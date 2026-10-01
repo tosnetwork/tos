@@ -97,7 +97,10 @@ class Driver : public td::actor::Actor {
     auto root = metrics::MultiCollector::create("root");
     if (mode == "parent-family")
       td::actor::send_closure(root.get(), &metrics::MultiCollector::add_sync_collector,
-          metrics::LambdaCollector::make([] { return sample(0, 255).families; }));
+          // The sync parent declares its 255 families, so the bounded path
+          // admits it and its real size reduces the nested child's allowance.
+          metrics::LambdaCollector::make([] { return sample(0, 255).families; },
+                                         metrics::CollectionReservation{255 * 256, 255}));
     std::array<metrics::MultiCollector::Own, 3> nested;
     std::array<td::actor::ActorOwn<Probe>, 3> probes;
     for (unsigned i = 0; i < 3; ++i) {

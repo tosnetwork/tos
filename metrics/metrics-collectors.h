@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <type_traits>
 
 #include "td/actor/ActorId.h"
@@ -15,21 +16,94 @@
 
 namespace tos::metrics {
 
+// What a collector will build, declared before it builds it. The bounded
+// collection path compares this with the remaining budget and refuses the
+// collector before any container is allocated; the result is still measured
+// afterwards, so an understated reservation is caught, never trusted.
+struct CollectionReservation {
+  std::size_t resident_bytes = 0;
+  std::size_t families = 0;
+};
+
+// Bytes one scalar family (one metric, one sample) occupies as `MetricSet::
+// resident_bytes` counts it: the three containers at capacity one plus the
+// strings, with a fixed allowance for the type string and allocator rounding.
+inline std::size_t scalar_family_reservation_bytes(const std::string &name, const std::optional<std::string> &help) {
+  return sizeof(MetricFamily) + sizeof(Metric) + sizeof(Sample) + name.capacity() + (help ? help->capacity() : 0) + 64;
+}
+
+// `count` scalar families whose names and helps fit the given capacities.
+inline CollectionReservation scalar_families_reservation(std::size_t count, std::size_t name_capacity,
+                                                         std::size_t help_capacity) {
+  const auto per_family = sizeof(MetricFamily) + sizeof(Metric) + sizeof(Sample) + name_capacity + help_capacity + 64;
+  return CollectionReservation{count * per_family, count};
+}
+// `families` families that together carry `metrics` labelled metrics of one
+// sample each, `labels_per_metric` labels with the given total key+value
+// capacity per label.
+inline CollectionReservation labelled_metrics_reservation(std::size_t families, std::size_t metrics,
+                                                          std::size_t labels_per_metric, std::size_t label_capacity,
+                                                          std::size_t family_name_help_capacity) {
+  const auto per_metric = sizeof(Metric) + sizeof(Sample) + labels_per_metric * (sizeof(Label) + label_capacity + 2);
+  return CollectionReservation{families * (sizeof(MetricFamily) + family_name_help_capacity + 64) + metrics * per_metric,
+                               families};
+}
+
 class Collector {
  public:
   virtual MetricSet collect() = 0;
+  // nullopt: this collector cannot bound its result in advance. Under a
+  // bounded budget it is then refused and recorded as shed, never run.
+  virtual std::optional<CollectionReservation> reservation() const { return std::nullopt; }
   virtual ~Collector() = default;
 };
 
 using MetricsPromise = td::Promise<MetricSet>;
 
+// Budget of one bounded collection. `max_resident_bytes` is what remains for
+// the children's results after the exporter has already set aside the pieces
+// that are alive at the same time during one collection: the resident
+// consensus core snapshot, the diagnostic status response, the previous
+// published snapshot and its typed prefix/suffix, the new rendered body and
+// a fixed scratch allowance (`remaining_core_publication_bytes` in the
+// exporter sums them). A child's result, the joined set and the rendered body
+// overlap in time, so the figure handed down is the remainder, not the whole.
 struct CollectionBudget {
   bool bounded = false;
   double deadline = 0;
   std::size_t max_resident_bytes = std::numeric_limits<std::size_t>::max();
   std::size_t max_families = 256;
   bool expired() const { return bounded && td::Timestamp::now().at() >= deadline; }
+  // Whether a declared reservation fits what remains. Unbounded admits all.
+  bool admits(const CollectionReservation &reservation) const {
+    return !bounded || (reservation.resident_bytes <= max_resident_bytes && reservation.families <= max_families);
+  }
 };
+
+// A collector refused before it ran. The reason travels as an error whose
+// message carries this prefix, so a parent can tell a shed from a failure.
+inline constexpr const char *kShedPrefix = "shed:";
+inline constexpr const char *kShedUnbudgeted = "collector_unbudgeted";
+inline constexpr const char *kShedOverBudget = "collector_over_budget";
+inline td::Status shed_status(const char *reason) { return td::Status::Error(PSTRING() << kShedPrefix << reason); }
+inline std::optional<std::string> shed_reason_of(const td::Status &status) {
+  const auto message = status.message();
+  const td::Slice prefix{kShedPrefix};
+  if (message.size() > prefix.size() && message.substr(0, prefix.size()) == prefix) {
+    return message.substr(prefix.size()).str();
+  }
+  return std::nullopt;
+}
+// Families a parent appends to a bounded result so a shed is visible in the
+// output rather than silently missing: one `health_collection_shed` sample
+// per refused child and a `health_collection_complete` gauge.
+inline constexpr const char *kShedFamily = "health_collection_shed";
+inline constexpr const char *kCompleteFamily = "health_collection_complete";
+struct CollectionShed {
+  std::string source;
+  std::string reason;
+};
+MetricSet shed_families(const std::vector<CollectionShed> &sheds);
 
 // Also implies inheritance from `td::actor::Actor`.
 // However, we cannot inherit actor class right here,
@@ -37,7 +111,26 @@ struct CollectionBudget {
 class AsyncCollector {
  public:
   virtual void collect(MetricsPromise P) = 0;
-  virtual void collect_with_budget(MetricsPromise P, CollectionBudget budget) { collect(std::move(P)); }
+  // Bounded path. A child that cannot declare a reservation is refused before
+  // it runs; one that fits runs `collect` and is measured afterwards. Only an
+  // unbounded budget falls through to the unbounded collect.
+  virtual std::optional<CollectionReservation> reservation() const { return std::nullopt; }
+  virtual void collect_with_budget(MetricsPromise P, CollectionBudget budget) {
+    if (!budget.bounded) {
+      collect(std::move(P));
+      return;
+    }
+    const auto declared = reservation();
+    if (!declared) {
+      P.set_error(shed_status(kShedUnbudgeted));
+      return;
+    }
+    if (!budget.admits(*declared)) {
+      P.set_error(shed_status(kShedOverBudget));
+      return;
+    }
+    collect(std::move(P));
+  }
   virtual ~AsyncCollector() = default;
 };
 
@@ -81,35 +174,48 @@ using SamplerLambda = std::function<std::vector<Sample>()>;
 
 class LambdaGauge : public Instrument<LambdaGauge> {
  public:
-  LambdaGauge(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help = std::nullopt);
+  // A lambda's sample count is unknown to the framework; a caller that knows
+  // the bound declares it, otherwise the collector is unbudgeted.
+  LambdaGauge(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help = std::nullopt,
+        std::optional<CollectionReservation> reservation = std::nullopt);
   MetricSet collect() final;
+  std::optional<CollectionReservation> reservation() const final { return reservation_; }
 
  private:
   std::string metric_name_;
   SamplerLambda lambda_;
   std::optional<std::string> help_;
+  std::optional<CollectionReservation> reservation_;
 };
 
 class LambdaCounter : public Instrument<LambdaCounter> {
  public:
-  LambdaCounter(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help = std::nullopt);
+  // A lambda's sample count is unknown to the framework; a caller that knows
+  // the bound declares it, otherwise the collector is unbudgeted.
+  LambdaCounter(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help = std::nullopt,
+        std::optional<CollectionReservation> reservation = std::nullopt);
   MetricSet collect() final;
+  std::optional<CollectionReservation> reservation() const final { return reservation_; }
 
  private:
   std::string metric_name_;
   SamplerLambda lambda_;
   std::optional<std::string> help_;
+  std::optional<CollectionReservation> reservation_;
 };
 
 using CollectorLambda = std::function<std::vector<MetricFamily>()>;
 
 class LambdaCollector : public Instrument<LambdaCollector> {
  public:
-  explicit LambdaCollector(CollectorLambda lambda);
+  // Same rule as the lambda instruments: declare the bound or be unbudgeted.
+  explicit LambdaCollector(CollectorLambda lambda, std::optional<CollectionReservation> reservation = std::nullopt);
   MetricSet collect() final;
+  std::optional<CollectionReservation> reservation() const final { return reservation_; }
 
  private:
   CollectorLambda lambda_;
+  std::optional<CollectionReservation> reservation_;
 };
 
 class MultiCollector : public td::actor::Actor, public AsyncCollector {
@@ -131,7 +237,8 @@ class MultiCollector : public td::actor::Actor, public AsyncCollector {
  private:
   bool collection_inflight_ = false;
   bool registration_overflow_ = false;
-  void collection_completed(MetricSet whole_set, MetricsPromise promise, td::Result<MetricSet> result, CollectionBudget budget);
+  void collection_completed(MetricSet whole_set, MetricsPromise promise, td::Result<MetricSet> result, CollectionBudget budget,
+                            std::vector<CollectionShed> sheds);
   std::string prefix_;
   std::vector<std::shared_ptr<Collector>> sync_collectors_ = {};
   std::unique_ptr<CollectorWrapper> async_collector_ = std::make_unique<CollectorWrapper>();
@@ -142,6 +249,9 @@ class AtomicGauge : public Instrument<AtomicGauge<ValueType>> {
  public:
   explicit AtomicGauge(std::string name, std::optional<std::string> help = std::nullopt);
   MetricSet collect() final;
+  std::optional<CollectionReservation> reservation() const final {
+    return CollectionReservation{scalar_family_reservation_bytes(name_, help_), 1};
+  }
 
   void set(ValueType value);
   void add(ValueType value);
@@ -161,6 +271,9 @@ class AtomicCounter : public Instrument<AtomicCounter<ValueType>> {
  public:
   explicit AtomicCounter(std::string name, std::optional<std::string> help = std::nullopt);
   MetricSet collect() final;
+  std::optional<CollectionReservation> reservation() const final {
+    return CollectionReservation{scalar_family_reservation_bytes(name_, help_), 1};
+  }
 
   void set(ValueType value);
   void add(ValueType value);
@@ -188,6 +301,10 @@ class Labeled : public Instrument<Labeled<LabelType, InstrumentType>> {
   template <typename... Args>
   explicit Labeled(std::string label_name, Args... args);
   MetricSet collect() override;
+  // The table is bounded by MAX_LABELS, so the reservation is the sum of its
+  // instruments' own reservations plus one label per metric; nullopt when
+  // the instrument type cannot bound itself.
+  std::optional<CollectionReservation> reservation() const override;
 
   std::shared_ptr<InstrumentType> label(LabelType label);
 
@@ -204,7 +321,7 @@ class Labeled : public Instrument<Labeled<LabelType, InstrumentType>> {
   const std::string label_name_;
   std::function<std::shared_ptr<InstrumentType>()> make_;
   std::unordered_map<LabelType, std::shared_ptr<InstrumentType>> instruments_;
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
 };
 
 template <typename A>
@@ -313,6 +430,23 @@ MetricSet Labeled<LabelType, InstrumentType>::collect() {
     whole_set = std::move(whole_set).join(std::move(metric_set).label({{{label_name_, label_str}}}));
   }
   return whole_set;
+}
+
+template <typename LabelType, typename InstrumentType>
+std::optional<CollectionReservation> Labeled<LabelType, InstrumentType>::reservation() const {
+  std::unique_lock lock(mutex_);
+  CollectionReservation total;
+  for (const auto &[l, instrument] : instruments_) {
+    const auto inner = instrument->reservation();
+    if (!inner) {
+      return std::nullopt;
+    }
+    // One label (key and rendered value) per metric the instrument emits.
+    const auto label_bytes = inner->families * (sizeof(Label) + label_name_.capacity() + 32);
+    total.resident_bytes += inner->resident_bytes + label_bytes;
+    total.families += inner->families;
+  }
+  return total;
 }
 
 template <typename LabelType, typename InstrumentType>

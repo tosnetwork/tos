@@ -123,6 +123,11 @@ class OverlayManager : public Overlays {
   void forget_peer(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay, adnl::AdnlNodeIdShort peer_id) override;
 
   void collect(metrics::MetricsPromise promise) override;
+  // Declared before collection: two traffic buckets, each two families with
+  // one metric per cell; a bucket's cells are bounded by the TL schema table
+  // plus the shared unknown cell (TlTrafficBucket), so the live cell counts
+  // are the bound.
+  std::optional<metrics::CollectionReservation> reservation() const override;
   void absorb_broadcasts(metrics::TlTrafficBucket delta, td::Promise<td::Unit> done) override;
 
   struct PrintId {};

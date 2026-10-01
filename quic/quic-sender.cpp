@@ -427,6 +427,19 @@ td::actor::Task<QuicSender::Stats> QuicSender::collect_stats_mode(bool build_per
   co_return stats;
 }
 
+std::optional<metrics::CollectionReservation> QuicSender::reservation() const {
+  // Summary only: `health_metrics_policy::build_per_path` decides whether
+  // per-path families exist at all. Off, the result is exactly the eight
+  // summary scalars of Stats::Entry::dump under the "quic_summary_" prefix.
+  // On, one entry per live path with no cap of its own: unbudgeted, never a
+  // guess.
+  if (health_metrics_policy::build_per_path) {
+    return std::nullopt;
+  }
+  // Longest name is "quic_summary_lost_bytes_total" (29 bytes); no helps.
+  return metrics::scalar_families_reservation(kSummaryFamilies, 32, 0);
+}
+
 // TODO(avevad): remove obsolete Stats and collect metrics directly
 void QuicSender::collect(td::Promise<metrics::MetricSet> P) {
   td::actor::send_closure(actor_id(this), &QuicSender::collect_stats_mode, health_metrics_policy::build_per_path,

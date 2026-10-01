@@ -14,6 +14,12 @@ class Fixture final : public td::actor::Actor, public tos::metrics::AsyncCollect
   Fixture(std::string mode, std::size_t padding, std::string metric_name = "fixture_calls")
       : mode_(std::move(mode)), padding_(padding), metric_name_(std::move(metric_name)) {
   }
+  // The fixture is deliberately budget-aware so the exporter-level tests keep
+  // exercising the render bound with the padded sets they ask for; the
+  // declared reservation is what the fixture will build.
+  std::optional<tos::metrics::CollectionReservation> reservation() const override {
+    return tos::metrics::CollectionReservation{64 + padding_, 1 + padding_ / 60000 + 1};
+  }
   void collect(tos::metrics::MetricsPromise promise) override {
     ++calls_;
     std::cout << "COLLECT " << calls_ << std::endl;

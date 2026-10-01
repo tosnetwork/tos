@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <functional>
 
 #include "td/utils/ScopeGuard.h"
@@ -31,6 +32,23 @@ struct TimedMetricResult {
 };
 }  // namespace
 
+MetricSet shed_families(const std::vector<CollectionShed> &sheds) {
+  auto shed = MetricFamily{.name = kShedFamily,
+                           .type = "gauge",
+                           .help = "One per collector refused before it ran in this bounded collection; the result is partial.",
+                           .metrics = {}};
+  for (const auto &item : sheds) {
+    auto scalar = MetricFamily::make_scalar("unused", "gauge", 1)
+                      .label(LabelSet{{{"source", item.source}, {"reason", item.reason}}});
+    shed.metrics.push_back(std::move(scalar.metrics.front()));
+  }
+  MetricSet set{};
+  if (!sheds.empty()) {
+    set.families.push_back(std::move(shed));
+  }
+  return set;
+}
+
 void CollectorWrapper::collect(MetricsPromise P) { collect_with_budget(std::move(P), {}); }
 
 void CollectorWrapper::collect_with_budget(MetricsPromise P, CollectionBudget budget) {
@@ -52,6 +70,7 @@ td::actor::Task<MetricSet> CollectorWrapper::collect_coro(CollectionBudget budge
   };
   MetricSet whole_set = {};
   td::Status error;
+  std::vector<CollectionShed> sheds;
   const bool publish_source_metadata = health::enabled.load(std::memory_order_relaxed);
   // Freeze the count, not iterators: registration may grow the vector while suspended.
   const auto count = source_collectors_.size();
@@ -92,7 +111,11 @@ td::actor::Task<MetricSet> CollectorWrapper::collect_coro(CollectionBudget budge
           ++source.failures;
           source.last_result_ok = false;
         }
-        if (error.is_ok()) {
+        // A shed is a child refused before it ran, not a failed child: the
+        // collection goes on and the refusal is published with its reason.
+        if (const auto reason = shed_reason_of(result.error())) {
+          sheds.push_back({source.source_id, *reason});
+        } else if (error.is_ok()) {
           error = result.move_as_error();
         }
       } else {
@@ -149,11 +172,17 @@ td::actor::Task<MetricSet> CollectorWrapper::collect_coro(CollectionBudget budge
     if (joined.is_error()) co_return joined.move_as_error();
     whole_set = joined.move_as_ok();
   }
+  if (!sheds.empty()) {
+    auto joined = join_with_budget(std::move(whole_set), shed_families(sheds), budget);
+    if (joined.is_error()) co_return joined.move_as_error();
+    whole_set = joined.move_as_ok();
+  }
   co_return whole_set;
 }
 
-LambdaGauge::LambdaGauge(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help)
-    : metric_name_(std::move(metric_name)), lambda_(std::move(lambda)), help_(std::move(help)) {
+LambdaGauge::LambdaGauge(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help,
+        std::optional<CollectionReservation> reservation)
+    : metric_name_(std::move(metric_name)), lambda_(std::move(lambda)), help_(std::move(help)), reservation_(reservation) {
 }
 
 MetricSet LambdaGauge::collect() {
@@ -162,8 +191,9 @@ MetricSet LambdaGauge::collect() {
   return MetricSet{.families = {std::move(family)}};
 }
 
-LambdaCounter::LambdaCounter(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help)
-    : metric_name_(std::move(metric_name)), lambda_(std::move(lambda)), help_(std::move(help)) {
+LambdaCounter::LambdaCounter(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help,
+        std::optional<CollectionReservation> reservation)
+    : metric_name_(std::move(metric_name)), lambda_(std::move(lambda)), help_(std::move(help)), reservation_(reservation) {
 }
 
 MetricSet LambdaCounter::collect() {
@@ -173,7 +203,8 @@ MetricSet LambdaCounter::collect() {
   return MetricSet{.families = {std::move(family)}};
 }
 
-LambdaCollector::LambdaCollector(CollectorLambda lambda) : lambda_(std::move(lambda)) {
+LambdaCollector::LambdaCollector(CollectorLambda lambda, std::optional<CollectionReservation> reservation)
+    : lambda_(std::move(lambda)), reservation_(reservation) {
 }
 
 MetricSet LambdaCollector::collect() {
@@ -192,8 +223,30 @@ void MultiCollector::collect_with_budget(MetricsPromise P, CollectionBudget budg
   }
   collection_inflight_ = true;
   MetricSet whole_set = {};
-  for (auto &c : sync_collectors_) {
+  std::vector<CollectionShed> sheds;
+  for (std::size_t index = 0; index < sync_collectors_.size(); ++index) {
+    auto &c = sync_collectors_[index];
     if (budget.expired()) { collection_inflight_ = false; P.set_error(td::Status::Error("Native total deadline expired before sync child")); return; }
+    if (budget.bounded) {
+      // Budget before allocation: the child declares what it will build and
+      // is refused, not run, when it cannot or when it does not fit what
+      // remains. The join below still measures what it actually built.
+      const auto declared = c->reservation();
+      const char *reason = nullptr;
+      if (!declared) {
+        reason = kShedUnbudgeted;
+      } else {
+        auto remaining = budget;
+        const auto parent = whole_set.resident_bytes();
+        remaining.max_resident_bytes = parent >= remaining.max_resident_bytes ? 0 : remaining.max_resident_bytes - parent;
+        remaining.max_families = whole_set.families.size() >= remaining.max_families ? 0 : remaining.max_families - whole_set.families.size();
+        if (!remaining.admits(*declared)) reason = kShedOverBudget;
+      }
+      if (reason != nullptr) {
+        sheds.push_back({PSTRING() << "sync_collector_" << index, reason});
+        continue;
+      }
+    }
     auto metric_set = c->collect();
     auto joined = join_with_budget(std::move(whole_set), std::move(metric_set), budget);
     if (joined.is_error()) { collection_inflight_ = false; P.set_error(joined.move_as_error()); return; }
@@ -209,13 +262,15 @@ void MultiCollector::collect_with_budget(MetricsPromise P, CollectionBudget budg
     child_budget.max_families -= whole_set.families.size();
   }
   async_collector_->collect_with_budget(
-      [self = actor_id(this), whole_set = std::move(whole_set), P = std::move(P), budget](td::Result<MetricSet> R) mutable {
+      [self = actor_id(this), whole_set = std::move(whole_set), P = std::move(P), budget,
+       sheds = std::move(sheds)](td::Result<MetricSet> R) mutable {
         td::actor::send_closure(self, &MultiCollector::collection_completed, std::move(whole_set), std::move(P),
-                                std::move(R), budget);
+                                std::move(R), budget, std::move(sheds));
       }, child_budget);
 }
 
-void MultiCollector::collection_completed(MetricSet whole_set, MetricsPromise promise, td::Result<MetricSet> result, CollectionBudget budget) {
+void MultiCollector::collection_completed(MetricSet whole_set, MetricsPromise promise, td::Result<MetricSet> result,
+                                          CollectionBudget budget, std::vector<CollectionShed> sheds) {
   collection_inflight_ = false;
   if (result.is_error()) {
     promise.set_error(result.move_as_error());
@@ -223,6 +278,20 @@ void MultiCollector::collection_completed(MetricSet whole_set, MetricsPromise pr
   }
   auto joined = join_with_budget(std::move(whole_set), result.move_as_ok(), budget);
   if (joined.is_error()) { promise.set_error(joined.move_as_error()); return; }
+  if (budget.bounded) {
+    // Publish the sync-side sheds and one completeness gauge: the result is
+    // complete only when neither this level nor any child level shed a
+    // collector (a child's sheds arrive as its own shed family).
+    auto set = joined.move_as_ok();
+    const bool child_shed = std::any_of(set.families.begin(), set.families.end(),
+                                        [](const MetricFamily &family) { return family.name == kShedFamily; });
+    auto marker = shed_families(sheds);
+    marker.families.push_back(MetricFamily::make_scalar(
+        kCompleteFamily, "gauge", sheds.empty() && !child_shed ? 1 : 0,
+        "One when every collector of this bounded collection ran; zero when any was refused."));
+    joined = join_with_budget(std::move(set), std::move(marker), budget);
+    if (joined.is_error()) { promise.set_error(joined.move_as_error()); return; }
+  }
   auto wrapped = std::move(joined.move_as_ok()).wrap(prefix_);
   if (budget.bounded && wrapped.resident_bytes() > budget.max_resident_bytes) {
     promise.set_error(td::Status::Error("Native wrapped resident budget exceeded")); return;

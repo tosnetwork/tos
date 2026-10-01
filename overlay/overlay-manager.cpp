@@ -701,6 +701,17 @@ void OverlayManager::collect(metrics::MetricsPromise promise) {
   connect(std::move(promise), collect_coro());
 }
 
+std::optional<metrics::CollectionReservation> OverlayManager::reservation() const {
+  // `TlTrafficBucket::collect` emits two families (bytes, messages) with one
+  // labelled metric per cell (direction, tl); the two directions join into at
+  // most four families. Cells are bounded by the TL schema names plus one
+  // shared unknown cell, and `cells()` is the live count under that bound.
+  const auto metrics = 2 * (broadcasts_in_.cells() + broadcasts_out_.cells());
+  // "overlay_broadcast_messages_total" + its help is under 128 bytes; a tl
+  // label value is a schema name, under 64 bytes with its key.
+  return metrics::labelled_metrics_reservation(4, metrics, 2, 72, 160);
+}
+
 td::actor::Task<metrics::MetricSet> OverlayManager::collect_coro() {
   std::vector<td::actor::StartedTask<td::Unit>> drains;
   for (const auto &[_, by_overlay] : overlays_) {

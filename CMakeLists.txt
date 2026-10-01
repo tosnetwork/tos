@@ -1014,6 +1014,10 @@ add_executable(test-health-collector-timestamps test/test-health-collector-times
 target_include_directories(test-health-collector-timestamps PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-health-collector-timestamps PRIVATE metrics tdactor tdutils)
 
+add_executable(test-health-collector-budget tools/node-health-monitor/tests/native/collector-budget.cpp)
+target_include_directories(test-health-collector-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-collector-budget PRIVATE metrics tdactor tdutils)
+
 add_executable(test-health-publisher-bench test/test-health-publisher-bench.cpp)
 target_include_directories(test-health-publisher-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-health-publisher-bench PRIVATE metrics tdutils)
@@ -1548,6 +1552,7 @@ tos_test(test-json-rpc-handler-guard)
 tos_test(test-metrics-label-bound)
 tos_test(test-health-collector-completion)
 tos_test(test-health-collector-timestamps)
+tos_test(test-health-collector-budget)
 tos_test(test-health-native-snapshot)
 tos_test(test-health-core-registry)
 tos_test(test-health-source-policy)
