@@ -1,0 +1,60 @@
+{
+ "events": [
+  {
+   "at": 1790860993,
+   "kind": "start",
+   "election": null
+  },
+  {
+   "at": 1790860993,
+   "kind": "driver_stopped"
+  },
+  {
+   "at": 1790861274,
+   "kind": "election_opened",
+   "election": {
+    "elect_at": 1790861568,
+    "elect_close": 1790861508,
+    "total_stake": 0,
+    "failed": false,
+    "finished": false
+   }
+  },
+  {
+   "at": 1790861524,
+   "kind": "election_closed",
+   "election": {
+    "elect_at": 1790861568,
+    "elect_close": 1790861508,
+    "total_stake": 0,
+    "failed": false,
+    "finished": false
+   }
+  },
+  {
+   "at": 1790861574,
+   "kind": "fresh_election",
+   "election": {
+    "elect_at": 1790861868,
+    "elect_close": 1790861808,
+    "total_stake": 0,
+    "failed": false,
+    "finished": false
+   },
+   "observed_at": 1790861574
+  },
+  {
+   "at": 1790861574,
+   "kind": "driver_started"
+  },
+  {
+   "at": 1790861875,
+   "kind": "set_in_office",
+   "since": 1790861868
+  }
+ ],
+ "result": "pass",
+ "zerostate_root": "de50a3116ac539afb99e1ddfea7d56213a2636bc6c5ee9f730efa509b8e667e0",
+ "elector_code_hash": "3477aea8b1d54bc208b75232f6814ac5cc97343e6a6cfedd6e24fdeb11e73a91",
+ "exit_status": 0
+}

@@ -654,6 +654,29 @@ fn tick(chain: &mut Chain) -> tos_sandbox::SendResult {
     result
 }
 
+/// Keep only the first profile the synthetic book admits, retiring the others.
+fn admit_only_the_first_synthetic_profile(chain: &mut Chain) {
+    let mut kept = chain_block::HashmapE::with_bit_len(256);
+    kept.set(
+        chain_block::SliceData::load_builder(
+            chain_block::BuilderData::with_raw(
+                vec![0x7cu8; 30].into_iter().chain([0, 0]).collect::<Vec<u8>>(),
+                256,
+            )
+            .expect("a key"),
+        )
+        .expect("a key slice"),
+        &chain_block::SliceData::default(),
+    )
+    .expect("insert");
+    let mut policy = chain_block::BuilderData::new();
+    chain_block::IBitstring::append_bit_one(&mut policy).expect("a non-empty policy");
+    policy
+        .checked_append_reference(chain_block::HashmapType::data(&kept).expect("one code").clone())
+        .expect("the codes");
+    set_contract_parameter(chain, 47, policy.into_cell().expect("a controller policy"));
+}
+
 /// The owner a test member's money belongs to, distinct from its identity.
 fn refund_owner(index: u16) -> [u8; 32] {
     let mut owner = [0xEEu8; 32];
@@ -742,25 +765,7 @@ fn a_failed_election_is_given_up_and_each_stake_comes_back_exactly_once() {
     // that kept those credits would pay member 1 twice.
     let stake = 30_000 * TOS;
     install_synthetic_book_owned(&mut chain, 3, stake, 2, &|index, _| refund_owner(index));
-    let mut kept = chain_block::HashmapE::with_bit_len(256);
-    kept.set(
-        chain_block::SliceData::load_builder(
-            chain_block::BuilderData::with_raw(
-                vec![0x7cu8; 30].into_iter().chain([0, 0]).collect::<Vec<u8>>(),
-                256,
-            )
-            .expect("a key"),
-        )
-        .expect("a key slice"),
-        &chain_block::SliceData::default(),
-    )
-    .expect("insert");
-    let mut policy = chain_block::BuilderData::new();
-    chain_block::IBitstring::append_bit_one(&mut policy).expect("a non-empty policy");
-    policy
-        .checked_append_reference(chain_block::HashmapType::data(&kept).expect("one code").clone())
-        .expect("the codes");
-    set_contract_parameter(&mut chain, 47, policy.into_cell().expect("a controller policy"));
+    admit_only_the_first_synthetic_profile(&mut chain);
 
     chain.blockchain.set_now(election - chain.elect_end_before);
     let result = tick(&mut chain);
@@ -785,6 +790,432 @@ fn a_failed_election_is_given_up_and_each_stake_comes_back_exactly_once() {
             "member {index} was not refunded exactly once"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The election lifecycle as a whole
+//
+// Each test above checks one rule where it lives. The deadlock that stopped the local
+// chain came from two rules that were each right -- a stake is refused once the
+// election closes, and a short election waits for more stake -- and together left a
+// state with no way out. Nothing tested the pair, because nothing followed an election
+// past the tick it closed on.
+//
+// So these follow the whole lifecycle, for every way an election can end:
+//
+// - liveness: every election either seats a set or gives way to a fresh one, within
+//   the term of the set it was meant to replace;
+// - time: each outcome is observed at every boundary, not at one tick;
+// - paired assumptions: a closed input is tested together with the state that needed it;
+// - conservation: every exit returns each stake exactly once, to the account that put
+//   it up;
+// - absence: an operator missing whole windows costs those windows, never the chain.
+// ---------------------------------------------------------------------------
+
+/// Every way an election can end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Outcome {
+    /// Nobody staked.
+    Empty,
+    /// Stake was placed, but less than the configuration's minimum total.
+    BelowMinimum,
+    /// Stake was placed, then the controller policy was removed: nobody is admitted.
+    NoPolicy,
+    /// Enough admitted stake, too few members: the selection runs and seats nobody, and
+    /// it credits back the member whose profile was retired.
+    FailedSelection,
+    /// A set is seated. One member staked three times the others, so the selection caps
+    /// it and part of its stake comes back at once.
+    Seated,
+}
+
+const OUTCOMES: [Outcome; 5] = [
+    Outcome::Empty,
+    Outcome::BelowMinimum,
+    Outcome::NoPolicy,
+    Outcome::FailedSelection,
+    Outcome::Seated,
+];
+
+/// An open election in the state `outcome` describes, and what each owner placed in it.
+struct Scenario {
+    chain: Chain,
+    election: u32,
+    placed: Vec<([u8; 32], u128)>,
+}
+
+fn scenario(outcome: Outcome) -> Scenario {
+    let (mut chain, _treasury, election) =
+        open_election(&format!("lifecycle-{outcome:?}"), 400_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    let (stakes, profiles): (Vec<u64>, u16) = match outcome {
+        Outcome::Empty => (Vec::new(), 1),
+        Outcome::BelowMinimum => (vec![11_000 * TOS; 2], 1),
+        Outcome::NoPolicy => (vec![11_000 * TOS; 4], 1),
+        Outcome::FailedSelection => (vec![30_000 * TOS; 3], 2),
+        Outcome::Seated => {
+            (vec![33_000 * TOS, 11_000 * TOS, 11_000 * TOS, 11_000 * TOS, 11_000 * TOS], 1)
+        }
+    };
+    if !stakes.is_empty() {
+        install_synthetic_book_full(
+            &mut chain,
+            stakes.len() as u16,
+            profiles,
+            &|index, _| refund_owner(index),
+            &|index| stakes[index as usize],
+        );
+    }
+    match outcome {
+        Outcome::NoPolicy => remove_contract_parameter(&mut chain, 47),
+        Outcome::FailedSelection => admit_only_the_first_synthetic_profile(&mut chain),
+        _ => {}
+    }
+    let placed = stakes
+        .iter()
+        .enumerate()
+        .map(|(index, stake)| (refund_owner(index as u16), u128::from(*stake)))
+        .collect();
+    Scenario { chain, election, placed }
+}
+
+/// The configuration contract's parameters without one of them.
+fn remove_contract_parameter(chain: &mut Chain, index: i32) {
+    use chain_block::IBitstring;
+    let mut account = chain
+        .blockchain
+        .get_account(&chain.config_contract)
+        .expect("the configuration contract is deployed")
+        .clone();
+    let data = account.get_data().expect("storage");
+    let mut slice = chain_block::SliceData::load_cell(data).expect("storage");
+    let parameters = slice.checked_drain_reference().expect("the parameter dictionary");
+    let mut dict = chain_block::HashmapE::with_hashmap(32, Some(parameters));
+    let mut key = chain_block::BuilderData::new();
+    key.append_i32(index).expect("the parameter index");
+    dict.remove(chain_block::SliceData::load_builder(key).expect("a key slice"))
+        .expect("the parameter is removed");
+    let mut rebuilt = chain_block::BuilderData::new();
+    rebuilt
+        .checked_append_reference(
+            chain_block::HashmapType::data(&dict).expect("a non-empty dictionary").clone(),
+        )
+        .expect("parameters");
+    rebuilt.checked_append_references_and_data(&slice).expect("the votes");
+    account.set_data(rebuilt.into_cell().expect("storage"));
+    chain.blockchain.set_account(chain.config_contract.clone(), account);
+    chain
+        .blockchain
+        .set_config(configuration_from_contract(chain))
+        .expect("the chain adopts the configuration");
+    assert!(
+        !parameter_present(&configuration_from_contract(chain), index as u32),
+        "parameter {index} is still present"
+    );
+}
+
+/// What the elector and the configuration contract show at one moment.
+#[derive(Debug, PartialEq)]
+struct Observed {
+    at: &'static str,
+    open_election: u32,
+    next_set_installed: bool,
+}
+
+fn observe(chain: &Chain, at: &'static str) -> Observed {
+    Observed {
+        at,
+        open_election: active_election_id(chain) as u32,
+        next_set_installed: parameter_present(&configuration_from_contract(chain), 36),
+    }
+}
+
+/// Tick at the moment `election` closes and record what follows.
+fn tick_at_close(chain: &mut Chain, election: u32, at: &'static str) -> Observed {
+    let close = election - chain.elect_end_before;
+    tick_at(chain, close, at)
+}
+
+/// Tick at `now` and record what follows.
+fn tick_at(chain: &mut Chain, now: u32, at: &'static str) -> Observed {
+    chain.blockchain.set_now(now);
+    tick(chain);
+    observe(chain, at)
+}
+
+/// An amount in the elector's storage: a 4-bit byte count and that many bytes.
+fn next_coins(slice: &mut chain_block::SliceData) -> u128 {
+    let bytes = slice.get_next_int(4).expect("an amount length") as usize;
+    if bytes == 0 {
+        return 0;
+    }
+    slice
+        .get_next_bits(bytes * 8)
+        .expect("an amount")
+        .iter()
+        .fold(0u128, |total, byte| (total << 8) | u128::from(*byte))
+}
+
+/// The frozen total and the bonuses a past election holds.
+fn past_totals(chain: &Chain, election: u32) -> (u128, u128) {
+    let key = chain_block::SliceData::load_builder(
+        chain_block::BuilderData::with_raw(election.to_be_bytes().to_vec(), 32).expect("key"),
+    )
+    .expect("key slice");
+    let mut record =
+        past_elections(chain).get(key).expect("lookup").expect("a record for that election");
+    record.get_next_u32().expect("unfreeze time");
+    record.get_next_u32().expect("hold time");
+    record.get_next_bits(256).expect("the set this election produced");
+    let _frozen = next_dictionary(&mut record, 256);
+    let total = next_coins(&mut record);
+    let bonuses = next_coins(&mut record);
+    (total, bonuses)
+}
+
+/// Liveness and time, together: every outcome is followed across each boundary, and by
+/// the end of the term it was meant to follow, every election has either seated a set or
+/// given way to a fresh one with a full window.
+#[test]
+fn every_election_seats_a_set_or_gives_way_to_a_fresh_one_within_the_term() {
+    for outcome in OUTCOMES {
+        let Scenario { mut chain, election, .. } = scenario(outcome);
+        let close = election - chain.elect_end_before;
+        let seated = outcome == Outcome::Seated;
+        let open = |at| Observed { at, open_election: election, next_set_installed: false };
+
+        let mut seen = vec![tick_at(&mut chain, close - 1, "before the close")];
+        seen.push(tick_at(&mut chain, close, "at the close"));
+        let mut expected = vec![
+            open("before the close"),
+            Observed { at: "at the close", open_election: election, next_set_installed: seated },
+        ];
+        if seated {
+            // The chain adopts the installed set; the elector forgets the election only
+            // once it sees that.
+            chain
+                .blockchain
+                .set_config(configuration_from_contract(&chain))
+                .expect("the chain adopts the installed set");
+            seen.push(tick_at(&mut chain, close + 1, "after the set is installed"));
+            expected.push(Observed {
+                at: "after the set is installed",
+                open_election: 0,
+                next_set_installed: true,
+            });
+            assert_eq!(seen, expected, "{outcome:?}");
+            continue;
+        }
+        seen.push(tick_at(&mut chain, election - 1, "the last second of the term"));
+        seen.push(tick_at(&mut chain, election, "the end of the term"));
+        expected.push(open("the last second of the term"));
+        expected.push(Observed {
+            at: "the end of the term",
+            open_election: 0,
+            next_set_installed: false,
+        });
+        let now = election + 1;
+        let fresh = tick_at(&mut chain, now, "one second later");
+        assert_eq!(seen, expected, "{outcome:?}");
+        assert!(!fresh.next_set_installed, "{outcome:?}: a set came from a given-up election");
+        assert_eq!(
+            fresh.open_election,
+            now + chain.elect_begin_before,
+            "{outcome:?}: no fresh election with a full window opened after the term ended"
+        );
+        assert!(
+            fresh.open_election - chain.elect_end_before > now,
+            "{outcome:?}: the fresh election opened already closed"
+        );
+    }
+}
+
+/// Conservation: on every exit, each owner gets back exactly what it placed -- plus, when
+/// a set served, its share of the bonuses and nothing more.
+#[test]
+fn every_exit_returns_each_stake_exactly_once_to_its_owner() {
+    for outcome in OUTCOMES {
+        let Scenario { mut chain, election, placed } = scenario(outcome);
+        let close = election - chain.elect_end_before;
+        tick_at(&mut chain, close, "at the close");
+        let placed_total: u128 = placed.iter().map(|(_, stake)| stake).sum();
+
+        if outcome == Outcome::Seated {
+            chain
+                .blockchain
+                .set_config(configuration_from_contract(&chain))
+                .expect("the chain adopts the installed set");
+            tick_at(&mut chain, close + 1, "after the set is installed");
+            let (frozen, bonuses) = past_totals(&chain, election);
+            let unused: Vec<u128> = placed.iter().map(|(owner, _)| owed(&chain, owner)).collect();
+            assert!(unused.iter().any(|part| *part > 0), "nothing was left over to follow");
+            assert_eq!(
+                frozen + unused.iter().sum::<u128>(),
+                placed_total,
+                "the frozen stake and the unused part do not add up to what was placed"
+            );
+            let release = chain.blockchain.now() + 10 * 365 * 24 * 3600;
+            tick_at(&mut chain, release, "after the stake is released");
+            // Exactly: the unused part, the frozen part, and the frozen part's share of the
+            // bonuses -- the same floor division the elector uses -- and nothing else.
+            for (index, ((owner, stake), unused)) in placed.iter().zip(&unused).enumerate() {
+                let held = stake - unused;
+                let expected = stake + bonuses * held / frozen;
+                assert_eq!(
+                    owed(&chain, owner),
+                    expected,
+                    "Seated: member {index} placed {stake}, {held} of it held, with {bonuses} \
+                     in bonuses over {frozen} held in all"
+                );
+            }
+        } else {
+            // Nothing may leave an election that is still standing.
+            for (index, (owner, _)) in placed.iter().enumerate() {
+                assert_eq!(
+                    owed(&chain, owner),
+                    0,
+                    "{outcome:?}: member {index}'s money left a standing election"
+                );
+            }
+            tick_at(&mut chain, election, "the end of the term");
+            for (index, (owner, stake)) in placed.iter().enumerate() {
+                assert_eq!(
+                    owed(&chain, owner),
+                    *stake,
+                    "{outcome:?}: member {index} was not refunded exactly what it placed"
+                );
+            }
+            // Ticking on, through the fresh election, pays nothing more.
+            tick_at(&mut chain, election + 1, "one second later");
+            let fresh = active_election_id(&chain) as u32;
+            tick_at_close(&mut chain, fresh, "the fresh election closes");
+            let after: u128 = placed.iter().map(|(owner, _)| owed(&chain, owner)).sum();
+            assert_eq!(after, placed_total, "{outcome:?}: a refund was paid twice");
+        }
+    }
+}
+
+/// Paired assumptions: the stake boundary closes the only input a short election could
+/// recover through. So the refusal is tested together with what it leaves behind: the
+/// short election still ends, the money that was placed is really there to go back, and
+/// the validator that was refused can stake into the next election and be seated.
+#[test]
+fn a_refused_late_stake_does_not_strand_the_election_or_the_staker() {
+    let (mut chain, _treasury, election) = open_election("late-stake", 400_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    let close = election - chain.elect_end_before;
+
+    let validators: Vec<PqValidator> =
+        (0..4u8).map(|index| PqValidator::new(0x70 + index)).collect();
+    let accounts: Vec<tos_sandbox::Treasury> = (0..4)
+        .map(|index| {
+            chain
+                .blockchain
+                .treasury(&format!("late-stake-{index}"), 60_000 * TOS)
+                .expect("a funded account")
+        })
+        .collect();
+    let address_of = |account: &tos_sandbox::Treasury| -> [u8; 32] {
+        account.address().address().get_bytestring(0).try_into().expect("an address")
+    };
+
+    // Two members in time: short of the minimum.
+    for index in 0..2 {
+        let result = pq_stake(
+            &mut chain,
+            &accounts[index],
+            &validators[index],
+            election,
+            30 + index as u64,
+            11_000 * TOS,
+        );
+        assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "member {index} could not stake");
+    }
+    let placed = declared_total_stake(&chain);
+
+    // A third arrives after the close: refused, and the election waits.
+    chain.blockchain.set_now(close + 1);
+    tick(&mut chain);
+    let late = pq_stake(&mut chain, &accounts[2], &validators[2], election, 32, 11_000 * TOS);
+    assert_eq!(reply(&late), (STAKE_RETURNED, 0), "a stake after the close was not refused");
+    assert_eq!(active_election_id(&chain) as u32, election, "the election did not wait");
+
+    // The term ends: the election ends with it, and the money is there to go back.
+    tick_at(&mut chain, election, "the end of the term");
+    assert_eq!(active_election_id(&chain), 0, "the short election stranded the chain");
+    let owed_total: u128 = accounts[..2].iter().map(|a| owed(&chain, &address_of(a))).sum();
+    assert_eq!(owed_total, placed, "the refunds are not what the election held");
+    assert!(
+        balance_of(&chain, &chain.elector) >= owed_total,
+        "the elector owes more than it holds"
+    );
+
+    // The refused validator, and everyone else, can now stake into a fresh election.
+    let fresh = tick_at(&mut chain, election + 1, "one second later").open_election;
+    assert_ne!(fresh, 0, "no fresh election opened");
+    for index in 0..4 {
+        let result = pq_stake(
+            &mut chain,
+            &accounts[index],
+            &validators[index],
+            fresh,
+            40 + index as u64,
+            11_000 * TOS,
+        );
+        assert_eq!(
+            reply(&result),
+            (STAKE_ACCEPTED, 0),
+            "member {index} could not stake into the fresh election"
+        );
+    }
+    let closed = tick_at_close(&mut chain, fresh, "the fresh election closes");
+    assert!(closed.next_set_installed, "the fresh election seated no set");
+}
+
+/// Absence: the operator misses three whole windows. Each costs that window and nothing
+/// else -- every empty election gives way to a fresh one with a full window -- and when
+/// the operator returns, the next election seats a set.
+#[test]
+fn an_absent_operator_costs_windows_never_the_chain() {
+    let (mut chain, _treasury, first) = open_election("absent-operator", 400_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    let mut election = first;
+    for window in 0..3 {
+        let closed = tick_at_close(&mut chain, election, "the close");
+        assert_eq!(closed.open_election, election, "window {window}: the election did not wait");
+        let ended = tick_at(&mut chain, election, "the end of the term");
+        assert_eq!(
+            ended.open_election, 0,
+            "window {window}: the empty election stranded the chain"
+        );
+        let now = election + 1;
+        let fresh = tick_at(&mut chain, now, "one second later");
+        assert!(
+            fresh.open_election > election && fresh.open_election - chain.elect_end_before > now,
+            "window {window}: no fresh election with a full window"
+        );
+        assert!(!fresh.next_set_installed, "window {window}: a set came from nobody");
+        election = fresh.open_election;
+    }
+
+    // The operator is back.
+    for index in 0..4u8 {
+        let account = chain
+            .blockchain
+            .treasury(&format!("absent-operator-{index}"), 40_000 * TOS)
+            .expect("a funded account");
+        let result = pq_stake(
+            &mut chain,
+            &account,
+            &PqValidator::new(0x78 + index),
+            election,
+            50 + u64::from(index),
+            11_000 * TOS,
+        );
+        assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "member {index} could not stake");
+    }
+    let closed = tick_at_close(&mut chain, election, "the close");
+    assert!(closed.next_set_installed, "the returning operator's election seated no set");
 }
 
 // ---------------------------------------------------------------------------

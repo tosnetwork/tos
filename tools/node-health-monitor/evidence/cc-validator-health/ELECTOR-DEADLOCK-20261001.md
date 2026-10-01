@@ -119,3 +119,53 @@ elector code hash `3477aea8…`, equal to the compiled fixed elector):
 
 After the rebuild, no node has an active incident, and the doctor reports
 17 pass, 0 fail, 3 not run.
+
+## Tests for the missing perspectives
+
+Each perspective listed above now has a test. The sandbox tests live in
+`tosctl/src/node-control/contracts/tests/elector_sandbox.rs`, in the section
+"The election lifecycle as a whole". They run over five outcomes: empty, below
+the minimum, no controller policy, failed selection, and seated.
+
+| Perspective | Test |
+|---|---|
+| Liveness, time progression | `every_election_seats_a_set_or_gives_way_to_a_fresh_one_within_the_term` observes each outcome before the close, at the close, in the last second of the term, at its end and one second later |
+| Paired assumptions | `a_refused_late_stake_does_not_strand_the_election_or_the_staker`: a real late stake is refused, the short election still ends, the elector holds what it owes, and the refused validator is seated in the fresh election |
+| Money conservation | `every_exit_returns_each_stake_exactly_once_to_its_owner`: an exact refund on every cancelled path, no second refund through the fresh election, and exact per-owner accounting on the seated path |
+| Operator absence (sandbox) | `an_absent_operator_costs_windows_never_the_chain`: three empty windows in a row, then a returning operator is seated |
+| Operator absence (live) | `scripts/local-pq-election-absence-drill.py`; its unit tests in `scripts/test_local_pq_election_absence_drill.py` require exit 1 on a chain that holds the empty election |
+
+Every new test was shown to fail. The mutants were applied to `elector-code.fc`,
+recompiled, and run against the whole suite of 82 tests:
+
+| Elector | Failing tests |
+|---|---|
+| Pre-fix (`5def57046`) | All seven deadlock tests: the three from the fix and the four above |
+| Cancellation refunds nothing | Below-minimum, failed-election, late-stake, conservation |
+| Cancelled at the close instead of the end of the term | Seven, including the existing retired-profile revival test |
+| No-policy path postpones for ever | Empty, liveness, conservation |
+| Below-minimum path postpones for ever | Below-minimum, late-stake, absence, liveness, conservation |
+| Failed path postpones for ever | Failed-election, liveness, conservation |
+| Unused part of a seated stake paid twice | Conservation |
+| Released stake paid twice when there are no bonuses | Conservation |
+
+One mutant survives. Paying a released stake twice when there are bonuses goes
+undetected, because the sandbox never accumulates bonuses, so that release path
+does not run there. It is inherited code that no change here touched, and it
+stays untested until a fixture can produce bonuses.
+
+The drill's unit tests fail when the drill reports a held election as a pass.
+The live drill passed on the rebuilt network. Its receipt is
+`ELECTOR-ABSENCE-DRILL-20261001.json`, with SHA-256 prefix `f57b6b06af141661`:
+
+| Unix time | Event |
+|---|---|
+| 1790860993 | Driver stopped between elections |
+| 1790861274 | Election `1790861568` opened, closing at `1790861508` |
+| 1790861524 | Closed with `total_stake = 0` |
+| 1790861574 | Given up; election `1790861868` open, closing at `1790861808`; driver restarted |
+| 1790861875 | Set from `1790861868` in office |
+
+The live drill cannot be shown red on this network without installing the
+broken elector again. Its red evidence is this morning's five-hour hold, plus
+the unit test above.
