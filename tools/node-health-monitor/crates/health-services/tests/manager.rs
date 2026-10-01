@@ -57,6 +57,32 @@ async fn state(manager: &Manager, wanted: &str) -> Value {
     }
     panic!("state {wanted} not observed: {:?}", manager.snapshot());
 }
+/// Hold a write lock on `db` from another connection for `hold`, released on a thread.
+fn hold_write_lock(db: PathBuf, hold: Duration) -> std::thread::JoinHandle<()> {
+    let lock = rusqlite::Connection::open(db).unwrap();
+    lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    std::thread::spawn(move || {
+        std::thread::sleep(hold);
+        lock.execute_batch("ROLLBACK").unwrap();
+    })
+}
+#[tokio::test]
+async fn a_restart_waits_for_a_predecessor_still_finishing_a_write() {
+    let fixture = Fixture::new();
+    drop(Manager::start(&fixture.config()).unwrap());
+    // A writer thread of the manager just dropped can still hold either database
+    // for a moment. Starting again must ride that out, not refuse to start.
+    for db in ["control.db", "evidence.db"] {
+        let release = hold_write_lock(fixture.0.join(db), Duration::from_millis(600));
+        let restarted = Manager::start(&fixture.config());
+        release.join().unwrap();
+        assert!(
+            restarted.is_ok(),
+            "start refused while {db} was briefly locked: {:?}",
+            restarted.err()
+        );
+    }
+}
 #[tokio::test]
 async fn full_evidence_writer_queue_refuses_without_receipt_or_green() {
     let fixture = Fixture::new();

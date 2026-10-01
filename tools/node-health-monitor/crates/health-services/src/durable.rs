@@ -20,12 +20,24 @@ type Result<T> = std::result::Result<T, String>;
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
+/// How long a running writer waits for a lock before refusing.
+const RUNTIME_BUSY: Duration = Duration::from_millis(100);
+/// How long opening and binding wait. A predecessor's writer thread may still be
+/// finishing its last write or retention pass when a manager starts again in the
+/// same process, and refusing to start for that is a race, not a fault.
+const STARTUP_BUSY: Duration = Duration::from_secs(5);
+
+/// Leave the startup allowance once a database is open and bound.
+fn runtime_busy(conn: &Connection) -> Result<()> {
+    conn.busy_timeout(RUNTIME_BUSY).map_err(err)
+}
+
 fn open(path: &Path, max_bytes: u64) -> Result<Connection> {
     if max_bytes < 262_144 {
         return Err("database quota too small".into());
     }
     let conn = Connection::open(path).map_err(err)?;
-    conn.busy_timeout(Duration::from_millis(100)).map_err(err)?;
+    conn.busy_timeout(STARTUP_BUSY).map_err(err)?;
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(err)?;
     if version > 1 {
         return Err("unsupported database schema".into());
@@ -56,6 +68,12 @@ fn bind_network(conn: &mut Connection, network: &str) -> Result<()> {
     if !tos_health_core::wire::hash(network) {
         return Err("invalid database network".into());
     }
+    conn.busy_timeout(STARTUP_BUSY).map_err(err)?;
+    let bound = bind_network_inner(conn, network);
+    runtime_busy(conn)?;
+    bound
+}
+fn bind_network_inner(conn: &mut Connection, network: &str) -> Result<()> {
     let tx = conn.transaction().map_err(err)?;
     tx.execute_batch("CREATE TABLE IF NOT EXISTS database_identity(singleton INTEGER PRIMARY KEY CHECK(singleton=1),network TEXT NOT NULL)").map_err(err)?;
     tx.execute("INSERT OR IGNORE INTO database_identity VALUES(1,?1)", [network]).map_err(err)?;
@@ -592,6 +610,7 @@ impl EvidenceDb {
             source_epoch TEXT NOT NULL,max_generation TEXT NOT NULL,deleted_rows INTEGER NOT NULL,
             PRIMARY KEY(observer_epoch,endpoint,source_epoch));
             CREATE TABLE IF NOT EXISTS retention_tombstones(store_seq INTEGER PRIMARY KEY,content_hash TEXT NOT NULL);").map_err(err)?;
+        runtime_busy(&conn)?;
         Ok(Self {
             conn,
             path: path.into(),
@@ -1246,6 +1265,7 @@ impl ControlDb {
         }
         let mut db = Self { conn, path: path.into(), quota, max_incidents, max_outbox };
         db.restore_unknown()?;
+        runtime_busy(&db.conn)?;
         Ok(db)
     }
     fn restore_unknown(&mut self) -> Result<()> {

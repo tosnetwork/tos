@@ -378,3 +378,25 @@ fn wal_quota_recovers_after_reader_release_even_without_expired_rows() {
         .expect("reset must recover without deleting fresh evidence or reopening M");
     assert!(database.disk_usage().unwrap().wal_bytes < quota);
 }
+
+#[test]
+fn an_open_database_refuses_a_held_lock_within_the_runtime_allowance() {
+    // Opening and binding may wait for a predecessor; a running writer may not. A write
+    // that meets a held lock must refuse within the runtime allowance, or a stuck reader
+    // would stall every ingest behind it for the startup allowance instead.
+    let t = Temp::new();
+    let path = t.0.join("control.db");
+    let mut db = ControlDb::open(&path, 1_048_576, 16, 32).unwrap();
+    db.bind_network(&"a".repeat(64)).unwrap();
+    let lock = rusqlite::Connection::open(&path).unwrap();
+    lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = std::time::Instant::now();
+    let result = db.bind_inventory("runtime-lock", "{}");
+    let waited = started.elapsed();
+    lock.execute_batch("ROLLBACK").unwrap();
+    assert!(result.is_err(), "a write through a held lock succeeded");
+    assert!(
+        waited < std::time::Duration::from_millis(1000),
+        "the open database waited {waited:?} for a held lock"
+    );
+}
