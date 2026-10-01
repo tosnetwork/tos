@@ -1218,6 +1218,238 @@ fn an_absent_operator_costs_windows_never_the_chain() {
     assert!(closed.next_set_installed, "the returning operator's election seated no set");
 }
 
+/// The elector's own accounts after the election record: credits, past elections, its
+/// purse of nobody's money, and the set it treats as active.
+fn elector_purse_and_active_set(chain: &Chain) -> (u128, u32) {
+    let account = chain.blockchain.get_account(&chain.elector).expect("the elector is deployed");
+    let data = account.get_data().expect("the elector has storage");
+    let mut slice = chain_block::SliceData::load_cell(data).expect("storage");
+    let _election = next_dictionary(&mut slice, 32);
+    let _credits = next_dictionary(&mut slice, 256);
+    let _past = next_dictionary(&mut slice, 32);
+    let purse = next_coins(&mut slice);
+    let active = slice.get_next_u32().expect("the active set id");
+    (purse, active)
+}
+
+/// What a past election holds frozen, by the account each stake goes back to.
+fn frozen_by_owner(chain: &Chain, election: u32) -> std::collections::BTreeMap<[u8; 32], u128> {
+    let key = chain_block::SliceData::load_builder(
+        chain_block::BuilderData::with_raw(election.to_be_bytes().to_vec(), 32).expect("key"),
+    )
+    .expect("key slice");
+    let mut record =
+        past_elections(chain).get(key).expect("lookup").expect("a record for that election");
+    record.get_next_u32().expect("unfreeze time");
+    record.get_next_u32().expect("hold time");
+    record.get_next_bits(256).expect("the set this election produced");
+    let frozen = next_dictionary(&mut record, 256);
+    let mut owners = std::collections::BTreeMap::new();
+    chain_block::HashmapType::iterate_slices(&frozen, |_key, mut value| {
+        let owner: [u8; 32] =
+            value.get_next_bits(256).expect("the owner").try_into().expect("32 bytes");
+        value.get_next_u64().expect("weight");
+        let stake = next_coins(&mut value);
+        let banned = value.get_next_bit().expect("the banned flag");
+        assert!(!banned, "nobody was punished in this round");
+        *owners.entry(owner).or_insert(0) += stake;
+        Ok(true)
+    })
+    .expect("frozen stakes");
+    owners
+}
+
+/// Configuration parameter 17: `min_stake max_stake min_total_stake:Tomis max_stake_factor:uint32`.
+fn stake_limits(min: u64, max: u64, min_total: u64, factor: u32) -> chain_block::Cell {
+    use chain_block::IBitstring;
+    let mut value = chain_block::BuilderData::new();
+    for amount in [min, max, min_total] {
+        chain_block::Serializable::write_to(&chain_block::Coins::new(amount), &mut value)
+            .expect("an amount");
+    }
+    value.append_u32(factor).expect("the factor");
+    value.into_cell().expect("stake limits")
+}
+
+fn has_past_election(chain: &Chain, election: u32) -> bool {
+    let key = chain_block::SliceData::load_builder(
+        chain_block::BuilderData::with_raw(election.to_be_bytes().to_vec(), 32).expect("key"),
+    )
+    .expect("key slice");
+    past_elections(chain).get(key).expect("lookup").is_some()
+}
+
+/// Bonuses, end to end: a set that serves is paid from two sources -- an eighth of the
+/// elector's purse when it takes office, and the validator fees sent from the zero
+/// address while it is active -- and when it leaves office and its stakes are released,
+/// each owner receives its unused part, its frozen stake and its share of the bonuses in
+/// proportion to that stake. What the floor division leaves over goes back to the purse,
+/// so not one nanotomi is created or lost.
+#[test]
+fn a_served_sets_bonuses_reach_its_stakers_in_proportion_and_nowhere_else() {
+    let (mut chain, _treasury, election) = open_election("bonus-round", 400_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    let address_of = |account: &tos_sandbox::Treasury| -> [u8; 32] {
+        account.address().address().get_bytestring(0).try_into().expect("an address")
+    };
+    // Unequal stakes, so a share in proportion differs from an equal split.
+    let stakes = [20_000 * TOS, 11_000 * TOS, 13_000 * TOS, 11_000 * TOS];
+    let mut owners = Vec::new();
+    for (index, stake) in stakes.iter().enumerate() {
+        let account = chain
+            .blockchain
+            .treasury(&format!("bonus-round-{index}"), 40_000 * TOS)
+            .expect("a funded account");
+        // A factor of three lets a larger stake count up to three times the smallest,
+        // so the members freeze different amounts.
+        let result = pq_stake_with_max_factor(
+            &mut chain,
+            &account,
+            &account,
+            &PqValidator::new(0x58 + index as u8),
+            election,
+            60 + index as u64,
+            *stake,
+            3 * 0x10000,
+        );
+        assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "member {index} could not stake");
+        owners.push(address_of(&account));
+    }
+    let placed = declared_total_stake(&chain);
+    // The launch configuration caps every stake at the smallest (a factor of one), which
+    // would freeze equal amounts. Allow three, as the members asked for.
+    set_contract_parameter(
+        &mut chain,
+        17,
+        stake_limits(10_000 * TOS, 10_000_000 * TOS, 40_000 * TOS, 3 * 0x10000),
+    );
+
+    // Elect, install, and rotate the set into office.
+    let closed = tick_at_close(&mut chain, election, "the close");
+    assert!(closed.next_set_installed, "the election seated no set");
+    let unused: Vec<u128> = owners.iter().map(|owner| owed(&chain, owner)).collect();
+    chain
+        .blockchain
+        .set_config(configuration_from_contract(&chain))
+        .expect("the chain adopts the installed set");
+    let takes_over = chain
+        .blockchain
+        .config_params()
+        .next_validator_set()
+        .expect("the next set is installed")
+        .utime_since();
+    chain.blockchain.set_now(takes_over);
+    chain
+        .blockchain
+        .tick_tock(&chain.config_contract, TransactionTickTock::Tock)
+        .expect("tock runs")
+        .expect_success();
+    chain
+        .blockchain
+        .set_config(configuration_from_contract(&chain))
+        .expect("the chain adopts the rotated set");
+    // Fill the purse with nobody's money: an ordinary account's plain transfer.
+    let donor = chain.blockchain.treasury("bonus-donor", 20_000 * TOS).expect("a funded account");
+    let (purse_before, active_before) = elector_purse_and_active_set(&chain);
+    assert_ne!(active_before, election, "the set was active before it took office");
+    chain
+        .blockchain
+        .send_message(
+            tos_sandbox::MessageBuilder::internal(donor.address(), &chain.elector, 8_000 * TOS)
+                .build(),
+        )
+        .expect("the transfer is delivered")
+        .expect_success();
+    let (purse, active) = elector_purse_and_active_set(&chain);
+    assert_eq!(purse, purse_before + 8_000 * TOS as u128, "a plain transfer missed the purse");
+    assert_ne!(active, election, "a plain transfer activated the set");
+    assert_eq!(past_totals(&chain, election).1, 0, "bonuses before the set took office");
+
+    // The elector sees the set in office: it forgets the election and makes the set
+    // active, and taking office moves an eighth of the purse to the set's bonuses.
+    for _ in 0..4 {
+        if elector_purse_and_active_set(&chain).1 == election {
+            break;
+        }
+        tick(&mut chain);
+    }
+    assert_eq!(active_election_id(&chain), 0, "the election was not forgotten once installed");
+    let (purse_in_office, active) = elector_purse_and_active_set(&chain);
+    assert_eq!(active, election, "the elector does not treat the rotated set as active");
+    let (_, bonuses) = past_totals(&chain, election);
+    assert_eq!(bonuses, purse >> 3, "taking office did not move an eighth of the purse");
+    assert_eq!(purse_in_office, purse - (purse >> 3), "the purse lost more than an eighth");
+
+    // Validator fees from the zero address go straight to the active set's bonuses.
+    let fees = 777 * TOS + 3;
+    let zero = masterchain(chain_block::AccountId::from([0u8; 32]));
+    chain
+        .blockchain
+        .send_message(tos_sandbox::MessageBuilder::internal(&zero, &chain.elector, fees).build())
+        .expect("the fees are delivered")
+        .expect_success();
+    let (frozen_total, bonuses) = past_totals(&chain, election);
+    assert_eq!(bonuses, (purse >> 3) + u128::from(fees), "the fees missed the bonuses");
+    let (purse_with_fees, _) = elector_purse_and_active_set(&chain);
+    assert_eq!(purse_with_fees, purse_in_office, "the fees went to the purse, not the set");
+
+    let frozen = frozen_by_owner(&chain, election);
+    assert_eq!(frozen.values().sum::<u128>(), frozen_total, "the frozen total disagrees");
+    assert_eq!(
+        frozen_total + unused.iter().sum::<u128>(),
+        placed,
+        "the frozen stake and the unused part do not add up to what the election held"
+    );
+    assert!(
+        frozen.values().collect::<std::collections::BTreeSet<_>>().len() > 1,
+        "every member froze the same amount, so a proportional share looks like an equal one"
+    );
+
+    // The set leaves office: the configuration names a different current set.
+    let previous = raw_parameter(&chain, 32).expect("the previous set is kept");
+    set_contract_parameter(&mut chain, 34, previous);
+    // The elector does one thing per tick, and announcing an election comes first.
+    for _ in 0..4 {
+        if elector_purse_and_active_set(&chain).1 != election {
+            break;
+        }
+        tick(&mut chain);
+    }
+    let (_, active) = elector_purse_and_active_set(&chain);
+    assert_ne!(active, election, "the set is still active after leaving office");
+
+    // Past the hold, the stakes are released -- one past election per tick.
+    let release = chain.blockchain.now() + 10 * 365 * 24 * 3600;
+    chain.blockchain.set_now(release);
+    let (purse_before_release, _) = elector_purse_and_active_set(&chain);
+    for _ in 0..8 {
+        if !has_past_election(&chain, election) {
+            break;
+        }
+        tick(&mut chain);
+    }
+    assert!(!has_past_election(&chain, election), "the stakes were never released");
+
+    let mut paid_bonuses = 0u128;
+    for (index, owner) in owners.iter().enumerate() {
+        let held = frozen.get(owner).copied().unwrap_or(0);
+        let share = bonuses * held / frozen_total;
+        paid_bonuses += share;
+        assert_eq!(
+            owed(&chain, owner),
+            unused[index] + held + share,
+            "member {index}: {held} held of {frozen_total}, with {bonuses} in bonuses"
+        );
+    }
+    assert!(paid_bonuses > 0, "no bonus was paid, so the share was never tested");
+    let (purse_after_release, _) = elector_purse_and_active_set(&chain);
+    assert_eq!(
+        purse_after_release,
+        purse_before_release + (bonuses - paid_bonuses),
+        "the bonus left over by the division did not go back to the purse"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Rotation
 //

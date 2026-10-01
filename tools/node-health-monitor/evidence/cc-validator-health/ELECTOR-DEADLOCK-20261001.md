@@ -149,10 +149,35 @@ recompiled, and run against the whole suite of 82 tests:
 | Unused part of a seated stake paid twice | Conservation |
 | Released stake paid twice when there are no bonuses | Conservation |
 
-One mutant survives. Paying a released stake twice when there are bonuses goes
-undetected, because the sandbox never accumulates bonuses, so that release path
-does not run there. It is inherited code that no change here touched, and it
-stays untested until a fixture can produce bonuses.
+### The bonus path
+
+The lifecycle tests never accumulate bonuses, so at first the release path with
+bonuses never ran, and paying a released stake twice there went undetected. That
+path now has its own test,
+`a_served_sets_bonuses_reach_its_stakers_in_proportion_and_nowhere_else`, which
+drives a real round end to end:
+
+- Four members stake real money with a factor of three. The chain's factor is
+  raised from the launch value of one, so the frozen stakes differ.
+- The set is elected, installed and rotated into office.
+- A plain transfer from an ordinary account fills the purse. Taking office moves
+  exactly one eighth of the purse to the set's bonuses.
+- Validator fees sent from the zero address go to the bonuses, not the purse.
+- The set leaves office and its stakes are released. Each owner receives exactly
+  its unused part, its frozen stake, and the floor of its proportional share of
+  the bonuses.
+- What the division leaves over returns to the purse.
+
+| Mutant | Fails at |
+|---|---|
+| Released stake paid twice when there are bonuses | Per-owner release |
+| Bonus split equally instead of by stake | Per-owner release |
+| Division remainder not returned to the purse | Purse after release |
+| A quarter of the purse moved on taking office | "Did not move an eighth" |
+| Validator fees not credited as bonuses | "The fees missed the bonuses" |
+
+No mutant survives now. Every new test also passes against the fixed elector:
+83 of 83.
 
 The drill's unit tests fail when the drill reports a held election as a pass.
 The live drill passed on the rebuilt network. Its receipt is
