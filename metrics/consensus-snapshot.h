@@ -148,7 +148,6 @@ inline std::optional<ConsensusPublication> capture_consensus(const std::string &
   if (network.size() != 64) return std::nullopt;
   if (!enabled.load(std::memory_order_relaxed) || !consensus_enabled.load(std::memory_order_relaxed)) return std::nullopt;
   const auto now = ConsensusStats::now_ns();
-  if (!lifecycle_verified.load()) consensus_stats.global_incomplete(IncompleteReason::SessionLifecycleUnverified);
   for (std::size_t a = 0; a < action_count; ++a) {
     for (std::size_t phase = 0; phase < phase_count; ++phase)
       replay_metric_phases[a][phase].store(c04_sum(consensus_stats.phases[a][1][phase].load(), consensus_stats.phases[a][2][phase].load(), static_cast<Action>(a)));
@@ -223,7 +222,12 @@ inline std::optional<ConsensusPublication> capture_consensus(const std::string &
   std::vector<std::string> actions;
   for (std::size_t a = 0; a < action_count; ++a) actions.push_back(c04_action(static_cast<Action>(a), now));
   if (!core_registry.complete()) consensus_stats.global_incomplete(IncompleteReason::ObservationGap);
-  const auto reasons = consensus_stats.incomplete_reasons.load();
+  // Lifecycle verification is a present-tense fact, not a latch: the reason
+  // is set while unverified and disappears once a session has been observed
+  // through its whole drain boundary. Every other reason stays latched.
+  const auto lifecycle_bit = std::uint32_t{1} << static_cast<unsigned>(IncompleteReason::SessionLifecycleUnverified);
+  auto reasons = consensus_stats.incomplete_reasons.load() & ~lifecycle_bit;
+  if (!lifecycle_verified.load()) reasons |= lifecycle_bit;
   const bool complete = reasons == 0;
   const auto sessions = c04_object({{"active", c04_u64(consensus_stats.sessions_active.load())}, {"started", c04_u64(consensus_stats.sessions_started.load())},
       {"stop_started", c04_u64(consensus_stats.sessions_stop_started.load())}, {"stopping", c04_u64(consensus_stats.sessions_stopping.load())},

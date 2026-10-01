@@ -132,6 +132,7 @@ def latest_native(db_path, node, now_ms):
         "age_seconds": age_s,
         "quarantined": bool(quarantined),
         "instrumentation_complete": native["quality"]["instrumentation_complete"],
+        "incomplete_reasons": list(consensus.get("incomplete_reasons", [])) if consensus else [],
         "coverage_missing": native["coverage"]["missing_fields"],
         "sessions_active": int(consensus["sessions"]["active"]) if consensus else None,
         "finalized_slot": max((c["last_finalized_slot"] for c in contexts if c.get("last_finalized_slot") is not None), default=None),
@@ -227,7 +228,14 @@ DIAGNOSIS_INSTRUCTION = (
     "non-healthy node with an observed finding citing that node's archive_parent; use status "
     "'insufficient_evidence' only when every node is unknown. Never claim a node is healthier than its "
     "verdict, never claim remediation was done, never request tools. Findings with basis 'observed' "
-    "must cite only supplied evidence IDs; hypotheses must list what evidence is missing."
+    "must cite only supplied evidence IDs; hypotheses must list what evidence is missing. "
+    "Each native row carries instrumentation_complete with incomplete_reasons: 'scope_unapproved' means "
+    "the node validates a shard whose typed consensus progress is not an approved input (masterchain "
+    "facts are unaffected); 'session_lifecycle_unverified' means no session has yet been observed "
+    "through its drain boundary since the process started; capacity and saturation reasons mean a "
+    "counter table overflowed and the affected counters are lower bounds. coverage_missing lists the "
+    "native sections this publisher cannot provide; an empty list means duties, queues and storage "
+    "are covered. Name the reason instead of calling coverage unspecified."
 )
 
 
