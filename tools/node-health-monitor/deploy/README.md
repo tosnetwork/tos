@@ -230,6 +230,23 @@ lifecycle observed). Older rows that reported the scope as an incomplete
 reason are still accepted; a row naming the field without a shard session is
 refused.
 
+## Bounds on the host-side helpers
+
+- The judgement reads its model child through capped pipes (16 KiB of stdout
+  accepted, 16 KiB of stderr kept) and kills a child that overflows or
+  overruns its deadline; nothing beyond the caps is buffered. Its journal
+  rotates to one kept generation before 64 MiB (`--journal-max-bytes`), and a
+  journaled run prints one summary line to journald.
+- The notification receiver rotates its journal the same way, answers 503
+  beyond eight concurrent connections and gives each connection a 10-second
+  read deadline.
+- The edge serves at most three non-heartbeat requests per burst. A poller
+  whose request is shed re-phases its 15-second timer by four seconds (at
+  most once a minute), so a phase lock with the collector and the probe
+  resolves itself; the shed is logged.
+- The validator's health GET routes refuse any request body (413) before
+  doing work.
+
 ## Node state: duties, real queues and the storage position
 
 The v3 payload carries a `node_state` section the validator manager refreshes

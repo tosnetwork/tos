@@ -101,6 +101,27 @@ timestamp per registered waiter. No syscalls, no locks, no allocation.
 
 (consolidated after §2 and §5)
 
-## 5. Codex agent review
+## 5. Codex agent review (received 2026-10-01, baseline `371a2ae4f`)
 
-Not received by 00:35 UTC 2026-10-01; appended here when it arrives.
+Memo: `node-health-monitor/SAFETY-PERF-AUDIT-20261001.md`. Nine findings;
+mapping to this note and what was done:
+
+| Codex | Here | Status |
+| --- | --- | --- |
+| SEC-01 P1 RocksDB probe takes the DB mutex on every commit, ungated | M2 | fixed before the report arrived (`b4bdc7e2e`): gated by the health flag, ≤ 1 probe/s per instance, comment corrected |
+| SEC-02 P1 ungated `statvfs` + waiter walk on the manager actor; alarm can fire more often than once a second | M1 | fixed (`b4bdc7e2e`) and, on Codex's addendum, moved onto the one-second waiter gate so an alarm wake-up never runs it (`360657385`) |
+| SEC-03 P1 Q evidence cache charges JSON length, keeps the decoded tree (44.8 MB of Values for 3.3 MB charged) | new | fixed (`360657385`): the resident charge is `max(json bytes, decoded footprint) + 2048`, payloads over 4096 nodes are refused; test with the audit's 7000-zero payload |
+| SEC-04 P1 M retention can delete a parent Q still retains; Q then locks as `manager_conflicted` | sub-agent's "no cross-process fence" | fixed on the Q side: a missing parent whose generation is covered by M's retention seal is an expiry, Q evicts the dependent evidence and continues; no seal or a generation above the seal still refuses (see §6) |
+| SEC-05 P2 retention stops at the first page without candidates; cursor restarts at 0 | new | fixed: pages continue to the tail or the budget, resume cursor across passes, `complete` only at the tail (see §6) |
+| SEC-06 P2 Q grants capped at 4096 rows forever; `compact_terminal` never called | new | fixed: cap counts resident grants, compaction runs on Q's 15 s tick and prunes compacted rows older than 30 days (see §6) |
+| SEC-07 P2 no unified disk budget for main/WAL/logs; Q has no page quota; seals accumulate | partly new | Q gets `max_page_count` and `wal_autocheckpoint` like M (see §6); M's WAL gate, seal pruning and a declared total budget remain follow-ups |
+| SEC-08 P2 collector allocates before the budget check; HTTP body window per connection | new | the health GET routes refuse any request body (413) up front (`360657385`); the collector pre-allocation bound stays a follow-up |
+| SEC-09 P2 model output fully buffered; JSONL never rotates; receiver has no deadline or concurrency bound | partly my §3 | fixed (`360657385`, `e261f3f87`): capped streamed child output with kill, journal rotation for judge and receiver, receiver read deadline 10 s and 8 concurrent connections |
+
+Codex's boundary statement agrees with §1: nothing attributes the validator
+RSS growth to the monitor; with SEC-01/02 fixed the flags-off comparison is
+now a clean one.
+
+## 6. M/Q ledger fixes (SEC-04/05/06/07)
+
+(appended when landed)
