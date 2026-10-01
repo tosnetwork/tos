@@ -27,6 +27,11 @@ evening the owner had the network rebuilt with rotating elections
 (`--rotate`, key block every ~10 minutes) and a `key_block_age` fact added
 (`native_key_block` source, rule `key_block_stale`, 19-rule catalog); the
 first key block landed on schedule and all seven nodes judge healthy.
+Overnight the three remaining coverage gaps were closed with native
+observations (duties from the collator schedule's leader-window assignment,
+the manager's real waiter queues, disk and GC position; 22-rule catalog,
+coverage `complete`), and a safety/performance audit of the engine-side diff
+found and fixed five items (`evidence/cc-validator-health/SAFETY-PERF-AUDIT-20260930.md`).
 A checked item means only its named implementation and evidence exist, never
 a main merge or production approval.
 

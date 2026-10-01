@@ -103,4 +103,4 @@ timestamp per registered waiter. No syscalls, no locks, no allocation.
 
 ## 5. Codex agent review
 
-(appended when received)
+Not received by 00:35 UTC 2026-10-01; appended here when it arrives.

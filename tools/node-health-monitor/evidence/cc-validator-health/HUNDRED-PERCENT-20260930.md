@@ -291,6 +291,35 @@ Owner cap: development soaks are at most two hours.
 | M evidence store | 35,488 rows, 92 MB, 27 retention passes, 0 deletions yet (oldest row 2.2 h, window 6 h) |
 | Final doctor (00:17 UTC, live state, receipts file) | **14 pass, 0 fail, 3 not_run** (physical separation, 72-hour soak, certificate rotation — none of them run on this host, said so) |
 
-## 14. Final state
+## 14. Final state (2026-10-01 00:32 UTC)
 
-(appended when the node-state deploy is verified)
+Node-state engine `validator-engine-nhm-cc-326b11c8166d427c` (node state +
+the audit fixes of `b4bdc7e2e`) rolled onto all seven nodes between 00:19:53
+and 00:21:39 UTC, one node at a time, each back at the head within seconds
+(replay from the last key block is cheap now). Two deploy defects were hit
+and fixed on the spot:
+
+1. The manager refused inventory revision 8 with `invalid target`: a target
+   could bind at most 18 rules, a number frozen when the catalog had 18. M
+   was down for about four minutes until the previous revision was
+   restored; the bound is now a constant equal to the catalog size, pinned
+   by a test against the manifest (`2509f40aa`).
+2. The edges recreated by the rollout answered 503 for eight minutes with
+   nothing in the journal; the native sampler discarded its error. It now
+   names each refusal (`6d0df8ba2`); the recreated edges came up usable at
+   once ("process cache cold" for one tick, then usable).
+
+Live after the deploy: coverage `complete` with no missing field on every
+node; 20 rules per validator, 16 per observer, **every input good, verdict
+healthy ×7**, 0 refusals, 0 quarantined sources. The new facts read, for
+validator1: member 1, leader windows assigned 136 = started 136, missed 0;
+queue depth 0, oldest wait 0; disk used 445 ‰; state GC lag 21,964 blocks
+(GC seqno 0: the node has not collected a single state yet, exactly what the
+audit note §1 says; `state_gc_lag` will trip at 50,000 blocks in about three
+hours unless the first persistent state after 06:38:56 UTC lets GC start).
+The native snapshot's own `instrumentation_complete` stays false because
+`lifecycle_verified` has no writer (audit finding M3), so the model
+explanation may keep calling diagnostic coverage incomplete even though the
+three fields it named are now present.
+
+Branch head `6d0df8ba2`, pushed; memo updated.
