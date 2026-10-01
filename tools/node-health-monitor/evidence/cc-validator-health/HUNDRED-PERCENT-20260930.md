@@ -277,6 +277,20 @@ stale, lying-coverage and malformed sections. Engine
 `validator-engine-nhm-cc-27a1496dee7a25ca`; deployed after the 2-hour soak
 so the soak record stays clean. Live result in §13.
 
-## 13. Final state
+## 13. Two-hour soak on the rotating network (22:17–00:16 UTC) and final doctor
 
-(appended when the 2-hour soak completes and the node-state deploy is verified)
+Owner cap: development soaks are at most two hours.
+
+| What | Result |
+| --- | --- |
+| Verdict continuity | 118 minute records in the window, no gap over 90 s; **all seven nodes healthy in every one of 119 samples**, no degraded, unhealthy or unknown entry |
+| Chain | 13 elections, a key block every ten minutes (last 19477), observer6 sync lag ≤ 1 s in every sample, no node restart |
+| Model lane | accepted analyses every ten minutes, consistent with the verdict ("All seven nodes are healthy … detailed diagnostic coverage remains incomplete" — the three node-state fields, deployed right after this soak) |
+| Monitoring cost (7 nodes) | edges 2.1–2.3 MiB RSS and 1.6–1.7 m-core each; M 98 MiB, 10.7 m-core; Q 82 MiB, 18.7 m-core |
+| Node cost | validators 0.63–0.66 core, observers 0.67–0.70 core; validator RSS +2.8 GiB over the window (3.4 GiB at the end), observers +1.0 GiB — the node's own growth without state garbage collection (no persistent state yet; see the audit note §1) |
+| M evidence store | 35,488 rows, 92 MB, 27 retention passes, 0 deletions yet (oldest row 2.2 h, window 6 h) |
+| Final doctor (00:17 UTC, live state, receipts file) | **14 pass, 0 fail, 3 not_run** (physical separation, 72-hour soak, certificate rotation — none of them run on this host, said so) |
+
+## 14. Final state
+
+(appended when the node-state deploy is verified)

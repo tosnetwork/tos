@@ -19,7 +19,7 @@ does not wait for either database. This is not proof against host-wide exhaustio
 
 `config/health-state.development.json` enables only management reachability and
 expected-source availability. Its all-zero network ID and quotas are placeholders,
-not discovered production facts. The 18-rule catalog is implemented in Rust, but
+not discovered production facts. The 22-rule catalog is implemented in Rust, but
 most native/host/witness facts still lack real adapters. Do not populate them with
 inferred consensus success. Bind a new immutable inventory revision when changing
 configuration. Removed active targets remain visible as unknown after restart.

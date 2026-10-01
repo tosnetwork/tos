@@ -157,6 +157,9 @@ enum Predicate {
     Increase,
     Storage,
 }
+/// A target binds at most one rule per catalog entry; the bound follows the
+/// catalog instead of a number frozen when the catalog was smaller.
+pub const MAX_RULES_PER_TARGET: usize = 22;
 fn definition(id: &str) -> Option<(Option<FactId>, Predicate)> {
     use FactId::*;
     use Predicate::*;
@@ -205,7 +208,7 @@ impl RuleInventory {
                 || t.sources.is_empty()
                 || t.sources.len() > 32
                 || t.rules.is_empty()
-                || t.rules.len() > 18
+                || t.rules.len() > MAX_RULES_PER_TARGET
             {
                 return Err("invalid target");
             }

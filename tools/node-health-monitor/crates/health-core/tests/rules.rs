@@ -148,3 +148,16 @@ fn scalar_rules_use_only_their_frozen_facts() {
         assert_eq!(e.evaluate(0)[0].signal, Signal::Bad, "{rule}");
     }
 }
+
+#[test]
+fn rules_per_target_bound_follows_the_catalog() {
+    // Every rule id the engine defines must fit one target at once.
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../contracts/rule-manifest.json")).unwrap();
+    let catalog = manifest["rules"].as_array().unwrap().len();
+    assert_eq!(
+        tos_health_core::rules::MAX_RULES_PER_TARGET,
+        catalog,
+        "bound must track the 22-rule catalog"
+    );
+}
