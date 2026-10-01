@@ -567,3 +567,31 @@ fn profile_arithmetic_cannot_overflow_into_validity() {
     profile.http_timeout_ms = profile.source_budget_ms;
     assert!(profile.validate().is_err());
 }
+
+
+#[test]
+fn evidence_charges_the_decoded_footprint_and_bounds_nodes() {
+    use tos_health_core::evidence::{value_footprint, value_nodes, MAX_PAYLOAD_NODES};
+    // 7000 zeros serialize to ~14 KB but cost 7000 Values once decoded.
+    let zeros = json!(vec![0u8; 7000]);
+    assert!(value_footprint(&zeros) > 7000 * 32);
+    assert_eq!(value_nodes(&zeros), 7001);
+    let mut e = evidence(1);
+    e.payload = zeros;
+    let mut s = EvidenceStore::new(8 * 1024 * 1024);
+    assert_eq!(s.insert(e.clone()), Err("evidence payload node limit"));
+    // Within the node bound the resident charge follows the footprint, not the text.
+    let mut small = evidence(2);
+    small.payload = json!(vec![0u8; 2000]);
+    let text = serde_json::to_vec(&small).unwrap().len();
+    s.insert(small).unwrap();
+    assert!(s.resident_bytes() > text + 2048, "{} vs {}", s.resident_bytes(), text);
+    assert!(value_nodes(&json!({"a": [1, 2, {"b": "c"}]})) == 6 && MAX_PAYLOAD_NODES == 4096);
+    // Removal by id frees the charge and the identity.
+    let id = s.insert(evidence(3)).unwrap();
+    let before = s.resident_bytes();
+    assert!(s.remove(&id));
+    assert!(s.resident_bytes() < before);
+    assert!(!s.remove(&id));
+    assert_eq!(s.insert(evidence(3)).unwrap(), id);
+}

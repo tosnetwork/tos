@@ -114,6 +114,10 @@ void PrometheusExporter::respond(td::Promise<HttpReturn> promise, int code, cons
 }
 
 void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<HttpReturn> promise) {
+  // None of the health routes accepts a request body; refuse one up front so a
+  // client cannot hold the per-connection body window behind a GET.
+  if (request->need_payload())
+    return respond(std::move(promise), 413, "Payload Too Large", "");
   if (request->url() == "/health-diagnostics") {
     if (!loopback_ || !native_v2_) return respond(std::move(promise),404,"Not Found","");
     if (request->method() != "GET") return respond(std::move(promise),405,"Method Not Allowed","");

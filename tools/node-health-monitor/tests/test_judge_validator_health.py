@@ -243,7 +243,7 @@ def test_model_answer_cannot_upgrade_a_verdict(tmp_path, monkeypatch):
             stdout = json.dumps({"status": "analysis", "summary": "all good",
                                  "findings": [], "missing_evidence": [], "recommended_runbooks": []}).encode()
         return R()
-    monkeypatch.setattr(judge.subprocess, "run", fake_run)
+    monkeypatch.setattr(judge, "run_bounded", lambda command, stdin, timeout: fake_run(command))
 
     class Args:
         provider = "codex"
@@ -267,7 +267,7 @@ def test_model_answer_cannot_upgrade_a_verdict(tmp_path, monkeypatch):
                                                "evidence_ids": [parent]}],
                                  "missing_evidence": [], "recommended_runbooks": ["inspect_consensus_queues"]}).encode()
         return R()
-    monkeypatch.setattr(judge.subprocess, "run", fake_run_cites)
+    monkeypatch.setattr(judge, "run_bounded", lambda command, stdin, timeout: fake_run_cites(command))
     assert judge.model_explanation(Args, report)["result"] == "accepted"
 
     def fake_run_foreign(command, **kwargs):
@@ -278,7 +278,7 @@ def test_model_answer_cannot_upgrade_a_verdict(tmp_path, monkeypatch):
                                  "findings": [{"claim": "c", "basis": "observed", "evidence_ids": ["f" * 64]}],
                                  "missing_evidence": [], "recommended_runbooks": []}).encode()
         return R()
-    monkeypatch.setattr(judge.subprocess, "run", fake_run_foreign)
+    monkeypatch.setattr(judge, "run_bounded", lambda command, stdin, timeout: fake_run_foreign(command))
     assert judge.model_explanation(Args, report)["error"] == "unbound_evidence_id"
 
 
@@ -376,3 +376,16 @@ def test_journal_rotates_once_before_the_size_cap(tmp_path):
     assert (tmp_path / "verdicts.jsonl.1").read_text() == "c" * 40 + "\n"
     judge.append_journal(path, "e", 0)  # 0 disables rotation
     assert path.read_text().endswith("e\n")
+
+
+def test_bounded_child_output_is_capped_and_the_child_killed():
+    import sys as _sys
+    judge = load_module()
+    quick = judge.run_bounded([_sys.executable, "-c", "import sys; sys.stdout.write(sys.stdin.read()); sys.stderr.write('e')"],
+                              b"hello", 10)
+    assert quick is not None and quick.returncode == 0 and quick.stdout == b"hello" and quick.stderr == b"e"
+    flood = judge.run_bounded([_sys.executable, "-c", "import sys\nwhile True: sys.stdout.write('x' * 65536); sys.stdout.flush()"],
+                              b"", 10, stdout_cap=100_000)
+    assert flood is None  # overflow: killed, nothing beyond the cap buffered
+    slow = judge.run_bounded([_sys.executable, "-c", "import time; time.sleep(30)"], b"", 1)
+    assert slow is None  # deadline: killed

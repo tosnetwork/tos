@@ -19,6 +19,9 @@ import time
 from pathlib import Path
 
 MAX_BODY = 65536
+JOURNAL_MAX_BYTES = 64 * 1024 * 1024
+MAX_INFLIGHT = 8
+READ_TIMEOUT_S = 10
 
 
 def main():
@@ -34,8 +37,35 @@ def main():
     journal.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     host, port = args.listen.rsplit(":", 1)
 
+    import threading
+    inflight = threading.BoundedSemaphore(MAX_INFLIGHT)
+
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = "nhm-receiver/1"
+        # A slow client cannot hold a thread past the read deadline.
+        timeout = READ_TIMEOUT_S
+
+        def handle(self):
+            # Bounded concurrency: beyond MAX_INFLIGHT connections the handler
+            # answers 503 immediately instead of queueing threads.
+            if not inflight.acquire(blocking=False):
+                try:
+                    self.rfile = self.connection.makefile("rb", -1)
+                    self.wfile = self.connection.makefile("wb", 0)
+                    self.raw_requestline = b"POST / HTTP/1.1"
+                    self.request_version = "HTTP/1.1"
+                    self.command = "POST"
+                    self._reply(503, {"accepted": False, "reason": "busy"})
+                finally:
+                    try:
+                        self.wfile.flush()
+                    except OSError:
+                        pass
+                return
+            try:
+                super().handle()
+            finally:
+                inflight.release()
 
         def log_message(self, fmt, *a):  # quiet; the journal is the record
             pass
@@ -75,6 +105,13 @@ def main():
                                "idempotency_key": key, "payload_hash": claimed,
                                "network_id": body.get("network_id"), "receiver_alias": body.get("receiver_alias"),
                                "incident": incident}, ensure_ascii=False)
+            # One kept generation: the journal never grows past the cap.
+            try:
+                size = journal.stat().st_size
+            except FileNotFoundError:
+                size = 0
+            if size + len(line) + 1 > JOURNAL_MAX_BYTES:
+                os.replace(journal, journal.with_name(journal.name + ".1"))
             fd = os.open(journal, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "a") as stream:
                 stream.write(line + "\n")

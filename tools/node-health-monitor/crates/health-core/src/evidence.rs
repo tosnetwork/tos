@@ -31,6 +31,51 @@ pub struct EvidenceStore {
     max_bytes: usize,
     sequence: u64,
 }
+/// Upper bound on decoded payload nodes per evidence record.
+pub const MAX_PAYLOAD_NODES: usize = 4096;
+const VALUE_NODE_BYTES: usize = 32;
+const STRING_HEAD_BYTES: usize = 24;
+const MAP_ENTRY_BYTES: usize = 48;
+
+/// Number of `serde_json::Value` nodes in a tree (scalars included).
+pub fn value_nodes(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Array(items) => {
+            1 + items.iter().map(value_nodes).fold(0usize, |a, b| a.saturating_add(b))
+        }
+        serde_json::Value::Object(map) => {
+            1 + map.values().map(value_nodes).fold(0usize, |a, b| a.saturating_add(b))
+        }
+        _ => 1,
+    }
+}
+
+/// Conservative resident-heap estimate of a decoded `serde_json::Value`:
+/// every node costs a Value, strings their bytes plus a heap header, arrays
+/// their element slots, objects an entry per key plus the key bytes.
+pub fn value_footprint(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            VALUE_NODE_BYTES
+        }
+        serde_json::Value::String(text) => {
+            VALUE_NODE_BYTES.saturating_add(STRING_HEAD_BYTES).saturating_add(text.len())
+        }
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(value_footprint)
+            .fold(VALUE_NODE_BYTES.saturating_add(STRING_HEAD_BYTES), |a, b| a.saturating_add(b)),
+        serde_json::Value::Object(map) => map.iter().fold(
+            VALUE_NODE_BYTES.saturating_add(STRING_HEAD_BYTES),
+            |acc, (key, item)| {
+                acc.saturating_add(MAP_ENTRY_BYTES)
+                    .saturating_add(key.len())
+                    .saturating_add(value_footprint(item))
+            },
+        ),
+    }
+}
+
 impl EvidenceStore {
     pub fn new(max_bytes: usize) -> Self {
         Self {
@@ -90,6 +135,13 @@ impl EvidenceStore {
         if bytes.len() > 32_768 || bytes.len() > self.max_bytes {
             return Err("evidence size limit");
         }
+        // The payload stays resident as a decoded tree, not as its JSON text:
+        // a short scalar costs a whole Value, so the resident charge is the
+        // larger of the two, and a tree of many tiny nodes is refused outright.
+        if value_nodes(&record.payload) > MAX_PAYLOAD_NODES {
+            return Err("evidence payload node limit");
+        }
+        let footprint = value_footprint(&record.payload);
         let mut canonical = record.clone();
         // Relay receipt time is not the identity of an original source record.
         canonical.received_at_ms = 0;
@@ -112,7 +164,7 @@ impl EvidenceStore {
             return Err("watermark exhausted");
         };
         // Include conservative per-record index/allocator overhead in the bound.
-        let size = bytes.len().checked_add(2048).ok_or("size overflow")?;
+        let size = bytes.len().max(footprint).checked_add(2048).ok_or("size overflow")?;
         if size > self.max_bytes {
             return Err("evidence resident limit");
         }
@@ -134,6 +186,21 @@ impl EvidenceStore {
             self.identities.remove(&(e.node_id, e.process_epoch, e.source_id, e.source_record_id));
             self.bytes -= bytes;
         }
+    }
+    /// Remove one stored record by evidence id (an expired projection parent);
+    /// the watermark is never reused.
+    pub fn remove(&mut self, evidence_id: &str) -> bool {
+        let Some(index) = self.records.iter().position(|(e, _)| e.evidence_id == evidence_id)
+        else {
+            return false;
+        };
+        if let Some((entry, bytes)) = self.records.remove(index) {
+            let e = entry.record;
+            self.identities.remove(&(e.node_id, e.process_epoch, e.source_id, e.source_record_id));
+            self.bytes = self.bytes.saturating_sub(bytes);
+            return true;
+        }
+        false
     }
     pub fn expire_before(&mut self, received_ms: i64) {
         // Insertion order is independent of the source wall clock.

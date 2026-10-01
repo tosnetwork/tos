@@ -378,8 +378,26 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
     let mut state = tos_health_core::native_facts::NativeFactState::default();
     let run = derivation_run_id();
     let mut first = true;
+    // The edge serves at most three non-heartbeat requests per burst. If this
+    // poller's two requests land in the same second as the collector's and the
+    // probe's, the edge sheds one every tick for as long as the phases stay
+    // locked. A shed request therefore re-phases the timer by four seconds, at
+    // most once a minute, which breaks the lock without any coordination.
+    let mut rephase = false;
+    let mut last_rephase = Instant::now() - Duration::from_secs(120);
     loop {
         timer.tick().await;
+        if rephase {
+            rephase = false;
+            if last_rephase.elapsed() >= Duration::from_secs(60) {
+                last_rephase = Instant::now();
+                eprintln!("native poll: re-phasing by 4 s after edge shedding");
+                tokio::time::sleep(Duration::from_secs(4)).await;
+                timer = tokio::time::interval(Duration::from_secs(15));
+                timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                timer.tick().await;
+            }
+        }
         let started = Instant::now();
         // Each skipped tick names its reason once; the loop never invents a
         // zero fact for a source it could not read.
@@ -387,6 +405,7 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
             Ok(response) if response.status().is_success() => response,
             Ok(response) => {
                 eprintln!("native poll: edge status {}", response.status());
+                rephase |= response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS;
                 continue;
             }
             Err(e) => {
@@ -487,7 +506,8 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
                 }
             }
             Ok(response) => {
-                eprintln!("native poll: gauges skipped: edge metrics status {}", response.status())
+                eprintln!("native poll: gauges skipped: edge metrics status {}", response.status());
+                rephase |= response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS;
             }
             Err(e) => eprintln!("native poll: gauges skipped: edge metrics request: {e}"),
         }

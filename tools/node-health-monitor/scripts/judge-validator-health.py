@@ -272,11 +272,80 @@ def run_codex(args, prompt, schema):
         command = [args.codex_bin, "codex", *endpoint, "--workdir", args.codex_workdir,
                    "--thread-file", args.codex_thread_file, "--max-thread-turns", "1",
                    "--output-schema", wire.name, "--timeout-seconds", str(args.model_timeout)]
-        result = subprocess.run(command, input=json.dumps(prompt).encode(), capture_output=True,
-                                timeout=args.model_timeout + 10)
-    if result.returncode != 0 or len(result.stdout) > MAX_MODEL_OUTPUT_BYTES:
-        return {"result": "unavailable", "error": result.stderr.decode(errors="replace")[-400:]}
+        result = run_bounded(command, json.dumps(prompt).encode(), args.model_timeout + 10)
+    if result is None or result.returncode != 0 or len(result.stdout) > MAX_MODEL_OUTPUT_BYTES:
+        error = (result.stderr if result else b"model process exceeded its output or time bound")
+        return {"result": "unavailable", "error": error.decode(errors="replace")[-400:]}
     return result.stdout
+
+
+class BoundedResult:
+    def __init__(self, returncode, stdout, stderr):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def run_bounded(command, stdin_bytes, timeout_s, stdout_cap=MAX_MODEL_OUTPUT_BYTES + 1, stderr_cap=16384):
+    """Run a child with streamed, capped output: stdout is read up to one byte
+    past the accepted maximum and stderr up to `stderr_cap`; a child that
+    exceeds either, or the deadline, is killed. Nothing beyond the caps is ever
+    buffered, so a misbehaving model process cannot grow this process."""
+    import selectors
+    import time as _time
+    try:
+        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as error:
+        return BoundedResult(127, b"", str(error).encode())
+    try:
+        child.stdin.write(stdin_bytes)
+        child.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
+    out, err = bytearray(), bytearray()
+    caps = {child.stdout: (out, stdout_cap), child.stderr: (err, stderr_cap)}
+    selector = selectors.DefaultSelector()
+    for stream in caps:
+        selector.register(stream, selectors.EVENT_READ)
+    deadline = _time.monotonic() + timeout_s
+    overflow = False
+    while caps and not overflow:
+        remaining = deadline - _time.monotonic()
+        if remaining <= 0:
+            break
+        for key, _ in selector.select(timeout=min(remaining, 1.0)):
+            chunk = os.read(key.fileobj.fileno(), 65536)
+            buffer, cap = caps[key.fileobj]
+            if not chunk:
+                selector.unregister(key.fileobj)
+                del caps[key.fileobj]
+                continue
+            buffer.extend(chunk[: max(0, cap - len(buffer))])
+            if len(buffer) >= cap and len(chunk) > 0 and (len(buffer) + len(chunk)) > cap:
+                overflow = True
+                break
+    timed_out = caps and not overflow
+    if overflow or timed_out:
+        child.kill()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        for stream in (child.stdout, child.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
+        return None
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        return None
+    for stream in (child.stdout, child.stderr):
+        try:
+            stream.close()
+        except OSError:
+            pass
+    return BoundedResult(child.returncode, bytes(out), bytes(err))
 
 
 def run_anthropic(args, prompt, schema):

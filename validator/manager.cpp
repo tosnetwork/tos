@@ -3974,9 +3974,10 @@ BlockHandle ValidatorManagerImpl::get_handle_from_lru(BlockIdExt id) {
 
 // Node-state gauges for the health snapshot: membership (duty counters live in
 // the consensus group), the three real waiter queues of this actor, and the
-// storage position. Runs only while health instrumentation is on. It is a
+// storage position. Runs only while health instrumentation is on and only on
+// the one-second waiter gate of alarm(), never per alarm wake-up. It is a
 // second pass over the waiter maps per second, of the same order as the timer
-// sweep below; the statvfs of the database root runs at most every ten seconds
+// sweep; the statvfs of the database root runs at most every ten seconds
 // because it is a syscall on this actor's thread.
 void ValidatorManagerImpl::publish_health_node_state() {
   if (!health::enabled.load(std::memory_order_relaxed)) {
@@ -4221,9 +4222,11 @@ void ValidatorManagerImpl::alarm() {
     }
   }
   alarm_timestamp().relax(resend_shard_blocks_at_);
-  publish_health_node_state();
   if (check_waiters_at_.is_in_past()) {
     check_waiters_at_ = td::Timestamp::in(1.0);
+    // Same one-second gate as the waiter timer sweep below; the alarm itself
+    // can fire more often than that.
+    publish_health_node_state();
     for (auto &w : wait_block_data_) {
       w.second.check_timers();
     }
