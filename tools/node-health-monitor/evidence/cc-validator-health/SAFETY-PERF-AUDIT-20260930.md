@@ -295,3 +295,40 @@ compiling and killed). `d5064d11f`, `e07befe32`.
 | M's size-based `wal_budget` has no long-reader test | gate exists, `journal_size_limit` set, refusals counted | needs ≥ 4 MiB of FULL-sync commits per run |
 | quic per-path mode declares no reservation | `build_per_path` is a compile-time `false` | by design it sheds if enabled |
 | Process-group kill covers descendants only while they stay in the child's session | the bridge's app-server stays in it | unchanged |
+
+## 9. Third review, the owner-directed fix, and the first green workflow
+
+The third independent review (memo `SAFETY-PERF-REVIEW3-20261001.md`) passed
+SEC-02 and SEC-09 and found two gaps each in SEC-07 and SEC-08: a rolling
+reader bypassed Q's water mark because only unbackedup frames were counted
+while the checkpointed-but-unreset prefix kept the file large; M could not
+recover writes after a reader released because the passive checkpoint never
+shrank the file and the size gate then refused the very write that would
+have reset it; the overlay reservation used the cell count before the drain
+instead of after; and the transport still buffered a same-packet body prefix
+and had no response deadline. The reviewer then implemented the fixes at the
+owner's direction (`5159cb84a`, `347b7260f`, memo `SEC07-08-FIX-20261001.md`).
+
+Review of that implementation here: correct. Both gates now judge the
+physical WAL length and reclaim with a zero-busy-timeout
+`wal_checkpoint(TRUNCATE)` that does not wait on readers, so a pinned reader
+is an immediate refusal and a released one is reclaimed on the next write.
+The overlay collector bounds its drain fan-out at 64 and re-checks the
+reservation against the real cell count after the drains, before building.
+The health listener gets 16 KiB I/O windows, five-second header and response
+deadlines and a 2 MiB + 4 KiB response cap; the general RPC window stays at
+4 MiB. One unit test was left behind: it inflated a WAL nobody read and
+expected a refusal, which under the reclaiming gate is wrong; it now asserts
+the real contract (unread oversize reclaimed; reader-pinned oversize refused;
+recovery after the reader commits), `f582f4832`.
+
+Verification on the merged head: Rust workspace fmt/clippy/tests/contracts/
+pytest/release all green; engine rebuilt and rolled onto the seven nodes
+(`…-a42c226db949b93f`); nine health binaries, 18/18 action modes,
+`test-health-collector-budget`, `test-http-server-limits` (9), HTTP contract
+test in every mode; live `tos_exporter_health_collection_complete 1`.
+
+The `Node health monitor` workflow passed in full for the first time at
+`8f80101d7` (both jobs). The two reviewer commits turned `rust-contracts`
+red on the unit test above; `f582f4832` carries the fix, and its run was in
+progress when this was written.

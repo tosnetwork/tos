@@ -401,3 +401,16 @@ Branch head `6d0df8ba2`, pushed; memo updated.
   by the elector (`0xEE6F454C`, reason 0) submitting at the election's close.
   No key block since 07:25; the monitor reports `key_block_stale` open on
   all seven nodes past the one-hour threshold, which is correct.
+
+## 19. Third review closed; workflow green at `8f80101d7` (09:20–11:30 UTC)
+
+- Third review's SEC-07/08 gaps fixed by the reviewer at the owner's
+  direction and reviewed here as correct (audit note §9); one stale unit test
+  corrected (`f582f4832`). Engine `…-a42c226db949b93f` on all seven nodes;
+  M and Q redeployed on the merged build.
+- `Node health monitor` workflow: first full green at `8f80101d7`; the
+  reviewer's commits re-reddened one unit test, fixed in `f582f4832`.
+- Elections: the script now skips a closed election instead of dying and
+  the unit is active, but no new election has opened since 07:25
+  (`active_election_id` stays on the finished one); key block age past
+  three hours, `key_block_stale` open on every node. Chain-side follow-up.
