@@ -121,6 +121,20 @@ pub struct RetentionStatus {
     pub oldest_retained_received_at_ms: Option<i64>,
     pub observations_rows: Option<u64>,
     pub witness_rows: Option<u64>,
+    /// Evidence database main file bytes at the last pass.
+    #[serde(default)]
+    pub disk_main_bytes: Option<u64>,
+    /// Evidence database WAL bytes at the last pass.
+    #[serde(default)]
+    pub disk_wal_bytes: Option<u64>,
+    /// The configured quota (main page quota and WAL gate limit).
+    #[serde(default)]
+    pub disk_quota_bytes: Option<u64>,
+    /// Writes the pre-write WAL gate refused since the writer started.
+    #[serde(default)]
+    pub wal_refusals: u64,
+    #[serde(default)]
+    pub last_wal_refusal_at_ms: Option<i64>,
 }
 impl RetentionStatus {
     pub fn new(policy: &RetentionPolicy) -> Self {
@@ -157,6 +171,18 @@ impl RetentionStatus {
             }
         }
     }
+    /// Record the store's on-disk footprint as measured by the writer.
+    pub fn record_disk(&mut self, usage: crate::durable::DiskUsage) {
+        self.disk_main_bytes = Some(usage.main_bytes);
+        self.disk_wal_bytes = Some(usage.wal_bytes);
+        self.disk_quota_bytes = Some(usage.quota_bytes);
+    }
+    /// Count a write the WAL gate refused; the retention pass that follows
+    /// is the recovery, and the doctor can see how often it was needed.
+    pub fn record_wal_refusal(&mut self, now_ms: i64) {
+        self.wal_refusals = self.wal_refusals.saturating_add(1);
+        self.last_wal_refusal_at_ms = Some(now_ms);
+    }
     fn age_ms(at: Option<i64>, now_ms: i64) -> Option<i64> {
         at.and_then(|value| now_ms.checked_sub(value)).map(|age| age.max(0))
     }
@@ -184,6 +210,14 @@ impl RetentionStatus {
             "oldest_retained_age_ms": Self::age_ms(self.oldest_retained_received_at_ms, now_ms).map(|value| value.to_string()),
             "observations_rows": text(self.observations_rows),
             "witness_rows": text(self.witness_rows),
+            "disk": {
+                "main_bytes": text(self.disk_main_bytes),
+                "wal_bytes": text(self.disk_wal_bytes),
+                "quota_bytes": text(self.disk_quota_bytes),
+                "wal_refusals": self.wal_refusals.to_string(),
+                "last_wal_refusal_at_ms": self.last_wal_refusal_at_ms.map(|value| value.to_string()),
+                "last_wal_refusal_age_ms": Self::age_ms(self.last_wal_refusal_at_ms, now_ms).map(|value| value.to_string()),
+            },
         })
     }
     /// OpenMetrics lines without the trailing `# EOF`.
@@ -244,8 +278,12 @@ impl RetentionSchedule {
         let freed = outcome
             .as_ref()
             .is_ok_and(|pass| pass.observations_deleted > 0 || pass.witness_deleted > 0);
+        let disk = db.disk_usage();
         if let Ok(mut status) = status.lock() {
             status.record(now_ms, &outcome);
+            if let Ok(usage) = disk {
+                status.record_disk(usage);
+            }
         }
         freed
     }
@@ -265,6 +303,11 @@ impl RetentionSchedule {
         status: &Arc<Mutex<RetentionStatus>>,
         error: &str,
     ) -> bool {
+        if error == "WAL quota exceeded" {
+            if let Ok(mut status) = status.lock() {
+                status.record_wal_refusal(chrono::Utc::now().timestamp_millis());
+            }
+        }
         if !self.policy.configured() || !is_capacity_error(error) {
             return false;
         }

@@ -33,6 +33,11 @@ fn open(path: &Path, max_bytes: u64) -> Result<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL").map_err(err)?;
     conn.pragma_update(None, "synchronous", "FULL").map_err(err)?;
     conn.pragma_update(None, "wal_autocheckpoint", 64).map_err(err)?;
+    // The pre-write WAL gate measures the file; a checkpointed WAL keeps its
+    // size until the next write resets it, and this truncates it then, so a
+    // long-reader episode cannot leave the gate refusing forever.
+    conn.pragma_update(None, "journal_size_limit", i64::try_from(max_bytes).map_err(err)?)
+        .map_err(err)?;
     let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0)).map_err(err)?;
     let sync: i64 = conn.pragma_query_value(None, "synchronous", |r| r.get(0)).map_err(err)?;
     if mode != "wal" || sync != 2 {
@@ -1134,6 +1139,30 @@ impl EvidenceDb {
             })
             .map_err(err)
     }
+    /// Main file bytes, WAL bytes and the configured quota, read from the
+    /// filesystem. The quota bounds the main file (page quota) and is also
+    /// the WAL gate's limit, so main + WAL ≤ 2 × quota is the declared peak.
+    pub fn disk_usage(&self) -> Result<DiskUsage> {
+        let len = |path: &Path| match std::fs::metadata(path) {
+            Ok(meta) => Ok(meta.len()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+            Err(e) => Err(err(e)),
+        };
+        let mut wal = self.path.as_os_str().to_owned();
+        wal.push("-wal");
+        Ok(DiskUsage {
+            main_bytes: len(&self.path)?,
+            wal_bytes: len(Path::new(&wal))?,
+            quota_bytes: self.quota,
+        })
+    }
+}
+/// On-disk footprint of one SQLite store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiskUsage {
+    pub main_bytes: u64,
+    pub wal_bytes: u64,
+    pub quota_bytes: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

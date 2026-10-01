@@ -681,6 +681,13 @@ pub fn read_process_projection(
 /// One bounded incremental page from a single read transaction. The previous
 /// cursor is persisted in QueryLedger, not inferred from the in-memory store:
 /// evicted query rows must not cause old M history to be scanned again.
+/// One M read transaction covers exactly one page: the cursor anchor check,
+/// the retained-parent revalidation, the page scan and the boundary row must
+/// come from one snapshot, and the transaction ends when this function
+/// returns. A reader that stayed open longer would keep every later WAL
+/// frame of M alive past its checkpoints, which is what M's WAL gate guards
+/// against; nothing here waits on I/O, the network or a lock while the
+/// snapshot is held.
 pub fn read_process_projection_page(
     path: &Path,
     network: &str,

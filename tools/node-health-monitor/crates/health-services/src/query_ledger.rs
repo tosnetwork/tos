@@ -14,12 +14,46 @@ use tos_health_core::query::Grant;
 pub struct QueryLedger {
     conn: Connection,
     clock_domain: String,
+    path: std::path::PathBuf,
+    page_size: u64,
+    /// WAL bytes above which a write is refused with `disk_backpressure`
+    /// after one passive checkpoint failed to bring it back down.
+    wal_high_water: u64,
+    /// Passive checkpoints a concurrent writer or checkpointer blocked.
+    checkpoint_busy: u64,
+    /// Passive checkpoints that left frames pinned by an open reader.
+    checkpoint_pinned: u64,
+    /// Writes refused by the WAL water mark since the ledger was opened.
+    backpressure_refusals: u64,
+    /// Whether the last gated write was refused.
+    backpressure: bool,
 }
 
 /// Hard SQLite page quota for the ledger file (256 MiB).
 pub const LEDGER_QUOTA_BYTES: u64 = 256 * 1024 * 1024;
 /// WAL frames between passive checkpoints; keeps the WAL file small.
 pub const WAL_AUTOCHECKPOINT_PAGES: i64 = 64;
+/// WAL high-water mark (64 MiB). `wal_autocheckpoint` only bounds the WAL
+/// while no reader holds frames; a long reader keeps every later frame alive
+/// and the file grows without limit. Above this mark a write first tries one
+/// passive checkpoint and is otherwise refused with `disk_backpressure`:
+/// imports pause (no cursor advances), grants are not issued, nothing is
+/// deleted to make room. The page quota bounds the main file; this bounds
+/// the WAL beside it, so main + WAL is the declared ledger peak.
+pub const LEDGER_WAL_HIGH_WATER_BYTES: u64 = 64 * 1024 * 1024;
+
+/// On-disk footprint of the ledger and the state of its WAL gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerDiskUsage {
+    pub main_bytes: u64,
+    pub wal_bytes: u64,
+    pub main_quota_bytes: u64,
+    pub wal_high_water_bytes: u64,
+    pub backpressure: bool,
+    pub backpressure_refusals: u64,
+    pub checkpoint_busy: u64,
+    pub checkpoint_pinned: u64,
+}
 /// Resident grants (non-empty body) the ledger may hold at once.
 const MAX_RESIDENT_GRANTS: i64 = 4096;
 /// Retained M parents behind resident derived rows: count and body bytes.
@@ -298,6 +332,14 @@ impl QueryLedger {
         }
         conn.pragma_update(None, "wal_autocheckpoint", WAL_AUTOCHECKPOINT_PAGES)
             .map_err(failure)?;
+        // A checkpointed WAL keeps its file size until the next write resets
+        // it; this truncates the file back to the mark at that reset.
+        conn.pragma_update(
+            None,
+            "journal_size_limit",
+            i64::try_from(LEDGER_WAL_HIGH_WATER_BYTES).map_err(failure)?,
+        )
+        .map_err(failure)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS query_grants (
                 run_id TEXT PRIMARY KEY,
@@ -404,7 +446,104 @@ impl QueryLedger {
             conn.execute_batch("ALTER TABLE query_grants ADD COLUMN compacted_unix_ms INTEGER")
                 .map_err(failure)?;
         }
-        Ok(Self { conn, clock_domain: format!("{boot_id}|{namespace}") })
+        Ok(Self {
+            conn,
+            clock_domain: format!("{boot_id}|{namespace}"),
+            path: path.to_path_buf(),
+            page_size: page,
+            wal_high_water: LEDGER_WAL_HIGH_WATER_BYTES,
+            checkpoint_busy: 0,
+            checkpoint_pinned: 0,
+            backpressure_refusals: 0,
+            backpressure: false,
+        })
+    }
+
+    /// Lower the WAL high-water mark, for tests that must reach it with a
+    /// few kilobytes instead of 64 MiB. Production keeps the constant.
+    pub fn with_wal_high_water(mut self, bytes: u64) -> Result<Self, String> {
+        self.wal_high_water = bytes.max(1);
+        self.conn
+            .pragma_update(
+                None,
+                "journal_size_limit",
+                i64::try_from(self.wal_high_water).map_err(failure)?,
+            )
+            .map_err(failure)?;
+        Ok(self)
+    }
+
+    fn file_len(path: &Path) -> Result<u64, String> {
+        match std::fs::metadata(path) {
+            Ok(meta) => Ok(meta.len()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+            Err(error) => Err(failure(error)),
+        }
+    }
+
+    fn wal_path(&self) -> std::path::PathBuf {
+        let mut name = self.path.as_os_str().to_owned();
+        name.push("-wal");
+        std::path::PathBuf::from(name)
+    }
+
+    /// Main file and WAL sizes with the gate's state; read-only.
+    pub fn disk_usage(&self) -> Result<LedgerDiskUsage, String> {
+        Ok(LedgerDiskUsage {
+            main_bytes: Self::file_len(&self.path)?,
+            wal_bytes: Self::file_len(&self.wal_path())?,
+            main_quota_bytes: LEDGER_QUOTA_BYTES,
+            wal_high_water_bytes: self.wal_high_water,
+            backpressure: self.backpressure,
+            backpressure_refusals: self.backpressure_refusals,
+            checkpoint_busy: self.checkpoint_busy,
+            checkpoint_pinned: self.checkpoint_pinned,
+        })
+    }
+
+    /// The WAL water-mark gate every growing write passes first. The file
+    /// size is only the trigger: a checkpointed WAL keeps its size until the
+    /// next write resets it, so refusing on size alone would never recover.
+    /// Above the mark the gate runs one passive checkpoint (never RESTART or
+    /// TRUNCATE on this path: those wait on readers) and reads back how many
+    /// frames it could not move into the main file. Those are the frames a
+    /// reader still pins; when they exceed the mark the write is refused as
+    /// `disk_backpressure`, a capacity condition that changes nothing
+    /// committed and is retried later. When every frame is backed up the
+    /// next write resets the WAL and `journal_size_limit` truncates the file.
+    fn wal_gate(&mut self) -> Result<(), ProjectionWriteError> {
+        let wal = self.wal_path();
+        if Self::file_len(&wal)? <= self.wal_high_water {
+            self.backpressure = false;
+            return Ok(());
+        }
+        let (busy, log, checkpointed): (i64, i64, i64) = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(failure)?;
+        if busy != 0 {
+            self.checkpoint_busy = self.checkpoint_busy.saturating_add(1);
+        }
+        // A reader does not make the checkpoint "busy"; it shows as frames
+        // the checkpoint could not back up.
+        let pinned_frames = u64::try_from(log.saturating_sub(checkpointed).max(0)).unwrap_or(0);
+        if pinned_frames > 0 {
+            self.checkpoint_pinned = self.checkpoint_pinned.saturating_add(1);
+        }
+        let pinned_bytes = pinned_frames.saturating_mul(self.page_size);
+        if pinned_bytes <= self.wal_high_water {
+            self.backpressure = false;
+            return Ok(());
+        }
+        self.backpressure = true;
+        self.backpressure_refusals = self.backpressure_refusals.saturating_add(1);
+        Err(ProjectionWriteError::Capacity("disk_backpressure"))
+    }
+
+    fn wal_gate_str(&mut self) -> Result<(), String> {
+        self.wal_gate().map_err(|error| error.to_string())
     }
 
     pub fn manager_cursor(&self) -> Result<Option<ManagerCursor>, String> {
@@ -526,6 +665,7 @@ impl QueryLedger {
     }
 
     pub fn create(&mut self, grant: &Grant, now_ms: u64) -> Result<(), String> {
+        self.wal_gate_str()?;
         if grant.revoked() || grant.expires_monotonic_ms() <= now_ms {
             return Err("inactive grant".into());
         }
@@ -560,6 +700,7 @@ impl QueryLedger {
     /// service restart. A broken connection fails closed; the broker must
     /// revoke and issue a fresh grant before opening another MCP session.
     pub fn claim_mcp(&mut self, run_id: &str, now_ms: u64) -> Result<(), String> {
+        self.wal_gate_str()?;
         let now = i64::try_from(now_ms).map_err(failure)?;
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
@@ -586,6 +727,7 @@ impl QueryLedger {
     /// query handler. This counts tool-level failures and survives a crash;
     /// the separate QueryService ledger can only be more restrictive.
     pub fn reserve_mcp_call(&mut self, run_id: &str, now_ms: u64) -> Result<(), String> {
+        self.wal_gate_str()?;
         let now = i64::try_from(now_ms).map_err(failure)?;
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
@@ -615,6 +757,7 @@ impl QueryLedger {
         bytes: usize,
         now_ms: u64,
     ) -> Result<(), String> {
+        self.wal_gate_str()?;
         let bytes = i64::try_from(bytes).map_err(failure)?;
         let now = i64::try_from(now_ms).map_err(failure)?;
         if bytes > 131_072 {
@@ -655,6 +798,7 @@ impl QueryLedger {
         body: &[u8],
         now_ms: u64,
     ) -> Result<String, String> {
+        self.wal_gate_str()?;
         if body.is_empty() || body.len() > 16_384 {
             return Err("broker package exceeds 16 KiB".into());
         }
@@ -857,6 +1001,7 @@ impl QueryLedger {
         store: &mut EvidenceStore,
         page: &[(EvidenceRow, Evidence)],
     ) -> Result<(), ProjectionWriteError> {
+        self.wal_gate()?;
         if page.len() > 256 {
             return Err("M projection page too large".into());
         }
@@ -1137,6 +1282,7 @@ impl QueryLedger {
         record: Evidence,
         origin: Option<&EvidenceRow>,
     ) -> Result<String, String> {
+        self.wal_gate_str()?;
         let mut candidate = store.clone();
         let previous = store.watermark();
         let id = candidate.insert(record).map_err(str::to_owned)?;
@@ -1265,6 +1411,7 @@ impl QueryLedger {
         now_ms: u64,
         attempt: Attempt<'_>,
     ) -> Result<(), String> {
+        self.wal_gate_str()?;
         if !tos_health_core::query::TOOLS.contains(&attempt.tool)
             || attempt.result_code.len() > 64
             || attempt.returned_bytes > 32_768
@@ -1347,6 +1494,7 @@ impl QueryLedger {
     /// compacts at most 16 runs and sweeps a bounded number of seals in one
     /// FULL transaction. The returned count is the number of runs compacted.
     pub fn compact_terminal(&mut self, cutoff_ms: u64, limit: usize) -> Result<usize, String> {
+        self.wal_gate_str()?;
         if limit == 0 || limit > 16 {
             return Err("terminal compaction limit must be 1..16".into());
         }

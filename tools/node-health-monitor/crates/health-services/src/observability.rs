@@ -385,11 +385,13 @@ async fn projection_health(
     let data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let (manager_conflicted, caught_up_at_last_import, query_watermark) =
         (data.manager_conflicted, data.manager_caught_up, data.store.watermark());
-    let cursor = ledger
-        .lock()
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-        .manager_cursor()
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let (cursor, disk) = {
+        let ledger = ledger.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        (
+            ledger.manager_cursor().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+            ledger.disk_usage().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+        )
+    };
     let head = crate::manager_query_source::read_projection_head(path, &state.inventory.network_id);
     let (source_global_m_seq, source_identity_match, lag_global_m_seq) = match (&head, &cursor) {
         (Ok(head), Some(cursor)) => (
@@ -437,6 +439,14 @@ async fn projection_health(
             "source_identity_match":source_identity_match,
             "verdict_source_configured":state.manager_control_db.is_some(),
             "verdict_import_error":data.verdict_import_error,
+            "disk_backpressure":disk.backpressure,
+            "disk_backpressure_refusals":disk.backpressure_refusals.to_string(),
+            "ledger_main_bytes":disk.main_bytes.to_string(),
+            "ledger_wal_bytes":disk.wal_bytes.to_string(),
+            "ledger_main_quota_bytes":disk.main_quota_bytes.to_string(),
+            "ledger_wal_high_water_bytes":disk.wal_high_water_bytes.to_string(),
+            "ledger_checkpoint_busy":disk.checkpoint_busy.to_string(),
+            "ledger_checkpoint_pinned":disk.checkpoint_pinned.to_string(),
         })),
     )
         .into_response();

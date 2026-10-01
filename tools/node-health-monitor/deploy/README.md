@@ -404,6 +404,56 @@ bound revision and rule bindings), `quarantined_sources` and `notification`
 (receiver configured, last accepted delivery receipt in this process). The
 metrics endpoint adds `tos_health_evidence_retention_*` counters and ages.
 
+## Disk budget
+
+Every file the monitor writes has a declared bound and a named enforcer.
+The table is the budget; the sum at the bottom is the declared peak when
+every file is at its bound at the same time. Nothing here is a reservation:
+the shared disk's free bytes belong to the validator first, and the hard
+boundary that survives a bug in this software is a filesystem or project
+quota around the monitor's directories, which this software does not
+provide and which must leave room below it for a checkpoint, a rotation and
+a rollback.
+
+| File set | Bound | Enforced by |
+| --- | --- | --- |
+| M evidence database, main file | `evidence_quota_bytes` (development: 2 GiB) | SQLite `max_page_count`; retention frees space, a refused insert gets one recovery pass |
+| M evidence WAL | `evidence_quota_bytes` | `wal_budget` pre-write gate (refuses `WAL quota exceeded`, counted as `retention.disk.wal_refusals`), `wal_autocheckpoint` 64 pages, a passive checkpoint after every retention pass, `journal_size_limit` truncates the file when the WAL resets |
+| M evidence shm | one index page set | SQLite |
+| M control database (incidents, outbox, verdicts), main and WAL | `control_quota_bytes` (development: 64 MiB) | same page quota, pre-write gate and size limit |
+| Q ledger, main file | `LEDGER_QUOTA_BYTES` 256 MiB | SQLite `max_page_count` |
+| Q ledger WAL | `LEDGER_WAL_HIGH_WATER_BYTES` 64 MiB | the water-mark gate below: one passive checkpoint, then `disk_backpressure`; `journal_size_limit` truncates at reset |
+| Judge journals (`verdicts.jsonl`, model journal), receiver journal | 64 MiB current plus one kept generation each (`--journal-max-bytes`, `JOURNAL_MAX_BYTES`) | the writing script rotates before the cap |
+| Runtime archives (`runtime-archive-*`) from network rebuilds and ledger resets | unbounded | operator; delete after the evidence they hold is recorded |
+| Private Codex home for the model turn | its own lifecycle | Codex; the monitor never deletes an active session |
+
+Declared peak for one development host with these values: M 2 GiB main +
+2 GiB WAL, control 64 + 64 MiB, Q 256 + 64 MiB, three journals at 128 MiB
+each, about 4.8 GiB before archives. A production profile sets the two
+quotas lower; the formula is the same.
+
+**The WAL water-mark gate.** `wal_autocheckpoint` only bounds a WAL while no
+reader holds frames. One long read transaction keeps every later frame
+alive and the file grows without limit, and M's pre-write gate is a file
+size check that cannot promise the next transaction stays under it. Q
+therefore gates every growing write (grants, bindings, packages, attempts,
+evidence and projection pages, compaction) on its WAL: above the mark it
+runs one passive checkpoint, reads back how many frames a reader still
+pins, and if those exceed the mark refuses the write as
+`disk_backpressure`. The refusal is a capacity condition: nothing committed
+changes, the import pauses with `caught_up=false` and no cursor advances,
+no grant is issued, and nothing is deleted to make room. Revocation is never
+gated. When the reader is gone the gate's own checkpoint backs every frame,
+the next write resets the WAL and `journal_size_limit` shrinks the file.
+`projection-health` reports `disk_backpressure`, `ledger_main_bytes`,
+`ledger_wal_bytes`, the refusal count and how often a checkpoint found
+pinned frames; M's state reports `retention.disk` with main, WAL, quota and
+WAL refusals. The doctor's `query_broker` gate sees a refused broker as
+`lagging` and then as a growing lag.
+
+Readers keep their scope short on purpose: one M read transaction covers
+exactly one projection page and ends when the page is read.
+
 ## Production doctor
 
 `scripts/doctor.py` prints one table of gates, each `pass`, `fail` or

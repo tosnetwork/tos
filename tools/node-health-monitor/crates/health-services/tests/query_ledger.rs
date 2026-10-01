@@ -764,3 +764,93 @@ fn expired_parents_are_deferred_while_a_grant_of_this_boot_is_active() {
     drop(ledger);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn a_long_reader_pins_the_wal_and_writes_are_refused_as_backpressure_until_it_lets_go() {
+    // SEC-07: `wal_autocheckpoint` bounds the WAL only while no reader holds
+    // frames. With a reader open the file grows without limit; the ledger
+    // must refuse further writes at its mark, change nothing committed, and
+    // resume once the reader is gone, without deleting anything to make room.
+    let (file, directory) = temporary();
+    let mark: u64 = 256 * 1024;
+    let mut ledger =
+        QueryLedger::open_for_boot(&file, BOOT_A).unwrap().with_wal_high_water(mark).unwrap();
+    let mut store = EvidenceStore::new(32 * 1024 * 1024);
+    for sequence in 1..=4 {
+        ledger.insert_evidence(&mut store, evidence(sequence)).unwrap();
+    }
+    let clock = tos_health_services::query_ledger::boot_millis().unwrap();
+    let mut pinned = grant(&[0x71; 32]);
+    pinned.expires_monotonic_ms = clock + 180_000;
+    ledger.create(&pinned, clock).unwrap();
+    let baseline = ledger.disk_usage().unwrap();
+    assert!(!baseline.backpressure && baseline.backpressure_refusals == 0);
+    // A second connection holds a read snapshot: checkpoints cannot reset the WAL.
+    let reader = rusqlite::Connection::open(&file).unwrap();
+    reader.execute_batch("BEGIN; SELECT COUNT(*) FROM query_grants;").unwrap();
+    let mut refused = None;
+    let mut written = 0u32;
+    for sequence in 5..5000 {
+        match ledger.insert_evidence(&mut store, evidence(sequence)) {
+            Ok(_) => written += 1,
+            Err(error) => {
+                refused = Some(error);
+                break;
+            }
+        }
+    }
+    let error = refused.expect("the WAL gate must refuse before five thousand rows");
+    assert!(error.contains("disk_backpressure"), "{error}");
+    assert!(written > 0, "the gate must not fire before the mark");
+    let usage = ledger.disk_usage().unwrap();
+    assert!(usage.backpressure, "{usage:?}");
+    assert_eq!(usage.backpressure_refusals, 1);
+    assert!(usage.wal_bytes > mark, "{usage:?}");
+    assert!(
+        usage.checkpoint_pinned >= 1,
+        "the passive checkpoint saw the reader's pinned frames: {usage:?}"
+    );
+    // Nothing committed moves while refused: evidence rows, watermark,
+    // grants, cursor table and seals are exactly as before the refusal.
+    let evidence_rows = count_sql(&file, "SELECT COUNT(*) FROM query_evidence");
+    let grants = count_sql(&file, "SELECT COUNT(*) FROM query_grants");
+    let watermark = store.watermark();
+    let sequence_on_disk =
+        count_sql(&file, "SELECT sequence FROM query_evidence_meta WHERE singleton=1");
+    assert!(ledger
+        .insert_evidence(&mut store, evidence(9_000))
+        .unwrap_err()
+        .contains("disk_backpressure"));
+    let mut another = grant(&[0x72; 32]);
+    another.run_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc".into();
+    another.expires_monotonic_ms = clock + 180_000;
+    assert!(ledger.create(&another, clock).unwrap_err().contains("disk_backpressure"));
+    assert!(ledger.compact_terminal(clock, 16).unwrap_err().contains("disk_backpressure"));
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_evidence"), evidence_rows);
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_grants"), grants);
+    assert_eq!(store.watermark(), watermark);
+    assert_eq!(
+        count_sql(&file, "SELECT sequence FROM query_evidence_meta WHERE singleton=1"),
+        sequence_on_disk
+    );
+    assert!(
+        ledger.load_active(&pinned.run_id, clock).unwrap().is_some(),
+        "the pinned grant is untouched"
+    );
+    assert_eq!(ledger.disk_usage().unwrap().backpressure_refusals, 4);
+    // Revocation is never gated: a conflict must still be able to revoke.
+    assert!(ledger.revoke(&another.run_id).is_ok());
+    // The reader lets go: the gate's own passive checkpoint backs every
+    // frame, the next write resets the WAL and journal_size_limit shrinks it.
+    reader.execute_batch("COMMIT").unwrap();
+    drop(reader);
+    ledger.insert_evidence(&mut store, evidence(9_000)).unwrap();
+    ledger.insert_evidence(&mut store, evidence(9_001)).unwrap();
+    let recovered = ledger.disk_usage().unwrap();
+    assert!(!recovered.backpressure, "{recovered:?}");
+    assert!(recovered.wal_bytes <= mark, "the WAL file shrinks after the reset: {recovered:?}");
+    ledger.create(&another, clock).unwrap();
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_grants"), grants + 1);
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
