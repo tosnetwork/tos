@@ -844,3 +844,75 @@ async fn package_v2_fixes_native_and_verdicts_and_truncates_deterministically() 
     drop(state);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// One real validator1 native-core-v3 sample from the rotating development
+/// network, taken after every section was present: coverage `complete` with
+/// no missing field. The v2 fixture cannot stand in for it, because a v2
+/// snapshot has no chain or node-state section and complete coverage is a
+/// contract violation there.
+const FIXTURE_V3_COMPLETE: &str = include_str!("fixtures/native_core_v3_validator1.json");
+const NETWORK_V3: &str = "99599bf0ef8fbe828f77f86f91aa7dc77ad061ae06799f7b3b8f7fc13cd0bd7b";
+
+fn native_row_v3_complete(
+    generation: u64,
+    observed_ms: i64,
+    coverage: Coverage,
+) -> DurableEvidence {
+    let mut source: Value = serde_json::from_str(FIXTURE_V3_COMPLETE).unwrap();
+    let at = rfc(observed_ms);
+    source["generation"] = json!(generation.to_string());
+    source["payload"]["generation"] = json!(generation.to_string());
+    source["observed_at"] = json!(at);
+    source["last_success_at"] = json!(at);
+    source["content_hash"] = json!(canonical_hash(&source["payload"]).unwrap());
+    let epoch = source["process_epoch"].as_str().unwrap().to_owned();
+    DurableEvidence {
+        source_epoch: epoch.clone(),
+        record: Evidence {
+            node_id: NODE.into(),
+            scope_id: "node".into(),
+            source_id: "native_core".into(),
+            source_record_id: format!("{epoch}:{generation}"),
+            process_epoch: epoch.clone(),
+            observed_at_ms: observed_ms,
+            received_at_ms: observed_ms + 500,
+            quality: SourceQuality {
+                availability: Availability::Available,
+                coverage,
+                observed_at_ms: Some(observed_ms),
+                last_success_at_ms: Some(observed_ms),
+                clock_valid: true,
+                process_epoch: epoch,
+                source_sequence: generation.to_string(),
+            },
+            payload: json!({"component":"consensus","source":source}),
+            redacted: true,
+        },
+    }
+}
+
+#[test]
+fn complete_native_coverage_projects_and_a_disagreeing_coverage_is_refused() {
+    // Validators publish `complete` coverage once every section is present.
+    // The projection once insisted on `partial` and latched the broker into a
+    // conflict the first time such a row arrived. It must accept the real
+    // row, and still refuse an envelope and a record that disagree.
+    use tos_health_core::source::Coverage;
+    use tos_health_services::manager_query_source::read_process_projection_page;
+    let directory = temp("coverage");
+    let path = directory.join("manager.sqlite");
+    let mut manager = EvidenceDb::open(&path, 64 * 1024 * 1024).unwrap();
+    manager.bind_network(NETWORK_V3).unwrap();
+    let t0 = ms("2026-10-01T05:03:39Z");
+    manager.insert(native_row_v3_complete(612, t0, Coverage::Complete)).unwrap();
+    let page = read_process_projection_page(&path, NETWORK_V3, None, &[]).unwrap();
+    assert_eq!(page.records.len(), 1, "a complete-coverage v3 row projects");
+    // Envelope says complete, record says partial: refused.
+    manager.insert(native_row_v3_complete(613, t0 + 15_000, Coverage::Partial)).unwrap();
+    assert_eq!(
+        read_process_projection_page(&path, NETWORK_V3, Some(&page.cursor), &[]).unwrap_err(),
+        "archived native source mismatch"
+    );
+    drop(manager);
+    let _ = std::fs::remove_dir_all(&directory);
+}

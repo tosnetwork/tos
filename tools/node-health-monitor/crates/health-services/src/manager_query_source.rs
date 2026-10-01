@@ -354,6 +354,16 @@ fn project_native(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
             envelope_matches(&v.node_id, &v.scope_id, &v.process_epoch, &v.source_epoch)
         }
     };
+    // The archived envelope's coverage status and the record's quality
+    // coverage are the same fact written twice; they must agree, and a
+    // complete coverage names no missing field. Insisting on `partial` here
+    // once latched the broker into a conflict the day validators first
+    // published complete coverage.
+    let expected_coverage = match coverage.status.as_str() {
+        "complete" if coverage.missing_fields.is_empty() => Coverage::Complete,
+        "partial" => Coverage::Partial,
+        _ => return Err("archived native coverage status unsupported".into()),
+    };
     if !identity_ok
         || record.source_id != "native_core"
         || record.source_record_id != format!("{}:{}", row.evidence.source_epoch, generation.0)
@@ -363,7 +373,7 @@ fn project_native(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
         || record.quality.process_epoch != record.process_epoch
         || record.quality.source_sequence != generation.0.to_string()
         || record.quality.availability != Availability::Available
-        || record.quality.coverage != Coverage::Partial
+        || record.quality.coverage != expected_coverage
         || !record.quality.clock_valid
         || !record.redacted
         || source_value.get("received_at").is_some_and(|v| !v.is_null())
