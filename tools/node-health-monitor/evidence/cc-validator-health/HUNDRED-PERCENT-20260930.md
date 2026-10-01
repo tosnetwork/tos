@@ -384,3 +384,20 @@ Branch head `6d0df8ba2`, pushed; memo updated.
   refused, swallowed import errors and a doctor gate reading a file
   timestamp. All three fixed; the gate now reads Q's projection health.
 - Final: Q re-projected from M's boundary and caught up (lag 61 rows at 08:14 UTC after a 140,000-row catch-up in eight minutes, 543 retained parents, 115 MiB resident, 0 import errors since 08:06:28); doctor `pass 16 fail 0 not_run 3 (physical_separation, soak_72h, cert_rotation) at 08:14 UTC`. Head `88e3783e9`.
+
+## 18. Second re-review closed; the never-green workflow repaired (08:15–09:20 UTC)
+
+- Codex's second re-review passed SEC-01/03/04/05/06 and left SEC-02 (second
+  traversal), SEC-09 (4 KiB pipe), SEC-07 and SEC-08 (directions given).
+  All four landed with red-first tests (audit note §8); engine
+  `…-2f99220c9f152551` on all seven nodes, `tos_exporter_health_collection_complete 1`
+  everywhere.
+- The `Node health monitor` workflow had been red on every run for a day:
+  generator drift, 413-before-405, an unobservable mutant and rotted
+  mutation anchors. All repaired; the CI runs for these commits were in
+  progress at the time of writing.
+- Operations: the elections service died at the 07:24 rollout (HTTP 500
+  during a validator restart, `Restart=no`) and on two restarts was refused
+  by the elector (`0xEE6F454C`, reason 0) submitting at the election's close.
+  No key block since 07:25; the monitor reports `key_block_stale` open on
+  all seven nodes past the one-hour threshold, which is correct.
