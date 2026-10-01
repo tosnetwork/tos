@@ -114,13 +114,15 @@ void PrometheusExporter::respond(td::Promise<HttpReturn> promise, int code, cons
 }
 
 void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<HttpReturn> promise) {
-  // None of the health routes accepts a request body; refuse one up front so a
-  // client cannot hold the per-connection body window behind a GET.
-  if (request->need_payload())
-    return respond(std::move(promise), 413, "Payload Too Large", "");
+  // None of the health routes accepts a request body. The method is answered
+  // first (a bodiless POST is 405, not 413); a GET that announces a body is
+  // refused before any of it is read, so a client cannot hold the
+  // per-connection body window behind a health route.
+  const bool announces_body = request->need_payload();
   if (request->url() == "/health-diagnostics") {
     if (!loopback_ || !native_v2_) return respond(std::move(promise),404,"Not Found","");
     if (request->method() != "GET") return respond(std::move(promise),405,"Method Not Allowed","");
+    if (announces_body) return respond(std::move(promise),413,"Payload Too Large","");
     const auto &d=health::diagnostic_stats;
     const char *names[]={"capacity","contention","sequence","encoding","socket","shutdown"};
     std::string body="{\"schema_version\":1,\"process_epoch\":\""+core_publisher_.epoch()+"\",\"source_id\":\"consensus_diagnostic\",\"catalog\":8,\"enabled\":"+(d.enabled.load()?std::string("true"):std::string("false"))+",\"counter_complete\":"+(d.complete.load()?std::string("true"):std::string("false"))+",\"dropped\":\""+std::to_string(d.dropped.load())+"\",\"sampled_out\":\""+std::to_string(d.sampled_out.load())+"\",\"queue_records\":\""+std::to_string(d.records.load())+"\",\"queue_bytes\":\""+std::to_string(d.bytes.load())+"\",\"sent\":\""+std::to_string(d.sent.load())+"\",\"reasons\":{";
@@ -134,6 +136,8 @@ void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<
       return respond(std::move(promise), 404, "Not Found", "");
     if (request->method() != "GET")
       return respond(std::move(promise), 405, "Method Not Allowed", "");
+    if (announces_body)
+      return respond(std::move(promise), 413, "Payload Too Large", "");
     auto body = core_snapshot_ ? core_snapshot_->read(td::Timestamp::now().at()) : std::nullopt;
     if (!body)
       return respond(std::move(promise), 503, "Service Unavailable", "");
@@ -145,6 +149,8 @@ void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<
   if (request->method() != "GET") {
     return respond(std::move(promise), 405, "Method Not Allowed", "");
   }
+  if (announces_body)
+    return respond(std::move(promise), 413, "Payload Too Large", "");
   const auto now = td::Timestamp::now().at();
   if (admission_.begin(now)) {
     waiter_.emplace(std::move(promise));

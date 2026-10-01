@@ -45,6 +45,15 @@ COMMON = {
  'diagnostic_phase':O(kind={'const':'diagnostic_phase'},record_type={'const':1},payload={'type':'string','pattern':'^0[0-3]0[0-2](0[0-9a-f]|1[0-5])00$'},monotonic_ns=U),
 }
 COMMON['anchor']={'oneOf':[R('block'),R('consensus'),R('storage_ack')]}
+# The typed native-core payloads, the v3 chain anchor and the edge's native
+# process binding are frozen by hand (their strict Rust and C++ decoders mirror
+# them byte for byte); the generator carries them unchanged from the sidecar.
+FROZEN=json.loads((ROOT/'scripts/native-defs.frozen.json').read_text())
+COMMON.update(copy.deepcopy(FROZEN['defs']))
+# Sources carry only producer payload kinds; the broker-derived kinds below
+# (native_consensus, chain_anchors, storage_state, health_verdicts) exist only
+# inside tool output envelopes.
+SOURCE_PAYLOAD={'oneOf':[{'$ref':ref} for ref in FROZEN['source_payload_oneOf']]}
 # Typed native consensus projection, its fixed chain/storage views and the
 # read-only M verdict copy. All four are derived from retained M rows only.
 COMMON['count']=O(name=S(64),count=U)
@@ -61,6 +70,7 @@ COMMON['health_verdicts']=O(kind={'const':'health_verdicts'},source_id=ALIAS,eva
 COMMON['health']=O(evidence_id=S(128),observed_at=TIME,evaluation_sequence=U,since_basis={'const':'query_import'},active_incidents=A(R('health_verdict'),64),rules_evaluated=I(0,64))
 COMMON['payload']={'oneOf':[R(x) for x in ['process','host_cgroup','native','native_core','unavailable','scalar','diagnostic','diagnostic_phase','block','consensus','storage_ack','native_consensus','chain_anchors','storage_state','health_verdicts']]}
 COMMON['source']=O(schema_version={'const':1},source_id=ALIAS,node_id=ALIAS,scope_id=ALIAS,process_epoch=S(128),source_epoch=S(128),source_version=S(96),generation=U,availability=E('available','disabled','unsupported','unauthorized','error','unknown'),observed_at=N(TIME),last_success_at=N(TIME),received_at=N(TIME),source_age_ms=N(I(0,9007199254740991)),clock_quality=E('valid','uncertain','invalid'),coverage=R('coverage'),content_hash=H,payload=R('payload'),quality=R('quality'))
+COMMON['source']['allOf']=copy.deepcopy(FROZEN['source_allOf'])
 COMMON['evidence']=O(evidence_id=S(128),kind=E('observation','derived','event','change'),node_id=ALIAS,source_id=ALIAS,source_version=S(96),source_record_id=S(256),process_epoch=S(128),observed_at=N(TIME),received_at=TIME,clock_quality=E('valid','uncertain','invalid'),scope_id=ALIAS,payload=R('payload'),content_hash=H,quality=R('quality'),redacted={'const':True},parent_evidence_ids=A(S(128),32),derivation_version=N(S(96)))
 COMMON['component']=O(kind=E('process','host','chain','consensus','network','storage','index','gpu','telemetry','deployment'),sources=A(ALIAS,32),value=N(R('payload')),quality=R('quality'),health=N(R('health')))
 COMMON['event']=O(event_id=S(128),evidence_id=S(128),source_id=ALIAS,source_record_id=S(256),process_epoch=S(128),observed_at=N(TIME),scope_id=ALIAS,kind=S(64),stage=N(S(64)),reason=N(S(256)),correlation_id=N(S(160)),excerpt=S(512),content_hash=H,quality=R('quality'))
@@ -77,26 +87,27 @@ DATA = {
 }
 def envelope(data):
  return O(schema_version={'const':1},request_id=S(128),run_id=m.RUN,network_id=H,generated_at=TIME,status=E('ok','partial','unavailable','error'),data=N(data),evidence=A(R('evidence'),128),missing_evidence=A(R('missing'),32),coverage=R('coverage'),pagination=R('pagination'),error=N(R('error')),budget=R('budget'))
-def document(body):
+def document(body,overrides=None):
+ defs={**COMMON,**(overrides or {})}
  used=set()
  def visit(v):
   if isinstance(v,dict):
    ref=v.get('$ref','')
    if ref.startswith('#/$defs/'):
     name=ref.rsplit('/',1)[1]
-    if name not in used:used.add(name);visit(COMMON[name])
+    if name not in used:used.add(name);visit(defs[name])
    for child in v.values():visit(child)
   elif isinstance(v,list):
    for child in v:visit(child)
  visit(body)
- return {'$schema':'https://json-schema.org/draft/2020-12/schema',**copy.deepcopy(body),'$defs':{k:copy.deepcopy(COMMON[k]) for k in sorted(used)}}
-def write(path,body):
- path=ROOT/'contracts'/path;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(document(body),indent=2)+'\n')
+ return {'$schema':'https://json-schema.org/draft/2020-12/schema',**copy.deepcopy(body),'$defs':{k:copy.deepcopy(defs[k]) for k in sorted(used)}}
+def write(path,body,overrides=None):
+ path=ROOT/'contracts'/path;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(document(body,overrides),indent=2)+'\n')
 def main():
  write('common.schema.json',R('u64'))
- write('source-envelope.schema.json',R('source'))
+ write('source-envelope.schema.json',R('source'),{'payload':SOURCE_PAYLOAD})
  write('edge-heartbeat.schema.json',O(schema_version={'const':1},node_id=ALIAS,edge_epoch=S(128),state=E('available','degraded','unknown'),guard=E('normal','guarded','emergency','recovering'),validator_epoch=N(S(128)),sources=A(O(source_id=ALIAS,age_ms=N(U),usable=B),32)))
- write('edge-snapshot.schema.json',O(schema_version={'const':1},status=E('ok','partial'),sources=A(R('source'),32),anchors=A(R('anchor'),32)))
+ write('edge-snapshot.schema.json',O(schema_version={'const':1},status=E('ok','partial'),sources=A(R('source'),32),anchors=A(R('anchor'),32),native_process_binding=R('native_process_binding')),{'payload':SOURCE_PAYLOAD})
  write('edge-capabilities.schema.json',O(schema_version={'const':1},node_id=ALIAS,catalog_digest=H,capabilities=A(O(name=ALIAS,value=R('capability')),32),sources=A(O(source_id=ALIAS,status=E('available','disabled','unsupported','unauthorized','error','unknown')),32)))
  write('diagnostic-batch.schema.json',O(schema_version={'const':1},node_id=ALIAS,edge_epoch=S(128),process_epoch=S(128),source_id=ALIAS,batch_id=H,records=A(O(sequence=U,monotonic_ns=U,observed_at=N(TIME),record_type={'const':1},payload={'type':'string','pattern':'^[0-9a-f]{4}$'}),128),quality=O(dropped=U,gaps=B)))
  for name,body in m.INPUT_SCHEMAS.items(): write('tools/'+name+'.input.schema.json',body);write('tools/'+name+'.output.schema.json',envelope(DATA[name]))

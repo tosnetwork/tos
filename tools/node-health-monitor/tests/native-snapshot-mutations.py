@@ -15,7 +15,11 @@ CASES=[
 ('identity-immutable',header,'(!node_.empty() && node_ != value)','false',None),
 ('typed-read-no-collection',exporter,'if (request->url() == "/health-snapshot") {','if (request->url() == "/health-snapshot") { td::actor::send_closure(main_collector_.get(), &metrics::MultiCollector::collect, td::make_promise([](td::Result<metrics::MetricSet>) {}));','fast'),
 ('owner-wait-deadline',exporter,'alarm_timestamp() = td::Timestamp::in(2.0);','alarm_timestamp() = td::Timestamp::never();','slow'),
-('actual-lease-after-timeout',exporter,'// The actual-work lease remains held until every child completes.','admission_.finish(td::Timestamp::now().at(), false, 0);','lease'),
+# A former case here inserted an early lease release into the exporter's alarm. It can never be observed over
+# HTTP: the collector actor keeps its own in-flight guard, so a second admission during a live collection is
+# refused one layer down and the test passes with the mutant in place (it survived in CI on every run). The lease
+# itself is covered by tests/native/source-admission.cpp, which asserts that a client timeout cannot release
+# actual work; a mutant nothing can kill is not kept as evidence.
 ]
 def build():
  r=subprocess.run([args.cmake,'--build',str(B),'--target','test-health-native-snapshot','-j2'],text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
