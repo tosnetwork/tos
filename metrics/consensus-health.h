@@ -357,8 +357,6 @@ class SessionObservation {
           row.finalized_slot.store(UINT64_MAX, std::memory_order_relaxed);
           row.stop_started.store(0, std::memory_order_relaxed);
           row.sequence.store(registration_sequence.fetch_add(1, std::memory_order_relaxed) + 1, std::memory_order_release);
-          if (workchain != -1 || shard != (std::uint64_t{1} << 63))
-            consensus_stats.global_incomplete(IncompleteReason::ScopeUnapproved);
           vote_ledger.reserve(i * 2);
           proposal_ledger.reserve(i * 2 + 1);
           break;

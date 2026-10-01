@@ -143,6 +143,9 @@ inline bool storage_commit_ack_observed() noexcept {
 struct ConsensusPublication {
   std::string json;
   bool complete = false;
+  // A session outside the approved masterchain scope is active: its typed
+  // progress is not an approved input, which the envelope reports as coverage.
+  bool shard_scope = false;
 };
 inline std::optional<ConsensusPublication> capture_consensus(const std::string &network) {
   if (network.size() != 64) return std::nullopt;
@@ -226,7 +229,9 @@ inline std::optional<ConsensusPublication> capture_consensus(const std::string &
   // is set while unverified and disappears once a session has been observed
   // through its whole drain boundary. Every other reason stays latched.
   const auto lifecycle_bit = std::uint32_t{1} << static_cast<unsigned>(IncompleteReason::SessionLifecycleUnverified);
-  auto reasons = consensus_stats.incomplete_reasons.load() & ~lifecycle_bit;
+  // Scope is coverage, not integrity: the bit is never published as a reason.
+  const auto scope_bit = std::uint32_t{1} << static_cast<unsigned>(IncompleteReason::ScopeUnapproved);
+  auto reasons = consensus_stats.incomplete_reasons.load() & ~lifecycle_bit & ~scope_bit;
   if (!lifecycle_verified.load()) reasons |= lifecycle_bit;
   const bool complete = reasons == 0;
   const auto sessions = c04_object({{"active", c04_u64(consensus_stats.sessions_active.load())}, {"started", c04_u64(consensus_stats.sessions_started.load())},
@@ -237,6 +242,6 @@ inline std::optional<ConsensusPublication> capture_consensus(const std::string &
       {"repeated_requests", c04_u64(consensus_stats.repeated_requests.load())}, {"retired_requests", c04_u64(consensus_stats.retired_requests.load())},
       {"post_terminal_progress", c04_u64(consensus_stats.post_terminal_progress.load())}, {"sessions", sessions}});
   if (json.size() > 32 * 1024) return std::nullopt;
-  return ConsensusPublication{std::move(json), complete};
+  return ConsensusPublication{std::move(json), complete, !scope_valid};
 }
 }  // namespace tos::health

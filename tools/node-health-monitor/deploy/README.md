@@ -218,6 +218,18 @@ edge must be recreated with the new zero-state root (read it from the
 network's own file, never from a constant in a script), or it refuses every
 native sample. The refusal reason is now logged by the edge once a minute.
 
+## Scope is coverage, not integrity
+
+A validator that also validates a shard runs a session outside the approved
+masterchain scope; its typed consensus progress is not an approved input
+(C04 ruling). The publisher reports that as **coverage**: the envelope's
+`missing_fields` names `shard_consensus_progress` while such a session is
+active, the `typed_consensus_progress` capability says `scope_unapproved`,
+and `instrumentation_complete` is left to what it means (counters intact,
+lifecycle observed). Older rows that reported the scope as an incomplete
+reason are still accepted; a row naming the field without a shard session is
+refused.
+
 ## Node state: duties, real queues and the storage position
 
 The v3 payload carries a `node_state` section the validator manager refreshes

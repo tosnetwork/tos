@@ -231,6 +231,20 @@ void unit() {
   CHECK(ns_stale_body);
   CHECK(ns_stale_body->find("\"node_state\":null") != std::string::npos);
   CHECK(ns_stale_body->find("\"local_duties\",\"queue_state\",\"storage_state\"]") != std::string::npos);
+  // A shard session is coverage, not an integrity defect: the field is named
+  // and the snapshot stays complete.
+  node_state.storage_valid.store(true);
+  node_state.observed_unix_seconds.store(1700000031);
+  anchor.applied_advanced_unix_seconds = 1700000031;
+  anchor.observed_unix_seconds = 1700000031;
+  chain_anchor_state.publish(anchor);
+  ConsensusPublication shard{"{\"synthetic\":true}", true, true};
+  auto sharded = publisher.prepare(11, 10, 1700000031, "# EOF\n", true, sign, verify, true, &shard, true);
+  CHECK(sharded);
+  auto sharded_body = sharded->read(10);
+  CHECK(sharded_body);
+  CHECK(sharded_body->find("\"coverage\":{\"status\":\"partial\",\"missing_fields\":[\"shard_consensus_progress\"]") != std::string::npos);
+  CHECK(sharded_body->find("\"instrumentation_complete\":true") != std::string::npos);
   // Without a valid disk sample the storage position is not claimed.
   node_state.observed_unix_seconds.store(1700000031);
   node_state.storage_valid.store(false);

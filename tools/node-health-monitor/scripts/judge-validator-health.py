@@ -229,13 +229,14 @@ DIAGNOSIS_INSTRUCTION = (
     "'insufficient_evidence' only when every node is unknown. Never claim a node is healthier than its "
     "verdict, never claim remediation was done, never request tools. Findings with basis 'observed' "
     "must cite only supplied evidence IDs; hypotheses must list what evidence is missing. "
-    "Each native row carries instrumentation_complete with incomplete_reasons: 'scope_unapproved' means "
-    "the node validates a shard whose typed consensus progress is not an approved input (masterchain "
-    "facts are unaffected); 'session_lifecycle_unverified' means no session has yet been observed "
-    "through its drain boundary since the process started; capacity and saturation reasons mean a "
-    "counter table overflowed and the affected counters are lower bounds. coverage_missing lists the "
-    "native sections this publisher cannot provide; an empty list means duties, queues and storage "
-    "are covered. Name the reason instead of calling coverage unspecified."
+    "Each native row carries instrumentation_complete with incomplete_reasons: "
+    "'session_lifecycle_unverified' means no session has yet been observed through its drain boundary "
+    "since the process started (observers never run one); capacity and saturation reasons mean a "
+    "counter table overflowed and the affected counters are lower bounds. coverage_missing lists what "
+    "this publisher does not cover: 'shard_consensus_progress' means the node validates a shard whose "
+    "typed consensus progress is not an approved input (masterchain facts are unaffected); "
+    "'local_duties', 'queue_state' and 'storage_state' mean the node-state section is absent. An "
+    "empty list means everything is covered. Name the reason instead of calling coverage unspecified."
 )
 
 

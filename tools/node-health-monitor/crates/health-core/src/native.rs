@@ -371,6 +371,21 @@ impl NativeRecord {
     }
 }
 
+/// A session outside the approved masterchain scope must be named in the
+/// envelope's coverage (`shard_consensus_progress`), or, for publishers
+/// before that field existed, as the legacy incomplete reason; naming the
+/// field without such a session is refused.
+fn shard_scope_covered(consensus: &Consensus, missing_fields: &[String]) -> Result<(), String> {
+    let shard = consensus.unapproved_scope();
+    let named = missing_fields.iter().any(|f| f == "shard_consensus_progress");
+    if named && !shard {
+        return Err("shard scope coverage without a shard session".into());
+    }
+    if shard && !named && !consensus.legacy_scope_reason() {
+        return Err("shard session not covered".into());
+    }
+    Ok(())
+}
 pub fn canonical_hash<T: Serialize>(value: &T) -> Result<String, String> {
     let value = serde_json::to_value(value).map_err(|e| e.to_string())?;
     let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
@@ -520,6 +535,7 @@ impl NativeEnvelopeV2 {
         let consensus_complete = match &self.payload.consensus {
             Some(v) => {
                 v.validate(&self.payload.network_id)?;
+                shard_scope_covered(v, &self.coverage.missing_fields)?;
                 v.instrumentation_complete
             }
             None => false,
@@ -648,6 +664,7 @@ impl NativeEnvelopeV3 {
         }
         if let Some(consensus) = &self.payload.consensus {
             consensus.validate(&self.payload.network_id)?;
+            shard_scope_covered(consensus, &self.coverage.missing_fields)?;
         }
         let state_fields = ["local_duties", "queue_state", "storage_state"];
         let marked_missing = |field: &str| self.coverage.missing_fields.iter().any(|f| f == field);

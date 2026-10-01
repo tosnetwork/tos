@@ -219,3 +219,33 @@ fn unapproved_scope_and_post_terminal_progress_cannot_stay_green() {
     rehash(&mut value);
     validate(&value).unwrap();
 }
+
+#[test]
+fn shard_scope_is_coverage_not_an_integrity_defect() {
+    let shard_context = serde_json::json!([{
+        "network_id":"a".repeat(64),"scope":{"scope_id":null,"workchain":0,"shard":"1"},
+        "session_id":"b".repeat(64),"current_slot":1,"last_finalized_slot":null,
+        "lifecycle":"active","stop_started_monotonic_ns":null
+    }]);
+    // Current publisher: the capability names the reason, the envelope's coverage
+    // names the field, the incomplete reasons carry nothing about scope.
+    let mut value = fixture();
+    value["payload"]["consensus"]["contexts"] = shard_context.clone();
+    value["payload"]["consensus"]["capabilities"]["typed_consensus_progress"]["reason"] =
+        "scope_unapproved".into();
+    value["coverage"]["missing_fields"] = serde_json::json!(["shard_consensus_progress"]);
+    rehash(&mut value);
+    validate(&value).unwrap();
+    // The field without a shard session is a lie.
+    let mut lying = fixture();
+    lying["coverage"]["missing_fields"] = serde_json::json!(["shard_consensus_progress"]);
+    rehash(&mut lying);
+    assert!(validate(&lying).is_err());
+    // A shard session with neither the field nor the legacy reason is uncovered.
+    let mut uncovered = fixture();
+    uncovered["payload"]["consensus"]["contexts"] = shard_context;
+    uncovered["payload"]["consensus"]["capabilities"]["typed_consensus_progress"]["reason"] =
+        "scope_unapproved".into();
+    rehash(&mut uncovered);
+    assert!(validate(&uncovered).is_err());
+}

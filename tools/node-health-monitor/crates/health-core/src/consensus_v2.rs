@@ -221,6 +221,14 @@ const NEGATIVE: &[(&str, &str)] = &[
     ("vote_deadline", "no_frozen_protocol_deadline"),
 ];
 impl Consensus {
+    /// A session outside the approved masterchain scope is active.
+    pub fn unapproved_scope(&self) -> bool {
+        self.contexts.iter().any(|c| c.scope.scope_id.is_none())
+    }
+    /// Older publishers reported the unapproved scope as an incomplete reason.
+    pub fn legacy_scope_reason(&self) -> bool {
+        self.incomplete_reasons.contains(&IncompleteReason::ScopeUnapproved)
+    }
     pub fn validate(&self, network: &str) -> Result<(), String> {
         if self.actions.len() != 4
             || self.capabilities.len() != 11
@@ -347,10 +355,9 @@ impl Consensus {
                 .capabilities
                 .get("typed_consensus_progress")
                 .ok_or("missing typed progress capability")?;
-            if cap.supported
-                || cap.reason.as_deref() != Some("scope_unapproved")
-                || !self.incomplete_reasons.contains(&IncompleteReason::ScopeUnapproved)
-            {
+            // The envelope's coverage names the unapproved scope; older
+            // publishers reported it as an incomplete reason, still accepted.
+            if cap.supported || cap.reason.as_deref() != Some("scope_unapproved") {
                 return Err("unapproved C04 context scope".into());
             }
         }

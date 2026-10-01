@@ -215,7 +215,9 @@ class NativeCorePublisher {
     // Coverage names exactly what this sample cannot speak about.
     std::string missing;
     if (!(v3 && anchors)) missing += "\"chain_anchors\",";
-    if (!have_node_state) missing += "\"local_duties\",\"queue_state\",\"storage_state\",";
+    if (!have_node_state) missing += "\"local_duties\",\"queue_state\",";
+    if (v2 && consensus != nullptr && consensus->shard_scope) missing += "\"shard_consensus_progress\",";
+    if (!have_node_state) missing += "\"storage_state\",";
     if (!missing.empty()) missing.pop_back();
     result.suffix = std::string(",\"clock_quality\":\"valid\",\"coverage\":{\"status\":\"") +
                     (missing.empty() ? "complete" : "partial") + "\",\"missing_fields\":[" + missing +
