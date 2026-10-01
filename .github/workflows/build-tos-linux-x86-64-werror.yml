@@ -108,6 +108,8 @@ jobs:
         sudo ./llvm.sh 21
         sudo apt-get install -y clang-format-21
 
+    # Captured output under an evidence `raw/` directory is a byte-exact record whose
+    # SHA-256 an evidence index pins; trimming it would break the pin and the record.
     - name: Check spaces at EOL on added lines
       shell: bash
       run: |
@@ -115,7 +117,8 @@ jobs:
           ':(exclude)crypto/smartcont/tol-stdlib/' \
           ':(exclude)tol/' \
           ':(exclude)tol-tester/' \
-          ':(exclude)third-party/' | grep -nE '^\+[^+].*[[:space:]]$'; then
+          ':(exclude)third-party/' \
+          ':(exclude,glob)tools/node-health-monitor/evidence/**/raw/**' | grep -nE '^\+[^+].*[[:space:]]$'; then
           echo "The lines above end in whitespace" >&2
           exit 1
         fi
