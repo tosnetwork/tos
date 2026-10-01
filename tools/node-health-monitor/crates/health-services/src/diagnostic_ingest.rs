@@ -112,7 +112,9 @@ pub(crate) fn insert(conn: &mut Connection, batch: &DiagnosticBatch) -> Result<A
         let digest = format!("{:x}", Sha256::digest(&encoded));
         drop(encoded);
         drop(canonical);
-        EvidenceStore::new(65536).insert(value.record.clone()).map_err(str::to_owned)?;
+        EvidenceStore::new(tos_health_core::evidence::MAX_RECORD_RESIDENT_BYTES)
+            .insert(value.record.clone())
+            .map_err(str::to_owned)?;
         let body = serde_json::to_string(&value).map_err(|e| e.to_string())?;
         if body.len() > 8192 {
             return Err("DIAGNOSTIC_OWNERSHIP".into());
@@ -355,7 +357,7 @@ mod tests {
             .unwrap();
         let stored: DurableEvidence = serde_json::from_str(&body).unwrap();
         assert_eq!(stored.record.quality.observed_at_ms, None);
-        let mut store = EvidenceStore::new(65536);
+        let mut store = EvidenceStore::new(tos_health_core::evidence::MAX_RECORD_RESIDENT_BYTES);
         let id = store.insert(stored.record.clone()).unwrap();
         let grant = tos_health_core::query::Grant::new(
             "00000000-0000-4000-8000-000000000001".into(),
@@ -399,7 +401,7 @@ mod tests {
         for field in ["producer_dropped", "relay_dropped", "parse_errors"] {
             known.payload["contract_quality"][field] = serde_json::json!("0");
         }
-        let mut store = EvidenceStore::new(65536);
+        let mut store = EvidenceStore::new(tos_health_core::evidence::MAX_RECORD_RESIDENT_BYTES);
         let id = store.insert(known).unwrap();
         let output = tos_health_core::query_output::success(
             "tos_get_event_window",

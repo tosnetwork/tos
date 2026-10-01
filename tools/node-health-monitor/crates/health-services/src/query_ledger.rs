@@ -3,6 +3,7 @@ use crate::durable::EvidenceRow;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     fs::OpenOptions,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
@@ -21,6 +22,12 @@ pub const LEDGER_QUOTA_BYTES: u64 = 256 * 1024 * 1024;
 pub const WAL_AUTOCHECKPOINT_PAGES: i64 = 64;
 /// Resident grants (non-empty body) the ledger may hold at once.
 const MAX_RESIDENT_GRANTS: i64 = 4096;
+/// Retained M parents behind resident derived rows: count and body bytes.
+/// These bounds drive eviction of the oldest resident rows exactly as the
+/// resident byte bound does; a bound that only refused would wedge the
+/// import forever once the resident store outgrew it.
+const MAX_RETAINED_PARENTS: i64 = 4096;
+const MAX_RETAINED_PARENT_BYTES: i64 = 8 * 1024 * 1024;
 /// Compacted run-id seals younger than this stay as anti-replay history.
 pub const TERMINAL_SEAL_HISTORY_MS: i64 = 30 * 86_400_000;
 /// Expired seals removed per compaction call; bounds one transaction.
@@ -79,6 +86,25 @@ pub struct Attempt<'a> {
     pub returned_bytes: usize,
 }
 
+/// Wall-clock milliseconds since the Unix epoch. Used only to age the replay
+/// seals of grants from other boots, whose monotonic expiry is meaningless
+/// here; it never decides whether a grant is valid.
+fn unix_millis() -> Result<i64, String> {
+    let elapsed =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(failure)?;
+    i64::try_from(elapsed.as_millis()).map_err(failure)
+}
+
+/// What one eviction call did with the expired parents it was given.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EvictionOutcome {
+    /// Derived query evidence ids removed from the ledger.
+    pub evicted: Vec<String>,
+    /// Parents left in place because an active grant of this boot still
+    /// reads at a fixed watermark; the next projection pass retries them.
+    pub deferred: Vec<String>,
+}
+
 fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -113,6 +139,67 @@ impl From<String> for ProjectionWriteError {
     fn from(message: String) -> Self {
         Self::Refused(message)
     }
+}
+
+/// Count and body bytes of the retained parents in this transaction.
+fn parent_totals(tx: &rusqlite::Transaction<'_>) -> Result<(i64, i64), ProjectionWriteError> {
+    tx.query_row("SELECT COUNT(*), COALESCE(SUM(length(body)),0) FROM query_origins", [], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })
+    .map_err(projection_sql_failure)
+}
+
+/// Make room for one more parent of `size` bytes by evicting the oldest
+/// resident derived rows, mirrored in the ledger transaction, until the
+/// parent bounds hold. Rows at or before an active grant's fixed watermark
+/// are never evicted (the grant keeps its view; the import pauses instead),
+/// and rows newer than `page_floor` belong to the write in progress and are
+/// never evicted either, so a parent set that cannot fit even after every
+/// older row is gone is refused as full. Evicted evidence ids are recorded so
+/// the caller skips their parent bindings.
+fn make_parent_room(
+    tx: &rusqlite::Transaction<'_>,
+    candidate: &mut EvidenceStore,
+    page_floor: u64,
+    pinned_w: u64,
+    totals: &mut (i64, i64),
+    size: i64,
+    evicted: &mut BTreeSet<String>,
+) -> Result<(), ProjectionWriteError> {
+    let mut budget = candidate.entries().count();
+    while totals.0 >= MAX_RETAINED_PARENTS
+        || totals.1.checked_add(size).is_none_or(|sum| sum > MAX_RETAINED_PARENT_BYTES)
+    {
+        if budget == 0 {
+            return Err(ProjectionWriteError::Capacity("M parent retention full"));
+        }
+        budget -= 1;
+        let Some(oldest) = candidate.entries().next() else {
+            return Err(ProjectionWriteError::Capacity("M parent retention full"));
+        };
+        let (watermark, id) = (oldest.watermark, oldest.evidence_id.clone());
+        if watermark <= pinned_w {
+            return Err(ProjectionWriteError::Capacity("active grant evidence retention"));
+        }
+        if watermark > page_floor {
+            return Err(ProjectionWriteError::Capacity("M parent retention full"));
+        }
+        if !candidate.remove(&id) {
+            return Err("evicted evidence missing from store".to_owned().into());
+        }
+        tx.execute("DELETE FROM query_evidence WHERE evidence_id=?1", [&id])
+            .map_err(projection_sql_failure)?;
+        tx.execute("DELETE FROM query_projection_origin WHERE query_evidence_id=?1", [&id])
+            .map_err(projection_sql_failure)?;
+        tx.execute(
+            "DELETE FROM query_origins WHERE origin_id NOT IN (SELECT origin_id FROM query_projection_origin)",
+            [],
+        )
+        .map_err(projection_sql_failure)?;
+        evicted.insert(id);
+        *totals = parent_totals(tx)?;
+    }
+    Ok(())
 }
 
 impl From<&str> for ProjectionWriteError {
@@ -301,6 +388,21 @@ impl QueryLedger {
                 conn.execute_batch("ALTER TABLE query_mcp_bindings ADD COLUMN wire_bytes INTEGER NOT NULL DEFAULT 0 CHECK(wire_bytes BETWEEN 0 AND 131072)")
                     .map_err(failure)?;
             }
+        }
+        // Seals of a previous boot cannot be aged by this boot's monotonic
+        // clock. They carry the wall-clock instant of their compaction so the
+        // sweep can bound them; the column is nullable so a ledger written by
+        // an earlier build upgrades in place.
+        let mut columns = conn.prepare("PRAGMA table_info(query_grants)").map_err(failure)?;
+        let names: Vec<String> = columns
+            .query_map([], |row| row.get(1))
+            .map_err(failure)?
+            .collect::<Result<_, _>>()
+            .map_err(failure)?;
+        drop(columns);
+        if !names.iter().any(|name| name == "compacted_unix_ms") {
+            conn.execute_batch("ALTER TABLE query_grants ADD COLUMN compacted_unix_ms INTEGER")
+                .map_err(failure)?;
         }
         Ok(Self { conn, clock_domain: format!("{boot_id}|{namespace}") })
     }
@@ -858,15 +960,10 @@ impl QueryLedger {
                 .map_err(projection_sql_failure)?;
             }
         }
-        let (mut count, mut bytes): (i64, i64) = tx
-            .query_row(
-                "SELECT COUNT(*), COALESCE(SUM(length(body)),0) FROM query_origins",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(projection_sql_failure)?;
+        let mut totals = parent_totals(&tx)?;
+        let mut evicted = BTreeSet::new();
         for (origin, entry) in &staged {
-            if entry.watermark < first_live {
+            if entry.watermark < first_live || evicted.contains(&entry.evidence_id) {
                 continue;
             }
             let parent = serde_json::to_vec(origin).map_err(failure)?;
@@ -887,10 +984,15 @@ impl QueryLedger {
                 }
             } else {
                 let size = i64::try_from(parent.len()).map_err(failure)?;
-                if count >= 4096 || bytes.checked_add(size).is_none_or(|sum| sum > 8 * 1024 * 1024)
-                {
-                    return Err(ProjectionWriteError::Capacity("M parent retention full"));
-                }
+                make_parent_room(
+                    &tx,
+                    &mut candidate,
+                    previous,
+                    pinned_w,
+                    &mut totals,
+                    size,
+                    &mut evicted,
+                )?;
                 tx.execute(
                     "INSERT INTO query_origins(origin_id,manager_seq,body) VALUES(?1,?2,?3)",
                     params![
@@ -900,8 +1002,8 @@ impl QueryLedger {
                     ],
                 )
                 .map_err(projection_sql_failure)?;
-                count += 1;
-                bytes += size;
+                totals.0 = totals.0.saturating_add(1);
+                totals.1 = totals.1.saturating_add(size);
             }
             tx.execute(
                 "INSERT INTO query_projection_origin(query_evidence_id,origin_id) VALUES(?1,?2)",
@@ -955,18 +1057,37 @@ impl QueryLedger {
     /// themselves, in one transaction. Returns the evicted query evidence ids
     /// so the caller can remove the same rows from the resident store. The
     /// evidence sequence is never rewound; an evicted watermark is a gap.
-    pub fn evict_expired_origins(&mut self, origins: &[String]) -> Result<Vec<String>, String> {
+    ///
+    /// A grant fixes the watermark its reader sees, so while any grant of this
+    /// boot is still active at `now_ms` nothing is evicted: every origin is
+    /// returned as deferred and the next projection pass offers it again.
+    pub fn evict_expired_origins(
+        &mut self,
+        origins: &[String],
+        now_ms: u64,
+    ) -> Result<EvictionOutcome, String> {
         if origins.len() > 4096 {
             return Err("expired M parent set exceeds retained bound".into());
         }
         if origins.is_empty() {
-            return Ok(Vec::new());
+            return Ok(EvictionOutcome::default());
         }
         if origins.iter().any(|origin| !tos_health_core::wire::hash(origin)) {
             return Err("expired M parent id malformed".into());
         }
+        let now = i64::try_from(now_ms).map_err(failure)?;
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let pinned: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM query_grants WHERE boot_id=?1 AND revoked=0 AND expires_ms>?2",
+                params![self.clock_domain, now],
+                |row| row.get(0),
+            )
+            .map_err(failure)?;
+        if pinned > 0 {
+            return Ok(EvictionOutcome { evicted: Vec::new(), deferred: origins.to_vec() });
+        }
         let mut evicted = Vec::new();
         for origin in origins {
             let dependants: Vec<String> = {
@@ -1007,7 +1128,7 @@ impl QueryLedger {
             evicted.extend(dependants);
         }
         tx.commit().map_err(failure)?;
-        Ok(evicted)
+        Ok(EvictionOutcome { evicted, deferred: Vec::new() })
     }
 
     fn insert_bound(
@@ -1098,20 +1219,18 @@ impl QueryLedger {
                     return Err("M parent identity conflict".into());
                 }
             } else {
-                let (count, bytes): (i64, i64) = tx
-                    .query_row(
-                        "SELECT COUNT(*), COALESCE(SUM(length(body)),0) FROM query_origins",
-                        [],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .map_err(failure)?;
-                if count >= 4096
-                    || bytes
-                        .checked_add(i64::try_from(parent.len()).map_err(failure)?)
-                        .is_none_or(|sum| sum > 8 * 1024 * 1024)
-                {
-                    return Err("M parent retention full".into());
-                }
+                let mut totals = parent_totals(&tx).map_err(|error| error.to_string())?;
+                let mut evicted = BTreeSet::new();
+                make_parent_room(
+                    &tx,
+                    &mut candidate,
+                    previous,
+                    pinned_w,
+                    &mut totals,
+                    i64::try_from(parent.len()).map_err(failure)?,
+                    &mut evicted,
+                )
+                .map_err(|error| error.to_string())?;
                 tx.execute(
                     "INSERT INTO query_origins(origin_id,manager_seq,body) VALUES(?1,?2,?3)",
                     params![
@@ -1216,13 +1335,17 @@ impl QueryLedger {
         Ok(true)
     }
 
-    /// Reclaim the payload of expired runs. The grant row and its unique run
-    /// ID remain as a replay seal for `TERMINAL_SEAL_HISTORY_MS` past the
-    /// cutoff; older seals of this boot are then dropped so the table stays
-    /// bounded. `cutoff_ms` is an explicit policy input, never inferred from
-    /// a wall clock or another boot's monotonic origin. Each call compacts at
-    /// most 16 runs and sweeps a bounded number of seals in one FULL
-    /// transaction. The returned count is the number of runs compacted.
+    /// Reclaim the payload of terminal runs: runs of this boot expired at or
+    /// before `cutoff_ms`, and every resident run of another boot, since each
+    /// lookup binds the current boot and such a run can never be read again
+    /// whatever its expiry meant in its own clock. The grant row and its
+    /// unique run ID remain as a replay seal; seals of this boot are dropped
+    /// `TERMINAL_SEAL_HISTORY_MS` past the cutoff, seals of other boots the
+    /// same span after their wall-clock compaction instant, so the table
+    /// stays bounded. `cutoff_ms` is an explicit policy input, never inferred
+    /// from a wall clock or another boot's monotonic origin. Each call
+    /// compacts at most 16 runs and sweeps a bounded number of seals in one
+    /// FULL transaction. The returned count is the number of runs compacted.
     pub fn compact_terminal(&mut self, cutoff_ms: u64, limit: usize) -> Result<usize, String> {
         if limit == 0 || limit > 16 {
             return Err("terminal compaction limit must be 1..16".into());
@@ -1231,14 +1354,17 @@ impl QueryLedger {
             return Err("terminal compaction cutoff is in the future".into());
         }
         let cutoff = i64::try_from(cutoff_ms).map_err(failure)?;
+        let compacted_at = unix_millis()?;
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        // Other boots' residents first: they are dead weight against the
+        // resident bound regardless of the cutoff.
         let runs: Vec<String> = {
             let mut query = tx
                 .prepare(
                     "SELECT run_id FROM query_grants
-                 WHERE boot_id=?1 AND expires_ms<=?2 AND length(body)>0
-                 ORDER BY expires_ms,run_id LIMIT ?3",
+                 WHERE length(body)>0 AND (boot_id<>?1 OR expires_ms<=?2)
+                 ORDER BY (boot_id=?1),expires_ms,run_id LIMIT ?3",
                 )
                 .map_err(failure)?;
             let rows = query
@@ -1265,9 +1391,9 @@ impl QueryLedger {
             tx.execute("DELETE FROM query_packages WHERE run_id=?1", [run]).map_err(failure)?;
             let changed = tx
                 .execute(
-                    "UPDATE query_grants SET revoked=1,body=X''
-                 WHERE run_id=?1 AND boot_id=?2 AND expires_ms<=?3 AND length(body)>0",
-                    params![run, self.clock_domain, cutoff],
+                    "UPDATE query_grants SET revoked=1,body=X'',compacted_unix_ms=?4
+                 WHERE run_id=?1 AND length(body)>0 AND (boot_id<>?2 OR expires_ms<=?3)",
+                    params![run, self.clock_domain, cutoff, compacted_at],
                 )
                 .map_err(failure)?;
             if changed != 1 {
@@ -1288,6 +1414,32 @@ impl QueryLedger {
                    AND NOT EXISTS(SELECT 1 FROM query_packages p WHERE p.run_id=query_grants.run_id)
                  ORDER BY expires_ms,run_id LIMIT ?3)",
             params![self.clock_domain, seal_cutoff, TERMINAL_SEAL_SWEEP_LIMIT],
+        )
+        .map_err(failure)?;
+        // Seals of other boots: a seal compacted by an earlier build under its
+        // own boot carries no instant yet, so it is stamped now and ages from
+        // here; stamped seals older than the history window are dropped. The
+        // wall clock only orders these seals; it never decides grant validity.
+        let foreign_cutoff = compacted_at
+            .checked_sub(TERMINAL_SEAL_HISTORY_MS)
+            .ok_or("terminal seal history cutoff underflow")?;
+        tx.execute(
+            "UPDATE query_grants SET compacted_unix_ms=?2 WHERE run_id IN (
+                 SELECT run_id FROM query_grants
+                 WHERE boot_id<>?1 AND length(body)=0 AND compacted_unix_ms IS NULL
+                 ORDER BY run_id LIMIT ?3)",
+            params![self.clock_domain, compacted_at, TERMINAL_SEAL_SWEEP_LIMIT],
+        )
+        .map_err(failure)?;
+        tx.execute(
+            "DELETE FROM query_grants WHERE run_id IN (
+                 SELECT run_id FROM query_grants
+                 WHERE boot_id<>?1 AND length(body)=0 AND compacted_unix_ms<?2
+                   AND NOT EXISTS(SELECT 1 FROM query_attempts a WHERE a.run_id=query_grants.run_id)
+                   AND NOT EXISTS(SELECT 1 FROM query_mcp_bindings b WHERE b.run_id=query_grants.run_id)
+                   AND NOT EXISTS(SELECT 1 FROM query_packages p WHERE p.run_id=query_grants.run_id)
+                 ORDER BY compacted_unix_ms,run_id LIMIT ?3)",
+            params![self.clock_domain, foreign_cutoff, TERMINAL_SEAL_SWEEP_LIMIT],
         )
         .map_err(failure)?;
         tx.commit().map_err(failure)?;

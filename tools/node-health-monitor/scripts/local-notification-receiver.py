@@ -22,6 +22,10 @@ MAX_BODY = 65536
 JOURNAL_MAX_BYTES = 64 * 1024 * 1024
 MAX_INFLIGHT = 8
 READ_TIMEOUT_S = 10
+# The TLS handshake runs in the connection's own thread under this bound, so
+# a peer that connects and never speaks holds one slot for this long, not the
+# accept loop.
+HANDSHAKE_TIMEOUT_S = 5
 
 
 def main():
@@ -45,27 +49,38 @@ def main():
         # A slow client cannot hold a thread past the read deadline.
         timeout = READ_TIMEOUT_S
 
-        def handle(self):
-            # Bounded concurrency: beyond MAX_INFLIGHT connections the handler
-            # answers 503 immediately instead of queueing threads.
-            if not inflight.acquire(blocking=False):
-                try:
-                    self.rfile = self.connection.makefile("rb", -1)
-                    self.wfile = self.connection.makefile("wb", 0)
-                    self.raw_requestline = b"POST / HTTP/1.1"
-                    self.request_version = "HTTP/1.1"
-                    self.command = "POST"
-                    self._reply(503, {"accepted": False, "reason": "busy"})
-                finally:
-                    try:
-                        self.wfile.flush()
-                    except OSError:
-                        pass
+        def setup(self):
+            # Admission and the TLS handshake both happen here, in this
+            # connection's thread, before any request parsing. The listening
+            # socket hands over un-handshaken connections, so the accept loop
+            # never waits on a peer.
+            self.admitted = inflight.acquire(blocking=False)
+            self.handshaken = False
+            if not self.admitted:
+                # Over the limit: there is no TLS session yet to carry a 503,
+                # and performing a handshake just to refuse would spend the
+                # very capacity being protected. Close; the sender retries.
                 return
             try:
-                super().handle()
+                self.request.settimeout(HANDSHAKE_TIMEOUT_S)
+                self.request.do_handshake()
+                self.handshaken = True
+            except (ssl.SSLError, OSError, TimeoutError):
+                return
+            super().setup()  # applies READ_TIMEOUT_S via `timeout`
+
+        def handle(self):
+            if not self.admitted or not self.handshaken:
+                return
+            super().handle()
+
+        def finish(self):
+            try:
+                if self.handshaken:
+                    super().finish()
             finally:
-                inflight.release()
+                if self.admitted:
+                    inflight.release()
 
         def log_message(self, fmt, *a):  # quiet; the journal is the record
             pass
@@ -123,7 +138,10 @@ def main():
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(args.cert_file, args.key_file)
     server = http.server.ThreadingHTTPServer((host, int(port)), Handler)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.daemon_threads = True
+    # Deferred handshake: accept() returns at once and the handler thread
+    # completes TLS under HANDSHAKE_TIMEOUT_S.
+    server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
     print(f"receiver listening on {args.listen}", file=sys.stderr, flush=True)
     server.serve_forever()
 

@@ -628,3 +628,53 @@ fn restore_evicts_or_skips_instead_of_refusing_to_start() {
     wrong[0].evidence_id = "f".repeat(64);
     assert_eq!(EvidenceStore::restore(1 << 20, 40, wrong).err(), Some("invalid restored evidence"));
 }
+
+#[test]
+fn resident_charge_covers_the_real_allocation_of_decoded_payloads() {
+    use tos_health_core::evidence::{record_footprint, value_footprint};
+    // An independent probe decoded 3000 short scalars from the wire (the
+    // vector grew to 4096 slots), inserted rows until the 8 MiB store was
+    // full, and found the array slots alone exceeded the charged bytes.
+    // The charge must cover real capacities, and the kept allocation must be
+    // the charged one.
+    let value_bytes = std::mem::size_of::<serde_json::Value>();
+    let mut store = EvidenceStore::new(8 * 1024 * 1024);
+    for t in 0..200i64 {
+        let mut e = evidence(t + 1);
+        e.payload = json!(vec![0u8; 3000]);
+        let wire = serde_json::to_vec(&e).unwrap();
+        let decoded: tos_health_core::evidence::Evidence = serde_json::from_slice(&wire).unwrap();
+        let slots = match &decoded.payload {
+            serde_json::Value::Array(a) => a.capacity(),
+            _ => unreachable!(),
+        };
+        assert!(slots >= 3000);
+        // The footprint of what the deserializer produced counts its slots.
+        assert!(value_footprint(&decoded.payload) >= slots * value_bytes);
+        assert!(record_footprint(&decoded) >= value_footprint(&decoded.payload));
+        store.insert(decoded).unwrap();
+    }
+    let allocated: usize = store
+        .entries()
+        .map(|e| match &e.record.payload {
+            serde_json::Value::Array(a) => a.capacity() * value_bytes,
+            _ => 0,
+        })
+        .sum();
+    assert!(allocated > 0);
+    assert!(
+        store.resident_bytes() >= allocated,
+        "charged {} < allocated {}",
+        store.resident_bytes(),
+        allocated
+    );
+    assert!(store.resident_bytes() <= 8 * 1024 * 1024);
+    // Strings are charged by capacity as well: a decoded string owning slack
+    // costs at least that slack until it is shrunk on insert.
+    let mut text = String::with_capacity(4096);
+    text.push_str("abc");
+    let v = serde_json::Value::String(text);
+    assert!(value_footprint(&v) >= 4096 + value_bytes);
+    let map = json!({"k": 1});
+    assert!(value_footprint(&map) >= 11 * value_bytes);
+}

@@ -21,8 +21,10 @@ A ``pass`` receipt is honoured only when its evidence path exists (unless
 """
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
+import socket
 import sqlite3
 import stat
 import sys
@@ -315,19 +317,22 @@ def run(args):
         gates.append(gate_retention(state))
         gates.append(gate_notification(state, receipts, now))
         gates.append(gate_ai_lane(state))
-    gates.append(gate_query_broker(args.query_ledger_db, args.query_max_idle_seconds, now))
+    gates.append(gate_query_broker(args.query_control_socket, args.query_service_token_file,
+                                   args.query_max_lag_rows, args.timeout))
+    gates.append(gate_query_ledger_activity(args.query_ledger_db, args.query_max_idle_seconds, now))
     for gate_id, title in RECEIPT_GATES:
         gates.append(gate_receipt(gate_id, title, receipts, base_dir or Path.cwd(), now,
                                   not args.no_check_evidence_paths, args.receipt_max_age_days))
     return gates
 
 
-def gate_query_broker(path, max_idle_seconds, now):
-    """The query broker rewrites its ledger (or its WAL) on every 15-second
-    import tick; a ledger nobody has touched for longer than the allowance
-    means the broker is down or wedged, which no manager rule reports."""
+def gate_query_ledger_activity(path, max_idle_seconds, now):
+    """Write activity on the query broker's ledger (or its WAL). This is a
+    liveness signal only: the compaction tick writes the ledger whether or not
+    imports make progress, so a wedged import passes it. `query_broker` reads
+    the broker's own projection health for that."""
     if not path:
-        return Gate("query_broker", NOT_RUN, "no --query-ledger-db")
+        return Gate("query_ledger_activity", NOT_RUN, "no --query-ledger-db")
     newest = None
     for candidate in (Path(path), Path(str(path) + "-wal"), Path(str(path) + "-shm")):
         try:
@@ -336,11 +341,74 @@ def gate_query_broker(path, max_idle_seconds, now):
             continue
         newest = mtime if newest is None else max(newest, mtime)
     if newest is None:
-        return Gate("query_broker", FAIL, f"query ledger {path} is unreadable")
+        return Gate("query_ledger_activity", FAIL, f"query ledger {path} is unreadable")
     idle = max(0, int(now.timestamp() - newest))
     if idle > max_idle_seconds:
-        return Gate("query_broker", FAIL, f"query ledger last written {idle} s ago (allowance {max_idle_seconds} s): broker down or wedged")
-    return Gate("query_broker", PASS, f"query ledger written {idle} s ago")
+        return Gate("query_ledger_activity", FAIL, f"query ledger last written {idle} s ago (allowance {max_idle_seconds} s): broker down")
+    return Gate("query_ledger_activity", PASS, f"query ledger written {idle} s ago")
+
+
+class _UnixHTTPConnection(http.client.HTTPConnection):
+    """HTTP over a filesystem socket; the broker's control plane has no TCP port."""
+
+    def __init__(self, path, timeout):
+        super().__init__("localhost", timeout=timeout)
+        self._path = path
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._path)
+        self.sock = sock
+
+
+def fetch_projection_health(socket_path, token, timeout):
+    connection = _UnixHTTPConnection(socket_path, timeout)
+    try:
+        connection.request("GET", "/v1/control/projection-health", headers={"Authorization": f"Bearer {token}"})
+        response = connection.getresponse()
+        raw = response.read(65536)
+    finally:
+        connection.close()
+    # A refusal may carry no body; only a 200 is required to be JSON.
+    return response.status, (json.loads(raw) if raw.strip() else None)
+
+
+def gate_query_broker(socket_path, token_file, max_lag_rows, timeout):
+    """The broker's own projection health: it imports M in bounded pages and
+    latches a conflict when a source row changed. `caught_up`, or `lagging`
+    within the row allowance, passes; a conflict, an unavailable source, an
+    identity mismatch, an uninitialized cursor, a lag beyond the allowance or
+    an unreachable socket fails. A broker that retries one page in silence
+    shows here as a growing lag, which a ledger timestamp never would."""
+    if not socket_path:
+        return Gate("query_broker", NOT_RUN, "no --query-control-socket")
+    if not token_file:
+        return Gate("query_broker", FAIL, "--query-control-socket needs --query-service-token-file")
+    try:
+        token = read_secret(token_file)
+    except (OSError, ValueError) as error:
+        return Gate("query_broker", FAIL, f"query service token unreadable: {error}")
+    try:
+        status, body = fetch_projection_health(socket_path, token, timeout)
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        return Gate("query_broker", FAIL, f"query broker unreachable at {socket_path}: {type(error).__name__}")
+    if status == 401:
+        return Gate("query_broker", FAIL, "query broker refused the service token")
+    if not isinstance(body, dict):
+        return Gate("query_broker", FAIL, "query broker projection health malformed")
+    projection = body.get("projection_status")
+    lag = body.get("lag_global_m_seq")
+    try:
+        lag_rows = int(lag) if lag is not None else None
+    except (TypeError, ValueError):
+        lag_rows = None
+    detail = f"projection {projection}, lag {lag if lag is not None else 'unknown'} rows, http {status}"
+    if projection == "caught_up":
+        return Gate("query_broker", PASS, detail)
+    if projection == "lagging" and lag_rows is not None and 0 <= lag_rows <= max_lag_rows:
+        return Gate("query_broker", PASS, detail + f" (allowance {max_lag_rows})")
+    return Gate("query_broker", FAIL, detail)
 
 
 def render(gates):
@@ -361,7 +429,11 @@ def build_parser():
     parser.add_argument("--manager-read-token-file")
     parser.add_argument("--manager-state-file", help="saved state JSON instead of the live endpoint")
     parser.add_argument("--evidence-db", help="manager evidence SQLite file, opened read-only")
-    parser.add_argument("--query-ledger-db", help="query broker ledger SQLite file; its write activity is the liveness signal")
+    parser.add_argument("--query-control-socket", help="query broker control socket; its projection health is the query_broker gate")
+    parser.add_argument("--query-service-token-file", help="token file for the broker's control socket")
+    parser.add_argument("--query-max-lag-rows", type=int, default=1024,
+                        help="rows behind M the broker may be while still passing (default 1024, four import pages)")
+    parser.add_argument("--query-ledger-db", help="query broker ledger SQLite file; its write activity is a liveness signal only")
     parser.add_argument("--query-max-idle-seconds", type=int, default=300,
                         help="the query broker imports every 15 s; longer silence fails the gate")
     parser.add_argument("--evidence-file", help="gate-evidence JSON of receipts")

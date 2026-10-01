@@ -77,6 +77,12 @@ fn cutoff(now_ms: i64, retention_ms: u64) -> Option<i64> {
 /// The generation a source record identifies: the canonical decimal after
 /// the last `:` (archived `epoch:generation` records) or the whole record.
 /// Records without a canonical generation are never deleted.
+/// Deleted observations leave a (sequence, content hash) tombstone so a
+/// reader holding that exact row as a cursor anchor or a retained parent can
+/// prove retention removed it. Only the newest this many tombstones are
+/// kept: a reader whose anchor is older than that window is refused and
+/// must be re-anchored by an operator, which is the fail-closed outcome.
+pub const RETENTION_TOMBSTONE_LIMIT: i64 = 262_144;
 pub fn generation_of(source_record: &str) -> Option<u64> {
     let tail = source_record.rsplit(':').next().unwrap_or(source_record);
     tos_health_core::wire::exact_u64(tail).ok()

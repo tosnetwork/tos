@@ -5,6 +5,7 @@ opened read-only, and the process exit status is checked end to end.
 """
 import datetime as dt
 import http.server
+import socket
 import importlib.util
 import json
 import os
@@ -103,10 +104,11 @@ def test_all_live_gates_pass_and_receipt_gates_pass_with_valid_receipts(tmp_path
     gates = run_doctor(tmp_path, healthy_state(), "--evidence-file", str(evidence),
                        "--evidence-db", str(evidence_db(tmp_path)), "--query-ledger-db", str(ledger))
     assert gates["ai_lane"].status == doctor.NOT_RUN, "ai_unavailable is not bound in this inventory"
-    assert {g.status for g in gates.values() if g.id != "ai_lane"} == {doctor.PASS}
+    assert {g.status for g in gates.values() if g.id not in ("ai_lane", "query_broker")} == {doctor.PASS}
+    assert gates["query_broker"].status == doctor.NOT_RUN
     assert gates["rule_inputs_usable"].detail.startswith("4 rule bindings")
     assert "evidence db quarantined+witness_quarantined empty" in gates["no_quarantined_sources"].detail
-    assert len(gates) == 1 + 5 + 1 + len(doctor.RECEIPT_GATES)
+    assert len(gates) == 1 + 5 + 2 + len(doctor.RECEIPT_GATES)
 
 
 def test_unknown_input_and_missing_evaluation_fail_rule_gate(tmp_path):
@@ -318,25 +320,109 @@ def test_wire_integers(value, expected):
     assert doctor.as_int(value) == expected
 
 
-def test_query_broker_gate_reads_ledger_write_activity(tmp_path):
+def test_query_ledger_activity_gate_reads_ledger_write_activity(tmp_path):
     ledger = tmp_path / "query-ledger.db"
     ledger.write_bytes(b"x")
     stale = doctor.parse_time(NOW).timestamp() - 3600
     os.utime(ledger, (stale, stale))
     gates = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(ledger))
-    assert gates["query_broker"].status == doctor.FAIL  # an hour of silence
+    assert gates["query_ledger_activity"].status == doctor.FAIL  # an hour of silence
     fresh = doctor.parse_time(NOW).timestamp() - 20
     os.utime(ledger, (fresh, fresh))
     gates = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(ledger))
-    assert gates["query_broker"].status == doctor.PASS
+    assert gates["query_ledger_activity"].status == doctor.PASS
     # The WAL counts as write activity even when the main file is older.
     os.utime(ledger, (stale, stale))
     wal = tmp_path / "query-ledger.db-wal"
     wal.write_bytes(b"w")
     os.utime(wal, (fresh, fresh))
     gates = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(ledger))
-    assert gates["query_broker"].status == doctor.PASS
+    assert gates["query_ledger_activity"].status == doctor.PASS
+    gates = run_doctor(tmp_path, healthy_state())
+    assert gates["query_ledger_activity"].status == doctor.NOT_RUN
+    missing = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(tmp_path / "absent.db"))
+    assert missing["query_ledger_activity"].status == doctor.FAIL
+
+
+def _projection_health_server(tmp_path, answers, token):
+    """A broker stand-in on a filesystem socket answering projection-health."""
+    socket_path = str(tmp_path / "control.sock")
+    if len(socket_path) > 100:  # AF_UNIX path limit
+        socket_path = os.path.join("/tmp", f"nhm-doctor-{os.getpid()}.sock")
+    calls = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            calls.append((self.path, self.headers.get("authorization")))
+            if self.headers.get("authorization") != f"Bearer {token}":
+                self.send_response(401); self.end_headers(); return
+            status, body = answers.pop(0)
+            raw = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *a):
+            pass
+
+    class UnixServer(http.server.HTTPServer):
+        address_family = socket.AF_UNIX
+
+        def server_bind(self):
+            self.socket.bind(self.server_address)
+
+    server = UnixServer(socket_path, Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, socket_path, calls
+
+
+def test_query_broker_gate_reads_projection_health_over_the_control_socket(tmp_path):
+    token_file = tmp_path / "service.token"
+    token_file.write_text("s" * 32)
+    token_file.chmod(0o600)
+    answers = [
+        (200, {"projection_status": "caught_up", "lag_global_m_seq": "0", "manager_conflicted": False}),
+        (200, {"projection_status": "lagging", "lag_global_m_seq": "300", "manager_conflicted": False}),
+        (200, {"projection_status": "lagging", "lag_global_m_seq": "148424", "manager_conflicted": False}),
+        (503, {"projection_status": "conflict", "lag_global_m_seq": None, "manager_conflicted": True}),
+        (503, {"projection_status": "source_unavailable", "lag_global_m_seq": None, "manager_conflicted": False}),
+    ]
+    server, socket_path, calls = _projection_health_server(tmp_path, answers, "s" * 32)
+    try:
+        common = ["--query-control-socket", socket_path, "--query-service-token-file", str(token_file)]
+        gates = run_doctor(tmp_path, healthy_state(), *common)
+        assert gates["query_broker"].status == doctor.PASS and "caught_up" in gates["query_broker"].detail
+        gates = run_doctor(tmp_path, healthy_state(), *common)
+        assert gates["query_broker"].status == doctor.PASS, "four pages behind is within the allowance"
+        gates = run_doctor(tmp_path, healthy_state(), *common)
+        assert gates["query_broker"].status == doctor.FAIL, "a broker wedged for hours shows as a lag no allowance covers"
+        assert "148424" in gates["query_broker"].detail
+        gates = run_doctor(tmp_path, healthy_state(), *common)
+        assert gates["query_broker"].status == doctor.FAIL and "conflict" in gates["query_broker"].detail
+        gates = run_doctor(tmp_path, healthy_state(), *common)
+        assert gates["query_broker"].status == doctor.FAIL and "source_unavailable" in gates["query_broker"].detail
+        assert all(path == "/v1/control/projection-health" for path, _ in calls)
+        # A wrong token is a failing gate, not a pass by absence.
+        wrong = tmp_path / "wrong.token"
+        wrong.write_text("w" * 32)
+        wrong.chmod(0o600)
+        gates = run_doctor(tmp_path, healthy_state(), "--query-control-socket", socket_path,
+                           "--query-service-token-file", str(wrong))
+        assert gates["query_broker"].status == doctor.FAIL and "refused" in gates["query_broker"].detail
+    finally:
+        server.shutdown()
+        server.server_close()
+        try:
+            os.unlink(socket_path)
+        except OSError:
+            pass
+    # Nobody listening: fail, never not_run.
+    gates = run_doctor(tmp_path, healthy_state(), "--query-control-socket", socket_path,
+                       "--query-service-token-file", str(token_file))
+    assert gates["query_broker"].status == doctor.FAIL and "unreachable" in gates["query_broker"].detail
+    # Without the socket flag the gate is honestly not run.
     gates = run_doctor(tmp_path, healthy_state())
     assert gates["query_broker"].status == doctor.NOT_RUN
-    missing = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(tmp_path / "absent.db"))
-    assert missing["query_broker"].status == doctor.FAIL

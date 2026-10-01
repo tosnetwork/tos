@@ -115,7 +115,8 @@ fn count(conn: &Connection, table: &str) -> Result<u64> {
     .map_err(err)?;
     u64::try_from(n).map_err(err)
 }
-type ScannedObservation = (i64, String, String, String, String, String, String, Option<i64>);
+type ScannedObservation =
+    (i64, String, String, String, String, String, String, Option<i64>, String);
 /// Sequence below which rows of a (node, scope, source) group may go: the
 /// newest `RETAINED_ROWS_PER_SOURCE` rows are always kept. `None` means the
 /// group has too few rows to delete any.
@@ -162,7 +163,7 @@ fn retain_observations(
             let mut scan = conn
                 .prepare(
                     "SELECT store_seq,node,scope,process_epoch,source_epoch,source,source_record,
-                     json_extract(body,'$.record.received_at_ms')
+                     json_extract(body,'$.record.received_at_ms'),content_hash
                      FROM observations WHERE store_seq>?1 ORDER BY store_seq LIMIT ?2",
                 )
                 .map_err(err)?;
@@ -177,6 +178,7 @@ fn retain_observations(
                         r.get(5)?,
                         r.get(6)?,
                         r.get(7)?,
+                        r.get(8)?,
                     ))
                 })
                 .map_err(err)?;
@@ -208,7 +210,17 @@ fn retain_observations(
         }
         let tx = conn.transaction().map_err(err)?;
         let mut seals: BTreeMap<[String; 5], (u64, u64, i64)> = BTreeMap::new();
-        for (seq, node, scope, process_epoch, source_epoch, source, source_record, _) in candidates
+        for (
+            seq,
+            node,
+            scope,
+            process_epoch,
+            source_epoch,
+            source,
+            source_record,
+            _,
+            content_hash,
+        ) in candidates
         {
             let Some(generation) = generation_of(&source_record) else {
                 pass.unsealable_kept = pass.unsealable_kept.saturating_add(1);
@@ -219,6 +231,14 @@ fn retain_observations(
             if deleted != 1 {
                 return Err("retention candidate vanished inside its transaction".into());
             }
+            // The exact row this pass removed, so a reader that still names
+            // it (cursor anchor, retained parent) can tell this deletion from
+            // any other.
+            tx.execute(
+                "INSERT OR REPLACE INTO retention_tombstones(store_seq,content_hash) VALUES(?1,?2)",
+                params![seq, content_hash],
+            )
+            .map_err(err)?;
             let entry = seals
                 .entry([node, scope, process_epoch, source_epoch, source])
                 .or_insert((generation, 0, seq));
@@ -264,6 +284,14 @@ fn retain_observations(
             )
             .map_err(err)?;
         }
+        // Keep only the newest tombstones; sequence order is deletion-age
+        // order because retention walks sequences upward.
+        tx.execute(
+            "DELETE FROM retention_tombstones WHERE store_seq < (
+                 SELECT store_seq FROM retention_tombstones ORDER BY store_seq DESC LIMIT 1 OFFSET ?1)",
+            [crate::retention::RETENTION_TOMBSTONE_LIMIT - 1],
+        )
+        .map_err(err)?;
         tx.commit().map_err(err)?;
         // Deleted rows changed the group floors; recompute lazily next page.
         memo.clear();
@@ -550,7 +578,8 @@ impl EvidenceDb {
             PRIMARY KEY(node,scope,process_epoch,source_epoch,source));
             CREATE TABLE IF NOT EXISTS witness_retention_seals(observer_epoch TEXT NOT NULL,endpoint TEXT NOT NULL,
             source_epoch TEXT NOT NULL,max_generation TEXT NOT NULL,deleted_rows INTEGER NOT NULL,
-            PRIMARY KEY(observer_epoch,endpoint,source_epoch));").map_err(err)?;
+            PRIMARY KEY(observer_epoch,endpoint,source_epoch));
+            CREATE TABLE IF NOT EXISTS retention_tombstones(store_seq INTEGER PRIMARY KEY,content_hash TEXT NOT NULL);").map_err(err)?;
         Ok(Self {
             conn,
             path: path.into(),
@@ -881,7 +910,9 @@ impl EvidenceDb {
             return Err("invalid source epoch".into());
         }
         // Reuse the bounded metadata checks; temporary validation never changes the database.
-        EvidenceStore::new(65_536).insert(value.record.clone()).map_err(err)?;
+        EvidenceStore::new(tos_health_core::evidence::MAX_RECORD_RESIDENT_BYTES)
+            .insert(value.record.clone())
+            .map_err(err)?;
         let mut canonical = value.clone();
         canonical.record.received_at_ms = 0;
         let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).map_err(err)?));

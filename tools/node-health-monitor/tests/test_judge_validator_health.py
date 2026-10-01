@@ -469,3 +469,32 @@ def test_contract_too_small_for_the_inventory_is_unavailable_not_rejected(tmp_pa
     small.write_text(json.dumps(schema))
     _answer_with(monkeypatch, [{"claim": "gc lag", "basis": "observed", "evidence_ids": [p]} for p in parents])
     assert judge.model_explanation(_model_args(tmp_path, small), report)["result"] == "accepted"
+
+
+def test_bounded_child_stdin_write_honours_the_deadline():
+    """A child that never reads its stdin must not hold the judge past the
+    declared timeout: the pipe buffer fills long before 1 MiB is written."""
+    import sys as _sys
+    import time as _time
+    judge = load_module()
+    started = _time.monotonic()
+    result = judge.run_bounded([_sys.executable, "-c", "import time; time.sleep(10)"], b"x" * 1_048_576, 0.3)
+    elapsed = _time.monotonic() - started
+    assert result is None, "the child neither finished nor read its input; it must be killed"
+    assert elapsed < 1.5, f"stdin write blocked past the deadline: {elapsed:.2f}s"
+    # No sleeping child survives the call.
+    import subprocess as _sp
+    survivors = _sp.run(["pgrep", "-f", "import time; time.sleep(10)"], capture_output=True, text=True).stdout.split()
+    assert survivors == [], survivors
+
+
+def test_bounded_child_chunked_stdin_delivers_every_byte():
+    import hashlib as _hashlib
+    import os as _os
+    import sys as _sys
+    judge = load_module()
+    payload = _os.urandom(1_048_576)
+    echo = judge.run_bounded([_sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"],
+                             payload, 10, stdout_cap=2_000_000)
+    assert echo is not None and echo.returncode == 0
+    assert _hashlib.sha256(echo.stdout).hexdigest() == _hashlib.sha256(payload).hexdigest()

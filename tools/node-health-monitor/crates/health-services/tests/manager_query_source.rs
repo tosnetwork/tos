@@ -619,10 +619,11 @@ fn row(epoch: &str) -> DurableEvidence {
 
 #[test]
 fn production_process_parent_bound_is_below_query_resident_charge() {
-    // The production store charges every projected row its JSON bytes plus
-    // 2048. Exercise the short live-style source and the maximal accepted
-    // source epoch/missing-field profile; a 32 MiB test store does not model
-    // the production 4096-parent boundary.
+    // A parent body is at most a few bytes larger than its projected row's
+    // wire length, so the parent byte bound is never the first thing a page
+    // meets. The parent count bound can be, now that the resident store is
+    // charged by decoded footprint; the ledger evicts resident rows to make
+    // room rather than refusing (see the parent-room tests below).
     for wide in [false, true] {
         let epoch = if wide { "e".repeat(128) } else { "epoch-1".into() };
         let mut evidence = row(&epoch);
@@ -2147,7 +2148,7 @@ async fn broker_parent_index_overflow_latches_refusal_without_deadlocking_ledger
 }
 
 #[test]
-fn anchor_swept_by_retention_reanchors_but_a_missing_anchor_without_a_seal_is_refused() {
+fn anchor_swept_by_retention_reanchors_but_any_other_missing_anchor_is_refused() {
     let directory = std::env::temp_dir().join(format!(
         "nhm-anchor-sweep-{}-{}",
         std::process::id(),
@@ -2160,25 +2161,43 @@ fn anchor_swept_by_retention_reanchors_but_a_missing_anchor_without_a_seal_is_re
     manager.bind_network(&network).unwrap();
     manager.insert(row("edge-epoch-anchor-1")).unwrap();
     let page = read_process_projection_page(&manager_path, &network, None, &[]).unwrap();
-    let (anchor_seq, _) = page.cursor.anchor.clone().unwrap();
+    let (anchor_seq, anchor_hash) = page.cursor.anchor.clone().unwrap();
     manager.insert(row("edge-epoch-anchor-2")).unwrap();
     drop(manager);
-    // The anchor row vanishes with no retention seal: a rewrite, refused.
+    let seq = i64::try_from(anchor_seq).unwrap();
+    // The anchor row vanishes with no tombstone: a rewrite, refused.
     let sql = rusqlite::Connection::open(&manager_path).unwrap();
+    sql.execute("DELETE FROM observations WHERE store_seq=?1", [seq]).unwrap();
+    assert_eq!(
+        read_process_projection_page(&manager_path, &network, Some(&page.cursor), &[]).err(),
+        Some("M projection anchor missing".to_owned())
+    );
+    // A per-identity seal that swept past the sequence is not proof: it
+    // does not name this row. Still refused.
     sql.execute(
-        "DELETE FROM observations WHERE store_seq=?1",
-        [i64::try_from(anchor_seq).unwrap()],
+        "INSERT INTO retention_seals(node,scope,process_epoch,source_epoch,source,max_generation,deleted_rows,last_deleted_seq)
+         VALUES('v1','node','e','e','process','1',1,?1)",
+        [seq],
     )
     .unwrap();
     assert_eq!(
         read_process_projection_page(&manager_path, &network, Some(&page.cursor), &[]).err(),
         Some("M projection anchor missing".to_owned())
     );
-    // A seal that swept past the anchor's sequence proves bounded retention did it.
+    // A tombstone at this sequence with another hash is not this row either.
     sql.execute(
-        "INSERT INTO retention_seals(node,scope,process_epoch,source_epoch,source,max_generation,deleted_rows,last_deleted_seq)
-         VALUES('v1','node','e','e','process','1',1,?1)",
-        [i64::try_from(anchor_seq).unwrap()],
+        "INSERT INTO retention_tombstones(store_seq,content_hash) VALUES(?1,?2)",
+        rusqlite::params![seq, "f".repeat(64)],
+    )
+    .unwrap();
+    assert_eq!(
+        read_process_projection_page(&manager_path, &network, Some(&page.cursor), &[]).err(),
+        Some("M projection anchor missing".to_owned())
+    );
+    // The exact tombstone retention writes proves bounded retention did it.
+    sql.execute(
+        "UPDATE retention_tombstones SET content_hash=?1 WHERE store_seq=?2",
+        rusqlite::params![anchor_hash, seq],
     )
     .unwrap();
     drop(sql);
@@ -2199,4 +2218,196 @@ fn anchor_swept_by_retention_reanchors_but_a_missing_anchor_without_a_seal_is_re
         Some("M projection anchor changed".to_owned())
     );
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// `count` process rows written straight into M's table in one transaction,
+/// as the paging tests above do; one FULL commit per row would dominate.
+fn bulk_process_rows(manager_path: &std::path::Path, count: u32) {
+    let mut conn = rusqlite::Connection::open(manager_path).unwrap();
+    let tx = conn.transaction().unwrap();
+    for index in 1..=count {
+        let value = row(&format!("epoch-{index}"));
+        let mut canonical = value.clone();
+        canonical.record.received_at_ms = 0;
+        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap()));
+        let evidence = &value.record;
+        tx.execute(
+            "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![evidence.node_id,evidence.scope_id,evidence.process_epoch,
+                value.source_epoch,evidence.source_id,evidence.source_record_id,digest,
+                serde_json::to_string(&value).unwrap()],
+        ).unwrap();
+    }
+    tx.commit().unwrap();
+}
+
+fn ledger_count(path: &std::path::Path, sql: &str) -> i64 {
+    rusqlite::Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap()
+}
+
+/// Imports page after page through the ledger until M is caught up or the
+/// first refused page; returns the pages imported and that error.
+fn import_pages(
+    manager_path: &std::path::Path,
+    network: &str,
+    ledger: &mut QueryLedger,
+    store: &mut EvidenceStore,
+    max_pages: usize,
+) -> (usize, Option<String>, Vec<String>) {
+    let mut previous: Option<ManagerCursor> = None;
+    let mut pages = 0;
+    let mut last_ids = Vec::new();
+    while pages < max_pages {
+        let page =
+            read_process_projection_page(manager_path, network, previous.as_ref(), &[]).unwrap();
+        if let Err(error) = ledger.insert_projection_page(store, &page.records) {
+            return (pages, Some(error.to_string()), last_ids);
+        }
+        pages += 1;
+        let all: Vec<String> = store.entries().map(|e| e.evidence_id.clone()).collect();
+        last_ids = all[all.len().saturating_sub(page.records.len())..].to_vec();
+        if page.caught_up {
+            break;
+        }
+        previous = Some(page.cursor);
+    }
+    (pages, None, last_ids)
+}
+
+#[test]
+fn parent_bound_evicts_oldest_resident_rows_instead_of_wedging_the_import() {
+    // Live finding: the broker stopped importing for an hour and forty
+    // minutes. Its resident store could hold more derived rows than the
+    // retained-parent bound allowed parents, the bound only refused, and
+    // nothing ever released a parent, so every tick failed the same way.
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-parent-room-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let manager = EvidenceDb::open(&manager_path, 64 * 1024 * 1024).unwrap();
+    drop(manager);
+    let mut bind = EvidenceDb::open(&manager_path, 64 * 1024 * 1024).unwrap();
+    bind.bind_network(&network).unwrap();
+    drop(bind);
+    bulk_process_rows(&manager_path, 4400);
+    let mut ledger = QueryLedger::open(&ledger_path).unwrap();
+    // Large enough that the parent bound is the one that fills first.
+    let mut store = EvidenceStore::new(64 * 1024 * 1024);
+    let first = read_process_projection_page(&manager_path, &network, None, &[]).unwrap();
+    ledger.insert_projection_page(&mut store, &first.records).unwrap();
+    let first_ids: Vec<String> = store.entries().map(|e| e.evidence_id.clone()).collect();
+    assert_eq!(first_ids.len(), 256);
+    let (pages, error, last_ids) =
+        import_pages(&manager_path, &network, &mut ledger, &mut store, 64);
+    assert_eq!(error, None, "the import must not wedge on the parent bound");
+    assert!(pages >= 17, "{pages}");
+    let origins = ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_origins");
+    let origin_bytes =
+        ledger_count(&ledger_path, "SELECT COALESCE(SUM(length(body)),0) FROM query_origins");
+    assert!(origins <= 4096 && origins > 4000, "{origins}");
+    assert!(origin_bytes <= 8 * 1024 * 1024);
+    let resident = store.entries().count();
+    assert_eq!(
+        i64::try_from(resident).unwrap(),
+        ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_evidence"),
+        "store and ledger evict the same rows"
+    );
+    assert!(resident <= 4096, "{resident}");
+    assert_eq!(
+        ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_projection_origin"),
+        i64::try_from(resident).unwrap()
+    );
+    assert_eq!(
+        ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_origins WHERE origin_id NOT IN (SELECT origin_id FROM query_projection_origin)"),
+        0,
+        "no dangling parents"
+    );
+    let still: std::collections::BTreeSet<_> =
+        store.entries().map(|e| e.evidence_id.clone()).collect();
+    assert!(first_ids.iter().all(|id| !still.contains(id)), "the oldest derived rows are gone");
+    assert!(last_ids.iter().all(|id| still.contains(id)), "the newest derived rows remain");
+    let conn = rusqlite::Connection::open(&ledger_path).unwrap();
+    for id in &first_ids {
+        let present: i64 = conn
+            .query_row("SELECT COUNT(*) FROM query_evidence WHERE evidence_id=?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(present, 0);
+    }
+    drop(conn);
+    // Watermarks are never rewound: the store's sequence counts every import.
+    assert_eq!(store.watermark(), 4400);
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn an_active_grant_pinning_the_oldest_rows_pauses_the_import_instead_of_evicting_parents() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-parent-pin-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut bind = EvidenceDb::open(&manager_path, 64 * 1024 * 1024).unwrap();
+    bind.bind_network(&network).unwrap();
+    drop(bind);
+    bulk_process_rows(&manager_path, 4400);
+    let mut ledger = QueryLedger::open(&ledger_path).unwrap();
+    let mut store = EvidenceStore::new(64 * 1024 * 1024);
+    // Exactly the parent bound: sixteen full pages.
+    let (pages, error, _) = import_pages(&manager_path, &network, &mut ledger, &mut store, 16);
+    assert_eq!((pages, error), (16, None));
+    assert_eq!(ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_origins"), 4096);
+    let now = tos_health_services::query_ledger::boot_millis().unwrap();
+    let mut grant = Grant::new(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into(),
+        "aura".into(),
+        network.clone(),
+        &[7; 32],
+        BTreeSet::from(["v1".into()]),
+        BTreeSet::from(["node".into()]),
+        1_000,
+        2_000,
+        now,
+        1,
+    )
+    .unwrap();
+    grant.expires_monotonic_ms = now + 180_000;
+    ledger.create(&grant, now).unwrap();
+    let before_store: Vec<String> = store.entries().map(|e| e.evidence_id.clone()).collect();
+    let before_evidence = ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_evidence");
+    let mut previous: Option<ManagerCursor> = None;
+    for _ in 0..16 {
+        let page =
+            read_process_projection_page(&manager_path, &network, previous.as_ref(), &[]).unwrap();
+        previous = Some(page.cursor);
+    }
+    let next =
+        read_process_projection_page(&manager_path, &network, previous.as_ref(), &[]).unwrap();
+    assert_eq!(next.records.len(), 256);
+    let refused = ledger.insert_projection_page(&mut store, &next.records).unwrap_err();
+    assert_eq!(refused.to_string(), "active grant evidence retention");
+    assert!(refused.is_proven_recoverable(), "a pause, not a conflict");
+    let after_store: Vec<String> = store.entries().map(|e| e.evidence_id.clone()).collect();
+    assert_eq!(after_store, before_store, "nothing evicted from the store");
+    assert_eq!(ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_evidence"), before_evidence);
+    assert_eq!(ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_origins"), 4096);
+    // Once the grant is gone the same page evicts and imports.
+    ledger.revoke(&grant.run_id).unwrap();
+    ledger.insert_projection_page(&mut store, &next.records).unwrap();
+    assert!(ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_origins") <= 4096);
+    assert!(store.entries().count() < 4096 + 256);
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
 }

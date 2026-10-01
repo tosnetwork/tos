@@ -411,6 +411,82 @@ fn a_retained_parent_missing_without_any_seal_is_still_refused() {
     );
 }
 
+#[test]
+fn unrelated_legitimate_deletions_do_not_excuse_a_removed_anchor() {
+    // The independent review's control: real retention deletes other rows
+    // (a genuine seal and genuine tombstones appear), then the cursor's
+    // anchor row is removed by something else. The anchor is not in the
+    // deleted set, so the cursor must be refused.
+    let t = Temp::new();
+    let path = t.0.join("evidence.db");
+    let mut db = EvidenceDb::open(&path, 4_194_304).unwrap();
+    db.bind_network(NETWORK).unwrap();
+    let now = now_ms();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute(
+        "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+         VALUES('v1','node','boot:4242:100','diag','diagnostic','diag:1',?1,'{}')",
+        ["d".repeat(64)],
+    )
+    .unwrap();
+    let prior = read_process_projection_page(&path, NETWORK, None, &[]).unwrap();
+    assert_eq!(prior.cursor.anchor, Some((1, "d".repeat(64))));
+    for generation in 1..=9 {
+        let mut row = process_row(generation, now - 10 * HOUR);
+        row.record.node_id = "v2".into();
+        row.record.payload["source"]["node_id"] = "v2".into();
+        db.insert(row).unwrap();
+    }
+    let pass = db.retain(&policy(RETENTION_MIN_MS), now).unwrap();
+    assert_eq!(pass.observations_deleted, 1, "one unrelated row expired legitimately");
+    assert_eq!(table_count(&path, "retention_tombstones"), 1);
+    conn.execute("DELETE FROM observations WHERE store_seq=1", []).unwrap();
+    drop(conn);
+    assert_eq!(
+        read_process_projection_page(&path, NETWORK, Some(&prior.cursor), &[]).unwrap_err(),
+        "M projection anchor missing"
+    );
+}
+
+#[test]
+fn a_kept_parent_below_the_sealed_generation_that_vanishes_is_not_an_expiry() {
+    // A late-arriving row can carry a generation below what retention sealed
+    // and still be young enough to keep. If it then disappears, a generation
+    // seal would vouch for it; only the exact tombstone may.
+    let t = Temp::new();
+    let path = t.0.join("evidence.db");
+    let mut db = EvidenceDb::open(&path, 4_194_304).unwrap();
+    db.bind_network(NETWORK).unwrap();
+    let now = now_ms();
+    for generation in 1..=12 {
+        // Generation 2 arrived late: it is young while its neighbours are old.
+        let received = if generation == 2 { now - 60_000 } else { now - 10 * HOUR };
+        db.insert(process_row(generation, received)).unwrap();
+    }
+    let first = read_process_projection_page(&path, NETWORK, None, &[]).unwrap();
+    let retained: Vec<_> = first.records.iter().map(|(row, _)| row.clone()).collect();
+    let pass = db.retain(&policy(RETENTION_MIN_MS), now).unwrap();
+    assert_eq!(pass.observations_deleted, 3, "generations 1, 3 and 4 are old and below the floor");
+    assert_eq!(
+        db.evidence_seal("v1", "node", "boot:4242:100", "epoch-1", "process").unwrap(),
+        Some(4),
+        "the seal covers generation 2 although retention kept that row"
+    );
+    let page =
+        read_process_projection_page(&path, NETWORK, Some(&first.cursor), &retained).unwrap();
+    assert_eq!(page.expired_retained.len(), 3);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        conn.execute("DELETE FROM observations WHERE source_record='epoch-1:2'", []).unwrap(),
+        1
+    );
+    drop(conn);
+    assert_eq!(
+        read_process_projection_page(&path, NETWORK, Some(&first.cursor), &retained).unwrap_err(),
+        "retained M parent missing"
+    );
+}
+
 fn query_state(ledger: &std::path::Path, manager: &std::path::Path) -> ObservabilityState {
     ObservabilityState::new(
         Inventory {

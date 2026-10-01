@@ -26,6 +26,11 @@ use tos_health_core::{
     query::{Grant, QueryService, TOOLS},
 };
 
+/// Resident bound of the query service's evidence store, in bytes of real
+/// decoded footprint. 32 MiB holds about eight minutes of seven nodes'
+/// native and process rows at their actual in-memory size.
+pub const QUERY_RESIDENT_EVIDENCE_BYTES: usize = 32 * 1024 * 1024;
+
 pub struct Data {
     pub store: EvidenceStore,
     pub grants: BTreeMap<String, Grant>,
@@ -53,6 +58,9 @@ pub struct ObservabilityState {
     pub manager_projection_reads: Arc<AtomicU64>,
     pub started: Instant,
     pub epoch: String,
+    /// Resident bound of the evidence store, applied again when a durable
+    /// ledger is restored into it.
+    resident_evidence_bytes: usize,
 }
 impl ObservabilityState {
     pub fn new(
@@ -67,7 +75,9 @@ impl ObservabilityState {
         }
         Ok(Self {
             data: Arc::new(Mutex::new(Data {
-                store: EvidenceStore::new(8 * 1024 * 1024),
+                // Charged by real capacity (a decoded record is about eight
+                // times its wire size), so this is the resident bound it says.
+                store: EvidenceStore::new(QUERY_RESIDENT_EVIDENCE_BYTES),
                 grants: BTreeMap::new(),
                 manager_conflicted: false,
                 manager_caught_up: true,
@@ -87,6 +97,7 @@ impl ObservabilityState {
             manager_control_db: None,
             manager_projection_reads: Arc::new(AtomicU64::new(0)),
             started: Instant::now(),
+            resident_evidence_bytes: QUERY_RESIDENT_EVIDENCE_BYTES,
             epoch: hex(&random_token()?),
         })
     }
@@ -94,12 +105,32 @@ impl ObservabilityState {
         // Match the durable grant ledger's restart-stable clock domain.
         crate::query_ledger::boot_millis().unwrap_or(u64::MAX)
     }
+    /// Use a different resident bound for the evidence store. Must be called
+    /// before `with_query_ledger`, which restores the ledger into a store of
+    /// this size; a bound below one maximal record would refuse legitimate
+    /// rows and is rejected.
+    pub fn with_resident_evidence_bytes(self, bytes: usize) -> Result<Self, String> {
+        if bytes < tos_health_core::evidence::MAX_RECORD_RESIDENT_BYTES {
+            return Err("resident evidence bound below one maximal record".into());
+        }
+        if self.query_ledger.is_some() {
+            return Err("resident evidence bound must be set before the query ledger".into());
+        }
+        {
+            let mut data = self.data.lock().map_err(|_| "query state unavailable")?;
+            if data.store.entries().next().is_some() {
+                return Err("resident evidence bound must be set on an empty store".into());
+            }
+            data.store = EvidenceStore::new(bytes);
+        }
+        Ok(Self { resident_evidence_bytes: bytes, ..self })
+    }
     pub fn with_query_ledger(mut self, path: &std::path::Path) -> Result<Self, String> {
         let ledger = QueryLedger::open(path)?;
         let active = ledger.load_active_all(self.now())?;
         let mut data = self.data.lock().map_err(|_| "query state unavailable")?;
         let floor = active.iter().map(|g| g.watermark).max().unwrap_or(0);
-        let mut restored = ledger.load_evidence(8 * 1024 * 1024)?;
+        let mut restored = ledger.load_evidence(self.resident_evidence_bytes)?;
         if restored.watermark() < floor && restored.entries().next().is_none() {
             restored.advance_watermark_floor(floor).map_err(str::to_owned)?;
         } else if restored.watermark() < floor {
@@ -245,18 +276,23 @@ fn import_manager_into(
         // Parents M expired under a retention seal are a bounded, legitimate
         // loss of history, not a changed source: drop their derived rows and
         // keep serving. Ledger first, so a crash here never leaves a derived
-        // row whose parent is gone from both M and Q.
+        // row whose parent is gone from both M and Q. While a grant of this
+        // boot is active the ledger defers instead, so the grant keeps the
+        // fixed watermark it was issued at; the parents stay retained and the
+        // next pass offers them again.
         let expired: Vec<String> = page.expired_retained.iter().cloned().collect();
-        let evicted =
-            ledger.lock().map_err(|_| "query ledger unavailable")?.evict_expired_origins(&expired);
-        let evicted = match evicted {
+        let outcome = ledger
+            .lock()
+            .map_err(|_| "query ledger unavailable")?
+            .evict_expired_origins(&expired, state.now());
+        let outcome = match outcome {
             Ok(value) => value,
             Err(error) => {
                 block_manager_queries(state, data)?;
                 return Err(error);
             }
         };
-        for evidence_id in &evicted {
+        for evidence_id in &outcome.evicted {
             data.store.remove(evidence_id);
         }
     }

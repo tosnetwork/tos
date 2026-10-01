@@ -286,33 +286,81 @@ class BoundedResult:
 
 
 def run_bounded(command, stdin_bytes, timeout_s, stdout_cap=MAX_MODEL_OUTPUT_BYTES + 1, stderr_cap=16384):
-    """Run a child with streamed, capped output: stdout is read up to one byte
-    past the accepted maximum and stderr up to `stderr_cap`; a child that
-    exceeds either, or the deadline, is killed. Nothing beyond the caps is ever
-    buffered, so a misbehaving model process cannot grow this process."""
+    """Run a child with streamed, capped output under one deadline that
+    starts before the spawn and covers the stdin write as well: the input is
+    pumped in chunks from the same selector loop, so a child that never reads
+    cannot hold this process on a full pipe. stdout is read up to one byte past
+    the accepted maximum and stderr up to `stderr_cap`; a child that exceeds
+    either, or the deadline, is killed together with its whole process group,
+    so the helpers it spawned do not outlive it. Nothing beyond the caps is
+    ever buffered."""
     import selectors
+    import signal
     import time as _time
+    deadline = _time.monotonic() + timeout_s
     try:
-        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, start_new_session=True)
     except OSError as error:
         return BoundedResult(127, b"", str(error).encode())
-    try:
-        child.stdin.write(stdin_bytes)
-        child.stdin.close()
-    except (BrokenPipeError, OSError):
-        pass
+
+    def kill_group():
+        try:
+            os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            child.kill()
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+    def close_streams():
+        for stream in (child.stdin, child.stdout, child.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except OSError:
+                pass
+
     out, err = bytearray(), bytearray()
     caps = {child.stdout: (out, stdout_cap), child.stderr: (err, stderr_cap)}
+    pending = memoryview(stdin_bytes)
     selector = selectors.DefaultSelector()
     for stream in caps:
         selector.register(stream, selectors.EVENT_READ)
-    deadline = _time.monotonic() + timeout_s
+    stdin_open = True
+    if pending.nbytes == 0:
+        child.stdin.close()
+        stdin_open = False
+    else:
+        selector.register(child.stdin, selectors.EVENT_WRITE)
     overflow = False
     while caps and not overflow:
         remaining = deadline - _time.monotonic()
         if remaining <= 0:
             break
-        for key, _ in selector.select(timeout=min(remaining, 1.0)):
+        for key, events in selector.select(timeout=min(remaining, 1.0)):
+            if key.fileobj is child.stdin:
+                # Write what the pipe accepts right now, never more than one
+                # chunk per wake-up, and stop at the first error: a child
+                # that closed its input gets no more of it.
+                try:
+                    written = os.write(child.stdin.fileno(), pending[:65536])
+                    pending = pending[written:]
+                except (BrokenPipeError, OSError):
+                    pending = pending[:0]
+                if pending.nbytes == 0:
+                    selector.unregister(child.stdin)
+                    try:
+                        child.stdin.close()
+                    except OSError:
+                        pass
+                    stdin_open = False
+                continue
             chunk = os.read(key.fileobj.fileno(), 65536)
             buffer, cap = caps[key.fileobj]
             if not chunk:
@@ -323,29 +371,22 @@ def run_bounded(command, stdin_bytes, timeout_s, stdout_cap=MAX_MODEL_OUTPUT_BYT
             if len(buffer) >= cap and len(chunk) > 0 and (len(buffer) + len(chunk)) > cap:
                 overflow = True
                 break
-    timed_out = caps and not overflow
+    selector.close()
+    # A child that closed its outputs is finished even if it left input
+    # unread; only outputs still open at the deadline mean a timeout.
+    timed_out = bool(caps)
     if overflow or timed_out:
-        child.kill()
-        try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-        for stream in (child.stdout, child.stderr):
-            try:
-                stream.close()
-            except OSError:
-                pass
+        kill_group()
+        close_streams()
         return None
+    remaining = max(0.0, deadline - _time.monotonic())
     try:
-        child.wait(timeout=5)
+        child.wait(timeout=min(5.0, max(remaining, 0.05)))
     except subprocess.TimeoutExpired:
-        child.kill()
+        kill_group()
+        close_streams()
         return None
-    for stream in (child.stdout, child.stderr):
-        try:
-            stream.close()
-        except OSError:
-            pass
+    close_streams()
     return BoundedResult(child.returncode, bytes(out), bytes(err))
 
 

@@ -33,9 +33,20 @@ pub struct EvidenceStore {
 }
 /// Upper bound on decoded payload nodes per evidence record.
 pub const MAX_PAYLOAD_NODES: usize = 4096;
-const VALUE_NODE_BYTES: usize = 32;
-const STRING_HEAD_BYTES: usize = 24;
-const MAP_ENTRY_BYTES: usize = 48;
+/// Inline size of one decoded JSON value (an array slot or a map value).
+const VALUE_BYTES: usize = std::mem::size_of::<serde_json::Value>();
+/// Inline size of an owned string handle (pointer, capacity, length).
+const STRING_HEAD_BYTES: usize = std::mem::size_of::<String>();
+/// One ordered-map node holds up to eleven entries; nodes other than the
+/// root are at least half full, so entries are charged in half-node units.
+const MAP_NODE_BYTES: usize = 11 * (STRING_HEAD_BYTES + VALUE_BYTES) + 12 * 8 + 16;
+const MAP_ENTRIES_PER_CHARGED_NODE: usize = 6;
+/// Largest resident charge one record can carry: every node a one-entry
+/// map on its own node, plus the wire bound and the per-record overhead. A
+/// validation probe must allow at least this much or it refuses legitimate
+/// records; a decoded record is routinely eight times its wire size.
+pub const MAX_RECORD_RESIDENT_BYTES: usize =
+    MAX_PAYLOAD_NODES * (MAP_NODE_BYTES + VALUE_BYTES) + 32_768 + 2048;
 
 /// Number of `serde_json::Value` nodes in a tree (scalars included).
 pub fn value_nodes(value: &serde_json::Value) -> usize {
@@ -50,30 +61,69 @@ pub fn value_nodes(value: &serde_json::Value) -> usize {
     }
 }
 
-/// Conservative resident-heap estimate of a decoded `serde_json::Value`:
-/// every node costs a Value, strings their bytes plus a heap header, arrays
-/// their element slots, objects an entry per key plus the key bytes.
-pub fn value_footprint(value: &serde_json::Value) -> usize {
+/// Heap bytes owned by a decoded value, not counting the value's own inline
+/// slot: a string's allocated capacity, an array's allocated slots (used or
+/// not) plus what those slots own, a map's nodes plus its keys' capacities
+/// and what its values own. Capacities, not lengths: a deserializer grows a
+/// vector by doubling, so a 3000-element array commonly holds 4096 slots.
+fn heap_footprint(value: &serde_json::Value) -> usize {
     match value {
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
-            VALUE_NODE_BYTES
-        }
-        serde_json::Value::String(text) => {
-            VALUE_NODE_BYTES.saturating_add(STRING_HEAD_BYTES).saturating_add(text.len())
-        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
+        serde_json::Value::String(text) => text.capacity(),
         serde_json::Value::Array(items) => items
             .iter()
-            .map(value_footprint)
-            .fold(VALUE_NODE_BYTES.saturating_add(STRING_HEAD_BYTES), |a, b| a.saturating_add(b)),
-        serde_json::Value::Object(map) => map.iter().fold(
-            VALUE_NODE_BYTES.saturating_add(STRING_HEAD_BYTES),
-            |acc, (key, item)| {
-                acc.saturating_add(MAP_ENTRY_BYTES)
-                    .saturating_add(key.len())
-                    .saturating_add(value_footprint(item))
-            },
-        ),
+            .map(heap_footprint)
+            .fold(items.capacity().saturating_mul(VALUE_BYTES), |a, b| a.saturating_add(b)),
+        serde_json::Value::Object(map) => {
+            let nodes = map.len().div_ceil(MAP_ENTRIES_PER_CHARGED_NODE).max(1);
+            map.iter().fold(nodes.saturating_mul(MAP_NODE_BYTES), |acc, (key, item)| {
+                acc.saturating_add(key.capacity()).saturating_add(heap_footprint(item))
+            })
+        }
     }
+}
+
+/// Resident-heap estimate of a decoded `serde_json::Value` as it is actually
+/// allocated: the value's own slot plus everything it owns, by capacity.
+pub fn value_footprint(value: &serde_json::Value) -> usize {
+    VALUE_BYTES.saturating_add(heap_footprint(value))
+}
+
+/// Release the slack a deserializer leaves behind, so the charged capacity
+/// and the kept allocation are the same number.
+pub fn shrink_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => text.shrink_to_fit(),
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                shrink_value(item);
+            }
+            items.shrink_to_fit();
+        }
+        serde_json::Value::Object(map) => {
+            for item in map.values_mut() {
+                shrink_value(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Everything a stored record owns on the heap: its identity strings by
+/// capacity and its payload tree by capacity.
+pub fn record_footprint(record: &Evidence) -> usize {
+    [
+        &record.node_id,
+        &record.scope_id,
+        &record.source_id,
+        &record.source_record_id,
+        &record.process_epoch,
+        &record.quality.process_epoch,
+        &record.quality.source_sequence,
+    ]
+    .iter()
+    .map(|text| text.capacity())
+    .fold(value_footprint(&record.payload), |a, b| a.saturating_add(b))
 }
 
 impl EvidenceStore {
@@ -114,7 +164,7 @@ impl EvidenceStore {
         store.sequence = sequence;
         Ok(store)
     }
-    pub fn insert(&mut self, record: Evidence) -> Result<String, &'static str> {
+    pub fn insert(&mut self, mut record: Evidence) -> Result<String, &'static str> {
         if !record.redacted
             || record.process_epoch != record.quality.process_epoch
             || !(record.quality.observed_at_ms == Some(record.observed_at_ms)
@@ -143,11 +193,29 @@ impl EvidenceStore {
         if value_nodes(&record.payload) > MAX_PAYLOAD_NODES {
             return Err("evidence payload node limit");
         }
-        let footprint = value_footprint(&record.payload);
-        let mut canonical = record.clone();
+        // Keep exactly what is charged: drop deserializer slack first, then
+        // charge the record's real capacities (strings, array slots, map
+        // nodes), never its lengths.
+        shrink_value(&mut record.payload);
+        for text in [
+            &mut record.node_id,
+            &mut record.scope_id,
+            &mut record.source_id,
+            &mut record.source_record_id,
+            &mut record.process_epoch,
+            &mut record.quality.process_epoch,
+            &mut record.quality.source_sequence,
+        ] {
+            text.shrink_to_fit();
+        }
+        let footprint = record_footprint(&record);
         // Relay receipt time is not the identity of an original source record.
-        canonical.received_at_ms = 0;
-        let canonical_bytes = serde_json::to_vec(&canonical).map_err(|_| "serialization failed")?;
+        // Serialize with it zeroed in place instead of cloning the whole tree:
+        // the transient peak is then the two encodings, each under 32 KiB.
+        let received_at_ms = record.received_at_ms;
+        record.received_at_ms = 0;
+        let canonical_bytes = serde_json::to_vec(&record).map_err(|_| "serialization failed")?;
+        record.received_at_ms = received_at_ms;
         let digest = format!("{:x}", Sha256::digest(&canonical_bytes));
         let key = (
             record.node_id.clone(),

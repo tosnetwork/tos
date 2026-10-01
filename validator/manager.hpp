@@ -353,7 +353,12 @@ class ValidatorManagerImpl : public ValidatorManager {
   void got_next_gc_masterchain_state(BlockHandle handle, td::Ref<MasterchainState> state);
   void advance_gc(BlockHandle handle, td::Ref<MasterchainState> state);
   void try_advance_gc_masterchain_block();
-  void publish_health_node_state();
+  struct HealthWaiterSample {
+    std::uint64_t depth = 0;
+    std::uint64_t oldest_age_ms = 0;
+  };
+  void publish_health_node_state(const HealthWaiterSample &block_data, const HealthWaiterSample &state,
+                                 const HealthWaiterSample &shard_client);
   void update_gc_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) override;
   void update_shard_client_block_handle(BlockHandle handle, td::Ref<MasterchainState> state,
                                         td::Promise<td::Unit> promise) override;

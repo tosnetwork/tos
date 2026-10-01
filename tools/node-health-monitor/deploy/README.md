@@ -237,9 +237,14 @@ refused.
   overruns its deadline; nothing beyond the caps is buffered. Its journal
   rotates to one kept generation before 64 MiB (`--journal-max-bytes`), and a
   journaled run prints one summary line to journald.
-- The notification receiver rotates its journal the same way, answers 503
-  beyond eight concurrent connections and gives each connection a 10-second
-  read deadline.
+- The notification receiver rotates its journal the same way, admits at most
+  eight concurrent connections (the ninth is closed before any TLS work),
+  completes each TLS handshake in the connection's own thread under a
+  5-second bound so an idle TCP peer never holds the accept loop, and gives
+  each connection a 10-second read deadline.
+- The model turn's deadline starts before the child is spawned and covers the
+  stdin write (pumped in chunks from the same loop as the output reads); a
+  child that overruns is killed with its whole process group.
 - The edge serves at most three non-heartbeat requests per burst. A poller
   whose request is shed re-phases its 15-second timer by four seconds (at
   most once a minute), so a phase lock with the collector and the probe
@@ -352,21 +357,46 @@ duplicate) rather than minting a fresh sequence number for old evidence.
 Records without a canonical generation are never deleted. Seals are small and
 are kept for the life of the database.
 
+Each deleted observation also leaves a tombstone (its sequence and content
+hash) in the same transaction; only the newest 262,144 tombstones are kept.
+A seal says an identity was pruned up to a generation; a tombstone says this
+exact row was. A reader that still names a deleted row needs the second.
+
 The query service revalidates every retained parent on each projection. A
-missing parent whose generation is covered by M's retention seal for that
-identity is an expiry: Q evicts the dependent rows and continues. A missing
-parent above the seal, or with no seal, blocks all manager queries as a
-manager conflict. The same rule applies to Q's import cursor: an anchor row
-that retention swept (a seal records deletions at or beyond its sequence)
-re-anchors at the current boundary; a present anchor with another hash, or a
-missing anchor without such a seal, is refused as a rewrite. Set the evidence
-window at or above the longest period a query row may stay resident in Q;
-the two-hour floor is a minimum, not that guarantee.
+missing parent with a matching tombstone is an expiry: Q evicts the dependent
+rows and continues. A missing parent without one (no tombstone, another hash,
+or a tombstone already pruned) blocks all manager queries as a manager
+conflict, even when a generation seal would have covered it: a late-arriving
+row below the sealed generation that retention kept and something else
+removed is exactly the case a seal cannot tell apart. The same rule applies to
+Q's import cursor: an anchor row with a matching tombstone re-anchors at the
+current boundary; a present anchor with another hash, or a missing anchor
+without its tombstone, is refused as a rewrite, and a broker away longer than
+the tombstone window is refused and needs an operator reset. Set the evidence
+window at or above the longest period a query row may stay resident in Q; the
+two-hour floor is a minimum, not that guarantee.
+
+Eviction of expired parents waits while any grant of the current boot is
+active: a grant fixes a watermark, and its rows are not taken out from under
+it. Deferred parents are retried on the next projection pass. Grants from an
+earlier boot can never be read again and are compacted to empty seals on the
+service's own tick; those seals are pruned by wall clock after thirty days
+(the only use of a wall clock in the ledger, never for grant validity).
 
 Build `tos-observability` with `--features mcp` whenever its unit passes an
 MCP socket path; a binary without the feature exits at start, and a restart
 loop that nobody watches is an outage. The doctor's `query_broker` gate
 (below) exists for exactly that case.
+
+The broker imports M one page (256 rows) per 15-second tick while it is
+caught up, and up to sixteen pages or three seconds per tick while it is
+behind, so an outage of hours is closed in minutes rather than hours of
+refused grants. Every distinct import failure is printed to the journal when
+it starts, once a minute while it lasts, and when it clears. When the
+retained-parent bound (4096 parents, 8 MiB of parent bodies) would be
+exceeded, the oldest derived rows are evicted to release their parents, under
+the same grant pin as the resident byte bound; a parent bound that only
+refused could never free itself.
 
 The state endpoint reports `retention` (configured windows, pass counts, rows
 deleted, last pass age and error, oldest retained receipt), `inventory` (the
@@ -391,10 +421,17 @@ every node evaluated with a non-unknown input), `no_quarantined_sources`
 (configured, last pass within twice its period, no error),
 `notification_receiver` (configured and an accepted delivery within 24 hours,
 live or by receipt), `ai_lane` (`ai_unavailable` bound and not active;
-`not_run` when unbound) and `query_broker` (with `--query-ledger-db`: the
-broker's ledger or its WAL was written within `--query-max-idle-seconds`,
-default 300; `not_run` without the flag, `fail` when the file is missing).
-Receipt gates: `physical_separation`,
+`not_run` when unbound), `query_broker` (with `--query-control-socket` and
+`--query-service-token-file`: the broker's own projection health over its
+control socket; `caught_up`, or `lagging` within `--query-max-lag-rows`
+(default 1024, four import pages), passes; a conflict, an unavailable source,
+an identity mismatch, a larger lag, a refused token or an unreachable socket
+fails; `not_run` without the flag) and `query_ledger_activity` (with
+`--query-ledger-db`: the ledger or its WAL was written within
+`--query-max-idle-seconds`, default 300). The second is a liveness signal
+only: the compaction tick writes the ledger whether or not imports progress,
+and a broker once retried one unwritable page for two hours behind a fresh
+timestamp. Receipt gates: `physical_separation`,
 `performance_round_a` to `_f`, `soak_72h`, `token_rotation`,
 `cert_rotation`, `rollback_drill`. A `pass` receipt is honoured only with a
 valid RFC 3339 `at` younger than `--receipt-max-age-days` (default 90) and an

@@ -736,18 +736,13 @@ pub fn read_process_projection_page(
             Some(hash) if hash == expected => {}
             Some(_) => return Err("M projection anchor changed".into()),
             None => {
-                // The anchor row is gone. Bounded retention proves itself by its
-                // seals: if retention has deleted at or beyond this sequence,
-                // the broker was simply away longer than the retention window
-                // and re-anchors at the current boundary; without such a seal a
-                // missing anchor is a rewrite and is refused.
-                let swept: Option<i64> = conn
-                    .query_row("SELECT MAX(last_deleted_seq) FROM retention_seals", [], |row| {
-                        row.get(0)
-                    })
-                    .map_err(failure)?;
-                let seq = i64::try_from(*seq).map_err(failure)?;
-                if !swept.is_some_and(|last| last >= seq) {
+                // The anchor row is gone. Only retention's own tombstone for
+                // this exact sequence and hash proves that bounded retention
+                // removed it, in which case the broker was away longer than
+                // the window and re-anchors at the current boundary. Any
+                // other absence (no tombstone, another hash, a tombstone
+                // already pruned) is a rewrite and is refused.
+                if !retention_tombstone_matches(&conn, *seq, expected)? {
                     return Err("M projection anchor missing".into());
                 }
             }
@@ -799,11 +794,14 @@ pub fn read_process_projection_page(
             quarantined,
         )) = actual
         else {
-            // M's age retention seals every identity it deletes from, in the
-            // deleting transaction. A seal at or above this parent's
-            // generation proves a bounded expiry; anything else is a missing
-            // row the projection cannot explain.
-            if retention_seal_covers(&conn, origin)? {
+            // M's age retention tombstones every row it deletes, in the
+            // deleting transaction. A tombstone for this parent's exact
+            // sequence and hash proves a bounded expiry; anything else is a
+            // missing row the projection cannot explain. A per-identity
+            // generation seal is not enough: a late-arriving row below the
+            // sealed generation that retention kept and someone else removed
+            // would pass it.
+            if retention_tombstone_matches(&conn, origin.store_seq.0, &origin.evidence_id)? {
                 expired_retained.insert(origin.evidence_id.clone());
                 continue;
             }
@@ -947,33 +945,18 @@ pub fn read_process_projection_page(
 /// highest deleted generation at or above the parent's own generation. Read
 /// in the caller's M snapshot. A parent without a canonical generation can
 /// never have been sealed, so it is never reported as expired.
-fn retention_seal_covers(conn: &Connection, origin: &EvidenceRow) -> Result<bool, String> {
-    let record = &origin.evidence.record;
-    let Some(generation) = crate::retention::generation_of(&record.source_record_id) else {
-        return Ok(false);
-    };
-    let sealed: Option<String> = conn
+/// Whether retention recorded deleting exactly this row (sequence and
+/// content hash). Read inside the caller's M snapshot.
+fn retention_tombstone_matches(conn: &Connection, seq: u64, hash: &str) -> Result<bool, String> {
+    let recorded: Option<String> = conn
         .query_row(
-            "SELECT max_generation FROM retention_seals WHERE node=?1 AND scope=?2
-             AND process_epoch=?3 AND source_epoch=?4 AND source=?5",
-            params![
-                record.node_id,
-                record.scope_id,
-                record.process_epoch,
-                origin.evidence.source_epoch,
-                record.source_id
-            ],
+            "SELECT content_hash FROM retention_tombstones WHERE store_seq=?1",
+            [i64::try_from(seq).map_err(failure)?],
             |row| row.get(0),
         )
         .optional()
         .map_err(failure)?;
-    match sealed {
-        Some(value) => {
-            let sealed = tos_health_core::wire::exact_u64(&value).map_err(str::to_owned)?;
-            Ok(generation <= sealed)
-        }
-        None => Ok(false),
-    }
+    Ok(recorded.as_deref() == Some(hash))
 }
 
 /// The third value is a bounded set of M original IDs whose source tuple is

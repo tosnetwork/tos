@@ -56,9 +56,6 @@ fn terminal_payload_compaction_is_atomic_and_seals_replay() {
     assert_eq!(ledger.compact_terminal(old_expiry - 1, 16).unwrap(), 0);
     assert!(ledger.compact_terminal(old_expiry, 17).is_err());
     drop(ledger);
-    let mut foreign_clock = QueryLedger::open_for_boot(&file, BOOT_B).unwrap();
-    assert_eq!(foreign_clock.compact_terminal(old_expiry, 16).unwrap(), 0);
-    drop(foreign_clock);
 
     // Fixture rows exercise the same foreign-key and AUTOINCREMENT tables as
     // real calls, including an injected failure midway through the transaction.
@@ -103,6 +100,16 @@ fn terminal_payload_compaction_is_atomic_and_seals_replay() {
     let restored = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
     assert_eq!(restored.inspect(&old.run_id).unwrap().unwrap()["terminal_payload_compacted"], true);
     drop(restored);
+    // Under another boot every resident grant of boot A is unusable (each
+    // lookup binds boot_id), so compaction reclaims it whatever its expiry
+    // says in A's clock, and its run id stays sealed.
+    let mut foreign_clock = QueryLedger::open_for_boot(&file, BOOT_B).unwrap();
+    assert_eq!(foreign_clock.compact_terminal(old_expiry, 16).unwrap(), 1);
+    let sealed = foreign_clock.inspect(&current.run_id).unwrap().unwrap();
+    assert_eq!(sealed["terminal_payload_compacted"], true);
+    assert_eq!(sealed["clock_domain_current"], false);
+    assert!(foreign_clock.create(&current, 100).is_err(), "sealed run ID must not be recreated");
+    drop(foreign_clock);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -558,6 +565,202 @@ fn query_ledger_rejects_aliasing_private_file_and_expiry() {
     assert!(ledger.create(&grant(&token), 201_000).is_err());
     ledger.create(&grant(&token), 100).unwrap();
     assert!(ledger.load_active(&grant(&token).run_id, 200_100).unwrap().is_none());
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+fn count_sql(file: &PathBuf, sql: &str) -> i64 {
+    rusqlite::Connection::open(file).unwrap().query_row(sql, [], |row| row.get(0)).unwrap()
+}
+
+#[test]
+fn a_grant_from_a_previous_boot_is_compacted_and_its_run_id_stays_sealed() {
+    let (file, directory) = temporary();
+    let clock = tos_health_services::query_ledger::boot_millis().unwrap();
+    let mut g = grant(&[0x61; 32]);
+    g.expires_monotonic_ms = clock + 180_000;
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    ledger.create(&g, clock).unwrap();
+    drop(ledger);
+    // The reviewer's probe: reopen under another boot and compact.
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_B).unwrap();
+    assert_eq!(ledger.compact_terminal(clock, 16).unwrap(), 1);
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_grants WHERE length(body)>0"), 0);
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_grants"), 1, "the seal stays");
+    assert!(
+        count_sql(&file, "SELECT compacted_unix_ms FROM query_grants") > 0,
+        "a foreign seal carries its wall-clock compaction instant"
+    );
+    assert!(ledger.create(&g, clock).is_err(), "sealed run ID must not be recreated");
+    assert_eq!(ledger.compact_terminal(clock, 16).unwrap(), 0);
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn resident_grants_of_other_boots_release_the_resident_bound_through_compaction() {
+    let (file, directory) = temporary();
+    let foreign = format!("{BOOT_B}|test-time-namespace");
+    drop(QueryLedger::open_for_boot(&file, BOOT_A).unwrap());
+    // 4096 payload-carrying rows of another boot, never expired in that boot.
+    let mut db = rusqlite::Connection::open(&file).unwrap();
+    let tx = db.transaction().unwrap();
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO query_grants(run_id,boot_id,expires_ms,revoked,body) VALUES(?1,?2,?3,0,X'01')",
+            )
+            .unwrap();
+        for index in 0..4096 {
+            insert
+                .execute(rusqlite::params![
+                    format!("f{index:07x}-0000-4000-8000-000000000000"),
+                    foreign,
+                    i64::MAX / 2
+                ])
+                .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+    drop(db);
+    let clock = tos_health_services::query_ledger::boot_millis().unwrap();
+    let mut fresh = grant(&[0x62; 32]);
+    fresh.expires_monotonic_ms = clock + 180_000;
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert_eq!(ledger.create(&fresh, clock).unwrap_err(), "query grant ledger full");
+    let mut compacted = 0usize;
+    for _ in 0..512 {
+        let n = ledger.compact_terminal(clock, 16).unwrap();
+        compacted += n;
+        if n == 0 {
+            break;
+        }
+    }
+    assert_eq!(compacted, 4096, "every foreign resident row is reclaimed, sixteen per call");
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_grants WHERE length(body)>0"), 0);
+    ledger.create(&fresh, clock).expect("released bound admits a new grant");
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn foreign_seals_age_out_by_wall_clock_while_young_and_unstamped_ones_stay() {
+    use tos_health_services::query_ledger::TERMINAL_SEAL_HISTORY_MS;
+    let (file, directory) = temporary();
+    let foreign = format!("{BOOT_B}|test-time-namespace");
+    drop(QueryLedger::open_for_boot(&file, BOOT_A).unwrap());
+    let unix_now = i64::try_from(
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(&file).unwrap();
+    let seal = |run: &str, stamp: Option<i64>| {
+        db.execute(
+            "INSERT INTO query_grants(run_id,boot_id,expires_ms,revoked,body,compacted_unix_ms) VALUES(?1,?2,1,1,X'',?3)",
+            rusqlite::params![run, foreign, stamp],
+        )
+        .unwrap();
+    };
+    for index in 0..3 {
+        seal(
+            &format!("0{index:07x}-0000-4000-8000-000000000000"),
+            Some(unix_now - TERMINAL_SEAL_HISTORY_MS - 60_000),
+        );
+        seal(&format!("1{index:07x}-0000-4000-8000-000000000000"), Some(unix_now - 60_000));
+        // Compacted by an earlier build under its own boot: no stamp yet.
+        seal(&format!("2{index:07x}-0000-4000-8000-000000000000"), None);
+    }
+    drop(db);
+    let clock = tos_health_services::query_ledger::boot_millis().unwrap();
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert_eq!(ledger.compact_terminal(clock, 16).unwrap(), 0, "seals carry no payload to compact");
+    assert_eq!(
+        count_sql(&file, "SELECT COUNT(*) FROM query_grants WHERE run_id LIKE '0%'"),
+        0,
+        "aged out"
+    );
+    assert_eq!(
+        count_sql(&file, "SELECT COUNT(*) FROM query_grants WHERE run_id LIKE '1%'"),
+        3,
+        "young"
+    );
+    assert_eq!(
+        count_sql(&file, "SELECT COUNT(*) FROM query_grants WHERE run_id LIKE '2%'"),
+        3,
+        "kept"
+    );
+    assert_eq!(
+        count_sql(&file, "SELECT COUNT(*) FROM query_grants WHERE run_id LIKE '2%' AND compacted_unix_ms IS NULL"),
+        0,
+        "an unstamped foreign seal is stamped now so it ages from this point"
+    );
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// Schema-faithful derived rows bound to one M parent, as a projection pass
+/// leaves them, without building a full M database here.
+fn bind_derived_rows(file: &PathBuf, origin: &str, derived: &[&str]) {
+    let db = rusqlite::Connection::open(file).unwrap();
+    db.execute(
+        "INSERT INTO query_origins(origin_id,manager_seq,body) VALUES(?1,1,X'01')",
+        [origin],
+    )
+    .unwrap();
+    for (index, id) in derived.iter().enumerate() {
+        db.execute(
+            "INSERT INTO query_evidence(store_seq,evidence_id,body) VALUES(?1,?2,X'01')",
+            rusqlite::params![i64::try_from(index + 1).unwrap(), id],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO query_projection_origin(query_evidence_id,origin_id) VALUES(?1,?2)",
+            rusqlite::params![id, origin],
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn expired_parents_are_deferred_while_a_grant_of_this_boot_is_active() {
+    let (file, directory) = temporary();
+    let clock = tos_health_services::query_ledger::boot_millis().unwrap();
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    let origin = "e".repeat(64);
+    let derived = ["1".repeat(64), "2".repeat(64)];
+    bind_derived_rows(&file, &origin, &[&derived[0], &derived[1]]);
+    let mut g = grant(&[0x63; 32]);
+    g.expires_monotonic_ms = clock + 180_000;
+    ledger.create(&g, clock).unwrap();
+    // Active grant: nothing moves, the parent is reported back as deferred.
+    let outcome = ledger.evict_expired_origins(std::slice::from_ref(&origin), clock).unwrap();
+    assert!(outcome.evicted.is_empty());
+    assert_eq!(outcome.deferred, vec![origin.clone()]);
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_evidence"), 2);
+    assert_eq!(
+        count_sql(&file, "SELECT COUNT(*) FROM query_origins"),
+        1,
+        "the parent stays retained"
+    );
+    // Past the grant's expiry the same call evicts.
+    let outcome =
+        ledger.evict_expired_origins(std::slice::from_ref(&origin), clock + 180_001).unwrap();
+    assert!(outcome.deferred.is_empty());
+    let mut evicted = outcome.evicted.clone();
+    evicted.sort();
+    assert_eq!(evicted, derived.to_vec());
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_evidence"), 0);
+    assert_eq!(count_sql(&file, "SELECT COUNT(*) FROM query_origins"), 0);
+    // A revoked grant pins nothing either.
+    assert!(ledger.revoke(&g.run_id).unwrap());
+    bind_derived_rows(&file, &"f".repeat(64), &[&"3".repeat(64)]);
+    let mut other = grant(&[0x64; 32]);
+    other.run_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd".into();
+    other.expires_monotonic_ms = clock + 180_000;
+    ledger.create(&other, clock).unwrap();
+    assert!(ledger.revoke(&other.run_id).unwrap());
+    let outcome = ledger.evict_expired_origins(&["f".repeat(64)], clock).unwrap();
+    assert_eq!(outcome.evicted, vec!["3".repeat(64)]);
     drop(ledger);
     std::fs::remove_dir_all(directory).unwrap();
 }

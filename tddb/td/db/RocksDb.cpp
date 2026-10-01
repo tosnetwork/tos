@@ -559,12 +559,12 @@ Status RocksDb::begin_transaction() {
 }
 
 namespace {
-// After a committed write, record whether RocksDB reports a write stop. The
-// property read is a lock-free counter read inside RocksDB; the fact is
-// published through the process-wide storage health for the exporter.
-// At most one property read per second per database, and only while health
-// instrumentation is on: the property takes the DB mutex, and a write stop is
-// a sustained condition that a one-second sample cannot miss.
+// After a committed write, record whether RocksDB reports a write stop; the
+// fact is published through the process-wide storage health for the exporter.
+// Reading the property takes the DB mutex, so it runs at most once per second
+// per database and only while health instrumentation is on; a write stop is a
+// sustained condition that a one-second sample cannot miss. With the
+// instrumentation off this function returns before any RocksDB call.
 void observe_write_stop(rocksdb::DB *db, std::uint64_t &last_probe_ms) {
   if (db == nullptr || !storage_health.enabled.load(std::memory_order_relaxed)) {
     return;

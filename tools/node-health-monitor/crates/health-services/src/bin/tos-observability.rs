@@ -159,15 +159,35 @@ async fn refresh_manager(
     // Startup performs the first bounded import before either listener opens.
     ticks.tick().await;
     let mut last_compaction_report: Option<std::time::Instant> = None;
+    let mut last_import_error: Option<(String, std::time::Instant)> = None;
     loop {
         ticks.tick().await;
         let state = state.clone();
-        let compaction = tokio::task::spawn_blocking(move || {
-            let _ = tos_health_services::observability::import_manager(&state);
-            compact_terminal_grants(&state)
+        let (import, compaction) = tokio::task::spawn_blocking(move || {
+            (import_manager_catching_up(&state), compact_terminal_grants(&state))
         })
         .await
         .map_err(|error| error.to_string())?;
+        // An import failure that nobody prints is an outage nobody sees: the
+        // broker once sat for hours on a page it could not write, retrying in
+        // silence. Print each distinct failure when it starts and again every
+        // minute while it lasts, and say when it clears.
+        match import {
+            Ok(_) => {
+                if let Some((message, _)) = last_import_error.take() {
+                    eprintln!("manager import recovered after: {message}");
+                }
+            }
+            Err(message) => {
+                let due = last_import_error.as_ref().is_none_or(|(last, at)| {
+                    *last != message || at.elapsed() >= Duration::from_secs(60)
+                });
+                if due {
+                    eprintln!("manager import failed: {message}");
+                    last_import_error = Some((message, std::time::Instant::now()));
+                }
+            }
+        }
         if let Err(error) = compaction {
             let due =
                 last_compaction_report.is_none_or(|at| at.elapsed() >= Duration::from_secs(60));
@@ -177,6 +197,33 @@ async fn refresh_manager(
             }
         }
     }
+}
+
+/// Pages imported per tick while the broker is behind M, and the time the
+/// tick may spend on them. One page per fifteen seconds is enough to follow
+/// a live M; after an outage it is hours of catch-up during which every grant
+/// is refused as not caught up. A bounded burst closes the gap in minutes
+/// while still yielding to the tick.
+const CATCH_UP_PAGES_PER_TICK: usize = 16;
+const CATCH_UP_BUDGET: Duration = Duration::from_secs(3);
+
+fn import_manager_catching_up(
+    state: &tos_health_services::observability::ObservabilityState,
+) -> Result<(u64, usize), String> {
+    let started = std::time::Instant::now();
+    let mut last = tos_health_services::observability::import_manager(state)?;
+    for _ in 1..CATCH_UP_PAGES_PER_TICK {
+        let caught_up = state
+            .data
+            .lock()
+            .map(|data| data.manager_caught_up)
+            .map_err(|_| "query state unavailable".to_owned())?;
+        if caught_up || started.elapsed() >= CATCH_UP_BUDGET {
+            break;
+        }
+        last = tos_health_services::observability::import_manager(state)?;
+    }
+    Ok(last)
 }
 
 /// Reclaim payloads of grants that expired more than an hour ago on this
