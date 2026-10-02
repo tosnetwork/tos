@@ -45,12 +45,21 @@
 // =============================================================================
 
 #include <algorithm>
+#include <deque>
+#include <map>
+#include <set>
+#include <string>
 #include <vector>
 
+#include "block/block-auto.h"
+#include "block/block-parse.h"
 #include "block/block.h"
 #include "crypto/vm/boc.h"
+#include "emulator/emulator-extern.h"
 #include "emulator/test/tos-genesis-config.h"
 #include "smc-envelope/SmartContract.h"
+#include "td/utils/JsonBuilder.h"
+#include "td/utils/base64.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/tests.h"
 #include "vm/cells.h"
@@ -177,8 +186,9 @@ td::Ref<vm::Cell> transfer() {
   return msg.finalize();
 }
 
-// `sends` send actions, optionally preceded by an update installing `install` signers.
-td::Ref<vm::Cell> actions(int sends, int install = 0) {
+// `sends` send actions, optionally preceded by `updates` updates that each install the
+// same dictionaries of `install` signers and `install_proposers` proposers.
+td::Ref<vm::Cell> actions(int sends, int install = 0, int install_proposers = 0, int updates = 1) {
   td::Ref<vm::Cell> next;
   for (int i = 0; i < sends; i++) {
     vm::CellBuilder action;
@@ -191,10 +201,19 @@ td::Ref<vm::Cell> actions(int sends, int install = 0) {
     next = action.finalize();
   }
   if (install > 0) {
-    vm::CellBuilder update;
-    update.store_long(kActionUpdate, 32).store_long(1, 8).store_ref(signer_dict(install, 0x30)).store_zeroes(1);
-    update.store_ones(1).store_ref(next);
-    next = update.finalize();
+    const auto signers = signer_dict(install, 0x30);
+    const auto proposers = install_proposers > 0 ? signer_dict(install_proposers, 0x60) : td::Ref<vm::Cell>();
+    for (int u = 0; u < updates; u++) {
+      vm::CellBuilder update;
+      update.store_long(kActionUpdate, 32).store_long(1, 8).store_ref(signers);
+      if (proposers.not_null()) {
+        update.store_ones(1).store_ref(proposers);
+      } else {
+        update.store_zeroes(1);
+      }
+      update.store_ones(1).store_ref(next);
+      next = update.finalize();
+    }
   }
   return next;
 }
@@ -442,23 +461,34 @@ TEST(MultisigFeeProfile, ProfileMatchesThisBuild) {
   }
 }
 
+struct QuoteCase {
+  const char *name;
+  int signers;
+  int sends;
+  int install;
+  int install_proposers;
+  int updates;
+};
+
+const QuoteCase kQuoteCases[] = {
+    {"3 signers, 1 action", 3, 1, 0, 0, 1},
+    {"255 signers, 1 action", 255, 1, 0, 0, 1},
+    {"3 signers, 255 actions", 3, 255, 0, 0, 1},
+    {"3 signers, update installing 255", 3, 1, 255, 0, 1},
+    // Validation walks the proposer set as well as the signer set, on every update.
+    {"3 signers, update installing 1 signer and 255 proposers", 3, 1, 1, 255, 1},
+    {"3 signers, update installing 255 signers and 255 proposers", 3, 1, 255, 255, 1},
+    {"3 signers, two updates sharing 1 signer and 255 proposers", 3, 1, 1, 255, 2},
+    {"255 signers, 200 actions and an update installing 255", 255, 200, 255, 0, 1},
+    // An update installing both full sets nearly fills the order's action cell limit
+    // on its own, so it is combined with a full wallet rather than with more actions.
+    {"255 signers, update installing 255 signers and 255 proposers", 255, 1, 255, 255, 1},
+};
+
 TEST(MultisigFeeProfile, QuoteCoversTheLargestWalletsAndOrders) {
   auto p = contract_profile();
-  struct Case {
-    const char *name;
-    int signers;
-    int sends;
-    int install;
-  };
-  const Case cases[] = {
-      {"3 signers, 1 action", 3, 1, 0},
-      {"255 signers, 1 action", 255, 1, 0},
-      {"3 signers, 255 actions", 3, 255, 0},
-      {"3 signers, update installing 255", 3, 1, 255},
-      {"255 signers, 200 actions and an update installing 255", 255, 200, 255},
-  };
-  for (const auto &c : cases) {
-    auto chain = actions(c.sends, c.install);
+  for (const auto &c : kQuoteCases) {
+    auto chain = actions(c.sends, c.install, c.install_proposers, c.updates);
     auto path = run_path(c.signers, chain);
     const td::int64 quote = estimate(c.signers, chain);
     const td::int64 cost = actual_cost(path);
@@ -469,5 +499,236 @@ TEST(MultisigFeeProfile, QuoteCoversTheLargestWalletsAndOrders) {
     // The phases whose gas the profile fixes outright must not grow with the wallet.
     CHECK(path.order_init_gas <= p[kOrderInitGas]);
     CHECK(path.order_execute_gas <= p[kOrderExecuteGas]);
+  }
+}
+
+namespace {
+
+std::string boc64(td::Ref<vm::Cell> cell) {
+  return td::base64_encode(vm::std_boc_serialize(std::move(cell)).move_as_ok());
+}
+
+td::Ref<vm::Cell> from_boc64(td::Slice text) {
+  auto cell = vm::std_boc_deserialize(td::base64_decode(text).move_as_ok());
+  CHECK(cell.is_ok());
+  return cell.move_as_ok();
+}
+
+struct Delivery {
+  block::StdAddress to;
+  td::RefInt256 value;
+  td::Ref<vm::Cell> message;
+};
+
+Delivery parse_delivery(td::Ref<vm::Cell> message) {
+  auto cs = vm::load_cell_slice(message);
+  block::gen::CommonMsgInfo::Record_int_msg_info info;
+  CHECK(tlb::unpack(cs, info));
+  Delivery d;
+  CHECK(block::tlb::t_MsgAddressInt.extract_std_address(info.dest, d.to));
+  block::CurrencyCollection value;
+  CHECK(value.unpack(info.value));
+  d.value = value.tomis;
+  d.message = std::move(message);
+  return d;
+}
+
+struct Outcome {
+  block::StdAddress account;
+  bool compute_success = false;
+  bool action_success = false;
+};
+
+// Whole transactions on the node's executor, one shard: contract accounts keep their
+// state, and messages to any other address are recorded as delivered.
+class Executor {
+ public:
+  Executor() {
+    static const auto boc = fee_fixture::tos_versioned_config_boc();
+    emulator_ = transaction_emulator_create(boc.c_str(), 0);
+    CHECK(emulator_ != nullptr);
+    CHECK(transaction_emulator_set_unixtime(emulator_, kNow));
+  }
+  ~Executor() {
+    transaction_emulator_destroy(emulator_);
+  }
+  Executor(const Executor &) = delete;
+  Executor &operator=(const Executor &) = delete;
+
+  // A message from an outside account; its forward fee does not matter to these contracts.
+  static td::Ref<vm::Cell> external_sender_message(const block::StdAddress &from, const block::StdAddress &to,
+                                                   td::uint64 value, td::Ref<vm::Cell> body,
+                                                   td::Ref<vm::Cell> init = {}) {
+    vm::CellBuilder cb;
+    cb.store_long(0b0110, 4);  // int_msg_info$0, ihr_disabled, bounce, not bounced
+    store_std_address(cb, from);
+    store_std_address(cb, to);
+    store_coins(cb, value);
+    cb.store_zeroes(1 + 4 + 4).store_long(0, 64).store_long(kNow, 32);
+    if (init.not_null()) {
+      cb.store_long(0b11, 2).store_ref(init);
+    } else {
+      cb.store_zeroes(1);
+    }
+    cb.store_ones(1).store_ref(std::move(body));
+    return cb.finalize();
+  }
+
+  void contract(const block::StdAddress &address) {
+    contracts_.insert(key(address));
+  }
+
+  void settle(td::Ref<vm::Cell> message) {
+    queue_.push_back(parse_delivery(std::move(message)));
+    while (!queue_.empty()) {
+      auto next = queue_.front();
+      queue_.pop_front();
+      if (contracts_.count(key(next.to)) == 0) {
+        delivered.push_back(next);
+        continue;
+      }
+      outcomes.push_back(execute(next));
+    }
+  }
+
+  td::RefInt256 balance(const block::StdAddress &address) const {
+    auto it = accounts_.find(key(address));
+    CHECK(it != accounts_.end());
+    block::gen::ShardAccount::Record shard;
+    CHECK(tlb::unpack_cell(from_boc64(it->second), shard));
+    block::gen::Account::Record_account account;
+    CHECK(tlb::unpack_cell(shard.account, account));
+    block::gen::AccountStorage::Record storage;
+    CHECK(tlb::csr_unpack(account.storage, storage));
+    block::CurrencyCollection value;
+    CHECK(value.unpack(storage.balance));
+    return value.tomis;
+  }
+
+  std::vector<Outcome> outcomes;
+  std::vector<Delivery> delivered;
+
+ private:
+  static std::string key(const block::StdAddress &address) {
+    return address.addr.as_slice().str();
+  }
+
+  Outcome execute(const Delivery &message) {
+    lt_ += 1'000'000;
+    CHECK(transaction_emulator_set_lt(emulator_, lt_));
+    std::string account;
+    auto it = accounts_.find(key(message.to));
+    if (it != accounts_.end()) {
+      account = it->second;
+    } else {
+      td::Ref<vm::Cell> none;
+      CHECK(block::gen::Account().cell_pack_account_none(none));
+      vm::CellBuilder shard;
+      shard.store_ref(none).store_bits(td::Bits256::zero().as_bitslice()).store_long(0, 64);
+      account = boc64(shard.finalize());
+    }
+    auto raw = transaction_emulator_emulate_transaction(emulator_, account.c_str(), boc64(message.message).c_str());
+    std::string text(raw);
+    string_destroy(raw);
+    auto json = td::json_decode(td::MutableSlice(text));
+    CHECK(json.is_ok());
+    auto value = json.move_as_ok();
+    auto &obj = value.get_object();
+    if (!obj.get_optional_bool_field("success").move_as_ok()) {
+      LOG(FATAL) << "emulation refused: " << text;
+    }
+    accounts_[key(message.to)] = obj.get_required_string_field("shard_account").move_as_ok();
+
+    block::gen::Transaction::Record trans;
+    CHECK(tlb::unpack_cell(from_boc64(obj.get_required_string_field("transaction").move_as_ok()), trans));
+    vm::Dictionary out_msgs{trans.r1.out_msgs, 15};
+    for (int i = 0; i < trans.outmsg_cnt; i++) {
+      auto out = out_msgs.lookup_ref(td::BitArray<15>(i));
+      CHECK(out.not_null());
+      queue_.push_back(parse_delivery(out));
+    }
+    Outcome outcome;
+    outcome.account = message.to;
+    block::gen::TransactionDescr::Record_trans_ord ord;
+    CHECK(tlb::unpack_cell(trans.description, ord));
+    if (block::gen::t_TrComputePhase.get_tag(*ord.compute_ph) == block::gen::TrComputePhase::tr_phase_compute_vm) {
+      block::gen::TrComputePhase::Record_tr_phase_compute_vm compute;
+      CHECK(tlb::csr_unpack(ord.compute_ph, compute));
+      outcome.compute_success = compute.success;
+    }
+    if (ord.action->prefetch_ulong(1) == 1) {
+      block::gen::TrActionPhase::Record action;
+      CHECK(tlb::unpack_cell(ord.action->prefetch_ref(), action));
+      outcome.action_success = action.success;
+    }
+    return outcome;
+  }
+
+  void *emulator_ = nullptr;
+  td::uint64 lt_ = 1'000'000;
+  std::deque<Delivery> queue_;
+  std::map<std::string, std::string> accounts_;
+  std::set<std::string> contracts_;
+};
+
+}  // namespace
+
+// The quote must not only exceed a priced sum; a proposal carrying exactly the quote
+// has to take the order all the way to execution on the executor validators run,
+// without the wallet's own balance paying for anything but the actions themselves.
+TEST(MultisigFeeProfile, QuoteFundedOrdersExecuteWithoutWalletSubsidy) {
+  constexpr td::uint64 kWalletFunds = 1000 * kCoin;
+  for (const auto &c : kQuoteCases) {
+    Executor chain;
+    vm::CellBuilder init;
+    init.store_long(0, 2).store_ones(1).store_ref(wallet_code()).store_ones(1).store_ref(parent_data(0, c.signers));
+    init.store_zeroes(1);
+    const auto wallet_init = init.finalize();
+    const block::StdAddress wallet(0, wallet_init->get_hash().bits());
+    chain.contract(wallet);
+    chain.settle(Executor::external_sender_message(std_address(0x01), wallet, kWalletFunds,
+                                                   vm::CellBuilder().finalize(), wallet_init));
+    const auto before = chain.balance(wallet);
+
+    // The order's address follows from this wallet's address.
+    vm::CellBuilder order_data;
+    store_std_address(order_data, wallet);
+    order_data.store_long(0, 64);
+    vm::CellBuilder order_init;
+    order_init.store_long(0, 2).store_ones(1).store_ref(order_code()).store_ones(1).store_ref(order_data.finalize());
+    order_init.store_zeroes(1);
+    const block::StdAddress order(0, order_init.finalize()->get_hash().bits());
+    chain.contract(order);
+
+    auto chain_actions = actions(c.sends, c.install, c.install_proposers, c.updates);
+    const auto quote = static_cast<td::uint64>(estimate(c.signers, chain_actions));
+    vm::CellBuilder proposal;
+    proposal.store_long(kOpNewOrder, 32).store_long(1, 64).store_long(static_cast<long long>(kNextSeqno), 64);
+    proposal.store_long(0, 1).store_long(0, 8).store_long(kNow + kLifetime, 32).store_ref(chain_actions);
+    chain.settle(Executor::external_sender_message(proposer(), wallet, quote, proposal.finalize()));
+    for (int index : {0, 1}) {  // the wallet's threshold is 2
+      vm::CellBuilder approve;
+      approve.store_long(kOpApprove, 32).store_long(7, 64).store_long(index, 8);
+      chain.settle(Executor::external_sender_message(signer(index), order, kCoin, approve.finalize()));
+    }
+
+    for (const auto &outcome : chain.outcomes) {
+      CHECK(outcome.compute_success && outcome.action_success);
+    }
+    int paid = 0;
+    for (const auto &d : chain.delivered) {
+      paid += d.to == std_address(0x77) && td::cmp(d.value, td::make_refint(kCoin / 1000)) == 0;
+    }
+    // The actions themselves are the wallet's payments: their values, and (send mode 1)
+    // the forward fees of their messages, which the signers approved with them.
+    const auto msg_prices = config()->get_msg_prices(false).move_as_ok();
+    const auto sent = forwarded_part_of(transfer());
+    const auto per_send = static_cast<td::int64>(kCoin / 1000 + msg_prices.compute_fwd_fees(sent.cells, sent.bits));
+    const auto after = chain.balance(wallet);
+    const auto payouts = td::make_refint(static_cast<td::int64>(c.sends) * per_send);
+    LOG(INFO) << "multisig quote-funded path, " << c.name << ": quote " << quote << ", wallet kept "
+              << (after + payouts - before)->to_dec_string() << " beyond its payouts";
+    CHECK(paid == c.sends);
+    CHECK(td::cmp(after + payouts, before) >= 0);
   }
 }

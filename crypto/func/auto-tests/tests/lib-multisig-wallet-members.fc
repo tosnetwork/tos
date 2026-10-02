@@ -47,8 +47,6 @@ cell audit_update(int threshold, cell signers, cell proposers, cell next) inline
       .end_cell();
 }
 
-int main() { return 0; }
-
 int audit_many_proposers_are_priced() method_id(101) {
   audit_install_context();
   cell chain = audit_update(1, audit_members(1, 0x1000), audit_members(255, 0x2000), null());

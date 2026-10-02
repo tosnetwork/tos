@@ -5,7 +5,7 @@
 Initial reviewed head: `924cf0970532b5794fcee635e8ff67755c326041`.
 Head branch: `tol-stdlib-audited-patterns`.
 
-**One confirmed fee-accounting defect has a source fix and six new regression vectors. Native execution of the patch has NOT been verified in this review. A separate, conditional signer-configuration risk remains unresolved. This is not a security approval or a claim that every path in the PR is safe.**
+**One confirmed fee-accounting defect has a source fix and six new regression vectors. The original review did not execute the patch; native follow-up verification is recorded in the last section. A separate, conditional signer-configuration risk remains unresolved. This is not a security approval or a claim that every path in the PR is safe.**
 
 Changes made directly on the PR branch:
 
@@ -61,7 +61,7 @@ The new FunC file imports the production wallet rather than reimplementing its v
 | 255 signers and 255 proposers | 510 visits |
 | Threshold 2, one signer, 255 proposers | `invalid_config`; proposer count cannot satisfy quorum |
 
-These are added regression cases, **not six tests reported as passed**. Native compilation/execution remains required.
+As first committed, the file did not assemble: it included the wallet, whose `recv_internal` is method 0, and also defined `main`, so Fift stopped with `procedure already defined` and none of the six cases ran. The follow-up removed `main`; the results are in the last section.
 
 ## F-02 — P2 / conditional configuration risk: indexed approvals do not enforce unique signer addresses
 
@@ -137,3 +137,33 @@ python3 crypto/func/auto-tests/run_tests.py crypto/func/auto-tests/tests
 Extend the native multisig fee fixture's `actions` helper/case matrix to construct nonempty proposer dictionaries and include at least (one updated signer, 255 proposers), (255 signers, 255 proposers), and repeated updates sharing proposer dictionaries. Verify the actual quote covers the measured path; also execute the quote-funded transaction path rather than relying only on the fixture's generous balance. Do not invent newly measured profile constants.
 
 Resolve F-02's signer-identity semantics and close its corresponding tests before calling the multisig a unique-address M-of-N implementation. No merge or approval was performed as part of this review.
+
+## Native follow-up verification
+
+Run on the branch head after the review commits, with the follow-up changes below.
+
+Follow-up changes:
+
+- `lib-multisig-wallet-members.fc`: removed the duplicate `main` that kept the file from assembling.
+- `emulator/test/multisig-fee-profile-fixture.cpp`:
+  - The quote coverage matrix now builds nonempty proposer dictionaries. It adds (1 signer, 255 proposers), (255 signers, 255 proposers) for both a 3-signer and a 255-signer wallet, and two updates sharing the same (1, 255) dictionaries.
+  - A wallet of 255 signers with 200 actions and an update installing both full sets exceeds the order's 1024-cell action limit and is refused with `order_too_large`. The largest in-limit combination is used instead.
+  - New test `QuoteFundedOrdersExecuteWithoutWalletSubsidy`. For every case it runs the whole path as complete transactions on the C++ executor, funding the proposal with exactly `get_order_estimate`: proposal, order deployment, two approvals, execution. Every transaction must succeed in both the compute and action phases, and every action payment must arrive. The wallet's balance must not fall by more than the actions themselves pay, which is their values plus the forward fees of their messages (send mode 1).
+
+Results:
+
+- `run_tests.py` (FunC): 35 files pass, including the six new cases.
+- `test-emulator`: all tests pass, including the extended quote matrix and the quote-funded path for nine cases.
+- `multisig_wallet_sandbox.rs` (15 tests) and `highload_wallet_v3_sandbox.rs` (11 tests) pass.
+
+Sensitivity of F-01. With the counter reverted to `installed += signer_count`, three tests fail:
+
+- the new FunC file fails;
+- the quote matrix fails at (1 signer, 255 proposers): quote 129,679,583 against an actual path cost of about 296,959,069;
+- the quote-funded path fails at the same case, because a transaction on the path does not complete.
+
+This reproduces F-01's effect on the executor: an order funded with the old quote did not reach execution.
+
+The actions' own forward fees are not part of the quote. With 255 send actions, the wallet pays about 102,000,000 in forward fees for its outbound messages. The quote prices the path that takes an order to execution. The actions are payments the signers approved, with a send mode the action chose, so their fees are counted with their values.
+
+F-02 is unchanged by this follow-up and remains open.
