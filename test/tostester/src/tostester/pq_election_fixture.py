@@ -217,28 +217,61 @@ def build_production_pool_stake_order(
         raise RuntimeError("production PQ pool stake builder returned invalid BOC hex") from error
 
 
-def elector_reply(transactions: list, query_id: int) -> tuple[int, int] | None:
-    """Find an exact elector answer, ignoring source-less wallet externals."""
+def elector_reply(
+    transactions: list, query_id: int, *, controller: Address | None = None
+) -> tuple[int, int] | None:
+    """Find a bound business result, ignoring other sources and request IDs.
+
+    Controller receipts are mapped to the existing acceptance/refusal result
+    tags for callers; the transaction body remains the actual relay-v2 wire.
+    Direct owner recoveries still come from the elector.
+    """
     elector = Address((-1, bytes.fromhex("33" * 32)))
     for transaction in transactions:
         message = transaction.in_msg
         if message is None or message.source is None:
             continue
         source_text = message.source.account_address
-        if not source_text or Address(source_text) != elector:
+        if not source_text:
             continue
+        source = Address(source_text)
         if not isinstance(message.msg_data, toslib_api.Msg_dataRaw):
             continue
         reply = Cell.one_from_boc(message.msg_data.body).begin_parse()
         if reply.remaining_bits < 96:
             continue
         opcode = reply.load_uint(32)
+        if controller is not None and source == controller and opcode == 0x50516232:
+            if reply.load_uint(64) != (query_id | (1 << 63)):
+                continue
+            reply.load_uint(256)  # full request commitment; the pool verifies it on-chain
+            forwarded = reply.load_coins()
+            accepted = reply.load_coins()
+            reason = reply.load_uint(32)
+            success = reply.load_uint(1)
+            business_return = reply.load_coins()  # actual debt, not a balance delta
+            reply.load_coins()  # this delivery's callback budget
+            payer = reply.load_ref().begin_parse()
+            if payer.load_address() is None or payer.remaining_bits or payer.remaining_refs:
+                raise ValueError("invalid relay fee payer")
+            if business_return > (1_000_000_000 if success else forwarded):
+                raise ValueError("inconsistent relay business return")
+            if reply.remaining_bits or reply.remaining_refs:
+                raise ValueError("trailing relay result fields")
+            if accepted != (forwarded - 1_000_000_000 if success else 0) or (success and reason):
+                raise ValueError("inconsistent relay result amounts")
+            return (0xF374484C if success else 0xEE6F454C), reason
+        if source != elector:
+            continue
         if reply.load_uint(64) != query_id:
             continue
-        # A successful mature-stake recovery has only opcode + query_id;
-        # refusals and stake acknowledgements additionally carry a reason.
-        if opcode == 0xF96F7324 and reply.remaining_bits == 0 and reply.remaining_refs == 0:
-            return opcode, 0
+        # Direct recovery optionally includes its exact gross credit; older
+        # direct bodies have only opcode + query_id. Refusals carry a reason.
+        if opcode == 0xF96F7324:
+            if reply.remaining_bits:
+                reply.load_coins()  # gross credit, excluding the caller's remaining fees
+            if not reply.remaining_bits and not reply.remaining_refs:
+                return opcode, 0
         if reply.remaining_bits >= 32:
             return opcode, reply.load_uint(32)
     return None

@@ -35,7 +35,7 @@ REWARD_SHARE_BPS = 4000
 MAX_NOMINATORS = 40
 MIN_VALIDATOR_STAKE = 5_000_000_000_000
 MIN_NOMINATOR_STAKE = 100_000_000_000
-EXPECTED_ADDRESS = "-1:39ebb7d066bc471da3bbdcde82f5259651929d357a9eab25bebdf7b83292eeb2"
+EXPECTED_ADDRESS = "-1:5d78980307adfc43eb8e18a487305b51fa5fb76116dde11343193f5eaed18024"
 
 POOL_CODE = REPO / "crypto/smartcont/artifacts/nominator-pool-v1.boc"
 
@@ -51,6 +51,37 @@ def _lifecycle_module():
 
 
 lifecycle = _lifecycle_module()
+
+
+def test_product_relay_adnl_reader_uses_the_bound_v2_reference(monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "pq_config_wallet_first_stake_e2e", REPO / "scripts/pq-config-wallet-first-stake-e2e.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    pool = Address((-1, bytes([0x31]) * 32))
+    controller = Address((-1, bytes([0x42]) * 32))
+    terms = Builder().store_uint(123, 32).store_uint(0x10000, 32).store_uint(0xA5, 256).end_cell()
+    body = (
+        Builder()
+        .store_uint(0x50517232, 32)
+        .store_uint((1 << 63) | 17, 64)
+        .store_uint(12345, 160)
+        .store_coins(10_002_000_000_000)
+        .store_uint(0x33, 256)
+        .store_ref(terms)
+        .end_cell()
+    )
+    message = _relay_message(pool, controller, 17, bounced=False)
+    message.body = body
+    tx = SimpleNamespace(in_msg=message)
+    monkeypatch.setattr(module.lifecycle_module, "_decoded_transaction", lambda raw: raw)
+    assert module.adnl_from_controller_relay([tx], pool, 17) == (0xA5).to_bytes(32, "big")
+    with pytest.raises(RuntimeError, match="found 0"):
+        module.adnl_from_controller_relay([tx], pool, 18)
+    with pytest.raises(RuntimeError, match="found 0"):
+        module.adnl_from_controller_relay([tx], controller, 17)
 
 
 @pytest.mark.asyncio
@@ -121,7 +152,7 @@ def _relay_message(source, target, query_id, *, bounced):
     body = Builder()
     if bounced:
         body.store_uint(0xFFFFFFFF, 32)
-    body.store_uint(0x5051726C, 32).store_uint(query_id, 64)
+    body.store_uint(0x50517232, 32).store_uint(query_id | (1 << 63), 64)
     return MessageAny(
         info=InternalMsgInfo(
             ihr_disabled=True,
@@ -627,6 +658,11 @@ async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
     async def send(*args, **kwargs):
         seen["sent"] = kwargs["label"]
 
+    async def relay_query(index):
+        assert index == 0
+        return (1 << 63) | 2
+
+    runner.next_relay_query = relay_query
     runner.authorized_pool_order = build
     runner.send = send
 
@@ -673,6 +709,12 @@ async def test_pool_stake_refuses_if_window_closes_after_authorization(tmp_path)
         raise AssertionError("closed-window stake was sent")
 
     runner.client = FakeClient()
+
+    async def relay_query(index):
+        assert index == 0
+        return (1 << 63) | 2
+
+    runner.next_relay_query = relay_query
     runner.authorized_pool_order = build
     runner.stakeable_election_id = stakeable
     runner.send = send
@@ -885,9 +927,17 @@ def test_multi_nominator_stake_order_uses_bound_node_authorization_and_birth_wit
             birth_witness=witness,
         )
     ]
+
+    async def runmethod(address, method):
+        assert address == controller_address.to_str(is_user_friendly=False)
+        assert method == "next_relay_query"
+        return f"result: [ {(1 << 63) | 1} ]"
+
+    subject.runmethod = runmethod
     assert (
         asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address)) == Cell.empty()
     )
+    assert seen["builder"]["query_id"] == (1 << 63) | 1
     assert seen["request"] == {
         "election_date": 1_700_000_000,
         "max_factor": lifecycle.MAX_FACTOR,
@@ -2042,3 +2092,20 @@ def test_integrated_claim_limits_name_scripted_custody_and_single_host(tmp_path)
         == 30 * lifecycle.NANO
     )
     assert report["agent_nominator_rewards"][0]["wallet_funding_nanotos"] == (29 * lifecycle.NANO)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    ["result: [ -1 ]", "result: [ 1 ]", f"result: [ {1 << 64} ]", "result: [ 2 3 ]", "error"],
+)
+async def test_relay_query_requires_authoritative_in_domain_scalar(tmp_path, reply):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="query-refusal")
+    runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
+
+    async def runmethod(*args):
+        return reply
+
+    runner.runmethod = runmethod
+    with pytest.raises(RuntimeError):
+        await runner.next_relay_query(0)

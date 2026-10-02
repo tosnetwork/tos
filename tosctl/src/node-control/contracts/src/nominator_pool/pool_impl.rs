@@ -293,6 +293,21 @@ impl SmartContract for NominatorPoolWrapperImpl {
 /// those live with the caller.
 #[async_trait::async_trait]
 impl crate::nominator::NominatorWrapper for NominatorPoolWrapperImpl {
+    async fn next_relay_query(&self) -> anyhow::Result<u64> {
+        let roles =
+            self.provider.get_method(self.pool_addr.to_string(), "get_pool_data", vec![]).await?;
+        let controller = MsgAddressInt::with_standart(
+            None,
+            -1,
+            chain_block::UInt256::from_slice(&roles.number_bytes(5, 32)?).into(),
+        )?;
+        let stack =
+            self.provider.get_method(controller.to_string(), "next_relay_query", vec![]).await?;
+        let query = stack.u64(0)?;
+        anyhow::ensure!(query > (1_u64 << 63), "invalid relay query domain");
+        Ok(query)
+    }
+
     async fn get_roles(&self) -> anyhow::Result<crate::nominator::NominatorRoles> {
         // pool.fc records a validator address but has no owner: the funds
         // belong to the nominators, and no single account can withdraw them.
@@ -954,7 +969,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             addr.to_string(),
-            "-1:39ebb7d066bc471da3bbdcde82f5259651929d357a9eab25bebdf7b83292eeb2"
+            "-1:81523b9dd1dacde37d4d7d8339c38f7ad4b065eb73cb8a8fb79d4dfbc175bdc7"
         );
     }
 

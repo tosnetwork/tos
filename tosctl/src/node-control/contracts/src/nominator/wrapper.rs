@@ -37,6 +37,8 @@ pub struct PoolMaintenance {
 pub trait NominatorWrapper: SmartContract + Send + Sync {
     /// Get the owner and validator addresses stored in the contract
     async fn get_roles(&self) -> anyhow::Result<NominatorRoles>;
+    /// Read the controller-authoritative next relay ID; do not derive it from wall time.
+    async fn next_relay_query(&self) -> anyhow::Result<u64>;
     /// Get pool data (parsed persistent storage of nominator)
     async fn get_pool_data(&self) -> anyhow::Result<PoolData>;
     /// Return the state_init used for deploying this contract (if available).

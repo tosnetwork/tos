@@ -23,6 +23,16 @@ Validators are the verification backbone for AI actor workflows. Agent runners, 
 - persistent database directory
 - Fift scripts directory
 
+## Controller funding for elections
+
+A deployed PQ controller needs explicit root-authorized operating funding before
+it can relay a pool stake. Account balance alone is not spending authorization.
+Keep operator capital for the storage floor and fees separate from the recorded
+operating funds and pool principal. See [controller initialization and election
+checks](Local-PQ-Network.md#controller-funding-before-election-rehearsal) for the
+SDK/signing steps, state checks and rejection diagnostics. The monetary examples
+there are local development values, not production recommendations.
+
 ## Production Hardware Requirements
 
 The following requirements apply to a normal TOS validator participating in

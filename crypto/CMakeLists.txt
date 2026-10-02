@@ -559,7 +559,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   # The libraries it includes are part of what it compiles to. Without them here, editing
   # one leaves this artifact stale and every test reads the previous version of the rule.
   GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code
-    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
   GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig)
   GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet)
   GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)

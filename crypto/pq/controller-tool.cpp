@@ -125,6 +125,9 @@ std::string authorisation_boc(const tos::pq::ValidatorControllerRootKeyStore& ro
       "  tos-pq-controller send ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL MODE MESSAGE_BOC_B64\n"
       "  tos-pq-controller bind ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL CONSENSUS_SEED\n"
       "  tos-pq-controller rotate-root ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL NEXT_ROOT_SEED\n"
+      "  tos-pq-controller fund-operations ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL PAYLOAD_BOC_B64\n"
+      "  tos-pq-controller withdraw-operations ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL "
+      "PAYLOAD_BOC_B64\n"
       "\n"
       "A root seed is created with `tos-pq-key keygen`. The output is a base64 PQca body,\n"
       "to be sent to the controller as an internal message.");
@@ -196,7 +199,9 @@ int main(int argc, char** argv) {
     const bool send = command == "send";
     const bool bind = command == "bind";
     const bool rotate = command == "rotate-root";
-    if (!send && !bind && !rotate) {
+    const bool fund = command == "fund-operations";
+    const bool withdraw = command == "withdraw-operations";
+    if (!send && !bind && !rotate && !fund && !withdraw) {
       usage();
     }
     if (argc != (send ? 10 : 9)) {
@@ -208,6 +213,16 @@ int main(int argc, char** argv) {
     const auto epoch = to_u64(argv[5]);
     const auto nonce = to_u64(argv[6]);
     const auto valid_until = static_cast<std::uint32_t>(to_u64(argv[7]));
+
+    if (fund || withdraw) {
+      // Deposits bind the funding wallet, amount, independent allowance, cap,
+      // floor and expiry. Withdrawals bind the wallet and exact amount.
+      // Neither operation supplies a default amount or submits a transfer.
+      std::cout << authorisation_boc(root, global_id, controller_id, epoch, nonce, valid_until, fund ? 4 : 5,
+                                     cell_from_base64(argv[8]), nullptr)
+                << '\n';
+      return 0;
+    }
 
     if (send) {
       const auto mode = static_cast<std::uint8_t>(std::stoul(argv[8]));

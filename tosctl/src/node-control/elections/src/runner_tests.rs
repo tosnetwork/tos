@@ -215,6 +215,7 @@ mock! {
     #[async_trait::async_trait]
     impl NominatorWrapper for NominatorWrapperImpl {
         async fn get_roles(&self) -> anyhow::Result<NominatorRoles>;
+        async fn next_relay_query(&self) -> anyhow::Result<u64>;
         async fn get_pool_data(&self) -> anyhow::Result<PoolData>;
         fn state_init(&self) -> Option<chain_block::StateInit>;
     }
@@ -244,7 +245,7 @@ fn validate_message_parameters(
     }
 
     // The pool holds the capital; the wallet sends relay gas only.
-    let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
+    let fee = POOL_RELAY_BUDGET;
     if *value != fee {
         eprintln!("withf: value mismatch: expected={}, got={}", fee, value);
         return false;
@@ -546,6 +547,7 @@ fn setup_wallet(wallet: &mut MockWalletImpl) {
 
 fn setup_pool(pool: &mut MockNominatorWrapperImpl) {
     pool.expect_address().returning(|| pool_address());
+    pool.expect_next_relay_query().returning(|| Ok((1_u64 << 63) | 1));
     pool.expect_get_roles().returning(|| {
         Ok(NominatorRoles {
             owner_address: wallet_address(),
@@ -568,8 +570,7 @@ async fn test_participate_new_key_no_pool_refuses_before_sending() {
     setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, None);
     harness.wallet_mock.expect_address().returning(|| wallet_address());
     harness.wallet_mock.expect_message().times(0);
-    let expected_stake =
-        (WALLET_BALANCE - (ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE) - MIN_NANOTOS_FOR_STORAGE) / 2;
+    let expected_stake = (WALLET_BALANCE - (POOL_RELAY_BUDGET) - MIN_NANOTOS_FOR_STORAGE) / 2;
 
     let mut runner = harness.build(node_id);
 
@@ -667,6 +668,7 @@ async fn test_pool_controller_wrong_workchain_refuses_before_wallet_message() {
     harness.wallet_mock.expect_message().times(0);
     let pool = harness.pool_mock.as_mut().expect("pool");
     pool.expect_address().returning(|| pool_address());
+    pool.expect_next_relay_query().returning(|| Ok((1_u64 << 63) | 1));
     pool.expect_get_roles().returning(|| {
         Ok(NominatorRoles {
             owner_address: wallet_address(),
@@ -1595,7 +1597,7 @@ async fn test_split50_stake_calculation() {
     // With Split50: stake = max(total_balance / 2, min_stake)
     // total_balance = frozen_stake(0) + pool_free_balance + elections_stake(0)
     // pool_free_balance = WALLET_BALANCE - gas_fee - MIN_NANOTOS_FOR_STORAGE
-    let gas_fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
+    let gas_fee = POOL_RELAY_BUDGET;
     let pool_free_balance = WALLET_BALANCE - gas_fee - MIN_NANOTOS_FOR_STORAGE;
     let expected = (pool_free_balance / 2).max(MIN_STAKE);
     assert_eq!(

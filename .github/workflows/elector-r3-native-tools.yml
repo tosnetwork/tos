@@ -1,0 +1,53 @@
+name: Elector R3 native tools
+
+# Export only repository source and compiled tools, never .git, credentials or
+# runtime state. This supports independent local compilation of the relay fix.
+on:
+  push:
+    branches: [elector-security-audit-2026-10-01]
+    paths: [.github/workflows/elector-r3-native-tools.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - name: Configure and build native tools
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift create-state gen_fif tos-pq-controller tos-pq-vote -j2
+          cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-key -j2
+      - name: Package exact source and tools
+        run: |
+          set -euo pipefail
+          mkdir -p export/bin export/lib export/source
+          git archive HEAD | tar -x -C export/source
+          find build build-pq-key -type f -executable \
+            \( -name func -o -name fift -o -name create-state -o -name 'tos-pq-*' \) \
+            -exec cp '{}' export/bin/ \;
+          cp -a build/crypto/smartcont export/generated-smartcont
+          for binary in export/bin/*; do
+            ldd "$binary" | awk '/=> \\// {print $3} /^\\s*\\// {print $1}' | \
+              while read -r library; do cp -L "$library" export/lib/; done
+          done
+          cp -L /lib64/ld-linux-x86-64.so.2 export/lib/
+          git rev-parse HEAD > export/SOURCE_COMMIT
+          (cd export && find bin lib -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          tar -czf native-relay-tools.tar.gz -C export .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-relay-tools-${{ github.sha }}
+          path: native-relay-tools.tar.gz
+          if-no-files-found: error
+          retention-days: 7

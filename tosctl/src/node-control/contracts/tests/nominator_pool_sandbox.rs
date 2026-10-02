@@ -29,7 +29,7 @@ const TOS: u64 = 1_000_000_000;
 /// pool forwards, which is the part the elector no longer knows.
 const NEW_STAKE: u32 = 0x4e73_744b;
 /// `PQrl`: what the pool asks its controller to relay.
-const RELAY_STAKE: u32 = 0x5051_726c;
+const RELAY_STAKE: u32 = 0x5051_7232;
 /// What the elector answers a message whose operation it does not recognise.
 const UNKNOWN_QUERY: u32 = 0xffff_ffff;
 /// The only refusal the pool understands.
@@ -249,7 +249,7 @@ impl Pooled {
         let order = stake_order(query_id, value, election);
         self.chain
             .send_message(
-                MessageBuilder::internal(&self.validator, &self.pool, 2 * TOS).body(order).build(),
+                MessageBuilder::internal(&self.validator, &self.pool, 20 * TOS).body(order).build(),
             )
             .expect("the order is delivered")
     }
@@ -349,7 +349,9 @@ fn only_the_configured_validator_can_order_a_stake() {
     pooled
         .chain
         .send_message(
-            MessageBuilder::internal(stranger.address(), &pooled.pool, 2 * TOS).body(order).build(),
+            MessageBuilder::internal(stranger.address(), &pooled.pool, 20 * TOS)
+                .body(order)
+                .build(),
         )
         .expect("delivered")
         .expect_exit_code(ERROR_NOT_THE_VALIDATOR);
@@ -390,7 +392,7 @@ fn a_pools_stake_goes_to_its_controller_and_the_pool_records_it() {
     pooled
         .chain
         .send_message(
-            MessageBuilder::internal(&pooled.validator, &pooled.pool, 2 * TOS).body(again).build(),
+            MessageBuilder::internal(&pooled.validator, &pooled.pool, 20 * TOS).body(again).build(),
         )
         .expect("delivered")
         .expect_exit_code(ERROR_NOT_IDLE);
@@ -408,19 +410,35 @@ fn a_pools_stake_goes_to_its_controller_and_the_pool_records_it() {
 fn a_bounced_relay_lets_the_pool_try_again() {
     let mut pooled = launch(1_000 * TOS, 20_000 * TOS);
     let election = pooled.election();
-    pooled.order(1, 1_000 * TOS, election);
+    let result = pooled.order(1, 1_000 * TOS, election);
     assert_eq!(pooled.state().0, 1, "the stake was not recorded as out");
+    let mut prefix = None;
+    result.transactions[0]
+        .1
+        .iterate_out_msgs(|message| {
+            if message.dst().as_ref() == Some(&pooled.controller) {
+                prefix = Some(
+                    message
+                        .body()
+                        .expect("body")
+                        .clone()
+                        .get_next_bits(256)
+                        .expect("committed prefix"),
+                );
+            }
+            Ok(true)
+        })
+        .expect("outgoing");
 
     // The relay, bounced by the controller.
     let mut body = BuilderData::new();
     body.append_u32(0xffff_ffff).expect("the bounced prefix");
-    body.append_u32(RELAY_STAKE).expect("the operation that bounced");
-    body.append_u64(1).expect("query id");
+    body.append_raw(&prefix.expect("real prefix"), 256).expect("actual bounced prefix");
     let controller = pooled.controller.clone();
     let pool = pooled.pool.clone();
     // Marked bounced, which is the bit the contract reads to tell one from an ordinary
     // message; the builder has no word for it.
-    let mut bounce = MessageBuilder::internal(&controller, &pool, TOS)
+    let mut bounce = MessageBuilder::internal(&controller, &pool, 1_000 * TOS)
         .body(body.into_cell().expect("a bounce"))
         .build();
     bounce.int_header_mut().expect("an internal message").bounced = true;
@@ -450,7 +468,7 @@ fn terms_that_are_not_a_stake_are_refused_before_anything_is_sent() {
     let result = pooled
         .chain
         .send_message(
-            MessageBuilder::internal(&pooled.validator, &pooled.pool, 2 * TOS)
+            MessageBuilder::internal(&pooled.validator, &pooled.pool, 20 * TOS)
                 .body(body.into_cell().expect("a truncated order"))
                 .build(),
         )
@@ -470,9 +488,8 @@ fn a_stake_spends_the_amount_it_was_ordered_to() {
         .and_then(|account| account.balance().and_then(|balance| balance.coins.as_u64()))
         .expect("a balance");
 
-    // The order carries two TOS of its own, which land in the pool before the stake
-    // leaves it, so the balance falls by the stake less what the order brought in.
-    let order_value = 2 * TOS;
+    // Current transaction fees and change belong to the caller; the pool
+    // contributes exactly the principal it was told to forward.
     pooled.order(1, 1_000 * TOS, election);
 
     let after = pooled
@@ -480,13 +497,5 @@ fn a_stake_spends_the_amount_it_was_ordered_to() {
         .get_account(&pooled.pool)
         .and_then(|account| account.balance().and_then(|balance| balance.coins.as_u64()))
         .expect("a balance");
-    let spent = before - after;
-    assert!(
-        spent < 1_000 * TOS - order_value + TOS,
-        "the stake cost the pool {spent}, which is more than it was told to spend"
-    );
-    assert!(
-        spent > 1_000 * TOS - order_value - TOS,
-        "the stake cost the pool only {spent}, so it did not send what it was ordered to"
-    );
+    assert_eq!(before - after, 1_000 * TOS, "the pool spends exactly forwarded principal");
 }

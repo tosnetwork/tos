@@ -23,10 +23,9 @@ const KIND_SEND: u8 = 1;
 const KIND_ROTATE_ROOT: u8 = 2;
 const KIND_BIND_CONSENSUS: u8 = 3;
 
-/// `PQrl`: relay a stake for whoever sent the money.
-const RELAY_OP: u32 = 0x5051_726c;
-/// `PQst`: what the relay sends on.
-const STAKE_OP: u32 = 0x5051_7374;
+/// Request-bound stake relay and its forwarded stake.
+const RELAY_OP: u32 = 0x5051_7232;
+const STAKE_OP: u32 = 0x5051_7332;
 
 const ERROR_WRONG_NETWORK: i32 = 91;
 const ERROR_STALE_EPOCH: i32 = 92;
@@ -106,12 +105,16 @@ impl RootKey {
     }
 
     fn sign(&self, message: &[u8]) -> Vec<u8> {
+        self.sign_under(message, CONTROLLER_CONTEXT)
+    }
+
+    fn sign_under(&self, message: &[u8], context: &[u8]) -> Vec<u8> {
         let signature = hex::decode(
             &run_key_tool(&[
                 "sign",
                 self.file.to_str().expect("path"),
                 &hex::encode(message),
-                &hex::encode(CONTROLLER_CONTEXT),
+                &hex::encode(context),
             ])[0],
         )
         .expect("hex");
@@ -724,19 +727,62 @@ fn name_an_elector(chain: &mut Blockchain) -> MsgAddressInt {
 }
 
 /// A relay request: the terms of a stake and the key that authorised it.
-fn relay_body(algorithm: u16, key: &[u8], signature: &[u8]) -> Cell {
+fn relay_body_with_signature(
+    owner: &MsgAddressInt,
+    algorithm: u16,
+    key: &[u8],
+    signature: Cell,
+) -> Cell {
     use chain_block::IBitstring;
+    let mut terms = chain_block::BuilderData::new();
+    terms.append_u32(1_789_434_000).expect("election");
+    terms.append_u32(0x10000).expect("factor");
+    terms.append_raw(&[0xa5; 32], 256).expect("adnl");
+    terms.append_u16(algorithm).expect("suite");
+    terms.checked_append_reference(stored(key)).expect("key");
+    terms.checked_append_reference(signature).expect("signature");
+    terms.append_bit_zero().expect("no witness");
+    let terms = terms.into_cell().expect("terms");
+    let elector = chain_block::UInt256::from([0x33; 32]);
+    let mut commitment = chain_block::BuilderData::new();
+    commitment.append_u32(RELAY_OP).expect("op");
+    commitment.append_raw(&owner.address().get_bytestring(0), 256).expect("owner");
+    commitment.append_raw(elector.as_slice(), 256).expect("elector");
+    chain_block::Coins::new(4_900 * TOS).write_to(&mut commitment).expect("exact forward");
+    commitment.checked_append_reference(terms.clone()).expect("terms");
+    commitment.checked_append_reference(owner.serialize().expect("payer")).expect("payer");
+    let commitment = commitment.into_cell().expect("commitment").hash(0);
     let mut body = chain_block::BuilderData::new();
     body.append_u32(RELAY_OP).expect("operation");
-    body.append_u64(7).expect("query id");
-    body.append_u32(1_789_434_000).expect("election");
-    body.append_u32(0x10000).expect("max factor");
-    body.append_raw(&[0xa5; 32], 256).expect("adnl address");
-    body.append_u16(algorithm).expect("algorithm");
-    body.checked_append_reference(stored(key)).expect("the key");
-    body.checked_append_reference(stored(signature)).expect("the signature");
-    body.append_bit_zero().expect("no birth witness");
+    body.append_u64((1 << 63) | 1).expect("query");
+    body.append_raw(&commitment.as_slice()[..20], 160).expect("bounce commitment");
+    chain_block::Coins::new(4_900 * TOS).write_to(&mut body).expect("forwarded");
+    body.append_raw(elector.as_slice(), 256).expect("elector");
+    body.checked_append_reference(terms).expect("terms");
+    body.checked_append_reference(owner.serialize().expect("payer")).expect("payer");
     body.into_cell().expect("a relay request")
+}
+fn relay_body(owner: &MsgAddressInt, algorithm: u16, key: &[u8], signature: &[u8]) -> Cell {
+    relay_body_with_signature(owner, algorithm, key, stored(signature))
+}
+fn signed_relay_body(controller: &Controller, owner: &MsgAddressInt, key: &RootKey) -> Cell {
+    let network =
+        match controller.chain.config_params().config(19).expect("network").expect("network") {
+            chain_block::ConfigParamEnum::ConfigParam19(id) => id as i32,
+            _ => panic!("network parameter"),
+        };
+    let preimage = chain_block::pq_elector::stake_preimage(
+        network,
+        1_789_434_000,
+        0x10000,
+        &chain_block::UInt256::from_slice(&controller.address.address().get_bytestring(0)),
+        &chain_block::UInt256::from_slice(&owner.address().get_bytestring(0)),
+        1,
+        &chain_block::derive_consensus_key_id(1, &key.public_key),
+        &chain_block::UInt256::from([0xa5; 32]),
+    );
+    let signature = key.sign_under(&preimage, b"TOS-VALIDATOR-ELECTION-v1");
+    relay_body(owner, 1, &key.public_key, &signature)
 }
 
 /// What the controller sent on, if anything: where, carrying what, and stating whom.
@@ -757,6 +803,7 @@ fn relayed(result: &tos_sandbox::SendResult) -> Option<(MsgAddressInt, u128, Str
             let value = message.get_value().map(|v| v.coins.as_u128()).unwrap_or(0);
             let destination = message.dst().expect("a destination");
             body.get_next_u64().expect("query id");
+            body.get_next_bits(160).expect("payload commitment");
             body.get_next_u16().expect("algorithm");
             body.get_next_u32().expect("election");
             body.get_next_u32().expect("max factor");
@@ -776,7 +823,7 @@ fn relayed(result: &tos_sandbox::SendResult) -> Option<(MsgAddressInt, u128, Str
 ///
 /// This is the whole of what a consensus key may make this account do. It is not a root
 /// authorisation: the key authorised the stake the elector will verify, and this account
-/// only checks that the key presented is the one it was bound to.
+/// checks the bound key and its stake signature before retaining the one pending slot.
 #[test]
 fn a_bound_consensus_key_relays_a_stake_for_whoever_sent_the_money() {
     let root = RootKey::new(0xb3);
@@ -819,6 +866,25 @@ fn a_bound_consensus_key_relays_a_stake_for_whoever_sent_the_money() {
         .expect("deployment")
         .expect_success();
 
+    let payer = controller.chain.treasury("controller-relayer", 10_000 * TOS).expect("payer");
+    let payload = contracts::validator_controller::operating_funding_payload(
+        &contracts::validator_controller::OperatingFunding {
+            payer: payer.address(),
+            deposit: u128::from(80 * TOS),
+            allowance: u128::from(60 * TOS),
+            per_request_limit: u128::from(20 * TOS),
+            storage_floor: u128::from(10 * TOS),
+            expires_at: controller.chain.now() + 86_400,
+        },
+    )
+    .expect("operating payload");
+    let expires = controller.chain.now() + 600;
+    let network = match controller.chain.config_params().config(19).expect("network") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        _ => panic!("missing network id"),
+    };
+    let funding = authorize(&mut controller, &root, 0, 0, expires, 4, payload, None, network);
+    assert_eq!(exit_code(&funding), 0);
     let pool = controller.chain.treasury("relay-pool", 100_000 * TOS).expect("a pool");
     let before = controller
         .chain
@@ -826,14 +892,10 @@ fn a_bound_consensus_key_relays_a_stake_for_whoever_sent_the_money() {
         .and_then(|account| account.balance().and_then(|balance| balance.coins.as_u64()))
         .expect("a balance");
 
+    let relay = signed_relay_body(&controller, pool.address(), &consensus);
     let result = controller
         .chain
-        .send_message(pool.build_message(
-            &controller.address,
-            5_000 * TOS,
-            true,
-            Some(relay_body(1, &consensus.public_key, &vec![0x5a; 2420])),
-        ))
+        .send_message(pool.build_message(&controller.address, 5_000 * TOS, true, Some(relay)))
         .expect("the relay request is delivered");
     assert_eq!(exit_code(&result), 0, "a relay from the bound key was refused");
 
@@ -845,14 +907,24 @@ fn a_bound_consensus_key_relays_a_stake_for_whoever_sent_the_money() {
         "the relay stated an owner that is not the account that sent the money"
     );
     // Only what arrived. The account's own balance is not what a stake is made of.
-    assert!(value <= u128::from(5_000 * TOS), "the relay sent more than it was given");
-    assert!(value > u128::from(4_900 * TOS), "the relay kept the money it was given");
+    assert_eq!(
+        value,
+        u128::from(4_900 * TOS),
+        "caller-funded fees cannot change exact forwarded principal"
+    );
     let after = controller
         .chain
         .get_account(&controller.address)
         .and_then(|account| account.balance().and_then(|balance| balance.coins.as_u64()))
         .expect("a balance");
-    assert!(after >= before, "the relay spent the controller's own balance: {before} -> {after}");
+    let operations = controller
+        .chain
+        .run_get_method(&controller.address, "operating_state", vec![])
+        .expect("operating ledger");
+    let funds: u64 =
+        operations.stack[0].as_integer().expect("funds").to_string().parse().expect("funds");
+    let grant = (80 * TOS).checked_sub(funds).expect("reserved grant");
+    assert_eq!(after, before - grant, "only the explicitly reserved operating grant is spent");
 }
 
 /// Everything the relay refuses, and the fact that it sends nothing when it does.
@@ -872,7 +944,7 @@ fn a_relay_is_refused_unless_the_key_is_the_bound_one_and_the_money_is_enough() 
             &unbound.address,
             5_000 * TOS,
             true,
-            Some(relay_body(1, &consensus.public_key, &vec![0x5a; 2420])),
+            Some(relay_body(pool.address(), 1, &consensus.public_key, &vec![0x5a; 2420])),
         ))
         .expect("delivered");
     assert_eq!(exit_code(&result), ERROR_NO_CONSENSUS_KEY, "an unbound controller relayed a stake");
@@ -904,7 +976,7 @@ fn a_relay_is_refused_unless_the_key_is_the_bound_one_and_the_money_is_enough() 
             &controller.address,
             5_000 * TOS,
             true,
-            Some(relay_body(1, &stranger.public_key, &vec![0x5a; 2420])),
+            Some(relay_body(pool.address(), 1, &stranger.public_key, &vec![0x5a; 2420])),
         ))
         .expect("delivered");
     assert_eq!(
@@ -923,7 +995,7 @@ fn a_relay_is_refused_unless_the_key_is_the_bound_one_and_the_money_is_enough() 
             &controller.address,
             5_000 * TOS,
             true,
-            Some(relay_body(7, &consensus.public_key, &vec![0x5a; 2420])),
+            Some(relay_body(pool.address(), 7, &consensus.public_key, &vec![0x5a; 2420])),
         ))
         .expect("delivered");
     assert_eq!(
@@ -940,7 +1012,7 @@ fn a_relay_is_refused_unless_the_key_is_the_bound_one_and_the_money_is_enough() 
             &controller.address,
             TOS,
             true,
-            Some(relay_body(1, &consensus.public_key, &vec![0x5a; 2420])),
+            Some(relay_body(pool.address(), 1, &consensus.public_key, &vec![0x5a; 2420])),
         ))
         .expect("delivered");
     assert_eq!(
@@ -989,7 +1061,7 @@ fn a_stake_owner_outside_the_masterchain_is_refused_before_anything_is_relayed()
         .send_message(
             MessageBuilder::internal(&basechain, &controller.address, 5_000 * TOS)
                 .bounce(true)
-                .body(relay_body(1, &consensus.public_key, &vec![0x5a; 2420]))
+                .body(relay_body(&basechain, 1, &consensus.public_key, &vec![0x5a; 2420]))
                 .build(),
         )
         .expect("the relay request is delivered");
@@ -1041,7 +1113,7 @@ fn a_signature_the_elector_could_not_parse_never_leaves_this_account() {
                 &controller.address,
                 5_000 * TOS,
                 true,
-                Some(relay_body(1, &consensus.public_key, &vec![0x5a; length])),
+                Some(relay_body(pool.address(), 1, &consensus.public_key, &vec![0x5a; length])),
             ))
             .expect("delivered");
         assert_ne!(
@@ -1064,31 +1136,15 @@ fn a_signature_the_elector_could_not_parse_never_leaves_this_account() {
             chain_block::BuilderData::new().into_cell().expect("an empty chain"),
         )
         .expect("the chain");
-    let mut body = chain_block::BuilderData::new();
-    {
-        use chain_block::IBitstring;
-        body.append_u32(RELAY_OP).expect("operation");
-        body.append_u64(7).expect("query id");
-        body.append_u32(1_789_434_000).expect("election");
-        body.append_u32(0x10000).expect("max factor");
-        body.append_raw(&[0xa5; 32], 256).expect("adnl address");
-        body.append_u16(1).expect("algorithm");
-    }
-    body.checked_append_reference(stored(&consensus.public_key)).expect("the key");
-    body.checked_append_reference(lying.into_cell().expect("a lying signature"))
-        .expect("the signature");
-    {
-        use chain_block::IBitstring;
-        body.append_bit_zero().expect("no birth witness");
-    }
+    let body = relay_body_with_signature(
+        pool.address(),
+        1,
+        &consensus.public_key,
+        lying.into_cell().expect("lying signature"),
+    );
     let result = controller
         .chain
-        .send_message(pool.build_message(
-            &controller.address,
-            5_000 * TOS,
-            true,
-            Some(body.into_cell().expect("a relay request")),
-        ))
+        .send_message(pool.build_message(&controller.address, 5_000 * TOS, true, Some(body)))
         .expect("delivered");
     assert_ne!(exit_code(&result), 0, "a signature that lies about its length was relayed");
     assert!(relayed(&result).is_none(), "a refused relay sent something anyway");

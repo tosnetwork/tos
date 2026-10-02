@@ -20,6 +20,9 @@
 use chain_block::{Account, ConfigParams, MsgAddressInt, ShardStateUnsplit, TransactionTickTock};
 use tos_sandbox::{Blockchain, generate_zerostate_state};
 
+#[path = "elector_security_audit/mod.rs"]
+mod security_audit;
+
 /// The zerostate is generated rather than fixtured, so these tests run against the
 /// contracts and the configuration the chain would actually launch with.
 fn zerostate() -> ShardStateUnsplit {
@@ -2666,10 +2669,18 @@ fn a_retired_profile_cannot_make_an_election_look_ready() {
         "retiring a profile took the stake that had been placed"
     );
 
-    // And the election is postponed, not failed. The difference is the whole point of
-    // judging readiness on the stake the election can stand behind: an election that
-    // was marked failed would not retry until new stake arrived, so putting the profile
-    // back would leave it stuck for a reason the configuration had already undone.
+    // No selection should run on inadmissible stake. Input-aware failed retry can
+    // also recover later, so eventual installation alone cannot detect this guard.
+    let summary = chain
+        .blockchain
+        .run_get_method(&chain.elector, "participant_list_extended", vec![])
+        .expect("actual readiness state");
+    assert_eq!(summary.exit_code, 0);
+    assert_eq!(
+        summary.stack[5].as_integer().expect("failed flag").to_string(),
+        "0",
+        "retired-only stake must postpone selection without marking it failed"
+    );
     admit_sender_code(&mut chain, &accounts[0]);
     chain
         .blockchain
@@ -2941,6 +2952,52 @@ fn controller_preimage(
     preimage.extend_from_slice(payload.hash(0).as_slice());
     assert_eq!(preimage.len(), 93, "the controller preimage changed shape");
     preimage
+}
+
+fn fund_controller_operations(
+    chain: &mut Chain,
+    validator: &RootedValidator,
+    payer: &tos_sandbox::Treasury,
+) {
+    use chain_block::IBitstring;
+    let payload = contracts::validator_controller::operating_funding_payload(
+        &contracts::validator_controller::OperatingFunding {
+            payer: payer.address(),
+            deposit: u128::from(80 * TOS),
+            allowance: u128::from(60 * TOS),
+            per_request_limit: u128::from(20 * TOS),
+            storage_floor: u128::from(10 * TOS),
+            expires_at: chain.blockchain.now() + 86_400,
+        },
+    )
+    .expect("operating payload");
+    let nonce = validator.stored_nonce(chain);
+    let expires = chain.blockchain.now() + 600;
+    let signature = validator.root.sign_under(
+        &controller_preimage(global_id(chain), &validator.id(), 0, nonce, expires, 4, &payload),
+        CONTROLLER_CONTEXT,
+    );
+    let mut body = chain_block::BuilderData::new();
+    body.append_u32(CONTROLLER_OP).expect("op");
+    body.append_u64(1).expect("query");
+    body.append_i32(global_id(chain)).expect("network");
+    body.append_u64(0).expect("epoch");
+    body.append_u64(nonce).expect("nonce");
+    body.append_u32(expires).expect("expiry");
+    body.append_u8(4).expect("kind");
+    body.checked_append_reference(payload).expect("payload");
+    body.checked_append_reference(stored_bytes(&signature)).expect("signature");
+    body.append_bit_zero().expect("no cosignature");
+    chain
+        .blockchain
+        .send_message(payer.build_message(
+            &validator.address,
+            100 * TOS,
+            true,
+            Some(body.into_cell().expect("body")),
+        ))
+        .expect("explicit operating deposit")
+        .expect_success();
 }
 
 impl RootedValidator {
@@ -3555,6 +3612,7 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
     // The pool that holds the money, staking through the first of them.
     let owner = chain.blockchain.treasury("pool-e2e-owner", 100_000 * TOS).expect("an owner");
     let operator = chain.blockchain.treasury("pool-e2e-operator", 100_000 * TOS).expect("a wallet");
+    fund_controller_operations(&mut chain, &validators[0], &operator);
     let controller = validators[0].address.clone();
     let pool = deploy_single_nominator(
         &mut chain,
@@ -3581,7 +3639,7 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
     // vectors; the production message builder below supplies the pool body.
     // Neither the test nor the operator constructs an elector-directed body.
     let signature = validators[0].consensus.sign(&preimage);
-    let witness = birth_witness(&chain, &controller);
+    let witness = rooted_birth_witness(&validators[0]);
 
     let params = NewStakeParams {
         query_id: 1,
@@ -3596,13 +3654,13 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
 
     let result = chain
         .blockchain
-        .send_message(operator.build_message(&pool, 2 * TOS, true, Some(order)))
+        .send_message(operator.build_message(&pool, 20 * TOS, true, Some(order)))
         .expect("the order is delivered");
     result.expect_success();
 
     // The elector took it, and the member it registered is the controller.
     assert!(
-        replies(&result).contains(&STAKE_ACCEPTED),
+        replies(&result).contains(&0x50516f32),
         "the pool's stake never reached the election: {:02x?}",
         replies(&result)
     );
@@ -3706,6 +3764,14 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
             transaction
                 .iterate_out_msgs(|message| {
                     if message.dst() == Some(to.clone()) {
+                        if message.body().is_some_and(|body| {
+                            matches!(
+                                body.clone().get_next_u32().ok(),
+                                Some(0x50516132 | 0x50516133)
+                            )
+                        }) {
+                            return Ok(true);
+                        }
                         values.push(
                             message.get_value().expect("internal transfer value").coins.as_u128(),
                         );
@@ -3723,6 +3789,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     let validator = deploy_rooted_validator(&mut chain, 0x31);
     admit_code_of(&mut chain, &validator.address);
     let operator = chain.blockchain.treasury("multi-pool-operator", 100_000 * TOS).expect("wallet");
+    fund_controller_operations(&mut chain, &validator, &operator);
     let controller = validator.address.clone();
     let pool = deploy_multi_nominator(&mut chain, operator.address(), &controller);
 
@@ -3738,7 +3805,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
         &validator.consensus.adnl,
     );
     let signature = validator.consensus.sign(&preimage);
-    let witness = birth_witness(&chain, &controller);
+    let witness = rooted_birth_witness(&validator);
     let order = new_stake_with_witness(
         &NewStakeParams {
             query_id: 1,
@@ -3754,7 +3821,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     .expect("production multi-pool stake order");
     let result = chain
         .blockchain
-        .send_message(operator.build_message(&pool, 2 * TOS, true, Some(order)))
+        .send_message(operator.build_message(&pool, 20 * TOS, true, Some(order)))
         .expect("order delivered");
     result.expect_success();
 
@@ -3775,10 +3842,11 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     for transaction in result.transactions_for(&chain.elector) {
         transaction
             .iterate_out_msgs(|message| {
-                if message.dst() == Some(pool.clone()) {
+                if message.dst() == Some(controller.clone()) {
                     let mut body = message.body().expect("Elector reply body").clone();
                     let tag = body.get_next_u32().expect("reply opcode");
                     body.get_next_u64().expect("reply query id");
+                    body.get_next_bits(160).expect("return commitment");
                     elector_reply = Some((tag, body.get_next_u32().expect("reply reason")));
                 }
                 Ok(true)
@@ -3816,37 +3884,27 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     }
 }
 
-/// The old 10,001 TOS order reaches the Elector, but its mode-64 forwarding
-/// fee leaves less than 10,001 TOS there. After the Elector's one-TOS reply
-/// reserve it is below the 10,000 TOS minimum: reason 5, not a relay bounce.
+/// Exact forwarding excludes relay fees from the principal tested by the elector.
 #[test]
 fn a_multi_nominator_first_stake_exposes_the_exact_refusal() {
-    let probe = multi_nominator_first_stake_probe(10_001 * TOS);
-    assert_eq!(probe.pool_to_controller, Some(u128::from(10_001 * TOS)));
-    assert!(probe.controller_to_elector.is_some_and(|value| value < u128::from(10_001 * TOS)));
+    let probe = multi_nominator_first_stake_probe(10_000 * TOS);
+    assert!(probe.pool_to_controller.is_some_and(|value| value > u128::from(10_000 * TOS)));
+    assert_eq!(probe.controller_to_elector, Some(u128::from(10_000 * TOS)));
     assert_eq!(probe.controller_aborted, Some(false));
     assert!(!probe.controller_bounced_to_pool);
     assert_eq!(probe.elector_aborted, Some(false));
-    assert_eq!(probe.elector_reply, Some((STAKE_RETURNED, REASON_BELOW_MINIMUM)));
+    assert_eq!(probe.elector_reply, Some((0x50516532, REASON_BELOW_MINIMUM)));
     assert_eq!(probe.pool_state, 0);
     assert!(!probe.controller_registered);
 }
 
-/// One additional TOS is an explicit forwarding-fee allowance, rather than
-/// pretending the Elector's one-TOS confirmation reserve also covers relay
-/// fees. The same production builder and three compiled contracts must now
-/// reach the acceptance reply and pool state 2.
 #[test]
 fn a_multi_nominator_first_stake_with_forwarding_allowance_is_accepted() {
     let probe = multi_nominator_first_stake_probe(10_002 * TOS);
-    assert_eq!(
-        probe.elector_reply,
-        Some((STAKE_ACCEPTED, 0)),
-        "Elector must accept the forwarded amount"
-    );
-    assert_eq!(probe.pool_state, 2, "the pool must receive and record acceptance");
-    assert_eq!(probe.pool_to_controller, Some(u128::from(10_002 * TOS)));
-    assert!(probe.controller_to_elector.is_some_and(|value| value >= u128::from(10_001 * TOS)));
+    assert_eq!(probe.elector_reply, Some((0x50516f32, 0)));
+    assert_eq!(probe.pool_state, 2, "the pool must consume its bound receipt");
+    assert!(probe.pool_to_controller.is_some_and(|value| value > u128::from(10_002 * TOS)));
+    assert_eq!(probe.controller_to_elector, Some(u128::from(10_002 * TOS)));
     assert_eq!(probe.controller_aborted, Some(false));
     assert!(!probe.controller_bounced_to_pool);
     assert_eq!(probe.elector_aborted, Some(false));
@@ -4934,9 +4992,13 @@ fn seed_file_for(validator: &PqValidator) -> std::path::PathBuf {
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))
         .expect("only this process may write it");
     let seed = home.join(validator.key_file.file_name().expect("the seed has a name"));
-    std::fs::copy(&validator.key_file, &seed).expect("the seed is provisioned");
-    std::fs::set_permissions(&seed, std::fs::Permissions::from_mode(0o600))
+    // Concurrent native-tool tests may provision the same fixture. Publish a
+    // complete file atomically so no reader observes a truncation in progress.
+    let temporary = tempfile::NamedTempFile::new_in(&home).expect("private staging file");
+    std::fs::copy(&validator.key_file, temporary.path()).expect("the test seed is provisioned");
+    std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o600))
         .expect("owner-only, as the node insists");
+    temporary.persist(&seed).expect("publish complete test seed");
     seed
 }
 
@@ -5725,13 +5787,22 @@ fn controller_birth_witness(chain: &Chain, who: &tos_sandbox::Treasury) -> chain
 /// requires the result to be the sender's address, so a wrong number is not believed --
 /// it produces a different address and is refused. It replaced a pruned proof of the
 /// state init, which is a level-one cell and so cannot be sent by a contract at all.
+fn rooted_birth_witness(validator: &RootedValidator) -> chain_block::Cell {
+    let (code, data) = validator.birth.as_ref().expect("original deployment");
+    witness_from_cells(code, data)
+}
+
 fn birth_witness(chain: &Chain, address: &MsgAddressInt) -> chain_block::Cell {
-    use chain_block::{GetRepresentationHash, IBitstring};
     let account = chain.blockchain.get_account(address).expect("the sender exists");
     let state_init = account.state_init().expect("the sender was deployed with a state init");
     let code = state_init.code().expect("a controller is deployed with code");
     let data = state_init.data().expect("a controller is deployed with data");
 
+    witness_from_cells(code, data)
+}
+
+fn witness_from_cells(code: &chain_block::Cell, data: &chain_block::Cell) -> chain_block::Cell {
+    use chain_block::{GetRepresentationHash, IBitstring};
     let mut witness = chain_block::BuilderData::new();
     witness.append_raw(code.repr_hash().as_slice(), 256).expect("the code hash");
     witness.append_u16(code.repr_depth()).expect("the code depth");
@@ -6627,12 +6698,9 @@ fn a_controller_rotates_its_key_and_releases_the_one_it_held() {
 /// Rewrite the open election with `book_fields` of the post-quantum book still present,
 /// each of them an empty dictionary.
 ///
-/// Zero is the storage an upgrade leaves behind: the configuration contract may replace
-/// the elector's code while an election is open, and the upgrade hook sets the new code
-/// without migrating a single cell, so the first thing the new code reads is an election
-/// the old code wrote. One is a shape no version has ever written, and is here to show
-/// that the election is read as one of the two shapes that exist and never as something
-/// in between.
+/// Missing books are an incompatible election, not an empty membership list. A
+/// caller must finish or explicitly migrate the old election before installing a
+/// different storage reader. Partial books must also fail without rewriting claims.
 fn rewrite_election_with_book_fields(chain: &mut Chain, book_fields: usize) {
     use chain_block::IBitstring;
     let mut account =
@@ -6676,7 +6744,7 @@ fn rewrite_election_with_book_fields(chain: &mut Chain, book_fields: usize) {
 }
 
 #[test]
-fn an_election_opened_before_the_upgrade_is_read_and_written_again() {
+fn an_election_missing_its_books_is_refused_without_losing_its_declared_principal() {
     let (mut chain, treasury, election) = open_election("legacy-elect", 60_000 * TOS);
     raise_to_post_quantum_version(&mut chain);
     let opening =
@@ -6686,25 +6754,19 @@ fn an_election_opened_before_the_upgrade_is_read_and_written_again() {
     assert_ne!(placed, 0, "the fixture needs a running total to read back");
     rewrite_election_with_book_fields(&mut chain, 0);
 
-    // Every entry point reads the election first, so an unreadable one stops the elector
-    // altogether: no stake is accepted and no election ever closes.
-    assert_eq!(
-        declared_total_stake(&chain),
-        placed,
-        "an election opened by the previous code could not be read back"
-    );
-
+    let before = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
+    let decoded = chain
+        .blockchain
+        .run_get_method(&chain.elector, "participant_list_extended", vec![])
+        .expect("getter");
+    assert_eq!(decoded.exit_code, 65, "absent books need explicit migration");
     let validator = PqValidator::new(9);
     let result = pq_stake(&mut chain, &treasury, &validator, election, 2, 12_000 * TOS);
+    result.expect_aborted().expect_exit_code(65);
     assert_eq!(
-        reply(&result),
-        (STAKE_ACCEPTED, 0),
-        "the elector stopped working on the storage an upgrade leaves behind"
-    );
-    assert_eq!(
-        pq_member_key_id(&chain, &treasury),
-        Some(validator.key_id()),
-        "the book was not created for an election that was opened without one"
+        chain.blockchain.get_account(&chain.elector).expect("elector").get_data(),
+        before,
+        "refusal must not rewrite the original principal total or creditor state"
     );
 }
 

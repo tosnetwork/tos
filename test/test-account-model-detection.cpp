@@ -57,6 +57,14 @@ TEST(AccountModel, tosctl_v1r3_wallet_is_recognised_by_its_embedded_code_hash) {
   ASSERT_EQ("wallet v1 r3", tos::detect_wallet_type(vm::CellHash::from_slice(code_hash.as_slice())));
 }
 
+TEST(AccountModel, nominator_pool_is_recognised_by_the_locked_code_hash) {
+  // The build lock independently checks this against current source and BOC.
+  // CellHash::to_hex uses upper case; a lower-case table entry cannot match it.
+  td::Bits256 code_hash;
+  CHECK(code_hash.from_hex("adda03faacad57caa588755aad14f6a99b4632f65e0b2a8f301990fde5b3a2be") == 256);
+  ASSERT_EQ("nominator pool v1", tos::detect_wallet_type(vm::CellHash::from_slice(code_hash.as_slice())));
+}
+
 TEST(AccountModel, unknown_code_is_not_claimed_to_be_a_wallet) {
   ASSERT_EQ("", tos::detect_wallet_type(foreign_code()->get_hash(0)));
 }

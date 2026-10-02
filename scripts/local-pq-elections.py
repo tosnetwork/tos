@@ -65,7 +65,7 @@ async def wait(predicate, timeout=60):
     raise TimeoutError("election transaction confirmation timed out")
 
 
-async def lite_int(method, *args):
+async def lite_int(method, *args, address=ELECTOR):
     proc = await asyncio.create_subprocess_exec(
         "/usr/local/bin/tos-lite-client",
         "-C",
@@ -73,7 +73,7 @@ async def lite_int(method, *args):
         "-v",
         "0",
         "-c",
-        f"runmethod {ELECTOR.to_str(is_user_friendly=False)} {method} " + " ".join(args),
+        f"runmethod {address.to_str(is_user_friendly=False)} {method} " + " ".join(args),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -285,7 +285,11 @@ async def main():
                             for i in selected:
                                 c = candidates[i]
                                 pool = pools[i]
-                                query = election * 10 + i
+                                query = await lite_int(
+                                    "next_relay_query", address=Address(c["controller"])
+                                )
+                                if not (1 << 63) < query < (1 << 64):
+                                    raise ValueError("controller returned an invalid relay query")
                                 # Local test capital; no external funds or production keys.
                                 await send(wallet, pool.address, 11020)
                                 request = (
@@ -322,14 +326,18 @@ async def main():
                                     signature=auth.signature,
                                     witness=Cell.one_from_boc(base64.b64decode(c["witness_b64"])),
                                 )
-                                await send(wallet, pool.address, 2, body)
+                                await send(wallet, pool.address, 20, body)
 
                                 async def accepted():
                                     account = await client.raw_get_account_state(pool.address)
                                     transactions = await client.raw_get_transactions(
                                         pool.address, account.last_transaction_id
                                     )
-                                    answer = elector_reply(transactions.transactions, query)
+                                    answer = elector_reply(
+                                        transactions.transactions,
+                                        query,
+                                        controller=Address(c["controller"]),
+                                    )
                                     # Reason 0 means the election is already finished (or none
                                     # is active): a stake sent at the window's close, or after a
                                     # restart that re-read a closing election. That is not a

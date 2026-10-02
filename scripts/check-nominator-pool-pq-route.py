@@ -135,7 +135,7 @@ def validate(source: str) -> None:
                 f"production pool builder {field} is not bound to node/controller data")
     require(bool(calls(support, "authorized_pool_order")) and bool(calls(primary, "authorized_pool_order")),
             "a pool stake route bypasses the shared node-authorized order")
-    require(keyword(builder, "query_id") == "time.time_ns() if query_id is None else query_id"
+    require(keyword(builder, "query_id") == "await self.next_relay_query(index) if query_id is None else query_id"
             and keyword(one_call(primary, "authorized_pool_order"), "query_id") == "query_id"
             and "return query_id" in ast.unparse(primary),
             "primary pool order no longer binds a recorded query ID to its body")
@@ -303,7 +303,7 @@ def self_test(source: str) -> None:
         "second stake feedback removed":
             ("await self.record_pool_stake_feedback(\n                    final_query_id", "await self.pool_data(\n                    final_query_id"),
         "Elector reply ignored":
-            ("elector_reply(pool_transactions, query_id)", "None"),
+            ("elector_reply(pool_transactions, query_id, controller=controller_address)", "None"),
         "controller bounce ignored":
             ("pool_controller_bounce(\n                pool_transactions", "ignored_bounce(\n                pool_transactions"),
         "controller relay ignored":

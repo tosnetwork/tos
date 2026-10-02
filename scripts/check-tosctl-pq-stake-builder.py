@@ -120,8 +120,8 @@ def main() -> None:
 
     product_probe = collapsed(root / "scripts/pq-config-wallet-first-stake-e2e.py")
     if (
-        "elector_reply(pool_txs, query_id)" not in product_probe
-        or "elector_reply(controller_txs, query_id)" in product_probe
+        "elector_reply(pool_txs, query_id, controller=controller.address)" not in product_probe
+        or "elector_reply(controller_txs," in product_probe
     ):
         fail(
             "product first-stake probe no longer reads the Elector reply from the stake-owner pool"

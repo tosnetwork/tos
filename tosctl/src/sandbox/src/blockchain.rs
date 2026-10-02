@@ -414,8 +414,10 @@ impl Blockchain {
         Ok(SendResult { transactions: all_txs, external_out_messages: ext_outs })
     }
 
-    /// Execute a single message against its destination account.
-    fn execute_one(
+    /// Execute one real transaction, including its action phase, and return
+    /// undelivered outbound messages. Tests can interleave asynchronous replies
+    /// without replacing the executor or inventing contract state transitions.
+    pub fn execute_one(
         &mut self,
         msg: Message,
     ) -> SandboxResult<(MsgAddressInt, Transaction, Vec<Message>)> {
