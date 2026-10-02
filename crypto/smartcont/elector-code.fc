@@ -691,6 +691,14 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
   send_raw_message(sr::message(sender, 0, begin_cell().store_uint(0x47656133, 32).store_uint(query, 64).end_cell(), false), 64);
 }
 
+;; Stable compatibility entry point. This must remain a real dictionary call:
+;; upgrade_code invokes it through the target c3 before installing that code.
+;; The tag promises retention of the owner/query tombstones and ACK confirmation
+;; semantics, not permission to discard them when the outstanding count is zero.
+int recovery_upgrade_format() impure method_id(1667) {
+  return recover::metadata_tag;
+}
+
 int upgrade_ready() method_id {
   var (elect, credits, past, _, _, _) = load_data();
   var (outstanding, _) = recovery_book();
@@ -720,12 +728,30 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
   ifnot (upgrade_ready()) { return false; }
   accept_message();
   var code = cs~load_ref();
-  var (elect, credits, past, purse, active_id, active_hash) = load_data();
-  store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, null());
+  cell preserved_data = get_data();
+  cell preserved_recovery = recovery_metadata();
+  cont previous_code = get_c3();
+  ifnot (preserved_recovery.null?()) {
+    ;; A cleared local receipt may still owe its remote owner a confirmation.
+    ;; Never erase it, including on a same-code installation. A target without
+    ;; this fixed entry point cannot take over a nonempty recovery history.
+    set_c3(code.begin_parse().bless());
+    int target_format = recovery_upgrade_format();
+    set_c3(previous_code);
+    throw_unless(67, target_format == recover::metadata_tag);
+    ;; The compatibility entry point is a read-only declaration, not a migration.
+    throw_unless(67, cell_hash(get_data()) == cell_hash(preserved_data));
+  }
   set_code(code);
   ifnot(cs.slice_empty?()) {
     set_c3(code.begin_parse().bless());
     after_code_upgrade(s_addr, cs, query_id);
+    set_c3(previous_code);
+    ifnot (preserved_recovery.null?()) {
+      cell retained = recovery_metadata();
+      throw_unless(67, ~ retained.null?());
+      throw_unless(67, cell_hash(retained) == cell_hash(preserved_recovery));
+    }
     throw(0);
   }
   return true;
