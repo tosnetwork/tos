@@ -119,17 +119,46 @@ fun multisigOrderAllocateSeqno(requested: int, nextSeqno: int): (int, int) {
     return (nextSeqno, nextSeqno + 1);
 }
 
-/// Number of signers, or INVALID_CONFIG if the dictionary is empty or larger
-/// than MULTISIG_ORDER_MAX_SIGNERS.
+/// Approvals are recorded per index, so an address listed at two indices could
+/// approve twice. A signer set therefore lists each signer as a plain addr_std
+/// (267 bits, no references), in strictly increasing address order by index:
+/// workchain first, then account id. Two equal addresses can never both satisfy
+/// that, and checking it needs only the previous entry. Indices may be sparse.
+///
+/// Checks `signer` against the previous entry's (workchain, account id) and
+/// returns its own; `first` is true for the set's lowest index. Throws
+/// INVALID_CONFIG.
+fun multisigOrderNextSignerKey(signer: slice, previousWorkchain: int, previousId: int, first: bool): (int, int) {
+    var s = signer;
+    if (s.remainingBitsCount() != 267 || s.remainingRefsCount() != 0) {
+        throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+    }
+    if (s.loadUint(3) != 4) { // addr_std, no anycast
+        throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+    }
+    val workchain = s.loadInt(8);
+    val id = s.loadUint(256);
+    if (!(first || workchain > previousWorkchain || (workchain == previousWorkchain && id > previousId))) {
+        throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+    }
+    return (workchain, id);
+}
+
+/// Number of signers. Throws INVALID_CONFIG if the dictionary is empty, larger
+/// than MULTISIG_ORDER_MAX_SIGNERS, or not ordered as
+/// [multisigOrderNextSignerKey] requires.
 fun multisigOrderSignerCount(signers: cell): int {
     var count = 0;
-    var (index, _, found) = (signers as dict).uDictGetFirst(MULTISIG_ORDER_SIGNER_INDEX_BITS);
+    var workchain = 0;
+    var id = 0;
+    var (index, signer, found) = (signers as dict).uDictGetFirst(MULTISIG_ORDER_SIGNER_INDEX_BITS);
     while (found) {
         count += 1;
         if (count > MULTISIG_ORDER_MAX_SIGNERS) {
             throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
         }
-        (index, _, found) = (signers as dict).uDictGetNext(MULTISIG_ORDER_SIGNER_INDEX_BITS, index!);
+        (workchain, id) = multisigOrderNextSignerKey(signer!, workchain, id, count == 1);
+        (index, signer, found) = (signers as dict).uDictGetNext(MULTISIG_ORDER_SIGNER_INDEX_BITS, index!);
     }
     if (count == 0) {
         throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
@@ -159,7 +188,8 @@ fun multisigOrderNew(
 /// [multisigOrderNew] with the signer count supplied instead of counted, for
 /// an order whose init comes only from a parent that already validated the
 /// set: counting a 255-signer dictionary costs far more gas than the rest of
-/// initialisation.
+/// initialisation. Trusts that the set satisfies [multisigOrderSignerCount];
+/// a count alone does not show the addresses are distinct.
 fun multisigOrderNewWithCount(
     parent: address,
     seqno: uint64,

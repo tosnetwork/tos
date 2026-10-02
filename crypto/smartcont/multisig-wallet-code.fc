@@ -21,9 +21,16 @@
 ;; accepts only from itself. Signer and proposer sets may not contain this wallet's own
 ;; address, so it can never approve or propose by a message to itself.
 ;;
+;; Each signer is one vote. A signer set lists distinct plain addresses in increasing order
+;; by index (multisig_order::next_signer_key), and every update is checked against that.
+;; The set a wallet is deployed with is the deployer's input, which no code runs on; check
+;; it with get_checked_signer_count before deploying or joining a wallet. (Checking the
+;; current set on every proposal instead would cost about 1,500 gas per signer each time.)
+;;
 ;; The cost a proposal must cover grows with its number of actions and with the size of
-;; any signer or proposer set it installs; see fee_profile(). The signer count is stored and handed to
-;; each order, so neither the parent nor the order counts the set on every message.
+;; any signer or proposer set it installs; see fee_profile(). The signer count is stored
+;; and handed to each order, so neither the parent nor the order counts the set on every
+;; message.
 ;;
 ;; storage: next_seqno:uint64 threshold:uint8 signer_count:uint8 signers:^Cell
 ;;          proposers:(Maybe ^Cell) order_code:^Cell
@@ -46,8 +53,8 @@ const int send_mode::bounce_on_action_fail = 16;
 ;; TVM (2026-10-02) at 3 signers and 1 action: proposal 19165, order init 3481, firing
 ;; approval 9643 and parent execute 7851 gas; init message 8638 bits / 16 cells, order
 ;; state 8793 bits / 14 cells and execute message 456 bits / 1 cell beyond the action and
-;; signer set; per action 834 gas at proposal and 1805 at execution; 866 gas per signer an
-;; update installs. The fixture fails if a build makes any value lower than its measurement
+;; signer set; per action 834 gas at proposal and 1805 at execution; 1881 gas per signer an
+;; update installs (applied to installed proposers too, which cost less). The fixture fails if a build makes any value lower than its measurement
 ;; or more than 25% above it, and checks the linear model against 255-signer wallets and
 ;; 255-action orders.
 tuple fee_profile() inline {
@@ -64,7 +71,7 @@ tuple fee_profile() inline {
       1,     ;; execute_message_cells
       920,   ;; parent_new_order_gas_per_action
       1990,  ;; parent_execute_gas_per_action
-      960    ;; parent_gas_per_updated_signer
+      2070   ;; parent_gas_per_updated_signer
   );
 }
 
@@ -92,14 +99,21 @@ tuple fee_profile() inline {
 }
 
 ;; Number of addresses in a signer or proposer dictionary, refusing this wallet's own
-;; address and more than 255 entries.
-int count_members(cell members) impure inline {
+;; address and more than 255 entries. A signer set (`signers` true) must also list distinct
+;; plain addresses in increasing order (multisig_order::next_signer_key), since each of its
+;; entries is a vote; proposers only open orders, so their set needs no such rule.
+int count_members(cell members, int signers) impure inline {
   int count = 0;
+  int workchain = 0;
+  int id = 0;
   (int index, slice member, int found) = members.udict_get_min?(multisig_order::signer_index_bits);
   while (found) {
     count += 1;
     throw_if(multisig_order::error::invalid_config, count > multisig_order::max_signers);
     throw_if(multisig_order::error::invalid_config, equal_slice_bits(member, my_address()));
+    if (signers) {
+      (workchain, id) = multisig_order::next_signer_key(member, workchain, id, count == 1);
+    }
     (index, member, found) = members.udict_get_next?(multisig_order::signer_index_bits, index);
   }
   return count;
@@ -125,8 +139,8 @@ int count_members(cell members) impure inline {
       cs~load_ref();
     } elseif (tag == action::update) {
       threshold = cs~load_uint(8);
-      signer_count = count_members(cs~load_ref());
-      int proposer_count = count_members(cs~load_dict());
+      signer_count = count_members(cs~load_ref(), true);
+      int proposer_count = count_members(cs~load_dict(), false);
       multisig_order::require_valid_threshold(threshold, signer_count);
       installed += signer_count + proposer_count;
     } else {
@@ -254,6 +268,13 @@ int count_members(cell members) impure inline {
 slice get_order_address(int seqno) method_id {
   (_, _, _, _, _, cell order_code) = load_data();
   return multisig_order::address(order_code, my_address(), seqno);
+}
+
+;; Number of signers in the current set; throws unless the set satisfies
+;; multisig_order::signer_count, the rule every update is held to.
+int get_checked_signer_count() method_id {
+  (_, _, _, cell signers, _, _) = load_data();
+  return multisig_order::signer_count(signers);
 }
 
 tuple get_fee_profile() method_id {

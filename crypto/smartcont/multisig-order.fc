@@ -108,15 +108,37 @@ slice multisig_order::address(cell order_code, slice parent, int seqno) inline {
   return (next_seqno, next_seqno + 1);
 }
 
-;; Number of signers, or invalid_config if the dictionary is empty or larger than
-;; multisig_order::max_signers.
+;; Approvals are recorded per index, so an address listed at two indices could approve
+;; twice. A signer set therefore lists each signer as a plain addr_std (267 bits, no
+;; references), in strictly increasing address order by index: workchain first, then
+;; account id. Two equal addresses can never both satisfy that, and checking it needs only
+;; the previous entry. Indices may be sparse.
+;;
+;; Checks `signer` against the previous entry's (workchain, account id) and returns its
+;; own; `first` is true for the set's lowest index. Throws invalid_config.
+(int, int) multisig_order::next_signer_key(slice signer, int previous_workchain, int previous_id,
+                                           int first) impure inline {
+  throw_unless(multisig_order::error::invalid_config, (signer.slice_bits() == 267) & (signer.slice_refs() == 0));
+  throw_unless(multisig_order::error::invalid_config, signer~load_uint(3) == 4); ;; addr_std, no anycast
+  int workchain = signer~load_int(8);
+  int id = signer~load_uint(256);
+  throw_unless(multisig_order::error::invalid_config,
+               first | (workchain > previous_workchain) | ((workchain == previous_workchain) & (id > previous_id)));
+  return (workchain, id);
+}
+
+;; Number of signers. Throws invalid_config if the dictionary is empty, larger than
+;; multisig_order::max_signers, or not ordered as multisig_order::next_signer_key requires.
 int multisig_order::signer_count(cell signers) impure inline {
   int count = 0;
-  (int index, _, int found) = signers.udict_get_min?(multisig_order::signer_index_bits);
+  int workchain = 0;
+  int id = 0;
+  (int index, slice signer, int found) = signers.udict_get_min?(multisig_order::signer_index_bits);
   while (found) {
     count += 1;
     throw_if(multisig_order::error::invalid_config, count > multisig_order::max_signers);
-    (index, _, found) = signers.udict_get_next?(multisig_order::signer_index_bits, index);
+    (workchain, id) = multisig_order::next_signer_key(signer, workchain, id, count == 1);
+    (index, signer, found) = signers.udict_get_next?(multisig_order::signer_index_bits, index);
   }
   throw_if(multisig_order::error::invalid_config, count == 0);
   return count;
@@ -138,9 +160,11 @@ int multisig_order::signer_count(cell signers) impure inline {
   return [parent, seqno, threshold, signers, 0, 0, expires_at, false, action];
 }
 
-;; [multisig_order::new_with_count] counting the signers itself. An order whose init comes
-;; only from a parent that already validated the set should take the count from the parent:
-;; counting a 255-signer dictionary costs far more gas than the rest of initialisation.
+;; [multisig_order::new_with_count] counting and checking the signers itself. An order whose
+;; init comes only from a parent that already validated the set should take the count from
+;; the parent: counting a 255-signer dictionary costs far more gas than the rest of
+;; initialisation. new_with_count trusts that the set satisfies
+;; multisig_order::signer_count; a count alone does not show the addresses are distinct.
 [slice, int, int, cell, int, int, int, int, cell] multisig_order::new(slice parent, int seqno, int threshold,
                                                                       cell signers, int expires_at, cell action) impure inline {
   return multisig_order::new_with_count(parent, seqno, threshold, signers, multisig_order::signer_count(signers),

@@ -5,7 +5,7 @@
 Initial reviewed head: `924cf0970532b5794fcee635e8ff67755c326041`.
 Head branch: `tol-stdlib-audited-patterns`.
 
-**One confirmed fee-accounting defect has a source fix and six new regression vectors. The original review did not execute the patch; native follow-up verification is recorded in the last section. A separate, conditional signer-configuration risk remains unresolved. This is not a security approval or a claim that every path in the PR is safe.**
+**One confirmed fee-accounting defect has a source fix and six new regression vectors. The original review did not execute the patch; native follow-up verification is recorded in the last section. A separate, conditional signer-configuration risk was unresolved at review time; its resolution is recorded in the last section. This is not a security approval or a claim that every path in the PR is safe.**
 
 Changes made directly on the PR branch:
 
@@ -96,7 +96,7 @@ No runtime uniqueness change was pushed. Closing the unique-address interpretati
 4. Re-measure gas and message/state-size profiles for any runtime implementation change. Naively scanning the whole signer set on every approval would invalidate the current constant-cost approval/init assumptions.
 5. Add duplicate-address, malformed-address, sparse-index, maximum-size and normal-flow tests. Duplicate configurations must be rejected before they can authorize an order, or explicit weighted semantics must be documented and tested.
 
-This item remains open. The limited fee-counter fix above must not be represented as closing it.
+This item was open at review time; see "F-02 resolution" below.
 
 ## Action-phase observations: do not import an upstream conclusion blindly
 
@@ -166,4 +166,42 @@ This reproduces F-01's effect on the executor: an order funded with the old quot
 
 The actions' own forward fees are not part of the quote. With 255 send actions, the wallet pays about 102,000,000 in forward fees for its outbound messages. The quote prices the path that takes an order to execution. The actions are payments the signers approved, with a send mode the action chose, so their fees are counted with their values.
 
-F-02 is unchanged by this follow-up and remains open.
+F-02 was not addressed by this follow-up; see "F-02 resolution" below.
+
+## F-02 resolution
+
+Signer sets now give each address exactly one vote.
+
+Rule: a signer set lists each signer as a plain `addr_std` (267 bits, no references), in strictly increasing address order by index: workchain first, then account id. Indices may be sparse and may reach 255. Equal addresses can never both satisfy a strict order, so one comparison with the previous entry detects a duplicate.
+
+Where the rule is enforced:
+
+- `multisig_order::next_signer_key` and Tol `multisigOrderNextSignerKey` check one entry against the previous one. `multisig_order::signer_count` and `multisigOrderSignerCount`, and so `new` and `multisigOrderNew`, apply the rule to the whole set.
+- `new_with_count` and `multisigOrderNewWithCount` keep their fast path. They document that they trust their caller to supply a set satisfying the rule, because a count alone does not show the addresses are distinct.
+- The wallet applies the rule to every signer set an update installs, at proposal and again at execution. Proposer sets keep the previous rules, because proposers open orders but never vote.
+- The new getter `get_checked_signer_count` applies the rule to the current set. The wallet's initial set is the deployer's input, and no code runs on it. It is checked by calling this getter before deploying or joining a wallet.
+
+Rejected alternative: checking the current set on every proposal. It was implemented and measured: a proposal on a 255-signer wallet went from 69,565 to 455,962 gas, and the largest valid combination no longer fit the gas limit of the estimate getter. The deployer can also write any initial state, so a per-proposal check cannot replace checking before deployment.
+
+Cost: the per-installed-member gas in the fee profile rose from 866 measured (profile 960) to 1,881 measured (profile 2,070), because every installed signer is now checked. Installed proposers are charged at the same rate although they cost less. This overcharge is conservative, and the excess stays with the wallet.
+
+Tests:
+
+- Library, with identical vectors in `lib-multisig-order.fc` and `stdlib-multisig-order-positive.tol` (case 116).
+  - Accepted: a sparse ordered set up to index 255, and an ordering decided by workchain before account id.
+  - Refused: one address at two indices; a descending order by account id; a descending order by workchain; a trailing bit; `addr_none`; the anycast form; an entry with a reference; and `new` over a duplicate set.
+- Wallet, in `lib-multisig-wallet-members.fc`, through the production validator:
+  - duplicate and unordered signer sets are refused, including when a later update in the chain installs them;
+  - proposer sets are not subject to the rule;
+  - the getter counts a valid stored set and refuses a duplicate one.
+- Sandbox, in `multisig_wallet_sandbox.rs`:
+  - `an_update_cannot_list_one_signer_twice`: a proposal installing alice twice, or an unordered set, is refused before any order exists.
+  - The fixture now orders its signers and asserts `get_checked_signer_count` on every deployed wallet.
+
+Sensitivity: each of these mutations makes a test fail.
+
+- the order comparison, the length and reference check, and the `addr_std` tag check, removed in FunC and in Tol separately;
+- the wallet skipping the rule for installed signers;
+- the getter returning the stored count unchecked.
+
+Full runs after the change: FunC 35 files; `test-emulator` 99 tests, including the quote matrix and the quote-funded path; tol-tester 674; Rust sandboxes 16 + 11.

@@ -377,6 +377,49 @@ int test_new_with_count_and_reclaim() method_id(115) {
   return 15;
 }
 
+slice addr_at(int workchain, int id) {
+  return begin_cell().store_uint(4, 3).store_int(workchain, 8).store_uint(id, 256).end_cell().begin_parse();
+}
+
+cell set_of(slice a, int index_a, slice b, int index_b) {
+  cell d = new_dict();
+  d~udict_set(multisig_order::signer_index_bits, index_a, a);
+  d~udict_set(multisig_order::signer_index_bits, index_b, b);
+  return d;
+}
+
+int test_signer_sets_are_ordered_and_distinct() method_id(116) {
+  ;; ordered by address along the indices, which may be sparse and reach 255
+  cell sparse = new_dict();
+  sparse~udict_set(multisig_order::signer_index_bits, 0, alice());
+  sparse~udict_set(multisig_order::signer_index_bits, 7, bob());
+  sparse~udict_set(multisig_order::signer_index_bits, 255, carol());
+  throw_unless(241, multisig_order::signer_count(sparse) == 3);
+  ;; the workchain orders before the account id
+  slice low = addr_at(-1, ((1 << 255) - 1) * 2 + 1);
+  slice high = addr_at(0, 1);
+  throw_unless(242, multisig_order::signer_count(set_of(low, 0, high, 1)) == 2);
+  int rejected = 0;
+  ;; one address at two indices: it could approve twice
+  try { multisig_order::signer_count(set_of(alice(), 0, alice(), 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 243); rejected += 1; }
+  try { multisig_order::signer_count(set_of(bob(), 0, alice(), 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 244); rejected += 1; }
+  try { multisig_order::signer_count(set_of(high, 0, low, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 245); rejected += 1; }
+  ;; not a plain addr_std: a trailing bit, addr_none, the anycast form, a reference
+  slice trailing = begin_cell().store_slice(bob()).store_uint(0, 1).end_cell().begin_parse();
+  try { multisig_order::signer_count(set_of(alice(), 0, trailing, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 246); rejected += 1; }
+  slice none = begin_cell().store_uint(0, 2).end_cell().begin_parse();
+  try { multisig_order::signer_count(set_of(alice(), 0, none, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 247); rejected += 1; }
+  slice anycast = begin_cell().store_uint(5, 3).store_int(0, 8).store_uint(((1 << 255) - 1) * 2 + 1, 256).end_cell().begin_parse();
+  try { multisig_order::signer_count(set_of(alice(), 0, anycast, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 248); rejected += 1; }
+  slice with_ref = begin_cell().store_slice(bob()).store_ref(begin_cell().end_cell()).end_cell().begin_parse();
+  try { multisig_order::signer_count(set_of(alice(), 0, with_ref, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 249); rejected += 1; }
+  ;; an order cannot be built over such a set either
+  set_now(1000);
+  try { multisig_order::new(parent(), 5, 1, set_of(alice(), 0, alice(), 1), 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 250); rejected += 1; }
+  throw_unless(251, rejected == 8);
+  return 16;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -393,4 +436,5 @@ TESTCASE | 113 | | 13
 TESTCASE | 114 | | 14
 TESTCASE | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
 TESTCASE | 115 | | 15
+TESTCASE | 116 | | 16
 -}

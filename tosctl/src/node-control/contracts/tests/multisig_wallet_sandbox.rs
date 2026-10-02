@@ -145,10 +145,13 @@ impl Fixture {
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
         bc.set_now(NOW);
         let funder = bc.treasury("funder", 10_000 * TOS).expect("funder");
-        let signers: Vec<Treasury> = ["alice", "bob", "carol"]
+        let mut signers: Vec<Treasury> = ["alice", "bob", "carol"]
             .iter()
             .map(|n| bc.treasury(n, 1_000 * TOS).expect("signer"))
             .collect();
+        // A signer set lists its addresses in increasing order by index; all of these
+        // are basechain addresses, so the account ids decide.
+        signers.sort_by_key(|t| t.address().address().get_bytestring(0));
         let proposer = bc.treasury("dave", 1_000 * TOS).expect("proposer");
         let outsider = bc.treasury("eve", 1_000 * TOS).expect("outsider");
         let target = bc.treasury("target", 1_000 * TOS).expect("target");
@@ -158,7 +161,8 @@ impl Fixture {
             .expect("compile multisig");
         let extra: Vec<MsgAddressInt> = (0..extra_signers)
             .map(|i| {
-                let mut account = [0x60u8; 32];
+                // above every treasury address, so they follow the three named signers
+                let mut account = [0xffu8; 32];
                 account[31] = i;
                 MsgAddressInt::with_params(0, chain_block::UInt256::from(account)).unwrap()
             })
@@ -187,6 +191,12 @@ impl Fixture {
             .state_init(init)
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
+        let checked = bc
+            .run_get_method(&multisig, "get_checked_signer_count", vec![])
+            .expect("checked signer count")
+            .expect_success()
+            .int_at(0);
+        assert_eq!(checked, i128::from(signer_count), "the deployed signer set follows the rule");
         Self { bc, multisig, order_code, signers, proposer, outsider, target }
     }
 
@@ -530,6 +540,25 @@ fn an_update_makes_older_orders_stale() {
     let r = f.approve(&stale_order, &bob, 1);
     assert_eq!(exit_code_on(&r, &f.multisig), ERROR_STALE_SIGNERS);
     assert_eq!(f.balance(f.target.address()), target_before, "a stale order must not pay out");
+}
+
+#[test]
+fn an_update_cannot_list_one_signer_twice() {
+    // Approvals are counted per index, so a set listing alice at two indices would let
+    // her approve twice. Such an update is refused when proposed, before any order or
+    // approval exists, however it is ordered.
+    let mut f = Fixture::new();
+    let alice = f.signer(0);
+    let bob = f.signer(1);
+    let proposer = f.proposer.address().clone();
+    let expires_at = f.bc.now() + DAY;
+    for set in [vec![(0, &alice), (1, &alice), (2, &bob)], vec![(0, &bob), (1, &alice)]] {
+        let actions = update_action(2, address_dict(&set).unwrap(), None, None);
+        let r = f.propose(&proposer, false, 0, NEXT_SEQNO, expires_at, actions, 10 * TOS);
+        assert_eq!(exit_code_on(&r, &f.multisig), ERROR_INVALID_CONFIG);
+    }
+    assert_eq!(f.multisig_int(0), 0, "no sequence number was allocated");
+    assert_eq!(f.balance(&f.order_address(0)), 0, "no order was deployed");
 }
 
 #[test]

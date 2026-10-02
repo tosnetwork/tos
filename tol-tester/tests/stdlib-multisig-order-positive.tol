@@ -391,6 +391,50 @@ fun test_new_with_count_and_reclaim(): int {
     return 15;
 }
 
+fun addrAt(workchain: int, id: int): slice {
+    return beginCell().storeUint(4, 3).storeInt(workchain, 8).storeUint(id, 256).endCell().beginParse();
+}
+
+fun setOf(a: slice, indexA: int, b: slice, indexB: int): cell {
+    var d = createEmptyDict();
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, indexA, a);
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, indexB, b);
+    return d!;
+}
+
+@method_id(116)
+fun test_signer_sets_are_ordered_and_distinct(): int {
+    // ordered by address along the indices, which may be sparse and reach 255
+    var sparse = createEmptyDict();
+    sparse.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 0, alice() as slice);
+    sparse.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 7, bob() as slice);
+    sparse.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 255, carol() as slice);
+    assert(multisigOrderSignerCount(sparse!) == 3) throw 241;
+    // the workchain orders before the account id
+    val low = addrAt(-1, ((1 << 255) - 1) * 2 + 1);
+    val high = addrAt(0, 1);
+    assert(multisigOrderSignerCount(setOf(low, 0, high, 1)) == 2) throw 242;
+    var rejected = 0;
+    // one address at two indices: it could approve twice
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, alice() as slice, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 243); rejected += 1; }
+    try { multisigOrderSignerCount(setOf(bob() as slice, 0, alice() as slice, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 244); rejected += 1; }
+    try { multisigOrderSignerCount(setOf(high, 0, low, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 245); rejected += 1; }
+    // not a plain addr_std: a trailing bit, addr_none, the anycast form, a reference
+    val trailing = beginCell().storeSlice(bob() as slice).storeUint(0, 1).endCell().beginParse();
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, trailing, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 246); rejected += 1; }
+    val none = beginCell().storeUint(0, 2).endCell().beginParse();
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, none, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 247); rejected += 1; }
+    val anycast = beginCell().storeUint(5, 3).storeInt(0, 8).storeUint(((1 << 255) - 1) * 2 + 1, 256).endCell().beginParse();
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, anycast, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 248); rejected += 1; }
+    val withRef = beginCell().storeSlice(bob() as slice).storeRef(beginCell().endCell()).endCell().beginParse();
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, withRef, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 249); rejected += 1; }
+    // an order cannot be built over such a set either
+    setNow(1000);
+    try { multisigOrderNew(parent(), 5, 1, setOf(alice() as slice, 0, alice() as slice, 1), 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 250); rejected += 1; }
+    assert(rejected == 8) throw 251;
+    return 16;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -407,4 +451,5 @@ fun test_new_with_count_and_reclaim(): int {
 @testcase | 114 | | 14
 @testcase | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
 @testcase | 115 | | 15
+@testcase | 116 | | 16
  */

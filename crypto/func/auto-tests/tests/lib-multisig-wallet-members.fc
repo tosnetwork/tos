@@ -105,6 +105,61 @@ int audit_proposers_cannot_satisfy_threshold() method_id(106) {
   return 6;
 }
 
+cell audit_pair(slice first, slice second) inline {
+  cell members = new_dict();
+  members~udict_set(multisig_order::signer_index_bits, 0, first);
+  members~udict_set(multisig_order::signer_index_bits, 1, second);
+  return members;
+}
+
+int audit_installed_signers_are_ordered_and_distinct() method_id(107) {
+  audit_install_context();
+  int rejected = 0;
+  ;; one address at two indices
+  try { validate_actions(audit_update(1, audit_pair(audit_address(0x1000), audit_address(0x1000)), null(), null()), 2, 3); } catch (_, code) { throw_unless(108, code == multisig_order::error::invalid_config); rejected += 1; }
+  ;; addresses out of order
+  try { validate_actions(audit_update(1, audit_pair(audit_address(0x1001), audit_address(0x1000)), null(), null()), 2, 3); } catch (_, code) { throw_unless(109, code == multisig_order::error::invalid_config); rejected += 1; }
+  ;; also when a later update in the chain installs it
+  cell tail = audit_update(1, audit_pair(audit_address(0x1000), audit_address(0x1000)), null(), null());
+  try { validate_actions(audit_update(1, audit_members(3, 0x2000), null(), tail), 2, 3); } catch (_, code) { throw_unless(110, code == multisig_order::error::invalid_config); rejected += 1; }
+  throw_unless(111, rejected == 3);
+  return 7;
+}
+
+int audit_proposer_sets_need_no_order() method_id(108) {
+  audit_install_context();
+  ;; proposers open orders but never vote, so their set keeps the plain rules
+  cell chain = audit_update(1, audit_members(1, 0x1000), audit_pair(audit_address(0x2001), audit_address(0x2001)), null());
+  (int actions, int visited, int threshold, int signers) = validate_actions(chain, 2, 3);
+  throw_unless(121, (actions == 1) & (visited == 3) & (threshold == 1) & (signers == 1));
+  return 8;
+}
+
+() audit_store(cell signers) impure inline {
+  set_data(begin_cell()
+      .store_uint(0, 64).store_uint(1, 8).store_uint(2, 8)
+      .store_ref(signers).store_dict(null()).store_ref(begin_cell().end_cell())
+      .end_cell());
+}
+
+int audit_checked_signer_count_getter() method_id(109) {
+  audit_install_context();
+  audit_store(audit_members(2, 0x1000));
+  throw_unless(131, get_checked_signer_count() == 2);
+  ;; a deployed set that breaks the rule is reported, not counted
+  audit_store(audit_pair(audit_address(0x1000), audit_address(0x1000)));
+  int rejected = false;
+  try {
+    ;; use the result: a getter is not impure, and an unused call would be dropped
+    throw_unless(134, get_checked_signer_count() < 0);
+  } catch (_, code) {
+    throw_unless(132, code == multisig_order::error::invalid_config);
+    rejected = true;
+  }
+  throw_unless(133, rejected);
+  return 9;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -112,4 +167,7 @@ TESTCASE | 103 | | 3
 TESTCASE | 104 | | 4
 TESTCASE | 105 | | 5
 TESTCASE | 106 | | 6
+TESTCASE | 107 | | 7
+TESTCASE | 108 | | 8
+TESTCASE | 109 | | 9
 -}
