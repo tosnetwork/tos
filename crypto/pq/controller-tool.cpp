@@ -126,7 +126,8 @@ std::string authorisation_boc(const tos::pq::ValidatorControllerRootKeyStore& ro
       "  tos-pq-controller bind ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL CONSENSUS_SEED\n"
       "  tos-pq-controller rotate-root ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL NEXT_ROOT_SEED\n"
       "  tos-pq-controller fund-operations ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL PAYLOAD_BOC_B64\n"
-      "  tos-pq-controller withdraw-operations ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL PAYLOAD_BOC_B64\n"
+      "  tos-pq-controller withdraw-operations ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL "
+      "PAYLOAD_BOC_B64\n"
       "\n"
       "A root seed is created with `tos-pq-key keygen`. The output is a base64 PQca body,\n"
       "to be sent to the controller as an internal message.");
@@ -218,7 +219,8 @@ int main(int argc, char** argv) {
       // floor and expiry. Withdrawals bind the wallet and exact amount.
       // Neither operation supplies a default amount or submits a transfer.
       std::cout << authorisation_boc(root, global_id, controller_id, epoch, nonce, valid_until, fund ? 4 : 5,
-                                     cell_from_base64(argv[8]), nullptr) << '\n';
+                                     cell_from_base64(argv[8]), nullptr)
+                << '\n';
       return 0;
     }
 

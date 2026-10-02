@@ -4,7 +4,7 @@
   "design_record": "tosnetwork/memo@9153173c, sections 15-16; minimal return-record/bounce recovery authorized by the operator on 2026-10-02",
   "source_sha256": {
     ".github/workflows/contract-sandboxes.yml": "92e69d5c9d985e085d3fa4761a1af6c3e72e7c027e995d0a31aec212cb1c44df",
-    "crypto/pq/controller-tool.cpp": "9060a4976b7e08eb99386dbcfccc79f38afcd3fb2b5dc83e48c0c2881c21708a",
+    "crypto/pq/controller-tool.cpp": "fdc257d223bfcb9839a4a36a8d8f8e76d700a57230b22833c225dca20ca2c459",
     "crypto/smartcont/elector-code.fc": "32384ad9c74e707dfbf2638d1dd48e10bb353ff804791e48ef057adf445d0e43",
     "crypto/smartcont/nominator-pool/pool.fc": "9c0c627f169d40c5cfe7b1ae93bbbf83200b15fdd89f66b78f96439eb05a35b6",
     "crypto/smartcont/single-nominator-pool/single-nominator-code.fc": "fba31ce9b4264fd8117001df0e07b1fdbc063a97a7a1980a65862e3538d8988c",
@@ -14,7 +14,7 @@
     "scripts/build-nominator-pool-v1.sh": "0934dc437524ad631d91e85e415684457a4c4f2c1995468d3336198e2e5ef9bc",
     "scripts/check-single-nominator-code-lock.sh": "aaf07cdc856cb5af71cfe786de7bcd61e0aa7cbfdd5561298afdc5f7cf4bc5f3",
     "test/pq-native/contract-guard-mutations.py": "ecbf064da3321d40173dbd96fdf3cb251a085d3ca3d2db132f78fffaa4f60b95",
-    "test/pq-native/elector-r3-accounting-mutations.py": "1b3a17b406131334824bc8aad101733475e039f2ad7f495af442a8f4185ead5e",
+    "test/pq-native/elector-r3-accounting-mutations.py": "6f62d478a27f30936d01c5582475fb72e9a94921a5bd57e67053606528293ae1",
     "test/pq-native/elector-r3-implementation.md": "f577d97c4d9c467b852478413cc9fd0e3a08fadb6b2ac7c036f6db77a8dc6de2",
     "test/pq-native/elector-review-followup.md": "565043aa1bf596a5cfd05b34a3056ebdd9cc097f1d126ecbc4841e0935eef5d9",
     "test/pq-native/elector-security-audit.md": "7ea620de957f53ff4e7e58f8228add9fedec043701f0dc4a31aa091ebf527075",
