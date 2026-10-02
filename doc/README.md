@@ -50,7 +50,7 @@ Each is kept with its TeX source where one exists.
 
 | Paper | Subject |
 | --- | --- |
-| [tos.pdf](tos.pdf) ([tex](tos.tex)) | Current overview: post-quantum authentication, shielded transfers, and deployment boundaries |
+| [pq.pdf](pq.pdf) ([tex](pq.tex)) | Current overview: post-quantum authentication, shielded transfers, and deployment boundaries |
 | [The-TOS-Protocol.pdf](The-TOS-Protocol.pdf) ([docx](The-TOS-Protocol.docx)) | The protocol |
 | [tblkch.tex](tblkch.tex) | The block chain |
 | [tvm.tex](tvm.tex) | The virtual machine |

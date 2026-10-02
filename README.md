@@ -8,7 +8,7 @@ validator signatures**, while its shielded-pool implementation combines
 zero-knowledge transaction proofs with **post-quantum note authorization and
 encrypted note delivery**.
 
-[Technical overview (PDF)](doc/tos.pdf) · [Overview source](doc/tos.tex) ·
+[Technical overview (PDF)](doc/pq.pdf) · [Overview source](doc/pq.tex) ·
 [Documentation](doc/README.md) · [Build guide](BUILD.md)
 
 ## Security by layer
@@ -155,8 +155,8 @@ For this checkout, start with the [in-tree index](doc/README.md) and
 
 ## Technical overview and license
 
-[`doc/tos.pdf`](doc/tos.pdf) explains the architecture, privacy flow and security
-boundaries. Rebuild it from [`doc/tos.tex`](doc/tos.tex) with
-`bash scripts/build-tos-paper.sh` (requires `pdflatex`).
+[`doc/pq.pdf`](doc/pq.pdf) explains the architecture, privacy flow and security
+boundaries. Rebuild it from [`doc/pq.tex`](doc/pq.tex) with
+`bash scripts/build-pq-paper.sh` (requires `pdflatex`).
 
 TOS is licensed under the [GNU General Public License v3.0](LICENSE).
