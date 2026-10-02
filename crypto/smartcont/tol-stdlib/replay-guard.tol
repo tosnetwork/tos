@@ -1,0 +1,147 @@
+// Bounded replay protection for high-volume signed requests.
+//
+// A request carries a query id and the time it was created. The guard keeps
+// one bit per query id in two generations of 1023-bit rows: `queries` holds
+// ids accepted since `lastCleanTime`, `oldQueries` the generation before it.
+// Once `timeout` seconds pass the current generation becomes the old one, and
+// after another `timeout` it is dropped.
+//
+// Dropping is safe only together with the freshness rule
+// `now - timeout < createdAt <= now`: by the time a generation is
+// discarded, every request it recorded has been stale for at least `timeout`
+// seconds and is rejected on its timestamp instead. Use [ReplayGuard.accept],
+// which applies rotation, freshness and the bitmap in that order; calling the
+// pieces separately in another order reopens the replay window. The current
+// time is always read from the block (`blockchain.now()`), never taken from
+// the caller, so a request cannot choose the clock it is judged by.
+tol 1.3
+
+import "@stdlib/tvm-dicts"
+
+const REPLAY_GUARD_THROW_ALREADY_PROCESSED = 0x1701
+const REPLAY_GUARD_THROW_INVALID_QUERY_ID = 0x1702
+const REPLAY_GUARD_THROW_INVALID_CREATED_AT = 0x1703
+const REPLAY_GUARD_THROW_INVALID_TIMEOUT = 0x1704
+
+/// Width of a row index; there are 2^13 rows.
+const REPLAY_GUARD_SHIFT_BITS = 13
+/// Width of a bit index inside a row.
+const REPLAY_GUARD_BIT_NUMBER_BITS = 10
+/// Usable bits per row: one cell's data capacity. Bit index 1023 does not
+/// exist even though it fits in REPLAY_GUARD_BIT_NUMBER_BITS.
+const REPLAY_GUARD_ROW_BITS = 1023
+/// Timeouts are stored in 22 bits (up to ~48 days).
+const REPLAY_GUARD_MAX_TIMEOUT = 4194303
+
+struct ReplayGuard {
+    oldQueries: dict
+    queries: dict
+    lastCleanTime: uint64
+    timeout: uint22
+}
+
+/// Creates an empty guard. `timeout` must be in 1..REPLAY_GUARD_MAX_TIMEOUT;
+/// zero would make every request stale and drop history on every call.
+fun replayGuardNew(timeout: int): ReplayGuard {
+    if (timeout <= 0 || timeout > REPLAY_GUARD_MAX_TIMEOUT) {
+        throw REPLAY_GUARD_THROW_INVALID_TIMEOUT;
+    }
+    return ReplayGuard {
+        oldQueries: createEmptyDict(),
+        queries: createEmptyDict(),
+        lastCleanTime: blockchain.now(),
+        timeout: timeout,
+    };
+}
+
+/// Splits a query id into (row, bit). Valid ids are
+/// `row * 1024 + bit` with `row < 2^13` and `bit < 1023`; ids whose low ten
+/// bits are 1023 are rejected rather than silently overflowing a row.
+fun replayGuardSplitQueryId(queryId: int): (int, int) {
+    if (queryId < 0 || queryId >= (1 << (REPLAY_GUARD_SHIFT_BITS + REPLAY_GUARD_BIT_NUMBER_BITS))) {
+        throw REPLAY_GUARD_THROW_INVALID_QUERY_ID;
+    }
+    val shift = queryId >> REPLAY_GUARD_BIT_NUMBER_BITS;
+    val bitNumber = queryId & ((1 << REPLAY_GUARD_BIT_NUMBER_BITS) - 1);
+    if (bitNumber >= REPLAY_GUARD_ROW_BITS) {
+        throw REPLAY_GUARD_THROW_INVALID_QUERY_ID;
+    }
+    return (shift, bitNumber);
+}
+
+@pure
+fun replayGuardStoreZeroes(b: builder, count: int): builder
+    asm "STZEROES"
+
+fun replayGuardRowHasBit(rows: dict, shift: int, bitNumber: int): bool {
+    val (row, found) = rows.uDictGetRef(REPLAY_GUARD_SHIFT_BITS, shift);
+    if (!found) {
+        return false;
+    }
+    var s = row!.beginParse();
+    s.skipBits(bitNumber);
+    return s.preloadUint(1) == 1;
+}
+
+/// Ages the generations according to the current time. Idempotent within
+/// one timeout.
+fun ReplayGuard.rotate(mutate self): void {
+    val nowTs = blockchain.now();
+    if (self.lastCleanTime < nowTs - self.timeout) {
+        self.oldQueries = self.queries;
+        self.queries = createEmptyDict();
+        if (self.lastCleanTime < nowTs - self.timeout * 2) {
+            self.oldQueries = createEmptyDict();
+        }
+        self.lastCleanTime = nowTs;
+    }
+}
+
+/// True if the id was accepted in either live generation.
+fun ReplayGuard.isProcessed(self, queryId: int): bool {
+    val (shift, bitNumber) = replayGuardSplitQueryId(queryId);
+    return replayGuardRowHasBit(self.oldQueries, shift, bitNumber)
+        || replayGuardRowHasBit(self.queries, shift, bitNumber);
+}
+
+/// Rejects a request created in the future or more than `timeout` ago.
+fun ReplayGuard.requireFresh(self, createdAt: int): void {
+    val nowTs = blockchain.now();
+    if (createdAt <= nowTs - self.timeout || createdAt > nowTs) {
+        throw REPLAY_GUARD_THROW_INVALID_CREATED_AT;
+    }
+}
+
+/// Records the id in the current generation, rejecting an id already present
+/// in either generation.
+fun ReplayGuard.markProcessed(mutate self, queryId: int): void {
+    val (shift, bitNumber) = replayGuardSplitQueryId(queryId);
+    if (replayGuardRowHasBit(self.oldQueries, shift, bitNumber)) {
+        throw REPLAY_GUARD_THROW_ALREADY_PROCESSED;
+    }
+    val (row, found) = self.queries.uDictGetRef(REPLAY_GUARD_SHIFT_BITS, shift);
+    var next = beginCell();
+    if (found) {
+        var tail = row!.beginParse();
+        val head = tail.loadBits(bitNumber);
+        if (tail.preloadUint(1) == 1) {
+            throw REPLAY_GUARD_THROW_ALREADY_PROCESSED;
+        }
+        tail.skipBits(1);
+        next = next.storeSlice(head).storeUint(1, 1).storeSlice(tail);
+    } else {
+        next = replayGuardStoreZeroes(next, bitNumber);
+        next = next.storeUint(1, 1);
+        next = replayGuardStoreZeroes(next, REPLAY_GUARD_ROW_BITS - bitNumber - 1);
+    }
+    self.queries.uDictSetRef(REPLAY_GUARD_SHIFT_BITS, shift, next.endCell());
+}
+
+/// The complete acceptance check: rotate, require freshness, then record.
+/// A `mutate self` is written back only on normal return, so a rejected
+/// request leaves the caller's guard untouched, rotation included.
+fun ReplayGuard.accept(mutate self, queryId: int, createdAt: int): void {
+    self.rotate();
+    self.requireFresh(createdAt);
+    self.markProcessed(queryId);
+}

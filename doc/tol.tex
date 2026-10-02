@@ -1181,6 +1181,11 @@ contains, among others:
 @stdlib/supervision
 @stdlib/capability
 @stdlib/safe-payments
+@stdlib/jetton-fees
+@stdlib/replay-guard
+@stdlib/ordered-delivery
+@stdlib/quorum-signatures
+@stdlib/multisig-order
 \end{verbatim}
 
 Imports are explicit; a test or contract that uses symbols from a package
@@ -1204,6 +1209,27 @@ monitor/supervision helpers, capability grants, and safe-payment helpers.
 
 Some Slice 6 protocol behavior remains activation-gated even though the
 repo-side Tol and stdlib surfaces are present.
+
+\subsection{Security Building Blocks}
+Five packages provide mechanisms that contracts otherwise tend to re-derive
+by hand:
+
+\begin{itemize}
+\item \verb|jetton-fees|: prices a jetton wallet's measured gas and size
+profile with the live fee configuration instead of fixed nanocoin constants;
+\item \verb|replay-guard|: bounded two-generation query-id bitmap with a
+freshness window for high-volume signed requests;
+\item \verb|ordered-delivery|: a 256-wide out-of-order completion window and
+key-checked pending slots for nonce streams;
+\item \verb|quorum-signatures|: strict M-of-N Ed25519 authorization whose
+verifier set can never shrink below its quorum;
+\item \verb|multisig-order|: one contract per multisig proposal, with
+execution bound to the signer set and threshold current at execution time.
+\end{itemize}
+
+Time-dependent checks in these packages read \verb|blockchain.now()|; they
+never accept a caller-supplied clock. Provenance and licensing are recorded
+in \verb|crypto/smartcont/tol-stdlib/NOTICE.md|.
 
 \section{Reserved but Unsupported Surface}
 The following tokens or forms are reserved or lexed but currently rejected:

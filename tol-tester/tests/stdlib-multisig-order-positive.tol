@@ -1,0 +1,199 @@
+import "@stdlib/tvm-dicts"
+import "@stdlib/multisig-order"
+
+fun setC7(c7: array<unknown>): void
+    asm "c7 POP"
+
+// The libraries read time with NOW (c7[0][3]); tests move the clock here.
+fun setNow(t: int): void {
+    var params: array<unknown> = [];
+    var i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(t, 3);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
+fun main(): int {
+    return 0;
+}
+
+fun expectThrow(code: int, expected: int, failCode: int): void {
+    assert(code == expected) throw failCode;
+}
+
+fun parent(): address { return address("0:0000000000000000000000000000000000000000000000000000000000000abc"); }
+fun alice(): address { return address("0:1111111111111111111111111111111111111111111111111111111111111111"); }
+fun bob(): address { return address("0:2222222222222222222222222222222222222222222222222222222222222222"); }
+fun carol(): address { return address("0:3333333333333333333333333333333333333333333333333333333333333333"); }
+fun mallory(): address { return address("0:4444444444444444444444444444444444444444444444444444444444444444"); }
+fun orderCode(): cell { return beginCell().storeUint(0xc0de, 16).endCell(); }
+fun action(): cell { return beginCell().storeUint(0xac7, 12).endCell(); }
+
+fun signers(): cell {
+    var d = createEmptyDict();
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 0, alice() as slice);
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 1, bob() as slice);
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 7, carol() as slice);
+    return d!;
+}
+
+fun newOrder(): MultisigOrder {
+    setNow(1000);
+    return multisigOrderNew(parent(), 5, 2, signers(), 2000, action());
+}
+
+@method_id(101)
+fun test_seqno_allocation(): int {
+    val (a, nextA) = multisigOrderAllocateSeqno(MULTISIG_ORDER_NEXT_SEQNO, 5);
+    assert(a == 5 && nextA == 6) throw 101;
+    val (b, nextB) = multisigOrderAllocateSeqno(6, 6);
+    assert(b == 6 && nextB == 7) throw 102;
+    var rejected = 0;
+    try { multisigOrderAllocateSeqno(5, 6); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_SEQNO, 103); rejected += 1; }
+    try { multisigOrderAllocateSeqno(9, 6); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_SEQNO, 104); rejected += 1; }
+    try { multisigOrderAllocateSeqno(MULTISIG_ORDER_NEXT_SEQNO, MULTISIG_ORDER_NEXT_SEQNO); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_SEQNO, 105); rejected += 1; }
+    assert(rejected == 3) throw 106;
+    return 1;
+}
+
+@method_id(102)
+fun test_address_derivation(): int {
+    val a5 = multisigOrderAddress(orderCode(), parent(), 5);
+    assert(a5 == multisigOrderAddress(orderCode(), parent(), 5)) throw 111;
+    assert(a5 != multisigOrderAddress(orderCode(), parent(), 6)) throw 112;
+    assert(a5 != multisigOrderAddress(orderCode(), alice(), 5)) throw 113;
+    assert(a5 != multisigOrderAddress(beginCell().endCell(), parent(), 5)) throw 114;
+    val expected = address.fromWorkchainAndHash(BASECHAIN, multisigOrderStateInit(orderCode(), parent(), 5).hash());
+    assert(a5 == expected) throw 115;
+    return 2;
+}
+
+@method_id(103)
+fun test_order_validation(): int {
+    val o = newOrder();
+    assert(o.threshold == 2 && o.approvalCount == 0 && !o.executed) throw 121;
+    var rejected = 0;
+    try { multisigOrderNew(parent(), 5, 0, signers(), 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 122); rejected += 1; }
+    try { multisigOrderNew(parent(), 5, 4, signers(), 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 123); rejected += 1; }
+    try { multisigOrderNew(parent(), 5, 1, beginCell().endCell(), 2000, action()); } catch (code) { rejected += 1; }
+    try { multisigOrderNew(parent(), 5, 2, signers(), 1000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_EXPIRED, 125); rejected += 1; }
+    assert(rejected == 4) throw 126;
+    val (idx, found) = o.findSigner(carol());
+    assert(found && idx == 7) throw 127;
+    val (_, missing) = o.findSigner(mallory());
+    assert(!missing) throw 128;
+    return 3;
+}
+
+@method_id(104)
+fun test_threshold_fires_exactly_once(): int {
+    var o = newOrder();
+    setNow(1500);
+    assert(!o.approve(0, alice())) throw 131;
+    setNow(1500);
+    assert(o.approve(7, carol())) throw 132;
+    assert(o.executed && o.approvalCount == 2) throw 133;
+    assert(o.approvals == (1 | (1 << 7))) throw 134;
+    var thrown = false;
+    try {
+        setNow(1500);
+        o.approve(1, bob());
+    } catch (code) {
+        expectThrow(code, MULTISIG_ORDER_THROW_ALREADY_EXECUTED, 135);
+        thrown = true;
+    }
+    assert(thrown) throw 136;
+    return 4;
+}
+
+@method_id(105)
+fun test_approval_rejections(): int {
+    var o = newOrder();
+    setNow(1500);
+    o.approve(0, alice());
+    var rejected = 0;
+    try { setNow(1500); o.approve(0, alice()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_ALREADY_APPROVED, 141); rejected += 1; }
+    // right index, wrong sender
+    try { setNow(1500); o.approve(1, mallory()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNKNOWN_SIGNER, 142); rejected += 1; }
+    // index with no signer
+    try { setNow(1500); o.approve(2, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNKNOWN_SIGNER, 143); rejected += 1; }
+    try { setNow(1500); o.approve(256, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNKNOWN_SIGNER, 144); rejected += 1; }
+    try { setNow(2001); o.approve(1, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_EXPIRED, 145); rejected += 1; }
+    assert(rejected == 5) throw 146;
+    assert(o.approvalCount == 1 && !o.executed) throw 147;
+    // last valid second
+    setNow(2000);
+    assert(o.approve(1, bob())) throw 148;
+    return 5;
+}
+
+@method_id(106)
+fun test_execute_round_trip_and_admission(): int {
+    var o = newOrder();
+    setNow(1500);
+    o.approve(0, alice());
+    setNow(1500);
+    o.approve(1, bob());
+    var body = multisigOrderBuildExecuteBody(77, o.executeMessage()).beginParse();
+    assert(body.loadUint(32) == MULTISIG_ORDER_OP_EXECUTE) throw 151;
+    assert(body.loadUint(64) == 77) throw 152;
+    val execute = multisigOrderParseExecute(body);
+    assert(execute.seqno == 5 && execute.approvalCount == 2) throw 153;
+    assert(execute.action.hash() == action().hash()) throw 154;
+    val orderAddress = multisigOrderAddress(orderCode(), parent(), 5);
+    setNow(1600); multisigOrderRequireExecute(execute, orderAddress, orderCode(), parent(), signers(), 2);
+    return 6;
+}
+
+@method_id(107)
+fun test_execute_admission_rejections(): int {
+    var o = newOrder();
+    setNow(1500);
+    o.approve(0, alice());
+    setNow(1500);
+    o.approve(1, bob());
+    val execute = o.executeMessage();
+    val orderAddress = multisigOrderAddress(orderCode(), parent(), 5);
+    var changed = createEmptyDict();
+    changed.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 0, alice() as slice);
+    changed.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 1, bob() as slice);
+    var rejected = 0;
+    // sender is the order for a different seqno
+    try { setNow(1600); multisigOrderRequireExecute(execute, multisigOrderAddress(orderCode(), parent(), 6), orderCode(), parent(), signers(), 2); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_EXECUTE, 161); rejected += 1; }
+    try { setNow(1600); multisigOrderRequireExecute(execute, mallory(), orderCode(), parent(), signers(), 2); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_EXECUTE, 162); rejected += 1; }
+    // signer set changed after the order was opened
+    try { setNow(1600); multisigOrderRequireExecute(execute, orderAddress, orderCode(), parent(), changed!, 2); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_STALE_SIGNERS, 163); rejected += 1; }
+    // threshold raised after the order was opened
+    try { setNow(1600); multisigOrderRequireExecute(execute, orderAddress, orderCode(), parent(), signers(), 3); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INSUFFICIENT_APPROVALS, 164); rejected += 1; }
+    try { setNow(2001); multisigOrderRequireExecute(execute, orderAddress, orderCode(), parent(), signers(), 2); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_EXPIRED, 165); rejected += 1; }
+    assert(rejected == 5) throw 166;
+    return 7;
+}
+
+@method_id(108)
+fun test_order_storage_round_trip(): int {
+    var o = newOrder();
+    setNow(1500);
+    o.approve(7, carol());
+    val restored = MultisigOrder.fromCell(o.toCell());
+    assert(restored.approvalCount == 1 && restored.approvals == (1 << 7)) throw 171;
+    assert(restored.signers.hash() == signers().hash()) throw 172;
+    assert(restored.parent == parent() && restored.seqno == 5) throw 173;
+    return 8;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+@testcase | 108 | | 8
+ */

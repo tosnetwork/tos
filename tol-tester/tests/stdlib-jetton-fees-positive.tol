@@ -1,0 +1,196 @@
+import "@stdlib/gas-payments"
+import "@stdlib/jetton"
+import "@stdlib/jetton-fees"
+
+// The fee instructions read the unpacked config tuple at c7[0][14], so every
+// test installs a synthetic configuration whose prices make each fee easy to
+// derive by hand:
+//   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
+//   forward fee(b, c)   = 400000 + b + 100 * c
+//   forward simple(b,c) = b + 100 * c
+//   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)
+fun setC7(c7: array<unknown>): void
+    asm "c7 POP"
+
+fun installFeeConfig(precompiledGas: int?): void {
+    val storage = beginCell().storeUint(0xcc, 8).storeUint(0, 32)
+        .storeUint(65536, 64).storeUint(65536 * 500, 64)
+        .storeUint(65536 * 2, 64).storeUint(65536 * 1000, 64).endCell().beginParse();
+    val gas = beginCell().storeUint(0xd1, 8).storeUint(100, 64).storeUint(100000, 64)
+        .storeUint(0xde, 8).storeUint(65536 * 1000, 64).storeUint(1000000, 64).storeUint(1000000, 64)
+        .storeUint(10000, 64).storeUint(10000000, 64).storeUint(100000000, 64).storeUint(1000000000, 64)
+        .endCell().beginParse();
+    val msg = beginCell().storeUint(0xea, 8).storeUint(400000, 64).storeUint(65536, 64)
+        .storeUint(65536 * 100, 64).storeUint(98304, 32).storeUint(21845, 16).storeUint(21845, 16)
+        .endCell().beginParse();
+    var unpacked: array<unknown> = [];
+    unpacked.push(storage);
+    unpacked.push(null);
+    unpacked.push(gas);
+    unpacked.push(gas);
+    unpacked.push(msg);
+    unpacked.push(msg);
+    unpacked.push(null);
+    var params: array<unknown> = [];
+    var i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(unpacked, 14);
+    params.set(precompiledGas, 16);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
+fun profile(): JettonFeeProfile {
+    return JettonFeeProfile {
+        walletStorageBits: 1033,
+        walletStorageCells: 3,
+        walletInitStateBits: 931,
+        walletInitStateCells: 3,
+        burnNotificationBits: 754,
+        burnNotificationCells: 1,
+        sendTransferGas: 9255,
+        receiveTransferGas: 10355,
+        sendBurnGas: 5791,
+        receiveBurnGas: 6775,
+        minStorageSeconds: 10,
+    };
+}
+
+fun main(): int {
+    return 0;
+}
+
+@method_id(101)
+fun test_components(): int {
+    installFeeConfig(null);
+    val p = profile();
+    // (1033 + 500 * 3) * 10
+    assert(p.walletMinStorageFee() == 25330) throw 101;
+    // 931 + 100 * 3, no lump price
+    assert(p.initStateForwardOverhead() == 1231) throw 102;
+    return 1;
+}
+
+@method_id(102)
+fun test_required_transfer_value(): int {
+    installFeeConfig(null);
+    val p = profile();
+    // 0 + 1 * 5000 + 1231 + 9255000 + 10355000 + 25330
+    assert(p.requiredTransferValue(0, 5000) == 19641561) throw 111;
+    // a forwarded notification adds the amount and a second forward fee
+    assert(p.requiredTransferValue(1000000, 5000) == 20646561) throw 112;
+    return 2;
+}
+
+@method_id(103)
+fun test_transfer_value_boundary(): int {
+    installFeeConfig(null);
+    val p = profile();
+    p.requireTransferValue(19641562, 0, 5000);
+    var thrown = false;
+    try {
+        p.requireTransferValue(19641561, 0, 5000);
+    } catch (code) {
+        assert(code == JETTON_WALLET_FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE) throw 121;
+        thrown = true;
+    }
+    assert(thrown) throw 122;
+    return 3;
+}
+
+@method_id(104)
+fun test_burn_value_and_boundary(): int {
+    installFeeConfig(null);
+    val p = profile();
+    // (400000 + 754 + 100) + 5791000 + 6775000
+    assert(p.requiredBurnValue() == 12966854) throw 131;
+    p.requireBurnValue(12966855);
+    var thrown = false;
+    try {
+        p.requireBurnValue(12966854);
+    } catch (code) {
+        assert(code == JETTON_WALLET_FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE) throw 132;
+        thrown = true;
+    }
+    assert(thrown) throw 133;
+    return 4;
+}
+
+@method_id(105)
+fun test_precompiled_gas_overrides_wallet_side_only(): int {
+    installFeeConfig(2000);
+    val p = profile();
+    // both wallet compute phases priced at 2000 gas = 2000000 each
+    assert(p.requiredTransferValue(0, 5000) == 4031561) throw 141;
+    // the minter side of a burn keeps its measured gas
+    assert(p.requiredBurnValue() == 9175854) throw 142;
+    return 5;
+}
+
+@method_id(106)
+fun test_zero_profile_field_rejected(): int {
+    installFeeConfig(null);
+    var p = profile();
+    p.receiveBurnGas = 0;
+    var thrown = false;
+    try {
+        p.requiredBurnValue();
+    } catch (code) {
+        assert(code == JETTON_FEES_THROW_INVALID_PROFILE) throw 151;
+        thrown = true;
+    }
+    assert(thrown) throw 152;
+    var q = profile();
+    q.minStorageSeconds = 0;
+    thrown = false;
+    try {
+        q.requiredTransferValue(0, 0);
+    } catch (code) {
+        assert(code == JETTON_FEES_THROW_INVALID_PROFILE) throw 153;
+        thrown = true;
+    }
+    assert(thrown) throw 154;
+    return 6;
+}
+
+@method_id(107)
+fun test_fee_follows_config_not_constants(): int {
+    // Same profile, cheaper gas: the requirement must move with the config.
+    installFeeConfig(null);
+    val before = profile().requiredTransferValue(0, 5000);
+    val gas = beginCell().storeUint(0xd1, 8).storeUint(100, 64).storeUint(100000, 64)
+        .storeUint(0xde, 8).storeUint(65536 * 10, 64).storeUint(1000000, 64).storeUint(1000000, 64)
+        .storeUint(10000, 64).storeUint(10000000, 64).storeUint(100000000, 64).storeUint(1000000000, 64)
+        .endCell().beginParse();
+    installFeeConfig(null);
+    var c7 = getC7();
+    var params = c7.get(0) as array<unknown>;
+    var unpacked = params.get(14) as array<unknown>;
+    unpacked.set(gas, 3);
+    params.set(unpacked, 14);
+    c7.set(params, 0);
+    setC7(c7);
+    val after = profile().requiredTransferValue(0, 5000);
+    // gas fee(g) becomes 100000 + (g - 100) * 10
+    // 5000 + 1231 + 191550 + 202550 + 25330
+    assert(after == 425661) throw 161;
+    assert(after < before) throw 162;
+    return 7;
+}
+
+fun getC7(): array<unknown>
+    asm "c7 PUSH"
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+ */

@@ -1,0 +1,155 @@
+import "@stdlib/ordered-delivery"
+
+fun main(): int {
+    return 0;
+}
+
+fun expectThrow(code: int, expected: int, failCode: int): void {
+    assert(code == expected) throw failCode;
+}
+
+@method_id(101)
+fun test_in_order_completion_advances_head(): int {
+    var w = nonceWindowNew(1);
+    w.complete(1);
+    w.complete(2);
+    w.complete(3);
+    assert(w.nextPending == 4) throw 101;
+    assert(w.completed == 0) throw 102;
+    assert(w.isCompleted(3)) throw 103;
+    assert(!w.isCompleted(4)) throw 104;
+    return 1;
+}
+
+@method_id(102)
+fun test_out_of_order_completion_folds_contiguous_run(): int {
+    var w = nonceWindowNew(10);
+    w.complete(12);
+    w.complete(13);
+    w.complete(15);
+    assert(w.nextPending == 10) throw 111;
+    assert(w.isCompleted(13) && !w.isCompleted(14)) throw 112;
+    w.complete(11);
+    assert(w.nextPending == 10) throw 113;
+    // completing the head folds 10..13 and stops at the gap at 14
+    w.complete(10);
+    assert(w.nextPending == 14) throw 114;
+    assert(w.completed == 2) throw 115;
+    w.complete(14);
+    assert(w.nextPending == 16) throw 116;
+    assert(w.completed == 0) throw 117;
+    return 2;
+}
+
+@method_id(103)
+fun test_window_edges(): int {
+    var w = nonceWindowNew(0);
+    assert(w.lastAcceptable() == 255) throw 121;
+    w.complete(255);
+    var thrown = false;
+    try {
+        w.complete(256);
+    } catch (code) {
+        expectThrow(code, ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW, 122);
+        thrown = true;
+    }
+    assert(thrown) throw 123;
+    assert(!w.isCompleted(256)) throw 124;
+    // completing 0..254 folds the whole window including 255
+    var n = 0;
+    while (n < 255) {
+        w.complete(n);
+        n += 1;
+    }
+    assert(w.nextPending == 256) throw 125;
+    assert(w.completed == 0) throw 126;
+    w.complete(256 + 255);
+    return 3;
+}
+
+@method_id(104)
+fun test_duplicate_and_stale_completions_rejected(): int {
+    var w = nonceWindowNew(5);
+    w.complete(7);
+    var rejected = 0;
+    try { w.complete(7); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 131); rejected += 1; }
+    try { w.complete(4); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 132); rejected += 1; }
+    try { w.complete(-1); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_NONCE, 133); rejected += 1; }
+    try { w.complete(NONCE_WINDOW_MAX_NONCE + 1); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_NONCE, 134); rejected += 1; }
+    assert(rejected == 4) throw 135;
+    assert(w.isCompleted(4)) throw 136;
+    return 4;
+}
+
+@method_id(105)
+fun test_top_of_nonce_space(): int {
+    var w = nonceWindowNew(NONCE_WINDOW_MAX_NONCE - 1);
+    w.complete(NONCE_WINDOW_MAX_NONCE);
+    w.complete(NONCE_WINDOW_MAX_NONCE - 1);
+    // the head may reach 2^64 - 1 and still be stored
+    assert(w.nextPending == NONCE_WINDOW_MAX_NONCE + 1) throw 141;
+    val restored = NonceWindow.fromCell(w.toCell());
+    assert(restored.nextPending == w.nextPending) throw 142;
+    return 5;
+}
+
+@method_id(106)
+fun test_pending_slots_key_checked(): int {
+    var p = pendingSlotsNew();
+    val payload = beginCell().storeUint(0xabc, 12).endCell();
+    p.put(3, 1, payload);
+    val (found, status, body) = p.get(3);
+    assert(found && status == 1) throw 151;
+    assert(body!.hash() == payload.hash()) throw 152;
+    // same slot index, different nonce: never visible, never writable
+    val (alias, _, _) = p.get(3 + 256);
+    assert(!alias) throw 153;
+    var thrown = false;
+    try {
+        p.put(3 + 256, 2, payload);
+    } catch (code) {
+        expectThrow(code, ORDERED_DELIVERY_THROW_SLOT_OCCUPIED, 154);
+        thrown = true;
+    }
+    assert(thrown) throw 155;
+    assert(!p.remove(3 + 256)) throw 156;
+    val (still, _, _) = p.get(3);
+    assert(still) throw 157;
+    return 6;
+}
+
+@method_id(107)
+fun test_pending_slots_update_remove_reuse(): int {
+    var p = pendingSlotsNew();
+    val a = beginCell().storeUint(1, 8).endCell();
+    val b = beginCell().storeUint(2, 8).endCell();
+    p.put(9, 1, a);
+    p.put(9, 2, b);
+    val (_, status, body) = p.get(9);
+    assert(status == 2 && body!.hash() == b.hash()) throw 161;
+    assert(p.remove(9)) throw 162;
+    assert(!p.remove(9)) throw 163;
+    // the freed slot can now carry the nonce one window later
+    p.put(9 + 256, 0, a);
+    val (found, _, _) = p.get(9 + 256);
+    assert(found) throw 164;
+    var thrown = false;
+    try {
+        p.put(10, 256, a);
+    } catch (code) {
+        expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_STATUS, 165);
+        thrown = true;
+    }
+    assert(thrown) throw 166;
+    return 7;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+ */

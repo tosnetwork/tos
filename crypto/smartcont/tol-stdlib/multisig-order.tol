@@ -1,0 +1,248 @@
+// Multisig with one contract per proposal ("order").
+//
+// A single-contract multisig keeps every open proposal and every approval in
+// its own storage, which grows with the number of proposals and lets one
+// busy period make every later call more expensive. Here the parent contract
+// only allocates a sequence number and deploys an order contract at an
+// address derived from (order code, parent, seqno). Approvals accumulate in
+// that order; when the threshold is reached the order sends one execute
+// message to the parent.
+//
+// The parent trusts an execute message only if
+//   * it comes from the address derived for the claimed seqno,
+//   * the order was approved under the signer set the parent has *now*
+//     (orders opened before a signer change cannot execute afterwards),
+//   * the approvals reach the parent's *current* threshold, and
+//   * the order has not expired.
+// [multisigOrderRequireExecute] checks all four. Orders also refuse approvals
+// after expiry, so an expired order can never fire. Expiry is always judged
+// against `blockchain.now()`, never a time supplied by a message.
+tol 1.3
+
+import "@stdlib/tvm-dicts"
+
+const MULTISIG_ORDER_THROW_INVALID_CONFIG = 0x1a01
+const MULTISIG_ORDER_THROW_INVALID_SEQNO = 0x1a02
+const MULTISIG_ORDER_THROW_UNKNOWN_SIGNER = 0x1a03
+const MULTISIG_ORDER_THROW_ALREADY_APPROVED = 0x1a04
+const MULTISIG_ORDER_THROW_ALREADY_EXECUTED = 0x1a05
+const MULTISIG_ORDER_THROW_EXPIRED = 0x1a06
+const MULTISIG_ORDER_THROW_UNAUTHORIZED_EXECUTE = 0x1a07
+const MULTISIG_ORDER_THROW_STALE_SIGNERS = 0x1a08
+const MULTISIG_ORDER_THROW_INSUFFICIENT_APPROVALS = 0x1a09
+
+const MULTISIG_ORDER_OP_INIT: uint32 = 0x16b7a4fb
+const MULTISIG_ORDER_OP_APPROVE: uint32 = 0x9c205aee
+const MULTISIG_ORDER_OP_EXECUTE: uint32 = 0xe71e90bc
+
+/// Signers are indexed 0..255; the approval set is a 256-bit mask.
+const MULTISIG_ORDER_SIGNER_INDEX_BITS = 8
+const MULTISIG_ORDER_MAX_SIGNERS = 255
+/// Pass as the requested seqno to take the parent's next one.
+const MULTISIG_ORDER_NEXT_SEQNO = 0xffffffffffffffff
+
+struct MultisigOrder {
+    parent: address
+    seqno: uint64
+    threshold: uint8
+    /// signer index (uint8) -> signer address
+    signers: cell
+    approvals: uint256
+    approvalCount: uint8
+    expiresAt: uint32
+    executed: bool
+    action: cell
+}
+
+struct MultisigOrderExecute {
+    seqno: uint64
+    expiresAt: uint32
+    approvalCount: uint8
+    signersHash: uint256
+    action: cell
+}
+
+/// The immutable data an order is deployed with; it alone fixes the address.
+fun multisigOrderInitData(parent: address, seqno: uint64): cell {
+    return beginCell().storeAddress(parent).storeUint(seqno, 64).endCell();
+}
+
+fun multisigOrderStateInit(orderCode: cell, parent: address, seqno: uint64): cell {
+    return beginCell()
+        .storeUint(0, 2)
+        .storeMaybeRef(orderCode)
+        .storeMaybeRef(multisigOrderInitData(parent, seqno))
+        .storeUint(0, 1)
+        .endCell();
+}
+
+fun multisigOrderAddress(orderCode: cell, parent: address, seqno: uint64): address {
+    return address.fromWorkchainAndHash(BASECHAIN, multisigOrderStateInit(orderCode, parent, seqno).hash());
+}
+
+/// Returns (seqno to use, parent's next seqno afterwards). The request must
+/// be exactly the parent's next seqno or MULTISIG_ORDER_NEXT_SEQNO, so two
+/// proposals can never claim the same order address.
+fun multisigOrderAllocateSeqno(requested: int, nextSeqno: int): (int, int) {
+    if (nextSeqno < 0 || nextSeqno >= MULTISIG_ORDER_NEXT_SEQNO) {
+        throw MULTISIG_ORDER_THROW_INVALID_SEQNO;
+    }
+    if (requested != MULTISIG_ORDER_NEXT_SEQNO && requested != nextSeqno) {
+        throw MULTISIG_ORDER_THROW_INVALID_SEQNO;
+    }
+    return (nextSeqno, nextSeqno + 1);
+}
+
+/// Number of signers, or INVALID_CONFIG if the dictionary is empty or larger
+/// than MULTISIG_ORDER_MAX_SIGNERS.
+fun multisigOrderSignerCount(signers: cell): int {
+    var count = 0;
+    var (index, _, found) = (signers as dict).uDictGetFirst(MULTISIG_ORDER_SIGNER_INDEX_BITS);
+    while (found) {
+        count += 1;
+        if (count > MULTISIG_ORDER_MAX_SIGNERS) {
+            throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+        }
+        (index, _, found) = (signers as dict).uDictGetNext(MULTISIG_ORDER_SIGNER_INDEX_BITS, index!);
+    }
+    if (count == 0) {
+        throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+    }
+    return count;
+}
+
+fun multisigOrderRequireValidThreshold(threshold: int, signerCount: int): void {
+    if (threshold <= 0 || threshold > signerCount) {
+        throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+    }
+}
+
+/// A fresh, unapproved order. Rejects an empty or oversized signer set, a
+/// threshold outside 1..signerCount, and an expiry not after the current time.
+fun multisigOrderNew(
+    parent: address,
+    seqno: uint64,
+    threshold: int,
+    signers: cell,
+    expiresAt: int,
+    action: cell
+): MultisigOrder {
+    multisigOrderRequireValidThreshold(threshold, multisigOrderSignerCount(signers));
+    if (expiresAt <= blockchain.now()) {
+        throw MULTISIG_ORDER_THROW_EXPIRED;
+    }
+    return MultisigOrder {
+        parent,
+        seqno,
+        threshold,
+        signers,
+        approvals: 0,
+        approvalCount: 0,
+        expiresAt,
+        executed: false,
+        action,
+    };
+}
+
+/// Index of `signer` in the order's signer set.
+fun MultisigOrder.findSigner(self, signer: address): (int, bool) {
+    var (index, value, found) = (self.signers as dict).uDictGetFirst(MULTISIG_ORDER_SIGNER_INDEX_BITS);
+    while (found) {
+        if (value!.bitsEqual(signer as slice)) {
+            return (index!, true);
+        }
+        (index, value, found) = (self.signers as dict).uDictGetNext(MULTISIG_ORDER_SIGNER_INDEX_BITS, index!);
+    }
+    return (-1, false);
+}
+
+/// Records the approval of the signer at `signerIndex`, whose address must be
+/// `sender`. Returns true exactly once: on the approval that reaches the
+/// threshold, which also marks the order executed. The caller sends
+/// [multisigOrderBuildExecuteBody] to the parent when it returns true.
+fun MultisigOrder.approve(mutate self, signerIndex: int, sender: address): bool {
+    if (self.executed) {
+        throw MULTISIG_ORDER_THROW_ALREADY_EXECUTED;
+    }
+    if (blockchain.now() > self.expiresAt) {
+        throw MULTISIG_ORDER_THROW_EXPIRED;
+    }
+    if (signerIndex < 0 || signerIndex > MULTISIG_ORDER_MAX_SIGNERS) {
+        throw MULTISIG_ORDER_THROW_UNKNOWN_SIGNER;
+    }
+    val (expected, found) = (self.signers as dict).uDictGet(MULTISIG_ORDER_SIGNER_INDEX_BITS, signerIndex);
+    if (!found || !expected!.bitsEqual(sender as slice)) {
+        throw MULTISIG_ORDER_THROW_UNKNOWN_SIGNER;
+    }
+    val bit = 1 << signerIndex;
+    if ((self.approvals & bit) != 0) {
+        throw MULTISIG_ORDER_THROW_ALREADY_APPROVED;
+    }
+    self.approvals = self.approvals | bit;
+    self.approvalCount = self.approvalCount + 1;
+    if (self.approvalCount >= self.threshold) {
+        self.executed = true;
+        return true;
+    }
+    return false;
+}
+
+fun MultisigOrder.executeMessage(self): MultisigOrderExecute {
+    return MultisigOrderExecute {
+        seqno: self.seqno,
+        expiresAt: self.expiresAt,
+        approvalCount: self.approvalCount,
+        signersHash: self.signers.hash(),
+        action: self.action,
+    };
+}
+
+fun multisigOrderBuildExecuteBody(queryId: uint64, execute: MultisigOrderExecute): cell {
+    return beginCell()
+        .storeUint(MULTISIG_ORDER_OP_EXECUTE, 32)
+        .storeUint(queryId, 64)
+        .storeUint(execute.seqno, 64)
+        .storeUint(execute.expiresAt, 32)
+        .storeUint(execute.approvalCount, 8)
+        .storeUint(execute.signersHash, 256)
+        .storeRef(execute.action)
+        .endCell();
+}
+
+/// Parses an execute body (op and query id already consumed).
+fun multisigOrderParseExecute(body: slice): MultisigOrderExecute {
+    var s = body;
+    val execute = MultisigOrderExecute {
+        seqno: s.loadUint(64),
+        expiresAt: s.loadUint(32),
+        approvalCount: s.loadUint(8),
+        signersHash: s.loadUint(256),
+        action: s.loadRef(),
+    };
+    s.assertEnd();
+    return execute;
+}
+
+/// Parent-side admission of an execute message; see the file header for the
+/// four conditions.
+fun multisigOrderRequireExecute(
+    execute: MultisigOrderExecute,
+    sender: address,
+    orderCode: cell,
+    parent: address,
+    currentSigners: cell,
+    currentThreshold: int
+): void {
+    if (!sender.bitsEqual(multisigOrderAddress(orderCode, parent, execute.seqno))) {
+        throw MULTISIG_ORDER_THROW_UNAUTHORIZED_EXECUTE;
+    }
+    if (execute.signersHash != currentSigners.hash()) {
+        throw MULTISIG_ORDER_THROW_STALE_SIGNERS;
+    }
+    if (execute.approvalCount < currentThreshold) {
+        throw MULTISIG_ORDER_THROW_INSUFFICIENT_APPROVALS;
+    }
+    if (blockchain.now() > execute.expiresAt) {
+        throw MULTISIG_ORDER_THROW_EXPIRED;
+    }
+}
