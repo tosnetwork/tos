@@ -122,7 +122,7 @@ fn every_cap_boundary_conserves_the_increment_without_consuming_historic_credits
     for target in [90_000, 100_000, 110_000] {
         for selected in [false, true] {
             let (mut chain, _, election) = open_election("cap-boundary", 400_000 * TOS);
-            raise_to_post_quantum_version(&mut chain);
+            require_post_quantum_version(&mut chain);
             let stakes = if selected {
                 [target, 80_000, 70_000, 60_000]
             } else {
@@ -165,7 +165,7 @@ fn real_pq_single_and_split_stakes_match_at_each_cap_boundary() {
     for target in [90_000, 100_000, 110_000] {
         for split in [false, true] {
             let (mut chain, _, election) = open_election("pq-cap-boundary", 400_000 * TOS);
-            raise_to_post_quantum_version(&mut chain);
+            require_post_quantum_version(&mut chain);
             let mut owners = Vec::new();
             for i in 0..4u8 {
                 let sender = chain
@@ -212,7 +212,7 @@ fn real_pq_single_and_split_stakes_match_at_each_cap_boundary() {
 fn participant_cost_profile_uses_registration_count_not_seated_count() {
     for count in [21u16, 1024, 4097, 8192] {
         let (mut chain, _, election) = open_election("registration-profile", 400_000 * TOS);
-        raise_to_post_quantum_version(&mut chain);
+        require_post_quantum_version(&mut chain);
         raise_validator_ceiling(&mut chain, 21);
         install_synthetic_book(&mut chain, count, 11_000 * TOS);
         chain.blockchain.set_now(election - chain.elect_end_before);
@@ -233,7 +233,7 @@ fn participant_cost_profile_uses_registration_count_not_seated_count() {
 fn the_participant_bound_covers_selection_retirement_cancellation_and_unfreeze() {
     for path in ["all-selected", "mostly-refunded", "retired", "failed"] {
         let (mut chain, _, election) = open_election(path, 400_000 * TOS);
-        raise_to_post_quantum_version(&mut chain);
+        require_post_quantum_version(&mut chain);
         install_synthetic_book_full(
             &mut chain,
             256,
@@ -316,7 +316,7 @@ fn the_participant_bound_covers_selection_retirement_cancellation_and_unfreeze()
 #[test]
 fn an_additional_identity_is_refused_at_the_participant_bound_before_state_changes() {
     let (mut chain, sender, election) = open_election("bounded-registration", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     install_synthetic_book(&mut chain, 256, 11_000 * TOS);
     align_declared_total_with_the_synthetic_book(&mut chain);
     admit_sender_code(&mut chain, &sender);
@@ -334,7 +334,7 @@ fn an_additional_identity_is_refused_at_the_participant_bound_before_state_chang
 #[test]
 fn the_last_admitted_participant_can_top_up_without_occupying_another_slot() {
     let (mut chain, sender, election) = open_election("last-participant", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let key = PqValidator::new(0xce);
     install_synthetic_book(&mut chain, 255, 11_000 * TOS);
     align_declared_total_with_the_synthetic_book(&mut chain);
@@ -383,7 +383,7 @@ fn the_last_admitted_participant_can_top_up_without_occupying_another_slot() {
 #[test]
 fn an_oversized_import_is_refused_before_a_tick_can_spend_its_gas_budget() {
     let (mut chain, _, election) = open_election("oversized-import", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     install_synthetic_book(&mut chain, 4097, 11_000 * TOS);
     align_declared_total_with_the_synthetic_book(&mut chain);
     let data = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
@@ -405,7 +405,7 @@ fn an_oversized_import_is_refused_before_a_tick_can_spend_its_gas_budget() {
 #[test]
 fn a_refused_configuration_returns_each_original_once_even_after_late_confirmation() {
     let (mut chain, _, election) = open_election("configuration-refund", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let mut owners = Vec::new();
     let mut shared_adnl = None;
     for i in 0..4u8 {
@@ -802,7 +802,7 @@ fn upgrades_and_rollbacks_require_a_debt_free_boundary_and_preserve_the_root() {
 #[test]
 fn over_cap_principal_is_conserved_for_winners_losers_and_shared_owners() {
     let (mut chain, _, election) = open_election("principal-cap", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     install_synthetic_book_full(&mut chain, 6, 2, &|i, _| refund_owner(i % 2), &|i| {
         (100_000 - u64::from(i) * 10_000) * TOS
     });
@@ -834,7 +834,7 @@ fn over_cap_principal_is_conserved_for_winners_losers_and_shared_owners() {
 #[test]
 fn real_pq_top_up_above_a_lowered_cap_returns_all_surplus() {
     let (mut chain, _, election) = open_election("signed-cap", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let mut owners = Vec::new();
     for i in 0..4u8 {
         let sender = chain
@@ -865,7 +865,7 @@ fn real_pq_top_up_above_a_lowered_cap_returns_all_surplus() {
 fn a_failed_selection_retries_after_each_decisive_configuration_change() {
     for parameter in [16, 17, 47] {
         let (mut chain, _, election) = open_election(&format!("retry-{parameter}"), 400_000 * TOS);
-        raise_to_post_quantum_version(&mut chain);
+        require_post_quantum_version(&mut chain);
         let members = if parameter == 16 { 3 } else { 4 };
         install_synthetic_book_over(&mut chain, members, 30_000 * TOS, 2);
         counts(&mut chain, 4, 4);
@@ -905,7 +905,7 @@ fn a_failed_selection_retries_after_each_decisive_configuration_change() {
 #[test]
 fn identical_failed_inputs_skip_selection_and_cancel_without_double_credit() {
     let (mut chain, _, election) = open_election("cached-failure", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     install_synthetic_book_owned(&mut chain, 21, 30_000 * TOS, 1, &|i, _| refund_owner(i));
     counts(&mut chain, 31, 22);
     chain.blockchain.set_now(election - chain.elect_end_before);
@@ -937,7 +937,7 @@ fn identical_failed_inputs_skip_selection_and_cancel_without_double_credit() {
 #[test]
 fn a_legacy_failed_record_without_fingerprint_gets_one_new_attempt() {
     let (mut chain, _, election) = open_election("legacy-failure", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     install_synthetic_book(&mut chain, 3, 30_000 * TOS);
     counts(&mut chain, 4, 4);
     tick_at_close(&mut chain, election, "failed selection");

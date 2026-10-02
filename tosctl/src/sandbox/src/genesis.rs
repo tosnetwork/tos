@@ -97,13 +97,23 @@ pub fn generate_zerostate_state(fif_path: impl AsRef<Path>) -> SandboxResult<Sha
     let tmp =
         tempfile::tempdir().map_err(|e| SandboxError::Serialization(format!("tmpdir: {e}")))?;
 
-    // gen-zerostate templates read a genesis validator key manifest
-    // (`validator-keys.pub`, four concatenated 32-byte public keys) from the
-    // working directory. Supply a deterministic manifest of four distinct
-    // keys: the key bytes only shape the validator set, not the total
-    // balance being measured here, and determinism keeps the run reproducible.
-    let manifest: Vec<u8> = (1u8..=4).flat_map(|i| [i; 32]).collect();
-    std::fs::write(tmp.path().join("validator-keys.pub"), manifest)
+    // gen-zerostate reads its four genesis validators from `validator-pq.pub`
+    // in the working directory: per validator a 1376-byte record of controller
+    // id (32), ADNL id (32) and ML-DSA-44 public key (1312). The template
+    // requires the ids nonzero and every id and key unique, and only hashes the
+    // key. Supply a deterministic manifest of four distinct records: the bytes
+    // only shape the validator set, not the balances or parameters measured
+    // here, and determinism keeps the run reproducible.
+    let manifest: Vec<u8> = (1u8..=4)
+        .flat_map(|i| {
+            let mut record = Vec::with_capacity(1376);
+            record.extend_from_slice(&[i; 32]);
+            record.extend_from_slice(&[i | 0x10; 32]);
+            record.extend_from_slice(&[i | 0x20; 1312]);
+            record
+        })
+        .collect();
+    std::fs::write(tmp.path().join("validator-pq.pub"), manifest)
         .map_err(|e| SandboxError::Serialization(format!("write validator manifest: {e}")))?;
 
     let fif_path = fif_path
