@@ -324,3 +324,30 @@ fn outstanding_payment_receipt_still_blocks_installation() {
     assert_eq!(f.code(), code);
     assert_eq!(f.data(), data);
 }
+
+#[test]
+fn matching_recovery_capability_cannot_enqueue_actions() {
+    let side_effect = target(concat!(
+        "() recv_internal(slice body) impure { }\n",
+        "int recovery_upgrade_format() impure method_id(1667) {\n",
+        " cell msg = begin_cell().store_uint(0x10, 6).store_slice(my_address())\n",
+        " .store_coins(1000000000).store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1).end_cell();\n",
+        " send_raw_message(msg, 0); return 0x52435632; }\n",
+        "() after_code_upgrade(slice sender, slice body, int query) impure method_id(1666) { return (); }\n",
+    ));
+    for hook in [false, true] {
+        let mut f = Fixture::new("recovery-capability-actions");
+        f.acknowledge_first_payment();
+        let original_code = f.code();
+        let original_data = f.data();
+        let (tx, out) = f.upgrade(side_effect.clone(), hook);
+        assert!(
+            tx.read_description().expect("description").is_aborted(),
+            "a capability declaration must not enqueue a payment"
+        );
+        assert!(out.is_empty(), "refused declaration must emit no hidden payment");
+        assert_eq!(f.code(), original_code);
+        assert_eq!(f.data(), original_data);
+        assert_eq!(reply(&f.send(ACK, QUERY)), (CONFIRMED, QUERY));
+    }
+}

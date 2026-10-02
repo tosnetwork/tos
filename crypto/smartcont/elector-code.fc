@@ -695,6 +695,8 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
 ;; upgrade_code invokes it through the target c3 before installing that code.
 ;; The tag promises retention of the owner/query tombstones and ACK confirmation
 ;; semantics, not permission to discard them when the outstanding count is zero.
+cell recovery_upgrade_actions() impure asm "c5 PUSH";
+
 int recovery_upgrade_format() impure method_id(1667) {
   return recover::metadata_tag;
 }
@@ -729,6 +731,7 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
   accept_message();
   var code = cs~load_ref();
   cell preserved_data = get_data();
+  cell preserved_actions = recovery_upgrade_actions();
   cell preserved_recovery = recovery_metadata();
   cont previous_code = get_c3();
   ifnot (preserved_recovery.null?()) {
@@ -741,6 +744,7 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
     throw_unless(67, target_format == recover::metadata_tag);
     ;; The compatibility entry point is a read-only declaration, not a migration.
     throw_unless(67, cell_hash(get_data()) == cell_hash(preserved_data));
+    throw_unless(67, cell_hash(recovery_upgrade_actions()) == cell_hash(preserved_actions));
   }
   set_code(code);
   ifnot(cs.slice_empty?()) {
