@@ -153,6 +153,18 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
     amounts~load_uint(256), amounts~load_maybe_ref()); amounts.end_parse();
   return (owner, elector, hash, forwarded, capital, prefix, phase, receipt);
 }
+;; Controller-owned receipts are not part of a pool's settlement surplus.
+;; Reclassify an explicitly accepted unrelated credit before the next READY send.
+;; Keep the one-slot record and its creditor, commitment, phase and receipt.
+() ctl::protect_owner_credit(int value) impure inline_ref {
+  var (sequence, pending) = ctl::relay_state();
+  if (pending.null?()) { return (); }
+  var (owner, elector, hash, forwarded, capital, prefix, phase, receipt) = ctl::unpack(pending);
+  if (phase >= 2) { return (); }  ;; PAID repeats already reserve all prior balance.
+  ctl::save_relay(sequence, ctl::record(owner, elector, hash, forwarded,
+    sr::add(capital, value), prefix, phase, receipt));
+}
+
 () ctl::kick(int query) impure inline_ref {
   send_raw_message(sr::message(my_address(), sr::add(sr::control_value(), sr::callback_value()),
     begin_cell().store_uint(sr::retry, 32).store_uint(query, 64).end_cell(), false), 3);
@@ -313,7 +325,7 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
 
   slice sender = header~load_msg_addr();
   if (flags & 1) { return ctl::record_bounce(sender, msg_value, in_msg_body); }
-  if (in_msg_body.slice_empty?()) { return (); }
+  if (in_msg_body.slice_empty?()) { return ctl::protect_owner_credit(msg_value); }
   int op = in_msg_body~load_uint(32);
   if (op == sr::relay) { return ctl::relay_stake(sender, msg_value, in_msg_body); }
   if ((op == sr::ok) | (op == sr::error_reply)) { return ctl::receive_result(sender, msg_value, op, in_msg_body); }
@@ -323,7 +335,7 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
     var (wc, address) = parse_std_addr(sender);
     throw_unless(sr::error, (wc == -1) & (address == sr::elector()));
     throw_unless(sr::error, in_msg_body~load_uint(64) < sr::domain);
-    return ();
+    return ctl::protect_owner_credit(msg_value);
   }
   throw_unless(ctl::error::bad_operation, op == ctl::op);
   in_msg_body~load_uint(64);  ;; query_id, echoed by nothing: this account answers no one

@@ -1,4 +1,5 @@
 //! Asynchronous receipts and funds, using one native transaction at a time.
+mod r3_r4;
 use super::*;
 use chain_block::{Coins, Message, TrComputePhase, Transaction, TransactionDescr};
 use contracts::nominator::{NewStakeParams, new_stake_with_witness};

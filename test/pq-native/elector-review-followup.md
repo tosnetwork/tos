@@ -6,6 +6,31 @@ single-flight protocol. It does not deploy contracts or migrate a live chain.
 The original `elector-security-results.json` describes the earlier revision;
 its hashes and totals are historical, not validation of this follow-up.
 
+## Subsequent R3/R4 candidate: not ready for deployment
+
+The follow-up below is historical. The new candidate on top of
+`9615ff13a0e1859c917af796f3a77f6a4315e73e` preserves a nonempty recovery
+confirmation book across upgrades and checks the target's runtime schema
+capability. Remote commits `764a10c15` and `1377e4863` supersede the local
+R4 implementation: they additionally check that compatibility probing does not
+mutate data and that a supplied upgrade hook preserves recovery history. A
+compatible installation need not supply a hook; an incompatible target must
+still refuse without one. Native tests cover lost-confirmation repair,
+incompatible targets, and repeated ACKs without another principal payment.
+The same-code test constructs a drained upgrade precondition; it does not
+prove a live-chain drain or migration.
+
+The controller change protects explicitly accepted plain funding and authenticated
+legacy receipts. **R3 remains open:** an aborted non-bounce message can retain
+unrelated value without updating the protected-capital record. The READY
+balance sweep then pays that value to the current pool. A separately executed
+native counterexample fails the intended ownership assertion (exit 101).
+Passing the four candidate tests does not close this defect.
+
+See `elector-r3-r4-results.json` for source hashes, scoped checks, mutation
+results and the remaining failure. Release/golden artifacts and deployment
+remain on hold. These changes are review candidates, not complete remediation.
+
 ## Recovery confirmation outlives a staking result
 
 The pool's paid-recovery reference now contains its own query, pinned elector
