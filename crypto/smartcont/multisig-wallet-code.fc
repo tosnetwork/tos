@@ -22,7 +22,7 @@
 ;; address, so it can never approve or propose by a message to itself.
 ;;
 ;; The cost a proposal must cover grows with its number of actions and with the size of
-;; any signer set it installs; see fee_profile(). The signer count is stored and handed to
+;; any signer or proposer set it installs; see fee_profile(). The signer count is stored and handed to
 ;; each order, so neither the parent nor the order counts the set on every message.
 ;;
 ;; storage: next_seqno:uint64 threshold:uint8 signer_count:uint8 signers:^Cell
@@ -107,7 +107,9 @@ int count_members(cell members) impure inline {
 
 ;; Walks the action chain without executing it, starting from the parameters in force; each
 ;; update replaces them for the actions that follow. Returns
-;; (action count, signers installed by updates, final threshold, final signer count).
+;; (action count, members visited by updates, final threshold, final signer count).
+;; The fee counter includes BOTH signer and proposer entries, summed over every update.
+;; It must stay separate from signer_count, which alone determines the approval threshold.
 ;; Throws invalid_action, or invalid_config for an update that could never be satisfied.
 (int, int, int, int) validate_actions(cell actions, int threshold, int signer_count) impure inline {
   slice cs = actions.begin_parse();
@@ -124,9 +126,9 @@ int count_members(cell members) impure inline {
     } elseif (tag == action::update) {
       threshold = cs~load_uint(8);
       signer_count = count_members(cs~load_ref());
-      count_members(cs~load_dict());
+      int proposer_count = count_members(cs~load_dict());
       multisig_order::require_valid_threshold(threshold, signer_count);
-      installed += signer_count;
+      installed += signer_count + proposer_count;
     } else {
       throw(error::invalid_action);
     }
