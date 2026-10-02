@@ -36,12 +36,18 @@ M = "-1:" + "ff" * 32
 
 def fift(args, cwd, script=SCRIPT):
     return subprocess.run(
-        [FIFT, "-I", INCLUDE, "-s", script, *args], cwd=cwd, capture_output=True, text=True, errors="replace"
+        [FIFT, "-I", INCLUDE, "-s", script, *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        errors="replace",
     )
 
 
 def error_of(result):
-    found = re.search(r"Error interpreting file [^\n]*?:\d+:\s*(?:[^:\n]*:)?([^\n\x1b]*)", result.stderr)
+    found = re.search(
+        r"Error interpreting file [^\n]*?:\d+:\s*(?:[^:\n]*:)?([^\n\x1b]*)", result.stderr
+    )
     return found.group(1).strip() if found else None
 
 
@@ -69,11 +75,13 @@ def read_back(work, base):
             '"TosUtil.fif" include\n'
             '"%s.init.boc" file>B B>boc dup hashu 64 0x. cr\n'
             "<s ref@+ =: code ref@ =: data\n"
-            "108550 code <s data runvm drop 0<> abort\"get_checked_signer_count failed\" . cr\n"
-            "107307 code <s data runvm drop 0<> abort\"get_multisig_data failed\" "
+            '108550 code <s data runvm drop 0<> abort"get_checked_signer_count failed" . cr\n'
+            '107307 code <s data runvm drop 0<> abort"get_multisig_data failed" '
             "drop drop drop . drop cr\n" % base
         )
-    result = subprocess.run([FIFT, "-I", INCLUDE, "-s", probe], cwd=work, capture_output=True, text=True)
+    result = subprocess.run(
+        [FIFT, "-I", INCLUDE, "-s", probe], cwd=work, capture_output=True, text=True
+    )
     assert result.returncode == 0, result.stderr
     address, count, threshold = result.stdout.split()
     return int(count), int(threshold), address
@@ -84,7 +92,9 @@ def main():
         # Accepted: signers given out of order and across workchains, plus a proposer.
         result = fift(["0", "2", "ms", C, A, M, "-p", B], work)
         assert result.returncode == 0, result.stderr
-        listed = re.findall(r"^\s+(\d+)\s+(-?\d+:[0-9a-f]{64})", result.stdout.split("Proposers")[0], re.M)
+        listed = re.findall(
+            r"^\s+(\d+)\s+(-?\d+:[0-9a-f]{64})", result.stdout.split("Proposers")[0], re.M
+        )
         assert listed == [("0", M), ("1", A), ("2", C)], listed
         assert os.path.getsize(os.path.join(work, "ms.addr")) == 36
         count, threshold, address = read_back(work, "ms")
@@ -96,7 +106,8 @@ def main():
         for workchain in ("-1", "1"):
             base = "unsupported-" + workchain
             expect_refused(
-                work, [workchain, "1", base, A, B],
+                work,
+                [workchain, "1", base, A, B],
                 "this multisig wallet supports only workchain 0",
             )
             assert not os.path.exists(os.path.join(work, base + ".init.boc"))
@@ -104,9 +115,17 @@ def main():
 
         # Refused.
         expect_refused(work, ["0", "1", "x", A, B, A], "the same signer address is listed twice")
-        expect_refused(work, ["0", "1", "x", A, B, friendly(work, A)], "the same signer address is listed twice")
-        expect_refused(work, ["0", "0", "x", A, B], "the threshold must be between 1 and the number of signers")
-        expect_refused(work, ["0", "3", "x", A, B], "the threshold must be between 1 and the number of signers")
+        expect_refused(
+            work,
+            ["0", "1", "x", A, B, friendly(work, A)],
+            "the same signer address is listed twice",
+        )
+        expect_refused(
+            work, ["0", "0", "x", A, B], "the threshold must be between 1 and the number of signers"
+        )
+        expect_refused(
+            work, ["0", "3", "x", A, B], "the threshold must be between 1 and the number of signers"
+        )
         expect_refused(work, ["0", "1", "x", "-p", A], "no signers given")
         expect_refused(work, ["0", "1", "x", "0:zz"], "invalid smart-contract address")
 
@@ -136,7 +155,9 @@ def main():
             mutant = os.path.join(work, base + ".fif")
             with open(mutant, "w") as f:
                 f.write(source.replace(fields, replacement))
-            expect_refused(work, ["0", "1", base, A, B], "the wallet refuses this signer set", mutant)
+            expect_refused(
+                work, ["0", "1", base, A, B], "the wallet refuses this signer set", mutant
+            )
             assert not os.path.exists(os.path.join(work, base + ".init.boc"))
             assert not os.path.exists(os.path.join(work, base + ".addr"))
     print("new-multisig-wallet.fif: all checks passed")
