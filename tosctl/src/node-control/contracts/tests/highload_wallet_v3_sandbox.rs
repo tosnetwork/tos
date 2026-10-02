@@ -13,7 +13,7 @@
 //! the query id.
 
 use chain_block::{
-    BuilderData, Cell, CurrencyCollection, IBitstring, InternalMessageHeader, Message,
+    BuilderData, Cell, Coins, CurrencyCollection, IBitstring, InternalMessageHeader, Message,
     MsgAddressInt, Serializable, SliceData, StateInit,
 };
 use ed25519_dalek::{Signer as _, SigningKey};
@@ -87,6 +87,69 @@ fn relaxed_transfer_with_state_init(dest: &MsgAddressInt, value: u64) -> Cell {
     )
 }
 
+fn append_dict(b: &mut BuilderData, root: Option<Cell>) {
+    match root {
+        Some(root) => {
+            b.append_bits(1, 1).unwrap();
+            b.checked_append_reference(root).unwrap();
+        }
+        None => {
+            b.append_bits(0, 1).unwrap();
+        }
+    }
+}
+
+/// A replay dictionary with every one of its 8192 rows present: the largest state a
+/// generation can reach. Rows hold no set bits, so every id is still unused.
+fn full_generation() -> Cell {
+    let row = cell(|b| {
+        b.append_raw(&[0u8; 128], 1023).unwrap();
+    });
+    let mut dict = chain_block::HashmapE::with_bit_len(13);
+    for shift in 0u32..8192 {
+        let mut key = BuilderData::new();
+        key.append_bits(shift as usize, 13).unwrap();
+        dict.setref(SliceData::load_builder(key).unwrap(), row.clone()).unwrap();
+    }
+    chain_block::HashmapType::data(&dict).cloned().expect("non-empty dictionary")
+}
+
+/// An internal message whose destination is addr_none: well-formed enough for the
+/// wallet's parser, but never deliverable.
+fn transfer_to_nowhere(value: u64) -> Cell {
+    cell(|b| {
+        b.append_bits(0b0100, 4).unwrap(); // int_msg_info$0 ihr_disabled
+        b.append_bits(0, 2).unwrap(); // src: addr_none
+        b.append_bits(0, 2).unwrap(); // dest: addr_none
+        Coins::new(value).write_to(b).unwrap();
+        b.append_bits(0, 1).unwrap();
+        b.append_bits(0, 4).unwrap(); // extra_flags
+        b.append_bits(0, 4).unwrap(); // fwd_fee
+        b.append_u64(0).unwrap();
+        b.append_u32(0).unwrap();
+        b.append_bits(0, 1).unwrap();
+        b.append_bits(0, 1).unwrap();
+    })
+}
+
+/// A transfer that also carries an extra currency.
+fn transfer_with_extra_currency(dest: &MsgAddressInt, value: u64) -> Cell {
+    let mut amount = CurrencyCollection::with_coins(value);
+    amount.set_other(7, 1_000).unwrap();
+    let header = InternalMessageHeader {
+        bounce: false,
+        dst: dest.clone(),
+        value: amount,
+        ..Default::default()
+    };
+    Message::with_int_header_and_body(header, SliceData::load_cell(Cell::default()).unwrap())
+        .serialize_as_is()
+        .unwrap()
+        .0
+        .into_cell()
+        .unwrap()
+}
+
 struct Request {
     subwallet_id: u32,
     message: Cell,
@@ -105,6 +168,11 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_guard(None, None, 0)
+    }
+
+    /// A wallet deployed with the given replay dictionaries and clean time.
+    fn with_guard(old_queries: Option<Cell>, queries: Option<Cell>, last_clean_time: u64) -> Self {
         // Genesis global version, with basechain admitted so the wallet can pay out to
         // basechain accounts.
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
@@ -115,9 +183,9 @@ impl Fixture {
         let data = cell(|b| {
             b.append_raw(key.verifying_key().as_bytes(), 256).unwrap();
             b.append_u32(SUBWALLET_ID).unwrap();
-            b.append_bits(0, 1).unwrap(); // old_queries: empty
-            b.append_bits(0, 1).unwrap(); // queries: empty
-            b.append_u64(0).unwrap(); // last_clean_time
+            append_dict(b, old_queries.clone());
+            append_dict(b, queries.clone());
+            b.append_u64(last_clean_time).unwrap();
             b.append_bits(TIMEOUT as usize, 22).unwrap();
         });
         let init = StateInit::with_code_and_data(wallet_code(), data);
@@ -407,4 +475,56 @@ fn getters_report_configuration() {
     let f = Fixture::new();
     assert_eq!(f.get_int("get_subwallet_id"), SUBWALLET_ID as i128);
     assert_eq!(f.get_int("get_timeout"), TIMEOUT as i128);
+}
+
+#[test]
+fn a_full_replay_dictionary_still_fits_the_gas_credit() {
+    // Both generations at their maximum size and no rotation due: every request pays for
+    // the deepest lookups. Only reads may run before acceptance, or such a wallet would
+    // stop accepting anything until a timeout passed.
+    let full = full_generation();
+    let mut f = Fixture::with_guard(Some(full.clone()), Some(full), NOW as u64);
+    let before = f.balance(f.target.address());
+    let request = f.request(5 * 1024 + 7, relaxed_transfer(f.target.address(), TOS));
+    f.send_signed(&request).expect("accepted within the credit").expect_success();
+    assert_received(before, f.balance(f.target.address()), TOS, "transfer from a full wallet");
+    assert!(f.processed(5 * 1024 + 7, false));
+}
+
+#[test]
+fn undeliverable_requests_still_consume_their_id() {
+    // The wallet forces IGNORE_ERRORS onto every send, so an undeliverable message is
+    // skipped rather than failing the action phase, and the request's id stays used.
+    // (This sandbox's executor skips these messages either way; the property is pinned
+    // on the node's executor by emulator/test/highload-wallet-action-phase-fixture.cpp.)
+    let mut f = Fixture::new();
+    for (query_id, message) in [
+        (11, transfer_to_nowhere(TOS)),
+        (12, transfer_with_extra_currency(f.target.address(), TOS)),
+    ] {
+        let before = f.balance(f.target.address());
+        let request = f.request(query_id, message);
+        f.send_signed(&request).expect("accepted");
+        assert_eq!(f.balance(f.target.address()), before, "request {query_id} must not send");
+        assert!(f.processed(query_id, false), "request {query_id} must consume its id");
+        let replay = f.signed(&request, &f.key.clone());
+        f.expect_rejected(replay, ERROR_ALREADY_PROCESSED);
+    }
+}
+
+#[test]
+fn processed_reports_unusable_ids_as_unprocessed() {
+    let f = Fixture::new();
+    for query_id in [1023i64, -1, 1 << 23] {
+        let result =
+            f.bc.run_get_method(
+                &f.wallet,
+                "processed?",
+                vec![StackItem::int(query_id), StackItem::int(0)],
+            )
+            .expect("processed?")
+            .expect_success()
+            .int_at(0);
+        assert_eq!(result, 0, "id {query_id}");
+    }
 }

@@ -1158,11 +1158,14 @@ set(MULTISIG_WALLET_BOC ${SLICE1_GAS_PARITY_DIR}/multisig-wallet.boc)
 set(MULTISIG_ORDER_BOC  ${SLICE1_GAS_PARITY_DIR}/multisig-order.boc)
 smartcont_func_to_boc(${MULTISIG_WALLET_BOC} multisig-wallet-code.fc multisig-order.fc)
 smartcont_func_to_boc(${MULTISIG_ORDER_BOC} multisig-order-code.fc multisig-order.fc)
+set(HIGHLOAD_WALLET_V3_BOC ${SLICE1_GAS_PARITY_DIR}/highload-wallet-v3.boc)
+smartcont_func_to_boc(${HIGHLOAD_WALLET_V3_BOC} highload-wallet-v3-code.fc replay-guard.fc)
 
-add_custom_target(multisig_contracts
+add_custom_target(smartcont_fixture_contracts
     DEPENDS
         ${MULTISIG_WALLET_BOC}
         ${MULTISIG_ORDER_BOC}
+        ${HIGHLOAD_WALLET_V3_BOC}
 )
 
 add_custom_target(slice1_gas_parity_contracts ALL
@@ -1233,9 +1236,11 @@ add_executable(test-emulator
         emulator/test/jetton-wallet-fee-profile-fixture.cpp
         # Measures the multisig fee profile against this build of the parent
         # and order contracts.
-        emulator/test/multisig-fee-profile-fixture.cpp)
+        emulator/test/multisig-fee-profile-fixture.cpp
+        # High-volume wallet requests through a real action phase.
+        emulator/test/highload-wallet-action-phase-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
-add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract multisig_contracts)
+add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract smartcont_fixture_contracts)
 target_compile_definitions(test-emulator PRIVATE
     SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}"
     SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}"
@@ -1247,6 +1252,7 @@ target_compile_definitions(test-emulator PRIVATE
     TOS_REPORT_BOND_ORACLE_BOC="${TOS_REPORT_BOND_ORACLE_BOC}"
     MULTISIG_WALLET_BOC="${MULTISIG_WALLET_BOC}"
     MULTISIG_ORDER_BOC="${MULTISIG_ORDER_BOC}"
+    HIGHLOAD_WALLET_V3_BOC="${HIGHLOAD_WALLET_V3_BOC}"
 )
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)

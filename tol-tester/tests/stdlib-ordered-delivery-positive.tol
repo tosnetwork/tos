@@ -272,6 +272,98 @@ fun test_fixed_slots_layout_matches_func(): int {
     return p.root.hash();
 }
 
+@method_id(113)
+fun test_full_window_folds_completely(): int {
+    // Every nonce above the head completes first, so completing the head
+    // must fold all 256 at once: the bitmap is all ones at that moment.
+    var w = nonceWindowNew(0);
+    var n = 1;
+    while (n < 256) {
+        w.complete(n);
+        n += 1;
+    }
+    assert(w.completed == NONCE_WINDOW_FULL_MASK - 1) throw 211;
+    w.complete(0);
+    assert(w.nextPending == 256) throw 212;
+    assert(w.completed == 0) throw 213;
+    w.complete(256 + 255);
+    return 13;
+}
+
+@method_id(114)
+fun test_complete_range(): int {
+    var w = nonceWindowNew(10);
+    w.completeRange(12, 14);
+    assert(w.nextPending == 10 && w.isCompleted(13) && !w.isCompleted(11)) throw 221;
+    w.completeRange(10, 11);
+    assert(w.nextPending == 15 && w.completed == 0) throw 222;
+    w.complete(17);
+    var rejected = 0;
+    try { w.completeRange(20, 19); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_NONCE, 223); rejected += 1; }
+    try { w.completeRange(14, 16); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 224); rejected += 1; }
+    try { w.completeRange(16, 15 + 256); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW, 225); rejected += 1; }
+    // overlapping an already completed nonce changes nothing
+    try { w.completeRange(16, 18); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 226); rejected += 1; }
+    assert(rejected == 4) throw 227;
+    assert(w.nextPending == 15 && !w.isCompleted(16)) throw 228;
+    // the whole window at once
+    var full = nonceWindowNew(0);
+    full.completeRange(0, 255);
+    assert(full.nextPending == 256 && full.completed == 0) throw 229;
+    return 14;
+}
+
+@method_id(115)
+fun test_pending_slots_bound_to_window(): int {
+    var w = nonceWindowNew(0);
+    var p = pendingSlotsNew();
+    val a = beginCell().storeUint(1, 8).endCell();
+    p.putInWindow(w, 3, 1, a);
+    val (held, holder) = p.occupant(3 + 256);
+    assert(held && holder == 3) throw 231;
+    var rejected = 0;
+    // the nonce one window later is not in the window yet
+    try { p.putInWindow(w, 3 + 256, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW, 232); rejected += 1; }
+    // once 0..3 complete, nonce 3's never-removed entry is stale and is reclaimed
+    w.completeRange(0, 3);
+    p.putInWindow(w, 3 + 256, 2, a);
+    val (now, _, _) = p.get(3 + 256);
+    val (old, _, _) = p.get(3);
+    assert(now && !old) throw 233;
+    try { p.putInWindow(w, 2, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 234); rejected += 1; }
+    // a holder that is not below the head is never displaced
+    p.put(5 + 512, 1, a);
+    try { p.putInWindow(w, 5, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_SLOT_OCCUPIED, 235); rejected += 1; }
+    assert(rejected == 3) throw 236;
+    val (empty, _) = pendingSlotsNew().occupant(9);
+    assert(!empty) throw 237;
+    return 15;
+}
+
+@method_id(116)
+fun test_fixed_slots_bound_to_window(): int {
+    var w = nonceWindowNew(0);
+    var p = fixedSlotsNew();
+    val a = beginCell().storeUint(1, 8).endCell();
+    p.putInWindow(w, 3, 1, a);
+    val (held, holder) = p.occupant(3 + 256);
+    assert(held && holder == 3) throw 241;
+    var rejected = 0;
+    try { p.putInWindow(w, 3 + 256, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW, 242); rejected += 1; }
+    w.completeRange(0, 3);
+    p.putInWindow(w, 3 + 256, 2, a);
+    val (now, _, _) = p.get(3 + 256);
+    val (old, _, _) = p.get(3);
+    assert(now && !old) throw 243;
+    try { p.putInWindow(w, 2, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 244); rejected += 1; }
+    p.put(5 + 512, 1, a);
+    try { p.putInWindow(w, 5, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_SLOT_OCCUPIED, 245); rejected += 1; }
+    assert(rejected == 3) throw 246;
+    val (empty, _) = fixedSlotsNew().occupant(0);
+    assert(!empty) throw 247;
+    return 16;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -285,4 +377,8 @@ fun test_fixed_slots_layout_matches_func(): int {
 @testcase | 111 | | 11
 @testcase | 108 | | 108172638824023323656301294226925930422985867943527330981503674913960755835622
 @testcase | 112 | | 67470058507674813740225093116304431827422772986530920139661665217563619817841
+@testcase | 113 | | 13
+@testcase | 114 | | 14
+@testcase | 115 | | 15
+@testcase | 116 | | 16
  */

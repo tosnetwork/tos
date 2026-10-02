@@ -274,6 +274,100 @@ int test_fixed_slots_layout_matches_tol() method_id(112) {
   return p.cell_hash();
 }
 
+int test_full_window_folds_completely() method_id(113) {
+  ;; Every nonce above the head completes first, so completing the head must fold all 256
+  ;; at once: the bitmap is all ones at that moment.
+  var w = nonce_window::new(0);
+  int n = 1;
+  while (n < 256) {
+    w~nonce_window::complete(n);
+    n += 1;
+  }
+  [_, int before] = w;
+  throw_unless(211, before == ordered_delivery::full_mask - 1);
+  w~nonce_window::complete(0);
+  [int next_pending, int completed] = w;
+  throw_unless(212, next_pending == 256);
+  throw_unless(213, completed == 0);
+  w~nonce_window::complete(256 + 255);
+  return 13;
+}
+
+int test_complete_range() method_id(114) {
+  var w = nonce_window::new(10);
+  w~nonce_window::complete_range(12, 14);
+  [int head, _] = w;
+  throw_unless(221, (head == 10) & nonce_window::completed?(w, 13) & (~ nonce_window::completed?(w, 11)));
+  w~nonce_window::complete_range(10, 11);
+  [head, int completed] = w;
+  throw_unless(222, (head == 15) & (completed == 0));
+  w~nonce_window::complete(17);
+  int rejected = 0;
+  try { w~nonce_window::complete_range(20, 19); } catch (_, code) { expect_throw(code, ordered_delivery::error::invalid_nonce, 223); rejected += 1; }
+  try { w~nonce_window::complete_range(14, 16); } catch (_, code) { expect_throw(code, ordered_delivery::error::already_completed, 224); rejected += 1; }
+  try { w~nonce_window::complete_range(16, 15 + 256); } catch (_, code) { expect_throw(code, ordered_delivery::error::outside_window, 225); rejected += 1; }
+  ;; overlapping an already completed nonce changes nothing
+  try { w~nonce_window::complete_range(16, 18); } catch (_, code) { expect_throw(code, ordered_delivery::error::already_completed, 226); rejected += 1; }
+  throw_unless(227, rejected == 4);
+  [head, _] = w;
+  throw_unless(228, (head == 15) & (~ nonce_window::completed?(w, 16)));
+  ;; the whole window at once
+  var full = nonce_window::new(0);
+  full~nonce_window::complete_range(0, 255);
+  [int full_head, int full_bits] = full;
+  throw_unless(229, (full_head == 256) & (full_bits == 0));
+  return 14;
+}
+
+int test_pending_slots_bound_to_window() method_id(115) {
+  var w = nonce_window::new(0);
+  cell p = new_dict();
+  cell a = begin_cell().store_uint(1, 8).end_cell();
+  p~pending_slots::put_in_window(w, 3, 1, a);
+  (int held, int holder) = pending_slots::occupant(p, 3 + 256);
+  throw_unless(231, held & (holder == 3));
+  int rejected = 0;
+  ;; the nonce one window later is not in the window yet
+  try { p~pending_slots::put_in_window(w, 3 + 256, 1, a); } catch (_, code) { expect_throw(code, ordered_delivery::error::outside_window, 232); rejected += 1; }
+  ;; once 0..3 complete, nonce 3's never-removed entry is stale and is reclaimed
+  w~nonce_window::complete_range(0, 3);
+  p~pending_slots::put_in_window(w, 3 + 256, 2, a);
+  (int now, _, _) = pending_slots::get(p, 3 + 256);
+  (int old, _, _) = pending_slots::get(p, 3);
+  throw_unless(233, now & (~ old));
+  try { p~pending_slots::put_in_window(w, 2, 1, a); } catch (_, code) { expect_throw(code, ordered_delivery::error::already_completed, 234); rejected += 1; }
+  ;; a holder that is not below the head is never displaced
+  p~pending_slots::put(5 + 512, 1, a);
+  try { p~pending_slots::put_in_window(w, 5, 1, a); } catch (_, code) { expect_throw(code, ordered_delivery::error::slot_occupied, 235); rejected += 1; }
+  throw_unless(236, rejected == 3);
+  (int empty, _) = pending_slots::occupant(new_dict(), 9);
+  throw_if(237, empty);
+  return 15;
+}
+
+int test_fixed_slots_bound_to_window() method_id(116) {
+  var w = nonce_window::new(0);
+  cell p = fixed_slots::new();
+  cell a = begin_cell().store_uint(1, 8).end_cell();
+  p~fixed_slots::put_in_window(w, 3, 1, a);
+  (int held, int holder) = fixed_slots::occupant(p, 3 + 256);
+  throw_unless(241, held & (holder == 3));
+  int rejected = 0;
+  try { p~fixed_slots::put_in_window(w, 3 + 256, 1, a); } catch (_, code) { expect_throw(code, ordered_delivery::error::outside_window, 242); rejected += 1; }
+  w~nonce_window::complete_range(0, 3);
+  p~fixed_slots::put_in_window(w, 3 + 256, 2, a);
+  (int now, _, _) = fixed_slots::get(p, 3 + 256);
+  (int old, _, _) = fixed_slots::get(p, 3);
+  throw_unless(243, now & (~ old));
+  try { p~fixed_slots::put_in_window(w, 2, 1, a); } catch (_, code) { expect_throw(code, ordered_delivery::error::already_completed, 244); rejected += 1; }
+  p~fixed_slots::put(5 + 512, 1, a);
+  try { p~fixed_slots::put_in_window(w, 5, 1, a); } catch (_, code) { expect_throw(code, ordered_delivery::error::slot_occupied, 245); rejected += 1; }
+  throw_unless(246, rejected == 3);
+  (int empty, _) = fixed_slots::occupant(fixed_slots::new(), 0);
+  throw_if(247, empty);
+  return 16;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -287,4 +381,8 @@ TESTCASE | 110 | | 10
 TESTCASE | 111 | | 11
 TESTCASE | 108 | | 108172638824023323656301294226925930422985867943527330981503674913960755835622
 TESTCASE | 112 | | 67470058507674813740225093116304431827422772986530920139661665217563619817841
+TESTCASE | 113 | | 13
+TESTCASE | 114 | | 14
+TESTCASE | 115 | | 15
+TESTCASE | 116 | | 16
 -}

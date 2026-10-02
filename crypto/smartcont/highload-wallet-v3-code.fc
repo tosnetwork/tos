@@ -13,11 +13,21 @@
 ;; 10-bit bit index stored back to back), so existing signing tools apply unchanged.
 ;;
 ;; Everything that can reject a request runs before accept_message(): the signature, the
-;; subwallet, the timeout, freshness and the replay bitmap. After acceptance the new state
-;; is committed first, so a request that fails afterwards (a malformed outbound message,
-;; or an action-phase failure) has still consumed its query id and cannot be replayed to
-;; drain gas. The outbound message is checked once state is committed and sent with
-;; IGNORE_ERRORS for the same reason.
+;; subwallet, the timeout, freshness and the replay lookups. These are reads only
+;; (replay_guard's check half), so they fit the external gas credit at any dictionary size;
+;; writing the query id (the record half) happens after acceptance. The new state is then
+;; committed, so a request that fails in the compute phase afterwards has still consumed
+;; its query id and cannot be replayed to drain gas.
+;;
+;; The outbound message is sent with IGNORE_ERRORS, so an undeliverable one (addr_none
+;; destination, malformed extra currencies, too little balance) is skipped by the action
+;; phase rather than failing it, and the committed query id stands.
+;; highload-wallet-action-phase-fixture.cpp checks this on the node's executor.
+;;
+;; Deployment: timeout must be positive (a zero timeout rejects every request and locks the
+;; funds) and should be between one hour and one day, since the replay dictionary holds up
+;; to two timeouts of ids. A request is bound to subwallet_id and timeout but not to the
+;; network, so use a distinct subwallet_id per key on every network the key is used on.
 ;;
 ;; Batches: a request may send an internal message to this wallet itself with op
 ;; internal_transfer and an action list in its single reference; the wallet installs that
@@ -106,9 +116,10 @@ cell my_code() asm "MYCODE";
   throw_unless(error::invalid_subwallet_id, request_subwallet_id == subwallet_id);
   [_, _, _, int timeout] = guard;
   throw_unless(error::invalid_timeout, request_timeout == timeout);
-  guard~replay_guard::accept(query_id, created_at);
+  guard~replay_guard::check(query_id, created_at);
 
   accept_message();
+  guard~replay_guard::record(query_id);
   save_data(public_key, subwallet_id, guard);
   commit();
 
@@ -155,8 +166,12 @@ int get_timeout() method_id {
 }
 
 ;; Whether `query_id` was accepted and is still remembered; with `need_clean`, as it will
-;; look after the rotation the next request performs.
+;; look after the rotation the next request performs. An id that can never be used (bit
+;; index 1023, negative, or beyond 23 bits) was never processed.
 int processed?(int query_id, int need_clean) method_id {
+  if ((query_id < 0) | (query_id >= (1 << QUERY_ID_BITS)) | ((query_id & 1023) == 1023)) {
+    return false;
+  }
   (_, _, [cell, cell, int, int] guard) = load_data();
   if (need_clean) {
     guard~replay_guard::rotate();

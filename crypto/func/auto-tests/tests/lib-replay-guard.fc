@@ -186,6 +186,27 @@ int test_layout_matches_tol() method_id(109) {
   return replay_guard::pack(g).cell_hash();
 }
 
+int test_check_reads_and_record_writes() method_id(110) {
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1000);
+  g~replay_guard::check(7, 1000);
+  ;; check never writes: nothing recorded, storage unchanged
+  throw_if(181, replay_guard::processed?(g, 7));
+  [cell old_queries, cell queries, _, _] = g;
+  throw_unless(182, cell_null?(queries) & cell_null?(old_queries));
+  g~replay_guard::record(7);
+  throw_unless(183, replay_guard::processed?(g, 7));
+  int rejected = 0;
+  try { set_now(1000); g~replay_guard::check(7, 1000); } catch (_, code) { expect_throw(code, replay_guard::error::already_processed, 184); rejected += 1; }
+  try { g~replay_guard::record(7); } catch (_, code) { expect_throw(code, replay_guard::error::already_processed, 185); rejected += 1; }
+  ;; check rejects ids still remembered in the old generation too
+  set_now(1101);
+  try { g~replay_guard::check(7, 1100); } catch (_, code) { expect_throw(code, replay_guard::error::already_processed, 186); rejected += 1; }
+  throw_unless(187, rejected == 3);
+  return 10;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -196,4 +217,5 @@ TESTCASE | 106 | | 6
 TESTCASE | 107 | | 7
 TESTCASE | 108 | | 8
 TESTCASE | 109 | | 49751840920418588745216052838403757172391007160505045324086559891392396194906
+TESTCASE | 110 | | 10
 -}

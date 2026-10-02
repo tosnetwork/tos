@@ -9,11 +9,18 @@
 // Dropping is safe only together with the freshness rule
 // `now - timeout < createdAt <= now`: by the time a generation is
 // discarded, every request it recorded has been stale for at least `timeout`
-// seconds and is rejected on its timestamp instead. Use [ReplayGuard.accept],
-// which applies rotation, freshness and the bitmap in that order; calling the
-// pieces separately in another order reopens the replay window. The current
-// time is always read from the block (`blockchain.now()`), never taken from
-// the caller, so a request cannot choose the clock it is judged by.
+// seconds and is rejected on its timestamp instead. The current time is
+// always read from the block (`blockchain.now()`), never taken from the
+// caller, so a request cannot choose the clock it is judged by.
+//
+// Acceptance comes in two halves so that an external-message contract can
+// stay inside the gas credit it has before accept_message():
+//   [ReplayGuard.check]  rotate, require freshness, require the id unused —
+//                        lookups only, cheap at any dictionary size;
+//   [ReplayGuard.record] build the row and write it — the expensive part,
+//                        paid after acceptance.
+// [ReplayGuard.accept] runs both, for internal-message contracts. Calling the
+// pieces in another order, or skipping check, reopens the replay window.
 tol 1.3
 
 import "@stdlib/tvm-dicts"
@@ -137,11 +144,26 @@ fun ReplayGuard.markProcessed(mutate self, queryId: int): void {
     self.queries.uDictSetRef(REPLAY_GUARD_SHIFT_BITS, shift, next.endCell());
 }
 
-/// The complete acceptance check: rotate, require freshness, then record.
-/// A `mutate self` is written back only on normal return, so a rejected
-/// request leaves the caller's guard untouched, rotation included.
-fun ReplayGuard.accept(mutate self, queryId: int, createdAt: int): void {
+/// Pre-acceptance half: rotates, rejects a stale or future request, and
+/// rejects an id already used in either generation. Reads only.
+fun ReplayGuard.check(mutate self, queryId: int, createdAt: int): void {
     self.rotate();
     self.requireFresh(createdAt);
+    if (self.isProcessed(queryId)) {
+        throw REPLAY_GUARD_THROW_ALREADY_PROCESSED;
+    }
+}
+
+/// Post-acceptance half: records the id. Call it after [ReplayGuard.check]
+/// on the same guard; it still refuses an id already present.
+fun ReplayGuard.record(mutate self, queryId: int): void {
     self.markProcessed(queryId);
+}
+
+/// Both halves at once. A `mutate self` is written back only on normal
+/// return, so a rejected request leaves the caller's guard untouched,
+/// rotation included.
+fun ReplayGuard.accept(mutate self, queryId: int, createdAt: int): void {
+    self.check(queryId, createdAt);
+    self.record(queryId);
 }

@@ -10,10 +10,17 @@
 ;; Dropping is safe only together with the freshness rule
 ;; `now - timeout < created_at <= now`: by the time a generation is discarded, every
 ;; request it recorded has been stale for at least `timeout` seconds and is rejected on its
-;; timestamp instead. Use [~replay_guard::accept], which applies rotation, freshness and the
-;; bitmap in that order; calling the pieces separately in another order reopens the replay
-;; window. The current time is always read from the block (`now()`), never taken from the
-;; caller, so a request cannot choose the clock it is judged by.
+;; timestamp instead. The current time is always read from the block (`now()`), never taken
+;; from the caller, so a request cannot choose the clock it is judged by.
+;;
+;; Acceptance comes in two halves so that an external-message contract stays inside the gas
+;; credit it has before accept_message():
+;;   [~replay_guard::check]  rotate, require freshness, require the id unused: lookups only,
+;;                           cheap at any dictionary size;
+;;   [~replay_guard::record] build the row and write it: the expensive part, paid after
+;;                           acceptance.
+;; [~replay_guard::accept] runs both, for internal-message contracts. Calling the pieces in
+;; another order, or skipping check, reopens the replay window.
 ;;
 ;; FunC counterpart of the Tol `@stdlib/replay-guard`: same rules, same throw codes, and
 ;; [replay_guard::pack] produces the same cell as the Tol `ReplayGuard.toCell()`.
@@ -123,13 +130,27 @@ int replay_guard::processed?([cell, cell, int, int] guard, int query_id) impure 
   return ([old_queries, queries, last_clean_time, timeout], ());
 }
 
-;; The complete acceptance check: rotate, require freshness, then record. A rejected
-;; request throws before the caller can store the updated guard, so it leaves the stored
-;; guard untouched, rotation included.
-([cell, cell, int, int], ()) ~replay_guard::accept([cell, cell, int, int] guard, int query_id, int created_at) impure inline {
+;; Pre-acceptance half: rotates, rejects a stale or future request, and rejects an id already
+;; used in either generation. Reads only.
+([cell, cell, int, int], ()) ~replay_guard::check([cell, cell, int, int] guard, int query_id, int created_at) impure inline {
   guard~replay_guard::rotate();
   replay_guard::require_fresh(guard, created_at);
+  throw_if(replay_guard::error::already_processed, replay_guard::processed?(guard, query_id));
+  return (guard, ());
+}
+
+;; Post-acceptance half: records the id. Call it after [~replay_guard::check] on the same
+;; guard; it still refuses an id already present.
+([cell, cell, int, int], ()) ~replay_guard::record([cell, cell, int, int] guard, int query_id) impure inline {
   guard~replay_guard::mark_processed(query_id);
+  return (guard, ());
+}
+
+;; Both halves at once. A rejected request throws before the caller can store the updated
+;; guard, so it leaves the stored guard untouched, rotation included.
+([cell, cell, int, int], ()) ~replay_guard::accept([cell, cell, int, int] guard, int query_id, int created_at) impure inline {
+  guard~replay_guard::check(query_id, created_at);
+  guard~replay_guard::record(query_id);
   return (guard, ());
 }
 

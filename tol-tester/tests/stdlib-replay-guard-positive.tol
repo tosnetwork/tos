@@ -189,6 +189,27 @@ fun test_layout_matches_func(): int {
     return g.toCell().hash();
 }
 
+@method_id(110)
+fun test_check_reads_and_record_writes(): int {
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1000);
+    g.check(7, 1000);
+    // check never writes: nothing recorded, storage unchanged
+    assert(!g.isProcessed(7)) throw 181;
+    assert(g.queries == null && g.oldQueries == null) throw 182;
+    g.record(7);
+    assert(g.isProcessed(7)) throw 183;
+    var rejected = 0;
+    try { setNow(1000); g.check(7, 1000); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_ALREADY_PROCESSED, 184); rejected += 1; }
+    try { g.record(7); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_ALREADY_PROCESSED, 185); rejected += 1; }
+    // check rejects ids still remembered in the old generation too
+    setNow(1101);
+    try { g.check(7, 1100); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_ALREADY_PROCESSED, 186); rejected += 1; }
+    assert(rejected == 3) throw 187;
+    return 10;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -199,4 +220,5 @@ fun test_layout_matches_func(): int {
 @testcase | 107 | | 7
 @testcase | 108 | | 8
 @testcase | 109 | | 49751840920418588745216052838403757172391007160505045324086559891392396194906
+@testcase | 110 | | 10
  */
