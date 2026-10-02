@@ -349,7 +349,9 @@ fn only_the_configured_validator_can_order_a_stake() {
     pooled
         .chain
         .send_message(
-            MessageBuilder::internal(stranger.address(), &pooled.pool, 20 * TOS).body(order).build(),
+            MessageBuilder::internal(stranger.address(), &pooled.pool, 20 * TOS)
+                .body(order)
+                .build(),
         )
         .expect("delivered")
         .expect_exit_code(ERROR_NOT_THE_VALIDATOR);
@@ -411,7 +413,15 @@ fn a_bounced_relay_lets_the_pool_try_again() {
     let result = pooled.order(1, 1_000 * TOS, election);
     assert_eq!(pooled.state().0, 1, "the stake was not recorded as out");
     let mut prefix = None;
-    result.transactions[0].1.iterate_out_msgs(|message| { prefix = Some(message.body().expect("body").clone().get_next_bits(256).expect("committed prefix")); Ok(true) }).expect("outgoing");
+    result.transactions[0]
+        .1
+        .iterate_out_msgs(|message| {
+            prefix = Some(
+                message.body().expect("body").clone().get_next_bits(256).expect("committed prefix"),
+            );
+            Ok(true)
+        })
+        .expect("outgoing");
 
     // The relay, bounced by the controller.
     let mut body = BuilderData::new();

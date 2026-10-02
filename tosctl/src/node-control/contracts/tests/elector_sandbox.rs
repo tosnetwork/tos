@@ -2671,11 +2671,16 @@ fn a_retired_profile_cannot_make_an_election_look_ready() {
 
     // No selection should run on inadmissible stake. Input-aware failed retry can
     // also recover later, so eventual installation alone cannot detect this guard.
-    let summary = chain.blockchain.run_get_method(&chain.elector, "participant_list_extended", vec![])
+    let summary = chain
+        .blockchain
+        .run_get_method(&chain.elector, "participant_list_extended", vec![])
         .expect("actual readiness state");
     assert_eq!(summary.exit_code, 0);
-    assert_eq!(summary.stack[5].as_integer().expect("failed flag").to_string(), "0",
-        "retired-only stake must postpone selection without marking it failed");
+    assert_eq!(
+        summary.stack[5].as_integer().expect("failed flag").to_string(),
+        "0",
+        "retired-only stake must postpone selection without marking it failed"
+    );
     admit_sender_code(&mut chain, &accounts[0]);
     chain
         .blockchain
@@ -3712,7 +3717,11 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
             transaction
                 .iterate_out_msgs(|message| {
                     if message.dst() == Some(to.clone()) {
-                        if message.body().is_some_and(|body| body.clone().get_next_u32().ok() == Some(0x50516132)) { return Ok(true); }
+                        if message.body().is_some_and(|body| {
+                            body.clone().get_next_u32().ok() == Some(0x50516132)
+                        }) {
+                            return Ok(true);
+                        }
                         values.push(
                             message.get_value().expect("internal transfer value").coins.as_u128(),
                         );
@@ -6681,14 +6690,19 @@ fn an_election_missing_its_books_is_refused_without_losing_its_declared_principa
     rewrite_election_with_book_fields(&mut chain, 0);
 
     let before = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
-    let decoded = chain.blockchain.run_get_method(&chain.elector, "participant_list_extended", vec![])
+    let decoded = chain
+        .blockchain
+        .run_get_method(&chain.elector, "participant_list_extended", vec![])
         .expect("getter");
     assert_eq!(decoded.exit_code, 65, "absent books need explicit migration");
     let validator = PqValidator::new(9);
     let result = pq_stake(&mut chain, &treasury, &validator, election, 2, 12_000 * TOS);
     result.expect_aborted().expect_exit_code(65);
-    assert_eq!(chain.blockchain.get_account(&chain.elector).expect("elector").get_data(), before,
-        "refusal must not rewrite the original principal total or creditor state");
+    assert_eq!(
+        chain.blockchain.get_account(&chain.elector).expect("elector").get_data(),
+        before,
+        "refusal must not rewrite the original principal total or creditor state"
+    );
 }
 
 /// A stake for an election that is not the open one, refused for a reason that is

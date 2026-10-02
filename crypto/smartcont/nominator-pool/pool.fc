@@ -208,8 +208,15 @@ cell pool::request(int kind, int query, int elector, int hash, int forwarded, in
     var (forwarded, prefix) = (amounts~load_coins(), amounts~load_uint(256)); amounts.end_parse();
     return (kind, query, elector, hash, forwarded, prefix);
 }
-cell pool::completed(int query, int hash, int elector) inline {
-    return begin_cell().store_uint(query, 64).store_uint(hash, 256).store_uint(elector, 256).end_cell();
+cell pool::completed(cell previous, int query, int hash, int elector) inline {
+    cell paid = null();
+    ifnot (previous.null?()) {
+        slice old = previous.begin_parse();
+        if (old.slice_refs()) { paid = old~load_ref(); }
+    }
+    builder result = begin_cell().store_uint(query, 64).store_uint(hash, 256).store_uint(elector, 256);
+    ifnot (paid.null?()) { result = result.store_ref(paid); }
+    return result.end_cell();
 }
 cell pool::recovered(cell last, int elector, int amount) inline_ref {
     slice cs = last.begin_parse();
@@ -217,7 +224,7 @@ cell pool::recovered(cell last, int elector, int amount) inline_ref {
     int hash = cs~load_uint(256);
     int stake_elector = cs~load_uint(256);
     return begin_cell().store_uint(query, 64).store_uint(hash, 256).store_uint(stake_elector, 256)
-      .store_ref(begin_cell().store_uint(elector, 256).store_coins(amount).end_cell()).end_cell();
+      .store_ref(begin_cell().store_uint(query, 64).store_uint(elector, 256).store_coins(amount).end_cell()).end_cell();
 }
 () pool::recovery_ack(slice elector, int query) impure inline_ref {
     send_raw_message(sr::message(elector, sr::control_value(),
@@ -520,9 +527,10 @@ cell distribute_share(int reward, cell nominators) inline_ref {
         int recovery_duplicate = false;
         ifnot (last.null?()) {
             slice ls = last.begin_parse();
-            int last_query = ls~load_uint(64); ls~load_uint(256);
+            ls~load_uint(64); ls~load_uint(256);
             if (ls.slice_refs()) {
                 slice paid = ls~load_ref().begin_parse();
+                int last_query = paid~load_uint(64);
                 int pinned_elector = paid~load_uint(256);
                 recovery_duplicate = (sender_wc == -1) & (sender_addr == pinned_elector) & (query_id == last_query);
                 recovery_source |= recovery_duplicate;
@@ -543,7 +551,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                 var (kind, expected_query, expected_elector, expected_hash, expected_forwarded, _) = pool::unpack_request(pending);
                 matched = (state == 1) & (kind == 0) & (query_id == expected_query)
                   & (hash == expected_hash) & (forwarded == expected_forwarded);
-                if (matched) { last = pool::completed(query_id, hash, expected_elector); }
+                if (matched) { last = pool::completed(last, query_id, hash, expected_elector); }
             }
             if (matched) {
                 throw_unless(sr::error, accepted == (success ? sr::sub(forwarded, sr::confirmation) : 0));
@@ -559,6 +567,13 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                     }
                 }
             }
+        } elseif ((op == 0x47656133) & recovery_duplicate) {
+            ;; Only the pinned elector can confirm its durable receipt was cleared.
+            in_msg_body.end_parse();
+            slice fields = last.begin_parse();
+            builder cleared = begin_cell().store_slice(fields~load_bits(576));
+            last = cleared.end_cell();
+            pool::save_protocol(last, pending);
         } elseif (recovery_source) {
 
             if ((op == 0xf96f7332) & recovery_duplicate) {
@@ -609,7 +624,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
         } else {
 
             ;; throw on any unexpected request so that the coins is bounced back to the sender in case of a typo
-            throw_unless(70, ((op >= 1) & (op <= 7)) | (op == op::recover_stake()) | (op == op::new_stake()));
+            throw_unless(70, ((op >= 1) & (op <= 8)) | (op == op::recover_stake()) | (op == op::new_stake()));
 
             if (op == 1) {
                 ;; just accept coins
@@ -662,6 +677,16 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                 send_excesses(sender_address);
             }
 
+            if (op == 8) { ;; Caller-funded repair, independent of the latest staking round.
+                throw_unless(sr::error, msg_value >= sr::add(sr::control_value(), sr::gas_fee(-1, sr::control_gas)));
+                throw_unless(sr::error, ~ last.null?());
+                slice saved = last.begin_parse();
+                throw_unless(sr::error, saved.slice_refs());
+                slice paid = saved~load_ref().begin_parse();
+                int paid_query = paid~load_uint(64);
+                pool::recovery_ack(sr::address(paid~load_uint(256)), paid_query);
+            }
+
             if (op == op::recover_stake()) { ;; send recover_stake to elector (anyone can send)
 
                 ;; We need to take all credits from the elector at once,
@@ -678,6 +703,16 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                 ;; and the elector will start a new election (see elector-code.fc)
                 ;; in this case, our pool will have to skip the round, but it will be able to recover stake later
 
+                ifnot (last.null?()) {
+                    slice saved = last.begin_parse();
+                    if (saved.slice_refs()) {
+                        slice paid = saved~load_ref().begin_parse();
+                        int paid_query = paid~load_uint(64);
+                        throw_unless(sr::error, msg_value >= sr::add(sr::control_value(), sr::gas_fee(-1, sr::control_gas)));
+                        pool::recovery_ack(sr::address(paid~load_uint(256)), paid_query);
+                        return (); ;; Retry recovery after the authoritative cleanup reply.
+                    }
+                }
                 throw_unless(111, validator_set_changes_count >= 2);
                 throw_unless(112, (validator_set_changes_count > 2) | (now() - validator_set_change_time > stake_held_for + 60));
                 ;; see elector-code.fc
@@ -691,9 +726,6 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                     var (kind, saved_query, saved_elector, _, _, _) = pool::unpack_request(pending);
                     throw_unless(sr::error, (kind == 1) & (state == 2));
                     query_id = saved_query; pinned_elector = saved_elector;
-                } elseif (state == 0) {
-                    throw_unless(sr::error, ls.slice_refs());
-                    pinned_elector = ls~load_ref().begin_parse().preload_uint(256);
                 } else {
                     throw_unless(sr::error, state == 2);
                     pool::save_protocol(last, pool::request(1, query_id, pinned_elector, 0, stake_amount_sent, 0));

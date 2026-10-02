@@ -67,7 +67,7 @@ std::string detect_wallet_type(const vm::CellHash& code_hash) {
         // repository, so this entry has to stay reproducible from
         // crypto/smartcont/nominator-pool.
         // scripts/check-nominator-pool-code-lock.sh enforces that.
-        {"BEB3408BA3E849A81173C54D2F2D53B4C9CCB6B67D112BD293E038F2CD126D58", "nominator pool v1"},
+        {"9CCE536F3D093FE56681AB37017BF094368DCC507B965141F6A78598DFDE5DC3", "nominator pool v1"},
         {"BCD75D29A1D932013CF31300C5D924A5F02EAA92CD830EC0330104FFBAD07928", "wallet v1 r1"},
         {"9CEC5155DCB2B37716C032C5EF85947C01E32C4405A2611EE8D1122AFFF0E0C1", "highload v1"},
         {"DE7D8832DDC838811F940EF0CECBBC95C6CD2CEF83E9D22ABCE5E1A1DBA5638A", "highload v2"},

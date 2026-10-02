@@ -53,6 +53,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # Native upgrade/rollback tests compile the pinned classic elector.
 
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh

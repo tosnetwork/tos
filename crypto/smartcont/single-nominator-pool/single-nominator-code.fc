@@ -73,12 +73,18 @@ const ERROR::INSUFFICIENT_ELECTOR_FEE = 0x2005;
     if (single_protocol.null?()) { return (0, 0, 0, 0, 0); }
     slice cs = single_protocol.begin_parse();
     var result = (cs~load_uint(64), cs~load_uint(256), cs~load_coins(), cs~load_uint(256), cs~load_uint(1));
-    cs.end_parse(); return result;
+    cs~load_maybe_ref(); cs.end_parse(); return result;
+}
+cell single::previous() inline_ref {
+    slice cs = single_protocol.begin_parse();
+    cs~load_uint(64); cs~load_uint(256); cs~load_coins(); cs~load_uint(256); cs~load_uint(1);
+    cell previous = cs~load_maybe_ref(); cs.end_parse(); return previous;
 }
 () single::remember(int query, int hash, int amount, int prefix, int pending,
                     slice owner, slice validator, slice controller) impure inline_ref {
     single_protocol = begin_cell().store_uint(query, 64).store_uint(hash, 256)
-      .store_coins(amount).store_uint(prefix, 256).store_uint(pending, 1).end_cell();
+      .store_coins(amount).store_uint(prefix, 256).store_uint(pending, 1)
+      .store_maybe_ref(pending ? single_protocol : null()).end_cell();
     save_data(owner, validator, controller);
 }
 
@@ -105,7 +111,10 @@ int check_new_stake_msg(slice cs) impure inline_ref;
         slice bs = in_msg_full.begin_parse(); bs~load_uint(4); slice source = bs~load_msg_addr();
         var (query, hash, amount, prefix, pending) = single::pending();
         if (pending & equal_slice_bits(source, controller_address) & sr::bounce_matches(in_msg_body, prefix)) {
-            single::remember(query, hash, amount, prefix, 0, owner_address, validator_address, controller_address);
+            ;; No allocation occurred. Restore the previous result as well as its query,
+            ;; so a lost ACK from that result remains repairable.
+            single_protocol = single::previous();
+            save_data(owner_address, validator_address, controller_address);
         }
         return ();
 	}

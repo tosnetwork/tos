@@ -1,7 +1,7 @@
 //! Asynchronous receipts and funds, using one native transaction at a time.
 use super::*;
 use chain_block::{Coins, Message, TrComputePhase, Transaction, TransactionDescr};
-use contracts::nominator::{new_stake_with_witness, NewStakeParams};
+use contracts::nominator::{NewStakeParams, new_stake_with_witness};
 use tos_sandbox::{MessageBuilder, Treasury};
 
 const RELAY: u32 = 0x50517232;
@@ -746,13 +746,6 @@ fn a_served_pool_recovers_its_real_credit_and_lost_ack_never_reallocates_rewards
     assert!(balance_of(&fixture.chain, &fixture.pool) > before + credit);
     let lost_ack = only_to(out, &fixture.chain.elector);
     assert_eq!(op(&lost_ack), 0x47656132);
-    let settled = fixture
-        .chain
-        .blockchain
-        .get_account(&fixture.pool)
-        .expect("pool")
-        .get_data()
-        .expect("data");
     // A retry asks for the paid receipt, not for a second principal payment.
     let command = pool_command(&fixture, 0x47657424);
     let (tx, out) = step(&mut fixture.chain, command);
@@ -767,24 +760,14 @@ fn a_served_pool_recovers_its_real_credit_and_lost_ack_never_reallocates_rewards
     );
     let (tx, out) = step(&mut fixture.chain, repeat);
     successful(&tx, "pool deduplicates recovery");
-    assert_eq!(
-        fixture
-            .chain
-            .blockchain
-            .get_account(&fixture.pool)
-            .expect("pool")
-            .get_data()
-            .expect("data"),
-        settled,
-        "receipt retry must not reallocate principal or rewards"
-    );
-    assert!(
-        out.iter().any(|m| m.dst().as_ref() == Some(&fixture.chain.elector)),
-        "duplicate recovery must re-acknowledge the paid receipt"
-    );
-    let ack = only_to(out, &fixture.chain.elector);
-    let (tx, _) = step(&mut fixture.chain, ack);
-    successful(&tx, "repaired recovery acknowledgment");
+    assert!(out.is_empty(), "confirmed cleanup must not loop acknowledgments");
+    let after_cleanup = fixture
+        .chain
+        .blockchain
+        .get_account(&fixture.pool)
+        .expect("pool")
+        .get_data()
+        .expect("data");
     let (tx, _) = step(&mut fixture.chain, lost_ack);
     successful(&tx, "late duplicate recovery acknowledgment");
     // A copied old payload with a small new value must not run accounting again.
@@ -793,7 +776,10 @@ fn a_served_pool_recovers_its_real_credit_and_lost_ack_never_reallocates_rewards
         .body(duplicate.body().expect("body").clone().into_cell().expect("body cell"))
         .build();
     let (tx, _) = step(&mut fixture.chain, replay);
-    successful(&tx, "late recovery result");
+    assert!(
+        tx.read_description().expect("description").is_aborted(),
+        "forgotten old-elector callback must not regain authority after cleanup"
+    );
     assert_eq!(
         fixture
             .chain
@@ -802,7 +788,7 @@ fn a_served_pool_recovers_its_real_credit_and_lost_ack_never_reallocates_rewards
             .expect("pool")
             .get_data()
             .expect("data"),
-        settled
+        after_cleanup
     );
     assert_eq!(owed(&fixture.chain, &owner), 0);
 }
@@ -1829,4 +1815,379 @@ fn recovery_receipt_storage_is_one_tombstone_per_owner_and_repeated_rounds_do_no
     println!(
         "recovery book owners=256 cells={after_size} maximum payment gas={maximum_gas}; distinct-owner growth remains explicit"
     );
+}
+
+#[test]
+fn recovery_ack_survives_accepted_and_rejected_later_stakes() {
+    for reject in [false, true] {
+        let (mut fixture, _) = served_and_unfrozen_pool("cross-round-lost-recovery-ack");
+        let command = pool_command(&fixture, 0x47657424);
+        let (_, out) = step(&mut fixture.chain, command);
+        let request = only_to(out, &fixture.chain.elector);
+        let (_, out) = step(&mut fixture.chain, request);
+        let payment = only_to(out, &fixture.pool);
+        let duplicate = payment.clone();
+        let (tx, out) = step(&mut fixture.chain, payment);
+        successful(&tx, "first recovery settlement");
+        assert_eq!(fixture.pool_state(), 0);
+        assert_eq!(op(&only_to(out, &fixture.chain.elector)), 0x47656132);
+        // Deliberately omit delivery of the pool's ACK. Do not inject an owner message.
+        let until =
+            fixture.chain.blockchain.config_params().validator_set().expect("set").utime_until();
+        fixture.chain.blockchain.set_now(
+            (until - fixture.chain.elect_begin_before).max(fixture.chain.blockchain.now() + 1),
+        );
+        tick(&mut fixture.chain);
+        let next = active_election_id(&fixture.chain) as u32;
+        assert!(next > fixture.election);
+        let stake = begin(&mut fixture, 2, next + u32::from(reject));
+        let (tx, out) = step(&mut fixture.chain, stake);
+        successful(&tx, "later real elector result");
+        let reply = only_to(out, &fixture.validator.address);
+        finish_reply(&mut fixture, reply, if reject { 0 } else { 2 });
+        let saved = fixture
+            .chain
+            .blockchain
+            .get_account(&fixture.pool)
+            .expect("pool")
+            .get_data()
+            .expect("data");
+        for (source, query) in [
+            (fixture.operator.address().clone(), DOMAIN | 1),
+            (fixture.chain.elector.clone(), DOMAIN | 2),
+        ] {
+            let mut body = BuilderData::new();
+            body.append_u32(0x47656133).expect("op");
+            body.append_u64(query).expect("query");
+            let message = MessageBuilder::internal(&source, &fixture.pool, TOS)
+                .bounce(false)
+                .body(body.into_cell().expect("body"))
+                .build();
+            let _ = step(&mut fixture.chain, message);
+            assert_eq!(
+                fixture
+                    .chain
+                    .blockchain
+                    .get_account(&fixture.pool)
+                    .expect("pool")
+                    .get_data()
+                    .expect("data"),
+                saved,
+                "unbound recovery confirmation cannot erase repair metadata"
+            );
+        }
+        let command = pool_command(&fixture, 8);
+        let (tx, out) = step(&mut fixture.chain, command);
+        successful(&tx, "old recovery ACK remains repairable after later stake result");
+        let ack = only_to(out, &fixture.chain.elector);
+        let mut body = ack.body().expect("ack").clone();
+        assert_eq!(body.get_next_u32().expect("op"), 0x47656132);
+        assert_eq!(body.get_next_u64().expect("old query"), DOMAIN | 1);
+        let (tx, out) = step(&mut fixture.chain, ack.clone());
+        successful(&tx, "old receipt cleared by real owner ACK");
+        // Lose the first confirmation too; the repeated ACK must still get a reply.
+        assert_eq!(op(&only_to(out, &fixture.pool)), 0x47656133);
+        let (tx, out) = step(&mut fixture.chain, ack);
+        successful(&tx, "idempotent ACK confirmation");
+        let confirmation = only_to(out, &fixture.pool);
+        let (tx, _) = step(&mut fixture.chain, confirmation);
+        successful(&tx, "pool durably clears only confirmed repair metadata");
+        let before = fixture
+            .chain
+            .blockchain
+            .get_account(&fixture.pool)
+            .expect("pool")
+            .get_data()
+            .expect("data");
+        let (tx, _) = step(&mut fixture.chain, duplicate);
+        successful(&tx, "late old recovery cannot distribute twice");
+        assert_eq!(
+            fixture
+                .chain
+                .blockchain
+                .get_account(&fixture.pool)
+                .expect("pool")
+                .get_data()
+                .expect("data"),
+            before
+        );
+        if reject {
+            let stake = begin(&mut fixture, 3, next);
+            let (tx, out) = step(&mut fixture.chain, stake);
+            successful(&tx, "new stake after refused round");
+            let receipt = only_to(out, &fixture.validator.address);
+            finish_reply(&mut fixture, receipt, 2);
+        }
+        for i in 0..3 {
+            let mut validator = deploy_rooted_validator(&mut fixture.chain, 0x20 + i);
+            root_place(&mut fixture.chain, &mut validator, next, 1, 10_002 * TOS);
+        }
+        rotate_elected_round(&mut fixture.chain, next);
+        let command = pool_command(&fixture, 6);
+        fixture.chain.blockchain.send_message(command).expect("pool set update").expect_success();
+        let until =
+            fixture.chain.blockchain.config_params().validator_set().expect("set").utime_until();
+        fixture.chain.blockchain.set_now(
+            (until - fixture.chain.elect_begin_before).max(fixture.chain.blockchain.now() + 1),
+        );
+        tick(&mut fixture.chain);
+        let later = active_election_id(&fixture.chain) as u32;
+        for i in 0..4 {
+            let mut validator = deploy_rooted_validator(&mut fixture.chain, 0x24 + i);
+            root_place(&mut fixture.chain, &mut validator, later, 1, 10_002 * TOS);
+        }
+        rotate_elected_round(&mut fixture.chain, later);
+        let command = pool_command(&fixture, 6);
+        fixture
+            .chain
+            .blockchain
+            .send_message(command)
+            .expect("pool second update")
+            .expect_success();
+        let held = fixture
+            .chain
+            .blockchain
+            .config_params()
+            .elector_params()
+            .expect("params")
+            .stake_held_for;
+        fixture.chain.blockchain.set_now(fixture.chain.blockchain.now() + held + 61);
+        for _ in 0..8 {
+            if !has_past_election(&fixture.chain, next) {
+                break;
+            }
+            tick(&mut fixture.chain);
+        }
+        assert!(!has_past_election(&fixture.chain, next));
+        let owner: [u8; 32] = fixture.pool.address().get_bytestring(0).try_into().expect("owner");
+        assert!(owed(&fixture.chain, &owner) >= u128::from(10_001 * TOS));
+        let command = pool_command(&fixture, 0x47657424);
+        fixture
+            .chain
+            .blockchain
+            .send_message(command)
+            .expect("new principal recovery cascade")
+            .expect_success();
+        assert_eq!(fixture.pool_state(), 0);
+        assert_eq!(owed(&fixture.chain, &owner), 0);
+        let mut root = SliceData::load_cell(
+            fixture
+                .chain
+                .blockchain
+                .get_account(&fixture.chain.elector)
+                .expect("elector")
+                .get_data()
+                .expect("data"),
+        )
+        .expect("slice");
+        next_dictionary(&mut root, 32);
+        next_dictionary(&mut root, 256);
+        next_dictionary(&mut root, 32);
+        next_coins(&mut root);
+        root.get_next_u32().expect("active");
+        root.get_next_hash().expect("hash");
+        let book = root.checked_drain_reference().expect("receipt book");
+        let mut book = SliceData::load_cell(book).expect("book");
+        book.get_next_u32().expect("metadata tag");
+        assert_eq!(book.get_next_u32().expect("outstanding"), 0);
+    }
+}
+
+#[test]
+fn relay_query_allocation_refuses_large_jumps_without_burning_the_next_id() {
+    let mut fixture = Fixture::new("bounded-relay-query-allocation");
+    let order = fixture.order(1, fixture.election + 1, 10_002 * TOS);
+    let (tx, out) = step(&mut fixture.chain, order);
+    successful(&tx, "valid signed pool request");
+    let relay = only_to(out, &fixture.validator.address);
+    let original = fixture
+        .chain
+        .blockchain
+        .get_account(&fixture.validator.address)
+        .expect("controller")
+        .get_data()
+        .expect("data");
+    for query in [u64::MAX, u64::MAX - 1, DOMAIN | 1_000_000, DOMAIN | 2] {
+        let mut attempted = relay.clone();
+        let mut body = attempted.body().expect("body").clone();
+        let operation = body.get_next_u32().expect("op");
+        body.get_next_u64().expect("query");
+        let mut changed = BuilderData::new();
+        changed.append_u32(operation).expect("op");
+        changed.append_u64(query).expect("query");
+        changed
+            .checked_append_references_and_data(&body)
+            .expect("same valid signature and commitment");
+        attempted.set_body(SliceData::load_cell(changed.into_cell().expect("body")).expect("body"));
+        let (tx, _) = step(&mut fixture.chain, attempted);
+        assert!(
+            tx.read_description().expect("description").is_aborted(),
+            "nonconsecutive valid-signature query must be refused"
+        );
+        assert_eq!(
+            fixture
+                .chain
+                .blockchain
+                .get_account(&fixture.validator.address)
+                .expect("controller")
+                .get_data()
+                .expect("data"),
+            original
+        );
+    }
+    let (tx, out) = step(&mut fixture.chain, relay);
+    successful(&tx, "next allocated query still works");
+    let request = only_to(out, &fixture.chain.elector);
+    let (tx, out) = step(&mut fixture.chain, request);
+    successful(&tx, "business refusal");
+    let receipt = only_to(out, &fixture.validator.address);
+    finish_reply(&mut fixture, receipt, 0);
+    let next = fixture
+        .chain
+        .blockchain
+        .run_get_method(&fixture.validator.address, "next_relay_query", vec![])
+        .expect("next query");
+    assert_eq!(next.exit_code, 0);
+    assert_eq!(next.stack[0].as_integer().expect("query").to_string(), (DOMAIN | 2).to_string());
+    let next_root = PqValidator::new(0x74);
+    let mut payload = BuilderData::new();
+    payload.checked_append_reference(stored_bytes(&next_root.public_key)).expect("root");
+    let message = controller_authorization(
+        &fixture,
+        2,
+        payload.into_cell().expect("payload"),
+        Some(&next_root),
+    );
+    let (tx, _) = step(&mut fixture.chain, message);
+    successful(&tx, "root rotation after cleanup");
+    fixture.validator.root = next_root;
+    let next_key = PqValidator::new(0x75);
+    let mut payload = BuilderData::new();
+    payload.append_u16(1).expect("algorithm");
+    payload.checked_append_reference(stored_bytes(&next_key.public_key)).expect("consensus");
+    let message = controller_authorization(
+        &fixture,
+        3,
+        payload.into_cell().expect("payload"),
+        Some(&next_key),
+    );
+    let (tx, _) = step(&mut fixture.chain, message);
+    successful(&tx, "consensus rotation after cleanup");
+    fixture.validator.consensus = next_key;
+    let next = fixture
+        .chain
+        .blockchain
+        .run_get_method(&fixture.validator.address, "next_relay_query", vec![])
+        .expect("getter after rotation");
+    assert_eq!(next.stack[0].as_integer().expect("query").to_string(), (DOMAIN | 2).to_string());
+    let at = fixture.election;
+    let stake = begin(&mut fixture, 2, at);
+    let (tx, out) = step(&mut fixture.chain, stake);
+    successful(&tx, "rotated next request");
+    let receipt = only_to(out, &fixture.validator.address);
+    finish_reply(&mut fixture, receipt, 2);
+}
+
+#[test]
+fn single_pool_reuses_the_authoritative_query_after_a_real_controller_bounce() {
+    let mut fixture = Fixture::new("single-query-bounce-recovery");
+    fixture.pool = deploy_single_nominator(
+        &mut fixture.chain,
+        fixture.operator.address(),
+        fixture.operator.address(),
+        &fixture.validator.address,
+        20_000 * TOS,
+    );
+    let order = fixture.order(u64::MAX, fixture.election, 10_002 * TOS);
+    let (tx, out) = step(&mut fixture.chain, order);
+    successful(&tx, "signed out-of-sequence single-pool order");
+    let relay = only_to(out, &fixture.validator.address);
+    let (tx, out) = step(&mut fixture.chain, relay);
+    assert!(tx.read_description().expect("description").is_aborted());
+    let bounce = only_to(out, &fixture.pool);
+    assert!(bounce.is_bounced());
+    let (tx, _) = step(&mut fixture.chain, bounce);
+    successful(&tx, "actual controller refusal bounce");
+    assert!(fixture.pending().is_none());
+    let at = fixture.election;
+    let stake = begin(&mut fixture, 1, at);
+    let (tx, out) = step(&mut fixture.chain, stake);
+    successful(&tx, "allocated next single-pool stake");
+    let receipt = only_to(out, &fixture.validator.address);
+    let (_, out) = step(&mut fixture.chain, receipt);
+    let message = only_to(out, &fixture.validator.address);
+    let (_, out) = step(&mut fixture.chain, message);
+    let payment = only_to(out, &fixture.pool);
+    let (tx, out) = step(&mut fixture.chain, payment);
+    successful(&tx, "single pool accepts bound success");
+    let ack = only_to(out, &fixture.validator.address);
+    let (tx, _) = step(&mut fixture.chain, ack);
+    successful(&tx, "single pool cleanup");
+    assert!(fixture.pending().is_none());
+}
+
+#[test]
+fn single_pool_bounce_preserves_a_previous_unacknowledged_result() {
+    let mut fixture = Fixture::new("single-previous-result-after-bounce");
+    fixture.pool = deploy_single_nominator(
+        &mut fixture.chain,
+        fixture.operator.address(),
+        fixture.operator.address(),
+        &fixture.validator.address,
+        20_000 * TOS,
+    );
+    let at = fixture.election + 1;
+    let stake = begin(&mut fixture, 1, at);
+    let (_, out) = step(&mut fixture.chain, stake);
+    let receipt = only_to(out, &fixture.validator.address);
+    let (_, out) = step(&mut fixture.chain, receipt);
+    let kick = only_to(out, &fixture.validator.address);
+    let (_, out) = step(&mut fixture.chain, kick);
+    let payment = only_to(out, &fixture.pool);
+    let (tx, out) = step(&mut fixture.chain, payment);
+    successful(&tx, "first single-pool business result");
+    assert_eq!(op(&only_to(out, &fixture.validator.address)), ACK); // Lost deliberately.
+    let paid = fixture
+        .chain
+        .blockchain
+        .get_account(&fixture.pool)
+        .expect("pool")
+        .get_data()
+        .expect("data");
+    let order = fixture.order(2, fixture.election, 10_002 * TOS);
+    let (tx, out) = step(&mut fixture.chain, order);
+    successful(&tx, "new order while prior ACK was lost");
+    let relay = only_to(out, &fixture.validator.address);
+    let (tx, out) = step(&mut fixture.chain, relay);
+    assert!(tx.read_description().expect("description").is_aborted());
+    let bounce = only_to(out, &fixture.pool);
+    assert!(bounce.is_bounced());
+    let (tx, _) = step(&mut fixture.chain, bounce);
+    successful(&tx, "refused attempt restores prior result");
+    assert_eq!(
+        fixture
+            .chain
+            .blockchain
+            .get_account(&fixture.pool)
+            .expect("pool")
+            .get_data()
+            .expect("data"),
+        paid,
+        "real bounce must retain the previous ACK repair record"
+    );
+    let request = retry(&fixture, DOMAIN | 1);
+    let (tx, out) = step(&mut fixture.chain, request);
+    successful(&tx, "old paid receipt retry");
+    let repeat = only_to(out, &fixture.pool);
+    assert!(value(&repeat) < u128::from(20 * TOS));
+    let (tx, out) = step(&mut fixture.chain, repeat);
+    successful(&tx, "pool repairs previous ACK");
+    let ack = only_to(out, &fixture.validator.address);
+    let (tx, _) = step(&mut fixture.chain, ack);
+    successful(&tx, "controller clears old paid slot");
+    assert!(fixture.pending().is_none());
+    let at = fixture.election;
+    let stake = begin(&mut fixture, 2, at);
+    let (tx, _) = step(&mut fixture.chain, stake);
+    successful(&tx, "normal next allocation after repair");
 }

@@ -458,12 +458,22 @@ def run(binary, filter_, log):
         cwd=ROOT,
         capture_output=True,
         text=True,
-        env={**os.environ, "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", str(ROOT / "tosctl/src/target"))},
+        env={
+            **os.environ,
+            "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", str(ROOT / "tosctl/src/target")),
+        },
     )
     raw = completed.stdout + completed.stderr
     log.write_text(raw)
-    return completed.returncode, raw, {"path": str(log), "bytes": log.stat().st_size,
-        "sha256": hashlib.sha256(log.read_bytes()).hexdigest()}
+    return (
+        completed.returncode,
+        raw,
+        {
+            "path": str(log),
+            "bytes": log.stat().st_size,
+            "sha256": hashlib.sha256(log.read_bytes()).hexdigest(),
+        },
+    )
 
 
 def main():
@@ -516,18 +526,30 @@ def main():
             exit_code, raw, receipt = run(binary, filter_, logs / (name + "-mutant.log"))
             # A missing fixture, a compilation error or a zero-test filter must
             # never count as a guard exercised by a compiled failing test.
-            killed = (exit_code == 101 and "could not compile" not in raw
-                      and "test result: FAILED" in raw and "running 0 tests" not in raw
-                      and any(filter_ in line and "FAILED" in line for line in raw.splitlines()))
+            killed = (
+                exit_code == 101
+                and "could not compile" not in raw
+                and "test result: FAILED" in raw
+                and "running 0 tests" not in raw
+                and any(filter_ in line and "FAILED" in line for line in raw.splitlines())
+            )
         finally:
             source.write_text(original)
         build()
         restored, _, restored_receipt = run(binary, filter_, logs / (name + "-restored.log"))
         if restored:
             raise RuntimeError(f"{name}: restored source must pass")
-        reports.append({"guard": name, "killed": killed, "exit": exit_code,
-            "test": f"{binary}::{filter_}", "baseline": baseline_receipt,
-            "mutant": receipt, "restored": restored_receipt})
+        reports.append(
+            {
+                "guard": name,
+                "killed": killed,
+                "exit": exit_code,
+                "test": f"{binary}::{filter_}",
+                "baseline": baseline_receipt,
+                "mutant": receipt,
+                "restored": restored_receipt,
+            }
+        )
         if not killed:
             survivors.append(name)
         print(f"{'killed  ' if killed else 'SURVIVED'} {name}", flush=True)

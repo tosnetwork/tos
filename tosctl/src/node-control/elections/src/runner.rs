@@ -770,7 +770,7 @@ impl ElectionRunner {
         let live_policy = node.api.live_controller_policy().await?;
         let body = nominator::new_stake_from_birth_artifact(
             &nominator::NewStakeParams {
-                query_id: UnixTime::now(),
+                query_id: pool.next_relay_query().await?,
                 stake_amount: participant.stake,
                 validator_pubkey: authorization.public_key.as_slice(),
                 stake_at: participant.election_id as u32,

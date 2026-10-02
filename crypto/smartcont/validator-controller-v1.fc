@@ -179,7 +179,7 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
   throw_unless(sr::error, elector == sr::elector());
   throw_unless(sr::error, commitment == sr::commitment(owner, elector, forwarded, terms));
   var (sequence, pending) = ctl::relay_state();
-  throw_unless(sr::error, (query > sequence) & (query < (1 << 64)) & pending.null?());
+  throw_unless(sr::error, (sequence < ((1 << 64) - 1)) & (query == sequence + 1) & pending.null?());
   cell payload = sr::payload(terms, owner);
   cell body = sr::stake_body(query, payload);
   cell outgoing = sr::message(sr::address(elector), forwarded, body, true);
@@ -442,5 +442,5 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
   return ctl::load_data();
 }
 
-int next_relay_query() method_id { var (sequence, _) = ctl::relay_state(); return sequence + 1; }
+int next_relay_query() method_id { var (sequence, _) = ctl::relay_state(); throw_unless(sr::error, sequence < ((1 << 64) - 1)); return sequence + 1; }
 cell relay_pending() method_id { var (_, pending) = ctl::relay_state(); return pending; }

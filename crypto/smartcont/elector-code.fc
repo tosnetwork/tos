@@ -679,12 +679,16 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
   var (entry, found) = receipts.udict_get?(256, owner);
   ifnot (found) { return (); }
   int previous_query = entry~load_uint(64); entry~load_coins(); int outstanding = entry~load_uint(1); entry.end_parse();
-  if ((query != previous_query) | (outstanding == 0)) { return (); }
+  if (query != previous_query) { return (); }
+  if (outstanding == 0) {
+    send_raw_message(sr::message(sender, 0, begin_cell().store_uint(0x47656133, 32).store_uint(query, 64).end_cell(), false), 64);
+    return ();
+  }
   ;; Retain only the last sequence as a replay tombstone, never the old claim amount.
   receipts~udict_set_builder(256, owner, begin_cell().store_uint(query, 64).store_coins(0).store_uint(0, 1));
   var (elect, credits, past, purse, active_id, active_hash) = load_data();
   store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, recovery_pack(count - 1, receipts));
-  send_raw_message(sr::message(sender, 0, begin_cell().store_uint(1, 32).store_uint(query, 64).end_cell(), false), 64);
+  send_raw_message(sr::message(sender, 0, begin_cell().store_uint(0x47656133, 32).store_uint(query, 64).end_cell(), false), 64);
 }
 
 int upgrade_ready() method_id {

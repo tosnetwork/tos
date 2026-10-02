@@ -3769,6 +3769,16 @@ class PoolLifecycle:
                 self.event("keep_elections_alive_error", error=repr(error))
             await asyncio.sleep(poll_seconds)
 
+    async def next_relay_query(self, index: int) -> int:
+        output = await self.runmethod(raw_address(self.controllers[index].address), "next_relay_query")
+        match = re.search(r"result:\s*\[\s*(0x[0-9a-fA-F]+|[0-9]+)\s*\]", output)
+        if not match:
+            raise RuntimeError("controller next relay query getter did not return one integer")
+        query = int(match.group(1), 0)
+        if not (1 << 63) < query < (1 << 64):
+            raise RuntimeError("controller relay query outside allocated domain")
+        return query
+
     async def authorized_pool_order(
         self, index: int, election_id: int, pool_address: Address, *, query_id: int | None = None
     ) -> Cell:
@@ -3790,7 +3800,7 @@ class PoolLifecycle:
             raise AssertionError(f"validator {index + 1} authorization differs from its bound key")
         return build_production_pool_stake_order(
             REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order",
-            query_id=time.time_ns() if query_id is None else query_id, stake_amount=POOL_STAKE_VALUE,
+            query_id=await self.next_relay_query(index) if query_id is None else query_id, stake_amount=POOL_STAKE_VALUE,
             stake_at=election_id, max_factor=MAX_FACTOR,
             adnl_addr=node.validator_key.id, algorithm_id=auth.algorithm_id,
             public_key=auth.public_key, signature=auth.signature,
@@ -3820,7 +3830,7 @@ class PoolLifecycle:
     async def stake_through_pool(self, election_id: int, *, label: str) -> int:
         if self.pool_address is None:
             raise AssertionError("primary pool is not deployed")
-        query_id = time.time_ns()
+        query_id = await self.next_relay_query(0)
         body = await self.authorized_pool_order(
             0, election_id, self.pool_address, query_id=query_id
         )

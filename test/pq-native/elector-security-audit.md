@@ -1,5 +1,9 @@
 # Elector security audit: native acceptance
 
+For the post-review recovery-confirmation and strict query-allocation changes,
+see [the review follow-up](elector-review-followup.md). The original result index
+binds the pre-review revision, not the follow-up source.
+
 This branch closes the applicable audit matrix with the current native compiler,
 real ML-DSA-44 signatures, and the transaction executor's compute, action and
 bounce phases. The result index is `elector-security-results.json` in this
@@ -34,7 +38,7 @@ that replacing the signature algorithm requires this particular relay protocol.
 
 The relay's extra signature verification protects its newly persistent slot;
 it is not a cryptographic requirement to verify a PQ stake twice. This design
-uses one request identifier and one unfinished slot per controller. It adds no
+uses one request identifier and one unfinished slot per controller. The relay adds no
 ACKED exchange, relay queue, maintenance bond, revenue-sharing policy or new
 nominator population limit. Existing nominator policies are retained.
 
@@ -43,7 +47,7 @@ nominator population limit. Existing nominator policies are retained.
 `crypto/smartcont/stake-relay.fc` is the shared wire and checked coin arithmetic.
 All three contracts use the same uint64 request ID in the high-bit domain.
 Root-owned legacy requests remain in the low-bit domain. Accepted relay IDs
-increase strictly and are never reused.
+are allocated as the controller's exact next sequence and are never reused after acceptance.
 
 | Message | Opcode | Binding |
 | --- | --- | --- |
@@ -75,8 +79,8 @@ and single-pool owner authority are not changed into shared custody.
 
 ## Mature-stake recovery
 
-The multi pool uses request/reply/ACK `0x47657432` / `0xf96f7332` /
-`0x47656132`, with the elector retained from its accepted stake and the same query.
+The multi pool uses request/reply/ACK/confirmation `0x47657432` / `0xf96f7332` /
+`0x47656132` / `0x47656133`, with the elector retained from its accepted stake and the same query.
 A later Config1 replacement cannot redirect the mature credit to the new elector. Elector records the
 gross credit and deletes that credit atomically with a successful nonbounce
 payment action. A recipient abort can be repaired using a fee-only repeated
@@ -86,7 +90,8 @@ later credit.
 
 Elector keeps one replay tombstone per distinct recovery owner. It does not
 keep one record per call or per round. ACK clears the amount and outstanding
-status, while retaining the last ID. Storage therefore grows with distinct
+status, while retaining the last ID. Its idempotent confirmation lets the pool
+clear a separately preserved repair record; later staking results cannot erase it. Storage therefore grows with distinct
 historical creditors; it is not globally constant or TTL-pruned. Native controls
 measure 256 owners and repeated rounds, verify point-operation gas and record
 the measured cell count. Only a tested debt-free installation boundary drops

@@ -26,13 +26,24 @@ ROOT = Path(__file__).resolve().parents[4]
 def test_bound_pool_results_require_the_real_controller_and_domain_query():
     controller = Address((-1, bytes([0x51]) * 32))
     query = 127
-    body = (Builder().store_uint(0x50516232, 32).store_uint(query | (1 << 63), 64)
-            .store_uint(7, 256).store_coins(10_002_000_000_000)
-            .store_coins(10_001_000_000_000).store_uint(0, 32).store_uint(1, 1)
-            .end_cell().to_boc())
-    tx = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(controller.to_str()),
-        msg_data=toslib_api.Msg_dataRaw(body=body)))
+    body = (
+        Builder()
+        .store_uint(0x50516232, 32)
+        .store_uint(query | (1 << 63), 64)
+        .store_uint(7, 256)
+        .store_coins(10_002_000_000_000)
+        .store_coins(10_001_000_000_000)
+        .store_uint(0, 32)
+        .store_uint(1, 1)
+        .end_cell()
+        .to_boc()
+    )
+    tx = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(controller.to_str()),
+            msg_data=toslib_api.Msg_dataRaw(body=body),
+        )
+    )
     assert elector_reply([tx], query, controller=controller) == (0xF374484C, 0)
     assert elector_reply([tx], query + 1, controller=controller) is None
     assert elector_reply([tx], query, controller=Address((-1, bytes([0x52]) * 32))) is None
@@ -41,23 +52,43 @@ def test_bound_pool_results_require_the_real_controller_and_domain_query():
 
 def test_direct_recovery_amount_is_parsed_as_coins_and_not_as_a_reason():
     elector = Address((-1, bytes.fromhex("33" * 32)))
-    body = (Builder().store_uint(0xF96F7324, 32).store_uint(9, 64)
-            .store_coins(50_000_000_000).end_cell().to_boc())
-    tx = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(elector.to_str()),
-        msg_data=toslib_api.Msg_dataRaw(body=body)))
+    body = (
+        Builder()
+        .store_uint(0xF96F7324, 32)
+        .store_uint(9, 64)
+        .store_coins(50_000_000_000)
+        .end_cell()
+        .to_boc()
+    )
+    tx = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(elector.to_str()),
+            msg_data=toslib_api.Msg_dataRaw(body=body),
+        )
+    )
     assert elector_reply([tx], 9) == (0xF96F7324, 0)
 
 
 def test_bound_pool_result_reader_rejects_inconsistent_amounts():
     controller = Address((-1, bytes([0x51]) * 32))
-    body = (Builder().store_uint(0x50516232, 32).store_uint(127 | (1 << 63), 64)
-            .store_uint(7, 256).store_coins(10_002_000_000_000)
-            .store_coins(10_001_000_000_001).store_uint(0, 32).store_uint(1, 1)
-            .end_cell().to_boc())
-    tx = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(controller.to_str()),
-        msg_data=toslib_api.Msg_dataRaw(body=body)))
+    body = (
+        Builder()
+        .store_uint(0x50516232, 32)
+        .store_uint(127 | (1 << 63), 64)
+        .store_uint(7, 256)
+        .store_coins(10_002_000_000_000)
+        .store_coins(10_001_000_000_001)
+        .store_uint(0, 32)
+        .store_uint(1, 1)
+        .end_cell()
+        .to_boc()
+    )
+    tx = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(controller.to_str()),
+            msg_data=toslib_api.Msg_dataRaw(body=body),
+        )
+    )
     with pytest.raises(ValueError, match="inconsistent relay result amounts"):
         elector_reply([tx], 127, controller=controller)
 

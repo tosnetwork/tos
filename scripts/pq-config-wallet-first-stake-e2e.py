@@ -547,7 +547,9 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             )
             if not pool_complete:
                 raise RuntimeError("pool feedback transaction window is incomplete")
-            reply = lifecycle_module.elector_reply(pool_txs, query_id, controller=controller.address)
+            reply = lifecycle_module.elector_reply(
+                pool_txs, query_id, controller=controller.address
+            )
         pool_path = run_dir / "product-stake-pool-transactions.json"
         pool_path.write_text(json.dumps([tx.to_dict() for tx in pool_txs], indent=2) + "\n")
         report["transaction_coverage"].update(

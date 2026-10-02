@@ -217,7 +217,9 @@ def build_production_pool_stake_order(
         raise RuntimeError("production PQ pool stake builder returned invalid BOC hex") from error
 
 
-def elector_reply(transactions: list, query_id: int, *, controller: Address | None = None) -> tuple[int, int] | None:
+def elector_reply(
+    transactions: list, query_id: int, *, controller: Address | None = None
+) -> tuple[int, int] | None:
     """Find a bound business result, ignoring other sources and request IDs.
 
     Controller receipts are mapped to the existing acceptance/refusal result

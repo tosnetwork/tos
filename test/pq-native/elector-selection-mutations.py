@@ -16,7 +16,10 @@ MUTATIONS = [
         "capped-principal",
         [
             ("int refund = original_stake;", "int refund = stake;"),
-            ("throw_unless(63, total_placed == tot_stake + total_refunded);", "throw_unless(63, true);"),
+            (
+                "throw_unless(63, total_placed == tot_stake + total_refunded);",
+                "throw_unless(63, true);",
+            ),
         ],
         "security_audit::over_cap_principal_is_conserved_for_winners_losers_and_shared_owners",
         "owner principal not conserved",
@@ -41,7 +44,10 @@ MUTATIONS = [
         "capped-boundary-principal",
         [
             ("int refund = original_stake;", "int refund = stake;"),
-            ("throw_unless(63, total_placed == tot_stake + total_refunded);", "throw_unless(63, true);"),
+            (
+                "throw_unless(63, total_placed == tot_stake + total_refunded);",
+                "throw_unless(63, true);",
+            ),
         ],
         "security_audit::every_cap_boundary_conserves_the_increment_without_consuming_historic_credits",
         "boundary principal increment",
@@ -73,30 +79,51 @@ MUTATIONS = [
     *[
         (
             f"rollback-ignores-{claim}",
-            [("return elect.null?() & credits.null?() & past.null?() & (outstanding == 0);", expression)],
+            [
+                (
+                    "return elect.null?() & credits.null?() & past.null?() & (outstanding == 0);",
+                    expression,
+                )
+            ],
             "security_audit::upgrades_and_rollbacks_require_a_debt_free_boundary_and_preserve_the_root",
             f"live liabilities must refuse rollback: {phase}",
         )
         for claim, expression, phase in [
-            ("active-book", "return credits.null?() & past.null?() & (outstanding == 0);", "cached"),
-            ("frozen-book", "return elect.null?() & credits.null?() & (outstanding == 0);", "frozen-only"),
-            ("credits", "return elect.null?() & past.null?() & (outstanding == 0);", "credits-only"),
+            (
+                "active-book",
+                "return credits.null?() & past.null?() & (outstanding == 0);",
+                "cached",
+            ),
+            (
+                "frozen-book",
+                "return elect.null?() & credits.null?() & (outstanding == 0);",
+                "frozen-only",
+            ),
+            (
+                "credits",
+                "return elect.null?() & past.null?() & (outstanding == 0);",
+                "credits-only",
+            ),
         ]
     ],
     (
         "missing-books-treated-as-empty",
-        [("throw_unless(65, es.slice_bits() >= 3);\n"
-          "  cell pq_members = es~load_dict();\n"
-          "  cell pq_key_owner = es~load_dict();\n"
-          "  cell pq_by_code = es~load_dict();",
-          "cell pq_members = null();\n"
-          "  cell pq_key_owner = null();\n"
-          "  cell pq_by_code = null();\n"
-          "  ifnot (es.slice_empty?()) {\n"
-          "    pq_members = es~load_dict();\n"
-          "    pq_key_owner = es~load_dict();\n"
-          "    pq_by_code = es~load_dict();\n"
-          "  }")],
+        [
+            (
+                "throw_unless(65, es.slice_bits() >= 3);\n"
+                "  cell pq_members = es~load_dict();\n"
+                "  cell pq_key_owner = es~load_dict();\n"
+                "  cell pq_by_code = es~load_dict();",
+                "cell pq_members = null();\n"
+                "  cell pq_key_owner = null();\n"
+                "  cell pq_by_code = null();\n"
+                "  ifnot (es.slice_empty?()) {\n"
+                "    pq_members = es~load_dict();\n"
+                "    pq_key_owner = es~load_dict();\n"
+                "    pq_by_code = es~load_dict();\n"
+                "  }",
+            )
+        ],
         "an_election_missing_its_books_is_refused_without_losing_its_declared_principal",
         "absent books need explicit migration",
     ),
@@ -130,8 +157,16 @@ def main():
     original = SOURCE.read_text()
     build = ["cmake", "--build", "build", "--target", "gen_fif", f"-j{args.jobs}"]
     test = [
-        "cargo", "test", "--manifest-path", "tosctl/src/Cargo.toml", "-p", "contracts",
-        "--locked", "--test", "elector_sandbox", f"-j{args.jobs}",
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "-p",
+        "contracts",
+        "--locked",
+        "--test",
+        "elector_sandbox",
+        f"-j{args.jobs}",
     ]
     test_source = ROOT / "tosctl/src/node-control/contracts/tests/elector_security_audit/mod.rs"
     index = {
@@ -159,12 +194,21 @@ def main():
             if compile_result["exit"] != 0:
                 index["runs"].append({"name": name, "compile": compile_result})
                 raise RuntimeError(f"{name}: a compile failure is not sensitivity evidence")
-            result = run(test + [target, "--", "--exact", "--nocapture"], destination / f"{name}.log")
+            result = run(
+                test + [target, "--", "--exact", "--nocapture"], destination / f"{name}.log"
+            )
             log = (destination / f"{name}.log").read_text()
             intended = result["exit"] == 101 and assertion in log and "running 1 test" in log
-            index["runs"].append({"name": name, "compile": compile_result,
-                "source_sha256": hashlib.sha256(changed.encode()).hexdigest(),
-                "intended_assertion": assertion, "intended_failure": intended, **result})
+            index["runs"].append(
+                {
+                    "name": name,
+                    "compile": compile_result,
+                    "source_sha256": hashlib.sha256(changed.encode()).hexdigest(),
+                    "intended_assertion": assertion,
+                    "intended_failure": intended,
+                    **result,
+                }
+            )
             print(f"{name}: exit={result['exit']}, intended={intended}", flush=True)
             if not intended:
                 raise RuntimeError(f"{name}: did not fail at the intended assertion")
