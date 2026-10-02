@@ -1,0 +1,58 @@
+{
+  "status": "OPEN defect characterization, not remediation",
+  "base": "0aacb85c1 with independent R4 capability-action check",
+  "ruling": "memo/main@398a6049291b section 12.4",
+  "test": "valid_refund_preaccounting_abort_is_not_repaired_by_a_fee_retry",
+  "observation": "A genuine non-bounce rejected-stake refund encounters a 1000-gas masterchain configuration, aborts with -14, retains >9900 TOS and the unchanged WAIT record; after restoring prices, a funded retry still aborts and the pool stays waiting.",
+  "source": {
+    "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_r4.rs",
+    "bytes": 18691,
+    "sha256": "a7abc8e8c824e47dd7d713322b158d9d67da7f901d4d441cbd37ee38c8b182e1"
+  },
+  "focused": {
+    "path": ".git/elector-security-audit-artifacts/r3-r4/preaccounting-abort.log",
+    "bytes": 9143,
+    "sha256": "3b8f8191d56a756e768b6b551483337aa67ee0e5de46a85e86b44950f06cd1a0"
+  },
+  "restored_suite": {
+    "passed": 5,
+    "log": {
+      "path": ".git/elector-security-audit-artifacts/r3-r4/ruling-controls/r3-restored-suite.log",
+      "bytes": 9525,
+      "sha256": "a6ea7cd3401edce7c5729165334c9b65c85cacd5a3af8da4c98ebc078907f598"
+    }
+  },
+  "instrument_sensitivity": {
+    "name": "preaccounting-instrument",
+    "test": "valid_refund_preaccounting_abort_is_not_repaired_by_a_fee_retry",
+    "meaning": "OPEN R3 characterization: removing resource restriction must invalidate the failure premise",
+    "baseline": {
+      "exit": 0,
+      "source_sha256": "5b7776d456ed3532b18d94dc8d63498cc2090a1f8488ec3d9caf20ee954c2d2a",
+      "log": ".git/elector-security-audit-artifacts/r3-r4/ruling-controls/preaccounting-instrument-baseline.log",
+      "bytes": 9143,
+      "sha256": "312a803bcd345cea65215ca9c45a334fe1ed9ad25631b0a3d247dac1903301dc"
+    },
+    "mutant": {
+      "exit": 101,
+      "source_sha256": "b91a302a7c86d29e1a0785a871628e7caa12544ffea51c68840cb3859476d7cb",
+      "log": ".git/elector-security-audit-artifacts/r3-r4/ruling-controls/preaccounting-instrument-mutant.log",
+      "bytes": 9696,
+      "sha256": "1564b3f211fdc12ee36f28aa341af8de5054eb0ee20db5242c0592eae194331b"
+    },
+    "restored": {
+      "exit": 0,
+      "source_sha256": "5b7776d456ed3532b18d94dc8d63498cc2090a1f8488ec3d9caf20ee954c2d2a",
+      "log": ".git/elector-security-audit-artifacts/r3-r4/ruling-controls/preaccounting-instrument-restored.log",
+      "bytes": 9143,
+      "sha256": "2fc7348e5244c6c0fc2517c6e306dd779aff6afcc09824a61950ad927518db11"
+    }
+  },
+  "limits": [
+    "No production R3 changes in this follow-up.",
+    "The resource-restriction mutant verifies the failure instrument; it is not a repair mutant.",
+    "This exercises changed global gas limits, not a claim about failure frequency under normal prices.",
+    "Increasing gas or inferring debt from account balance is not accepted as recovery."
+  ],
+  "retention": "Retain raw files at listed TOS .git paths for at least 90 days after resolution."
+}

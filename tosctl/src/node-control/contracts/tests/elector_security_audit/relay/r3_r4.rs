@@ -341,3 +341,50 @@ fn a_nonempty_recovery_book_requires_the_target_schema() {
         );
     }
 }
+
+// Characterization of an OPEN recovery boundary, not a passing remediation gate.
+#[test]
+fn valid_refund_preaccounting_abort_is_not_repaired_by_a_fee_retry() {
+    let mut f = Fixture::new("refund-before-accounting-abort");
+    let wrong_round = f.election.checked_add(1).expect("later election");
+    let stake = begin(&mut f, 1, wrong_round);
+    let (tx, out) = step(&mut f.chain, stake);
+    successful(&tx, "elector produces actual rejected-stake refund");
+    let refund = only_to(out, &f.validator.address);
+    assert!(!refund.int_header().expect("header").bounce);
+    assert!(value(&refund) > u128::from(9_900 * TOS));
+    let waiting = f.pending().expect("WAIT record");
+    let prices = raw_parameter(&f.chain, 20).expect("original gas profile");
+    let mut restricted = f.chain.blockchain.config_params().gas_prices(true).expect("gas prices");
+    restricted.gas_limit = 1_000;
+    set_contract_parameter(
+        &mut f.chain,
+        20,
+        restricted.write_to_new_cell().expect("gas").into_cell().expect("gas cell"),
+    );
+    let before = balance_of(&f.chain, &f.validator.address);
+    let (tx, out) = step(&mut f.chain, refund);
+    assert!(tx.read_description().expect("description").is_aborted());
+    match tx.read_description().expect("description") {
+        TransactionDescr::Ordinary(d) => match d.compute_ph {
+            TrComputePhase::Vm(vm) => {
+                assert_eq!(vm.exit_code, -14, "real controller must exhaust gas")
+            }
+            _ => panic!("real compute phase required"),
+        },
+        _ => panic!("ordinary transaction required"),
+    }
+    assert!(out.is_empty(), "non-bounce refund remains at controller");
+    assert_eq!(f.pending(), Some(waiting.clone()), "refund was not durably classified");
+    assert!(balance_of(&f.chain, &f.validator.address) > before + u128::from(9_900 * TOS));
+    set_contract_parameter(&mut f.chain, 20, prices);
+    let request = retry(&f, DOMAIN | 1);
+    let (tx, out) = step(&mut f.chain, request);
+    assert!(
+        tx.read_description().expect("description").is_aborted(),
+        "characterization: fee-only retry cannot reconstruct the missing result"
+    );
+    assert!(out.iter().all(|m| m.dst().as_ref() != Some(&f.pool)), "no owner settlement occurred");
+    assert_eq!(f.pending(), Some(waiting));
+    assert_eq!(f.pool_state(), 1, "OPEN: the pool is still waiting after replenishing gas");
+}
