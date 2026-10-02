@@ -1,0 +1,274 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=26mm]{geometry}
+\usepackage{booktabs,tabularx,array}
+\usepackage[colorlinks=true,urlcolor=blue,linkcolor=blue,citecolor=blue]{hyperref}
+\pdfinfoomitdate=1
+\pdftrailerid{}
+\pdfsuppressptexinfo=15
+\hypersetup{pdftitle={TOS: Post-Quantum Authentication and Shielded Transfers},pdfauthor={TOS contributors}}
+\setlength{\emergencystretch}{3em}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\repo}[2]{\href{https://github.com/tosnetwork/tos/blob/main/#1}{#2}}
+\title{TOS Blockchain\\\large Post-Quantum Authentication and Shielded Transfers}
+\author{TOS contributors}
+\date{October 2026}
+\begin{document}
+\maketitle
+\begin{abstract}
+TOS is a Layer-1 blockchain with masterchain and shardchain infrastructure,
+asynchronous smart contracts, and a native virtual machine. Its canonical
+genesis configuration uses ML-DSA-44 validator signatures. Its shielded
+native-asset design combines zero-knowledge transaction proofs, one-time
+post-quantum note authorization, and post-quantum encrypted note delivery.
+These mechanisms protect different surfaces: signature security is not the
+same property as transaction privacy or proof soundness. In particular, the
+current shielded circuit uses pairing-based Groth16 proofs and is not a
+post-quantum proof system. This overview describes implementation boundaries,
+public information, and deployment prerequisites rather than asserting
+unconditional anonymity or production readiness.
+\end{abstract}
+\textbf{Scope.} Source baseline: \code{54be8f1f4}. This document describes the
+repository's October 2026 implementation and canonical configuration; it is
+not a statement that every running network has activated them. Exact wire
+formats and deployment identities remain defined by source and the frozen
+shielded-pool profile.
+\setcounter{tocdepth}{1}
+\tableofcontents
+\newpage
+
+\section{Architecture and security objectives}
+The masterchain carries network configuration and validator-set information.
+Shardchains execute accounts and transfer messages. The TOS Virtual Machine
+(TVM) executes contracts, while validators authenticate consensus messages.
+Contract calls between accounts are asynchronous messages: receiving funds,
+forwarding them, and processing a later result are separate transactions.
+A signature cannot by itself guarantee completion or refund of that sequence.
+
+TOS applies cryptographic mechanisms at distinct layers:
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}p{0.23\linewidth}X@{}}
+\toprule
+Surface & Mechanism and boundary \\
+\midrule
+Validator signing & ML-DSA-44; protects authorized consensus messages. \\
+Contract authorization & Native ML-DSA-44 verification, with contract-specific signed fields and replay rules. \\
+Shielded note spending & One-time ML-DSA-44 note authorization plus a circuit proof of valid state transition. \\
+Note delivery & ML-KEM-768 key encapsulation and XChaCha20-Poly1305 authenticated encryption. \\
+Hidden-value validity & Groth16 over BLS12-381, with Poseidon2 commitments and tree hashing; not post-quantum proof soundness. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+The objective is to provide post-quantum authentication on designated paths
+and confidentiality within the shielded protocol. It is not to imply that
+all legacy wallets, administrative credentials, transport authentication, or
+external applications become post-quantum merely by connecting to TOS.
+
+\section{Post-quantum consensus from genesis}
+\subsection{Canonical version parameters}
+The canonical zerostate generator selects global protocol version 18 in
+ConfigParam 8, and creates four equally weighted post-quantum genesis
+validator descriptors. These use \code{validator\_pq\_addr\#b3} and algorithm
+identifier 1 for ML-DSA-44. ConfigParam 47 binds controller admission to the
+approved controller code. The Simplex transport configuration selects its
+v2 QUIC profile; that transport version is distinct from global protocol
+version 18.
+
+The public bootstrap manifest is \code{validator-pq.pub}. It binds each
+validator's controller identity, ADNL identity, and consensus public key.
+The canonical generator rejects the classical bootstrap-file format and
+checks duplicate identities. Private keys remain operator material and must
+not be placed in the public manifest or committed to the repository.
+Launching a new chain still requires review of all immutable genesis inputs,
+including network identity, time parameters, and compiled contract hashes.
+Changing the generator does not change an existing chain's zerostate.
+
+\subsection{Keys and authorization}
+ML-DSA is standardized in FIPS 204~\cite{fips204}. The implemented ML-DSA-44
+suite uses a 1,312-byte public key and a 2,420-byte signature. Protocol-specific
+message encodings and domain separation remain essential: algorithm security
+does not make a signature valid for another role, network, or request.
+
+A stable controller identity separates validator identity from individual
+keys. Root authority and consensus signing have different responsibilities;
+ADNL identity is also distinct. Rotation and admission follow the controller
+and network rules, rather than an assumption that every address or key is
+interchangeable. Operators must provision, protect, and recover the correct
+key for each role.
+
+TVM exposes \code{PQCHECKSIG\_MLDSA44} for contract verification. Its minimum
+global version is 16; the canonical genesis profile is version 18. An
+instruction's introduction version is not the complete version requirement
+of a contract using additional instructions.
+
+\subsection{Resource implications}
+Post-quantum signatures increase serialized message sizes relative to compact
+classical signatures. Admission limits, verification budgets, message-size
+limits, and network capacity must account for those sizes. This overview
+makes no throughput or fee claim: measured cost depends on the implementation,
+message path, hardware, and workload. Native contract verification also does
+not imply that each contract call repeats consensus verification.
+
+\section{Shielded native-asset transfers}
+\subsection{State and transaction flow}
+The version-1 shielded pool targets native TOS in workchain 0. It records
+commitments and nullifiers rather than exposing a transparent account balance
+for each private note. Commitments bind note contents; nullifiers prevent a
+consumed note from being spent again. Proof verification checks the specified
+transition, including the circuit's value and membership constraints.
+
+\begin{center}
+\fbox{\begin{minipage}{0.89\linewidth}
+Transparent TOS deposit $\longrightarrow$ shielded notes\\[4pt]
+Shielded notes $\longrightarrow$ proof-authorized private transfer
+$\longrightarrow$ new notes\\[4pt]
+Shielded notes $\longrightarrow$ public withdrawal message
+\end{minipage}}
+\end{center}
+Each private transaction has a fixed shape of two input slots and three
+output slots, with real and dummy data handled according to the profile.
+The circuit uses Groth16 on BLS12-381, and Poseidon2 over its scalar field
+for commitments and tree operations. Tree parameters, public inputs, proof
+encoding, and deployment hashes must match the frozen profile exactly.
+
+Note authorization uses one-time ML-DSA-44 keys. Authorization and proof
+verification serve different purposes: the former authenticates spending
+intent, while the latter establishes the hidden-state relationships required
+by the circuit. Neither can substitute for the other.
+
+\subsection{Encrypted delivery}
+Recipients discover and decrypt note payloads using the wallet's viewing
+material. Delivery combines ML-KEM-768, standardized in FIPS 203~\cite{fips203},
+with XChaCha20-Poly1305. A domain-separated derivation binds key material to
+the execution domain and output slot, with authenticated context preventing
+payloads from being silently reassigned to another context.
+
+The fixed payload contains a version byte, a 1,088-byte encapsulation
+ciphertext, and a 144-byte authenticated encrypted body: 1,233 bytes in total.
+Real and dummy outputs use the same payload size. This removes a simple
+length distinction, not all statistical or network side channels.
+
+Payment descriptors are single-use. Viewing keys can remain shared within a
+pool domain; senders who exchange off-chain descriptor information can
+recognize a reused viewing key. The current profile therefore does not claim
+unlinkability against such sender collusion.
+
+\subsection{What remains public}
+Shielded transfers do not hide every observable fact. Transparent deposit
+values, public withdrawal values and recipients, fees, commitments,
+nullifiers, transaction ordering, and timing remain observable as specified
+by the protocol. A node operator or network observer may also see traffic
+metadata. Wallet compromise can reveal note or viewing material.
+
+Privacy claims must consequently identify the observer and the protected
+information. Hidden note values and ownership relationships are not the same
+as hiding network origin, deposit history, or every relationship inferable
+from user behavior. Wallet practices and the size and activity of the privacy
+set affect practical privacy.
+
+\section{Cryptographic and financial boundaries}
+\subsection{Post-quantum scope}
+ML-DSA signatures and ML-KEM delivery address quantum threats to their
+respective authentication and encapsulation tasks. Groth16 is a pairing-based
+proof construction~\cite{groth16}; its soundness assumptions are not
+post-quantum. Adding a post-quantum signature to a Groth16 transaction does
+not make the proof system post-quantum.
+
+The frozen profile explicitly defers a post-quantum proof backend. Future
+migration would require new proof and circuit review, compatible state and
+wallet handling, and a controlled activation process. It cannot be represented
+as an already-delivered property of the current pool.
+
+\subsection{Funds, fees, and asynchronous outcomes}
+A valid proof must still be processed by a correctly funded contract. The
+pool must preserve backing and enforce fee and message rules. Deposit and
+transfer entry points use funded internal messages; proof acceptance does
+not authorize arbitrary expenditure of the account's balance.
+
+For withdrawal, the public amount is the gross outgoing message value before
+recipient computation, not a guarantee of the recipient's net balance
+increase. Failure and bounce handling must account for the value actually
+returned. Fees already consumed by execution or delivery cannot be assumed
+to reappear as refundable principal. This is an asynchronous settlement
+boundary, independent of whether the authorization is post-quantum.
+
+The v1 profile does not provide arbitrary multi-asset transfers, variable
+transaction shapes, or unrestricted payload memos. Its state structures and
+history are bounded according to the profile. These bounds require explicit
+capacity and recovery testing; the word ``shielded'' is not an exemption
+from storage or execution constraints.
+
+\section{Implementation and deployment status}
+The repository contains the pool contract, circuit, wallet implementation,
+and deployment artifacts. Availability of those files is not activation
+approval. The frozen profile labels itself ready for coding and requires its
+acceptance gates before mainnet or testnet activation.
+
+\textbf{Development proving keys must never protect real funds.} The circuit
+package describes deterministic development setup material whose secret
+setup randomness is known. Such material allows forged proofs. A production
+deployment requires the prescribed ceremony and independently verified
+artifacts, not merely rebuilding the development example.
+
+Before activation, operators and reviewers must establish at least:
+\begin{enumerate}
+\item Agreement among contract code, circuit, public-input encoding, verifier
+keys, and deployment-profile identities.
+\item Completion of the required ceremony and verification of its final
+artifacts, without substituting development keys.
+\item Native execution of valid and invalid paths, including replay, double
+spending, malformed payloads, insufficient funding, and asynchronous failures.
+\item Resource and recovery checks for the chosen network configuration.
+\item Explicit network activation approval under the release and upgrade
+process; no assumption that source availability authorizes deployment.
+\end{enumerate}
+This is a summary, not a replacement for the profile's acceptance matrix.
+There is no administrative \code{SETCODE} upgrade path in the pool design;
+changes require the specified network upgrade process.
+
+\section{Development and operations}
+The repository supplies the validator engine, clients, TVM, contract tools,
+and supporting packages. See \repo{BUILD.md}{the build guide} for dependencies
+and target commands. \repo{doc/Local-PQ-Network.md}{The local PQ network guide}
+covers local deployment and election rehearsals; local test success is not a
+production security certification.
+
+Monitoring should distinguish unavailable observations from a healthy node.
+Process liveness alone does not establish validator participation, progress,
+or storage health. Cryptographic validation, operational observations, and
+fund-recovery tests should each report their own boundaries.
+
+This overview is built from \code{doc/tos.tex} using
+\code{bash scripts/build-tos-paper.sh}. The script requires \code{pdflatex}
+and writes \code{doc/tos.pdf} without leaving intermediate files in the
+source directory. Historical protocol papers remain available separately.
+
+\section*{Implementation references}
+\addcontentsline{toc}{section}{Implementation references}
+\begin{itemize}
+\item \repo{crypto/smartcont/gen-zerostate.fif}{Canonical genesis generator}
+and \repo{doc/validator-genesis-bootstrap.md}{validator bootstrap guide}.
+\item \repo{crypto/pq/pq-consensus.h}{Post-quantum consensus types} and
+\repo{doc/tvm-mldsa44.md}{native ML-DSA verification interface}.
+\item \repo{artifacts/shielded-pool/PROFILE.md}{Frozen shielded-pool profile}:
+exact encoding, privacy boundaries, and activation gates.
+\item \repo{tools/shielded-pool-circuit/README.md}{Circuit package and development-key warning}.
+\item \href{https://github.com/tosnetwork/tos/tree/main/tools/shielded-pool-wallet}{Shielded wallet implementation}.
+\item \repo{artifacts/shielded-pool/CEREMONY.md}{Ceremony requirements} and
+\repo{doc/tos-upgrade-process.md}{network upgrade process}.
+\end{itemize}
+\begin{thebibliography}{9}
+\bibitem{fips204} NIST. \emph{Module-Lattice-Based Digital Signature Standard}.
+FIPS 204, 2024. \url{https://doi.org/10.6028/NIST.FIPS.204}.
+\bibitem{fips203} NIST. \emph{Module-Lattice-Based Key-Encapsulation Mechanism Standard}.
+FIPS 203, 2024. \url{https://doi.org/10.6028/NIST.FIPS.203}.
+\bibitem{groth16} Jens Groth. \emph{On the Size of Pairing-Based Non-interactive
+Arguments}. EUROCRYPT, 2016.
+\url{https://doi.org/10.1007/978-3-662-49896-5_11}.
+\end{thebibliography}
+\end{document}

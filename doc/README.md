@@ -35,7 +35,7 @@ with tests; deployment records and their frozen profiles belong in `artifacts/`.
 | [LiteClient.md](LiteClient.md) | Using the lite client |
 | [Validator.md](Validator.md) | Running a validator |
 | [Local-PQ-Network.md](Local-PQ-Network.md) | Local deployment, controller operating authorization, election rehearsal and failure diagnosis |
-| [validator-genesis-bootstrap.md](validator-genesis-bootstrap.md) | Genesis validator bootstrap and `validator-keys.pub` |
+| [validator-genesis-bootstrap.md](validator-genesis-bootstrap.md) | Post-quantum genesis validator bootstrap and `validator-pq.pub` |
 
 ## Release process
 
@@ -50,6 +50,7 @@ Each is kept with its TeX source where one exists.
 
 | Paper | Subject |
 | --- | --- |
+| [tos.pdf](tos.pdf) ([tex](tos.tex)) | Current overview: post-quantum authentication, shielded transfers, and deployment boundaries |
 | [The-TOS-Protocol.pdf](The-TOS-Protocol.pdf) ([docx](The-TOS-Protocol.docx)) | The protocol |
 | [tblkch.tex](tblkch.tex) | The block chain |
 | [tvm.tex](tvm.tex) | The virtual machine |
