@@ -18,10 +18,10 @@
     {
       "source_id": "native_exporter",
       "anchor": {
-        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "metrics/prometheus-exporter.cpp",
         "symbol": "PrometheusExporter::on_request",
-        "source_sha256": "a4225559870a53215135aee37760beb9699b591d0f6ff720f4bba936050014dc"
+        "source_sha256": "de9e0d4ac7c14494cb07c94e033111e5207dccab9b90fba1730fbf63f0d18aae"
       },
       "interface": "GET /metrics",
       "grammar": "OpenMetrics 1.0 exact immutable body including EOF; paired native_core hash/generation",
@@ -53,10 +53,10 @@
     {
       "source_id": "process",
       "anchor": {
-        "commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
         "symbol": "sample_process",
-        "source_sha256": "a97b158acd9841c6237413abe749120a998c710cb366ec6405a128a56fa66335"
+        "source_sha256": "24e6efd3feba2fc3f40bb836e20fd43790c64103a26368e05bd68b69a3ac451d"
       },
       "interface": "fixed proc fields",
       "grammar": "source-envelope.schema.json process payload; fixed configured PID files and process epoch",
@@ -88,7 +88,7 @@
     {
       "source_id": "consensus_status",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "validator-engine/json-rpc-server-blocks.cpp",
         "symbol": "getNodeConsensusStatus",
         "source_sha256": "67f451f0a81dbb2c076a262f9ae9b69edd5af1c114098906b0a23d7f9c97d39d"
@@ -117,10 +117,10 @@
     {
       "source_id": "quic",
       "anchor": {
-        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "quic/quic-sender.cpp",
         "symbol": "health_metrics_policy::build_per_path",
-        "source_sha256": "0857f803ba99ff46967d07845cfecaeff6d099d76f10555333af76a788cf2199"
+        "source_sha256": "86d863b848e94e7b44d9158ec495b1613f299f340053c82d11ed21a382dc6f25"
       },
       "interface": "native collector summary",
       "grammar": "strict schema required before adapter enablement",
@@ -146,10 +146,10 @@
     {
       "source_id": "vote_intent",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "validator/consensus/simplex/pool.cpp",
         "symbol": "publish<PersistOwnVoteIntent>",
-        "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+        "source_sha256": "2736b947fae6cbba859cc5b7476b36a1fd9a65bbac5f24757c858857ebc08b26"
       },
       "interface": "core hook not connected",
       "grammar": "strict schema required before adapter enablement",
@@ -175,10 +175,10 @@
     {
       "source_id": "vote_signed_commit",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "validator/consensus/simplex/pool.cpp",
         "symbol": "publish<PersistOwnSignedVote>",
-        "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+        "source_sha256": "2736b947fae6cbba859cc5b7476b36a1fd9a65bbac5f24757c858857ebc08b26"
       },
       "interface": "core hook not connected",
       "grammar": "strict schema required before adapter enablement",
@@ -204,7 +204,7 @@
     {
       "source_id": "pq_sign",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "crypto/pq/consensus-pq-signer.cpp",
         "symbol": "ValidatorPQKeyStore::sign_consensus",
         "source_sha256": "b1114d5f292ab89a0f1ef7cfe7bff12ec577dce2e4ded828f20bded7d8415a58"
@@ -239,7 +239,7 @@
     {
       "source_id": "pq_verify",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "validator/consensus/types.cpp",
         "symbol": "PeerValidator::check_signature",
         "source_sha256": "6d5970fdcade5d74697d460c92a465ce2918f16e4f98985657c6d661df71a359"
@@ -274,7 +274,7 @@
     {
       "source_id": "rocksdb",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "scripts/validator_rss_rocksdb_monitor.sh",
         "symbol": "rocksdb",
         "source_sha256": "7ca8ba0559f11ece232bb887511520a631bc36e7d195670df450a60a562e993c"
@@ -303,7 +303,7 @@
     {
       "source_id": "readiness",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "validator-engine/json-rpc-server-utils.cpp",
         "symbol": "handle_readyz",
         "source_sha256": "a5a506cab788e11d733361590c054b24f64172ab4aae707475e795a5388eee6e"
@@ -332,7 +332,7 @@
     {
       "source_id": "guard",
       "anchor": {
-        "commit": "0a3aafda25ad9fa9d93be45156e2df2838646085",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "tools/node-health-monitor/crates/health-core/src/guard.rs",
         "symbol": "pub struct Guard",
         "source_sha256": "af0d2076e3a8f20711df99a643381e9b28dc2529e9dc437fc5b8c593829b197f"
@@ -361,7 +361,7 @@
     {
       "source_id": "witness",
       "anchor": {
-        "commit": "8699a3e554dcacdd0fd0194de4c823b1b34c6e20",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "tools/node-health-monitor/crates/health-services/src/witness.rs",
         "symbol": "pub struct WitnessCache",
         "source_sha256": "fc0566012d7b9c1856bd1dae6f9b2a6c28d2c2042defa717b955d7dddd8ec7aa"
@@ -399,7 +399,7 @@
     {
       "source_id": "diagnostic_trace",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "validator/consensus/trace-collector.cpp",
         "symbol": "TraceCollectorImpl",
         "source_sha256": "ad1b57c61a6c20a7e8a95a344c03637f0364f1d80950cdbfb67dec29e460b2ac"
@@ -428,10 +428,10 @@
     {
       "source_id": "validator_stats",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "validator-engine/validator-engine.cpp",
         "symbol": "run_control_query(tos::tos_api::engine_validator_getStats",
-        "source_sha256": "a5bef5b5f82ec81ae0e63d6408c1bbebc73f0384a8c48fffa1800594c7c60f9d"
+        "source_sha256": "155d9c21ada97257f895c1e5728faadf28047edefb5bb1d5aaa918af667e9a1e"
       },
       "interface": "engine.validator.getStats authenticated control protocol",
       "grammar": "provider allowlist and payload schemas not frozen",
@@ -457,10 +457,10 @@
     {
       "source_id": "host_cgroup",
       "anchor": {
-        "commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
         "symbol": "sample_cgroup",
-        "source_sha256": "a97b158acd9841c6237413abe749120a998c710cb366ec6405a128a56fa66335"
+        "source_sha256": "24e6efd3feba2fc3f40bb836e20fd43790c64103a26368e05bd68b69a3ac451d"
       },
       "interface": "configured cgroup-v2 fixed files through at most 16 descendant levels",
       "grammar": "source-envelope.schema.json host_cgroup payload; exact decimal u64; effective finite ancestor minimum",
@@ -493,10 +493,10 @@
     {
       "source_id": "native_core",
       "anchor": {
-        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+        "commit": "b422696d1071f8ddfc776aae80858137142647ab",
         "path": "metrics/native-core-snapshot.h",
         "symbol": "NativeCorePublisher",
-        "source_sha256": "8149ec2fdf4a441db08cb85e048dae97fa53629f460608be7b7c57ed38edb7bf"
+        "source_sha256": "1b03e058a285232fc8c2d16ec8ca40aa473f8b4f8ae0c010f0fc0510f233cbfb"
       },
       "interface": "GET /health-snapshot (loopback, configured alias and network only)",
       "grammar": "source-envelope.schema.json native_core payload; exact decimal u64; exact bytes/hash/generation paired to immutable OpenMetrics body",
