@@ -8,6 +8,7 @@ const int sr::ack = 0x50516132;
 const int sr::retry = 0x50516632;
 const int sr::return_retry = 0x50517433;
 const int sr::return_ack = 0x50516133;
+const int sr::retry_fees = 0x50517834;
 const int sr::excess = 0x50517833;
 const int sr::domain = 1 << 63;
 const int sr::error = 180;
@@ -86,9 +87,13 @@ int sr::bounce_matches(slice body, int prefix) inline {
 }
 int sr::reserved_op(int op) inline {
   return (op == sr::relay) | (op == sr::ok) | (op == sr::error_reply)
-    | (op == sr::return_retry) | (op == sr::return_ack) | (op == sr::excess) | (op == sr::result) | (op == sr::ack) | (op == sr::retry) | (op == 0xffffffff);
+    | (op == sr::return_retry) | (op == sr::return_ack) | (op == sr::retry_fees) | (op == sr::excess) | (op == sr::result) | (op == sr::ack) | (op == sr::retry) | (op == 0xffffffff);
 }
 
 ;; Current-price bounds, never a default deposit or an authorization.
 int sr::retry_value() inline { return sr::add(sr::control_value(), sr::callback_value()); }
 int sr::automatic_value() inline { return sr::add(sr::mul(3, sr::control_value()), sr::retry_value()); }
+;; Elector processing, a possible old fee-credit refund, and the terminal fee
+;; receipt are distinct from the controller's forwarding transaction.
+int sr::return_retry_value() inline { return sr::add(sr::automatic_value(), sr::mul(3, sr::control_value())); }
+int sr::wait_retry_value() inline { return sr::add(sr::return_retry_value(), sr::control_value()); }

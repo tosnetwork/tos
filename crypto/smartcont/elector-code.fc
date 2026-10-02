@@ -120,6 +120,7 @@ cell relay_return_body(cell result, int budget, slice payer) inline_ref {
   save_relay_returns(count, book);
 }
 () retry_relay_return(slice sender, int msg_value, int query, slice cs) impure inline_ref {
+  int token = cs~load_uint(160);
   int hash = cs~load_uint(256);
   slice payer = cs~load_msg_addr(); cs.end_parse();
   var (wc, controller) = parse_std_addr(sender);
@@ -131,12 +132,13 @@ cell relay_return_body(cell result, int budget, slice payer) inline_ref {
   if (query < expected_query) {
     ;; A later admitted request can overtake an earlier paid repair message.
     raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
-    send_raw_message(sr::message(payer, 0, begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 128);
+    send_raw_message(sr::message(sender, 0, begin_cell().store_uint(sr::retry_fees, 32)
+      .store_uint(query, 64).store_uint(token, 160).end_cell(), false), 144);
     return ();
   }
   throw_unless(sr::error, (query == expected_query) & (hash == expected_hash));
   int budget = sr::automatic_value();
-  throw_unless(sr::error, msg_value >= sr::add(budget, sr::mul(2, sr::control_value())));
+  throw_unless(sr::error, msg_value >= sr::return_retry_value());
   set_gas_limit(sr::control_gas);
   int payment = phase == 1 ? sr::add(amount, fee_credit) : 0;
   raw_reserve(sr::sub(sr::sub(pair_first(get_balance()), msg_value), payment), 0);
@@ -145,11 +147,12 @@ cell relay_return_body(cell result, int budget, slice payer) inline_ref {
     save_relay_returns(count, book);
     if (fee_credit) {
       send_raw_message(sr::message(previous_payer, fee_credit,
-        begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 1);
+        begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 17);
     }
-    send_raw_message(sr::message(sender, sr::add(amount, budget), relay_return_body(result, budget, payer), true), 1);
+    send_raw_message(sr::message(sender, sr::add(amount, budget), relay_return_body(result, budget, payer), true), 17);
   }
-  send_raw_message(sr::message(payer, 0, begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 128);
+  send_raw_message(sr::message(sender, 0, begin_cell().store_uint(sr::retry_fees, 32)
+    .store_uint(query, 64).store_uint(token, 160).end_cell(), false), 144);
 }
 () acknowledge_relay_return(slice sender, int msg_value, int query, slice cs) impure inline_ref {
   int hash = cs~load_uint(256);
@@ -832,7 +835,7 @@ int recovery_upgrade_format() impure method_id(1667) {
   return recover::metadata_tag;
 }
 
-int relay_return_upgrade_format() impure method_id(1668) { return 0x52525633; }
+int relay_return_upgrade_format() impure method_id(1668) { return 0x52525634; }
 
 int upgrade_ready() method_id {
   var (elect, credits, past, _, _, _) = load_data();
@@ -875,9 +878,9 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
     ;; this fixed entry point cannot take over a nonempty recovery history.
     set_c3(code.begin_parse().bless());
     int target_format = recovery_upgrade_format();
-    int return_format = has_relay_returns ? relay_return_upgrade_format() : 0x52525633;
+    int return_format = has_relay_returns ? relay_return_upgrade_format() : 0x52525634;
     set_c3(previous_code);
-    throw_unless(67, (target_format == recover::metadata_tag) & (return_format == 0x52525633));
+    throw_unless(67, (target_format == recover::metadata_tag) & (return_format == 0x52525634));
     ;; The compatibility entry point is a read-only declaration, not a migration.
     throw_unless(67, cell_hash(get_data()) == cell_hash(preserved_data));
     throw_unless(67, cell_hash(recovery_upgrade_actions()) == cell_hash(preserved_actions));

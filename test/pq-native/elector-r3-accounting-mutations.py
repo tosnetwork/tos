@@ -94,8 +94,8 @@ MUTANTS = [
         C,
         [
             (
-                "send_raw_message(sr::message(sr::address(owner), sr::add(principal, callback), payment, false), 1);",
-                "send_raw_message(sr::message(sr::address(owner), sr::add(principal, callback), payment, false), 3);",
+                "send_raw_message(sr::message(sr::address(owner), sr::add(principal, callback), payment, false), 17);",
+                "send_raw_message(sr::message(sr::address(owner), sr::add(principal, callback), payment, false), 19);",
             )
         ],
         BASE + "a_real_controller_payment_action_failure_keeps_ready_debt_for_public_retry",
@@ -208,12 +208,160 @@ MUTANTS = [
         E,
         [
             (
-                "int return_format = has_relay_returns ? relay_return_upgrade_format() : 0x52525633;",
-                "int return_format = 0x52525633;",
+                "int return_format = has_relay_returns ? relay_return_upgrade_format() : 0x52525634;",
+                "int return_format = 0x52525634;",
             )
         ],
         BASE + "r3_r4::return_tombstones_require_the_new_upgrade_capability_and_survive_cutover",
         "return capability must reject incompatible code",
+    ),
+    (
+        "obsolete-return-wire-capability",
+        E,
+        [
+            (
+                "(return_format == 0x52525634)",
+                "((return_format == 0x52525634) | (return_format == 0x52525633))",
+            )
+        ],
+        BASE + "r3_r4::return_tombstones_require_the_new_upgrade_capability_and_survive_cutover",
+        "return capability must reject incompatible code",
+    ),
+    (
+        "wait-retry-budget",
+        "crypto/smartcont/validator-controller-v1.fc",
+        [
+            (
+                "throw_unless(sr::error, msg_value >= sr::wait_retry_value());",
+                "throw_unless(sr::error, true);",
+            )
+        ],
+        "security_audit::relay::r3_accounting::review_underfunded_wait_retry_is_refused_before_forwarding_and_exact_budget_completes",
+        "insufficient WAIT budget must be refused at the controller",
+    ),
+    (
+        "retry-fee-flight-overwrite",
+        "crypto/smartcont/validator-controller-v1.fc",
+        [("throw_unless(sr::error, ctl::retry_fees.null?());", "throw_unless(sr::error, true);")],
+        "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+        "one flight cannot overwrite another payer",
+    ),
+    (
+        "ignored-retry-bounce",
+        "crypto/smartcont/validator-controller-v1.fc",
+        [
+            (
+                "return ctl::receive_retry_fees(sender, msg_value, query, token);\n    }",
+                "return ();\n    }",
+            )
+        ],
+        "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+        "native retry bounce must refund its bound caller",
+    ),
+    (
+        "retry-fee-wrong-sender",
+        "crypto/smartcont/validator-controller-v1.fc",
+        [("(address != elector) | (query != expected_query)", "false | (query != expected_query)")],
+        "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+        "only the pinned elector may settle retry fees",
+    ),
+    (
+        "retry-fee-stale-token",
+        "crypto/smartcont/validator-controller-v1.fc",
+        [("(token != expected_token)", "false")],
+        "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+        "duplicate bounce cannot refund twice or pay the latest caller",
+    ),
+    (
+        "retry-fee-wrong-payer",
+        "crypto/smartcont/validator-controller-v1.fc",
+        [
+            (
+                ".store_uint(elector, 256).store_coins(delivery).store_slice(fee_payer).end_cell());",
+                ".store_uint(elector, 256).store_coins(delivery).store_slice(sr::address(owner)).end_cell());",
+            )
+        ],
+        "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+        "native retry bounce must refund its bound caller",
+    ),
+    (
+        "retry-fee-not-cleared",
+        "crypto/smartcont/validator-controller-v1.fc",
+        [("ctl::save_retry_fees(null());", "ctl::save_retry_fees(ctl::retry_fees);")],
+        "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+        "settled retry fees clear their ownership record",
+    ),
+    (
+        "cleanup-erases-retry-fees",
+        "crypto/smartcont/validator-controller-v1.fc",
+        [
+            (
+                "ctl::save_relay(sequence, null());",
+                "ctl::save_relay(sequence, null());\n  ctl::save_retry_fees(null());",
+            )
+        ],
+        "security_audit::relay::r3_accounting::review_delayed_native_retry_bounce_keeps_its_payer_after_business_cleanup_and_a_later_query",
+        "business cleanup must preserve another message",
+    ),
+    (
+        "controller-retry-action-does-not-bounce",
+        C,
+        [
+            (
+                ".store_uint(hash, 256).store_slice(fee_payer).end_cell(), true), 17);",
+                ".store_uint(hash, 256).store_slice(fee_payer).end_cell(), true), 1);",
+            )
+        ],
+        ACCOUNTING + "review_controller_retry_action_failure_returns_current_payer_funds",
+        "controller retry action failure must bounce current payer funds",
+    ),
+    (
+        "elector-retry-action-does-not-bounce",
+        "crypto/smartcont/elector-code.fc",
+        [
+            (
+                "relay_return_body(result, budget, payer), true), 17);",
+                "relay_return_body(result, budget, payer), true), 1);",
+            )
+        ],
+        "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+        "native elector failure must bounce the paid retry",
+    ),
+    (
+        "success-loss-ignored",
+        "crypto/smartcont/nominator-pool/pool.fc",
+        [
+            (
+                "int loss = sr::sub(sr::sub(forwarded, accepted), business_return);",
+                "int loss = success ? 0 : sr::sub(sr::sub(forwarded, accepted), business_return);",
+            )
+        ],
+        "security_audit::relay::r3_accounting::review_successful_confirmation_bounce_accounts_for_validator_loss",
+        "success-path transport loss must be reflected in validator capital",
+    ),
+    (
+        "success-loss-charged-twice",
+        "crypto/smartcont/nominator-pool/pool.fc",
+        [
+            (
+                "if (matched) {\n                throw_unless(sr::error, accepted ==",
+                "if (matched | (~ last.null?())) {\n                throw_unless(sr::error, accepted ==",
+            )
+        ],
+        "security_audit::relay::r3_accounting::review_successful_confirmation_bounce_accounts_for_validator_loss",
+        "repeated successful receipt cannot charge loss twice",
+    ),
+    (
+        "validator-topup-graceful",
+        "crypto/smartcont/nominator-pool/pool.fc",
+        [
+            (
+                "if (loss > validator_amount) {",
+                "if (false) {",
+            )
+        ],
+        "security_audit::relay::r3_accounting::review_insufficient_validator_capital_waits_for_explicit_topup_then_records_loss_once",
+        "insufficient capital refunds current callback fees",
     ),
 ]
 

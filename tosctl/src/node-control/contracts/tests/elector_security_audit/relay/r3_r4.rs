@@ -379,9 +379,11 @@ fn return_tombstones_require_the_new_upgrade_capability_and_survive_cutover() {
         .get_data()
         .expect("data");
     let temp = tempfile::tempdir().expect("target fixture");
-    for declaration in
-        ["", "int relay_return_upgrade_format() impure method_id(1668) { return 0; }"]
-    {
+    for declaration in [
+        "",
+        "int relay_return_upgrade_format() impure method_id(1668) { return 0; }",
+        "int relay_return_upgrade_format() impure method_id(1668) { return 0x52525633; }",
+    ] {
         let source = temp.path().join("incompatible-return-history.fc");
         std::fs::write(&source, format!("() recv_internal(int value, cell msg, slice body) impure {{ return (); }}\nint recovery_upgrade_format() impure method_id(1667) {{ return 0x52435632; }}\n{declaration}\n")).expect("target source");
         let target = tos_sandbox::compile_func_with_stdlib(&[source]).expect("target compiles");

@@ -50,7 +50,9 @@ jobs:
   sandboxes:
     name: contract-sandboxes
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # A cold native/vector build takes about 50 minutes before mutation tests.
+    # Leave time for both complete assertion-sensitivity suites.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
         with:
@@ -182,7 +184,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r3-accounting-${{ github.sha }}
-          path: r3-mutations
+          path: |
+            r3-mutations
+            mutations.json
+            mutations-logs
           if-no-files-found: warn
           retention-days: 30
 

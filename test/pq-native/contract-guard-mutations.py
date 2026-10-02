@@ -460,6 +460,7 @@ def run(binary, filter_, log):
         text=True,
         env={
             **os.environ,
+            "TOS_ROOT": str(ROOT),
             "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", str(ROOT / "tosctl/src/target")),
         },
     )

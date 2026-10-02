@@ -1,6 +1,52 @@
 //! Explicit debt and paid retry controls. Every hop uses the native action phase.
 use super::*;
 
+const RETRY_FEES: u32 = 0x50517834;
+
+fn retry_flight(f: &Fixture) -> Option<chain_block::Cell> {
+    let result = f
+        .chain
+        .blockchain
+        .run_get_method(&f.validator.address, "relay_retry_fees", vec![])
+        .expect("retry flight");
+    assert_eq!(result.exit_code, 0);
+    result.stack[0].as_cell().ok().cloned()
+}
+
+fn wait_budget(f: &Fixture) -> u64 {
+    let result = f
+        .chain
+        .blockchain
+        .run_get_method(&f.validator.address, "relay_retry_value", vec![])
+        .expect("current retry budget");
+    assert_eq!(result.exit_code, 0);
+    result.stack[0].as_integer().expect("budget").to_string().parse().expect("coins")
+}
+
+// Deliver the independent terminal fee receipt as its own real transaction.
+// Business messages stay queued, and caller refunds remain visible to assertions.
+fn settle_retry_fees(f: &mut Fixture, messages: Vec<Message>) -> Vec<Message> {
+    let mut remaining = Vec::new();
+    for message in messages {
+        if op(&message) == RETRY_FEES {
+            assert_eq!(message.dst().as_ref(), Some(&f.validator.address));
+            let (tx, refunds) = step(&mut f.chain, message);
+            successful(&tx, "settle this retry flight's actual fees");
+            remaining.extend(refunds);
+        } else {
+            remaining.push(message);
+        }
+    }
+    remaining
+}
+
+fn pool_capital(f: &Fixture) -> u128 {
+    let result =
+        f.chain.blockchain.run_get_method(&f.pool, "get_pool_data", vec![]).expect("pool data");
+    assert_eq!(result.exit_code, 0);
+    result.stack[3].as_integer().expect("validator amount").to_string().parse().expect("coins")
+}
+
 pub(super) fn fund(f: &mut Fixture, amount: u64, permission: u64) {
     let request = funding_request(f, amount, permission);
     let (tx, out) = step(&mut f.chain, request);
@@ -347,6 +393,7 @@ fn preaccounting_abort_bounces_then_retries_actual_cash_once() {
     let request = only_to(out, &f.chain.elector);
     let (tx, out) = step(&mut f.chain, request);
     successful(&tx, "in-flight retry returns only caller fees");
+    let out = settle_retry_fees(&mut f, out);
     assert!(
         out.iter().all(|m| m.dst().as_ref() != Some(&f.validator.address)),
         "in-flight retry must not repeat business payment"
@@ -383,6 +430,7 @@ fn preaccounting_abort_bounces_then_retries_actual_cash_once() {
     let request = only_to(out, &f.chain.elector);
     let (tx, out) = step(&mut f.chain, request);
     successful(&tx, "elector retries returned funds");
+    let out = settle_retry_fees(&mut f, out);
     let repaired = only_to(out, &f.validator.address);
     let (tx, out) = step(&mut f.chain, repaired);
     successful(&tx, "controller accounts recovered cash");
@@ -466,6 +514,7 @@ fn delayed_control_fees_return_after_a_later_query_without_changing_its_debt() {
         let before = balance_of(&f.chain, &recipient);
         let (tx, out) = step(&mut f.chain, message);
         successful(&tx, label);
+        let out = settle_retry_fees(&mut f, out);
         assert!(
             value(&only_to(out, f.operator.address())) > 0,
             "late control fees return to their payer"
@@ -586,6 +635,7 @@ fn a_second_bounce_preserves_previous_payer_credit_and_acknowledged_returns_neve
     let replay = request.clone();
     let (tx, out) = step(&mut f.chain, request);
     successful(&tx, "first paid redelivery");
+    let out = settle_retry_fees(&mut f, out);
     let delivery = only_to(out, &f.validator.address);
     let returned = abort_result_and_deliver_native_bounce(&mut f, delivery);
     assert!(returned > debt, "the second bounce includes unspent retry fees");
@@ -597,6 +647,7 @@ fn a_second_bounce_preserves_previous_payer_credit_and_acknowledged_returns_neve
     let request = only_to(out, &f.chain.elector);
     let (tx, out) = step(&mut f.chain, request);
     successful(&tx, "refund old payer credit separately");
+    let out = settle_retry_fees(&mut f, out);
     assert_eq!(
         out.iter().find(|m| m.dst().as_ref() == Some(f.operator.address())).map(value),
         Some(returned - debt),
@@ -612,6 +663,7 @@ fn a_second_bounce_preserves_previous_payer_credit_and_acknowledged_returns_neve
     successful(&tx, "acknowledge return");
     let (tx, out) = step(&mut f.chain, replay);
     successful(&tx, "replayed paid retry refunds only its own inbound fees");
+    let out = settle_retry_fees(&mut f, out);
     assert!(
         out.iter().all(|m| m.dst().as_ref() != Some(&f.validator.address)),
         "an acknowledged return cannot pay principal again"
@@ -689,4 +741,435 @@ fn operating_withdrawal_is_explicit_bounded_and_cannot_touch_pending_debt() {
     let (tx, _) = step(&mut f.chain, withdrawal);
     successful(&tx, "release remaining operating funds after cleanup");
     assert_eq!(funds(&f), 0);
+}
+
+#[test]
+fn review_underfunded_wait_retry_is_refused_before_forwarding_and_exact_budget_completes() {
+    let mut f = Fixture::new("review-wait-threshold");
+    let at = f.election + 1;
+    let stake = begin(&mut f, 1, at);
+    let (tx, out) = step(&mut f.chain, stake);
+    successful(&tx, "elector emits original refusal");
+    let refund = only_to(out, &f.validator.address);
+    abort_result_and_deliver_native_bounce(&mut f, refund);
+    let pending = f.pending();
+    let caller = f.chain.blockchain.treasury("review-budget-payer", 1_000 * TOS).expect("caller");
+    let body = retry(&f, DOMAIN | 1).body().expect("body").clone().into_cell().expect("body cell");
+    let budget = wait_budget(&f);
+    assert!(budget > 3 * TOS);
+    for amount in [3 * TOS, budget - 1] {
+        let before = balance_of(&f.chain, &f.validator.address);
+        let request = caller.build_message(&f.validator.address, amount, true, Some(body.clone()));
+        let (tx, out) = step(&mut f.chain, request);
+        assert!(
+            tx.read_description().expect("description").is_aborted(),
+            "R3 review: insufficient WAIT budget must be refused at the controller"
+        );
+        assert_eq!(f.pending(), pending);
+        assert!(retry_flight(&f).is_none());
+        assert_eq!(balance_of(&f.chain, &f.validator.address), before);
+        let bounced = only_to(out, caller.address());
+        assert!(bounced.is_bounced());
+        assert!(value(&bounced) > 0, "rejected inlet returns actual remaining caller cash");
+    }
+    let request = caller.build_message(&f.validator.address, budget, true, Some(body));
+    let (tx, out) = step(&mut f.chain, request);
+    successful(&tx, "exact WAIT threshold forwards the complete downstream budget");
+    assert!(retry_flight(&f).is_some());
+    let repair = only_to(out, &f.chain.elector);
+    let (tx, out) = step(&mut f.chain, repair);
+    successful(&tx, "exact controller threshold must also satisfy elector");
+    let out = settle_retry_fees(&mut f, out);
+    assert!(
+        value(&only_to(out.clone(), caller.address())) > 0,
+        "terminal retry fees go to the actual caller"
+    );
+    assert!(retry_flight(&f).is_none());
+    let reply = only_to(out, &f.validator.address);
+    finish_reply(&mut f, reply, 0);
+}
+
+#[test]
+fn review_controller_retry_action_failure_returns_current_payer_funds() {
+    let mut f = Fixture::new("review-controller-retry-action");
+    let at = f.election + 1;
+    let stake = begin(&mut f, 1, at);
+    let (tx, out) = step(&mut f.chain, stake);
+    successful(&tx, "initial refusal");
+    let refund = only_to(out, &f.validator.address);
+    abort_result_and_deliver_native_bounce(&mut f, refund);
+    let pending = f.pending();
+    let protected = balance_of(&f.chain, &f.validator.address);
+    let caller =
+        f.chain.blockchain.treasury("review-controller-action-payer", 1_000 * TOS).expect("caller");
+    let body = retry(&f, DOMAIN | 1).body().expect("body").clone().into_cell().expect("cell");
+    f.chain
+        .blockchain
+        .set_size_limits_config(chain_block::SizeLimitsConfig {
+            max_msg_cells: 0,
+            ..chain_block::SizeLimitsConfig::default()
+        })
+        .expect("action limit");
+    let request = caller.build_message(&f.validator.address, 20 * TOS, true, Some(body.clone()));
+    let (tx, out) = step(&mut f.chain, request);
+    action_failure(&tx);
+    assert!(
+        out.iter()
+            .any(|m| m.is_bounced() && m.dst().as_ref() == Some(caller.address()) && value(m) > 0),
+        "controller retry action failure must bounce current payer funds"
+    );
+    assert_eq!(f.pending(), pending, "failed forwarding preserves business debt");
+    assert!(retry_flight(&f).is_none(), "failed forwarding rolls back fee ownership");
+    assert_eq!(
+        balance_of(&f.chain, &f.validator.address),
+        protected,
+        "failed forwarding preserves unrelated assets"
+    );
+    f.chain
+        .blockchain
+        .set_size_limits_config(chain_block::SizeLimitsConfig::default())
+        .expect("restore action limit");
+    let request = caller.build_message(&f.validator.address, 20 * TOS, true, Some(body));
+    let (tx, out) = step(&mut f.chain, request);
+    successful(&tx, "retry after action repair");
+    let repair = only_to(out, &f.chain.elector);
+    let (tx, out) = step(&mut f.chain, repair);
+    successful(&tx, "elector redelivery after repaired controller action");
+    let out = settle_retry_fees(&mut f, out);
+    let reply = only_to(out, &f.validator.address);
+    finish_reply(&mut f, reply, 0);
+}
+
+#[test]
+fn review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller() {
+    for failure in ["compute", "action"] {
+        let mut f = Fixture::new(failure);
+        let at = f.election + 1;
+        let stake = begin(&mut f, 1, at);
+        let (tx, out) = step(&mut f.chain, stake);
+        successful(&tx, "initial refusal");
+        let refund = only_to(out, &f.validator.address);
+        abort_result_and_deliver_native_bounce(&mut f, refund);
+        let pending = f.pending();
+        let before = balance_of(&f.chain, &f.validator.address);
+        let caller =
+            f.chain.blockchain.treasury("review-bounce-payer", 1_000 * TOS).expect("caller");
+        let other =
+            f.chain.blockchain.treasury("review-other-payer", 1_000 * TOS).expect("other caller");
+        let body = retry(&f, DOMAIN | 1).body().expect("body").clone().into_cell().expect("cell");
+        let request =
+            caller.build_message(&f.validator.address, 20 * TOS, true, Some(body.clone()));
+        let (tx, out) = step(&mut f.chain, request);
+        successful(&tx, "valid paid WAIT repair");
+        let repair = only_to(out, &f.chain.elector);
+        let flight = retry_flight(&f);
+        let mut fields = SliceData::load_cell(flight.clone().expect("flight")).expect("fields");
+        let query = fields.get_next_u64().expect("query");
+        let token = fields.get_next_bits(160).expect("token");
+        let mut forged = BuilderData::new();
+        forged.append_u32(RETRY_FEES).expect("op");
+        forged.append_u64(query).expect("query");
+        forged.append_raw(&token, 160).expect("token");
+        let fake = other.build_message(
+            &f.validator.address,
+            TOS,
+            true,
+            Some(forged.into_cell().expect("body")),
+        );
+        let (tx, out) = step(&mut f.chain, fake);
+        successful(&tx, "untrusted terminal receipt cannot settle a fee flight");
+        assert!(out.is_empty(), "only the pinned elector may settle retry fees");
+        assert_eq!(retry_flight(&f), flight, "terminal receipt sender binding");
+        let protected = balance_of(&f.chain, &f.validator.address);
+        assert!(protected >= before);
+        let competing =
+            other.build_message(&f.validator.address, 20 * TOS, true, Some(body.clone()));
+        let (tx, out) = step(&mut f.chain, competing);
+        assert!(
+            tx.read_description().expect("description").is_aborted(),
+            "one flight cannot overwrite another payer"
+        );
+        assert!(only_to(out, other.address()).is_bounced());
+        assert_eq!(retry_flight(&f), flight);
+        let prices = raw_parameter(&f.chain, 20).expect("prices");
+        let special = raw_parameter(&f.chain, 31).expect("special accounts");
+        if failure == "compute" {
+            let mut restricted = f.chain.blockchain.config_params().gas_prices(true).expect("gas");
+            restricted.gas_limit = 1_000;
+            restricted.special_gas_limit = 1_000;
+            set_contract_parameter(
+                &mut f.chain,
+                20,
+                restricted.write_to_new_cell().expect("prices").into_cell().expect("cell"),
+            );
+        } else {
+            // The Rust native executor exempts special accounts from message-size
+            // limits. Temporarily remove that exemption to exercise an actual
+            // elector action failure; do not count a compute refusal as one.
+            let mut ordinary = BuilderData::new();
+            ordinary.append_bit_zero().expect("empty special-account dictionary");
+            set_contract_parameter(&mut f.chain, 31, ordinary.into_cell().expect("cell"));
+            f.chain
+                .blockchain
+                .set_size_limits_config(chain_block::SizeLimitsConfig {
+                    max_msg_cells: 0,
+                    ..chain_block::SizeLimitsConfig::default()
+                })
+                .expect("action limit");
+        }
+        let (tx, out) = step(&mut f.chain, repair);
+        if failure == "compute" {
+            assert!(tx.read_description().expect("description").is_aborted());
+            match tx.read_description().expect("description") {
+                TransactionDescr::Ordinary(d) => match d.compute_ph {
+                    TrComputePhase::Vm(vm) => assert_eq!(vm.exit_code, -14),
+                    _ => panic!("native OOG"),
+                },
+                _ => panic!("ordinary transaction"),
+            }
+        } else {
+            action_failure(&tx);
+        }
+        assert!(
+            out.iter().any(|m| m.is_bounced()),
+            "native elector failure must bounce the paid retry"
+        );
+        let bounce = only_to(out, &f.validator.address);
+        assert!(bounce.is_bounced());
+        let duplicate = bounce.clone();
+        set_contract_parameter(&mut f.chain, 20, prices);
+        set_contract_parameter(&mut f.chain, 31, special);
+        f.chain
+            .blockchain
+            .set_size_limits_config(chain_block::SizeLimitsConfig::default())
+            .expect("restore action limit");
+        let (tx, out) = step(&mut f.chain, bounce);
+        successful(&tx, "native retry bounce is classified by its exact flight");
+        assert!(
+            out.iter().any(|m| m.dst().as_ref() == Some(caller.address()) && value(m) > 0),
+            "R3 review: native retry bounce must refund its bound caller"
+        );
+        assert_eq!(f.pending(), pending, "fee failure cannot change business debt");
+        assert!(retry_flight(&f).is_none(), "settled retry fees clear their ownership record");
+        assert_eq!(
+            balance_of(&f.chain, &f.validator.address),
+            protected,
+            "retry bounce cannot retain current fees or spend unrelated assets"
+        );
+        let request = other.build_message(&f.validator.address, 20 * TOS, true, Some(body));
+        let (tx, out) = step(&mut f.chain, request);
+        successful(&tx, "second caller starts a distinct fee flight");
+        let repair = only_to(out, &f.chain.elector);
+        let next = retry_flight(&f);
+        assert_ne!(next, flight);
+        let (tx, out) = step(&mut f.chain, duplicate);
+        successful(&tx, "late duplicate cannot settle a later flight");
+        assert!(out.is_empty(), "duplicate bounce cannot refund twice or pay the latest caller");
+        assert_eq!(retry_flight(&f), next, "flight identity rejects a stale bounce");
+        let (tx, out) = step(&mut f.chain, repair);
+        successful(&tx, "normal repair after the first failure");
+        let out = settle_retry_fees(&mut f, out);
+        assert!(value(&only_to(out.clone(), other.address())) > 0);
+        let result = only_to(out, &f.validator.address);
+        finish_reply(&mut f, result, 0);
+    }
+}
+
+fn reduced_success_payment(f: &mut Fixture) -> (Message, u128) {
+    let at = f.election;
+    let stake = begin(f, 1, at);
+    let (tx, out) = step(&mut f.chain, stake);
+    successful(&tx, "elector accepts the real stake");
+    let result = only_to(out, &f.validator.address);
+    assert_eq!(op(&result), 0x50516f32);
+    let gross = value(&result);
+    let recovered = abort_result_and_deliver_native_bounce(f, result);
+    assert!(recovered < gross);
+    let request = retry(f, DOMAIN | 1);
+    let (tx, out) = step(&mut f.chain, request);
+    successful(&tx, "fund successful confirmation recovery");
+    let repair = only_to(out, &f.chain.elector);
+    let (tx, out) = step(&mut f.chain, repair);
+    successful(&tx, "redeliver successful confirmation");
+    let out = settle_retry_fees(f, out);
+    let (tx, out) = step(&mut f.chain, only_to(out, &f.validator.address));
+    successful(&tx, "record actual reduced confirmation");
+    let (tx, out) = step(&mut f.chain, only_to(out, &f.validator.address));
+    successful(&tx, "pay actual reduced confirmation");
+    (only_to(out, &f.pool), gross - recovered)
+}
+
+fn pool_nominators(f: &Fixture) -> chain_block::HashmapE {
+    let account = f.chain.blockchain.get_account(&f.pool).expect("pool");
+    let mut data = SliceData::load_cell(account.get_data().expect("data")).expect("slice");
+    data.get_next_byte().expect("state");
+    data.get_next_u16().expect("count");
+    next_coins(&mut data);
+    next_coins(&mut data);
+    data.checked_drain_reference().expect("config");
+    next_dictionary(&mut data, 256)
+}
+
+fn deposit_review_nominator(f: &mut Fixture) {
+    f.chain.blockchain.set_workchain(0);
+    let nominator =
+        f.chain.blockchain.treasury("review-nominator", 50_000 * TOS).expect("nominator");
+    f.chain.blockchain.set_workchain(-1);
+    let mut body = BuilderData::new();
+    body.append_u32(0).expect("text");
+    body.append_u8(b'd').expect("deposit");
+    let message =
+        nominator.build_message(&f.pool, 4_902 * TOS, true, Some(body.into_cell().expect("body")));
+    let (tx, _) = step(&mut f.chain, message);
+    successful(&tx, "real nominator principal before transport loss");
+    f.nominator = Some(nominator);
+}
+
+#[test]
+fn review_successful_confirmation_bounce_accounts_for_validator_loss() {
+    let mut f = Fixture::new("review-success-bounce-loss");
+    deposit_review_nominator(&mut f);
+    let nominators = pool_nominators(&f);
+    let before = pool_capital(&f);
+    let (payment, loss) = reduced_success_payment(&mut f);
+    let (tx, out) = step(&mut f.chain, payment);
+    successful(&tx, "pool accepts successful but reduced return");
+    assert_eq!(f.pool_state(), 2);
+    let ack = only_to(out, &f.validator.address);
+    assert_eq!(
+        pool_capital(&f),
+        before - loss,
+        "R3 review: success-path transport loss must be reflected in validator capital"
+    );
+    assert_eq!(pool_nominators(&f), nominators, "transport loss cannot be charged to nominators");
+    let request = retry(&f, DOMAIN | 1);
+    let (tx, out) = step(&mut f.chain, request);
+    successful(&tx, "repeat paid receipt before cleanup");
+    let payment = only_to(out, &f.pool);
+    let (tx, _) = step(&mut f.chain, payment);
+    successful(&tx, "pool repairs receipt acknowledgment only");
+    assert_eq!(
+        pool_capital(&f),
+        before - loss,
+        "repeated successful receipt cannot charge loss twice"
+    );
+    assert_eq!(pool_nominators(&f), nominators);
+    let (tx, _) = step(&mut f.chain, ack);
+    successful(&tx, "cleanup");
+}
+
+#[test]
+fn review_insufficient_validator_capital_waits_for_explicit_topup_then_records_loss_once() {
+    let mut f = Fixture::new("review-low-validator-capital");
+    deposit_review_nominator(&mut f);
+    let nominators = pool_nominators(&f);
+    let (payment, loss) = reduced_success_payment(&mut f);
+    assert!(loss > 0);
+    // A pre-existing undercapitalized ledger is a boundary fixture, not a
+    // claim that this profile can burn 5,100 TOS in a single confirmation.
+    let mut account = f.chain.blockchain.get_account(&f.pool).expect("pool").clone();
+    let mut fields = SliceData::load_cell(account.get_data().expect("data")).expect("slice");
+    let mut data = BuilderData::new();
+    data.append_u8(fields.get_next_byte().expect("state")).expect("state");
+    data.append_u16(fields.get_next_u16().expect("count")).expect("count");
+    Coins::new(next_coins(&mut fields) as u64).write_to(&mut data).expect("sent");
+    next_coins(&mut fields);
+    Coins::new((loss - 1) as u64).write_to(&mut data).expect("capital below loss");
+    data.checked_append_references_and_data(&fields).expect("unchanged claims");
+    let original = data.into_cell().expect("data");
+    account.set_data(original.clone());
+    f.chain.blockchain.set_account(f.pool.clone(), account);
+    let (tx, out) = step(&mut f.chain, payment);
+    successful(
+        &tx,
+        "insufficient capital refunds current callback fees without committing receipt",
+    );
+    assert!(
+        out.iter().any(|m| m.dst().as_ref() == Some(f.operator.address()) && value(m) > 0),
+        "insufficient capital must return current caller fees"
+    );
+    assert!(
+        out.iter().all(|m| m.dst().as_ref() != Some(&f.validator.address)),
+        "no accounting ACK before validator topup"
+    );
+    assert_eq!(f.pool_state(), 1);
+    assert_eq!(
+        f.chain.blockchain.get_account(&f.pool).expect("pool").get_data().expect("data"),
+        original
+    );
+    assert_eq!(pool_nominators(&f), nominators);
+    let mut deposit = BuilderData::new();
+    deposit.append_u32(4).expect("validator deposit");
+    deposit.append_u64(0).expect("query");
+    let message =
+        f.operator.build_message(&f.pool, 3 * TOS, true, Some(deposit.into_cell().expect("body")));
+    let (tx, _) = step(&mut f.chain, message);
+    successful(&tx, "explicit validator topup while result accounting is pending");
+    let funded = pool_capital(&f);
+    assert!(funded >= loss);
+    let request = retry(&f, DOMAIN | 1);
+    let (tx, out) = step(&mut f.chain, request);
+    successful(&tx, "PAID receipt retry after validator topup");
+    let (tx, out) = step(&mut f.chain, only_to(out, &f.pool));
+    successful(&tx, "topup allows original loss accounting");
+    assert_eq!(f.pool_state(), 2);
+    assert_eq!(pool_capital(&f), funded - loss, "topup covers the recorded loss exactly once");
+    assert_eq!(
+        pool_nominators(&f),
+        nominators,
+        "undercapitalized recovery preserves all nominator claims"
+    );
+    let (tx, _) = step(&mut f.chain, only_to(out, &f.validator.address));
+    successful(&tx, "clear original debt after repaired accounting");
+    assert!(f.pending().is_none());
+}
+
+#[test]
+fn review_delayed_native_retry_bounce_keeps_its_payer_after_business_cleanup_and_a_later_query() {
+    let mut f = Fixture::new("review-delayed-retry-bounce");
+    let at = f.election + 1;
+    let stake = begin(&mut f, 1, at);
+    let (tx, out) = step(&mut f.chain, stake);
+    successful(&tx, "elector records first refusal");
+    let original_result = only_to(out, &f.validator.address);
+    let caller = f.chain.blockchain.treasury("review-old-fee-payer", 1_000 * TOS).expect("caller");
+    let body = retry(&f, DOMAIN | 1).body().expect("body").clone().into_cell().expect("cell");
+    let request = caller.build_message(&f.validator.address, 20 * TOS, true, Some(body));
+    let (tx, out) = step(&mut f.chain, request);
+    successful(&tx, "paid retry while original result is in flight");
+    let repair = only_to(out, &f.chain.elector);
+    let old_flight = retry_flight(&f);
+    let prices = raw_parameter(&f.chain, 20).expect("prices");
+    let mut restricted = f.chain.blockchain.config_params().gas_prices(true).expect("gas");
+    restricted.special_gas_limit = 1_000;
+    set_contract_parameter(
+        &mut f.chain,
+        20,
+        restricted.write_to_new_cell().expect("prices").into_cell().expect("cell"),
+    );
+    let (tx, out) = step(&mut f.chain, repair);
+    assert!(tx.read_description().expect("description").is_aborted());
+    let late_bounce = only_to(out, &f.validator.address);
+    assert!(late_bounce.is_bounced());
+    set_contract_parameter(&mut f.chain, 20, prices);
+    finish_reply(&mut f, original_result, 0);
+    assert_eq!(
+        retry_flight(&f),
+        old_flight,
+        "business cleanup must preserve another message's fee ownership"
+    );
+    let second = begin(&mut f, 2, at);
+    let waiting = f.pending();
+    let (tx, out) = step(&mut f.chain, late_bounce);
+    successful(&tx, "late native bounce settles the old independent fee flight");
+    assert!(
+        value(&only_to(out, caller.address())) > 0,
+        "late native retry fees must return to the original payer"
+    );
+    assert!(retry_flight(&f).is_none());
+    assert_eq!(f.pending(), waiting, "late bounce cannot modify a later business debt");
+    let (tx, out) = step(&mut f.chain, second);
+    successful(&tx, "second business request");
+    let result = only_to(out, &f.validator.address);
+    finish_reply(&mut f, result, 0);
 }

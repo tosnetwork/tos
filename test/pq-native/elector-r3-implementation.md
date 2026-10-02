@@ -19,8 +19,14 @@ Each transaction reserves its unrelated assets using its current balance and
 inbound value, not a balance snapshot saved by an earlier transaction. For a
 READY payment, the floor is `balance - inbound - D`. Both pool types reserve
 `balance - K` before callback processing. The multi pool charges any actual
-refusal/bounce shortfall to the validator's recorded capital, rather than
-nominators. The single pool has one principal owner and no separate nominator
+transport shortfall to the validator's recorded capital, including a successful
+confirmation reduced by a bounce. On the first matched receipt only, the loss
+is `forwarded - accepted - actual business return`, using checked subtraction.
+A repeated receipt never charges it again. If recorded validator capital cannot
+cover this loss, the pool returns the current callback fees, retains the pending
+receipt and its business cash, and sends no accounting ACK. An explicit validator
+deposit (existing opcode `4`) followed by a PAID receipt retry completes the
+same accounting. Nominator balances are unchanged throughout. The single pool has one principal owner and no separate nominator
 ledger; a real transport loss reduces that owner's returned cash.
 
 Root-signed controller action kind `4` explicitly deposits operating money and
@@ -61,6 +67,31 @@ that a late wakeup can refund its own fees after cleanup or a later query.
 Delayed pool ACKs, elector delivery ACKs and return retries likewise refund
 their own inbound fee value without modifying a later obligation.
 
+A WAIT retry uses a shared current-price end-to-end fee bound. With `C` the
+control allowance and `A` the automatic delivery budget, elector requires
+`E = A + 3C` and controller requires `W = E + C`. The controller forwards exactly
+`E`, immediately returns any excess, and rejects a smaller payment before
+forwarding. `relay_retry_value` reports the current bound for the pending phase.
+These are computed fee limits, not default operating deposits or authorization.
+
+One independent controller fee-flight record retains query, transaction-LT
+token, pinned elector, forwarded fees and actual payer. Concurrent WAIT retries
+cannot overwrite it. The token is encoded in the 160 bits following opcode and
+query, so it survives the native 256-bit bounce prefix. Elector returns terminal
+fee change to the controller with that identity. A native retry bounce or a
+matching terminal receipt refunds only the current returned cash to the stored
+payer and clears the record atomically. Sender/token mismatches and duplicates
+cannot settle another flight. Business cleanup leaves this record intact: even
+a late bounce after a later business query belongs to its original payer.
+The LT is a fee-flight identity, not another business query counter.
+
+Mandatory retry forwarding and terminal refund actions request native bounce on
+action failure. Actual compute and action failures therefore return executable
+retry funds to the bound payer in the tested profile, without converting them
+to business debt or operating funds. A terminal receipt still requires an active,
+executable controller and sufficient current fees; the support limits below
+apply to this additional hop as well.
+
 The retained grant is an explicit operating reservation, not unused inlet fees.
 There is one optional automatic wakeup per recorded result. Suppressing its
 action cannot erase READY. Every subsequent recovery attempt requires its own
@@ -88,8 +119,9 @@ The book grows with distinct historical controllers, not rounds or retry
 count; it is not globally constant, TTL-pruned or automatically deleted.
 Unadmitted requests cannot allocate return history. Outstanding returns block
 elector cutover. A nonempty history requires the target's read-only capability
-method `1668` to return `0x52525633`, in addition to the existing recovery
-capability. Code probes must preserve data and actions, and installation hooks
+method `1668` to return `0x52525634`, in addition to the existing recovery
+capability. The earlier `0x52525633` target is rejected because it lacks the
+fee-flight wire format. Code probes must preserve data and actions, and installation hooks
 must preserve both histories. Compatible same-code installation is tested by
 its actual success reply, not merely unchanged code bytes.
 
@@ -105,7 +137,8 @@ The matching contract set changes these payloads:
 | Elector result `0x50516f32` / `0x50516532` | 160-bit bounce commitment after query; delivery budget and payer reference after full hash |
 | Controller result `0x50516232` | historical actual business return `D`, current callback budget `K`, payer reference |
 | Pool ACK `0x50516132` | payer reference |
-| Return retry `0x50517433` | same query, full hash, caller address |
+| Return retry `0x50517433` | same query, 160-bit fee-flight token, full hash, caller address |
+| Retry fee receipt `0x50517834` | same query and 160-bit fee-flight token |
 | Delivery ACK `0x50516133` | same query, full hash, payer reference |
 | Fee change `0x50517833` | query |
 
@@ -156,9 +189,32 @@ Public recovery remains controller opcode `0x50516632` plus the original uint64
 query, funded by its caller. In WAIT it asks the pinned elector to repair a
 RETURNED transfer. In READY it pays the recorded debt. In PAID it repairs the
 pool's bookkeeping/ACK using only new fees. Read the actual state and current
-fee configuration; do not create a new query to repair an old debt.
+fee configuration and `relay_retry_value`; do not create a new query to repair
+an old debt. `relay_retry_fees` exposes the independent outstanding fee-flight
+record. Wait for that flight to settle before sending another WAIT retry. If the
+multi pool lacks validator capital for a recorded loss, explicitly top it up with
+the existing validator deposit before retrying the PAID receipt.
 
 ## Validation and support boundary
+
+The independent review at memo commit `75c0ee8d` reproduced two omissions on
+`20cfe78d0`: a rejected 3 TOS retry retained 2.82599 TOS in the controller, and
+a 1 TOS successful confirmation reduced to 0.98 TOS did not debit validator
+capital. The unmodified review patch was first run against that source and both
+target assertions failed. The current suite keeps those boundaries and adds
+exact-threshold acceptance, real compute/action bounces, caller/sender/token
+binding, delayed cleanup, replay, nominator isolation and insufficient-capital
+topup recovery. The result index records the baseline and repaired evidence.
+
+The elector action-failure test temporarily removes config 31's special-account
+exemption before imposing a native message-size action limit. Without this,
+the Rust native executor exempts elector from that limit, so the test would not
+exercise the claimed failure. It asserts successful compute and failed action,
+then restores the original config before executing the real bounce. The
+controller action-failure test needs no special-account override. The low
+validator-capital test seeds only that ledger boundary; it does not claim a
+normal confirmation can consume the fixture's entire 5,100 TOS capital.
+
 
 `elector-r3-accounting-mutations.py` requires a passing baseline, successful
 native compilation, the named failing assertion, and a passing restored source
@@ -173,6 +229,19 @@ python3 test/pq-native/elector-r3-accounting-mutations.py --out r3-mutations
 scripts/check-nominator-pool-code-lock.sh
 scripts/check-single-nominator-code-lock.sh
 ```
+
+The relevant final-head CI gates cover these changed boundaries:
+
+| Boundary | Evidence and gate |
+| --- | --- |
+| Controller/elector/pool compute, action, bounce and authorization | Contract sandbox suites, 32 R3 mutations and 45 existing guard mutations in `contract-sandboxes` |
+| Frozen code, SDK address and node recognition | Pool code locks in Source hygiene; sandbox artifact/address assertions; native account-recognition tests and strict native build |
+| Elector upgrade and zerostate bytes | Native recorded-answer gate plus upgrade refusal/preservation sandbox tests |
+| Rust/Python/native source and test wiring | Rust format, lint/hygiene, Source guards and Branch PQ chain / Python |
+
+Final-head CI is separate from the local result index. The legacy mutation
+runner now supplies its own `TOS_ROOT`, so a developer's `~/tos` fallback cannot
+hide an absent CI root. Both mutation suites retain their logs in CI artifacts.
 
 The gas envelopes are 200,000 for controller verification, 50,000 per control
 hop and 200,000 for the pool callback, with current-price forwarding allowances

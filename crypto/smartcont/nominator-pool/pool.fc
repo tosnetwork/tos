@@ -576,10 +576,16 @@ cell distribute_share(int reward, cell nominators) inline_ref {
             if (matched) {
                 throw_unless(sr::error, accepted == (success ? sr::sub(forwarded, sr::confirmation) : 0));
                 throw_unless(sr::error, (success == 0) | (reason == 0));
-                ifnot (success) {
-                    int loss = sr::sub(forwarded, business_return);
-                    validator_amount = sr::sub(validator_amount, loss);
+                int loss = sr::sub(sr::sub(forwarded, accepted), business_return);
+                if (loss > validator_amount) {
+                    ;; Keep the original receipt pending for an explicit validator
+                    ;; topup. Its business cash is already here; return only this
+                    ;; caller's callback budget and never charge nominators.
+                    send_raw_message(sr::message(payer, 0,
+                      begin_cell().store_uint(sr::excess, 32).store_uint(query_id, 64).end_cell(), false), 128);
+                    return ();
                 }
+                validator_amount = sr::sub(validator_amount, loss);
                 state = success ? 2 : 0; stake_amount_sent = accepted;
                 pool::save_protocol(last, null());
                 pool::ack(controller_address, query_id, hash, payer);

@@ -1433,6 +1433,7 @@ fn root_cannot_forge_reserved_callbacks_even_without_a_pending_request() {
         (0x50517433, 1),
         (0x50516133, 1),
         (0x50517833, 1),
+        (0x50517834, 1),
         (0x47657424, DOMAIN | 1),
     ] {
         let mut body = BuilderData::new();

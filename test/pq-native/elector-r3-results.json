@@ -1,63 +1,63 @@
 {
-  "base_commit": "d2eafb154a89f4fadc15993d0543e2df373ab2f5",
-  "scope": "R3 implementation in this working tree; source hashes below bind the tested code, not the base commit. No deployment or migration.",
+  "base_commit": "20cfe78d0791b8cf0bf691cc86249857a0cafc35",
+  "scope": "R3 repair including the F1/F2 review follow-up in this tree; source hashes bind the tested code, not the base commit. No deployment or migration.",
   "design_record": "tosnetwork/memo@9153173c, sections 15-16; minimal return-record/bounce recovery authorized by the operator on 2026-10-02",
   "source_sha256": {
-    ".github/workflows/contract-sandboxes.yml": "92e69d5c9d985e085d3fa4761a1af6c3e72e7c027e995d0a31aec212cb1c44df",
+    ".github/workflows/contract-sandboxes.yml": "6e6ba2f9f06804df52735bb939eba1f2842b833d4f9857f3573cb58bd912aac7",
     "crypto/pq/controller-tool.cpp": "fdc257d223bfcb9839a4a36a8d8f8e76d700a57230b22833c225dca20ca2c459",
-    "crypto/smartcont/elector-code.fc": "32384ad9c74e707dfbf2638d1dd48e10bb353ff804791e48ef057adf445d0e43",
-    "crypto/smartcont/nominator-pool/pool.fc": "9c0c627f169d40c5cfe7b1ae93bbbf83200b15fdd89f66b78f96439eb05a35b6",
+    "crypto/smartcont/elector-code.fc": "8379399fee9ec162ca30cd2587e36c12245bf600946e7f89ef117b837ad6bf58",
+    "crypto/smartcont/nominator-pool/pool.fc": "52e9b5e62a177e1988cb02ecf402fdcac3a141bf5f89c26289a48ea48e6ef173",
     "crypto/smartcont/single-nominator-pool/single-nominator-code.fc": "fba31ce9b4264fd8117001df0e07b1fdbc063a97a7a1980a65862e3538d8988c",
     "crypto/smartcont/single-nominator-pool/single-nominator-code.hex": "c1bab146c2e96652d840bba128bb45eb54750bb6efe1d4dbda2b19f7d1cff3e3",
-    "crypto/smartcont/stake-relay.fc": "3e40b12a7d12f37e0eb169b00988beae0c9ee1c3757af1aa0d4428d0afba6566",
-    "crypto/smartcont/validator-controller-v1.fc": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8",
-    "scripts/build-nominator-pool-v1.sh": "0934dc437524ad631d91e85e415684457a4c4f2c1995468d3336198e2e5ef9bc",
+    "crypto/smartcont/stake-relay.fc": "e9da8e0131349d5877105db81b7dda04ab08698fe17016046390d4ca3ad161fa",
+    "crypto/smartcont/validator-controller-v1.fc": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77",
+    "scripts/build-nominator-pool-v1.sh": "44a86b4b26921f0977cca181862089d92d2b0990ae1c9c94cd1646180a7b8b32",
     "scripts/check-single-nominator-code-lock.sh": "aaf07cdc856cb5af71cfe786de7bcd61e0aa7cbfdd5561298afdc5f7cf4bc5f3",
-    "test/pq-native/contract-guard-mutations.py": "ecbf064da3321d40173dbd96fdf3cb251a085d3ca3d2db132f78fffaa4f60b95",
-    "test/pq-native/elector-r3-accounting-mutations.py": "6f62d478a27f30936d01c5582475fb72e9a94921a5bd57e67053606528293ae1",
-    "test/pq-native/elector-r3-implementation.md": "f577d97c4d9c467b852478413cc9fd0e3a08fadb6b2ac7c036f6db77a8dc6de2",
+    "test/pq-native/contract-guard-mutations.py": "b93f5f5f72aec344fd641af88f5ba4d3a9399beb8ab653c2752e33d259b53c2f",
+    "test/pq-native/elector-r3-accounting-mutations.py": "7bb3c1f388c4d4a10ac9737ed4bf6fce91215dddcdc1ad3c54dd23f0e1ca80d6",
+    "test/pq-native/elector-r3-implementation.md": "6e899de9a43347684fdecb302bdb7e54713ff4fe7dc6ba91522368485cea8847",
     "test/pq-native/elector-review-followup.md": "565043aa1bf596a5cfd05b34a3056ebdd9cc097f1d126ecbc4841e0935eef5d9",
     "test/pq-native/elector-security-audit.md": "7ea620de957f53ff4e7e58f8228add9fedec043701f0dc4a31aa091ebf527075",
-    "test/regression-tests.ans": "893ba9515e64b89911b5b7d8637792955ddbd6d27bf3e6ae6b5cea8b3d0d243b",
-    "test/test-account-model-detection.cpp": "36f24e28b54f934d0ab988a68183d3389f259ace10a555b6919a9f24bcc16667",
+    "test/regression-tests.ans": "86b5ab74533d4d20fe840d754ace6d7c39ae8a9d7b07bf547409e85b5dea5eda",
+    "test/test-account-model-detection.cpp": "f7f94e35f74d725ec98a202fc109b07e3f9b922ad0ecc4841af80ae2a3390ef0",
     "test/tostester/src/tostester/pq_election_fixture.py": "d56ae019c7dd849426f4043d1de3487f8394ec8933857f5af51affdada6ed6bb",
     "test/tostester/tests/tostester/test_pq_election_fixture.py": "720e8a8d18df1cf13ff270161387424b2cac9e2636208d44ca7bd6099f615c2e",
     "tosctl/src/node-control/contracts/examples/controller_operating_payload.rs": "d269f39ab63055b5045f58dc32652fdd48b98c92954ba9ebd0acf91fc6e1f181",
-    "tosctl/src/node-control/contracts/src/contract_codes.rs": "f40ca17673e286db4f029b50eebbce508a17fa33bfc456bfc5bf923c7ced3a0c",
+    "tosctl/src/node-control/contracts/src/contract_codes.rs": "03748fa00084103dd79a07ee0835d6042111e407d4d349f911b77f7e319c4269",
     "tosctl/src/node-control/contracts/src/lib.rs": "9dd8a93e24e48abfe3a915d4c94ada2f37d386fff7cde99d352abf41d70f41c5",
     "tosctl/src/node-control/contracts/src/nominator/single_nominator.rs": "a251c8bd649cff6d7df5313658d4aafa841b0f1400a01aaf8fdbefedb0b6b93a",
-    "tosctl/src/node-control/contracts/src/nominator_pool/pool_impl.rs": "4212470cb5960ba13471d87fc816165da6395b201b0ab9a0ea2b530c5c4e9e58",
+    "tosctl/src/node-control/contracts/src/nominator_pool/pool_impl.rs": "892b2e73b1757012e71d76a17658719577febd9616e4a7af358b578148709924",
     "tosctl/src/node-control/contracts/src/validator_controller.rs": "27628d701aae5c521972f4ded2a22139addcf1343b7ee98d246e2dbcf10fd01f",
     "tosctl/src/node-control/contracts/tests/elector_sandbox.rs": "8ca7066a9ea2c1eb63b32f7327ee883b15fd24b11363eb6cf6ab1d8c330540bc",
     "tosctl/src/node-control/contracts/tests/elector_security_audit/mod.rs": "5d28e08a8e803346427780adec9257fab54be076cb7965cf653bcaaa7dcd41e8",
-    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay.rs": "9df8e31305d1adc63e964c1683e038439d527faa009fc5a0a68b7d43f128842d",
-    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_accounting.rs": "62ffa7aab62ea949e945fff40c725a9e4fed9f8a15733a41b57b8c661faa99d6",
-    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_r4.rs": "461734d2c1babb36ee71fbcd4568aab61e3d66a83f9d3700682dae4fd7746859",
+    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay.rs": "12ee6f018b8bec8af632163b8ccfa3ac90931cd9220f400d0544e7653500f304",
+    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_accounting.rs": "169749afb5c3b030b97ee289b58047e3a5f1eb70c1fe345e0f34e85056bffb8d",
+    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_r4.rs": "7cd21054cafb19ced03928d81c8246cedfd3df1b4956f5d7c89189a126a2289e",
     "tosctl/src/node-control/contracts/tests/nominator_pool_sandbox.rs": "534408c8e1b2d4d1ed6828037fb4f26719286300fd697eebc29c4bcb412d9be5",
     "tosctl/src/node-control/contracts/tests/validator_controller_sandbox.rs": "4775b0ce84d23a810ec501f00e218010a1d24bf450fe9832e669e877f09d46e9",
-    "validator-engine/json-rpc-account-model.cpp": "8d5a486f6653dd3d17bf8f723ec0ae1dda01a5a9537fb99155bd2964198b9083"
+    "validator-engine/json-rpc-account-model.cpp": "0d8879c41d2d9a0a3749e4e67b8c3a520d0865725f5938a380b0e42ceea43808"
   },
   "compiled_contracts": {
     "controller": {
       "source": "crypto/smartcont/validator-controller-v1.fc",
-      "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8",
-      "bytes": 5334,
-      "boc_sha256": "6516882160e737e6a4d1e0d11d9c373fe1c5a71cd3b127339875d6fd6dc904d3",
-      "cell_hash": "8239415b0231975e7712814886bca38c1328bb3967f33fd227d77a01f1070d72"
+      "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77",
+      "bytes": 6285,
+      "boc_sha256": "d29c738495e51bd3ee199d393e3dd7f6f779ec032938d90bb7d0889a8ab10a6d",
+      "cell_hash": "bbba20d7c7395657f253cde7962f4d4f4108a89c450627928e4686195bc000f2"
     },
     "elector": {
       "source": "crypto/smartcont/elector-code.fc",
-      "source_sha256": "32384ad9c74e707dfbf2638d1dd48e10bb353ff804791e48ef057adf445d0e43",
-      "bytes": 8268,
-      "boc_sha256": "dc296ed87775784df434ff7c085b96d099644a8bec51a011a4374a49fb6c4d84",
-      "cell_hash": "dd56f2ec1c08e90fbee979eace3002be3170f2bbf6aed88a1018e1c7f713a2e0"
+      "source_sha256": "8379399fee9ec162ca30cd2587e36c12245bf600946e7f89ef117b837ad6bf58",
+      "bytes": 8242,
+      "boc_sha256": "3c67685c99da57dd1756b3170de74de7370a599403b50d9538202a72ec654c1a",
+      "cell_hash": "db1752ed1038937dd5de08c5a4f451121418db98187401c4304f7f6b7bf0b467"
     },
     "multi-pool": {
       "source": "crypto/smartcont/nominator-pool/pool.fc",
-      "source_sha256": "9c0c627f169d40c5cfe7b1ae93bbbf83200b15fdd89f66b78f96439eb05a35b6",
-      "bytes": 5525,
-      "boc_sha256": "95fe9e26b8347f9f655c1fac95a904ed8546565fd96022e2836a1db1ffd306a8",
-      "cell_hash": "357d8360e5b990dd1e5a49ac606b48e08f1345389779e4f763df39dc7172c000"
+      "source_sha256": "52e9b5e62a177e1988cb02ecf402fdcac3a141bf5f89c26289a48ea48e6ef173",
+      "bytes": 5594,
+      "boc_sha256": "d61856d05e3e8acc3e7f289d5c935d369a1359ea849fcc62190fed292d16a069",
+      "cell_hash": "adda03faacad57caa588755aad14f6a99b4632f65e0b2a8f301990fde5b3a2be"
     },
     "single-pool": {
       "source": "crypto/smartcont/single-nominator-pool/single-nominator-code.fc",
@@ -71,255 +71,15 @@
     "contracts_and_elections": {
       "command": "TOS_ROOT=$PWD cargo test --manifest-path tosctl/src/Cargo.toml -p contracts -p elections --locked --no-fail-fast",
       "exit": 0,
-      "passed": 714,
+      "passed": 720,
       "ignored": 5,
       "groups": 45
     },
     "r3_accounting": {
-      "command": "R3_FEE_TRACE=1 cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test elector_sandbox security_audit::relay::r3_accounting -- --nocapture",
+      "command": "R3_FEE_TRACE=1 cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test elector_sandbox security_audit::relay -- --nocapture",
       "exit": 0,
-      "passed": 9
-    },
-    "mutations": {
-      "command": "python3 test/pq-native/elector-r3-accounting-mutations.py --out ../r3-final-mutations",
-      "exit": 0,
-      "killed": 18,
-      "controls": [
-        {
-          "name": "withdrawal-sender",
-          "test": "security_audit::relay::r3_accounting::operating_withdrawal_is_explicit_bounded_and_cannot_touch_pending_debt",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "withdrawal sender binding",
-          "failure": [
-            "withdrawal sender binding"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "withdrawal-ledger",
-          "test": "security_audit::relay::r3_accounting::operating_withdrawal_is_explicit_bounded_and_cannot_touch_pending_debt",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "withdrawal debits operating ledger",
-          "failure": [
-            "assertion `left == right` failed: withdrawal debits operating ledger"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "withdrawal-pending-guard",
-          "test": "security_audit::relay::r3_accounting::operating_withdrawal_is_explicit_bounded_and_cannot_touch_pending_debt",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "pending debt blocks withdrawal",
-          "failure": [
-            "pending debt blocks withdrawal"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "returned-fees-to-wrong-payer",
-          "test": "security_audit::relay::r3_accounting::a_second_bounce_preserves_previous_payer_credit_and_acknowledged_returns_never_repay",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "returned retry fees belong to the previous payer",
-          "failure": [
-            "assertion `left == right` failed: returned retry fees belong to the previous payer"
-          ],
-          "source_sha256": "32384ad9c74e707dfbf2638d1dd48e10bb353ff804791e48ef057adf445d0e43"
-        },
-        {
-          "name": "expired-sponsorship",
-          "test": "security_audit::relay::r3_accounting::sponsorship_requires_separate_explicit_funds_and_permission",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "R3: expired cannot authorize sponsorship",
-          "failure": [
-            "R3: expired cannot authorize sponsorship"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "missing-per-request-cap",
-          "test": "security_audit::relay::r3_accounting::sponsorship_requires_separate_explicit_funds_and_permission",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "R3: cap cannot authorize sponsorship",
-          "failure": [
-            "R3: cap cannot authorize sponsorship"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "late-self-kick-retains-fees",
-          "test": "security_audit::relay::r3_accounting::current_fee_change_goes_to_inlet_and_retry_payers_not_principal_owner",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "late automatic wakeup refunds its original sponsor",
-          "failure": [
-            "late automatic wakeup refunds its original sponsor: Ok(Ordinary(TransactionDescrOrdinary { credit_first: true, storage_ph: Some(TrStoragePhase { storage_fees_collected: Coins(0), storage_fees_due: None, status_change: Unchanged }), credit_ph: Some(TrCreditPhase { due_fees_collected: None, credit: CurrencyCollection { coins: Coins(2617920000), other: ExtraCurrencyCollection(HashmapE { bit_len: 32, data: None }) } }), compute_ph: Vm(TrComputePhaseVm { success: false, msg_state_used: false, account_activated: false, gas_fees: Coins(32810000), gas_used: VarUInteger7(3281), gas_limit: VarUInteger7(261792), gas_credit: None, mode: 0, exit_code: 180, exit_arg: None, vm_steps: 103, vm_init_state_hash: 0000000000000000000000000000000000000000000000000000000000000000, vm_final_state_hash: 0000000000000000000000000000000000000000000000000000000000000000 }), action: None, aborted: true, bounce: None, destroyed: false }))"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "optional-business-payment",
-          "test": "security_audit::relay::a_real_controller_payment_action_failure_keeps_ready_debt_for_public_retry",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "failed payment action must retain READY",
-          "failure": [
-            "assertion `left == right` failed: failed payment action must retain READY, not publish PAID"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "balance-derived-debt",
-          "test": "security_audit::relay::r3_accounting::explicit_debt_does_not_sweep_aborted_nonbounce_credit",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "owner payment is actual debt",
-          "failure": [
-            "assertion `left == right` failed: R3: owner payment is actual debt plus classified callback budget, never surplus"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "missing-transaction-floor",
-          "test": "security_audit::relay::r3_accounting::explicit_debt_does_not_sweep_aborted_nonbounce_credit",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "transaction floor protects unrelated cash",
-          "failure": [
-            "assertion `left == right` failed: R3: the transaction floor protects unrelated cash from every fee refund"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "callback-sweeps-principal",
-          "test": "security_audit::relay::r3_accounting::current_fee_change_goes_to_inlet_and_retry_payers_not_principal_owner",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "callback budget must not enter pool principal",
-          "failure": [
-            "assertion `left == right` failed: callback budget must not enter pool principal or rewards"
-          ],
-          "source_sha256": "9c0c627f169d40c5cfe7b1ae93bbbf83200b15fdd89f66b78f96439eb05a35b6"
-        },
-        {
-          "name": "unreserved-operating-grant",
-          "test": "security_audit::relay::r3_accounting::sponsorship_requires_separate_explicit_funds_and_permission",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "one finite operating grant is reserved",
-          "failure": [
-            "one finite operating grant is reserved"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "unbound-deposit-sender",
-          "test": "security_audit::relay::r3_accounting::operating_deposits_bind_sender_nonce_expiry_and_preserve_existing_debt",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "sender binding must reject",
-          "failure": [
-            "sender binding must reject"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "replayable-deposit",
-          "test": "security_audit::relay::r3_accounting::operating_deposits_bind_sender_nonce_expiry_and_preserve_existing_debt",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "nonce prevents a second credit",
-          "failure": [
-            "nonce prevents a second credit"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "expired-deposit-authority",
-          "test": "security_audit::relay::r3_accounting::operating_deposits_bind_sender_nonce_expiry_and_preserve_existing_debt",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "expired root authority",
-          "failure": [
-            "expired root authority"
-          ],
-          "source_sha256": "310a4201844a946abc19d374f4a1e4eec18bf96bda0f51cfbc3395321c1203c8"
-        },
-        {
-          "name": "resend-in-flight",
-          "test": "security_audit::relay::r3_accounting::preaccounting_abort_bounces_then_retries_actual_cash_once",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "in-flight retry must not repeat business payment",
-          "failure": [
-            "in-flight retry must not repeat business payment"
-          ],
-          "source_sha256": "32384ad9c74e707dfbf2638d1dd48e10bb353ff804791e48ef057adf445d0e43"
-        },
-        {
-          "name": "restore-gross-instead-of-cash",
-          "test": "security_audit::relay::r3_accounting::preaccounting_abort_bounces_then_retries_actual_cash_once",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "gross is never fabricated after a bounce",
-          "failure": [
-            "assertion `left == right` failed: gross is never fabricated after a bounce"
-          ],
-          "source_sha256": "32384ad9c74e707dfbf2638d1dd48e10bb353ff804791e48ef057adf445d0e43"
-        },
-        {
-          "name": "erase-return-capability",
-          "test": "security_audit::relay::r3_r4::return_tombstones_require_the_new_upgrade_capability_and_survive_cutover",
-          "killed": true,
-          "baseline": 0,
-          "mutant": 101,
-          "restored": 0,
-          "assertion": "return capability must reject incompatible code",
-          "failure": [
-            "return capability must reject incompatible code"
-          ],
-          "source_sha256": "32384ad9c74e707dfbf2638d1dd48e10bb353ff804791e48ef057adf445d0e43"
-        }
-      ]
+      "passed": 47,
+      "r3_accounting_tests": 15
     },
     "native_recorded_answers": {
       "command": "scripts/check-regression-db.sh . ../native-build",
@@ -346,7 +106,7 @@
         "scripts/check-single-nominator-code-lock.sh"
       ],
       "exit": 0,
-      "compiler": "fresh native CMake build; also checked with existing local FunC/Fift"
+      "compiler": "Fresh native CMake FunC/Fift build."
     },
     "format": {
       "command": "make -C tosctl/src fmt-check",
@@ -359,7 +119,709 @@
       "failed": 1,
       "limitation": "pending-finality-retry-policy-source requires GNU grep -P; macOS BSD grep rejects that option. Linux source-guard CI is the external gate."
     },
-    "github_ci": "Separate final-head gate on the existing PR #125. Local results above do not assert remote CI success."
+    "github_ci": "Separate final-head gate on the existing PR #125. Local results above do not assert remote CI success.",
+    "r3_mutations": {
+      "command": "env -u TOS_ROOT python3 test/pq-native/elector-r3-accounting-mutations.py --out r3-review-mutations",
+      "exit": 0,
+      "compiled_mutants": 32,
+      "killed": 32,
+      "results": [
+        {
+          "name": "withdrawal-sender",
+          "test": "security_audit::relay::r3_accounting::operating_withdrawal_is_explicit_bounded_and_cannot_touch_pending_debt",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "withdrawal sender binding",
+          "failure": [
+            "withdrawal sender binding"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "withdrawal-ledger",
+          "test": "security_audit::relay::r3_accounting::operating_withdrawal_is_explicit_bounded_and_cannot_touch_pending_debt",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "withdrawal debits operating ledger",
+          "failure": [
+            "assertion `left == right` failed: withdrawal debits operating ledger"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "withdrawal-pending-guard",
+          "test": "security_audit::relay::r3_accounting::operating_withdrawal_is_explicit_bounded_and_cannot_touch_pending_debt",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "pending debt blocks withdrawal",
+          "failure": [
+            "pending debt blocks withdrawal"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "returned-fees-to-wrong-payer",
+          "test": "security_audit::relay::r3_accounting::a_second_bounce_preserves_previous_payer_credit_and_acknowledged_returns_never_repay",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "returned retry fees belong to the previous payer",
+          "failure": [
+            "assertion `left == right` failed: returned retry fees belong to the previous payer"
+          ],
+          "source_sha256": "8379399fee9ec162ca30cd2587e36c12245bf600946e7f89ef117b837ad6bf58"
+        },
+        {
+          "name": "expired-sponsorship",
+          "test": "security_audit::relay::r3_accounting::sponsorship_requires_separate_explicit_funds_and_permission",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "R3: expired cannot authorize sponsorship",
+          "failure": [
+            "R3: expired cannot authorize sponsorship"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "missing-per-request-cap",
+          "test": "security_audit::relay::r3_accounting::sponsorship_requires_separate_explicit_funds_and_permission",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "R3: cap cannot authorize sponsorship",
+          "failure": [
+            "R3: cap cannot authorize sponsorship"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "late-self-kick-retains-fees",
+          "test": "security_audit::relay::r3_accounting::current_fee_change_goes_to_inlet_and_retry_payers_not_principal_owner",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "late automatic wakeup refunds its original sponsor",
+          "failure": [
+            "late automatic wakeup refunds its original sponsor: Ok(Ordinary(TransactionDescrOrdinary { credit_first: true, storage_ph: Some(TrStoragePhase { storage_fees_collected: Coins(0), storage_fees_due: None, status_change: Unchanged }), credit_ph: Some(TrCreditPhase { due_fees_collected: None, credit: CurrencyCollection { coins: Coins(2617920000), other: ExtraCurrencyCollection(HashmapE { bit_len: 32, data: None }) } }), compute_ph: Vm(TrComputePhaseVm { success: false, msg_state_used: false, account_activated: false, gas_fees: Coins(34460000), gas_used: VarUInteger7(3446), gas_limit: VarUInteger7(261792), gas_credit: None, mode: 0, exit_code: 180, exit_arg: None, vm_steps: 112, vm_init_state_hash: 0000000000000000000000000000000000000000000000000000000000000000, vm_final_state_hash: 0000000000000000000000000000000000000000000000000000000000000000 }), action: None, aborted: true, bounce: None, destroyed: false }))"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "optional-business-payment",
+          "test": "security_audit::relay::a_real_controller_payment_action_failure_keeps_ready_debt_for_public_retry",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "failed payment action must retain READY",
+          "failure": [
+            "assertion `left == right` failed: failed payment action must retain READY, not publish PAID"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "balance-derived-debt",
+          "test": "security_audit::relay::r3_accounting::explicit_debt_does_not_sweep_aborted_nonbounce_credit",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "owner payment is actual debt",
+          "failure": [
+            "assertion `left == right` failed: R3: owner payment is actual debt plus classified callback budget, never surplus"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "missing-transaction-floor",
+          "test": "security_audit::relay::r3_accounting::explicit_debt_does_not_sweep_aborted_nonbounce_credit",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "transaction floor protects unrelated cash",
+          "failure": [
+            "assertion `left == right` failed: R3: the transaction floor protects unrelated cash from every fee refund"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "callback-sweeps-principal",
+          "test": "security_audit::relay::r3_accounting::current_fee_change_goes_to_inlet_and_retry_payers_not_principal_owner",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "callback budget must not enter pool principal",
+          "failure": [
+            "assertion `left == right` failed: callback budget must not enter pool principal or rewards"
+          ],
+          "source_sha256": "52e9b5e62a177e1988cb02ecf402fdcac3a141bf5f89c26289a48ea48e6ef173"
+        },
+        {
+          "name": "unreserved-operating-grant",
+          "test": "security_audit::relay::r3_accounting::sponsorship_requires_separate_explicit_funds_and_permission",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "one finite operating grant is reserved",
+          "failure": [
+            "one finite operating grant is reserved"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "unbound-deposit-sender",
+          "test": "security_audit::relay::r3_accounting::operating_deposits_bind_sender_nonce_expiry_and_preserve_existing_debt",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "sender binding must reject",
+          "failure": [
+            "sender binding must reject"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "replayable-deposit",
+          "test": "security_audit::relay::r3_accounting::operating_deposits_bind_sender_nonce_expiry_and_preserve_existing_debt",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "nonce prevents a second credit",
+          "failure": [
+            "nonce prevents a second credit"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "expired-deposit-authority",
+          "test": "security_audit::relay::r3_accounting::operating_deposits_bind_sender_nonce_expiry_and_preserve_existing_debt",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "expired root authority",
+          "failure": [
+            "expired root authority"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "resend-in-flight",
+          "test": "security_audit::relay::r3_accounting::preaccounting_abort_bounces_then_retries_actual_cash_once",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "in-flight retry must not repeat business payment",
+          "failure": [
+            "in-flight retry must not repeat business payment"
+          ],
+          "source_sha256": "8379399fee9ec162ca30cd2587e36c12245bf600946e7f89ef117b837ad6bf58"
+        },
+        {
+          "name": "restore-gross-instead-of-cash",
+          "test": "security_audit::relay::r3_accounting::preaccounting_abort_bounces_then_retries_actual_cash_once",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "gross is never fabricated after a bounce",
+          "failure": [
+            "assertion `left == right` failed: gross is never fabricated after a bounce"
+          ],
+          "source_sha256": "8379399fee9ec162ca30cd2587e36c12245bf600946e7f89ef117b837ad6bf58"
+        },
+        {
+          "name": "erase-return-capability",
+          "test": "security_audit::relay::r3_r4::return_tombstones_require_the_new_upgrade_capability_and_survive_cutover",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "return capability must reject incompatible code",
+          "failure": [
+            "return capability must reject incompatible code"
+          ],
+          "source_sha256": "8379399fee9ec162ca30cd2587e36c12245bf600946e7f89ef117b837ad6bf58"
+        },
+        {
+          "name": "obsolete-return-wire-capability",
+          "test": "security_audit::relay::r3_r4::return_tombstones_require_the_new_upgrade_capability_and_survive_cutover",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "return capability must reject incompatible code",
+          "failure": [
+            "return capability must reject incompatible code"
+          ],
+          "source_sha256": "8379399fee9ec162ca30cd2587e36c12245bf600946e7f89ef117b837ad6bf58"
+        },
+        {
+          "name": "wait-retry-budget",
+          "test": "security_audit::relay::r3_accounting::review_underfunded_wait_retry_is_refused_before_forwarding_and_exact_budget_completes",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "insufficient WAIT budget must be refused at the controller",
+          "failure": [
+            "R3 review: insufficient WAIT budget must be refused at the controller"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "retry-fee-flight-overwrite",
+          "test": "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "one flight cannot overwrite another payer",
+          "failure": [
+            "one flight cannot overwrite another payer"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "ignored-retry-bounce",
+          "test": "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "native retry bounce must refund its bound caller",
+          "failure": [
+            "R3 review: native retry bounce must refund its bound caller"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "retry-fee-wrong-sender",
+          "test": "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "only the pinned elector may settle retry fees",
+          "failure": [
+            "only the pinned elector may settle retry fees"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "retry-fee-stale-token",
+          "test": "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "duplicate bounce cannot refund twice or pay the latest caller",
+          "failure": [
+            "duplicate bounce cannot refund twice or pay the latest caller"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "retry-fee-wrong-payer",
+          "test": "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "native retry bounce must refund its bound caller",
+          "failure": [
+            "R3 review: native retry bounce must refund its bound caller"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "retry-fee-not-cleared",
+          "test": "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "settled retry fees clear their ownership record",
+          "failure": [
+            "settled retry fees clear their ownership record"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "cleanup-erases-retry-fees",
+          "test": "security_audit::relay::r3_accounting::review_delayed_native_retry_bounce_keeps_its_payer_after_business_cleanup_and_a_later_query",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "business cleanup must preserve another message",
+          "failure": [
+            "assertion `left == right` failed: business cleanup must preserve another message's fee ownership"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "controller-retry-action-does-not-bounce",
+          "test": "security_audit::relay::r3_accounting::review_controller_retry_action_failure_returns_current_payer_funds",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "controller retry action failure must bounce current payer funds",
+          "failure": [
+            "controller retry action failure must bounce current payer funds"
+          ],
+          "source_sha256": "75a5616416226bce15b1f893f5797595ca3d260787faad29afe917eca344ac77"
+        },
+        {
+          "name": "elector-retry-action-does-not-bounce",
+          "test": "security_audit::relay::r3_accounting::review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_caller",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "native elector failure must bounce the paid retry",
+          "failure": [
+            "native elector failure must bounce the paid retry"
+          ],
+          "source_sha256": "8379399fee9ec162ca30cd2587e36c12245bf600946e7f89ef117b837ad6bf58"
+        },
+        {
+          "name": "success-loss-ignored",
+          "test": "security_audit::relay::r3_accounting::review_successful_confirmation_bounce_accounts_for_validator_loss",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "success-path transport loss must be reflected in validator capital",
+          "failure": [
+            "assertion `left == right` failed: R3 review: success-path transport loss must be reflected in validator capital"
+          ],
+          "source_sha256": "52e9b5e62a177e1988cb02ecf402fdcac3a141bf5f89c26289a48ea48e6ef173"
+        },
+        {
+          "name": "success-loss-charged-twice",
+          "test": "security_audit::relay::r3_accounting::review_successful_confirmation_bounce_accounts_for_validator_loss",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "repeated successful receipt cannot charge loss twice",
+          "failure": [
+            "assertion `left == right` failed: repeated successful receipt cannot charge loss twice"
+          ],
+          "source_sha256": "52e9b5e62a177e1988cb02ecf402fdcac3a141bf5f89c26289a48ea48e6ef173"
+        },
+        {
+          "name": "validator-topup-graceful",
+          "test": "security_audit::relay::r3_accounting::review_insufficient_validator_capital_waits_for_explicit_topup_then_records_loss_once",
+          "killed": true,
+          "baseline": 0,
+          "mutant": 101,
+          "restored": 0,
+          "assertion": "insufficient capital refunds current callback fees",
+          "failure": [
+            "insufficient capital refunds current callback fees without committing receipt: Ok(Ordinary(TransactionDescrOrdinary { credit_first: true, storage_ph: Some(TrStoragePhase { storage_fees_collected: Coins(0), storage_fees_due: None, status_change: Unchanged }), credit_ph: Some(TrCreditPhase { due_fees_collected: None, credit: CurrencyCollection { coins: Coins(3038960000), other: ExtraCurrencyCollection(HashmapE { bit_len: 32, data: None }) } }), compute_ph: Vm(TrComputePhaseVm { success: false, msg_state_used: false, account_activated: false, gas_fees: Coins(129820000), gas_used: VarUInteger7(12982), gas_limit: VarUInteger7(303896), gas_credit: None, mode: 0, exit_code: 180, exit_arg: None, vm_steps: 411, vm_init_state_hash: 0000000000000000000000000000000000000000000000000000000000000000, vm_final_state_hash: 0000000000000000000000000000000000000000000000000000000000000000 }), action: None, aborted: true, bounce: None, destroyed: false }))"
+          ],
+          "source_sha256": "52e9b5e62a177e1988cb02ecf402fdcac3a141bf5f89c26289a48ea48e6ef173"
+        }
+      ]
+    },
+    "existing_guard_mutations": {
+      "command": "env -u TOS_ROOT python3 test/pq-native/contract-guard-mutations.py --out r3-review-existing-mutations.json",
+      "exit": 0,
+      "compiled_mutants": 45,
+      "killed": 45,
+      "results": [
+        {
+          "guard": "controller-network",
+          "test": "validator_controller_sandbox::every_field_of_an_authorisation",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-epoch",
+          "test": "validator_controller_sandbox::every_field_of_an_authorisation",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-nonce",
+          "test": "validator_controller_sandbox::an_authorised_send_happens_once",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-expiry-past",
+          "test": "validator_controller_sandbox::every_field_of_an_authorisation",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-expiry-window",
+          "test": "validator_controller_sandbox::every_field_of_an_authorisation",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-kind",
+          "test": "validator_controller_sandbox::every_field_of_an_authorisation",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-owner-masterchain",
+          "test": "validator_controller_sandbox::outside_the_masterchain",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "elector-owner-fixed",
+          "test": "elector_sandbox::a_members_stake_owner_is_fixed",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "book-owner-fixed",
+          "test": "pq_elector_state_sandbox::a_members_owner_cannot_be_changed",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-stray-cosignature",
+          "test": "validator_controller_sandbox::every_field_of_an_authorisation",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-destroy-mode",
+          "test": "validator_controller_sandbox::every_field_of_an_authorisation",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-root-signature",
+          "test": "validator_controller_sandbox::every_field_of_an_authorisation",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-successor-proof",
+          "test": "validator_controller_sandbox::a_root_rotation_needs_both",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "controller-consensus-key-proof",
+          "test": "validator_controller_sandbox::binding_a_consensus_key_needs_the_root_and_the_key_itself",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-shape-bits",
+          "test": "controller_admission_sandbox::each_refusal_is_reachable",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-shape-refs",
+          "test": "controller_admission_sandbox::each_refusal_is_reachable",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-code-depth-bound",
+          "test": "controller_admission_sandbox::each_refusal_is_reachable",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-data-depth-bound",
+          "test": "controller_admission_sandbox::each_refusal_is_reachable",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-branch-type",
+          "test": "controller_admission_sandbox::each_refusal_is_reachable",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-branch-level",
+          "test": "controller_admission_sandbox::each_refusal_is_reachable",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-state-init-shape",
+          "test": "controller_admission_sandbox::each_refusal_is_reachable",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-address-binding",
+          "test": "elector_sandbox::a_stake_carrying_another_accounts_witness",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "witness-level-zero-hash",
+          "test": "controller_admission_sandbox::each_refusal_is_reachable",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "policy-absent-fails-closed",
+          "test": "elector_sandbox::a_stake_from_an_unadmitted_controller",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "policy-lookup",
+          "test": "elector_sandbox::a_stake_from_an_unadmitted_controller",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "elector-witness-required",
+          "test": "elector_sandbox::a_stake_carrying_another_accounts_witness",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "elector-retirement",
+          "test": "elector_sandbox::retiring_a_controller_code",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "elector-effective-floor",
+          "test": "elector_sandbox::a_retired_profile_stops_raising",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "config-ceiling",
+          "test": "elector_sandbox::the_controller_policy_cannot_grow",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "vote-signature",
+          "test": "elector_sandbox::a_vote_signed_by_a_key_that_is_not_at_that_index_is_refused",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "vote-identity-from-the-set",
+          "test": "elector_sandbox::a_validator_votes_for_a_proposal_with_the_key_in_the_current_set",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "vote-bound-to-its-set",
+          "test": "elector_sandbox::a_validator_votes_for_a_proposal_with_the_key_in_the_current_set",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "vote-funding",
+          "test": "elector_sandbox::an_underfunded_configuration_vote_is_refused_before_the_verification",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "vote-minimum-value",
+          "test": "elector_sandbox::the_minimum_value_a_configuration_vote_must_carry",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "complaint-vote-funding",
+          "test": "elector_sandbox::an_underfunded_complaint_vote_is_refused_before_the_verification",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "complaint-vote-minimum-value",
+          "test": "elector_sandbox::the_minimum_value_a_complaint_vote_must_carry",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "complaint-vote-signature",
+          "test": "elector_sandbox::a_complaint_vote_signed_by_another_validator_is_refused",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "complaint-vote-identity",
+          "test": "elector_sandbox::a_validator_votes_to_punish_a_validator_of_a_past_election",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "set-duplicate-validator",
+          "test": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "set-duplicate-key",
+          "test": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "set-weight-sum",
+          "test": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "set-count-agreement",
+          "test": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "no-administrator-appointment",
+          "test": "elector_sandbox::governance_cannot_vote_itself_an_administrator",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "no-external-authority",
+          "test": "elector_sandbox::an_external_validator_vote_has_no_authorization_path",
+          "mutant_exit": 101,
+          "killed": true
+        },
+        {
+          "guard": "readiness-on-effective-stake",
+          "test": "elector_sandbox::a_retired_profile_cannot_make_an_election_look_ready",
+          "mutant_exit": 101,
+          "killed": true
+        }
+      ]
+    }
   },
   "fee_measurement": {
     "profile_boc_hex": {
@@ -367,27 +829,44 @@
       "24": "b5ee9c72010101010023000042ea000000000098968000000000271000000000000f424000000001800055555555"
     },
     "maximum_observed_successful_gas_by_inbound_opcode": {
-      "50516361": 103816,
-      "00000000": 4103,
-      "4e73744b": 47815,
-      "50517232": 137071,
-      "50517332": 152506,
-      "50516f32": 29922,
-      "50516632": 20366,
-      "50517433": 29394,
-      "50516232": 24249,
-      "50516132": 9459,
-      "ffffffff": 14435,
-      "50516532": 31675,
-      "50516133": 16625
+      "50516361": 187260,
+      "4e73744b": 48413,
+      "50517232": 138114,
+      "ffffffff": 18431,
+      "50517332": 155104,
+      "50516532": 32115,
+      "00000000": 12818,
+      "50516632": 29255,
+      "50516133": 17250,
+      "50516232": 25969,
+      "50516f32": 32771,
+      "50516132": 9894,
+      "47657432": 18472,
+      "50517433": 33333,
+      "50517834": 8234,
+      "47657424": 18474,
+      "f96f7332": 21704,
+      "47656132": 17863,
+      "47656133": 10649,
+      "00000004": 12010,
+      "4e436f64": 19501,
+      "00000008": 17252,
+      "f96f7324": 3229
     },
-    "scope": "Native R3 suite on these source hashes and fee cells. Deliberate OOG executions excluded from successful maxima. Fixture funding is not a production default. Every hop asserts balance + inbound = post-balance + transaction fees + outbound values + forwarding fees."
+    "scope": "Native relay suite on these source hashes and fee cells. Aborted fault injections excluded from successful maxima. Each hop reconciles balance + inbound with post-balance + transaction fees + outbound values + forwarding fees. Fixture funding is not a production default.",
+    "wait_budget_nano_tos": {
+      "control": 558960000,
+      "automatic": 4294800000,
+      "elector_return_retry": 5971680000,
+      "controller_wait_retry": 6530640000,
+      "note": "Measured fixture values only; on-chain getters derive current prices. No production default."
+    }
   },
   "golden_receipts": {
     "governance": [
       "config_proposal_root_hash=832C802A751CF69258DE5838BF1F6EB2278555BBF100E6E8DACE573BA3B48FAA",
       "config_upgrade_root_hash=75A7B4598DAB00B02304DAE5E59AF47D476C12B24CE11A7E66B5086E9B710EBC",
-      "elector_upgrade_root_hash=AE1D59817B866230A79BB42CCAC6B1F2B4F020D6D32E6515F45E3747DD5EB265",
+      "elector_upgrade_root_hash=708213BD122AC66111E713FD75BFFC2731721B1D0E3A27E1CA15280C071BE06C",
       "complaint_envelope_root_hash=C02B819260617277F96540507171F597AA25F473B5294F378B2341E1EA11C2C8"
     ],
     "zerostate": [
@@ -395,9 +874,9 @@
       "basestate0.boc_size=105",
       "basestate0.file_hash=8375256A7007A9D4FDEA1952D0AA12F8EF074C56A620ABE6B252BAEF7CF864B2",
       "basestate0.root_hash=4DAA0F44F130CAFD0685FA6B71154A383C5FF26D4246602FCCC8AE831E95772E",
-      "zerostate.boc_size=15455",
-      "zerostate.file_hash=D758B8B7D5F060817254E6807406284BF32790755B7A2197B2FB1BE3B94C24ED",
-      "zerostate.root_hash=12F884C422BD8DED47BFFB025E87E4BE3DECA40AFE8E1BF76A28DD5E1B8F0779",
+      "zerostate.boc_size=15431",
+      "zerostate.file_hash=821469239F050EC2969986764A086FE1E06AF852DD31C3858433123F866B3132",
+      "zerostate.root_hash=EA502379BC16EF476AE9C1E53D1F9ABFB8D176E7613C77195A6A7B248269F3E7",
       "main-wallet.addr=1111111111111111111111111111111111111111111111111111111111111111FFFFFFFF",
       "config-master.addr=5555555555555555555555555555555555555555555555555555555555555555FFFFFFFF",
       "elector.addr=3333333333333333333333333333333333333333333333333333333333333333FFFFFFFF"
@@ -407,49 +886,77 @@
     "directory": "/Users/tomisetsu/Documents/Codex/2026-10-02/16-9153173c-pool-https-github-com/work",
     "retention": "Retained in this task workspace until user cleanup; no scheduled deletion. These local paths alone do not give remote reviewers access. Named failure excerpts are included above and the runner reproduces them. CI uploads R3 receipts with a 30-day retention.",
     "files": {
-      "r3-final-full.log": {
-        "bytes": 88026,
-        "sha256": "47e4660ed7d2437485f7928318a89278cc65c0d3adeefecddcb64038a2bb4140"
+      "r3-review-baseline-red.log": {
+        "bytes": 16721,
+        "sha256": "7729f65f154aca361f4e8920f526ad8ec75924c01233df45bb2ee7547f63c414"
       },
-      "r3-final-accounting.log": {
-        "bytes": 34599,
-        "sha256": "4b46e1524ff45b9f72c93415610f95e92467c5bd4f98b695a0a84420ede68497"
+      "r3-review-regressions.patch": {
+        "bytes": 5405,
+        "sha256": "34cf5f9706a21d3e9dac86283e9cb3ca4fc32e46a4a43fa41f93fa12044b08aa"
       },
-      "r3-final-mutations.log": {
-        "bytes": 553,
-        "sha256": "b19383beead5cb6de57c730eb7314a99f19ee26a302b544fa2a8525eb6a0a135"
+      "r3-review-final-full.log": {
+        "bytes": 88646,
+        "sha256": "220279bb372fbe713a59f54169f8cadfbccf38ea6ab943d6bc75fd9180b24208"
       },
-      "r3-native-regression-final.log": {
+      "r3-review-final-relay.log": {
+        "bytes": 197933,
+        "sha256": "d64128bb3b82975dd7c976b3e63e978b6f56bbb1f831a4cd158461ac3f82c47d"
+      },
+      "r3-review-mutations.log": {
+        "bytes": 1014,
+        "sha256": "17937957803db1f8e66083f7d8e5d31ecdc37ad32925a26921794f7e3ff59b7f"
+      },
+      "r3-review-mutations/results.json": {
+        "bytes": 17599,
+        "sha256": "1ed5ff62670ebdd157276c891842fc2be81fdd9ee60eb8be0a2e389e92e1abb3"
+      },
+      "r3-review-existing-mutations.json": {
+        "bytes": 36668,
+        "sha256": "13d1c83c6d74e12f44b4f824b9a161237fb6a75d7ea68ad82118ec0188fd7f90"
+      },
+      "r3-review-existing-mutations.log": {
+        "bytes": 1405,
+        "sha256": "a359329f9b06cd1f25d516b48a7fd6a1efd1bcb8d4dc3cf7937a5dce3ac3364a"
+      },
+      "r3-review-regression.log": {
         "bytes": 75,
         "sha256": "96db7d96f9e379cd531b400f9dee34f3abca4a55365bca29c15372ff0c343e70"
       },
-      "r3-account-model.log": {
-        "bytes": 722,
-        "sha256": "d5d223961431d57cc215afa1ccd3f31fec0d20164cda6f7dfd1638f66f0a5a88"
+      "r3-review-account-model.log": {
+        "bytes": 721,
+        "sha256": "4684d4b075355ce02959593150491075c85a14c3471f44c37a135feaca51269a"
       },
-      "r3-controller-auth.log": {
+      "r3-review-controller-auth.log": {
         "bytes": 62,
         "sha256": "2aff68cfee64baa579a7ea2ae5e599218f138a6edf5442fb2915ba70f275252a"
       },
-      "r3-python.log": {
+      "r3-review-python.log": {
         "bytes": 98,
-        "sha256": "4271b0d70d2afe45004c9a7514ebfc72f7f68dde0ab2ec96b5f19bb8243c6454"
+        "sha256": "4605579a6817f0e04ac42cbfc95954c6188b9fdb1836958657d804117ac06483"
       },
-      "r3-pool-lock.log": {
+      "r3-review-pool-lock.log": {
         "bytes": 100,
-        "sha256": "77e0452aa15c4ba1c21f937cef0f07271564130ff88bd7829265d902d47482c7"
+        "sha256": "3b46d3a3b3310931de44e0319407e4383656a881cd41adadf7d848e5998aec73"
       },
-      "r3-single-lock.log": {
+      "r3-review-single-lock.log": {
         "bytes": 48,
         "sha256": "e6048bb9e6db96858987110ca13a4c7ba0e0f0b66371f514a3f38bb3238c72b8"
       },
-      "r3-format.log": {
+      "r3-review-format.log": {
         "bytes": 0,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
-      "r3-source-guards.log": {
+      "r3-review-source-guards.log": {
         "bytes": 6932,
-        "sha256": "90ca6a1fbcd7ad9795908c68249d7bd6a9a16b0b0544b2f3963a37c5d4b6391a"
+        "sha256": "c785a8f41e49564c2bc367fd5e42411127f27bd861749cc6f3d8f2ba91f94ce6"
+      },
+      "r3-review-mutations-manifest.json": {
+        "bytes": 16325,
+        "sha256": "f14c1ceb50f2d69ee4e9831b64f27c3bdac916c7d8081cd585084086dc4864ad"
+      },
+      "r3-review-existing-mutations-logs-manifest.json": {
+        "bytes": 24450,
+        "sha256": "4ec4a81459d7be02bdee84b09e9102792cf420861a4d9123a8d98dc8913ccbbc"
       }
     }
   },
@@ -462,5 +969,21 @@
     "CARGO_TARGET_DIR": "an isolated build directory",
     "rust": "repository-pinned toolchain",
     "native_build": "cmake -S . -B ../native-build -G Ninja -DCMAKE_BUILD_TYPE=Release; cmake --build ../native-build --target gen_fif tos-pq-controller tos-pq-vote test-account-model-detection test-controller-auth test-smartcont test-fift test-cells test-vm"
+  },
+  "independent_review": {
+    "report": "https://github.com/tosnetwork/memo/blob/75c0ee8d/elector-security-audit-2026-10-01/R3-20cfe78d0-INDEPENDENT-REVIEW.md",
+    "patch": "https://github.com/tosnetwork/memo/blob/75c0ee8d/elector-security-audit-2026-10-01/R3-20cfe78d0-review-regressions.patch",
+    "baseline_production_commit": "20cfe78d0791b8cf0bf691cc86249857a0cafc35",
+    "baseline_exit": 101,
+    "failed_target_assertions": 2,
+    "baseline_excerpts": [
+      "REVIEW retry_bounced=2862450000 controller_gain=2825990000 outbound=0",
+      "REVIEW success_gross=1000000000 actual=980000000 lost=20000000 validator_before=5100000000000 validator_after=5100000000000",
+      "assertion `left == right` failed: R3 review: success-path transport loss must be reflected in validator capital",
+      "R3 review: a bounced paid WAIT retry must return its remaining fees to the actual caller",
+      "test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 140 filtered out; finished in 0.45s"
+    ],
+    "repair": "Shared WAIT fee bound; independent caller-bound retry flight with real bounce settlement; first-receipt validator loss accounting for success and failure, preserving nominator claims and waiting for explicit topup when capital is insufficient.",
+    "acceptance_boundary": "Local red/green evidence is not an independent reviewer acceptance. CI is tracked separately for the final pushed head."
   }
 }
