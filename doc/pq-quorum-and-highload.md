@@ -1,7 +1,7 @@
 # Post-quantum quorum signatures and high-volume wallet: design
 
-Status: design v3. Reviews are recorded at the end. The quorum library is implemented;
-the wallet is next.
+Status: design v4. Both deliverables are implemented and tested; reviews are recorded at
+the end.
 Two deliverables on one branch:
 
 1. `pq-quorum-signatures`, a library:
@@ -157,7 +157,10 @@ workchain. With the wallet and the relayer both on basechain:
 
 This follows `mldsa44-auth-module.fc`: verification is paid by whoever submits.
 
-- **No external path.** `recv_external` always throws, and there is no ACCEPT anywhere.
+- **No external path.** The contract has no `recv_external`, so an external message finds no
+  handler, and there is no ACCEPT anywhere. A `recv_external` that only threw would have
+  been an untrippable guard: without ACCEPT an external message is never accepted
+  anyway.
 - **Submission.** A request arrives in an internal message from a relayer:
 
   ```
@@ -232,10 +235,22 @@ Failure classes:
 | Step 5 runs out of gas | Rolls back to the state before the message: the id stays unused, nothing is sent. Step 2 makes this unreachable for a correctly funded request. |
 | A batch message the action phase cannot deliver | Skipped (+2). The id is consumed and the other messages go out. |
 | Refund | Mode +2, so a refund that cannot be paid is skipped rather than failing the action phase. |
-| The whole action phase fails (state size over the limit, total output size over the limit) | New data and every queued message roll back; fees may still be charged. The id is unused and the request can be resubmitted. |
+| A message passes the action phase's total output limit (for example several messages sharing one large body) | That message alone is skipped (+2). The others go out and the id is consumed. Tested. |
+| The whole action phase fails | New data and every queued message roll back; fees may still be charged. The id is unused and the request can be resubmitted. |
 
 "The id is consumed and the messages go out" holds only when the whole action phase
 succeeds.
+
+For this wallet, under the default size limits, no input reaches a whole action-phase
+failure:
+
+- the refund and every batch message carry +2;
+- the action list is built by the wallet itself;
+- the largest state fits the basechain account limit of 65,536 cells. That state is two
+  replay generations of 8,192 rows each, with their dictionary nodes, about 49,000 cells,
+  plus an 11-cell key.
+
+The table keeps the row because a configuration with smaller limits could reach it.
 
 ### Batch
 
@@ -334,7 +349,13 @@ evidence.
     `measured <= profile <= measured + 25%`.
 - **Sensitivity.** A mutation script removes every guard in turn, and some test must fail.
   A guard no input can trip is removed rather than kept.
-- **CI.** A workflow modelled on `mldsa-auth-module.yml`, with no job time limit.
+- **CI.** `.github/workflows/pq-contracts.yml`, modelled on `mldsa-auth-module.yml`, with
+  no job time limit.
+
+Not covered: special and library cells are refused by the verifier and by `pq-bytes.fc`'s
+`XCTOS` parse, but the test codec cannot build an exotic cell, so no test sends one. The
+mutation script names every guard it removes; a guard missing from that list is
+untested by mutation.
 
 ## Review record
 
@@ -395,3 +416,61 @@ Measurement changed one design point.
 - **Keys.** They are walked once, at configuration time.
 - **`MAX_QUORUM = 12`.** Confirmed by measurement: 745,000–747,000 gas at a full
   64-verifier set.
+
+### Round 3, quorum library code (`656ea5427`)
+
+The reviewer accepted dropping the chain walk before verification: it found no input
+the verifier accepts that the walk would have refused. Every other finding was accepted.
+
+- **Medium: failed transactions were judged on a stale state.** The harness kept the
+  account from before a failed transaction. Both suites now adopt the account the
+  executor returns, whatever the outcome. A refusal must leave the data hash unchanged,
+  and a success must complete both phases.
+- **Medium: the claim that an unvalidated config "can still authorize nothing" was
+  false.** The reviewer reproduced two counterexamples: an empty config with quorum 0
+  passed, and one key under two ids made 2-of-2.
+  - The claim is replaced by an explicit trusted-config precondition.
+  - `require_quorum` now repeats the cheap range checks, so quorum 0 is refused.
+  - A test shows the precondition is real: a set stored without `config()` with one key
+    under two ids passes, and `config()` refuses that set.
+- **Medium: the mutation verdict counted broken runs as kills.** Each suite now writes a
+  structured result. A mutant is killed only if:
+  - the baseline passed before and passes again after the sources are restored;
+  - tests ran;
+  - an assertion failed, with no errors.
+
+  The killing tests are named.
+- **Medium: rotating a full set did not fit one approved transaction.** Configuring 64
+  keys costs about 850,000 gas, and 12-of-64 about 746,000, so the two do not fit
+  together. `with_added_verifier` and `with_removed_verifier` change one key for about
+  13,000 gas. A 12-of-64 approval plus removing one key and adding another costs about
+  769,000–773,000 gas in one transaction, and is tested.
+- **Low: overstated coverage.** Added tests for `verifier?`, for malformed keys through
+  both entry points, and for the unconfigured state. Added mutations for the target
+  check, the request-time range check, the single-key changes and the Tol key-chain
+  checks. Special cells are listed as not covered.
+- **The 250,000 gas margin.** It is now an assertion: `gas_limit − gas ≥ 250,000` at
+  12-of-64.
+
+### Implementation notes, wallet
+
+Measured on the C++ executor, with both replay generations dense and the id needing a
+new row:
+
+| Measurement | Value |
+| --- | --- |
+| Base gas | 79,546 |
+| Gas per action | 2,664 |
+| Full 254-action batch | 756,202 gas |
+| Profile | 87,600 base and 2,930 per action |
+| Minimum value, 1 action | 0.0915 TOS |
+| Minimum value, 254 actions | 0.8328 TOS |
+
+The suite finds the minimum value by bisection on real transactions. One nanoton less is
+refused, with the id unused. Exactly that much runs the whole batch and its refund.
+
+A 255-action request is refused before verification, but only after 254 entries have
+been checked, at about 481,000 gas the relayer pays. Counting first would add a walk to
+every valid request.
+
+60 mutants, 37 in the library and 23 in the wallet, are each killed by an assertion.

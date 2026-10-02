@@ -1,0 +1,64 @@
+name: Post-quantum quorum and high-volume wallet
+on:
+  pull_request:
+    paths:
+      - 'crypto/smartcont/**'
+      - 'crypto/vm/**'
+      - 'crypto/pq/**'
+      - 'crypto/fift/**'
+      - 'crypto/func/**'
+      - 'crypto/CMakeLists.txt'
+      - 'CMakeLists.txt'
+      - 'common/global-version.h'
+      - 'emulator/**'
+      - 'tol/**'
+      - 'third-party/mldsa-native/**'
+      - 'test/auth-extensions/**'
+      - 'test/pq-contracts/**'
+      - 'doc/pq-quorum-and-highload.md'
+      - '.github/workflows/pq-contracts.yml'
+permissions:
+  contents: read
+concurrency:
+  group: pq-contracts-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+jobs:
+  # No job time limit: the result must come from the tests, never from whether a build
+  # finished before a deadline. GitHub's default limit remains only as protection against
+  # a hung runner.
+  contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build the contract tools, the transaction emulator and the generated code
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift tol emulator gen_fif -j"$(nproc)"
+      - name: Build the TEST ONLY signer
+        run: |
+          cmake -S test/pq-contracts -B build-pq-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-signer -j"$(nproc)"
+      - name: Quorum library, compiled from FunC
+        run: |
+          python3 test/pq-contracts/test_pq_quorum.py --build build \
+            --signer build-pq-signer/test-pq-contracts-sign \
+            --harness test/pq-contracts/pq-quorum-harness.fc
+      - name: Quorum library, compiled from Tol
+        run: |
+          python3 test/pq-contracts/test_pq_quorum.py --build build \
+            --signer build-pq-signer/test-pq-contracts-sign \
+            --harness test/pq-contracts/pq-quorum-harness.tol
+      - name: High-volume wallet and its deployment script
+        run: |
+          python3 test/pq-contracts/test_pq_highload.py --build build \
+            --signer build-pq-signer/test-pq-contracts-sign
+      - name: Remove every guard in turn
+        run: |
+          python3 test/pq-contracts/mutations.py --build build \
+            --signer build-pq-signer/test-pq-contracts-sign
+          git diff --exit-code
