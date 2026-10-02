@@ -1,5 +1,9 @@
 # Elector security audit: native acceptance
 
+Current R3 implementation and its explicit deployment/support boundaries are in
+[elector-r3-implementation.md](elector-r3-implementation.md). The findings and
+result indexes below describe earlier revisions.
+
 For the post-review recovery-confirmation and strict query-allocation changes,
 see [the review follow-up](elector-review-followup.md). The original result index
 binds the pre-review revision, not the follow-up source.

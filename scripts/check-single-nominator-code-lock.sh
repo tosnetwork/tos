@@ -58,7 +58,7 @@ import re
 import sys
 
 source = pathlib.Path(sys.argv[1]).read_text()
-match = re.search(r'CODE_V1_1:\s*&\'static str\s*=\s*"([0-9a-fA-F]*)"', source)
+match = re.search(r"CODE_V1_1:\s*&'static str\s*=\s*\"([0-9a-fA-F]*)\"", source)
 print(match.group(1).lower() if match else "")
 PY
 )

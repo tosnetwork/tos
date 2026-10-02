@@ -41,6 +41,7 @@ fn late_root_recovery_is_not_paid_to_a_different_pool() {
                 &fixture.validator.address,
             );
             fixture.nominator = None;
+            super::r3_accounting::fund(&mut fixture, 80 * TOS, 60 * TOS);
             let at = open_later_election(&mut fixture);
             let owner: [u8; 32] = fixture
                 .validator
@@ -83,6 +84,7 @@ fn late_root_recovery_is_not_paid_to_a_different_pool() {
             assert!(unrelated >= credit);
             let (tx, _) = step(&mut fixture.chain, root_payment);
             successful(&tx, "accept late owner credit");
+            let receipt_fees = tx.total_fees().coins.as_u128();
             assert_eq!(owed(&fixture.chain, &owner), 0);
 
             let expected_state = if refused { 0 } else { 2 };
@@ -96,7 +98,9 @@ fn late_root_recovery_is_not_paid_to_a_different_pool() {
             }
             assert_eq!(
                 balance_of(&fixture.chain, &fixture.validator.address),
-                capital.checked_add(unrelated).expect("protected capital"),
+                capital.checked_add(unrelated).expect("protected capital")
+                    - super::r3_accounting::first_grant(&fixture)
+                    - receipt_fees,
                 "late root recovery must remain with its owner, not the relay beneficiary"
             );
         }
@@ -124,6 +128,7 @@ fn controller_funding_in_wait_and_ready_is_not_relay_change() {
             fixture.operator.build_message(&fixture.validator.address, 500 * TOS, false, None);
         let (tx, out) = step(&mut fixture.chain, funding);
         successful(&tx, "plain controller funding");
+        let funding_fees = tx.total_fees().coins.as_u128();
         assert!(out.is_empty());
         if let Some(kick) = saved_kick {
             pay_ready(&mut fixture, kick, 2);
@@ -135,7 +140,9 @@ fn controller_funding_in_wait_and_ready_is_not_relay_change() {
         }
         assert_eq!(
             balance_of(&fixture.chain, &fixture.validator.address),
-            capital.checked_add(u128::from(500 * TOS)).expect("capital plus funding"),
+            capital.checked_add(u128::from(500 * TOS)).expect("capital plus funding")
+                - super::r3_accounting::first_grant(&fixture)
+                - funding_fees,
             "plain funding must not become the current pool's refund"
         );
     }
@@ -223,8 +230,9 @@ fn same_code_upgrade_preserves_lost_confirmation_repair() {
     let before = account.get_data().expect("data");
     let code = account.get_code().expect("code");
     let message = upgrade_message(&fixture, code.clone(), true);
-    let (tx, _) = step(&mut fixture.chain, message);
+    let (tx, out) = step(&mut fixture.chain, message);
     successful(&tx, "compatible same-code upgrade");
+    assert!(out.iter().any(|message| op(message) == 0xce436f64), "upgrade hook must execute");
     assert_eq!(
         fixture
             .chain
@@ -342,49 +350,62 @@ fn a_nonempty_recovery_book_requires_the_target_schema() {
     }
 }
 
-// Characterization of an OPEN recovery boundary, not a passing remediation gate.
 #[test]
-fn valid_refund_preaccounting_abort_is_not_repaired_by_a_fee_retry() {
-    let mut f = Fixture::new("refund-before-accounting-abort");
-    let wrong_round = f.election.checked_add(1).expect("later election");
-    let stake = begin(&mut f, 1, wrong_round);
+fn return_tombstones_require_the_new_upgrade_capability_and_survive_cutover() {
+    let mut f = Fixture::new("r3-return-upgrade");
+    let at = f.election + 1;
+    let stake = begin(&mut f, 1, at);
     let (tx, out) = step(&mut f.chain, stake);
-    successful(&tx, "elector produces actual rejected-stake refund");
-    let refund = only_to(out, &f.validator.address);
-    assert!(!refund.int_header().expect("header").bounce);
-    assert!(value(&refund) > u128::from(9_900 * TOS));
-    let waiting = f.pending().expect("WAIT record");
-    let prices = raw_parameter(&f.chain, 20).expect("original gas profile");
-    let mut restricted = f.chain.blockchain.config_params().gas_prices(true).expect("gas prices");
-    restricted.gas_limit = 1_000;
-    set_contract_parameter(
-        &mut f.chain,
-        20,
-        restricted.write_to_new_cell().expect("gas").into_cell().expect("gas cell"),
-    );
-    let before = balance_of(&f.chain, &f.validator.address);
-    let (tx, out) = step(&mut f.chain, refund);
-    assert!(tx.read_description().expect("description").is_aborted());
-    match tx.read_description().expect("description") {
-        TransactionDescr::Ordinary(d) => match d.compute_ph {
-            TrComputePhase::Vm(vm) => {
-                assert_eq!(vm.exit_code, -14, "real controller must exhaust gas")
-            }
-            _ => panic!("real compute phase required"),
-        },
-        _ => panic!("ordinary transaction required"),
+    successful(&tx, "record a rejected stake return");
+    let result = only_to(out, &f.validator.address);
+    let code = f
+        .chain
+        .blockchain
+        .get_account(&f.chain.elector)
+        .expect("elector")
+        .get_code()
+        .expect("code");
+    isolate_drained_upgrade_boundary(&mut f);
+    let message = upgrade_message(&f, code.clone(), true);
+    let (tx, out) = step(&mut f.chain, message);
+    successful(&tx, "upgrade refusal is a reply");
+    assert!(out.iter().any(|m| op(m) == 0xffffffff), "in-flight return blocks cutover");
+    finish_reply(&mut f, result, 0);
+    let before = f
+        .chain
+        .blockchain
+        .get_account(&f.chain.elector)
+        .expect("elector")
+        .get_data()
+        .expect("data");
+    let temp = tempfile::tempdir().expect("target fixture");
+    for declaration in
+        ["", "int relay_return_upgrade_format() impure method_id(1668) { return 0; }"]
+    {
+        let source = temp.path().join("incompatible-return-history.fc");
+        std::fs::write(&source, format!("() recv_internal(int value, cell msg, slice body) impure {{ return (); }}\nint recovery_upgrade_format() impure method_id(1667) {{ return 0x52435632; }}\n{declaration}\n")).expect("target source");
+        let target = tos_sandbox::compile_func_with_stdlib(&[source]).expect("target compiles");
+        let message = upgrade_message(&f, target, false);
+        let (tx, _) = step(&mut f.chain, message);
+        assert!(
+            tx.read_description().expect("description").is_aborted(),
+            "return capability must reject incompatible code"
+        );
+        let account = f.chain.blockchain.get_account(&f.chain.elector).expect("elector");
+        assert_eq!(account.get_code().expect("code"), code);
+        assert_eq!(account.get_data().expect("data"), before);
     }
-    assert!(out.is_empty(), "non-bounce refund remains at controller");
-    assert_eq!(f.pending(), Some(waiting.clone()), "refund was not durably classified");
-    assert!(balance_of(&f.chain, &f.validator.address) > before + u128::from(9_900 * TOS));
-    set_contract_parameter(&mut f.chain, 20, prices);
-    let request = retry(&f, DOMAIN | 1);
-    let (tx, out) = step(&mut f.chain, request);
-    assert!(
-        tx.read_description().expect("description").is_aborted(),
-        "characterization: fee-only retry cannot reconstruct the missing result"
+    let message = upgrade_message(&f, code, true);
+    let (tx, out) = step(&mut f.chain, message);
+    successful(&tx, "compatible return history upgrade");
+    assert!(out.iter().any(|m| op(m) == 0xce436f64), "compatible upgrade hook must execute");
+    assert_eq!(
+        f.chain
+            .blockchain
+            .get_account(&f.chain.elector)
+            .expect("elector")
+            .get_data()
+            .expect("data"),
+        before
     );
-    assert!(out.iter().all(|m| m.dst().as_ref() != Some(&f.pool)), "no owner settlement occurred");
-    assert_eq!(f.pending(), Some(waiting));
-    assert_eq!(f.pool_state(), 1, "OPEN: the pool is still waiting after replenishing gas");
 }

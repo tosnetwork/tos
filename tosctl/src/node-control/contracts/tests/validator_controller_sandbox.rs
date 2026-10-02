@@ -750,6 +750,7 @@ fn relay_body_with_signature(
     commitment.append_raw(elector.as_slice(), 256).expect("elector");
     chain_block::Coins::new(4_900 * TOS).write_to(&mut commitment).expect("exact forward");
     commitment.checked_append_reference(terms.clone()).expect("terms");
+    commitment.checked_append_reference(owner.serialize().expect("payer")).expect("payer");
     let commitment = commitment.into_cell().expect("commitment").hash(0);
     let mut body = chain_block::BuilderData::new();
     body.append_u32(RELAY_OP).expect("operation");
@@ -758,6 +759,7 @@ fn relay_body_with_signature(
     chain_block::Coins::new(4_900 * TOS).write_to(&mut body).expect("forwarded");
     body.append_raw(elector.as_slice(), 256).expect("elector");
     body.checked_append_reference(terms).expect("terms");
+    body.checked_append_reference(owner.serialize().expect("payer")).expect("payer");
     body.into_cell().expect("a relay request")
 }
 fn relay_body(owner: &MsgAddressInt, algorithm: u16, key: &[u8], signature: &[u8]) -> Cell {
@@ -864,6 +866,25 @@ fn a_bound_consensus_key_relays_a_stake_for_whoever_sent_the_money() {
         .expect("deployment")
         .expect_success();
 
+    let payer = controller.chain.treasury("controller-relayer", 10_000 * TOS).expect("payer");
+    let payload = contracts::validator_controller::operating_funding_payload(
+        &contracts::validator_controller::OperatingFunding {
+            payer: payer.address(),
+            deposit: u128::from(80 * TOS),
+            allowance: u128::from(60 * TOS),
+            per_request_limit: u128::from(20 * TOS),
+            storage_floor: u128::from(10 * TOS),
+            expires_at: controller.chain.now() + 86_400,
+        },
+    )
+    .expect("operating payload");
+    let expires = controller.chain.now() + 600;
+    let network = match controller.chain.config_params().config(19).expect("network") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        _ => panic!("missing network id"),
+    };
+    let funding = authorize(&mut controller, &root, 0, 0, expires, 4, payload, None, network);
+    assert_eq!(exit_code(&funding), 0);
     let pool = controller.chain.treasury("relay-pool", 100_000 * TOS).expect("a pool");
     let before = controller
         .chain
@@ -896,7 +917,14 @@ fn a_bound_consensus_key_relays_a_stake_for_whoever_sent_the_money() {
         .get_account(&controller.address)
         .and_then(|account| account.balance().and_then(|balance| balance.coins.as_u64()))
         .expect("a balance");
-    assert!(after >= before, "the relay spent the controller's own balance: {before} -> {after}");
+    let operations = controller
+        .chain
+        .run_get_method(&controller.address, "operating_state", vec![])
+        .expect("operating ledger");
+    let funds: u64 =
+        operations.stack[0].as_integer().expect("funds").to_string().parse().expect("funds");
+    let grant = (80 * TOS).checked_sub(funds).expect("reserved grant");
+    assert_eq!(after, before - grant, "only the explicitly reserved operating grant is spent");
 }
 
 /// Everything the relay refuses, and the fact that it sends nothing when it does.

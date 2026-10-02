@@ -73,18 +73,19 @@ const ERROR::INSUFFICIENT_ELECTOR_FEE = 0x2005;
     if (single_protocol.null?()) { return (0, 0, 0, 0, 0); }
     slice cs = single_protocol.begin_parse();
     var result = (cs~load_uint(64), cs~load_uint(256), cs~load_coins(), cs~load_uint(256), cs~load_uint(1));
-    cs~load_maybe_ref(); cs.end_parse(); return result;
+    cs~load_maybe_ref(); cs~load_ref(); cs.end_parse(); return result;
 }
 cell single::previous() inline_ref {
     slice cs = single_protocol.begin_parse();
     cs~load_uint(64); cs~load_uint(256); cs~load_coins(); cs~load_uint(256); cs~load_uint(1);
-    cell previous = cs~load_maybe_ref(); cs.end_parse(); return previous;
+    cell previous = cs~load_maybe_ref(); cs~load_ref(); cs.end_parse(); return previous;
 }
 () single::remember(int query, int hash, int amount, int prefix, int pending,
-                    slice owner, slice validator, slice controller) impure inline_ref {
+                    slice owner, slice validator, slice controller, slice payer) impure inline_ref {
     single_protocol = begin_cell().store_uint(query, 64).store_uint(hash, 256)
       .store_coins(amount).store_uint(prefix, 256).store_uint(pending, 1)
-      .store_maybe_ref(pending ? single_protocol : null()).end_cell();
+      .store_maybe_ref(pending ? single_protocol : null())
+      .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell();
     save_data(owner, validator, controller);
 }
 
@@ -113,6 +114,15 @@ int check_new_stake_msg(slice cs) impure inline_ref;
         if (pending & equal_slice_bits(source, controller_address) & sr::bounce_matches(in_msg_body, prefix)) {
             ;; No allocation occurred. Restore the previous result as well as its query,
             ;; so a lost ACK from that result remains repairable.
+            int excess = msg_value > amount ? sr::sub(msg_value, amount) : 0;
+            if (excess > sr::control_value()) {
+                slice record = single_protocol.begin_parse();
+                record~load_uint(64); record~load_uint(256); record~load_coins();
+                record~load_uint(256); record~load_uint(1); record~load_maybe_ref();
+                slice payer = record~load_ref().begin_parse();
+                raw_reserve(sr::sub(my_balance, excess), 0);
+                send_raw_message(sr::message(payer, 0, begin_cell().store_uint(sr::excess, 32).end_cell(), false), 128);
+            }
             single_protocol = single::previous();
             save_data(owner_address, validator_address, controller_address);
         }
@@ -138,15 +148,24 @@ int check_new_stake_msg(slice cs) impure inline_ref;
         int forwarded = in_msg_body~load_coins();
         int accepted = in_msg_body~load_coins();
         int reason = in_msg_body~load_uint(32);
-        int success = in_msg_body~load_uint(1); in_msg_body.end_parse();
+        int success = in_msg_body~load_uint(1);
+            int business_return = in_msg_body~load_coins();
+            int callback = in_msg_body~load_coins();
+            slice refund = in_msg_body~load_ref().begin_parse();
+            slice payer = refund~load_msg_addr(); refund.end_parse(); in_msg_body.end_parse();
+            throw_unless(sr::error, msg_value >= callback);
+        raw_reserve(sr::sub(my_balance, callback), 0);
         var (expected_query, expected_hash, amount, prefix, pending) = single::pending();
         if ((query_id == expected_query) & (hash == expected_hash) & (forwarded == amount)) {
             throw_unless(sr::error, accepted == (success ? sr::sub(forwarded, sr::confirmation) : 0));
             throw_unless(sr::error, (success == 0) | (reason == 0));
-            single::remember(query_id, hash, amount, prefix, 0, owner_address, validator_address, controller_address);
+            single::remember(query_id, hash, amount, prefix, 0, owner_address, validator_address, controller_address, payer);
             send_raw_message(sr::message(controller_address, sr::control_value(),
-              sr::control_body(sr::ack, query_id, hash), false), 3);
+              begin_cell().store_slice(sr::control_body(sr::ack, query_id, hash).begin_parse())
+                .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell(), false), 3);
         }
+        send_raw_message(sr::message(payer, 0,
+          begin_cell().store_uint(sr::excess, 32).store_uint(query_id, 64).end_cell(), false), 128);
         return ();
     }
 
@@ -214,10 +233,12 @@ int check_new_stake_msg(slice cs) impure inline_ref;
             cell outgoing = sr::message(sr::address(elector), stake_amount, sr::stake_body(relay_query, payload), true);
             int budget = sr::relay_cost(outgoing);
             throw_unless(sr::error, msg_value >= sr::add(sr::add(budget, sr::gas_fee(-1, sr::callback_gas)), sr::control_value()));
-            cell relay = sr::relay_body(owner_id, relay_query, elector, stake_amount, terms);
+            cell relay = sr::relay_body(owner_id, relay_query, elector, stake_amount, terms, sender);
             single::remember(relay_query, sr::request_hash(controller_id, relay_query, payload),
-              stake_amount, relay.begin_parse().preload_uint(256), 1, owner_address, validator_address, controller_address);
+              stake_amount, relay.begin_parse().preload_uint(256), 1, owner_address, validator_address, controller_address, sender);
+            raw_reserve(sr::sub(sr::sub(my_balance, msg_value), stake_amount), 0);
             send_msg(controller_address, sr::add(stake_amount, budget), relay, BOUNCEABLE, 1);
+            send_raw_message(sr::message(sender, 0, begin_cell().store_uint(sr::excess, 32).store_uint(query_id, 64).end_cell(), false), 128);
 
 		}
 

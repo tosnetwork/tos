@@ -2954,6 +2954,52 @@ fn controller_preimage(
     preimage
 }
 
+fn fund_controller_operations(
+    chain: &mut Chain,
+    validator: &RootedValidator,
+    payer: &tos_sandbox::Treasury,
+) {
+    use chain_block::IBitstring;
+    let payload = contracts::validator_controller::operating_funding_payload(
+        &contracts::validator_controller::OperatingFunding {
+            payer: payer.address(),
+            deposit: u128::from(80 * TOS),
+            allowance: u128::from(60 * TOS),
+            per_request_limit: u128::from(20 * TOS),
+            storage_floor: u128::from(10 * TOS),
+            expires_at: chain.blockchain.now() + 86_400,
+        },
+    )
+    .expect("operating payload");
+    let nonce = validator.stored_nonce(chain);
+    let expires = chain.blockchain.now() + 600;
+    let signature = validator.root.sign_under(
+        &controller_preimage(global_id(chain), &validator.id(), 0, nonce, expires, 4, &payload),
+        CONTROLLER_CONTEXT,
+    );
+    let mut body = chain_block::BuilderData::new();
+    body.append_u32(CONTROLLER_OP).expect("op");
+    body.append_u64(1).expect("query");
+    body.append_i32(global_id(chain)).expect("network");
+    body.append_u64(0).expect("epoch");
+    body.append_u64(nonce).expect("nonce");
+    body.append_u32(expires).expect("expiry");
+    body.append_u8(4).expect("kind");
+    body.checked_append_reference(payload).expect("payload");
+    body.checked_append_reference(stored_bytes(&signature)).expect("signature");
+    body.append_bit_zero().expect("no cosignature");
+    chain
+        .blockchain
+        .send_message(payer.build_message(
+            &validator.address,
+            100 * TOS,
+            true,
+            Some(body.into_cell().expect("body")),
+        ))
+        .expect("explicit operating deposit")
+        .expect_success();
+}
+
 impl RootedValidator {
     fn id(&self) -> chain_block::UInt256 {
         chain_block::UInt256::from_slice(&self.address.address().get_bytestring(0))
@@ -3566,6 +3612,7 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
     // The pool that holds the money, staking through the first of them.
     let owner = chain.blockchain.treasury("pool-e2e-owner", 100_000 * TOS).expect("an owner");
     let operator = chain.blockchain.treasury("pool-e2e-operator", 100_000 * TOS).expect("a wallet");
+    fund_controller_operations(&mut chain, &validators[0], &operator);
     let controller = validators[0].address.clone();
     let pool = deploy_single_nominator(
         &mut chain,
@@ -3592,7 +3639,7 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
     // vectors; the production message builder below supplies the pool body.
     // Neither the test nor the operator constructs an elector-directed body.
     let signature = validators[0].consensus.sign(&preimage);
-    let witness = birth_witness(&chain, &controller);
+    let witness = rooted_birth_witness(&validators[0]);
 
     let params = NewStakeParams {
         query_id: 1,
@@ -3718,7 +3765,10 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
                 .iterate_out_msgs(|message| {
                     if message.dst() == Some(to.clone()) {
                         if message.body().is_some_and(|body| {
-                            body.clone().get_next_u32().ok() == Some(0x50516132)
+                            matches!(
+                                body.clone().get_next_u32().ok(),
+                                Some(0x50516132 | 0x50516133)
+                            )
                         }) {
                             return Ok(true);
                         }
@@ -3739,6 +3789,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     let validator = deploy_rooted_validator(&mut chain, 0x31);
     admit_code_of(&mut chain, &validator.address);
     let operator = chain.blockchain.treasury("multi-pool-operator", 100_000 * TOS).expect("wallet");
+    fund_controller_operations(&mut chain, &validator, &operator);
     let controller = validator.address.clone();
     let pool = deploy_multi_nominator(&mut chain, operator.address(), &controller);
 
@@ -3754,7 +3805,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
         &validator.consensus.adnl,
     );
     let signature = validator.consensus.sign(&preimage);
-    let witness = birth_witness(&chain, &controller);
+    let witness = rooted_birth_witness(&validator);
     let order = new_stake_with_witness(
         &NewStakeParams {
             query_id: 1,
@@ -3795,6 +3846,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
                     let mut body = message.body().expect("Elector reply body").clone();
                     let tag = body.get_next_u32().expect("reply opcode");
                     body.get_next_u64().expect("reply query id");
+                    body.get_next_bits(160).expect("return commitment");
                     elector_reply = Some((tag, body.get_next_u32().expect("reply reason")));
                 }
                 Ok(true)
@@ -4940,9 +4992,13 @@ fn seed_file_for(validator: &PqValidator) -> std::path::PathBuf {
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))
         .expect("only this process may write it");
     let seed = home.join(validator.key_file.file_name().expect("the seed has a name"));
-    std::fs::copy(&validator.key_file, &seed).expect("the seed is provisioned");
-    std::fs::set_permissions(&seed, std::fs::Permissions::from_mode(0o600))
+    // Concurrent native-tool tests may provision the same fixture. Publish a
+    // complete file atomically so no reader observes a truncation in progress.
+    let temporary = tempfile::NamedTempFile::new_in(&home).expect("private staging file");
+    std::fs::copy(&validator.key_file, temporary.path()).expect("the test seed is provisioned");
+    std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o600))
         .expect("owner-only, as the node insists");
+    temporary.persist(&seed).expect("publish complete test seed");
     seed
 }
 
@@ -5731,13 +5787,22 @@ fn controller_birth_witness(chain: &Chain, who: &tos_sandbox::Treasury) -> chain
 /// requires the result to be the sender's address, so a wrong number is not believed --
 /// it produces a different address and is refused. It replaced a pruned proof of the
 /// state init, which is a level-one cell and so cannot be sent by a contract at all.
+fn rooted_birth_witness(validator: &RootedValidator) -> chain_block::Cell {
+    let (code, data) = validator.birth.as_ref().expect("original deployment");
+    witness_from_cells(code, data)
+}
+
 fn birth_witness(chain: &Chain, address: &MsgAddressInt) -> chain_block::Cell {
-    use chain_block::{GetRepresentationHash, IBitstring};
     let account = chain.blockchain.get_account(address).expect("the sender exists");
     let state_init = account.state_init().expect("the sender was deployed with a state init");
     let code = state_init.code().expect("a controller is deployed with code");
     let data = state_init.data().expect("a controller is deployed with data");
 
+    witness_from_cells(code, data)
+}
+
+fn witness_from_cells(code: &chain_block::Cell, data: &chain_block::Cell) -> chain_block::Cell {
+    use chain_block::{GetRepresentationHash, IBitstring};
     let mut witness = chain_block::BuilderData::new();
     witness.append_raw(code.repr_hash().as_slice(), 256).expect("the code hash");
     witness.append_u16(code.repr_depth()).expect("the code depth");

@@ -64,7 +64,7 @@ MUTANTS = [
         "controller-kind",
         "validator-controller-v1.fc",
         "  throw_unless(ctl::error::bad_kind, (kind == ctl::kind::send) | (kind == ctl::kind::rotate_root)\n"
-        "                                     | (kind == ctl::kind::bind_consensus));",
+        "                                     | (kind == ctl::kind::bind_consensus) | (kind == ctl::kind::fund_operations) | (kind == ctl::kind::withdraw_operations));",
         "  throw_unless(ctl::error::bad_kind, true);",
         "validator_controller_sandbox",
         "every_field_of_an_authorisation",

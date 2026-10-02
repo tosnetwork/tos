@@ -40,11 +40,140 @@ cell recovery_metadata() inline_ref {
   if (extra.null?()) { return (0, null()); }
   slice cs = extra.begin_parse();
   throw_unless(sr::error, cs~load_uint(32) == recover::metadata_tag);
-  var result = (cs~load_uint(32), cs~load_dict()); cs.end_parse(); return result;
+  var result = (cs~load_uint(32), cs~load_dict());
+  ifnot (cs.slice_empty?()) { cs~load_maybe_ref(); }
+  cs.end_parse(); return result;
+}
+cell relay_returns() inline_ref {
+  cell extra = recovery_metadata();
+  if (extra.null?()) { return null(); }
+  slice cs = extra.begin_parse(); cs~load_uint(32); cs~load_uint(32); cs~load_dict();
+  cell book = cs.slice_empty?() ? null() : cs~load_maybe_ref(); cs.end_parse(); return book;
 }
 cell recovery_pack(int count, cell receipts) inline_ref {
   throw_unless(sr::error, (count >= 0) & (count < (1 << 32)));
-  return begin_cell().store_uint(recover::metadata_tag, 32).store_uint(count, 32).store_dict(receipts).end_cell();
+  builder packed = begin_cell().store_uint(recover::metadata_tag, 32).store_uint(count, 32).store_dict(receipts);
+  cell returns = relay_returns();
+  ifnot (returns.null?()) { packed = packed.store_maybe_ref(returns); }
+  return packed.end_cell();
+}
+
+;; One return record per immutable controller. IN_FLIGHT is not permission
+;; to pay again: only a native bounce can restore an amount to RETURNED.
+;; The latest acknowledged query remains a replay tombstone across rounds.
+(int, cell) relay_return_book() inline_ref {
+  cell book = relay_returns();
+  if (book.null?()) { return (0, null()); }
+  slice cs = book.begin_parse();
+  var result = (cs~load_uint(32), cs~load_dict()); cs.end_parse(); return result;
+}
+() save_relay_returns(int count, cell book) impure inline_ref {
+  var (elect, credits, past, purse, active_id, active_hash) = load_data();
+  var (recovering, receipts) = recovery_book();
+  cell extra = begin_cell().store_uint(recover::metadata_tag, 32).store_uint(recovering, 32)
+    .store_dict(receipts).store_maybe_ref(begin_cell().store_uint(count, 32).store_dict(book).end_cell()).end_cell();
+  store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, extra);
+}
+cell relay_return_record(int query, int hash, int phase, int amount, cell result, int fee_credit, slice payer) inline_ref {
+  return begin_cell().store_uint(query, 64).store_uint(hash, 256).store_uint(phase, 2)
+    .store_coins(sr::coins(amount)).store_ref(result)
+    .store_ref(begin_cell().store_coins(sr::coins(fee_credit)).store_slice(payer).end_cell()).end_cell();
+}
+(int, int, int, int, cell, int, slice) unpack_relay_return(slice cs) inline_ref {
+  var (query, hash, phase, amount, result) = (cs~load_uint(64), cs~load_uint(256), cs~load_uint(2), cs~load_coins(), cs~load_ref());
+  slice fees = cs~load_ref().begin_parse(); cs.end_parse();
+  var (credit, payer) = (fees~load_coins(), fees~load_msg_addr()); fees.end_parse();
+  return (query, hash, phase, amount, result, credit, payer);
+}
+cell relay_return_body(cell result, int budget, slice payer) inline_ref {
+  return begin_cell().store_slice(result.begin_parse()).store_coins(budget)
+    .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell();
+}
+() remember_relay_return(int query, int amount, cell result) impure inline_ref {
+  var (_, controller) = parse_std_addr(stake_reply_destination);
+  var (count, book) = relay_return_book();
+  var (old, found) = book.udict_get_ref?(256, controller);
+  if (found) {
+    var (previous, _, phase, _, _, fee_credit, _) = unpack_relay_return(old.begin_parse());
+    throw_unless(sr::error, (query > previous) & (fee_credit == 0) & (phase != 1));
+    ;; A later query from the admitted immutable controller also proves its
+    ;; previous request completed. No root send can enter this namespace.
+    if (phase != 2) { count = sr::sub(count, 1); }
+  }
+  book~udict_set_ref(256, controller, relay_return_record(query, stake_reply_hash, 0, amount, result, 0, stake_reply_destination));
+  save_relay_returns(sr::add(count, 1), book);
+}
+() bounce_relay_return(slice sender, int msg_value, slice cs) impure inline_ref {
+  if (cs.slice_bits() < 288) { return (); }
+  if (cs~load_uint(32) != 0xffffffff) { return (); }
+  int prefix = cs~load_uint(256);
+  var (wc, controller) = parse_std_addr(sender);
+  if (wc != -1) { return (); }
+  var (count, book) = relay_return_book();
+  var (entry, found) = book.udict_get_ref?(256, controller);
+  ifnot (found) { return (); }
+  var (query, hash, phase, amount, result, _, payer) = unpack_relay_return(entry.begin_parse());
+  if ((phase != 0) | (prefix != result.begin_parse().preload_uint(256))) { return (); }
+  ;; Actual returned cash, never the gross amount claimed in an old body.
+  int restored = min(amount, msg_value);
+  book~udict_set_ref(256, controller, relay_return_record(query, hash, 1, restored, result, sr::sub(msg_value, restored), payer));
+  save_relay_returns(count, book);
+}
+() retry_relay_return(slice sender, int msg_value, int query, slice cs) impure inline_ref {
+  int hash = cs~load_uint(256);
+  slice payer = cs~load_msg_addr(); cs.end_parse();
+  var (wc, controller) = parse_std_addr(sender);
+  throw_unless(sr::error, wc == -1);
+  var (count, book) = relay_return_book();
+  var (entry, found) = book.udict_get_ref?(256, controller);
+  throw_unless(sr::error, found);
+  var (expected_query, expected_hash, phase, amount, result, fee_credit, previous_payer) = unpack_relay_return(entry.begin_parse());
+  if (query < expected_query) {
+    ;; A later admitted request can overtake an earlier paid repair message.
+    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
+    send_raw_message(sr::message(payer, 0, begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 128);
+    return ();
+  }
+  throw_unless(sr::error, (query == expected_query) & (hash == expected_hash));
+  int budget = sr::automatic_value();
+  throw_unless(sr::error, msg_value >= sr::add(budget, sr::mul(2, sr::control_value())));
+  set_gas_limit(sr::control_gas);
+  int payment = phase == 1 ? sr::add(amount, fee_credit) : 0;
+  raw_reserve(sr::sub(sr::sub(pair_first(get_balance()), msg_value), payment), 0);
+  if (phase == 1) {
+    book~udict_set_ref(256, controller, relay_return_record(query, hash, 0, amount, result, 0, payer));
+    save_relay_returns(count, book);
+    if (fee_credit) {
+      send_raw_message(sr::message(previous_payer, fee_credit,
+        begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 1);
+    }
+    send_raw_message(sr::message(sender, sr::add(amount, budget), relay_return_body(result, budget, payer), true), 1);
+  }
+  send_raw_message(sr::message(payer, 0, begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 128);
+}
+() acknowledge_relay_return(slice sender, int msg_value, int query, slice cs) impure inline_ref {
+  int hash = cs~load_uint(256);
+  slice destination = cs~load_ref().begin_parse();
+  slice payer = destination~load_msg_addr(); destination.end_parse(); cs.end_parse();
+  var (wc, controller) = parse_std_addr(sender);
+  throw_unless(sr::error, wc == -1);
+  var (count, book) = relay_return_book();
+  var (entry, found) = book.udict_get_ref?(256, controller);
+  ifnot (found) { return (); }
+  var (expected_query, expected_hash, phase, _, result, _, _) = unpack_relay_return(entry.begin_parse());
+  if (query < expected_query) {
+    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
+    send_raw_message(sr::message(payer, 0, begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 128);
+    return ();
+  }
+  throw_unless(sr::error, (query == expected_query) & (hash == expected_hash) & (phase != 1));
+  if (phase == 0) {
+    book~udict_set_ref(256, controller, relay_return_record(query, hash, 2, 0, result, 0, payer));
+    save_relay_returns(sr::sub(count, 1), book);
+  }
+  raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
+  send_raw_message(sr::message(payer, 0,
+    begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 128);
 }
 
 ;; elect -> elect_at elect_close min_stake total_stake failed finished
@@ -261,9 +390,10 @@ builder pack_complaint(int validator_id, cell description, int created_at, int s
 () return_stake(addr, query_id, reason) impure inline_ref {
   if (stake_reply_bound) {
     cell body = begin_cell().store_uint(sr::error_reply, 32).store_uint(query_id, 64)
-      .store_uint(reason, 32).store_coins(0).store_coins(stake_reply_received)
+      .store_uint(stake_reply_hash >> 96, 160).store_uint(reason, 32).store_coins(0).store_coins(stake_reply_received)
       .store_uint(stake_reply_hash, 256).end_cell();
-    send_raw_message(sr::message(stake_reply_destination, 0, body, false), 64);
+    remember_relay_return(query_id, stake_reply_received, body);
+    send_raw_message(sr::message(stake_reply_destination, 0, relay_return_body(body, 0, stake_reply_destination), true), 64);
     return ();
   }
   return send_message_back(addr, 0xee6f454c, query_id, reason, 0, 64);
@@ -272,9 +402,10 @@ builder pack_complaint(int validator_id, cell description, int created_at, int s
 () send_confirmation(addr, query_id, comment) impure inline_ref {
   if (stake_reply_bound) {
     cell body = begin_cell().store_uint(sr::ok, 32).store_uint(query_id, 64)
-      .store_uint(0, 32).store_coins(sr::sub(stake_reply_received, sr::confirmation))
+      .store_uint(stake_reply_hash >> 96, 160).store_uint(0, 32).store_coins(sr::sub(stake_reply_received, sr::confirmation))
       .store_coins(stake_reply_received).store_uint(stake_reply_hash, 256).end_cell();
-    send_raw_message(sr::message(stake_reply_destination, sr::confirmation, body, false), 1);
+    remember_relay_return(query_id, sr::confirmation, body);
+    send_raw_message(sr::message(stake_reply_destination, sr::confirmation, relay_return_body(body, 0, stake_reply_destination), true), 1);
     return ();
   }
   return send_message_back(addr, 0xf374484c, query_id, comment, 1000000000, 2);
@@ -701,10 +832,13 @@ int recovery_upgrade_format() impure method_id(1667) {
   return recover::metadata_tag;
 }
 
+int relay_return_upgrade_format() impure method_id(1668) { return 0x52525633; }
+
 int upgrade_ready() method_id {
   var (elect, credits, past, _, _, _) = load_data();
   var (outstanding, _) = recovery_book();
-  return elect.null?() & credits.null?() & past.null?() & (outstanding == 0);
+  var (returning, _) = relay_return_book();
+  return elect.null?() & credits.null?() & past.null?() & (outstanding == 0) & (returning == 0);
 }
 
 () after_code_upgrade(slice s_addr, slice cs, int query_id) impure method_id(1666) {
@@ -733,6 +867,7 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
   cell preserved_data = get_data();
   cell preserved_actions = recovery_upgrade_actions();
   cell preserved_recovery = recovery_metadata();
+  int has_relay_returns = ~ relay_returns().null?();
   cont previous_code = get_c3();
   ifnot (preserved_recovery.null?()) {
     ;; A cleared local receipt may still owe its remote owner a confirmation.
@@ -740,8 +875,9 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
     ;; this fixed entry point cannot take over a nonempty recovery history.
     set_c3(code.begin_parse().bless());
     int target_format = recovery_upgrade_format();
+    int return_format = has_relay_returns ? relay_return_upgrade_format() : 0x52525633;
     set_c3(previous_code);
-    throw_unless(67, target_format == recover::metadata_tag);
+    throw_unless(67, (target_format == recover::metadata_tag) & (return_format == 0x52525633));
     ;; The compatibility entry point is a read-only declaration, not a migration.
     throw_unless(67, cell_hash(get_data()) == cell_hash(preserved_data));
     throw_unless(67, cell_hash(recovery_upgrade_actions()) == cell_hash(preserved_actions));
@@ -910,8 +1046,7 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
   var cs = in_msg_cell.begin_parse();
   var flags = cs~load_uint(4);  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   if (flags & 1) {
-    ;; ignore all bounced messages
-    return ();
+    return bounce_relay_return(cs~load_msg_addr(), msg_value, in_msg);
   }
   var s_addr = cs~load_msg_addr();
   if (in_msg.slice_empty?()) {
@@ -924,12 +1059,36 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
     return process_simple_transfer(s_addr, msg_value);
   }
   int query_id = in_msg~load_uint(64);
+  if (op == sr::return_retry) { return retry_relay_return(s_addr, msg_value, query_id, in_msg); }
+  if (op == sr::return_ack) { return acknowledge_relay_return(s_addr, msg_value, query_id, in_msg); }
   if (op == sr::stake) {
     var (wc, controller) = parse_std_addr(s_addr);
     throw_unless(sr::error, (wc == -1) & (query_id >= sr::domain));
     int commitment = in_msg~load_uint(160);
     cell payload = begin_cell().store_slice(in_msg).end_cell();
     throw_unless(sr::error, commitment == (cell_hash(payload) >> 96));
+    ;; Only an admitted immutable controller may allocate durable return history.
+    ;; Malformed/unadmitted requests use the native bounce path without a record.
+    slice admission = payload.begin_parse();
+    admission~load_uint(16); admission~load_ref(); admission~load_uint(32);
+    admission~load_uint(32); admission~load_uint(256); admission~load_ref();
+    cell witness = admission~load_maybe_ref();
+    var (codes, policy) = pq::controller_policy();
+    throw_unless(sr::error, policy);
+    int admitted = false;
+    ifnot (witness.null?()) {
+      var (code_hash, status) = pq::controller_code_hash?(witness, controller);
+      admitted = (status == 0) & pq::controller_admitted?(codes, code_hash);
+    }
+    ifnot (admitted) {
+      var (elect, _, _, _, _, _) = load_data();
+      throw_unless(sr::error, ~ elect.null?());
+      var (_, _, _, _, _, _, members, _, _) = unpack_elect(elect);
+      var (member, found) = members.udict_get?(256, controller);
+      throw_unless(sr::error, found);
+      var (_, _, _, _, _, _, _, _, code_hash) = pq::unpack_member(member);
+      throw_unless(sr::error, pq::controller_admitted?(codes, code_hash));
+    }
     stake_reply_bound = true;
     stake_reply_hash = sr::request_hash(controller, query_id, payload);
     stake_reply_received = msg_value;

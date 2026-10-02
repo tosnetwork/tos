@@ -174,6 +174,18 @@ jobs:
       - name: Every controller rule is held by a test
         run: python3 test/pq-native/contract-guard-mutations.py --out mutations.json
 
+      - name: R3 accounting and return recovery sensitivity
+        run: python3 test/pq-native/elector-r3-accounting-mutations.py --out r3-mutations
+
+      - name: Retain R3 native assertion receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r3-accounting-${{ github.sha }}
+          path: r3-mutations
+          if-no-files-found: warn
+          retention-days: 30
+
       # The cutover deleted several validator-authority paths rather than refusing them
       # by name, so nothing in the contracts announces their return. This fails if one
       # comes back.

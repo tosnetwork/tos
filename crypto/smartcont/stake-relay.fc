@@ -6,6 +6,9 @@ const int sr::error_reply = 0x50516532;
 const int sr::result = 0x50516232;
 const int sr::ack = 0x50516132;
 const int sr::retry = 0x50516632;
+const int sr::return_retry = 0x50517433;
+const int sr::return_ack = 0x50516133;
+const int sr::excess = 0x50517833;
 const int sr::domain = 1 << 63;
 const int sr::error = 180;
 const int sr::confirmation = 1000000000;
@@ -51,14 +54,16 @@ int sr::request_hash(int controller, int query, cell payload) inline_ref {
   return begin_cell().store_uint(sr::stake, 32).store_int(-1, 32).store_uint(controller, 256)
     .store_uint(query, 64).store_ref(payload).end_cell().cell_hash();
 }
-int sr::commitment(int owner, int elector, int forwarded, cell terms) inline_ref {
+int sr::commitment(int owner, int elector, int forwarded, cell terms, slice payer) inline_ref {
   return begin_cell().store_uint(sr::relay, 32).store_uint(owner, 256)
-    .store_uint(elector, 256).store_coins(sr::coins(forwarded)).store_ref(terms).end_cell().cell_hash() >> 96;
+    .store_uint(elector, 256).store_coins(sr::coins(forwarded)).store_ref(terms)
+    .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell().cell_hash() >> 96;
 }
-cell sr::relay_body(int owner, int query, int elector, int forwarded, cell terms) inline_ref {
+cell sr::relay_body(int owner, int query, int elector, int forwarded, cell terms, slice payer) inline_ref {
   return begin_cell().store_uint(sr::relay, 32).store_uint(query, 64)
-    .store_uint(sr::commitment(owner, elector, forwarded, terms), 160)
-    .store_coins(sr::coins(forwarded)).store_uint(elector, 256).store_ref(terms).end_cell();
+    .store_uint(sr::commitment(owner, elector, forwarded, terms, payer), 160)
+    .store_coins(sr::coins(forwarded)).store_uint(elector, 256).store_ref(terms)
+    .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell();
 }
 cell sr::stake_body(int query, cell payload) inline_ref {
   return begin_cell().store_uint(sr::stake, 32).store_uint(query, 64)
@@ -81,5 +86,9 @@ int sr::bounce_matches(slice body, int prefix) inline {
 }
 int sr::reserved_op(int op) inline {
   return (op == sr::relay) | (op == sr::ok) | (op == sr::error_reply)
-    | (op == sr::result) | (op == sr::ack) | (op == sr::retry) | (op == 0xffffffff);
+    | (op == sr::return_retry) | (op == sr::return_ack) | (op == sr::excess) | (op == sr::result) | (op == sr::ack) | (op == sr::retry) | (op == 0xffffffff);
 }
+
+;; Current-price bounds, never a default deposit or an authorization.
+int sr::retry_value() inline { return sr::add(sr::control_value(), sr::callback_value()); }
+int sr::automatic_value() inline { return sr::add(sr::mul(3, sr::control_value()), sr::retry_value()); }

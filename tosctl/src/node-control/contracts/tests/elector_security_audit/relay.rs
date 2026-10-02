@@ -1,4 +1,5 @@
 //! Asynchronous receipts and funds, using one native transaction at a time.
+mod r3_accounting;
 mod r3_r4;
 use super::*;
 use chain_block::{Coins, Message, TrComputePhase, Transaction, TransactionDescr};
@@ -21,8 +22,22 @@ struct Fixture {
 }
 impl Fixture {
     fn new(label: &str) -> Self {
+        let mut fixture = Self::unfunded(label);
+        r3_accounting::fund(&mut fixture, 80 * TOS, 60 * TOS);
+        fixture
+    }
+    fn unfunded(label: &str) -> Self {
         let (mut chain, _, election) = open_election(label, 200_000 * TOS);
         raise_to_post_quantum_version(&mut chain);
+        if std::env::var_os("R3_FEE_TRACE").is_some() {
+            for parameter in [20, 24] {
+                let config = raw_parameter(&chain, parameter).expect("fee configuration");
+                println!(
+                    "R3_FEE_CONFIG parameter={parameter} boc={}",
+                    hex::encode(chain_block::write_boc(&config).expect("public configuration BOC"))
+                );
+            }
+        }
         let validator = deploy_rooted_validator(&mut chain, 0x52);
         admit_code_of(&mut chain, &validator.address);
         let operator = chain.blockchain.treasury(label, 100_000 * TOS).expect("operator");
@@ -116,6 +131,7 @@ fn step(chain: &mut Chain, message: Message) -> (Transaction, Vec<Message>) {
     let destination = message.dst().expect("destination");
     let before = balance_of(chain, &destination);
     let inbound = value(&message);
+    let inbound_op = message.body().and_then(|b| b.clone().get_next_u32().ok()).unwrap_or(0);
     let (_, transaction, outbound) =
         chain.blockchain.execute_one(message).expect("native transaction/action phase");
     let after = balance_of(chain, &destination);
@@ -128,6 +144,21 @@ fn step(chain: &mut Chain, message: Message) -> (Transaction, Vec<Message>) {
         after + transaction.total_fees().coins.as_u128() + transferred,
         "real transaction principal, balance and fees must reconcile"
     );
+    if std::env::var_os("R3_FEE_TRACE").is_some() {
+        if let TransactionDescr::Ordinary(ref d) =
+            transaction.read_description().expect("description")
+        {
+            if let TrComputePhase::Vm(ref vm) = d.compute_ph {
+                println!(
+                    "R3_FEE op={inbound_op:08x} gas={} inbound={inbound} fees={} outbound={} aborted={}",
+                    vm.gas_used,
+                    transaction.total_fees().coins.as_u128(),
+                    transferred,
+                    d.aborted
+                );
+            }
+        }
+    }
     (transaction, outbound)
 }
 fn only_to(messages: Vec<Message>, destination: &MsgAddressInt) -> Message {
@@ -186,8 +217,8 @@ fn the_three_real_contracts_close_the_stake_receipt_and_return_unused_budget() {
     assert!(fixture.pending().is_none(), "completed relay must not leak a pending slot");
     assert_eq!(
         balance_of(&fixture.chain, &fixture.validator.address),
-        capital,
-        "third-party fees cannot fund root or consume controller capital"
+        capital - r3_accounting::first_grant(&fixture),
+        "only the explicit operator grant leaves controller capital"
     );
     let (members, _) = pq_book(&fixture.chain);
     let member = members
@@ -209,6 +240,15 @@ fn begin(fixture: &mut Fixture, query: u64, at: u32) -> Message {
 fn finish_reply(fixture: &mut Fixture, receipt: Message, expected_state: u8) {
     let (tx, out) = step(&mut fixture.chain, receipt);
     successful(&tx, "record reply");
+    for ack in out
+        .iter()
+        .filter(|m| m.dst().as_ref() == Some(&fixture.chain.elector))
+        .cloned()
+        .collect::<Vec<_>>()
+    {
+        let (tx, _) = step(&mut fixture.chain, ack);
+        successful(&tx, "elector delivery acknowledgment");
+    }
     let kick = only_to(out, &fixture.validator.address);
     let (tx, out) = step(&mut fixture.chain, kick);
     successful(&tx, "pay recorded result");
@@ -379,7 +419,7 @@ fn malformed_or_underfunded_real_requests_refund_without_occupying_the_controlle
             successful(&tx, "canonical signature can reach elector witness check");
             let stake = only_to(out, &fixture.chain.elector);
             let (tx, out) = step(&mut fixture.chain, stake);
-            successful(&tx, "elector witness refusal");
+            assert!(tx.read_description().expect("description").is_aborted());
             let receipt = only_to(out, &fixture.validator.address);
             finish_reply(&mut fixture, receipt, 0);
         } else {
@@ -400,8 +440,8 @@ fn malformed_or_underfunded_real_requests_refund_without_occupying_the_controlle
         );
         assert!(fixture.pending().is_none());
         assert!(
-            balance_of(&fixture.chain, &fixture.pool) >= before,
-            "{scenario}: caller budget, not principal, pays refusal"
+            balance_of(&fixture.chain, &fixture.pool) > before - u128::from(TOS),
+            "{scenario}: operator bears the bounded refusal loss"
         );
     }
 }
@@ -450,6 +490,7 @@ fn pool_receipts_bind_actual_controller_query_hash_and_exact_forwarded_amount() 
             .expect("amount");
         body.append_u32(reason).expect("reason");
         body.append_bit_bool(success).expect("success");
+        body.checked_append_references_and_data(&bs).expect("unchanged accounting suffix");
         let source =
             if field == "source" { attacker.address() } else { &fixture.validator.address };
         let forged = MessageBuilder::internal(source, &fixture.pool, TOS)
@@ -876,18 +917,23 @@ fn a_real_refusal_returns_the_principal_without_root_intervention() {
             fixture.chain.blockchain.set_account(fixture.chain.elector.clone(), account);
         }
         let (tx, out) = step(&mut fixture.chain, stake);
-        successful(&tx, "real business refusal");
+        if scenario == "retired" {
+            assert!(tx.read_description().expect("description").is_aborted());
+        } else {
+            successful(&tx, "real business refusal");
+        }
         let receipt = only_to(out, &fixture.validator.address);
-        assert_eq!(op(&receipt), 0x50516532);
+        assert_eq!(op(&receipt), if scenario == "retired" { 0xffffffff } else { 0x50516532 });
         finish_reply(&mut fixture, receipt, 0);
-        assert_eq!(
-            balance_of(&fixture.chain, &fixture.validator.address),
-            capital,
-            "{scenario}: controller cannot retain owner budget"
+        let after = balance_of(&fixture.chain, &fixture.validator.address);
+        let reserved = capital - r3_accounting::first_grant(&fixture);
+        assert!(
+            after <= reserved && reserved - after < u128::from(TOS),
+            "{scenario}: only the operating grant and bounded elapsed rent leave capital"
         );
         assert!(
-            balance_of(&fixture.chain, &fixture.pool) >= before,
-            "{scenario}: caller budget must cover rejection costs"
+            balance_of(&fixture.chain, &fixture.pool) > before - u128::from(TOS),
+            "{scenario}: refusal costs are bounded and charged to the operator contribution"
         );
         let owner: [u8; 32] = fixture.pool.address().get_bytestring(0).try_into().expect("owner");
         assert_eq!(owed(&fixture.chain, &owner), 0, "refusal must not also create a credit");
@@ -944,8 +990,11 @@ fn an_elector_compute_abort_is_a_recorded_and_automatic_owner_refund() {
     let (tx, _) = step(&mut fixture.chain, only_to(out, &fixture.validator.address));
     successful(&tx, "refund ack");
     assert!(fixture.pending().is_none());
-    assert_eq!(balance_of(&fixture.chain, &fixture.validator.address), capital);
-    assert!(balance_of(&fixture.chain, &fixture.pool) >= before);
+    assert_eq!(
+        balance_of(&fixture.chain, &fixture.validator.address),
+        capital - r3_accounting::first_grant(&fixture)
+    );
+    assert!(balance_of(&fixture.chain, &fixture.pool) > before - u128::from(TOS));
 }
 
 #[test]
@@ -1019,9 +1068,16 @@ fn a_real_controller_payment_action_failure_keeps_ready_debt_for_public_retry() 
     let (tx, _) = step(&mut fixture.chain, receipt);
     successful(&tx, "record refund before payment");
     let ready = fixture.pending().expect("READY debt");
-    // Real rent over a long inactive period consumes more than this small retry
-    // can replenish. The strict capital reservation now fails in the action phase.
-    fixture.chain.blockchain.set_now(fixture.chain.blockchain.now() + 20 * 365 * 24 * 3600);
+    // Tighten the native outbound-message limit after READY. Compute still
+    // succeeds, but the mandatory principal action cannot be emitted.
+    fixture
+        .chain
+        .blockchain
+        .set_size_limits_config(chain_block::SizeLimitsConfig {
+            max_msg_cells: 0,
+            ..chain_block::SizeLimitsConfig::default()
+        })
+        .expect("tighten action limit");
     let request = retry(&fixture, DOMAIN | 1);
     let (tx, _) = step(&mut fixture.chain, request);
     assert_eq!(
@@ -1031,8 +1087,13 @@ fn a_real_controller_payment_action_failure_keeps_ready_debt_for_public_retry() 
     );
     action_failure(&tx);
     assert_eq!(fixture.pool_state(), 1);
+    fixture
+        .chain
+        .blockchain
+        .set_size_limits_config(chain_block::SizeLimitsConfig::default())
+        .expect("restore action limit");
     let mut request = retry(&fixture, DOMAIN | 1);
-    request.int_header_mut().expect("header").value.coins = Coins::new(20_000 * TOS);
+    request.int_header_mut().expect("header").value.coins = Coins::new(40 * TOS);
     let (tx, out) = step(&mut fixture.chain, request);
     successful(&tx, "fund rent and retry original debt");
     let (tx, out) = step(&mut fixture.chain, only_to(out, &fixture.pool));
@@ -1161,6 +1222,7 @@ fn controller_results_bind_elector_query_commitment_amount_and_wait_phase() {
         let mut cs = receipt.body().expect("receipt").clone();
         let tag = cs.get_next_u32().expect("op");
         let q = cs.get_next_u64().expect("query");
+        let commitment = cs.get_next_bits(160).expect("bounce commitment");
         let reason = cs.get_next_u32().expect("reason");
         let accepted = next_coins(&mut cs);
         let received = next_coins(&mut cs);
@@ -1171,6 +1233,7 @@ fn controller_results_bind_elector_query_commitment_amount_and_wait_phase() {
         let mut body = BuilderData::new();
         body.append_u32(tag).expect("op");
         body.append_u64(q + u64::from(field == "query")).expect("q");
+        body.append_raw(&commitment, 160).expect("commitment");
         body.append_u32(reason).expect("reason");
         Coins::new((accepted + u128::from(field == "accepted")) as u64)
             .write_to(&mut body)
@@ -1179,6 +1242,7 @@ fn controller_results_bind_elector_query_commitment_amount_and_wait_phase() {
             .write_to(&mut body)
             .expect("received");
         body.append_raw(&hash, 256).expect("hash");
+        body.checked_append_references_and_data(&cs).expect("unchanged fee suffix");
         let source =
             if field == "source" { fixture.operator.address() } else { &fixture.chain.elector };
         let message = MessageBuilder::internal(source, &fixture.validator.address, TOS)
@@ -1195,7 +1259,7 @@ fn controller_results_bind_elector_query_commitment_amount_and_wait_phase() {
     let (_, out) = step(&mut fixture.chain, receipt.clone());
     let ready = fixture.pending().expect("READY");
     let (_, repeated) = step(&mut fixture.chain, receipt);
-    assert!(repeated.is_empty(), "late success cannot restart READY payment");
+    assert!(repeated.iter().all(|m| m.is_bounced()), "late result cannot restart READY payment");
     assert_eq!(fixture.pending().expect("duplicate result"), ready);
     let kick = only_to(out, &fixture.validator.address);
     let (_, out) = step(&mut fixture.chain, kick);
@@ -1362,7 +1426,15 @@ fn one_pending_slot_and_monotonic_query_prevent_replay_and_storage_growth() {
 #[test]
 fn root_cannot_forge_reserved_callbacks_even_without_a_pending_request() {
     let mut fixture = Fixture::new("root-reserved-namespace");
-    for (operation, query) in [(RESULT, 1), (RELAY, 1), (ACK, 1), (0x47657424, DOMAIN | 1)] {
+    for (operation, query) in [
+        (RESULT, 1),
+        (RELAY, 1),
+        (ACK, 1),
+        (0x50517433, 1),
+        (0x50516133, 1),
+        (0x50517833, 1),
+        (0x47657424, DOMAIN | 1),
+    ] {
         let mut body = BuilderData::new();
         body.append_u32(operation).expect("operation");
         body.append_u64(query).expect("query");
@@ -1841,6 +1913,7 @@ fn recovery_ack_survives_accepted_and_rejected_later_stakes() {
         tick(&mut fixture.chain);
         let next = active_election_id(&fixture.chain) as u32;
         assert!(next > fixture.election);
+        r3_accounting::fund(&mut fixture, 0, 60 * TOS);
         let stake = begin(&mut fixture, 2, next + u32::from(reject));
         let (tx, out) = step(&mut fixture.chain, stake);
         successful(&tx, "later real elector result");
@@ -1913,6 +1986,7 @@ fn recovery_ack_survives_accepted_and_rejected_later_stakes() {
             before
         );
         if reject {
+            r3_accounting::fund(&mut fixture, 0, 60 * TOS);
             let stake = begin(&mut fixture, 3, next);
             let (tx, out) = step(&mut fixture.chain, stake);
             successful(&tx, "new stake after refused round");
@@ -2082,6 +2156,7 @@ fn relay_query_allocation_refuses_large_jumps_without_burning_the_next_id() {
         .expect("getter after rotation");
     assert_eq!(next.stack[0].as_integer().expect("query").to_string(), (DOMAIN | 2).to_string());
     let at = fixture.election;
+    r3_accounting::fund(&mut fixture, 0, 60 * TOS);
     let stake = begin(&mut fixture, 2, at);
     let (tx, out) = step(&mut fixture.chain, stake);
     successful(&tx, "rotated next request");
@@ -2111,6 +2186,7 @@ fn single_pool_reuses_the_authoritative_query_after_a_real_controller_bounce() {
     successful(&tx, "actual controller refusal bounce");
     assert!(fixture.pending().is_none());
     let at = fixture.election;
+    r3_accounting::fund(&mut fixture, 0, 60 * TOS);
     let stake = begin(&mut fixture, 1, at);
     let (tx, out) = step(&mut fixture.chain, stake);
     successful(&tx, "allocated next single-pool stake");
@@ -2138,6 +2214,7 @@ fn single_pool_bounce_preserves_a_previous_unacknowledged_result() {
         20_000 * TOS,
     );
     let at = fixture.election + 1;
+    r3_accounting::fund(&mut fixture, 0, 60 * TOS);
     let stake = begin(&mut fixture, 1, at);
     let (_, out) = step(&mut fixture.chain, stake);
     let receipt = only_to(out, &fixture.validator.address);
@@ -2188,6 +2265,7 @@ fn single_pool_bounce_preserves_a_previous_unacknowledged_result() {
     successful(&tx, "controller clears old paid slot");
     assert!(fixture.pending().is_none());
     let at = fixture.election;
+    r3_accounting::fund(&mut fixture, 0, 60 * TOS);
     let stake = begin(&mut fixture, 2, at);
     let (tx, _) = step(&mut fixture.chain, stake);
     successful(&tx, "normal next allocation after repair");

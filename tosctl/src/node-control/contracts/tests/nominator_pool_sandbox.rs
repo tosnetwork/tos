@@ -416,9 +416,16 @@ fn a_bounced_relay_lets_the_pool_try_again() {
     result.transactions[0]
         .1
         .iterate_out_msgs(|message| {
-            prefix = Some(
-                message.body().expect("body").clone().get_next_bits(256).expect("committed prefix"),
-            );
+            if message.dst().as_ref() == Some(&pooled.controller) {
+                prefix = Some(
+                    message
+                        .body()
+                        .expect("body")
+                        .clone()
+                        .get_next_bits(256)
+                        .expect("committed prefix"),
+                );
+            }
             Ok(true)
         })
         .expect("outgoing");
@@ -431,7 +438,7 @@ fn a_bounced_relay_lets_the_pool_try_again() {
     let pool = pooled.pool.clone();
     // Marked bounced, which is the bit the contract reads to tell one from an ordinary
     // message; the builder has no word for it.
-    let mut bounce = MessageBuilder::internal(&controller, &pool, TOS)
+    let mut bounce = MessageBuilder::internal(&controller, &pool, 1_000 * TOS)
         .body(body.into_cell().expect("a bounce"))
         .build();
     bounce.int_header_mut().expect("an internal message").bounced = true;
@@ -481,9 +488,8 @@ fn a_stake_spends_the_amount_it_was_ordered_to() {
         .and_then(|account| account.balance().and_then(|balance| balance.coins.as_u64()))
         .expect("a balance");
 
-    // The order carries two TOS of its own, which land in the pool before the stake
-    // leaves it, so the balance falls by the stake less what the order brought in.
-    let order_value = 20 * TOS;
+    // Current transaction fees and change belong to the caller; the pool
+    // contributes exactly the principal it was told to forward.
     pooled.order(1, 1_000 * TOS, election);
 
     let after = pooled
@@ -491,13 +497,5 @@ fn a_stake_spends_the_amount_it_was_ordered_to() {
         .get_account(&pooled.pool)
         .and_then(|account| account.balance().and_then(|balance| balance.coins.as_u64()))
         .expect("a balance");
-    let spent = before - after;
-    assert!(
-        spent < 1_000 * TOS,
-        "the stake cost the pool {spent}, which is more than it was told to spend"
-    );
-    assert!(
-        spent > 1_000 * TOS - order_value,
-        "the stake cost the pool only {spent}, so it did not send what it was ordered to"
-    );
+    assert_eq!(before - after, 1_000 * TOS, "the pool spends exactly forwarded principal");
 }

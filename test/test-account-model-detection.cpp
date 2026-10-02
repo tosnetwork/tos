@@ -61,7 +61,7 @@ TEST(AccountModel, nominator_pool_is_recognised_by_the_locked_code_hash) {
   // The build lock independently checks this against current source and BOC.
   // CellHash::to_hex uses upper case; a lower-case table entry cannot match it.
   td::Bits256 code_hash;
-  CHECK(code_hash.from_hex("9cce536f3d093fe56681ab37017bf094368dcc507b965141f6a78598dfde5dc3") == 256);
+  CHECK(code_hash.from_hex("357d8360e5b990dd1e5a49ac606b48e08f1345389779e4f763df39dc7172c000") == 256);
   ASSERT_EQ("nominator pool v1", tos::detect_wallet_type(vm::CellHash::from_slice(code_hash.as_slice())));
 }
 

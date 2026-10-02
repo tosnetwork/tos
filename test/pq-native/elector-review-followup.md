@@ -1,5 +1,9 @@
 # Elector review follow-up
 
+Current R3 implementation and its explicit deployment/support boundaries are in
+[elector-r3-implementation.md](elector-r3-implementation.md). The findings and
+result indexes below describe earlier revisions.
+
 This follow-up addresses the two source findings against
 `5df2222c1049e165560637a85a3dd1ae5aa32bbf`. It changes the existing single-query,
 single-flight protocol. It does not deploy contracts or migrate a live chain.

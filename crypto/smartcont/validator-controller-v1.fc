@@ -20,6 +20,7 @@
 #include "stake-relay.fc";
 
 global cell ctl::relay_meta;
+global cell ctl::operating;
 
 ;; ---------------------------------------------------------------------------
 ;; The frozen authorization wire. `test/pq-native/controller-auth-vectors.tsv`
@@ -35,6 +36,8 @@ const int ctl::kind::rotate_root = 2;
 ;; it and the new key proves its own private half exists, exactly as a root rotation does.
 ;; Only the key's identity is kept here; the secret never leaves the validator host.
 const int ctl::kind::bind_consensus = 3;
+const int ctl::kind::fund_operations = 4;
+const int ctl::kind::withdraw_operations = 5;
 
 const int ctl::error::no_consensus_key = 100;
 const int ctl::error::wrong_consensus_key = 101;
@@ -95,6 +98,7 @@ int ctl::hash_level0(cell c) asm "0 CHASHI";
   slice ds = get_data().begin_parse();
   var res = (ds~load_uint(64), ds~load_uint(64), ds~load_uint(16), ds~load_uint(256), ds~load_ref());
   ctl::relay_meta = ds.slice_empty?() ? null() : ds~load_maybe_ref();
+  ctl::operating = ds.slice_empty?() ? null() : ds~load_maybe_ref();
   ds.end_parse();
   return res;
 }
@@ -108,6 +112,7 @@ int ctl::hash_level0(cell c) asm "0 CHASHI";
     .store_uint(consensus_key_id, 256)
     .store_ref(root)
     .store_maybe_ref(ctl::relay_meta)
+    .store_maybe_ref(ctl::operating)
   .end_cell());
 }
 
@@ -138,43 +143,57 @@ slice ctl::elector_address() inline {
   ctl::relay_meta = begin_cell().store_uint(sequence, 64).store_maybe_ref(pending).end_cell();
   ctl::save_data(epoch, nonce, algorithm, key, root);
 }
-cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
-                 int prefix, int phase, cell receipt) inline_ref {
-  cell amounts = begin_cell().store_coins(sr::coins(forwarded)).store_coins(sr::coins(capital))
-    .store_uint(prefix, 256).store_maybe_ref(receipt).end_cell();
+;; Operating money is credited only by a root-signed, sender-bound deposit.
+;; A permission ceiling is independent of that money. Both default to zero.
+(int, int, int, int, int, slice) ctl::operations() impure inline_ref {
+  ctl::load_data();
+  if (ctl::operating.null?()) { return (0, 0, 0, 0, 0, my_address()); }
+  slice cs = ctl::operating.begin_parse();
+  var result = (cs~load_coins(), cs~load_coins(), cs~load_coins(), cs~load_coins(),
+    cs~load_uint(32), cs~load_msg_addr()); cs.end_parse(); return result;
+}
+() ctl::save_operations(int funds, int permission, int limit, int floor, int expires, slice payer) impure inline_ref {
+  var (epoch, nonce, algorithm, key, root) = ctl::load_data();
+  ctl::operating = begin_cell().store_coins(sr::coins(funds)).store_coins(sr::coins(permission))
+    .store_coins(sr::coins(limit)).store_coins(sr::coins(floor)).store_uint(expires, 32)
+    .store_slice(payer).end_cell();
+  ctl::save_data(epoch, nonce, algorithm, key, root);
+}
+cell ctl::record(int owner, int elector, int hash, int forwarded, int debt,
+                 int prefix, int phase, cell receipt, int grant, slice sponsor) inline_ref {
+  cell amounts = begin_cell().store_coins(sr::coins(forwarded)).store_coins(sr::coins(debt))
+    .store_uint(prefix, 256).store_maybe_ref(receipt)
+    .store_coins(sr::coins(grant)).store_slice(sponsor).end_cell();
   return begin_cell().store_uint(owner, 256).store_uint(elector, 256).store_uint(hash, 256)
     .store_uint(phase, 2).store_ref(amounts).end_cell();
 }
-(int, int, int, int, int, int, int, cell) ctl::unpack(cell pending) inline_ref {
+(int, int, int, int, int, int, int, cell, int, slice) ctl::unpack(cell pending) inline_ref {
   slice cs = pending.begin_parse();
   var (owner, elector, hash, phase) = (cs~load_uint(256), cs~load_uint(256), cs~load_uint(256), cs~load_uint(2));
   slice amounts = cs~load_ref().begin_parse(); cs.end_parse();
-  var (forwarded, capital, prefix, receipt) = (amounts~load_coins(), amounts~load_coins(),
-    amounts~load_uint(256), amounts~load_maybe_ref()); amounts.end_parse();
-  return (owner, elector, hash, forwarded, capital, prefix, phase, receipt);
+  var (forwarded, debt, prefix, receipt, grant, sponsor) = (amounts~load_coins(), amounts~load_coins(),
+    amounts~load_uint(256), amounts~load_maybe_ref(), amounts~load_coins(), amounts~load_msg_addr()); amounts.end_parse();
+  return (owner, elector, hash, forwarded, debt, prefix, phase, receipt, grant, sponsor);
 }
-;; Controller-owned receipts are not part of a pool's settlement surplus.
-;; Reclassify an explicitly accepted unrelated credit before the next READY send.
-;; Keep the one-slot record and its creditor, commitment, phase and receipt.
-() ctl::protect_owner_credit(int value) impure inline_ref {
-  var (sequence, pending) = ctl::relay_state();
-  if (pending.null?()) { return (); }
-  var (owner, elector, hash, forwarded, capital, prefix, phase, receipt) = ctl::unpack(pending);
-  if (phase >= 2) { return (); }  ;; PAID repeats already reserve all prior balance.
-  ctl::save_relay(sequence, ctl::record(owner, elector, hash, forwarded,
-    sr::add(capital, value), prefix, phase, receipt));
+() ctl::kick(int query, slice payer) impure inline_ref {
+  send_raw_message(sr::message(my_address(), sr::retry_value(),
+    begin_cell().store_uint(sr::retry, 32).store_uint(query, 64)
+      .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell(), false), 3);
 }
-
-() ctl::kick(int query) impure inline_ref {
-  send_raw_message(sr::message(my_address(), sr::add(sr::control_value(), sr::callback_value()),
-    begin_cell().store_uint(sr::retry, 32).store_uint(query, 64).end_cell(), false), 3);
+() ctl::refund(slice payer, int query) impure inline_ref {
+  ;; The 96-bit change notice fits in the message root; it needs no child cell.
+  send_raw_message(begin_cell().store_uint(0x10, 6).store_slice(payer).store_coins(0)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), 128);
 }
 () ctl::relay_stake(slice sender, int msg_value, slice cs) impure inline_ref {
   int query = cs~load_uint(64);
   int commitment = cs~load_uint(160);
   int forwarded = cs~load_coins();
   int elector = cs~load_uint(256);
-  cell terms = cs~load_ref(); cs.end_parse();
+  cell terms = cs~load_ref();
+  slice fee_payer = cs~load_ref().begin_parse();
+  slice payer = fee_payer~load_msg_addr(); fee_payer.end_parse(); cs.end_parse();
   var (wc, owner) = parse_std_addr(sender);
   throw_unless(ctl::error::owner_not_masterchain, (wc == -1) & owner);
   var (_, controller) = parse_std_addr(my_address());
@@ -189,7 +208,7 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
   cell canonical_signature = begin_cell().store_uint(pq::mldsa44_signature_bytes, 32).store_ref(signature_chain).end_cell();
   throw_unless(sr::error, cell_hash(canonical_signature) == cell_hash(signature));
   throw_unless(sr::error, elector == sr::elector());
-  throw_unless(sr::error, commitment == sr::commitment(owner, elector, forwarded, terms));
+  throw_unless(sr::error, commitment == sr::commitment(owner, elector, forwarded, terms, payer));
   var (sequence, pending) = ctl::relay_state();
   throw_unless(sr::error, (sequence < ((1 << 64) - 1)) & (query == sequence + 1) & pending.null?());
   cell payload = sr::payload(terms, owner);
@@ -202,78 +221,135 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
   throw_unless(ctl::error::bad_signature, pq_check_mldsa44(
     pq::stake_preimage(at, factor, controller, owner, algorithm, key_id, adnl),
     pq::election_context(), signature_chain, key_chain));
+  throw_unless(sr::error, at > now());
+  var (funds, permission, limit, floor, expires, sponsor) = ctl::operations();
+  int grant = sr::automatic_value();
+  throw_unless(sr::error, (now() < expires) & (grant <= limit) & (grant <= permission) & (grant <= funds));
   int capital = sr::sub(pair_first(get_balance()), msg_value);
+  throw_unless(sr::error, capital >= sr::add(funds, floor));
+  ctl::save_operations(sr::sub(funds, grant), sr::sub(permission, grant), limit, floor, expires, sponsor);
   pending = ctl::record(owner, elector, sr::request_hash(controller, query, payload), forwarded,
-    capital, body.begin_parse().preload_uint(256), 0, null());
+    0, body.begin_parse().preload_uint(256), 0, null(), grant, sponsor);
   ctl::save_relay(query, pending);
   raw_reserve(capital, 0);
   send_raw_message(outgoing, 17);
+  ctl::refund(payer, query);
 }
 () ctl::receive_result(slice sender, int msg_value, int op, slice cs) impure inline_ref {
   int query = cs~load_uint(64);
+  int commitment = cs~load_uint(160);
   int reason = cs~load_uint(32);
   int accepted = cs~load_coins();
   int received = cs~load_coins();
-  int hash = cs~load_uint(256); cs.end_parse();
+  int hash = cs~load_uint(256);
+  int budget = cs~load_coins();
+  slice refund = cs~load_ref().begin_parse();
+  slice payer = refund~load_msg_addr(); refund.end_parse(); cs.end_parse();
   var (sequence, pending) = ctl::relay_state();
-  if (pending.null?() | (query != sequence)) { return (); }
-  var (owner, elector, expected, forwarded, capital, prefix, phase, _) = ctl::unpack(pending);
+  throw_unless(sr::error, (~ pending.null?()) & (query == sequence));
+  var (owner, elector, expected, forwarded, _, prefix, phase, _, grant, sponsor) = ctl::unpack(pending);
   var (wc, address) = parse_std_addr(sender);
-  if ((wc != -1) | (address != elector) | (phase != 0)) { return (); }
-  throw_unless(sr::error, (hash == expected) & (received == forwarded));
+  throw_unless(sr::error, (wc == -1) & (address == elector) & (phase == 0));
+  throw_unless(sr::error, (hash == expected) & (commitment == (hash >> 96)) & (received == forwarded));
   throw_unless(sr::error, accepted == ((op == sr::ok) ? sr::sub(forwarded, sr::confirmation) : 0));
   throw_unless(sr::error, ((op == sr::ok) & (reason == 0)) | ((op == sr::error_reply) & (accepted == 0)));
+  int debt = sr::sub(msg_value, budget);
+  throw_unless(sr::error, debt <= (op == sr::ok ? sr::confirmation : forwarded));
+  int available = budget ? budget : grant;
+  throw_unless(sr::error, available >= sr::automatic_value());
   set_gas_limit(sr::control_gas);
   cell receipt = begin_cell().store_uint(sr::result, 32).store_uint(query, 64)
-    .store_uint(hash, 256).store_coins(forwarded).store_coins(accepted).store_uint(reason, 32).store_int(op == sr::ok, 1).end_cell();
-  ctl::save_relay(sequence, ctl::record(owner, elector, expected, forwarded, capital, prefix, 1, receipt));
-  raw_reserve(capital, 2);
-  ctl::kick(query);
+    .store_uint(hash, 256).store_coins(forwarded).store_coins(accepted).store_uint(reason, 32)
+    .store_int(op == sr::ok, 1).store_coins(debt).end_cell();
+  ctl::save_relay(sequence, ctl::record(owner, elector, expected, forwarded, debt, prefix, 1, receipt, 0, budget ? payer : sponsor));
+  ;; Same-transaction floor protects all business value and unrelated assets.
+  int release_grant = budget ? grant : 0;
+  raw_reserve(sr::sub(sr::sub(pair_first(get_balance()), available), release_grant), 0);
+  if (release_grant) {
+    send_raw_message(sr::message(sponsor, release_grant,
+      begin_cell().store_uint(sr::excess, 32).store_uint(query, 64).end_cell(), false), 1);
+  }
+  send_raw_message(sr::message(sender, sr::control_value(),
+    begin_cell().store_slice(sr::control_body(sr::return_ack, query, hash).begin_parse())
+      .store_ref(begin_cell().store_slice(budget ? payer : sponsor).end_cell()).end_cell(), false), 1);
+  ctl::kick(query, budget ? payer : sponsor);
+  ctl::refund(budget ? payer : sponsor, query);
 }
 () ctl::record_bounce(slice sender, int msg_value, slice body) impure inline_ref {
   var (sequence, pending) = ctl::relay_state();
   if (pending.null?()) { return (); }
-  var (owner, elector, hash, forwarded, capital, prefix, phase, _) = ctl::unpack(pending);
+  var (owner, elector, hash, forwarded, _, prefix, phase, _, grant, sponsor) = ctl::unpack(pending);
   var (wc, address) = parse_std_addr(sender);
   if ((wc != -1) | (address != elector) | (phase != 0)) { return (); }
   ifnot (sr::bounce_matches(body, prefix)) { return (); }
   throw_unless(sr::error, msg_value <= forwarded);
-  cell receipt = begin_cell().store_uint(sr::result, 32).store_uint(sequence, 64)
-    .store_uint(hash, 256).store_coins(forwarded).store_coins(0).store_uint(0xffffffff, 32).store_uint(0, 1).end_cell();
-  ctl::save_relay(sequence, ctl::record(owner, elector, hash, forwarded, capital, prefix, 1, receipt));
-  raw_reserve(capital, 2);
-  ctl::kick(sequence);
-}
-() ctl::retry(int msg_value, slice cs) impure inline_ref {
-  int query = cs~load_uint(64); cs.end_parse();
-  var (sequence, pending) = ctl::relay_state();
-  if (pending.null?() | (query != sequence)) { return (); }
-  var (owner, elector, hash, forwarded, capital, prefix, phase, receipt) = ctl::unpack(pending);
-  throw_unless(sr::error, phase > 0);
-  throw_unless(sr::error, msg_value >= sr::add(sr::control_value(), sr::callback_value()));
   set_gas_limit(sr::control_gas);
-  if (phase == 1) {
-    ctl::save_relay(sequence, ctl::record(owner, elector, hash, forwarded, capital, prefix, 2, receipt));
-    raw_reserve(capital, 0);
-    ;; Non-bounce payment: recipient compute abort cannot return or strand its principal.
-    ;; Action failure rolls back PAID, leaving the READY debt available for retry.
-    send_raw_message(sr::message(sr::address(owner), 0, receipt, false), 128);
-  } else {
-    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
-    ;; A paid receipt retry carries only this invocation's value, never old principal.
-    send_raw_message(sr::message(sr::address(owner), 0, receipt, false), 64);
+  cell receipt = begin_cell().store_uint(sr::result, 32).store_uint(sequence, 64)
+    .store_uint(hash, 256).store_coins(forwarded).store_coins(0).store_uint(0xffffffff, 32)
+    .store_uint(0, 1).store_coins(msg_value).end_cell();
+  ctl::save_relay(sequence, ctl::record(owner, elector, hash, forwarded, msg_value, prefix, 1, receipt, 0, sponsor));
+  raw_reserve(sr::sub(pair_first(get_balance()), grant), 0);
+  ctl::kick(sequence, sponsor);
+  ctl::refund(sponsor, sequence);
+}
+() ctl::retry(slice sender, int msg_value, slice cs) impure inline_ref {
+  int query = cs~load_uint(64);
+  int self = equal_slice_bits(sender, my_address());
+  slice fee_payer = sender;
+  if (self) {
+    slice refund = cs~load_ref().begin_parse();
+    fee_payer = refund~load_msg_addr(); refund.end_parse();
   }
+  cs.end_parse();
+  var (sequence, pending) = ctl::relay_state();
+  ;; A caller may have completed this request before its automatic wakeup.
+  ;; The authenticated self-message carries its payer even after slot cleanup.
+  if (self & (pending.null?() | (query != sequence))) {
+    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
+    ctl::refund(fee_payer, query);
+    return ();
+  }
+  throw_unless(sr::error, (~ pending.null?()) & (query == sequence));
+  var (owner, elector, hash, forwarded, debt, prefix, phase, receipt, grant, sponsor) = ctl::unpack(pending);
+  throw_unless(sr::error, msg_value >= sr::retry_value());
+  set_gas_limit(sr::control_gas);
+  if (phase == 0) {
+    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
+    send_raw_message(sr::message(sr::address(elector), 0,
+      begin_cell().store_uint(sr::return_retry, 32).store_uint(query, 64).store_uint(hash, 256)
+        .store_slice(sender).end_cell(), true), 64);
+    return ();
+  }
+  int principal = phase == 1 ? debt : 0;
+  int callback = sr::callback_value();
+  int floor = sr::sub(sr::sub(pair_first(get_balance()), msg_value), principal);
+  raw_reserve(floor, 0);
+  if (phase == 1) {
+    ctl::save_relay(sequence, ctl::record(owner, elector, hash, forwarded, 0, prefix, 2, receipt, 0, sponsor));
+  }
+  ;; The business action is exact and mandatory. An action failure rolls PAID back.
+  cell payment = begin_cell().store_slice(receipt.begin_parse()).store_coins(callback)
+    .store_ref(begin_cell().store_slice(fee_payer).end_cell()).end_cell();
+  send_raw_message(sr::message(sr::address(owner), sr::add(principal, callback), payment, false), 1);
+  ;; A self-kick was funded by the recorded operator; its change has that owner.
+  ctl::refund(fee_payer, query);
 }
 () ctl::acknowledge(slice sender, int msg_value, slice cs) impure inline_ref {
-  int query = cs~load_uint(64); int hash = cs~load_uint(256); cs.end_parse();
+  int query = cs~load_uint(64); int hash = cs~load_uint(256);
+  slice refund = cs~load_ref().begin_parse();
+  slice payer = refund~load_msg_addr(); refund.end_parse(); cs.end_parse();
   var (sequence, pending) = ctl::relay_state();
-  if (pending.null?() | (query != sequence)) { return (); }
-  var (owner, _, expected, _, _, _, phase, _) = ctl::unpack(pending);
+  if (pending.null?() | (query != sequence)) {
+    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
+    ctl::refund(payer, query);
+    return ();
+  }
+  var (owner, _, expected, _, _, _, phase, _, _, _) = ctl::unpack(pending);
   var (wc, address) = parse_std_addr(sender);
   throw_unless(sr::error, (wc == -1) & (address == owner) & (hash == expected) & (phase == 2));
   ctl::save_relay(sequence, null());
   raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
-  send_raw_message(sr::message(sender, 0, begin_cell().store_uint(1, 32).store_uint(query, 64).end_cell(), false), 64);
+  ctl::refund(payer, query);
 }
 
 () ctl::check_root_send(cell out) impure inline_ref {
@@ -325,17 +401,17 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
 
   slice sender = header~load_msg_addr();
   if (flags & 1) { return ctl::record_bounce(sender, msg_value, in_msg_body); }
-  if (in_msg_body.slice_empty?()) { return ctl::protect_owner_credit(msg_value); }
+  if (in_msg_body.slice_empty?()) { return (); }
   int op = in_msg_body~load_uint(32);
   if (op == sr::relay) { return ctl::relay_stake(sender, msg_value, in_msg_body); }
   if ((op == sr::ok) | (op == sr::error_reply)) { return ctl::receive_result(sender, msg_value, op, in_msg_body); }
-  if (op == sr::retry) { return ctl::retry(msg_value, in_msg_body); }
+  if (op == sr::retry) { return ctl::retry(sender, msg_value, in_msg_body); }
   if (op == sr::ack) { return ctl::acknowledge(sender, msg_value, in_msg_body); }
   if ((op == 0xf374484c) | (op == 0xee6f454c) | (op == 0xf96f7324) | (op == 0xfffffffe)) {
     var (wc, address) = parse_std_addr(sender);
     throw_unless(sr::error, (wc == -1) & (address == sr::elector()));
     throw_unless(sr::error, in_msg_body~load_uint(64) < sr::domain);
-    return ctl::protect_owner_credit(msg_value);
+    return ();
   }
   throw_unless(ctl::error::bad_operation, op == ctl::op);
   in_msg_body~load_uint(64);  ;; query_id, echoed by nothing: this account answers no one
@@ -359,7 +435,7 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
   throw_unless(ctl::error::expired, valid_until > now());
   throw_unless(ctl::error::expired, valid_until <= now() + ctl::max_ttl);
   throw_unless(ctl::error::bad_kind, (kind == ctl::kind::send) | (kind == ctl::kind::rotate_root)
-                                     | (kind == ctl::kind::bind_consensus));
+                                     | (kind == ctl::kind::bind_consensus) | (kind == ctl::kind::fund_operations) | (kind == ctl::kind::withdraw_operations));
 
   ;; A cosignature belongs to the two kinds that install a key: it is the new key's proof
   ;; that its private half exists. Without it a mistyped key would lock this account out
@@ -383,6 +459,46 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
     throw(ctl::error::bad_signature);
   }
 
+  if (kind == ctl::kind::withdraw_operations) {
+    slice ps = payload.begin_parse();
+    slice payer = ps~load_msg_addr();
+    int amount = ps~load_coins(); ps.end_parse();
+    throw_unless(ctl::error::bad_action, equal_slice_bits(sender, payer));
+    var (_, pending) = ctl::relay_state();
+    throw_unless(ctl::error::bad_action, pending.null?());
+    throw_unless(sr::error, msg_value >= sr::add(sr::gas_fee(-1, sr::relay_gas), sr::control_value()));
+    var (funds, permission, limit, floor, expires, sponsor) = ctl::operations();
+    int capital = sr::sub(pair_first(get_balance()), msg_value);
+    throw_unless(sr::error, capital >= sr::add(amount, floor));
+    ctl::save_operations(sr::sub(funds, amount), permission, limit, floor, expires, sponsor);
+    ctl::load_data();
+    throw_unless(sr::error, stored_nonce < ((1 << 64) - 1));
+    ctl::save_data(stored_epoch, stored_nonce + 1, consensus_algorithm, consensus_key_id, root);
+    raw_reserve(sr::sub(capital, amount), 0);
+    ctl::refund(sender, stored_nonce);
+    return ();
+  }
+
+  if (kind == ctl::kind::fund_operations) {
+    slice ps = payload.begin_parse();
+    slice payer = ps~load_msg_addr();
+    int deposit = ps~load_coins();
+    int permission = ps~load_coins();
+    int limit = ps~load_coins();
+    int floor = ps~load_coins();
+    int expires = ps~load_uint(32); ps.end_parse();
+    throw_unless(sr::error, equal_slice_bits(sender, payer));
+    throw_unless(sr::error, msg_value >= sr::add(deposit, sr::add(sr::gas_fee(-1, sr::relay_gas), sr::control_value())));
+    var (funds, _, _, _, _, _) = ctl::operations();
+    ctl::save_operations(sr::add(funds, deposit), permission, limit, floor, expires, payer);
+    ctl::load_data();
+    throw_unless(sr::error, stored_nonce < ((1 << 64) - 1));
+    ctl::save_data(stored_epoch, stored_nonce + 1, consensus_algorithm, consensus_key_id, root);
+    raw_reserve(sr::add(sr::sub(pair_first(get_balance()), msg_value), deposit), 0);
+    ctl::refund(sender, stored_nonce);
+    return ();
+  }
+
   if (kind == ctl::kind::send) {
     slice ps = payload.begin_parse();
     int mode = ps~load_uint(8);
@@ -392,6 +508,8 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
     var (_, pending) = ctl::relay_state();
     throw_unless(ctl::error::bad_action, pending.null?());
     ctl::check_root_send(out);
+    var (funds, _, _, floor, _, _) = ctl::operations();
+    raw_reserve(sr::add(funds, floor), 0);
     ;; The nonce is spent before the action, so a request cannot be replayed after one
     ;; that refused.
     ctl::save_data(stored_epoch, stored_nonce + 1, consensus_algorithm, consensus_key_id, root);
@@ -456,3 +574,5 @@ cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
 
 int next_relay_query() method_id { var (sequence, _) = ctl::relay_state(); throw_unless(sr::error, sequence < ((1 << 64) - 1)); return sequence + 1; }
 cell relay_pending() method_id { var (_, pending) = ctl::relay_state(); return pending; }
+
+(int, int, int, int, int, slice) operating_state() method_id { return ctl::operations(); }

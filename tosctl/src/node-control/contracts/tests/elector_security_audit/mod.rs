@@ -592,8 +592,21 @@ fn historical_elector_code() -> chain_block::Cell {
             .expect("historical source");
         assert!(output.status.success(), "the exact classic source must be available");
         let source = String::from_utf8(output.stdout).expect("FunC source");
-        let file =
-            repo_root().join(".git/elector-security-audit-artifacts/completion/classic-elector.fc");
+        let directory = std::process::Command::new("git")
+            .current_dir(repo_root())
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "elector-security-audit-artifacts/completion",
+            ])
+            .output()
+            .expect("artifact directory");
+        assert!(directory.status.success());
+        let directory =
+            std::path::PathBuf::from(String::from_utf8(directory.stdout).expect("path").trim());
+        std::fs::create_dir_all(&directory).expect("retained artifact directory");
+        let file = directory.join("classic-elector.fc");
         std::fs::write(&file, source).expect("retained source");
         tos_sandbox::compile_func(&[repo_root().join("crypto/smartcont/stdlib.fc"), file])
             .expect("the genuine classic elector compiles")

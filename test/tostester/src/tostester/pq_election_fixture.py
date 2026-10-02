@@ -249,6 +249,13 @@ def elector_reply(
             accepted = reply.load_coins()
             reason = reply.load_uint(32)
             success = reply.load_uint(1)
+            business_return = reply.load_coins()  # actual debt, not a balance delta
+            reply.load_coins()  # this delivery's callback budget
+            payer = reply.load_ref().begin_parse()
+            if payer.load_address() is None or payer.remaining_bits or payer.remaining_refs:
+                raise ValueError("invalid relay fee payer")
+            if business_return > (1_000_000_000 if success else forwarded):
+                raise ValueError("inconsistent relay business return")
             if reply.remaining_bits or reply.remaining_refs:
                 raise ValueError("trailing relay result fields")
             if accepted != (forwarded - 1_000_000_000 if success else 0) or (success and reason):

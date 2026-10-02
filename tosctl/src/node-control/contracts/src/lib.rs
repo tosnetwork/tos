@@ -40,6 +40,7 @@ pub mod service_actor;
 pub mod smart_contract;
 pub mod stack_utils;
 pub mod task_escrow;
+pub mod validator_controller;
 pub mod wallet;
 
 pub use agent_account::{
