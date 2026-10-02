@@ -1,0 +1,125 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; One multisig proposal ("order"), deployed by multisig-wallet-code.fc at the address
+;; derived from (this code, parent, seqno).
+;;
+;; The parent's `init` sets the signer set, threshold, expiry and actions, optionally
+;; recording the proposer's own approval. Signers then `approve` by index; each approval
+;; gets an `approve_accepted` or `approve_rejected` reply carrying the remaining value. The
+;; approval that reaches the threshold also sends `execute` to the parent with the order's
+;; whole balance, non-bounceable, exactly once. Expired orders refuse approvals.
+;;
+;; storage before init: parent:MsgAddressInt seqno:uint64 (the address-fixing init data)
+;; storage after init:  the multisig_order::pack layout, which extends that prefix
+
+#include "multisig-order.fc";
+
+const int op::approve_accepted = 0xcbd6e9fd;
+const int op::approve_rejected = 0x3f9143b6;
+
+const int error::unauthorized_init = 0x1a0f;
+const int error::already_initialized = 0x1a10;
+const int error::not_initialized = 0x1a11;
+const int error::unknown_op = 0xffff;
+
+;; addr_std (267 bits) + seqno
+const int init_data_bits = 267 + 64;
+
+() send_execute([slice, int, int, cell, int, int, int, int, cell] order, int query_id) impure inline {
+  [slice parent, _, _, _, _, _, _, _, _] = order;
+  send_raw_message(begin_cell()
+      .store_uint(0x10, 6) ;; non-bounceable: a failed execute leaves the funds with the parent
+      .store_slice(parent)
+      .store_coins(0)
+      .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; body in a ref
+      .store_ref(multisig_order::execute_body(query_id, multisig_order::execute_message(order)))
+      .end_cell(), 128); ;; the order's whole balance
+}
+
+() reply(slice to, int op, int query_id, int exit_code) impure inline {
+  builder body = begin_cell().store_uint(op, 32).store_uint(query_id, 64);
+  if (op == op::approve_rejected) {
+    body = body.store_uint(exit_code, 32);
+  }
+  send_raw_message(begin_cell()
+      .store_uint(0x10, 6)
+      .store_slice(to)
+      .store_coins(0)
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+      .store_builder(body)
+      .end_cell(), 64); ;; the remaining incoming value
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  slice in_msg = in_msg_full.begin_parse();
+  int flags = in_msg~load_uint(4);
+  if (flags & 1) {
+    return (); ;; bounced
+  }
+  slice sender = in_msg~load_msg_addr();
+  if (in_msg_body.slice_bits() < 32 + 64) {
+    return (); ;; top-up
+  }
+  int op = in_msg_body~load_uint(32);
+  int query_id = in_msg_body~load_uint(64);
+  slice ds = get_data().begin_parse();
+  int initialized = ds.slice_bits() > init_data_bits;
+
+  if (op == multisig_order::op::init) {
+    slice parent = ds~load_msg_addr();
+    int seqno = ds~load_uint(64);
+    throw_unless(error::unauthorized_init, equal_slice_bits(sender, parent));
+    throw_if(error::already_initialized, initialized);
+    int threshold = in_msg_body~load_uint(8);
+    cell signers = in_msg_body~load_ref();
+    int expires_at = in_msg_body~load_uint(32);
+    cell actions = in_msg_body~load_ref();
+    int approve_on_init = in_msg_body~load_int(1);
+    var order = multisig_order::new(parent, seqno, threshold, signers, expires_at, actions);
+    if (approve_on_init) {
+      int index = in_msg_body~load_uint(8);
+      (slice signer, int found) = signers.udict_get?(multisig_order::signer_index_bits, index);
+      throw_unless(multisig_order::error::unknown_signer, found);
+      if (order~multisig_order::approve(index, signer)) {
+        send_execute(order, query_id);
+      }
+    }
+    in_msg_body.end_parse();
+    set_data(multisig_order::pack(order));
+    return ();
+  }
+
+  if (op == multisig_order::op::approve) {
+    throw_unless(error::not_initialized, initialized);
+    int index = in_msg_body~load_uint(8);
+    in_msg_body.end_parse();
+    var order = multisig_order::unpack(get_data());
+    try {
+      int fired = order~multisig_order::approve(index, sender);
+      reply(sender, op::approve_accepted, query_id, 0);
+      if (fired) {
+        send_execute(order, query_id);
+      }
+      set_data(multisig_order::pack(order));
+    } catch (_, exit_code) {
+      reply(sender, op::approve_rejected, query_id, exit_code);
+    }
+    return ();
+  }
+
+  throw(error::unknown_op);
+}
+
+;; (initialized?, parent, seqno, threshold, executed, signers, approvals, approval_count,
+;;  expires_at, actions); fields after seqno are null before init.
+(int, slice, int, int, int, cell, int, int, int, cell) get_order_data() method_id {
+  slice ds = get_data().begin_parse();
+  if (ds.slice_bits() <= init_data_bits) {
+    slice parent = ds~load_msg_addr();
+    int seqno = ds~load_uint(64);
+    return (false, parent, seqno, null(), null(), null(), null(), null(), null(), null());
+  }
+  [slice parent, int seqno, int threshold, cell signers, int approvals, int approval_count,
+   int expires_at, int executed, cell actions] = multisig_order::unpack(get_data());
+  return (true, parent, seqno, threshold, executed, signers, approvals, approval_count, expires_at, actions);
+}

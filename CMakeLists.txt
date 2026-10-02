@@ -1130,6 +1130,41 @@ slice1_func_to_boc(${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/stdlib.fc
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc)
 
+# Compile a production FunC contract from crypto/smartcont to a .boc, with
+# stdlib.fc first. ARGN lists the library files the contract includes, so an
+# edit to any of them rebuilds the BoC instead of leaving a stale one.
+function(smartcont_func_to_boc OUT_BOC SOURCE)
+    get_filename_component(_stem ${OUT_BOC} NAME_WE)
+    set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)
+    set(_dir ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont)
+    set(_deps)
+    foreach(_lib ${ARGN})
+        list(APPEND _deps ${_dir}/${_lib})
+    endforeach()
+    add_custom_command(
+        OUTPUT ${OUT_BOC}
+        COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                $<TARGET_FILE:func> -W ${OUT_BOC} -A -P -o ${_fif} ${_dir}/stdlib.fc ${_dir}/${SOURCE}
+        COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                $<TARGET_FILE:fift> ${_fif}
+        WORKING_DIRECTORY ${_dir}
+        DEPENDS func fift ${_dir}/stdlib.fc ${_dir}/${SOURCE} ${_deps}
+        COMMENT "Compiling FunC contract ${SOURCE} -> ${OUT_BOC}"
+        VERBATIM
+    )
+endfunction()
+
+set(MULTISIG_WALLET_BOC ${SLICE1_GAS_PARITY_DIR}/multisig-wallet.boc)
+set(MULTISIG_ORDER_BOC  ${SLICE1_GAS_PARITY_DIR}/multisig-order.boc)
+smartcont_func_to_boc(${MULTISIG_WALLET_BOC} multisig-wallet-code.fc multisig-order.fc)
+smartcont_func_to_boc(${MULTISIG_ORDER_BOC} multisig-order-code.fc multisig-order.fc)
+
+add_custom_target(multisig_contracts
+    DEPENDS
+        ${MULTISIG_WALLET_BOC}
+        ${MULTISIG_ORDER_BOC}
+)
+
 add_custom_target(slice1_gas_parity_contracts ALL
     DEPENDS
         ${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}
@@ -1195,9 +1230,12 @@ add_executable(test-emulator
         emulator/test/config-param-43-transaction-fixture.cpp
         # Measures the jetton wallet fee profile against this build and checks
         # the config-priced transfer/burn requirements end to end.
-        emulator/test/jetton-wallet-fee-profile-fixture.cpp)
+        emulator/test/jetton-wallet-fee-profile-fixture.cpp
+        # Measures the multisig fee profile against this build of the parent
+        # and order contracts.
+        emulator/test/multisig-fee-profile-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
-add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract)
+add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract multisig_contracts)
 target_compile_definitions(test-emulator PRIVATE
     SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}"
     SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}"
@@ -1207,6 +1245,8 @@ target_compile_definitions(test-emulator PRIVATE
     SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC="${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC}"
     SLICE5_RECEIVE_CONTEXT_TOL_BOC="${SLICE5_RECEIVE_CONTEXT_TOL_BOC}"
     TOS_REPORT_BOND_ORACLE_BOC="${TOS_REPORT_BOND_ORACLE_BOC}"
+    MULTISIG_WALLET_BOC="${MULTISIG_WALLET_BOC}"
+    MULTISIG_ORDER_BOC="${MULTISIG_ORDER_BOC}"
 )
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)

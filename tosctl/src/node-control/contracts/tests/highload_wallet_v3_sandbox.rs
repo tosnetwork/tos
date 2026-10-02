@@ -13,11 +13,13 @@
 //! the query id.
 
 use chain_block::{
-    BuilderData, Cell, CurrencyCollection, IBitstring, InternalMessageHeader, Message, MsgAddressInt, Serializable,
-    SliceData, StateInit,
+    BuilderData, Cell, CurrencyCollection, IBitstring, InternalMessageHeader, Message,
+    MsgAddressInt, Serializable, SliceData, StateInit,
 };
 use ed25519_dalek::{Signer as _, SigningKey};
-use tos_sandbox::{Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury, compile_func_with_stdlib};
+use tos_sandbox::{
+    Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury, compile_func_with_stdlib,
+};
 use tos_vm::stack::StackItem;
 
 const TOS: u64 = 1_000_000_000;
@@ -39,7 +41,8 @@ fn smartcont(name: &str) -> std::path::PathBuf {
 }
 
 fn wallet_code() -> Cell {
-    compile_func_with_stdlib(&[smartcont("highload-wallet-v3-code.fc")]).expect("compile highload wallet")
+    compile_func_with_stdlib(&[smartcont("highload-wallet-v3-code.fc")])
+        .expect("compile highload wallet")
 }
 
 fn cell(build: impl FnOnce(&mut BuilderData)) -> Cell {
@@ -50,14 +53,20 @@ fn cell(build: impl FnOnce(&mut BuilderData)) -> Cell {
 
 /// An outbound internal message as a wallet signs it: src addr_none, serialized the way
 /// the node's own wallets serialize it.
-fn relaxed_message(dest: &MsgAddressInt, value: u64, body: Cell, state_init: Option<StateInit>) -> Cell {
+fn relaxed_message(
+    dest: &MsgAddressInt,
+    value: u64,
+    body: Cell,
+    state_init: Option<StateInit>,
+) -> Cell {
     let header = InternalMessageHeader {
         bounce: false,
         dst: dest.clone(),
         value: CurrencyCollection::with_coins(value),
         ..Default::default()
     };
-    let mut message = Message::with_int_header_and_body(header, SliceData::load_cell(body).unwrap());
+    let mut message =
+        Message::with_int_header_and_body(header, SliceData::load_cell(body).unwrap());
     if let Some(init) = state_init {
         message.set_state_init(init);
     }
@@ -70,7 +79,12 @@ fn relaxed_transfer(dest: &MsgAddressInt, value: u64) -> Cell {
 
 /// Same transfer, but carrying a StateInit, which the wallet refuses to send.
 fn relaxed_transfer_with_state_init(dest: &MsgAddressInt, value: u64) -> Cell {
-    relaxed_message(dest, value, Cell::default(), Some(StateInit::with_code_and_data(Cell::default(), Cell::default())))
+    relaxed_message(
+        dest,
+        value,
+        Cell::default(),
+        Some(StateInit::with_code_and_data(Cell::default(), Cell::default())),
+    )
 }
 
 struct Request {
@@ -109,8 +123,10 @@ impl Fixture {
         let init = StateInit::with_code_and_data(wallet_code(), data);
         let hash = init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
         let wallet = MsgAddressInt::with_params(0, hash).unwrap();
-        let deploy =
-            MessageBuilder::internal(funder.address(), &wallet, 100 * TOS).bounce(false).state_init(init).build();
+        let deploy = MessageBuilder::internal(funder.address(), &wallet, 100 * TOS)
+            .bounce(false)
+            .state_init(init)
+            .build();
         bc.send_message(deploy).expect("deploy").expect_success();
         Self { bc, wallet, key, target }
     }
@@ -176,7 +192,10 @@ impl Fixture {
             .run_get_method(
                 &self.wallet,
                 "processed?",
-                vec![StackItem::int(query_id as i64), StackItem::int(if need_clean { -1 } else { 0 })],
+                vec![
+                    StackItem::int(query_id as i64),
+                    StackItem::int(if need_clean { -1 } else { 0 }),
+                ],
             )
             .expect("processed?")
             .expect_success()
@@ -185,7 +204,11 @@ impl Fixture {
     }
 
     fn get_int(&self, method: &str) -> i128 {
-        self.bc.run_get_method(&self.wallet, method, vec![]).expect(method).expect_success().int_at(0)
+        self.bc
+            .run_get_method(&self.wallet, method, vec![])
+            .expect(method)
+            .expect_success()
+            .int_at(0)
     }
 }
 
@@ -193,7 +216,10 @@ impl Fixture {
 /// transfer of `value` raises its balance by slightly less than `value`.
 fn assert_received(before: u64, after: u64, value: u64, what: &str) {
     let received = after.checked_sub(before).unwrap_or_else(|| panic!("{what}: balance fell"));
-    assert!(received <= value && received + TOS / 1_000 > value, "{what}: received {received}, sent {value}");
+    assert!(
+        received <= value && received + TOS / 1_000 > value,
+        "{what}: received {received}, sent {value}"
+    );
 }
 
 #[test]
@@ -313,13 +339,17 @@ fn batch_through_internal_transfer_to_self() {
     let forged = MessageBuilder::internal(f.target.address(), &f.wallet, TOS).body(body).build();
     let result = f.bc.send_message(forged).expect("deliver");
     result.expect_success().expect_out_msgs(0);
-    assert!(f.balance(f.target.address()) <= outsider_before, "no batch may pay out for an outsider");
+    assert!(
+        f.balance(f.target.address()) <= outsider_before,
+        "no batch may pay out for an outsider"
+    );
 }
 
 #[test]
 fn a_batch_cannot_replace_the_wallet_code() {
     let mut f = Fixture::new();
-    let code_before = f.bc.get_account(&f.wallet).and_then(|a| a.get_code_hash()).expect("code hash");
+    let code_before =
+        f.bc.get_account(&f.wallet).and_then(|a| a.get_code_hash()).expect("code hash");
     // action_set_code#ad4de08e new_code:^Cell, followed by an ordinary send.
     let hostile_code = cell(|b| {
         b.append_u32(0xdead_c0de).unwrap();
@@ -342,7 +372,8 @@ fn a_batch_cannot_replace_the_wallet_code() {
     });
     let request = f.request(200, relaxed_message(&f.wallet, 10 * TOS, body, None));
     f.send_signed(&request).expect("accepted").expect_success();
-    let code_after = f.bc.get_account(&f.wallet).and_then(|a| a.get_code_hash()).expect("code hash");
+    let code_after =
+        f.bc.get_account(&f.wallet).and_then(|a| a.get_code_hash()).expect("code hash");
     assert_eq!(code_after, code_before, "the wallet must keep its own code after any batch");
     // and it still works
     let next = f.request(201, relaxed_transfer(f.target.address(), TOS));

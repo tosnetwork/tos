@@ -1,0 +1,208 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Multisig wallet: the parent of one-contract-per-proposal orders (multisig-order-code.fc).
+;;
+;; A signer or a proposer opens an order with `new_order`, prepaying everything the order
+;; needs to reach execution. The parent allocates the next sequence number and deploys the
+;; order at the address derived from (order code, parent, seqno); signers approve the order
+;; directly, and the order sends `execute` back once the threshold is reached. The parent
+;; runs the order's actions only after multisig-order.fc's four admission checks: the
+;; derived sender address, the current signer set, the current threshold, and expiry.
+;;
+;; Actions are a chain of cells, each `tag:uint32 ... next:(Maybe ^Cell)`:
+;;   send#94f8724f   mode:uint8 message:^Cell                                 next
+;;   update#e9973598 threshold:uint8 signers:^Cell proposers:(Maybe ^Cell)    next
+;; The chain is validated when the order is opened, so an order that could never execute
+;; is refused up front instead of being funded and left stranded; it is validated again on
+;; execution against the parameters in force then.
+;;
+;; storage: next_seqno:uint64 threshold:uint8 signers:^Cell proposers:(Maybe ^Cell)
+;;          order_code:^Cell
+
+#include "multisig-order.fc";
+
+const int op::new_order = 0x27bace9f;
+const int action::send = 0x94f8724f;
+const int action::update = 0xe9973598;
+
+const int error::invalid_action = 0x1a0e;
+const int error::unknown_op = 0xffff;
+
+const int max_actions = 255;
+
+;; About 10% above what emulator/test/multisig-fee-profile-fixture.cpp measured on the C++
+;; TVM (2026-10-02): proposal 18825, order init 5286, firing approval 9345 and parent execute
+;; 9430 gas; init message 7006 bits / 14 cells, order state 7169 bits / 12 cells and execute
+;; message 456 bits / 1 cell beyond the action and signer set. The fixture fails if a build
+;; makes any value lower than its measurement or more than 25% above it.
+tuple fee_profile() inline {
+  return multisig_order::fee_profile(
+      20700, ;; parent_new_order_gas
+      5800,  ;; order_init_gas
+      10300, ;; order_execute_gas
+      10400, ;; parent_execute_gas
+      7700,  ;; init_message_bits
+      15,    ;; init_message_cells
+      7900,  ;; order_state_bits
+      13,    ;; order_state_cells
+      500,   ;; execute_message_bits
+      1      ;; execute_message_cells
+  );
+}
+
+(int, int, cell, cell, cell) load_data() inline {
+  slice ds = get_data().begin_parse();
+  int next_seqno = ds~load_uint(64);
+  int threshold = ds~load_uint(8);
+  cell signers = ds~load_ref();
+  cell proposers = ds~load_dict();
+  cell order_code = ds~load_ref();
+  ds.end_parse();
+  return (next_seqno, threshold, signers, proposers, order_code);
+}
+
+() save_data(int next_seqno, int threshold, cell signers, cell proposers, cell order_code) impure inline {
+  set_data(begin_cell()
+      .store_uint(next_seqno, 64)
+      .store_uint(threshold, 8)
+      .store_ref(signers)
+      .store_dict(proposers)
+      .store_ref(order_code)
+      .end_cell());
+}
+
+;; Walks the action chain without executing it. `signer_count` and `threshold` are the
+;; values in force before the first action; each update replaces them for the actions that
+;; follow. Returns nothing; throws invalid_action (or invalid_config for a bad update).
+() validate_actions(cell actions, int threshold, int signer_count) impure inline {
+  slice cs = actions.begin_parse();
+  int count = 0;
+  int more = true;
+  while (more) {
+    count += 1;
+    throw_if(error::invalid_action, count > max_actions);
+    int tag = cs~load_uint(32);
+    if (tag == action::send) {
+      cs~load_uint(8);
+      cs~load_ref();
+    } elseif (tag == action::update) {
+      threshold = cs~load_uint(8);
+      signer_count = multisig_order::signer_count(cs~load_ref());
+      multisig_order::proposer_count(cs~load_dict());
+      multisig_order::require_valid_threshold(threshold, signer_count);
+    } else {
+      throw(error::invalid_action);
+    }
+    cell next = cs~load_maybe_ref();
+    cs.end_parse();
+    more = ~ cell_null?(next);
+    if (more) {
+      cs = next.begin_parse();
+    }
+  }
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  slice in_msg = in_msg_full.begin_parse();
+  int flags = in_msg~load_uint(4);
+  if (flags & 1) {
+    return (); ;; bounced
+  }
+  slice sender = in_msg~load_msg_addr();
+  if (in_msg_body.slice_bits() < 32) {
+    return (); ;; plain top-up
+  }
+  int op = in_msg_body~load_uint(32);
+  if (op == 0) {
+    return (); ;; text comment
+  }
+  int query_id = in_msg_body~load_uint(64);
+  (int next_seqno, int threshold, cell signers, cell proposers, cell order_code) = load_data();
+
+  if (op == op::new_order) {
+    int requested_seqno = in_msg_body~load_uint(64);
+    int is_signer = in_msg_body~load_int(1);
+    int index = in_msg_body~load_uint(8);
+    int expires_at = in_msg_body~load_uint(32);
+    cell actions = in_msg_body~load_ref();
+    in_msg_body.end_parse();
+
+    multisig_order::require_proposer(signers, proposers, is_signer, index, sender);
+    validate_actions(actions, threshold, multisig_order::signer_count(signers));
+    ;; also refuses an order that is already expired: its lifetime must be positive
+    multisig_order::require_new_order_value(fee_profile(), msg_value, signers, actions, expires_at - now());
+    (int seqno, int following) = multisig_order::allocate_seqno(requested_seqno, next_seqno);
+
+    builder init = begin_cell()
+        .store_uint(multisig_order::op::init, 32)
+        .store_uint(query_id, 64)
+        .store_uint(threshold, 8)
+        .store_ref(signers)
+        .store_uint(expires_at, 32)
+        .store_ref(actions)
+        .store_int(is_signer, 1);
+    if (is_signer) {
+      init = init.store_uint(index, 8);
+    }
+    send_raw_message(begin_cell()
+        .store_uint(0x18, 6) ;; bounceable
+        .store_slice(multisig_order::address(order_code, my_address(), seqno))
+        .store_coins(0)
+        .store_uint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1) ;; StateInit and body in refs
+        .store_ref(multisig_order::state_init(order_code, my_address(), seqno))
+        .store_ref(init.end_cell())
+        .end_cell(), 64); ;; carry the remaining incoming value
+    save_data(following, threshold, signers, proposers, order_code);
+    return ();
+  }
+
+  if (op == multisig_order::op::execute) {
+    var execute = multisig_order::parse_execute(in_msg_body);
+    multisig_order::require_execute(execute, sender, order_code, my_address(), signers, threshold);
+    [_, _, _, _, cell actions] = execute;
+    validate_actions(actions, threshold, multisig_order::signer_count(signers));
+    slice cs = actions.begin_parse();
+    int more = true;
+    while (more) {
+      int tag = cs~load_uint(32);
+      if (tag == action::send) {
+        int mode = cs~load_uint(8);
+        send_raw_message(cs~load_ref(), mode);
+      } else {
+        threshold = cs~load_uint(8);
+        signers = cs~load_ref();
+        proposers = cs~load_dict();
+      }
+      cell next = cs~load_maybe_ref();
+      more = ~ cell_null?(next);
+      if (more) {
+        cs = next.begin_parse();
+      }
+    }
+    save_data(next_seqno, threshold, signers, proposers, order_code);
+    return ();
+  }
+
+  throw(error::unknown_op);
+}
+
+(int, int, cell, cell) get_multisig_data() method_id {
+  (int next_seqno, int threshold, cell signers, cell proposers, _) = load_data();
+  return (next_seqno, threshold, signers, proposers);
+}
+
+slice get_order_address(int seqno) method_id {
+  (_, _, _, _, cell order_code) = load_data();
+  return multisig_order::address(order_code, my_address(), seqno);
+}
+
+tuple get_fee_profile() method_id {
+  return fee_profile();
+}
+
+;; Value a proposal for `actions` expiring at `expires_at` must carry. Computed on a fresh
+;; VM, so it is never below what the proposal transaction itself will require.
+int get_order_estimate(cell actions, int expires_at) method_id {
+  (_, _, cell signers, _, _) = load_data();
+  return multisig_order::required_new_order_value(fee_profile(), signers, actions, expires_at - now());
+}

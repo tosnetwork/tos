@@ -96,7 +96,8 @@ SOFTWARE.
 ## Independent implementations
 
 `ordered-delivery`, `quorum-signatures` and `multisig-order`, in both their
-`.tol` and `.fc` forms, contain no third-party code. They implement general mechanisms: a bounded
+`.tol` and `.fc` forms, contain no third-party code. Nor do the contracts
+built on them, `../multisig-wallet-code.fc` and `../multisig-order-code.fc`. They implement general mechanisms: a bounded
 out-of-order completion window, M-of-N Ed25519 authorization, and
 one-contract-per-proposal multisig. Their data layouts, interfaces, opcodes
 and error codes are TOS's own.
