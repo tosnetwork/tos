@@ -459,14 +459,14 @@ the verifier accepts that the walk would have refused. Every other finding was a
 
 ### Implementation notes, wallet
 
-Measured on the C++ executor, with both replay generations dense and the id needing a
-new row:
+Measured on the C++ executor at commit 571852002 (the suite's `--report` output), with both
+replay generations dense and the id needing a new row:
 
 | Measurement | Value |
 | --- | --- |
 | Base gas | 79,546 |
-| Gas per action | 2,664 |
-| Full 254-action batch | 756,202 gas |
+| Gas per action | 2,708 |
+| Full 254-action batch | 767,378 gas |
 | Profile | 87,600 base and 2,930 per action |
 | Minimum value, 1 action | 0.0915 TOS |
 | Minimum value, 254 actions | 0.8328 TOS |
@@ -475,7 +475,7 @@ The suite finds the minimum value by bisection on real transactions. One nanoton
 refused, with the id unused. Exactly that much runs the whole batch and its refund.
 
 A 255-action request is refused before verification, but only after 254 entries have
-been checked, at about 481,000 gas the relayer pays. Counting first would add a walk to
+been checked, at about 492,000 gas the relayer pays. Counting first would add a walk to
 every valid request.
 
 60 mutants, 37 in the library and 23 in the wallet, are each killed by an assertion.
@@ -503,3 +503,18 @@ tampering or replay path in the wallet. Every finding was accepted.
   - "Skipped count" and library-cell coverage are no longer claimed.
   - The deployment script now runs `get_checked_config`. It needs only c4, because the
     workchain check moved to submission time.
+
+### Round 5, final acceptance (`571852002`)
+
+The reviewer accepted the code. All four round-4 findings are closed, and no new
+blocking issue was found. In an independent rerun, both quorum suites and the wallet
+suite passed 20 of 20 each. All 61 mutants were killed by assertions, and the baselines
+passed before and after.
+
+- **Low: stale gas figures.** The source comment and the measurement table still quoted
+  an earlier build. They now give the values this suite reports at `571852002`: 2,708 gas
+  per action, 767,378 gas for a full batch and about 492,000 gas to refuse 255 actions.
+  The funding profile of 87,600 base and 2,930 per action still covers them.
+
+Merging still requires this workflow to pass in CI. It runs only on pull requests, so
+the local acceptance does not count as that gate.

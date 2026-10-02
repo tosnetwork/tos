@@ -82,9 +82,9 @@ const int CREATED_AT_BITS = 64;
 const int TIMEOUT_BITS = 22;
 
 ;; Measured compute bound, about 10% above what test/pq-contracts/test_pq_highload.py
-;; measured on the C++ executor at global version 16 (2026-10-02), with both replay
-;; generations dense and the id needing a new row: 79,646 gas plus 2,664 per action, so a
-;; full 254-action batch is about 756,000 gas. The suite fails if a build makes either value
+;; measured on the C++ executor at global version 16 (commit 571852002), with both replay
+;; generations dense and the id needing a new row: 79,546 gas plus 2,708 per action, so a
+;; full 254-action batch is about 767,400 gas. The suite fails if a build makes either value
 ;; lower than its measurement or more than 25% above it.
 const int fee::base_gas = 87600;
 const int fee::gas_per_action = 2930;
