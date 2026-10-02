@@ -38,9 +38,10 @@ namespace fee_fixture {
 // the fee instructions the wallet uses need at least 6.
 constexpr td::uint32 kTosGlobalVersion = 14;
 
-// The shared fixture config, with ConfigParam 8 raised to the TOS genesis
-// version. Price tables, capabilities and every other parameter are kept.
-inline std::string tos_versioned_config_boc() {
+// The shared fixture config, with ConfigParam 8 set to `global_version` (the TOS
+// genesis version by default). Price tables, capabilities and every other
+// parameter are kept.
+inline std::string tos_versioned_config_boc(td::uint32 global_version = kTosGlobalVersion) {
   auto decoded = td::base64_decode(td::Slice(config_boc));
   CHECK(decoded.is_ok());
   auto root = vm::std_boc_deserialize(decoded.move_as_ok());
@@ -55,7 +56,7 @@ inline std::string tos_versioned_config_boc() {
   cs.skip_first(32);
   const auto capabilities = cs.fetch_ulong(64);
   vm::CellBuilder cb;
-  cb.store_long(0xc4, 8).store_long(kTosGlobalVersion, 32).store_long(static_cast<long long>(capabilities), 64);
+  cb.store_long(0xc4, 8).store_long(global_version, 32).store_long(static_cast<long long>(capabilities), 64);
   CHECK(params.set_ref(key, cb.finalize()));
   auto boc = vm::std_boc_serialize(params.get_root_cell());
   CHECK(boc.is_ok());

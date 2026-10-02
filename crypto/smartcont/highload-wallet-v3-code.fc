@@ -32,6 +32,11 @@
 ;; Batches: a request may send an internal message to this wallet itself with op
 ;; internal_transfer and an action list in its single reference; the wallet installs that
 ;; list as its own actions, keeping its code.
+;;
+;; No request may send with DESTROY_IF_ZERO (mode +32), directly or in a batch. Replay
+;; protection is the wallet's state: a deleted wallet can be deployed again at the same
+;; address from its public StateInit with empty replay dictionaries, and once funded again,
+;; every request it accepted that is still fresh could run a second time.
 
 #include "replay-guard.fc";
 
@@ -41,6 +46,7 @@ const int error::invalid_signature = 33;
 const int error::invalid_subwallet_id = 34;
 const int error::invalid_message_to_send = 37;
 const int error::invalid_timeout = 38;
+const int error::destroy_not_allowed = 39;
 
 const int SIGNATURE_BITS = 512;
 const int PUBLIC_KEY_BITS = 256;
@@ -49,6 +55,8 @@ const int QUERY_ID_BITS = 23;
 const int CREATED_AT_BITS = 64;
 const int TIMEOUT_BITS = 22;
 const int SEND_MODE_IGNORE_ERRORS = 2;
+const int SEND_MODE_DESTROY_IF_ZERO = 32;
+const int ACTION_SEND_MSG = 0x0ec3c86d;
 
 () set_actions(cell actions) impure asm "c5 POP";
 cell my_code() asm "MYCODE";
@@ -91,7 +99,17 @@ cell my_code() asm "MYCODE";
   }
   if (in_msg_body~load_uint(32) == op::internal_transfer) {
     in_msg_body~skip_bits(64);
-    set_actions(in_msg_body.preload_ref());
+    cell actions = in_msg_body.preload_ref();
+    ;; OutList: each node is prev:^OutList followed by one action; the empty list has neither.
+    slice node = actions.begin_parse();
+    while (node.slice_refs()) {
+      cell prev = node~load_ref();
+      if (node~load_uint(32) == ACTION_SEND_MSG) {
+        throw_if(error::destroy_not_allowed, node~load_uint(8) & SEND_MODE_DESTROY_IF_ZERO);
+      }
+      node = prev.begin_parse();
+    }
+    set_actions(actions);
     set_code(my_code()); ;; an action list must not replace the wallet's code
   }
 }
@@ -116,6 +134,7 @@ cell my_code() asm "MYCODE";
   throw_unless(error::invalid_subwallet_id, request_subwallet_id == subwallet_id);
   [_, _, _, int timeout] = guard;
   throw_unless(error::invalid_timeout, request_timeout == timeout);
+  throw_if(error::destroy_not_allowed, send_mode & SEND_MODE_DESTROY_IF_ZERO);
   guard~replay_guard::check(query_id, created_at);
 
   accept_message();

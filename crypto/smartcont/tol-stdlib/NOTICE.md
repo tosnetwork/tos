@@ -37,7 +37,11 @@ How each module differs from its upstream:
   existing signing tools work unchanged. Replay and freshness failures
   use the library's throw codes (0x1701 to 0x1704), not upstream's 35 and
   36. A request whose outbound message is malformed throws after the
-  state commit; upstream silently skips one marked as bounced.
+  state commit; upstream silently skips one marked as bounced. A request
+  asking for send mode +32 (destroy if the balance reaches zero), directly
+  or inside a batch, is refused with throw code 39, because a deleted
+  wallet redeployed from its StateInit would start with empty replay
+  dictionaries.
 
 ### MIT license texts
 

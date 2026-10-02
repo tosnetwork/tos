@@ -104,9 +104,13 @@ std::string boc64(td::Ref<vm::Cell> cell) {
 struct Emulated {
   bool success;
   std::string shard_account;
+  td::Ref<vm::Cell> transaction;
 };
 
 Emulated emulate(void *emulator, const std::string &shard_account, td::Ref<vm::Cell> message) {
+  static td::uint64 lt = 1'000'000;
+  lt += 1'000'000;  // each transaction on an account needs a later logical time
+  CHECK(transaction_emulator_set_lt(emulator, lt));
   auto raw = transaction_emulator_emulate_transaction(emulator, shard_account.c_str(), boc64(message).c_str());
   std::string text(raw);
   string_destroy(raw);
@@ -114,9 +118,11 @@ Emulated emulate(void *emulator, const std::string &shard_account, td::Ref<vm::C
   CHECK(json.is_ok());
   auto value = json.move_as_ok();
   auto &obj = value.get_object();
-  Emulated result{obj.get_optional_bool_field("success").move_as_ok(), ""};
+  Emulated result{obj.get_optional_bool_field("success").move_as_ok(), "", {}};
   if (result.success) {
     result.shard_account = obj.get_required_string_field("shard_account").move_as_ok();
+    auto tx = obj.get_required_string_field("transaction").move_as_ok();
+    result.transaction = vm::std_boc_deserialize(td::base64_decode(tx).move_as_ok()).move_as_ok();
   } else {
     LOG(INFO) << "emulation refused: " << text;
   }
@@ -171,10 +177,11 @@ std::string deployed_wallet(void *emulator) {
   return result.shard_account;
 }
 
-td::Ref<vm::Cell> signed_request(td::uint64 query_id, td::Ref<vm::Cell> message) {
+// A request signed with send `mode`; by default mode 1, without IGNORE_ERRORS: the signer
+// may omit it, and the wallet must add it.
+td::Ref<vm::Cell> signed_request(td::uint64 query_id, td::Ref<vm::Cell> message, int mode = 1) {
   vm::CellBuilder inner;
-  // Send mode 1, without IGNORE_ERRORS: the signer may omit it, and the wallet must add it.
-  inner.store_long(kSubwallet, 32).store_ref(std::move(message)).store_long(1, 8);
+  inner.store_long(kSubwallet, 32).store_ref(std::move(message)).store_long(mode, 8);
   inner.store_long(static_cast<long long>(query_id), 23).store_long(kNow - 1, 64).store_long(kTimeout, 22);
   auto inner_cell = inner.finalize();
   auto signature = key().sign(inner_cell->get_hash().as_slice()).move_as_ok();
@@ -188,8 +195,8 @@ td::Ref<vm::Cell> signed_request(td::uint64 query_id, td::Ref<vm::Cell> message)
   return ext.finalize();
 }
 
-void *new_emulator() {
-  static const auto config = fee_fixture::tos_versioned_config_boc();
+void *new_emulator(td::uint32 global_version = fee_fixture::kTosGlobalVersion) {
+  const auto config = fee_fixture::tos_versioned_config_boc(global_version);
   void *emulator = transaction_emulator_create(config.c_str(), 0);
   CHECK(emulator != nullptr);
   CHECK(transaction_emulator_set_unixtime(emulator, kNow));
@@ -208,11 +215,61 @@ td::Ref<vm::Cell> relaxed(F dest_and_value) {
   return cb.finalize();
 }
 
-void check_request_consumes_its_id(td::uint64 query_id, td::Ref<vm::Cell> message) {
-  void *emulator = new_emulator();
+// A request asking for DESTROY_IF_ZERO is refused before acceptance: no gas is spent and
+// its query id stays unused.
+void check_destroying_request_is_refused(td::uint64 query_id, td::Ref<vm::Cell> message, int mode,
+                                         td::uint32 global_version) {
+  void *emulator = new_emulator(global_version);
+  auto wallet = deployed_wallet(emulator);
+  auto after = emulate(emulator, wallet, signed_request(query_id, std::move(message), mode));
+  CHECK(!after.success);
+  CHECK(!processed(wallet, query_id));
+  transaction_emulator_destroy(emulator);
+}
+
+// The account in a ShardAccount BoC, if it is active.
+bool active(const std::string &shard_account) {
+  auto cell = vm::std_boc_deserialize(td::base64_decode(shard_account).move_as_ok()).move_as_ok();
+  block::gen::ShardAccount::Record shard;
+  CHECK(tlb::unpack_cell(cell, shard));
+  if (block::gen::t_Account.get_tag(vm::load_cell_slice(shard.account)) != block::gen::Account::account) {
+    return false;
+  }
+  block::gen::Account::Record_account account;
+  CHECK(tlb::unpack_cell(shard.account, account));
+  block::gen::AccountStorage::Record storage;
+  CHECK(tlb::csr_unpack(account.storage, storage));
+  return storage.state->prefetch_ulong(1) == 1;
+}
+
+td::Ref<vm::Cell> only_out_message(const td::Ref<vm::Cell> &transaction) {
+  block::gen::Transaction::Record trans;
+  CHECK(tlb::unpack_cell(transaction, trans));
+  CHECK(trans.outmsg_cnt == 1);
+  vm::Dictionary out_msgs{trans.r1.out_msgs, 15};
+  td::BitArray<15> key;
+  key.store_ulong(0);
+  auto message = out_msgs.lookup_ref(key);
+  CHECK(message.not_null());
+  return message;
+}
+
+int exit_code_of(const td::Ref<vm::Cell> &transaction) {
+  block::gen::Transaction::Record trans;
+  CHECK(tlb::unpack_cell(transaction, trans));
+  block::gen::TransactionDescr::Record_trans_ord ord;
+  CHECK(tlb::unpack_cell(trans.description, ord));
+  block::gen::TrComputePhase::Record_tr_phase_compute_vm compute;
+  CHECK(tlb::csr_unpack(ord.compute_ph, compute));
+  return compute.r1.exit_code;
+}
+
+void check_request_consumes_its_id(td::uint64 query_id, td::Ref<vm::Cell> message, int mode = 1,
+                                   td::uint32 global_version = fee_fixture::kTosGlobalVersion) {
+  void *emulator = new_emulator(global_version);
   auto wallet = deployed_wallet(emulator);
   CHECK(!processed(wallet, query_id));
-  auto after = emulate(emulator, wallet, signed_request(query_id, std::move(message)));
+  auto after = emulate(emulator, wallet, signed_request(query_id, std::move(message), mode));
   CHECK(after.success);
   CHECK(processed(after.shard_account, query_id));
   transaction_emulator_destroy(emulator);
@@ -244,4 +301,93 @@ TEST(HighloadWalletActionPhase, MalformedExtraCurrenciesConsumeTheirId) {
                                   junk.store_long(0x5, 3);  // not a HashmapE 32 root
                                   cb.store_ones(1).store_ref(junk.finalize());
                                 }));
+}
+
+// The property holds whatever send mode the request was signed with, valid or not, for every
+// kind of message above, at the TOS genesis version and at the next version this node runs.
+TEST(HighloadWalletActionPhase, EveryModeAndMessageConsumesItsId) {
+  const auto ordinary = [](vm::CellBuilder &cb) {
+    store_std_address(cb, block::StdAddress(0, td::Bits256::zero()));
+    store_coins(cb, kCoin);
+    cb.store_zeroes(1);
+  };
+  const auto to_addr_none = [](vm::CellBuilder &cb) {
+    cb.store_zeroes(2);
+    store_coins(cb, kCoin);
+    cb.store_zeroes(1);
+  };
+  const auto malformed_extra = [](vm::CellBuilder &cb) {
+    store_std_address(cb, block::StdAddress(0, td::Bits256::zero()));
+    store_coins(cb, kCoin);
+    vm::CellBuilder junk;
+    junk.store_long(0x5, 3);
+    cb.store_ones(1).store_ref(junk.finalize());
+  };
+  const std::vector<td::Ref<vm::Cell>> messages = {relaxed(ordinary), relaxed(to_addr_none), relaxed(malformed_extra)};
+  // Plain modes, fee flags, destroy, carry value, carry balance, the invalid 128 + 64
+  // combination, and every bit set.
+  const int modes[] = {0, 1, 3, 16, 17, 32, 64, 128, 128 + 32, 128 + 64, 255};
+  td::uint64 query_id = 100;
+  for (td::uint32 version : {fee_fixture::kTosGlobalVersion, fee_fixture::kTosGlobalVersion + 1}) {
+    for (const auto &message : messages) {
+      for (int mode : modes) {
+        if (mode & 32) {
+          // DESTROY_IF_ZERO is refused outright; see the next test.
+          check_destroying_request_is_refused(query_id++, message, mode, version);
+        } else {
+          check_request_consumes_its_id(query_id++, message, mode, version);
+        }
+      }
+    }
+  }
+}
+
+// A batch: a request sending this wallet an internal_transfer whose action list holds one
+// send with `mode`. Returns the wallet after both transactions and the second's exit code.
+std::pair<std::string, int> run_batch(int mode) {
+  void *emulator = new_emulator();
+  auto wallet = deployed_wallet(emulator);
+  vm::CellBuilder node;  // out_list$_ prev:^(OutList 0) action_send_msg
+  node.store_ref(vm::CellBuilder().finalize()).store_long(0x0ec3c86d, 32).store_long(mode, 8);
+  node.store_ref(relaxed([](vm::CellBuilder &cb) {
+    store_std_address(cb, block::StdAddress(0, td::Bits256::zero()));
+    store_coins(cb, kCoin);
+    cb.store_zeroes(1);
+  }));
+  vm::CellBuilder to_self;
+  to_self.store_long(0b0110, 4).store_zeroes(2);  // int_msg_info$0 ihr_disabled bounce, src addr_none
+  store_std_address(to_self, wallet_address());
+  store_coins(to_self, kCoin);
+  to_self.store_zeroes(1 + 4 + 4 + 64 + 32 + 1 + 1);  // no extra currencies, fees, lt, at, no init, inline body
+  to_self.store_long(0xae42e5a4, 32).store_long(0, 64).store_ref(node.finalize());
+  auto first = emulate(emulator, wallet, signed_request(21, to_self.finalize()));
+  CHECK(first.success);
+  CHECK(processed(first.shard_account, 21));
+  auto second = emulate(emulator, first.shard_account, only_out_message(first.transaction));
+  CHECK(second.success);
+  transaction_emulator_destroy(emulator);
+  return {second.shard_account, exit_code_of(second.transaction)};
+}
+
+// Replay protection is the wallet's state. A deleted wallet could be deployed again from its
+// public StateInit with empty replay dictionaries, and every fresh request it had accepted
+// could then run again; so no request may send with DESTROY_IF_ZERO, directly or in a batch.
+TEST(HighloadWalletActionPhase, NoRequestCanDestroyTheWallet) {
+  for (int mode : {32, 128 + 32}) {
+    check_destroying_request_is_refused(31, relaxed([](vm::CellBuilder &cb) {
+                                          store_std_address(cb, block::StdAddress(0, td::Bits256::zero()));
+                                          store_coins(cb, kCoin);
+                                          cb.store_zeroes(1);
+                                        }),
+                                        mode, fee_fixture::kTosGlobalVersion);
+    auto [wallet, exit_code] = run_batch(mode);
+    CHECK(exit_code == 39);
+    CHECK(active(wallet));
+  }
+  // The same batch without the flag runs, carrying the whole balance out but keeping the
+  // account and its replay state.
+  auto [wallet, exit_code] = run_batch(128);
+  CHECK(exit_code == 0);
+  CHECK(active(wallet));
+  CHECK(processed(wallet, 21));
 }

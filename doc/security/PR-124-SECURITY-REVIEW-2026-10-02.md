@@ -205,3 +205,43 @@ Sensitivity: each of these mutations makes a test fail.
 - the getter returning the stored count unchecked.
 
 Full runs after the change: FunC 35 files; `test-emulator` 99 tests, including the quote matrix and the quote-funded path; tol-tester 674; Rust sandboxes 16 + 11.
+
+## Remaining follow-up items
+
+Deployment tooling for the initial signer set:
+
+- `crypto/smartcont/new-multisig-wallet.fif` builds a wallet's initial state from signer and proposer addresses given in any order and in any address form.
+  - It assigns signer indices in increasing address order.
+  - It refuses an address given twice, including the same address written in two forms.
+  - It refuses a threshold outside 1..signers.
+  - It then runs the wallet's own `get_checked_signer_count` on the state and refuses it unless the count matches. It saves the StateInit and the address.
+- `crypto/CMakeLists.txt` generates the wallet and order code it includes.
+- `crypto/smartcont/tests/test-new-multisig-wallet.py` (CTest `test-new-multisig-wallet`):
+  - runs the accepted case and reads the saved StateInit back through the wallet code: signer count, threshold, address;
+  - runs six refused cases;
+  - runs a copy of the script that lists signers in reverse order, which the wallet's check must refuse.
+- Sensitivity: removing the script's duplicate check, or its call to the wallet's check, makes the test fail.
+
+Wider coverage for the high-volume wallet:
+
+- `EveryModeAndMessageConsumesItsId` signs requests with send modes 0, 1, 3, 16, 17, 32, 64, 128, 160, 192 (the invalid 128 + 64) and 255.
+  - It runs them for an ordinary message, a message to `addr_none` and one with malformed extra currencies.
+  - It runs everything at global versions 14 (genesis) and 15, as whole transactions on the C++ executor.
+  - Every request without +32 consumes its query id.
+
+That coverage found an issue: a request could send with +32 (destroy if zero).
+
+- An account deleted that way can be deployed again at the same address from its public StateInit, with empty replay dictionaries.
+- Once funded again, every request it had accepted that was still fresh could run a second time.
+- The wallet now refuses +32 before acceptance (throw code 39), so the request costs nothing and its query id stays unused.
+- An `internal_transfer` batch is checked too: an action list holding a send with +32 is refused before it is installed.
+- `NoRequestCanDestroyTheWallet` covers both paths, and checks that a batch without the flag still runs and keeps the account and its replay state.
+- Removing either check makes it fail.
+
+Full runs after these items:
+
+- `test-emulator`: 101 tests
+- FunC: 35 files
+- tol-tester: 674
+- Rust sandboxes: 16 + 11
+- CTest `test-new-multisig-wallet`
