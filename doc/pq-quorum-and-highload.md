@@ -16,16 +16,17 @@ Two deliverables on one branch:
    - one signature authorizes a batch of outbound messages.
 
 The Ed25519 `quorum-signatures` library and `highload-wallet-v3-code.fc` stay as they
-are. They keep working on chains below global version 16, and their headers will say
+are, unchanged by this work. They keep working on chains below global version 16, and
 they are not post-quantum.
 
 ## Constraints that shape everything
 
 These come from `doc/tvm-mldsa44.md` and the C++ executor.
 
-- **Version.** `PQCHECKSIG_MLDSA44` exists from global version 16 only. Genesis runs 14,
-  so both deliverables run only on a chain whose ConfigParam 8 names 16. Activation is
-  out of scope.
+- **Version.** `PQCHECKSIG_MLDSA44` exists from global version 16 only, so both
+  deliverables run only on a chain whose ConfigParam 8 names 16 or later. The canonical
+  genesis now sets version 18 (`doc/validator-genesis-bootstrap.md`); a network
+  configured below 16 cannot run them.
 - **Operand sizes.**
   - signature: exactly 2420 bytes;
   - public key: exactly 1312 bytes;
