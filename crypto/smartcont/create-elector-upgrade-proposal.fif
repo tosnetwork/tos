@@ -42,6 +42,9 @@ expire-in now + =: expire-at
 
 ."Assembling new " name type ." smart contract code from " src-file type cr
 src-file load-upgrade-code-param-value =: param-value
+// Invoke the new code's installation hook even when upgrading an older installer.
+// It refuses an in-place format change while any election or creditor is live.
+<b param-value <s s, 1 1 u, b> =: param-value
 
 critical { ."Critical" } { ."Non-critical" } cond
 ." configuration proposal for configuration parameter " param-idx .

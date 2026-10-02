@@ -39,19 +39,13 @@ _ unpack_elect_with_retry(elect) inline_ref {
   var es = elect.begin_parse();
   var (elect_at, elect_close, min_stake, total_stake, failed, finished) =
     (es~load_uint(32), es~load_uint(32), es~load_tomis(), es~load_tomis(), es~load_int(1), es~load_int(1));
-  ;; An election opened before this code was installed ends here. The configuration
-  ;; contract may replace the elector's code while an election is open, and the upgrade
-  ;; migrates no storage, so the book is read as empty rather than read past the end:
-  ;; that election simply has no post-quantum members, and gains one the moment it is
-  ;; written back.
-  cell pq_members = null();
-  cell pq_key_owner = null();
-  cell pq_by_code = null();
-  ifnot (es.slice_empty?()) {
-    pq_members = es~load_dict();
-    pq_key_owner = es~load_dict();
-    pq_by_code = es~load_dict();
-  }
+  ;; A classical election has its member dictionary before the flags, and only
+  ;; three remaining presence/flag bits in total. It must never be accepted as
+  ;; an empty PQ book: doing so discards its owners while retaining its total.
+  throw_unless(65, es.slice_bits() >= 3);
+  cell pq_members = es~load_dict();
+  cell pq_key_owner = es~load_dict();
+  cell pq_by_code = es~load_dict();
   ;; Old records have no cache. A failed record stores the inputs of its last attempt.
   int failed_inputs = -1;
   ifnot (es.slice_empty?()) {
@@ -76,6 +70,21 @@ int election_inputs_hash(cell pq_members, cell pq_by_code) inline_ref {
     .store_ref(begin_cell().store_dict(pq_members).store_dict(pq_by_code).end_cell())
     .store_dict(config_param(16)).store_dict(config_param(17)).store_dict(config_param(47))
   .end_cell().cell_hash();
+}
+
+;; Registration count, rather than the number eventually seated, bounds sorting,
+;; refunding and cancellation work. Stop at the first excess entry even for a
+;; pre-existing oversized book; never traverse an unbounded book to reject it.
+const pq_participant_limit = 256;
+int bounded_participant_count(cell members) inline_ref {
+  int count = 0;
+  int id = -1;
+  int present = true;
+  while (present & (count <= pq_participant_limit)) {
+    (id, _, present) = members.udict_get_next?(256, id);
+    if (present) { count += 1; }
+  }
+  return count;
 }
 
 cell pack_elect(elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
@@ -350,6 +359,11 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   ;; it is still admitted. A profile retired after a controller registered therefore
   ;; stops it changing anything, rather than merely turning away newcomers.
   var (existing, registered) = pq_members.udict_get?(256, validator_id);
+  ifnot (registered) {
+    if (bounded_participant_count(pq_members) >= pq_participant_limit) {
+      return return_stake(owner_addr, query_id, 16);
+    }
+  }
   (cell admitted_codes, int have_policy) = pq::controller_policy();
   ifnot (have_policy) {
     return return_stake(owner_addr, query_id, 11);
@@ -585,7 +599,15 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
   .end_cell(), 64);
 }
 
+int upgrade_ready() method_id {
+  var (elect, credits, past, _, _, _) = load_data();
+  return elect.null?() & credits.null?() & past.null?();
+}
+
 () after_code_upgrade(slice s_addr, slice cs, int query_id) impure method_id(1666) {
+  ;; The installation tool always supplies a hook marker. No format conversion
+  ;; is implicit: finish elections, unfreeze and recover all claims first.
+  throw_unless(66, upgrade_ready());
   var op = 0x4e436f64;
   return send_message_back(s_addr, 0xce436f64, query_id, op, 0, 64);
 }
@@ -602,6 +624,7 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
     ;; not from configuration smart contract, return error
     return false;
   }
+  ifnot (upgrade_ready()) { return false; }
   accept_message();
   var code = cs~load_ref();
   set_code(code);
@@ -1033,6 +1056,9 @@ int conduct_elections(ds, elect, credits) impure {
     ;; elections not finished yet
     return false;
   }
+  ;; An oversized imported election needs an explicit migration, not a tick that
+  ;; exhausts its gas partway through distributing other people's principal.
+  throw_unless(64, bounded_participant_count(pq_members) <= pq_participant_limit);
   if (config_param(0).null?()) {
     ;; no configuration smart contract to send result to
     return postpone_elections();

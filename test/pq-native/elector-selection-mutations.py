@@ -37,6 +37,69 @@ MUTATIONS = [
         "security_audit::identical_failed_inputs_skip_selection_and_cancel_without_double_credit",
         "unchanged selection ran again",
     ),
+    (
+        "capped-boundary-principal",
+        [
+            ("int refund = original_stake;", "int refund = stake;"),
+            ("throw_unless(63, total_placed == tot_stake + total_refunded);", "throw_unless(63, true);"),
+        ],
+        "security_audit::every_cap_boundary_conserves_the_increment_without_consuming_historic_credits",
+        "boundary principal increment",
+    ),
+    (
+        "unbounded-registration",
+        [("const pq_participant_limit = 256;", "const pq_participant_limit = 1024;")],
+        "security_audit::an_additional_identity_is_refused_at_the_participant_bound_before_state_changes",
+        "the 257th identity must be refused",
+    ),
+    (
+        "omitted-claimant-fine-share",
+        [("credits~credit_to(reward_addr, reward);", "credits~credit_to(reward_addr, 0);")],
+        "security_audit::a_fine_is_partitioned_between_claimant_and_purse_once_with_real_transaction_fees",
+        "claimant fine share",
+    ),
+    (
+        "omitted-system-fine-share",
+        [("tomis += fine_unalloc;", "tomis += 0;")],
+        "security_audit::a_fine_is_partitioned_between_claimant_and_purse_once_with_real_transaction_fees",
+        "system fine share",
+    ),
+    (
+        "unsafe-installation",
+        [("throw_unless(66, upgrade_ready());", "throw_unless(66, true);")],
+        "security_audit::a_real_classic_book_and_creditor_survive_explicit_installation_refusal",
+        "expected first transaction to be aborted, but it succeeded",
+    ),
+    *[
+        (
+            f"rollback-ignores-{claim}",
+            [("return elect.null?() & credits.null?() & past.null?();", expression)],
+            "security_audit::upgrades_and_rollbacks_require_a_debt_free_boundary_and_preserve_the_root",
+            f"live liabilities must refuse rollback: {phase}",
+        )
+        for claim, expression, phase in [
+            ("active-book", "return credits.null?() & past.null?();", "cached"),
+            ("frozen-book", "return elect.null?() & credits.null?();", "frozen-only"),
+            ("credits", "return elect.null?() & past.null?();", "credits-only"),
+        ]
+    ],
+    (
+        "missing-books-treated-as-empty",
+        [("throw_unless(65, es.slice_bits() >= 3);\n"
+          "  cell pq_members = es~load_dict();\n"
+          "  cell pq_key_owner = es~load_dict();\n"
+          "  cell pq_by_code = es~load_dict();",
+          "cell pq_members = null();\n"
+          "  cell pq_key_owner = null();\n"
+          "  cell pq_by_code = null();\n"
+          "  ifnot (es.slice_empty?()) {\n"
+          "    pq_members = es~load_dict();\n"
+          "    pq_key_owner = es~load_dict();\n"
+          "    pq_by_code = es~load_dict();\n"
+          "  }")],
+        "an_election_missing_its_books_is_refused_without_losing_its_declared_principal",
+        "absent books need explicit migration",
+    ),
 ]
 
 

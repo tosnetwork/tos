@@ -6630,12 +6630,9 @@ fn a_controller_rotates_its_key_and_releases_the_one_it_held() {
 /// Rewrite the open election with `book_fields` of the post-quantum book still present,
 /// each of them an empty dictionary.
 ///
-/// Zero is the storage an upgrade leaves behind: the configuration contract may replace
-/// the elector's code while an election is open, and the upgrade hook sets the new code
-/// without migrating a single cell, so the first thing the new code reads is an election
-/// the old code wrote. One is a shape no version has ever written, and is here to show
-/// that the election is read as one of the two shapes that exist and never as something
-/// in between.
+/// Missing books are an incompatible election, not an empty membership list. A
+/// caller must finish or explicitly migrate the old election before installing a
+/// different storage reader. Partial books must also fail without rewriting claims.
 fn rewrite_election_with_book_fields(chain: &mut Chain, book_fields: usize) {
     use chain_block::IBitstring;
     let mut account =
@@ -6679,7 +6676,7 @@ fn rewrite_election_with_book_fields(chain: &mut Chain, book_fields: usize) {
 }
 
 #[test]
-fn an_election_opened_before_the_upgrade_is_read_and_written_again() {
+fn an_election_missing_its_books_is_refused_without_losing_its_declared_principal() {
     let (mut chain, treasury, election) = open_election("legacy-elect", 60_000 * TOS);
     raise_to_post_quantum_version(&mut chain);
     let opening =
@@ -6689,26 +6686,15 @@ fn an_election_opened_before_the_upgrade_is_read_and_written_again() {
     assert_ne!(placed, 0, "the fixture needs a running total to read back");
     rewrite_election_with_book_fields(&mut chain, 0);
 
-    // Every entry point reads the election first, so an unreadable one stops the elector
-    // altogether: no stake is accepted and no election ever closes.
-    assert_eq!(
-        declared_total_stake(&chain),
-        placed,
-        "an election opened by the previous code could not be read back"
-    );
-
+    let before = chain.blockchain.get_account(&chain.elector).expect("elector").get_data();
+    let decoded = chain.blockchain.run_get_method(&chain.elector, "participant_list_extended", vec![])
+        .expect("getter");
+    assert_eq!(decoded.exit_code, 65, "absent books need explicit migration");
     let validator = PqValidator::new(9);
     let result = pq_stake(&mut chain, &treasury, &validator, election, 2, 12_000 * TOS);
-    assert_eq!(
-        reply(&result),
-        (STAKE_ACCEPTED, 0),
-        "the elector stopped working on the storage an upgrade leaves behind"
-    );
-    assert_eq!(
-        pq_member_key_id(&chain, &treasury),
-        Some(validator.key_id()),
-        "the book was not created for an election that was opened without one"
-    );
+    result.expect_aborted().expect_exit_code(65);
+    assert_eq!(chain.blockchain.get_account(&chain.elector).expect("elector").get_data(), before,
+        "refusal must not rewrite the original principal total or creditor state");
 }
 
 /// A stake for an election that is not the open one, refused for a reason that is
