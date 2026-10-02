@@ -12,6 +12,9 @@
 //   FunC cells: 17
 //   Tol cells:  10
 //   ratio:      0.59
+// After config-priced fees (Fift `totalcsize` of the compiled code BoCs,
+// 2026-10-02): FunC 16 cells / 5969 bits, Tol 17 cells / 8314 bits
+// (was 11 cells / 5535 bits); cell ratio 1.06, inside the 1.15 budget.
 //
 // §5.3 error-class assignment table:
 //   FunC line          | FunC throw(N) | ErrorClass    | error_code | Slice 2 site
@@ -39,12 +42,21 @@
 // raw outbound builders, address helpers, basechain guard, and error mapping
 // now delegate to `@stdlib/jetton`. The receive-path helpers still accept the
 // compiler-loaded `storage` value and return the next storage snapshot so the
-// generated contract receiver remains the single c4 save site. The regenerated
-// Tol BoC remains byte-for-byte identical to the Stage 0 baseline.
+// generated contract receiver remains the single c4 save site.
+//
+// Fee sufficiency is priced from the live fee configuration through
+// `@stdlib/jetton-fees` instead of the fixed 0.01-coin constants the FunC
+// reference uses, so the BoC is no longer byte-identical to the Stage 0
+// baseline. Only configuration-independent quantities (gas units, bits and
+// cells) live in `walletFeeProfile()`; the emulator fixture
+// jetton-wallet-fee-profile-fixture.cpp measures them against this build and
+// fails if a code change makes them stale.
 // =============================================================================
 
 import "@stdlib/common"
+import "@stdlib/gas-payments"
 import "@stdlib/jetton"
+import "@stdlib/jetton-fees"
 
 const OP_TRANSFER: uint32 = JETTON_OP_TRANSFER
 const OP_TRANSFER_NOTIFICATION: uint32 = JETTON_OP_TRANSFER_NOTIFICATION
@@ -53,8 +65,6 @@ const OP_EXCESSES: uint32 = JETTON_OP_EXCESSES
 const OP_BURN: uint32 = JETTON_OP_BURN
 const OP_BURN_NOTIFICATION: uint32 = JETTON_OP_BURN_NOTIFICATION
 
-const MIN_TOS_FOR_STORAGE = 10000000
-const GAS_CONSUMPTION = 10000000
 
 const FUNC_THROW_WRONG_WORKCHAIN = JETTON_WALLET_FUNC_THROW_WRONG_WORKCHAIN
 const FUNC_THROW_OWNER_REQUIRED = JETTON_WALLET_FUNC_THROW_OWNER_REQUIRED
@@ -124,6 +134,32 @@ struct (OP_BURN_NOTIFICATION) BurnNotification {
     amount: coins;
     ownerAddress: any_address;
     responseAddress: any_address;
+}
+
+/// Measured cost inputs of this wallet build and of the minter it reports
+/// burns to, each about 10% above the measurement taken on the C++ TVM by
+/// jetton-wallet-fee-profile-fixture.cpp (2026-10-02):
+///   storage 8977 bits / 20 cells at the maximum balance, carried StateInit
+///   8857 bits / 20 cells, burn notification 754 bits / 1 cell at the maximum
+///   amount; gas: send transfer 7539, receive transfer 7781, send burn 5170,
+///   minter receiving the burn 4483.
+/// The fixture fails if a build makes any value lower than its measurement
+/// or more than 25% above it.
+@pure
+fun walletFeeProfile(): JettonFeeProfile {
+    return JettonFeeProfile {
+        walletStorageBits: 9900,
+        walletStorageCells: 22,
+        walletInitStateBits: 9800,
+        walletInitStateCells: 22,
+        burnNotificationBits: 800,
+        burnNotificationCells: 1,
+        sendTransferGas: 8300,
+        receiveTransferGas: 8600,
+        sendBurnGas: 5700,
+        receiveBurnGas: 5000,
+        minStorageSeconds: JETTON_FEES_DEFAULT_MIN_STORAGE_SECONDS,
+    };
 }
 
 @pure
@@ -275,13 +311,7 @@ fun sendTokens(
         msg.forwardTosAmount,
         msg.forwardPayload
     );
-    var fwdCount = 1;
-    if (msg.forwardTosAmount != 0) {
-        fwdCount = 2;
-    }
-    if (msgValue <= msg.forwardTosAmount + fwdCount * fwdFee + (2 * GAS_CONSUMPTION + MIN_TOS_FOR_STORAGE)) {
-        throw FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE;
-    }
+    walletFeeProfile().requireTransferValue(msgValue, msg.forwardTosAmount, fwdFee);
 
     sendRawMessage(outbound, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
     return JettonWalletStorage {
@@ -313,9 +343,11 @@ fun receiveTokens(
         throw FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE;
     }
 
+    val profile = walletFeeProfile();
+    val minStorage = profile.walletMinStorageFee();
     val tosBalanceBeforeMsg = originalBalance - msgValue;
-    val storageFee = MIN_TOS_FOR_STORAGE - min(tosBalanceBeforeMsg, MIN_TOS_FOR_STORAGE);
-    var remainingValue = msgValue - (storageFee + GAS_CONSUMPTION);
+    val storageFee = minStorage - min(tosBalanceBeforeMsg, minStorage);
+    var remainingValue = msgValue - (storageFee + calculateGasFee(BASECHAIN, profile.receiveTransferGas));
 
     if (msg.forwardTosAmount != 0) {
         remainingValue -= msg.forwardTosAmount + fwdFee;
@@ -362,9 +394,7 @@ fun burnTokens(
     if (nextBalance < 0) {
         throw FUNC_THROW_INSUFFICIENT_BALANCE;
     }
-    if (msgValue <= fwdFee + 2 * GAS_CONSUMPTION) {
-        throw FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE;
-    }
+    walletFeeProfile().requireBurnValue(msgValue);
 
     sendRawMessage(
         buildBurnNotificationMessage(
@@ -441,6 +471,22 @@ contract JettonWallet {
             storage
         );
         save(nextStorage);
+    }
+
+    /// Smallest attached value that is NOT enough for a transfer under the
+    /// current fee configuration; attach strictly more.
+    get fun get_transfer_fee(forwardTosAmount: coins, fwdFee: coins): coins {
+        return walletFeeProfile().requiredTransferValue(forwardTosAmount, fwdFee);
+    }
+
+    /// Smallest attached value that is NOT enough for a burn under the
+    /// current fee configuration; attach strictly more.
+    get fun get_burn_fee(): coins {
+        return walletFeeProfile().requiredBurnValue();
+    }
+
+    get fun get_fee_profile(): JettonFeeProfile {
+        return walletFeeProfile();
     }
 
     get fun get_wallet_data(): (coins, any_address, any_address, cell) {

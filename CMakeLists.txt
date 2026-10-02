@@ -1054,7 +1054,10 @@ file(MAKE_DIRECTORY ${SLICE1_GAS_PARITY_DIR})
 
 # Compile a .tol source to a .boc. Tol's --boc-output emits the BoC
 # write directive into its .fif output; running fift on that .fif then
-# materializes the .boc on disk.
+# materializes the .boc on disk. The stdlib is a dependency too: contracts
+# import it, and a BoC that outlives a stdlib edit silently tests old code.
+file(GLOB SLICE1_TOL_STDLIB_SOURCES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/tol-stdlib/*.tol)
 function(slice1_tol_to_boc TOL_SOURCE OUT_BOC)
     get_filename_component(_stem ${OUT_BOC} NAME_WE)
     set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)
@@ -1065,7 +1068,7 @@ function(slice1_tol_to_boc TOL_SOURCE OUT_BOC)
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
                 $<TARGET_FILE:fift> ${_fif}
         WORKING_DIRECTORY ${SLICE1_GAS_PARITY_DIR}
-        DEPENDS tol fift ${TOL_SOURCE}
+        DEPENDS tol fift ${TOL_SOURCE} ${SLICE1_TOL_STDLIB_SOURCES}
         COMMENT "Compiling Tol contract ${_stem} -> ${OUT_BOC}"
         VERBATIM
     )
@@ -1189,7 +1192,10 @@ add_executable(test-emulator
         # (Codex review follow-up, 2026-07-21): closes the gap between the
         # VmState-level test above and the TL-B parse test in
         # tvm-v14-v15-transaction-fixture.cpp.
-        emulator/test/config-param-43-transaction-fixture.cpp)
+        emulator/test/config-param-43-transaction-fixture.cpp
+        # Measures the jetton wallet fee profile against this build and checks
+        # the config-priced transfer/burn requirements end to end.
+        emulator/test/jetton-wallet-fee-profile-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
 add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract)
 target_compile_definitions(test-emulator PRIVATE
