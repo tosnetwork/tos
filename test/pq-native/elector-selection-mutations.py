@@ -73,14 +73,14 @@ MUTATIONS = [
     *[
         (
             f"rollback-ignores-{claim}",
-            [("return elect.null?() & credits.null?() & past.null?();", expression)],
+            [("return elect.null?() & credits.null?() & past.null?() & (outstanding == 0);", expression)],
             "security_audit::upgrades_and_rollbacks_require_a_debt_free_boundary_and_preserve_the_root",
             f"live liabilities must refuse rollback: {phase}",
         )
         for claim, expression, phase in [
-            ("active-book", "return credits.null?() & past.null?();", "cached"),
-            ("frozen-book", "return elect.null?() & credits.null?();", "frozen-only"),
-            ("credits", "return elect.null?() & past.null?();", "credits-only"),
+            ("active-book", "return credits.null?() & past.null?() & (outstanding == 0);", "cached"),
+            ("frozen-book", "return elect.null?() & credits.null?() & (outstanding == 0);", "frozen-only"),
+            ("credits", "return elect.null?() & past.null?() & (outstanding == 0);", "credits-only"),
         ]
     ],
     (

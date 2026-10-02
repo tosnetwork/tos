@@ -959,3 +959,5 @@ fn a_legacy_failed_record_without_fingerprint_gets_one_new_attempt() {
     tick(&mut chain);
     assert!(observe(&chain, "legacy retry").next_set_installed);
 }
+
+mod relay;

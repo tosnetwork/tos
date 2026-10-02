@@ -35,7 +35,7 @@ REWARD_SHARE_BPS = 4000
 MAX_NOMINATORS = 40
 MIN_VALIDATOR_STAKE = 5_000_000_000_000
 MIN_NOMINATOR_STAKE = 100_000_000_000
-EXPECTED_ADDRESS = "-1:39ebb7d066bc471da3bbdcde82f5259651929d357a9eab25bebdf7b83292eeb2"
+EXPECTED_ADDRESS = "-1:a353c04bd88ede55ee3833ef4de8217346e5e568ed62e063a5300855d5f0db34"
 
 POOL_CODE = REPO / "crypto/smartcont/artifacts/nominator-pool-v1.boc"
 
@@ -51,6 +51,29 @@ def _lifecycle_module():
 
 
 lifecycle = _lifecycle_module()
+
+
+def test_product_relay_adnl_reader_uses_the_bound_v2_reference(monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "pq_config_wallet_first_stake_e2e", REPO / "scripts/pq-config-wallet-first-stake-e2e.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    pool = Address((-1, bytes([0x31]) * 32))
+    controller = Address((-1, bytes([0x42]) * 32))
+    terms = Builder().store_uint(123, 32).store_uint(0x10000, 32).store_uint(0xA5, 256).end_cell()
+    body = (Builder().store_uint(0x50517232, 32).store_uint((1 << 63) | 17, 64)
+            .store_uint(12345, 160).store_coins(10_002_000_000_000)
+            .store_uint(0x33, 256).store_ref(terms).end_cell())
+    message = _relay_message(pool, controller, 17, bounced=False)
+    message.body = body
+    tx = SimpleNamespace(in_msg=message)
+    monkeypatch.setattr(module.lifecycle_module, "_decoded_transaction", lambda raw: raw)
+    assert module.adnl_from_controller_relay([tx], pool, 17) == (0xA5).to_bytes(32, "big")
+    with pytest.raises(RuntimeError, match="found 0"):
+        module.adnl_from_controller_relay([tx], pool, 18)
+    with pytest.raises(RuntimeError, match="found 0"):
+        module.adnl_from_controller_relay([tx], controller, 17)
 
 
 @pytest.mark.asyncio
@@ -121,7 +144,7 @@ def _relay_message(source, target, query_id, *, bounced):
     body = Builder()
     if bounced:
         body.store_uint(0xFFFFFFFF, 32)
-    body.store_uint(0x5051726C, 32).store_uint(query_id, 64)
+    body.store_uint(0x50517232, 32).store_uint(query_id | (1 << 63), 64)
     return MessageAny(
         info=InternalMsgInfo(
             ihr_disabled=True,

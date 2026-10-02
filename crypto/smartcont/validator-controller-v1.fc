@@ -3,9 +3,9 @@
 ;; Validator Controller v1: the root of a validator's authority, post-quantum by
 ;; construction.
 ;;
-;; This account owns the stake, is the stable validator identity, and is what replaces an
-;; operational consensus key. Every action it takes is authorized by an ML-DSA-44
-;; signature from the root key it holds, and there is deliberately no second way in: no
+;; This account is the stable validator identity and controls its operational consensus
+;; key. Root actions require ML-DSA-44 authorization. A separately bound consensus key
+;; can relay a caller's stake without gaining arbitrary spending authority. There is no
 ;; classical authorization, no modes, no replaceable authorization module, no extension
 ;; authority, no code replacement, no classical recovery.
 ;;
@@ -16,6 +16,10 @@
 
 #include "pq.fc";
 #include "pq-bytes.fc";
+#include "pq-validator.fc";
+#include "stake-relay.fc";
+
+global cell ctl::relay_meta;
 
 ;; ---------------------------------------------------------------------------
 ;; The frozen authorization wire. `test/pq-native/controller-auth-vectors.tsv`
@@ -32,21 +36,12 @@ const int ctl::kind::rotate_root = 2;
 ;; Only the key's identity is kept here; the secret never leaves the validator host.
 const int ctl::kind::bind_consensus = 3;
 
-;; `PQrl`: relay a stake for whoever sent the money. Not a root authorisation -- the
-;; consensus key authorises it, by having signed the stake the elector will verify.
-const int ctl::relay_op = 0x5051726c;
-
 const int ctl::error::no_consensus_key = 100;
 const int ctl::error::wrong_consensus_key = 101;
 const int ctl::error::relay_underfunded = 102;
 ;; A stake owner is a masterchain account: the wire carries its 256 bits and nothing
 ;; else, and the elector answers `-1:owner`.
 const int ctl::error::owner_not_masterchain = 103;
-
-;; What it costs the elector to look at a stake, plus what it costs to send it there. A
-;; relay that arrives with less would have its stake refused for being underfunded, after
-;; this account had already paid to forward it.
-const int ctl::relay_minimum = 2000000000;  ;; 2 TOS
 
 ;; How far ahead an authorization may be valid. A request that never expires is a request
 ;; that can be held and replayed the moment its nonce comes round again.
@@ -96,9 +91,10 @@ int ctl::hash_level0(cell c) asm "0 CHASHI";
 ;; account keeps is only enough to refuse a stake signed by some other key.
 ;; ---------------------------------------------------------------------------
 
-(int, int, int, int, cell) ctl::load_data() inline {
+(int, int, int, int, cell) ctl::load_data() impure inline {
   slice ds = get_data().begin_parse();
   var res = (ds~load_uint(64), ds~load_uint(64), ds~load_uint(16), ds~load_uint(256), ds~load_ref());
+  ctl::relay_meta = ds.slice_empty?() ? null() : ds~load_maybe_ref();
   ds.end_parse();
   return res;
 }
@@ -111,6 +107,7 @@ int ctl::hash_level0(cell c) asm "0 CHASHI";
     .store_uint(consensus_algorithm, 16)
     .store_uint(consensus_key_id, 256)
     .store_ref(root)
+    .store_maybe_ref(ctl::relay_meta)
   .end_cell());
 }
 
@@ -129,125 +126,204 @@ slice ctl::elector_address() inline {
     .end_cell().begin_parse();
 }
 
-;; Relay a stake for whoever sent the money.
-;;
-;; This is the one thing the consensus key may make this account do, and it is narrow on
-;; purpose: the funds forwarded are the funds that arrived, the destination is the elector
-;; and nothing else, and the account's own balance is not touched. A leaked consensus key
-;; can therefore commit an inbound stake to an election it was authorised for; it cannot
-;; take anything, change anything, or make this account do anything else.
-;;
-;; The signature is not verified here. The elector verifies it, once, and doing it twice
-;; would double the cost of every stake to learn nothing. What is checked here is that the
-;; key presented is the key this controller was bound to -- a cheap comparison of derived
-;; identities -- so a stake signed by some other key is refused before it is paid for.
+;; At most one unfinished third-party transfer. The authority prefix stays unchanged.
+(int, cell) ctl::relay_state() impure inline_ref {
+  ctl::load_data();
+  if (ctl::relay_meta.null?()) { return (sr::domain, null()); }
+  slice cs = ctl::relay_meta.begin_parse();
+  var result = (cs~load_uint(64), cs~load_maybe_ref()); cs.end_parse(); return result;
+}
+() ctl::save_relay(int sequence, cell pending) impure inline_ref {
+  var (epoch, nonce, algorithm, key, root) = ctl::load_data();
+  ctl::relay_meta = begin_cell().store_uint(sequence, 64).store_maybe_ref(pending).end_cell();
+  ctl::save_data(epoch, nonce, algorithm, key, root);
+}
+cell ctl::record(int owner, int elector, int hash, int forwarded, int capital,
+                 int prefix, int phase, cell receipt) inline_ref {
+  cell amounts = begin_cell().store_coins(sr::coins(forwarded)).store_coins(sr::coins(capital))
+    .store_uint(prefix, 256).store_maybe_ref(receipt).end_cell();
+  return begin_cell().store_uint(owner, 256).store_uint(elector, 256).store_uint(hash, 256)
+    .store_uint(phase, 2).store_ref(amounts).end_cell();
+}
+(int, int, int, int, int, int, int, cell) ctl::unpack(cell pending) inline_ref {
+  slice cs = pending.begin_parse();
+  var (owner, elector, hash, phase) = (cs~load_uint(256), cs~load_uint(256), cs~load_uint(256), cs~load_uint(2));
+  slice amounts = cs~load_ref().begin_parse(); cs.end_parse();
+  var (forwarded, capital, prefix, receipt) = (amounts~load_coins(), amounts~load_coins(),
+    amounts~load_uint(256), amounts~load_maybe_ref()); amounts.end_parse();
+  return (owner, elector, hash, forwarded, capital, prefix, phase, receipt);
+}
+() ctl::kick(int query) impure inline_ref {
+  send_raw_message(sr::message(my_address(), sr::add(sr::control_value(), sr::callback_value()),
+    begin_cell().store_uint(sr::retry, 32).store_uint(query, 64).end_cell(), false), 3);
+}
 () ctl::relay_stake(slice sender, int msg_value, slice cs) impure inline_ref {
-  int query_id = cs~load_uint(64);
-  int stake_at = cs~load_uint(32);
-  int max_factor = cs~load_uint(32);
-  int adnl_addr = cs~load_uint(256);
-  int algorithm_id = cs~load_uint(16);
-  cell public_key = cs~load_ref();
-  cell signature = cs~load_ref();
-  cell witness = cs~load_maybe_ref();
-  cs.end_parse();
-
-  throw_unless(ctl::error::relay_underfunded, msg_value >= ctl::relay_minimum);
-
-  var (_, _, bound_algorithm, bound_key_id, _) = ctl::load_data();
-  throw_unless(ctl::error::no_consensus_key, bound_key_id);
-  ;; The suite first, and not because the identity would otherwise be wrong -- an identity
-  ;; commits to the suite that derived it, so a key of another suite already fails the
-  ;; comparison below. It is checked here so that a request naming a suite this chain does
-  ;; not know is refused for being the wrong key, rather than inside the parser that would
-  ;; not know how long such a key should be.
-  throw_unless(ctl::error::wrong_consensus_key, algorithm_id == bound_algorithm);
-  throw_unless(ctl::error::wrong_consensus_key,
-               pq::key_id(algorithm_id, public_key) == bound_key_id);
-
-  ;; The shape the elector will read, settled here rather than discovered there.
-  ;;
-  ;; The elector answers a stake it dislikes by sending the money back, but a signature it
-  ;; cannot parse it aborts on, and an abort bounces to the account that sent the message
-  ;; -- which the relay makes this one. The bounce would stop here: the account whose money
-  ;; it is never hears that its stake died, and goes on waiting for an answer that cannot
-  ;; come while its principal rests in this balance. Refusing the same shape here costs a
-  ;; walk of the chain and bounces back to that account, which knows what a refusal means.
-  ;;
-  ;; What goes out is then rebuilt from the walked chain, so the elector is handed the
-  ;; canonical wrapper rather than whatever the caller wrapped the same bytes in.
-  cell signature_chain = pq::stored_signature(algorithm_id, signature);
-  cell relayed_signature = begin_cell()
-    .store_uint(pq::mldsa44_signature_bytes, 32)
-    .store_ref(signature_chain)
-  .end_cell();
-
-  ;; Whose money this is: the account that sent it here, read rather than stated. The
-  ;; elector believes it because this code is what ConfigParam 47 admitted, and this is
-  ;; the line that makes that belief true.
-  ;;
-  ;; And a masterchain account, or nothing. The stake wire carries the owner's 256 bits
-  ;; alone, and the elector answers -- and at unfreeze pays -- `-1:owner`. Money from an
-  ;; account `0:X` would be owed to `-1:X`, an account that may not exist and is not the
-  ;; sender's either way. Every pool that stakes is a masterchain contract, so nothing
-  ;; legitimate is turned away here; what is turned away is money that could not have
-  ;; come back.
-  (int owner_wc, int owner) = parse_std_addr(sender);
-  throw_unless(ctl::error::owner_not_masterchain, owner_wc == -1);
-
-  builder body = begin_cell()
-    .store_uint(pq::tag::stake_op, 32)
-    .store_uint(query_id, 64)
-    .store_uint(algorithm_id, 16)
-    .store_ref(public_key)
-    .store_uint(stake_at, 32)
-    .store_uint(max_factor, 32)
-    .store_uint(adnl_addr, 256)
-    .store_ref(relayed_signature);
-  ifnot (cell_null?(witness)) {
-    body = body.store_uint(1, 1).store_ref(witness);
+  int query = cs~load_uint(64);
+  int commitment = cs~load_uint(160);
+  int forwarded = cs~load_coins();
+  int elector = cs~load_uint(256);
+  cell terms = cs~load_ref(); cs.end_parse();
+  var (wc, owner) = parse_std_addr(sender);
+  throw_unless(ctl::error::owner_not_masterchain, (wc == -1) & owner);
+  var (_, controller) = parse_std_addr(my_address());
+  var (_, _, bound_algorithm, bound_key, _) = ctl::load_data();
+  throw_unless(ctl::error::no_consensus_key, bound_key);
+  var (at, factor, adnl, algorithm, key, signature, witness) = sr::terms(terms.begin_parse());
+  throw_unless(ctl::error::wrong_consensus_key, algorithm == bound_algorithm);
+  int key_id = pq::key_id(algorithm, key);
+  throw_unless(ctl::error::wrong_consensus_key, key_id == bound_key);
+  (_, cell key_chain) = pq::stored_key(algorithm, key);
+  cell signature_chain = pq::stored_signature(algorithm, signature);
+  cell canonical_signature = begin_cell().store_uint(pq::mldsa44_signature_bytes, 32).store_ref(signature_chain).end_cell();
+  throw_unless(sr::error, cell_hash(canonical_signature) == cell_hash(signature));
+  throw_unless(sr::error, elector == sr::elector());
+  throw_unless(sr::error, commitment == sr::commitment(owner, elector, forwarded, terms));
+  var (sequence, pending) = ctl::relay_state();
+  throw_unless(sr::error, (query > sequence) & (query < (1 << 64)) & pending.null?());
+  cell payload = sr::payload(terms, owner);
+  cell body = sr::stake_body(query, payload);
+  cell outgoing = sr::message(sr::address(elector), forwarded, body, true);
+  throw_unless(ctl::error::relay_underfunded, forwarded > sr::confirmation);
+  throw_unless(ctl::error::relay_underfunded, msg_value >= sr::add(forwarded, sr::relay_cost(outgoing)));
+  set_gas_limit(sr::relay_gas);
+  ;; Persistent space must not be occupied by an invalid public request.
+  throw_unless(ctl::error::bad_signature, pq_check_mldsa44(
+    pq::stake_preimage(at, factor, controller, owner, algorithm, key_id, adnl),
+    pq::election_context(), signature_chain, key_chain));
+  int capital = sr::sub(pair_first(get_balance()), msg_value);
+  pending = ctl::record(owner, elector, sr::request_hash(controller, query, payload), forwarded,
+    capital, body.begin_parse().preload_uint(256), 0, null());
+  ctl::save_relay(query, pending);
+  raw_reserve(capital, 0);
+  send_raw_message(outgoing, 17);
+}
+() ctl::receive_result(slice sender, int msg_value, int op, slice cs) impure inline_ref {
+  int query = cs~load_uint(64);
+  int reason = cs~load_uint(32);
+  int accepted = cs~load_coins();
+  int received = cs~load_coins();
+  int hash = cs~load_uint(256); cs.end_parse();
+  var (sequence, pending) = ctl::relay_state();
+  if (pending.null?() | (query != sequence)) { return (); }
+  var (owner, elector, expected, forwarded, capital, prefix, phase, _) = ctl::unpack(pending);
+  var (wc, address) = parse_std_addr(sender);
+  if ((wc != -1) | (address != elector) | (phase != 0)) { return (); }
+  throw_unless(sr::error, (hash == expected) & (received == forwarded));
+  throw_unless(sr::error, accepted == ((op == sr::ok) ? sr::sub(forwarded, sr::confirmation) : 0));
+  throw_unless(sr::error, ((op == sr::ok) & (reason == 0)) | ((op == sr::error_reply) & (accepted == 0)));
+  set_gas_limit(sr::control_gas);
+  cell receipt = begin_cell().store_uint(sr::result, 32).store_uint(query, 64)
+    .store_uint(hash, 256).store_coins(forwarded).store_coins(accepted).store_uint(reason, 32).store_int(op == sr::ok, 1).end_cell();
+  ctl::save_relay(sequence, ctl::record(owner, elector, expected, forwarded, capital, prefix, 1, receipt));
+  raw_reserve(capital, 2);
+  ctl::kick(query);
+}
+() ctl::record_bounce(slice sender, int msg_value, slice body) impure inline_ref {
+  var (sequence, pending) = ctl::relay_state();
+  if (pending.null?()) { return (); }
+  var (owner, elector, hash, forwarded, capital, prefix, phase, _) = ctl::unpack(pending);
+  var (wc, address) = parse_std_addr(sender);
+  if ((wc != -1) | (address != elector) | (phase != 0)) { return (); }
+  ifnot (sr::bounce_matches(body, prefix)) { return (); }
+  throw_unless(sr::error, msg_value <= forwarded);
+  cell receipt = begin_cell().store_uint(sr::result, 32).store_uint(sequence, 64)
+    .store_uint(hash, 256).store_coins(forwarded).store_coins(0).store_uint(0xffffffff, 32).store_uint(0, 1).end_cell();
+  ctl::save_relay(sequence, ctl::record(owner, elector, hash, forwarded, capital, prefix, 1, receipt));
+  raw_reserve(capital, 2);
+  ctl::kick(sequence);
+}
+() ctl::retry(int msg_value, slice cs) impure inline_ref {
+  int query = cs~load_uint(64); cs.end_parse();
+  var (sequence, pending) = ctl::relay_state();
+  if (pending.null?() | (query != sequence)) { return (); }
+  var (owner, elector, hash, forwarded, capital, prefix, phase, receipt) = ctl::unpack(pending);
+  throw_unless(sr::error, phase > 0);
+  throw_unless(sr::error, msg_value >= sr::add(sr::control_value(), sr::callback_value()));
+  set_gas_limit(sr::control_gas);
+  if (phase == 1) {
+    ctl::save_relay(sequence, ctl::record(owner, elector, hash, forwarded, capital, prefix, 2, receipt));
+    raw_reserve(capital, 0);
+    ;; Non-bounce payment: recipient compute abort cannot return or strand its principal.
+    ;; Action failure rolls back PAID, leaving the READY debt available for retry.
+    send_raw_message(sr::message(sr::address(owner), 0, receipt, false), 128);
   } else {
-    body = body.store_uint(0, 1);
+    raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
+    ;; A paid receipt retry carries only this invocation's value, never old principal.
+    send_raw_message(sr::message(sr::address(owner), 0, receipt, false), 64);
   }
-  body = body.store_uint(1, 1).store_uint(owner, 256);
+}
+() ctl::acknowledge(slice sender, int msg_value, slice cs) impure inline_ref {
+  int query = cs~load_uint(64); int hash = cs~load_uint(256); cs.end_parse();
+  var (sequence, pending) = ctl::relay_state();
+  if (pending.null?() | (query != sequence)) { return (); }
+  var (owner, _, expected, _, _, _, phase, _) = ctl::unpack(pending);
+  var (wc, address) = parse_std_addr(sender);
+  throw_unless(sr::error, (wc == -1) & (address == owner) & (hash == expected) & (phase == 2));
+  ctl::save_relay(sequence, null());
+  raw_reserve(sr::sub(pair_first(get_balance()), msg_value), 0);
+  send_raw_message(sr::message(sender, 0, begin_cell().store_uint(1, 32).store_uint(query, 64).end_cell(), false), 64);
+}
 
-  ;; Mode 64 carries what came in and nothing else, so this account never funds a stake
-  ;; out of its own balance. Bounceable, so a refusal returns the money to this account
-  ;; and from there it is the owner's to recover.
-  ;; The body travels behind a reference, which the bit before it has to say: a stake
-  ;; carries a key and a signature and does not fit beside the header.
-  send_raw_message(begin_cell()
-    .store_uint(0x18, 6)
-    .store_slice(ctl::elector_address())
-    .store_coins(0)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
-    .store_uint(1, 1)
-    .store_ref(body.end_cell())
-  .end_cell(), 64);
+() ctl::check_root_send(cell out) impure inline_ref {
+  slice cs = out.begin_parse();
+  int flags = cs~load_uint(4);
+  throw_unless(ctl::error::bad_action, (flags == 4) | (flags == 6));
+  slice source = cs~load_msg_addr();
+  ;; The executor fills addr_none, or accepts this controller's own canonical
+  ;; source. A root authorization cannot create a message from another account.
+  throw_unless(ctl::error::bad_action, (source.preload_uint(2) == 0) | equal_slice_bits(source, my_address()));
+  slice destination = cs~load_msg_addr();
+  var (out_wc, out_id) = parse_std_addr(destination);
+  slice canonical = begin_cell().store_uint(4, 3).store_int(out_wc, 8)
+    .store_uint(out_id, 256).end_cell().begin_parse();
+  throw_unless(ctl::error::bad_action, slice_hash(destination) == slice_hash(canonical));
+  cs~load_coins();
+  throw_unless(ctl::error::bad_action, cs~load_uint(1) == 0);  ;; no extra currencies
+  cs~load_coins(); cs~load_coins();
+  cs~skip_bits(64 + 32);
+  if (cs~load_uint(1)) {
+    if (cs~load_uint(1)) {
+      cs~load_ref();
+    } else {
+      if (cs~load_uint(1)) { cs~skip_bits(5); }
+      if (cs~load_uint(1)) { cs~skip_bits(2); }
+      cs~load_maybe_ref(); cs~load_maybe_ref(); cs~load_dict();
+    }
+  }
+  slice body = cs;
+  if (cs~load_uint(1)) {
+    body = cs~load_ref().begin_parse();
+    cs.end_parse();
+  } else {
+    body = cs;
+  }
+  if (body.slice_bits() >= 32) {
+    int op = body~load_uint(32);
+    throw_if(ctl::error::bad_action, sr::reserved_op(op));
+    if (body.slice_bits() >= 64) {
+      int query = body~load_uint(64);
+      throw_if(ctl::error::bad_action, (query >= sr::domain));
+    }
+  }
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
   slice header = in_msg_full.begin_parse();
   int flags = header~load_uint(4);
 
-  ;; Something this account sent came back. A relay is the only message it sends that can:
-  ;; it goes to the elector bounceable, so that a stake which cannot be carried out returns
-  ;; the money rather than leaving it there.
-  ;;
-  ;; The money is already in this balance by the time this runs, and the bounce cannot say
-  ;; whose it was -- a bounce carries the first 256 bits of the body it bounced, and a
-  ;; stake's owner is written past them. So it is held, and the root moves it back. Throwing
-  ;; instead would change nothing about where the money is and only burn what came with it.
-  if (flags & 1) {
-    return ();
-  }
-
-  if (in_msg_body.slice_empty?()) {
-    return ();  ;; plain value transfer, used to fund the account
-  }
+  slice sender = header~load_msg_addr();
+  if (flags & 1) { return ctl::record_bounce(sender, msg_value, in_msg_body); }
+  if (in_msg_body.slice_empty?()) { return (); }
   int op = in_msg_body~load_uint(32);
-  if (op == ctl::relay_op) {
-    return ctl::relay_stake(header~load_msg_addr(), msg_value, in_msg_body);
+  if (op == sr::relay) { return ctl::relay_stake(sender, msg_value, in_msg_body); }
+  if ((op == sr::ok) | (op == sr::error_reply)) { return ctl::receive_result(sender, msg_value, op, in_msg_body); }
+  if (op == sr::retry) { return ctl::retry(msg_value, in_msg_body); }
+  if (op == sr::ack) { return ctl::acknowledge(sender, msg_value, in_msg_body); }
+  if ((op == 0xf374484c) | (op == 0xee6f454c) | (op == 0xf96f7324) | (op == 0xfffffffe)) {
+    var (wc, address) = parse_std_addr(sender);
+    throw_unless(sr::error, (wc == -1) & (address == sr::elector()));
+    throw_unless(sr::error, in_msg_body~load_uint(64) < sr::domain);
+    return ();
   }
   throw_unless(ctl::error::bad_operation, op == ctl::op);
   in_msg_body~load_uint(64);  ;; query_id, echoed by nothing: this account answers no one
@@ -301,6 +377,9 @@ slice ctl::elector_address() inline {
     cell out = ps~load_ref();
     ps.end_parse();
     ctl::check_send_mode(mode);
+    var (_, pending) = ctl::relay_state();
+    throw_unless(ctl::error::bad_action, pending.null?());
+    ctl::check_root_send(out);
     ;; The nonce is spent before the action, so a request cannot be replayed after one
     ;; that refused.
     ctl::save_data(stored_epoch, stored_nonce + 1, consensus_algorithm, consensus_key_id, root);
@@ -362,3 +441,6 @@ slice ctl::elector_address() inline {
 (int, int, int, int, cell) controller_state() method_id {
   return ctl::load_data();
 }
+
+int next_relay_query() method_id { var (sequence, _) = ctl::relay_state(); return sequence + 1; }
+cell relay_pending() method_id { var (_, pending) = ctl::relay_state(); return pending; }

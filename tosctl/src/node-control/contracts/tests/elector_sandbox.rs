@@ -2669,10 +2669,13 @@ fn a_retired_profile_cannot_make_an_election_look_ready() {
         "retiring a profile took the stake that had been placed"
     );
 
-    // And the election is postponed, not failed. The difference is the whole point of
-    // judging readiness on the stake the election can stand behind: an election that
-    // was marked failed would not retry until new stake arrived, so putting the profile
-    // back would leave it stuck for a reason the configuration had already undone.
+    // No selection should run on inadmissible stake. Input-aware failed retry can
+    // also recover later, so eventual installation alone cannot detect this guard.
+    let summary = chain.blockchain.run_get_method(&chain.elector, "participant_list_extended", vec![])
+        .expect("actual readiness state");
+    assert_eq!(summary.exit_code, 0);
+    assert_eq!(summary.stack[5].as_integer().expect("failed flag").to_string(), "0",
+        "retired-only stake must postpone selection without marking it failed");
     admit_sender_code(&mut chain, &accounts[0]);
     chain
         .blockchain
@@ -3599,13 +3602,13 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
 
     let result = chain
         .blockchain
-        .send_message(operator.build_message(&pool, 2 * TOS, true, Some(order)))
+        .send_message(operator.build_message(&pool, 20 * TOS, true, Some(order)))
         .expect("the order is delivered");
     result.expect_success();
 
     // The elector took it, and the member it registered is the controller.
     assert!(
-        replies(&result).contains(&STAKE_ACCEPTED),
+        replies(&result).contains(&0x50516f32),
         "the pool's stake never reached the election: {:02x?}",
         replies(&result)
     );
@@ -3709,6 +3712,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
             transaction
                 .iterate_out_msgs(|message| {
                     if message.dst() == Some(to.clone()) {
+                        if message.body().is_some_and(|body| body.clone().get_next_u32().ok() == Some(0x50516132)) { return Ok(true); }
                         values.push(
                             message.get_value().expect("internal transfer value").coins.as_u128(),
                         );
@@ -3757,7 +3761,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     .expect("production multi-pool stake order");
     let result = chain
         .blockchain
-        .send_message(operator.build_message(&pool, 2 * TOS, true, Some(order)))
+        .send_message(operator.build_message(&pool, 20 * TOS, true, Some(order)))
         .expect("order delivered");
     result.expect_success();
 
@@ -3778,7 +3782,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     for transaction in result.transactions_for(&chain.elector) {
         transaction
             .iterate_out_msgs(|message| {
-                if message.dst() == Some(pool.clone()) {
+                if message.dst() == Some(controller.clone()) {
                     let mut body = message.body().expect("Elector reply body").clone();
                     let tag = body.get_next_u32().expect("reply opcode");
                     body.get_next_u64().expect("reply query id");
@@ -3819,37 +3823,27 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     }
 }
 
-/// The old 10,001 TOS order reaches the Elector, but its mode-64 forwarding
-/// fee leaves less than 10,001 TOS there. After the Elector's one-TOS reply
-/// reserve it is below the 10,000 TOS minimum: reason 5, not a relay bounce.
+/// Exact forwarding excludes relay fees from the principal tested by the elector.
 #[test]
 fn a_multi_nominator_first_stake_exposes_the_exact_refusal() {
-    let probe = multi_nominator_first_stake_probe(10_001 * TOS);
-    assert_eq!(probe.pool_to_controller, Some(u128::from(10_001 * TOS)));
-    assert!(probe.controller_to_elector.is_some_and(|value| value < u128::from(10_001 * TOS)));
+    let probe = multi_nominator_first_stake_probe(10_000 * TOS);
+    assert!(probe.pool_to_controller.is_some_and(|value| value > u128::from(10_000 * TOS)));
+    assert_eq!(probe.controller_to_elector, Some(u128::from(10_000 * TOS)));
     assert_eq!(probe.controller_aborted, Some(false));
     assert!(!probe.controller_bounced_to_pool);
     assert_eq!(probe.elector_aborted, Some(false));
-    assert_eq!(probe.elector_reply, Some((STAKE_RETURNED, REASON_BELOW_MINIMUM)));
+    assert_eq!(probe.elector_reply, Some((0x50516532, REASON_BELOW_MINIMUM)));
     assert_eq!(probe.pool_state, 0);
     assert!(!probe.controller_registered);
 }
 
-/// One additional TOS is an explicit forwarding-fee allowance, rather than
-/// pretending the Elector's one-TOS confirmation reserve also covers relay
-/// fees. The same production builder and three compiled contracts must now
-/// reach the acceptance reply and pool state 2.
 #[test]
 fn a_multi_nominator_first_stake_with_forwarding_allowance_is_accepted() {
     let probe = multi_nominator_first_stake_probe(10_002 * TOS);
-    assert_eq!(
-        probe.elector_reply,
-        Some((STAKE_ACCEPTED, 0)),
-        "Elector must accept the forwarded amount"
-    );
-    assert_eq!(probe.pool_state, 2, "the pool must receive and record acceptance");
-    assert_eq!(probe.pool_to_controller, Some(u128::from(10_002 * TOS)));
-    assert!(probe.controller_to_elector.is_some_and(|value| value >= u128::from(10_001 * TOS)));
+    assert_eq!(probe.elector_reply, Some((0x50516f32, 0)));
+    assert_eq!(probe.pool_state, 2, "the pool must consume its bound receipt");
+    assert!(probe.pool_to_controller.is_some_and(|value| value > u128::from(10_002 * TOS)));
+    assert_eq!(probe.controller_to_elector, Some(u128::from(10_002 * TOS)));
     assert_eq!(probe.controller_aborted, Some(false));
     assert!(!probe.controller_bounced_to_pool);
     assert_eq!(probe.elector_aborted, Some(false));

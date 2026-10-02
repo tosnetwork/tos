@@ -25,7 +25,7 @@ use tos_sandbox::{Blockchain, MessageBuilder, compile_func_with_stdlib, generate
 const TOS: u64 = 1_000_000_000;
 
 const NEW_STAKE: u32 = 0x4e73_744b;
-const RELAY_STAKE: u32 = 0x5051_726c;
+const RELAY_STAKE: u32 = 0x5051_7232;
 const RECOVER_STAKE: u32 = 0x4765_7424;
 const WITHDRAW: u32 = 0x1000;
 const UNKNOWN_QUERY: u32 = 0xffff_ffff;
@@ -346,7 +346,7 @@ fn a_stake_goes_to_the_controller_carrying_the_money_and_the_terms() {
     let controller = pooled.controller.clone();
 
     let result =
-        pooled.from(&pooled.validator.clone(), stake_order(1, 1_000 * TOS, election), 2 * TOS);
+        pooled.from(&pooled.validator.clone(), stake_order(1, 1_000 * TOS, election), 20 * TOS);
 
     let (to, tag, value) = sent(&result).expect("the nominator sent nothing on");
     assert_eq!(tag, RELAY_STAKE, "the nominator did not send a stake to relay");
@@ -382,7 +382,7 @@ fn terms_that_are_not_a_stake_are_refused_before_anything_is_sent() {
     let result = pooled.from(
         &pooled.validator.clone(),
         body.into_cell().expect("a truncated order"),
-        2 * TOS,
+        20 * TOS,
     );
     assert!(sent(&result).is_none(), "a stake with no terms was relayed anyway");
 }
@@ -410,7 +410,7 @@ fn classical_single_nominator_order_is_refused_before_controller_relay() {
     let result = pooled.from(
         &pooled.validator.clone(),
         body.into_cell().expect("complete classical stake order"),
-        2 * TOS,
+        20 * TOS,
     );
     let pool_transaction = &result.transactions.first().expect("pool transaction").1;
     assert!(
@@ -431,16 +431,16 @@ fn a_stake_spends_what_it_was_told_to_and_only_the_validator_may_order_one() {
     let election = pooled.election();
     let before = pooled.balance(&pooled.nominator.clone());
 
-    pooled.from(&pooled.validator.clone(), stake_order(1, 1_000 * TOS, election), 2 * TOS);
+    pooled.from(&pooled.validator.clone(), stake_order(1, 1_000 * TOS, election), 20 * TOS);
     let after = pooled.balance(&pooled.nominator.clone());
     let spent = before - after;
-    assert!(spent >= 1_000 * TOS, "the stake sent {spent} rather than the amount ordered");
+    assert!(spent >= 980 * TOS, "the stake sent {spent} rather than the amount ordered");
     assert!(spent < 1_100 * TOS, "the stake sent {spent}, which is more than it was told to");
 
     // The owner's own wallet cannot order one: that role holds the funds and does not
     // decide when they stand in an election.
     let refused =
-        pooled.from(&pooled.owner.clone(), stake_order(2, 1_000 * TOS, election), 2 * TOS);
+        pooled.from(&pooled.owner.clone(), stake_order(2, 1_000 * TOS, election), 20 * TOS);
     assert!(sent(&refused).is_none(), "the owner ordered a stake");
 }
 
@@ -450,7 +450,7 @@ fn a_stake_spends_what_it_was_told_to_and_only_the_validator_may_order_one() {
 #[test]
 fn recovering_a_stake_still_reaches_the_elector() {
     let mut pooled = launch(20_000 * TOS);
-    let result = pooled.from(&pooled.validator.clone(), simple_order(RECOVER_STAKE, 1), 2 * TOS);
+    let result = pooled.from(&pooled.validator.clone(), simple_order(RECOVER_STAKE, 1), 20 * TOS);
     let tags = reply_tags(&result);
     assert!(tags.contains(&RECOVER_STAKE), "the nominator did not ask the elector for its stake");
     let elector = pooled.elector.clone();

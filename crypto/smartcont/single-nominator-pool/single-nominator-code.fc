@@ -1,3 +1,5 @@
+#include "../stake-relay.fc";
+global cell single_protocol;
 ;; TOS single-nominator-pool contract
 ;; Adapted from https://github.com/orbs-network/single-nominator/blob/main/contracts/single-nominator.fc
 ;; This contract is very similar to https://github.com/tos-network/nominator-pool but much simpler since it only supports a single nominator.
@@ -21,7 +23,6 @@ const OP::UPGRADE = 0x9903;
 ;; What an operator still calls this command, and what the contract sends on. The first is
 ;; a name this contract answers to; the second is a message the controller relays.
 const OP::NEW_STAKE = 0x4e73744b;
-const OP::RELAY_STAKE = 0x5051726c;  ;; "PQrl"
 const OP::RECOVER_STAKE = 0x47657424;
 
 ;; modes
@@ -46,13 +47,14 @@ const ERROR::INSUFFICIENT_ELECTOR_FEE = 0x2005;
 ;; is not on the validator's machine, and a stake goes through it rather than straight to
 ;; the elector, which no longer takes one from anywhere else.
 
-(slice, slice, slice) load_data() inline {
+(slice, slice, slice) load_data() impure inline {
 	slice ds = get_data().begin_parse();
 
 	slice owner_address = ds~load_msg_addr();
 	slice validator_address = ds~load_msg_addr();
 	slice controller_address = ds~load_msg_addr();
 
+    single_protocol = ds.slice_empty?() ? null() : ds~load_maybe_ref();
 	ds.end_parse();
 
 	return (owner_address, validator_address, controller_address);
@@ -63,7 +65,21 @@ const ERROR::INSUFFICIENT_ELECTOR_FEE = 0x2005;
 		.store_slice(owner_address)
 		.store_slice(validator_address)
 		.store_slice(controller_address)
+        .store_maybe_ref(single_protocol)
 		.end_cell());
+}
+
+(int, int, int, int, int) single::pending() inline_ref {
+    if (single_protocol.null?()) { return (0, 0, 0, 0, 0); }
+    slice cs = single_protocol.begin_parse();
+    var result = (cs~load_uint(64), cs~load_uint(256), cs~load_coins(), cs~load_uint(256), cs~load_uint(1));
+    cs.end_parse(); return result;
+}
+() single::remember(int query, int hash, int amount, int prefix, int pending,
+                    slice owner, slice validator, slice controller) impure inline_ref {
+    single_protocol = begin_cell().store_uint(query, 64).store_uint(hash, 256)
+      .store_coins(amount).store_uint(prefix, 256).store_uint(pending, 1).end_cell();
+    save_data(owner, validator, controller);
 }
 
 ;; =============== messages =============================
@@ -86,8 +102,12 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 	slice cs = in_msg_full.begin_parse();
 	int flags = cs~load_uint(4); ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
 	if (flags & 1) {
-		;; ignore all bounced messages
-		return ();
+        slice bs = in_msg_full.begin_parse(); bs~load_uint(4); slice source = bs~load_msg_addr();
+        var (query, hash, amount, prefix, pending) = single::pending();
+        if (pending & equal_slice_bits(source, controller_address) & sr::bounce_matches(in_msg_body, prefix)) {
+            single::remember(query, hash, amount, prefix, 0, owner_address, validator_address, controller_address);
+        }
+        return ();
 	}
 	slice sender = cs~load_msg_addr();
 
@@ -103,6 +123,23 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 	} else {
 		query_id = in_msg_body~load_uint(64);
 	}
+
+    if ((op == sr::result) & equal_slice_bits(sender, controller_address)) {
+        int hash = in_msg_body~load_uint(256);
+        int forwarded = in_msg_body~load_coins();
+        int accepted = in_msg_body~load_coins();
+        int reason = in_msg_body~load_uint(32);
+        int success = in_msg_body~load_uint(1); in_msg_body.end_parse();
+        var (expected_query, expected_hash, amount, prefix, pending) = single::pending();
+        if ((query_id == expected_query) & (hash == expected_hash) & (forwarded == amount)) {
+            throw_unless(sr::error, accepted == (success ? sr::sub(forwarded, sr::confirmation) : 0));
+            throw_unless(sr::error, (success == 0) | (reason == 0));
+            single::remember(query_id, hash, amount, prefix, 0, owner_address, validator_address, controller_address);
+            send_raw_message(sr::message(controller_address, sr::control_value(),
+              sr::control_body(sr::ack, query_id, hash), false), 3);
+        }
+        return ();
+    }
 
 	;; owner role - cold wallet (private key that is not connected to the internet) that owns the funds used for staking and acts as the single nominator
 	if (equal_slice_bits(sender, owner_address)) {
@@ -157,10 +194,22 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 			check_new_stake_msg(in_msg_body);
 			throw_unless(ERROR::INSUFFICIENT_BALANCE, stake_amount <= my_balance - msg_value - MIN_TOS_FOR_STORAGE);
 
-			;; To the controller, which reads this contract as the account the money came
-			;; from and states it to the elector. The terms travel unchanged: this contract
-			;; checks that they are the right shape and nothing else, as it always has.
-			send_msg(controller_address, stake_amount, begin_cell().store_uint(OP::RELAY_STAKE, 32).store_uint(query_id, 64).store_slice(msg).end_cell(), BOUNCEABLE, MODE::SEND_MODE_REMAINING_AMOUNT); ;; bounceable, validator pays gas fees
+            var (previous_query, _, _, _, pending) = single::pending();
+            int relay_query = query_id | sr::domain;
+            throw_unless(sr::error, (pending == 0) & (relay_query > previous_query));
+            var (_, owner_id) = parse_std_addr(my_address());
+            var (_, controller_id) = parse_std_addr(controller_address);
+            int elector = sr::elector();
+            cell terms = begin_cell().store_slice(msg).end_cell();
+            cell payload = sr::payload(terms, owner_id);
+            cell outgoing = sr::message(sr::address(elector), stake_amount, sr::stake_body(relay_query, payload), true);
+            int budget = sr::relay_cost(outgoing);
+            throw_unless(sr::error, msg_value >= sr::add(sr::add(budget, sr::gas_fee(-1, sr::callback_gas)), sr::control_value()));
+            cell relay = sr::relay_body(owner_id, relay_query, elector, stake_amount, terms);
+            single::remember(relay_query, sr::request_hash(controller_id, relay_query, payload),
+              stake_amount, relay.begin_parse().preload_uint(256), 1, owner_address, validator_address, controller_address);
+            send_msg(controller_address, sr::add(stake_amount, budget), relay, BOUNCEABLE, 1);
+
 		}
 
 		;; recover stake from elector of previous validation cycle (sent every period ~18 hours)

@@ -954,7 +954,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             addr.to_string(),
-            "-1:39ebb7d066bc471da3bbdcde82f5259651929d357a9eab25bebdf7b83292eeb2"
+            "-1:a353c04bd88ede55ee3833ef4de8217346e5e568ed62e063a5300855d5f0db34"
         );
     }
 

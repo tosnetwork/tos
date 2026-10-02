@@ -37,15 +37,12 @@ use std::{
 mod runner_tests;
 
 const EXPIRED_LAG: u64 = 300; // 5 minutes
-/// Value in nanotos required by elector to execute stake or recover operations.
-// TOS compatibility: fee constant — verify on TOS testnet.
-const ELECTOR_STAKE_FEE: u64 = 1_000_000_000;
-/// Value in nanotos to send from the wallet to elector to recover stake.
-// TOS compatibility: recover fee assumes same elector message processing cost.
+/// Caller-funded relay budget for the native profile: verification, callbacks and ACK.
+/// The contracts derive the required amount from the live gas/forwarding schedule;
+/// unused funds return to the pool. This is an envelope, not a new protocol fee.
+const POOL_RELAY_BUDGET: u64 = 20_000_000_000;
+/// Caller funds for a direct, owner-authorized recovery.
 const RECOVER_FEE: u64 = 200_000_000;
-/// Gas fee consumed by nominator pool.
-// TOS compatibility: pool compute fee depends on TOS gas schedule; verify with TOS pool contract.
-const NPOOL_COMPUTE_FEE: u64 = 200_000_000;
 /// Gas fee consumed by validator wallet.
 const WALLET_COMPUTE_FEE: u64 = 200_000_000;
 /// Reserved minimum balance on the wallet (or pool) for stake calculations.
@@ -676,7 +673,7 @@ impl ElectionRunner {
         tracing::info!("node [{}] build stake message", node_id);
         let payload = Self::build_new_stake_payload(node_id, node).await?;
         // For simplicity we always assume that the node has nominator pool.
-        let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
+        let fee = POOL_RELAY_BUDGET;
         let stake_balance = node.stake_balance(fee).await?;
         if stake_balance < stake {
             anyhow::bail!(
@@ -929,7 +926,7 @@ impl ElectionRunner {
         min_stake: u64,
     ) -> anyhow::Result<u64> {
         tracing::info!("node [{}] calc stake", node_id);
-        let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
+        let fee = POOL_RELAY_BUDGET;
         let mut frozen_stake = 0;
         // Calculate frozen stake from past elections
         for election in past_elections {

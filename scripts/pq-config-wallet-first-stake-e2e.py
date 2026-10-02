@@ -74,13 +74,17 @@ def adnl_from_controller_relay(transactions: list, pool: Address, query_id: int)
         ):
             continue
         body = message.body.begin_parse()
-        if body.remaining_bits < 32 + 64 + 32 + 32 + 256 + 16:
+        if body.remaining_bits < 32 + 64 + 160 + 4 + 256:
             continue
-        if body.load_uint(32) != 0x5051726C or body.load_uint(64) != query_id:
+        if body.load_uint(32) != 0x50517232 or body.load_uint(64) != (query_id | (1 << 63)):
             continue
-        body.load_uint(32)  # stake_at
-        body.load_uint(32)  # max_factor
-        matching.append(body.load_uint(256).to_bytes(32, "big"))
+        body.load_uint(160)  # full relay commitment prefix
+        body.load_coins()  # exact forwarded value
+        body.load_uint(256)  # pinned elector
+        terms = body.load_ref().begin_parse()
+        terms.load_uint(32)  # stake_at
+        terms.load_uint(32)  # max_factor
+        matching.append(terms.load_uint(256).to_bytes(32, "big"))
     if len(matching) != 1:
         raise RuntimeError(f"expected one exact controller relay, found {len(matching)}")
     return matching[0]
@@ -529,10 +533,9 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         if len(orders) != 1:
             raise RuntimeError(f"expected one product stake order, found {len(orders)}")
         query_id = orders[0]
-        # The Elector acknowledges the stake owner (the pool), not the
-        # relaying controller. The controller history proves forwarding;
-        # the pool history carries the exact acceptance/refusal reply.
-        reply = lifecycle_module.elector_reply(pool_txs, query_id)
+        # The bound elector result reaches the controller, which pays the
+        # pool and forwards its exact business result. Both histories are kept.
+        reply = lifecycle_module.elector_reply(pool_txs, query_id, controller=controller.address)
         # A CLI parse failure can occur before the asynchronous Elector answer
         # reaches the controller. Give that exact query a bounded observation
         # window; an absent answer at the boundary is still inconclusive.
@@ -544,7 +547,7 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             )
             if not pool_complete:
                 raise RuntimeError("pool feedback transaction window is incomplete")
-            reply = lifecycle_module.elector_reply(pool_txs, query_id)
+            reply = lifecycle_module.elector_reply(pool_txs, query_id, controller=controller.address)
         pool_path = run_dir / "product-stake-pool-transactions.json"
         pool_path.write_text(json.dumps([tx.to_dict() for tx in pool_txs], indent=2) + "\n")
         report["transaction_coverage"].update(

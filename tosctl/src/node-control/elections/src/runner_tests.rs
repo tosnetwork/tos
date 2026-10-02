@@ -244,7 +244,7 @@ fn validate_message_parameters(
     }
 
     // The pool holds the capital; the wallet sends relay gas only.
-    let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
+    let fee = POOL_RELAY_BUDGET;
     if *value != fee {
         eprintln!("withf: value mismatch: expected={}, got={}", fee, value);
         return false;
@@ -569,7 +569,7 @@ async fn test_participate_new_key_no_pool_refuses_before_sending() {
     harness.wallet_mock.expect_address().returning(|| wallet_address());
     harness.wallet_mock.expect_message().times(0);
     let expected_stake =
-        (WALLET_BALANCE - (ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE) - MIN_NANOTOS_FOR_STORAGE) / 2;
+        (WALLET_BALANCE - (POOL_RELAY_BUDGET) - MIN_NANOTOS_FOR_STORAGE) / 2;
 
     let mut runner = harness.build(node_id);
 
@@ -1595,7 +1595,7 @@ async fn test_split50_stake_calculation() {
     // With Split50: stake = max(total_balance / 2, min_stake)
     // total_balance = frozen_stake(0) + pool_free_balance + elections_stake(0)
     // pool_free_balance = WALLET_BALANCE - gas_fee - MIN_NANOTOS_FOR_STORAGE
-    let gas_fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
+    let gas_fee = POOL_RELAY_BUDGET;
     let pool_free_balance = WALLET_BALANCE - gas_fee - MIN_NANOTOS_FOR_STORAGE;
     let expected = (pool_free_balance / 2).max(MIN_STAKE);
     assert_eq!(

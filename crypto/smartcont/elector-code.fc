@@ -1,25 +1,50 @@
 ;; Elector smartcontract
 #include "pq.fc";
 #include "pq-validator.fc";
+#include "stake-relay.fc";
 
-;; cur_elect credits past_elections tomis active_id active_hash
-(cell, cell, cell, int, int, int) load_data() inline_ref {
-  var cs = get_data().begin_parse();
-  var res = (cs~load_dict(), cs~load_dict(), cs~load_dict(), cs~load_tomis(), cs~load_uint(32), cs~load_uint(256));
-  cs.end_parse();
-  return res;
+global int stake_reply_bound;
+global int stake_reply_hash;
+global int stake_reply_received;
+global slice stake_reply_destination;
+
+const int recover::request = 0x47657432;
+const int recover::reply = 0xf96f7332;
+const int recover::ack = 0x47656132;
+const int recover::metadata_tag = 0x52435632;
+
+;; Keep the public root prefix intact. The optional recovery receipt book is
+;; preserved by every ordinary election write; old, unused roots have no suffix.
+cell recovery_metadata() inline_ref {
+  slice cs = get_data().begin_parse();
+  cs~load_dict(); cs~load_dict(); cs~load_dict(); cs~load_tomis(); cs~load_uint(32); cs~load_uint(256);
+  cell extra = cs.slice_empty?() ? null() : cs~load_maybe_ref(); cs.end_parse(); return extra;
 }
-
-;; cur_elect credits past_elections tomis active_id active_hash
+(cell, cell, cell, int, int, int) load_data() inline_ref {
+  slice cs = get_data().begin_parse();
+  var result = (cs~load_dict(), cs~load_dict(), cs~load_dict(), cs~load_tomis(), cs~load_uint(32), cs~load_uint(256));
+  ifnot (cs.slice_empty?()) { cs~load_maybe_ref(); }
+  cs.end_parse(); return result;
+}
+() store_data_with_recovery(cell elect, cell credits, cell past, int purse, int active_id, int active_hash, cell extra) impure inline_ref {
+  builder data = begin_cell().store_dict(elect).store_dict(credits).store_dict(past)
+    .store_tomis(purse).store_uint(active_id, 32).store_uint(active_hash, 256);
+  ifnot (extra.null?()) { data = data.store_maybe_ref(extra); }
+  set_data(data.end_cell());
+}
 () store_data(elect, credits, past_elections, tomis, active_id, active_hash) impure inline_ref {
-  set_data(begin_cell()
-    .store_dict(elect)
-    .store_dict(credits)
-    .store_dict(past_elections)
-    .store_tomis(tomis)
-    .store_uint(active_id, 32)
-    .store_uint(active_hash, 256)
-  .end_cell());
+  store_data_with_recovery(elect, credits, past_elections, tomis, active_id, active_hash, recovery_metadata());
+}
+(int, cell) recovery_book() inline_ref {
+  cell extra = recovery_metadata();
+  if (extra.null?()) { return (0, null()); }
+  slice cs = extra.begin_parse();
+  throw_unless(sr::error, cs~load_uint(32) == recover::metadata_tag);
+  var result = (cs~load_uint(32), cs~load_dict()); cs.end_parse(); return result;
+}
+cell recovery_pack(int count, cell receipts) inline_ref {
+  throw_unless(sr::error, (count >= 0) & (count < (1 << 32)));
+  return begin_cell().store_uint(recover::metadata_tag, 32).store_uint(count, 32).store_dict(receipts).end_cell();
 }
 
 ;; elect -> elect_at elect_close min_stake total_stake failed finished
@@ -234,10 +259,24 @@ builder pack_complaint(int validator_id, cell description, int created_at, int s
 }
 
 () return_stake(addr, query_id, reason) impure inline_ref {
+  if (stake_reply_bound) {
+    cell body = begin_cell().store_uint(sr::error_reply, 32).store_uint(query_id, 64)
+      .store_uint(reason, 32).store_coins(0).store_coins(stake_reply_received)
+      .store_uint(stake_reply_hash, 256).end_cell();
+    send_raw_message(sr::message(stake_reply_destination, 0, body, false), 64);
+    return ();
+  }
   return send_message_back(addr, 0xee6f454c, query_id, reason, 0, 64);
 }
 
 () send_confirmation(addr, query_id, comment) impure inline_ref {
+  if (stake_reply_bound) {
+    cell body = begin_cell().store_uint(sr::ok, 32).store_uint(query_id, 64)
+      .store_uint(0, 32).store_coins(sr::sub(stake_reply_received, sr::confirmation))
+      .store_coins(stake_reply_received).store_uint(stake_reply_hash, 256).end_cell();
+    send_raw_message(sr::message(stake_reply_destination, sr::confirmation, body, false), 1);
+    return ();
+  }
   return send_message_back(addr, 0xf374484c, query_id, comment, 1000000000, 2);
 }
 
@@ -590,18 +629,68 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
   set_data(begin_cell().store_dict(elect).store_dict(credits).store_slice(ds).end_cell());
   ;; send amount to sender in a new message
   send_raw_message(begin_cell()
-    .store_uint(0x18, 6)
+    .store_uint(0x10, 6)
     .store_slice(s_addr)
     .store_tomis(amount)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
     .store_uint(0xf96f7324, 32)
     .store_uint(query_id, 64)
+    .store_coins(amount)
   .end_cell(), 64);
+}
+
+() recover_with_receipt(slice sender, slice cs, int query) impure inline_ref {
+  cs.end_parse();
+  var (wc, owner) = parse_std_addr(sender);
+  throw_unless(sr::error, (wc == -1) & owner & (query >= sr::domain));
+  var (count, receipts) = recovery_book();
+  var (entry, found) = receipts.udict_get?(256, owner);
+  int amount = 0;
+  int previous_query = 0;
+  int outstanding = false;
+  if (found) {
+    previous_query = entry~load_uint(64); amount = entry~load_coins();
+    outstanding = entry~load_uint(1); entry.end_parse();
+    if (query == previous_query) {
+      if (outstanding) {
+        cell reply = begin_cell().store_uint(recover::reply, 32).store_uint(query, 64).store_coins(amount).end_cell();
+        send_raw_message(sr::message(sender, 0, reply, false), 64);
+      }
+      return ();
+    }
+    throw_unless(sr::error, (query > previous_query) & (outstanding == 0));
+  }
+  var (elect, credits, past, purse, active_id, active_hash) = load_data();
+  var (credit, have_credit) = credits~udict_delete_get?(256, owner);
+  ifnot (have_credit) { return send_message_back(sender, 0xfffffffe, query, recover::request, 0, 64); }
+  amount = credit~load_tomis(); credit.end_parse();
+  receipts~udict_set_builder(256, owner, begin_cell().store_uint(query, 64).store_coins(amount).store_uint(1, 1));
+  store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, recovery_pack(count + 1, receipts));
+  cell reply = begin_cell().store_uint(recover::reply, 32).store_uint(query, 64).store_coins(amount).end_cell();
+  ;; PAID and credit deletion commit only if the real payment action succeeds.
+  ;; Non-bounce value stays with the creditor even when its receive code aborts.
+  send_raw_message(sr::message(sender, amount, reply, false), 64);
+}
+() acknowledge_recovery(slice sender, slice cs, int query) impure inline_ref {
+  cs.end_parse();
+  var (wc, owner) = parse_std_addr(sender);
+  throw_unless(sr::error, wc == -1);
+  var (count, receipts) = recovery_book();
+  var (entry, found) = receipts.udict_get?(256, owner);
+  ifnot (found) { return (); }
+  int previous_query = entry~load_uint(64); entry~load_coins(); int outstanding = entry~load_uint(1); entry.end_parse();
+  if ((query != previous_query) | (outstanding == 0)) { return (); }
+  ;; Retain only the last sequence as a replay tombstone, never the old claim amount.
+  receipts~udict_set_builder(256, owner, begin_cell().store_uint(query, 64).store_coins(0).store_uint(0, 1));
+  var (elect, credits, past, purse, active_id, active_hash) = load_data();
+  store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, recovery_pack(count - 1, receipts));
+  send_raw_message(sr::message(sender, 0, begin_cell().store_uint(1, 32).store_uint(query, 64).end_cell(), false), 64);
 }
 
 int upgrade_ready() method_id {
   var (elect, credits, past, _, _, _) = load_data();
-  return elect.null?() & credits.null?() & past.null?();
+  var (outstanding, _) = recovery_book();
+  return elect.null?() & credits.null?() & past.null?() & (outstanding == 0);
 }
 
 () after_code_upgrade(slice s_addr, slice cs, int query_id) impure method_id(1666) {
@@ -627,6 +716,8 @@ int upgrade_code(s_addr, cs, query_id) inline_ref {
   ifnot (upgrade_ready()) { return false; }
   accept_message();
   var code = cs~load_ref();
+  var (elect, credits, past, purse, active_id, active_hash) = load_data();
+  store_data_with_recovery(elect, credits, past, purse, active_id, active_hash, null());
   set_code(code);
   ifnot(cs.slice_empty?()) {
     set_c3(code.begin_parse().bless());
@@ -781,6 +872,7 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
 
 () recv_internal(int msg_value, cell in_msg_cell, slice in_msg) impure {
   ;; do nothing for internal messages
+  stake_reply_bound = false;
   var cs = in_msg_cell.begin_parse();
   var flags = cs~load_uint(4);  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   if (flags & 1) {
@@ -798,12 +890,26 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
     return process_simple_transfer(s_addr, msg_value);
   }
   int query_id = in_msg~load_uint(64);
+  if (op == sr::stake) {
+    var (wc, controller) = parse_std_addr(s_addr);
+    throw_unless(sr::error, (wc == -1) & (query_id >= sr::domain));
+    int commitment = in_msg~load_uint(160);
+    cell payload = begin_cell().store_slice(in_msg).end_cell();
+    throw_unless(sr::error, commitment == (cell_hash(payload) >> 96));
+    stake_reply_bound = true;
+    stake_reply_hash = sr::request_hash(controller, query_id, payload);
+    stake_reply_received = msg_value;
+    stake_reply_destination = s_addr;
+    return process_pq_stake(s_addr, msg_value, in_msg, query_id);
+  }
   if (op == pq::tag::stake_op) {
     ;; The only stake operation. The classical one is not refused here by name: the
     ;; contract no longer knows that opcode, so it falls through to the unknown-query
     ;; answer below and the money it carried goes back with it.
     return process_pq_stake(s_addr, msg_value, in_msg, query_id);
   }
+  if (op == recover::request) { return recover_with_receipt(s_addr, in_msg, query_id); }
+  if (op == recover::ack) { return acknowledge_recovery(s_addr, in_msg, query_id); }
   if (op == 0x47657424) {
     ;; recover stake request
     return recover_stake(op, s_addr, in_msg, query_id);

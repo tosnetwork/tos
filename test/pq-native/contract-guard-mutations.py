@@ -7,7 +7,9 @@ is unreachable, or nothing is holding it.
 """
 
 import argparse
+import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -73,8 +75,8 @@ MUTANTS = [
     (
         "controller-owner-masterchain",
         "validator-controller-v1.fc",
-        "  throw_unless(ctl::error::owner_not_masterchain, owner_wc == -1);",
-        "  throw_unless(ctl::error::owner_not_masterchain, true);",
+        "  throw_unless(ctl::error::owner_not_masterchain, (wc == -1) & owner);",
+        "  throw_unless(ctl::error::owner_not_masterchain, owner);",
         "validator_controller_sandbox",
         "outside_the_masterchain",
     ),
@@ -439,8 +441,8 @@ def build():
     )
 
 
-def run(binary, filter_):
-    return subprocess.run(
+def run(binary, filter_, log):
+    completed = subprocess.run(
         [
             "cargo",
             "test",
@@ -448,6 +450,7 @@ def run(binary, filter_):
             str(MANIFEST),
             "-p",
             "contracts",
+            "--locked",
             "--test",
             binary,
             filter_,
@@ -455,8 +458,12 @@ def run(binary, filter_):
         cwd=ROOT,
         capture_output=True,
         text=True,
-        env={**__import__("os").environ, "CARGO_TARGET_DIR": str(ROOT / "tosctl/src/target")},
-    ).returncode
+        env={**os.environ, "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", str(ROOT / "tosctl/src/target"))},
+    )
+    raw = completed.stdout + completed.stderr
+    log.write_text(raw)
+    return completed.returncode, raw, {"path": str(log), "bytes": log.stat().st_size,
+        "sha256": hashlib.sha256(log.read_bytes()).hexdigest()}
 
 
 def main():
@@ -468,6 +475,11 @@ def main():
     mutants = [m for m in MUTANTS if m[2] is not None]
     if args.only:
         mutants = [m for m in mutants if m[0] == args.only]
+    if not mutants:
+        parser.error("no matching mutations")
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    logs = args.out.parent / (args.out.stem + "-logs")
+    logs.mkdir(exist_ok=True)
 
     # Every anchor is checked before anything is built, and all the broken ones are
     # reported together.
@@ -495,13 +507,27 @@ def main():
     for name, filename, before, after, binary, filter_ in mutants:
         source = SMARTCONT / filename
         original = source.read_text()
+        baseline, _, baseline_receipt = run(binary, filter_, logs / (name + "-baseline.log"))
+        if baseline:
+            raise RuntimeError(f"{name}: baseline must execute and pass before mutation")
         try:
             source.write_text(original.replace(before, after))
             build()  # A contract that no longer compiles is not a killed mutation.
-            killed = run(binary, filter_) != 0
+            exit_code, raw, receipt = run(binary, filter_, logs / (name + "-mutant.log"))
+            # A missing fixture, a compilation error or a zero-test filter must
+            # never count as a guard exercised by a compiled failing test.
+            killed = (exit_code == 101 and "could not compile" not in raw
+                      and "test result: FAILED" in raw and "running 0 tests" not in raw
+                      and any(filter_ in line and "FAILED" in line for line in raw.splitlines()))
         finally:
             source.write_text(original)
-        reports.append({"guard": name, "killed": killed, "test": f"{binary}::{filter_}"})
+        build()
+        restored, _, restored_receipt = run(binary, filter_, logs / (name + "-restored.log"))
+        if restored:
+            raise RuntimeError(f"{name}: restored source must pass")
+        reports.append({"guard": name, "killed": killed, "exit": exit_code,
+            "test": f"{binary}::{filter_}", "baseline": baseline_receipt,
+            "mutant": receipt, "restored": restored_receipt})
         if not killed:
             survivors.append(name)
         print(f"{'killed  ' if killed else 'SURVIVED'} {name}", flush=True)

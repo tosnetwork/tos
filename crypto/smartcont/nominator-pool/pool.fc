@@ -10,9 +10,11 @@
 ;; The validator in most cases have two pools (for even and odd validation rounds).
 
 #include "stdlib.fc";
+#include "../stake-relay.fc";
+
+global cell pool_protocol;
 
 int op::new_stake() asm "0x4e73744b PUSHINT"; ;; what an operator calls this command
-int op::relay_stake() asm "0x5051726c PUSHINT"; ;; "PQrl", what the controller relays
 int op::new_stake_error() asm "0xee6f454c PUSHINT"; ;; return_stake - see elector-code.fc
 int op::new_stake_ok() asm "0xf374484c PUSHINT"; ;; send_confirmation - see elector-code.fc
 
@@ -177,18 +179,54 @@ cell pack_config(int validator_address, int controller_address, int validator_re
         .store_uint(max_nominators_count, 16)
         .store_coins(min_validator_stake)
         .store_coins(min_nominator_stake)
+        .store_maybe_ref(pool_protocol)
         .end_cell();
 }
 
-(int, int, int, int, int, int) unpack_config(slice ds) inline_ref {
-    return (
-        ds~load_uint(ADDR_SIZE()), ;; validator_address
-        ds~load_uint(ADDR_SIZE()), ;; controller_address
-        ds~load_uint(16), ;; validator_reward_share
-        ds~load_uint(16), ;; max_nominators_count
-        ds~load_coins(), ;; min_validator_stake
-        ds~load_coins() ;; min_nominator_stake
-    );
+(int, int, int, int, int, int) unpack_config(slice ds) impure inline_ref {
+    var result = (ds~load_uint(256), ds~load_uint(256), ds~load_uint(16), ds~load_uint(16),
+                  ds~load_coins(), ds~load_coins());
+    pool_protocol = ds.slice_empty?() ? null() : ds~load_maybe_ref();
+    ds.end_parse(); return result;
+}
+(cell, cell) pool::protocol() inline_ref {
+    if (pool_protocol.null?()) { return (null(), null()); }
+    slice cs = pool_protocol.begin_parse();
+    var result = (cs~load_maybe_ref(), cs~load_maybe_ref()); cs.end_parse(); return result;
+}
+() pool::save_protocol(cell last, cell pending) impure inline_ref {
+    pool_protocol = begin_cell().store_maybe_ref(last).store_maybe_ref(pending).end_cell();
+}
+cell pool::request(int kind, int query, int elector, int hash, int forwarded, int prefix) inline_ref {
+    return begin_cell().store_uint(kind, 1).store_uint(query, 64).store_uint(elector, 256)
+      .store_uint(hash, 256).store_ref(begin_cell().store_coins(forwarded).store_uint(prefix, 256).end_cell()).end_cell();
+}
+(int, int, int, int, int, int) pool::unpack_request(cell pending) inline_ref {
+    slice cs = pending.begin_parse();
+    var (kind, query, elector, hash) = (cs~load_uint(1), cs~load_uint(64), cs~load_uint(256), cs~load_uint(256));
+    slice amounts = cs~load_ref().begin_parse(); cs.end_parse();
+    var (forwarded, prefix) = (amounts~load_coins(), amounts~load_uint(256)); amounts.end_parse();
+    return (kind, query, elector, hash, forwarded, prefix);
+}
+cell pool::completed(int query, int hash, int elector) inline {
+    return begin_cell().store_uint(query, 64).store_uint(hash, 256).store_uint(elector, 256).end_cell();
+}
+cell pool::recovered(cell last, int elector, int amount) inline_ref {
+    slice cs = last.begin_parse();
+    int query = cs~load_uint(64);
+    int hash = cs~load_uint(256);
+    int stake_elector = cs~load_uint(256);
+    return begin_cell().store_uint(query, 64).store_uint(hash, 256).store_uint(stake_elector, 256)
+      .store_ref(begin_cell().store_uint(elector, 256).store_coins(amount).end_cell()).end_cell();
+}
+() pool::recovery_ack(slice elector, int query) impure inline_ref {
+    send_raw_message(sr::message(elector, sr::control_value(),
+      begin_cell().store_uint(0x47656132, 32).store_uint(query, 64).end_cell(), false), 3);
+}
+() pool::ack(int controller, int query, int hash) impure inline_ref {
+    ;; The business result commits even if its fee-only acknowledgment cannot be sent.
+    send_raw_message(sr::message(sr::address(controller), sr::control_value(),
+      sr::control_body(sr::ack, query, hash), false), 3);
 }
 
 () save_data(int state, int nominators_count, int stake_amount_sent, int validator_amount, cell config, cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) impure inline_ref {
@@ -209,7 +247,7 @@ cell pack_config(int validator_address, int controller_address, int validator_re
         .end_cell());
 }
 
-(int, int, int, int, (int, int, int, int, int, int), cell, cell, int, int, int, int, int, cell) load_data() inline_ref {
+(int, int, int, int, (int, int, int, int, int, int), cell, cell, int, int, int, int, int, cell) load_data() impure inline_ref {
     slice ds = get_data().begin_parse();
     return (
         ds~load_uint(8), ;; state
@@ -342,41 +380,40 @@ cell distribute_share(int reward, cell nominators) inline_ref {
     slice sender_address = cs~load_msg_addr();
     (int sender_wc, int sender_addr) = parse_std_addr(sender_address);
 
-    if (flags & 1) { ;; bounced messages
-        if (in_msg_body.slice_bits() >= 64) {
-            in_msg_body~skip_bits(32); ;; skip 0xFFFFFFFF bounced prefix
-            int op = in_msg_body~load_uint(32);
-            (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
-            ;; A stake this pool sent, come back. It goes to the controller now rather than
-            ;; to the elector, so this is the controller refusing to relay it -- for a key
-            ;; it is not bound to, or for too little to pay the elector with. The money is
-            ;; back; what matters is that the pool stops believing a stake is out, or it
-            ;; would refuse every later order until the validator set had changed three
-            ;; times.
-            if ((op == op::relay_stake()) & (sender_wc == -1) & (sender_addr == controller_address)) {
-                if (state == 1) {
-                    state = 0;
-                }
-                save_data(
-                    state,
-                    nominators_count,
-                    stake_amount_sent,
-                    validator_amount,
-                    pack_config(validator_address, controller_address, validator_reward_share, max_nominators_count, min_validator_stake, min_nominator_stake),
-                    nominators,
-                    withdraw_requests,
-                    stake_at,
-                    saved_validator_set_hash,
-                    validator_set_changes_count,
-                    validator_set_change_time,
-                    stake_held_for,
-                    config_proposal_votings
-                );
+    if (flags & 1) {
+        slice bounced_body = in_msg_body;
+        (int state, int nominators_count, int stake_amount_sent, int validator_amount,
+         (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake),
+         cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash,
+         int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+        var (last, pending) = pool::protocol();
+        if ((state == 1) & (sender_wc == -1) & (sender_addr == controller_address) & (~ pending.null?())) {
+            var (kind, _, _, _, _, prefix) = pool::unpack_request(pending);
+            if ((kind == 0) & sr::bounce_matches(bounced_body, prefix)) {
+                state = 0; stake_amount_sent = 0; pool::save_protocol(last, null());
+                save_data(state, nominators_count, stake_amount_sent, validator_amount,
+                  pack_config(validator_address, controller_address, validator_reward_share, max_nominators_count, min_validator_stake, min_nominator_stake),
+                  nominators, withdraw_requests, stake_at, saved_validator_set_hash,
+                  validator_set_changes_count, validator_set_change_time, stake_held_for, config_proposal_votings);
             }
         }
-        return (); ;; ignore other bounces messages
+        if ((state == 2) & (sender_wc == -1) & (~ pending.null?())) {
+            var (kind, query, pinned_elector, _, _, _) = pool::unpack_request(pending);
+            if ((kind == 1) & (sender_addr == pinned_elector) & (bounced_body.slice_bits() == 128)) {
+                if ((bounced_body~load_uint(32) == 0xffffffff) &
+                    (bounced_body~load_uint(32) == 0x47657432) & (bounced_body~load_uint(64) == query)) {
+                    pool::save_protocol(last, null());
+                    save_data(state, nominators_count, stake_amount_sent, validator_amount,
+                      pack_config(validator_address, controller_address, validator_reward_share, max_nominators_count, min_validator_stake, min_nominator_stake),
+                      nominators, withdraw_requests, stake_at, saved_validator_set_hash,
+                      validator_set_changes_count, validator_set_change_time, stake_held_for, config_proposal_votings);
+                }
+            }
+        }
+        return ();
     }
 
+    if (in_msg_body.slice_empty?()) { return (); }
     int op = in_msg_body~load_uint(32);
 
    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
@@ -478,14 +515,72 @@ cell distribute_share(int reward, cell nominators) inline_ref {
 
         int query_id = in_msg_body~load_uint(64);
 
-        if (is_elector_address(sender_wc, sender_addr)) { ;; response from elector
+        var (last, pending) = pool::protocol();
+        int recovery_source = is_elector_address(sender_wc, sender_addr);
+        int recovery_duplicate = false;
+        ifnot (last.null?()) {
+            slice ls = last.begin_parse();
+            int last_query = ls~load_uint(64); ls~load_uint(256);
+            if (ls.slice_refs()) {
+                slice paid = ls~load_ref().begin_parse();
+                int pinned_elector = paid~load_uint(256);
+                recovery_duplicate = (sender_wc == -1) & (sender_addr == pinned_elector) & (query_id == last_query);
+                recovery_source |= recovery_duplicate;
+            }
+        }
+        ifnot (pending.null?()) {
+            var (kind, _, pinned_elector, _, _, _) = pool::unpack_request(pending);
+            recovery_source |= (kind == 1) & (sender_wc == -1) & (sender_addr == pinned_elector);
+        }
+        if ((op == sr::result) & (sender_wc == -1) & (sender_addr == controller_address)) {
+            int hash = in_msg_body~load_uint(256);
+            int forwarded = in_msg_body~load_coins();
+            int accepted = in_msg_body~load_coins();
+            int reason = in_msg_body~load_uint(32);
+            int success = in_msg_body~load_uint(1); in_msg_body.end_parse();
+            int matched = false;
+            ifnot (pending.null?()) {
+                var (kind, expected_query, expected_elector, expected_hash, expected_forwarded, _) = pool::unpack_request(pending);
+                matched = (state == 1) & (kind == 0) & (query_id == expected_query)
+                  & (hash == expected_hash) & (forwarded == expected_forwarded);
+                if (matched) { last = pool::completed(query_id, hash, expected_elector); }
+            }
+            if (matched) {
+                throw_unless(sr::error, accepted == (success ? sr::sub(forwarded, sr::confirmation) : 0));
+                throw_unless(sr::error, (success == 0) | (reason == 0));
+                state = success ? 2 : 0; stake_amount_sent = accepted;
+                pool::save_protocol(last, null());
+                pool::ack(controller_address, query_id, hash);
+            } else {
+                ifnot (last.null?()) {
+                    slice ls = last.begin_parse();
+                    if ((query_id == ls~load_uint(64)) & (hash == ls~load_uint(256))) {
+                        pool::ack(controller_address, query_id, hash);
+                    }
+                }
+            }
+        } elseif (recovery_source) {
 
-            accept_message();
+            if ((op == 0xf96f7332) & recovery_duplicate) {
+                ;; Only re-send the lost acknowledgment. Never distribute the paid amount twice.
+                in_msg_body~load_coins(); in_msg_body.end_parse();
+                pool::recovery_ack(sender_address, query_id);
+                return ();
+            }
 
-            if (op == op::recover_stake_ok()) {
+            int recovery_matches = false;
+            ifnot (pending.null?()) {
+                var (kind, expected_query, expected_elector, _, _, _) = pool::unpack_request(pending);
+                recovery_matches = (kind == 1) & (query_id == expected_query) & (sender_addr == expected_elector) & (state == 2);
+            }
+            ifnot (recovery_matches & ((op == 0xf96f7332) | (op == op::recover_stake_error()))) { return (); }
+            if ((op == 0xf96f7332) & recovery_matches) {
+                int recovered_amount = in_msg_body~load_coins(); in_msg_body.end_parse();
+                pool::save_protocol(pool::recovered(last, sender_addr, recovered_amount), null());
+                pool::recovery_ack(sender_address, query_id);
                 state = 0;
 
-                int reward = msg_value - stake_amount_sent;
+                int reward = recovered_amount - stake_amount_sent;
                 int nominators_reward = 0;
 
                 if (reward <= 0) {
@@ -508,17 +603,8 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                 stake_amount_sent = 0;
             }
 
-            if (state == 1) {
-                if (op == op::new_stake_error()) { ;; error when new_stake; stake returned
-                    state = 0;
-                }
-
-                if (op == op::new_stake_ok()) {
-                    state = 2;
-                }
-            }
-
-            ;; else just accept coins from elector
+            if ((op == op::recover_stake_error()) & recovery_matches) { pool::save_protocol(last, null()); }
+            ;; Unbound legacy stake callbacks cannot consume a pending request.
 
         } else {
 
@@ -596,8 +682,24 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                 throw_unless(112, (validator_set_changes_count > 2) | (now() - validator_set_change_time > stake_held_for + 60));
                 ;; see elector-code.fc
 
-                cell payload = begin_cell().store_uint(op::recover_stake(), 32).store_uint(query_id, 64).end_cell();
-                send_msg(elector_address(), 0, payload, BOUNCEABLE(), SEND_MODE_REMAINING_AMOUNT()); ;; bounceable,  carry all the remaining value of the inbound message, fee deducted from amount, revert on errors
+                throw_unless(sr::error, ~ last.null?());
+                slice ls = last.begin_parse(); query_id = ls~load_uint(64); ls~load_uint(256);
+                ;; Mature credit stays at the elector that accepted this stake,
+                ;; even if Config1 now points to a replacement contract.
+                int pinned_elector = ls~load_uint(256);
+                ifnot (pending.null?()) {
+                    var (kind, saved_query, saved_elector, _, _, _) = pool::unpack_request(pending);
+                    throw_unless(sr::error, (kind == 1) & (state == 2));
+                    query_id = saved_query; pinned_elector = saved_elector;
+                } elseif (state == 0) {
+                    throw_unless(sr::error, ls.slice_refs());
+                    pinned_elector = ls~load_ref().begin_parse().preload_uint(256);
+                } else {
+                    throw_unless(sr::error, state == 2);
+                    pool::save_protocol(last, pool::request(1, query_id, pinned_elector, 0, stake_amount_sent, 0));
+                }
+                cell payload = begin_cell().store_uint(0x47657432, 32).store_uint(query_id, 64).end_cell();
+                send_msg(sr::address(pinned_elector), 0, payload, BOUNCEABLE(), SEND_MODE_REMAINING_AMOUNT());
             }
 
             ;; message from validator
@@ -644,7 +746,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
 
                 stake_at = check_new_stake_msg(in_msg_body);
 
-                stake_amount_sent = value - ONE_TOS();
+                stake_amount_sent = sr::sub(value, sr::confirmation);
 
                 throw_unless(81, value >= MIN_STAKE_TO_SEND());
 
@@ -663,10 +765,21 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                 validator_set_change_time = utime_since;
                 stake_held_for = get_validator_config(); ;; save `stake_held_for` in case the config changes in the process
 
-                ;; To the controller, which reads this pool as the account the money came
-                ;; from and states it to the elector. The terms travel unchanged: this pool
-                ;; checks they are the right shape and reads neither key nor signature.
-                send_msg(make_address(-1, controller_address), value, begin_cell().store_uint(op::relay_stake(), 32).store_uint(query_id, 64).store_slice(msg).end_cell(), BOUNCEABLE(), SEND_MODE_PAY_FEE_SEPARATELY()); ;; pay fee separately, rever on errors
+                int relay_query = query_id | sr::domain;
+                ifnot (last.null?()) { throw_unless(sr::error, relay_query > last.begin_parse().preload_uint(64)); }
+                var (_, owner_id) = parse_std_addr(my_address());
+                int pinned_elector = sr::elector();
+                cell terms = begin_cell().store_slice(msg).end_cell();
+                cell stake_payload = sr::payload(terms, owner_id);
+                cell stake_out = sr::message(sr::address(pinned_elector), value, sr::stake_body(relay_query, stake_payload), true);
+                int relay_budget = sr::relay_cost(stake_out);
+                cell relay_body = sr::relay_body(owner_id, relay_query, pinned_elector, value, terms);
+                throw_unless(sr::error, msg_value >= sr::add(sr::add(relay_budget, sr::gas_fee(-1, sr::callback_gas)), sr::control_value()));
+                pool::save_protocol(last, pool::request(0, relay_query, pinned_elector,
+                  sr::request_hash(controller_address, relay_query, stake_payload), value, relay_body.begin_parse().preload_uint(256)));
+                send_msg(make_address(-1, controller_address), sr::add(value, relay_budget), relay_body,
+                  BOUNCEABLE(), SEND_MODE_PAY_FEE_SEPARATELY());
+
             }
         }
     }

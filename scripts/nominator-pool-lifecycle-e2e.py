@@ -182,9 +182,9 @@ NOMINATOR_FUNDING = NOMINATOR_DEPOSIT + 100 * NANO
 RESCUER_FUNDING = 50 * NANO
 POOL_DEPLOY_VALUE = 20 * NANO
 
-# pool.fc requires at least one TOS of message value to process a stake; the
-# rest of what it forwards comes from its own balance.
-POOL_STAKE_GAS = 2 * NANO
+# Caller-funded relay envelope; contracts derive gas and forwarding costs
+# from the live schedule and return unused budget to the pool.
+POOL_STAKE_GAS = 20 * NANO
 SUPPORT_POOL_CAPITAL = 2 * POOL_STAKE_VALUE + 20 * NANO
 MAX_FACTOR = 1 << 16
 POOL_STATE_IDLE = 0
@@ -213,9 +213,10 @@ def _relay_query_id(message: MessageAny, *, bounced: bool) -> int | None:
     body = message.body.begin_parse()
     if bounced and (body.remaining_bits < 32 or body.load_uint(32) != 0xFFFFFFFF):
         return None
-    if body.remaining_bits < 96 or body.load_uint(32) != 0x5051726C:
+    if body.remaining_bits < 96 or body.load_uint(32) != 0x50517232:
         return None
-    return body.load_uint(64)
+    query = body.load_uint(64)
+    return (query & ((1 << 63) - 1)) if query >= (1 << 63) else None
 
 
 def _pool_order_transaction_lt(transactions: list[Any], query_id: int) -> str | None:
@@ -3886,7 +3887,7 @@ class PoolLifecycle:
             details["pool_order_transaction_lt"] = _pool_order_transaction_lt(
                 pool_transactions, query_id
             )
-            details["elector_reply"] = elector_reply(pool_transactions, query_id)
+            details["elector_reply"] = elector_reply(pool_transactions, query_id, controller=controller_address)
             details["controller_bounce"] = pool_controller_bounce(
                 pool_transactions, controller_address, query_id
             )

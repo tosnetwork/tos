@@ -303,7 +303,7 @@ def self_test(source: str) -> None:
         "second stake feedback removed":
             ("await self.record_pool_stake_feedback(\n                    final_query_id", "await self.pool_data(\n                    final_query_id"),
         "Elector reply ignored":
-            ("elector_reply(pool_transactions, query_id)", "None"),
+            ("elector_reply(pool_transactions, query_id, controller=controller_address)", "None"),
         "controller bounce ignored":
             ("pool_controller_bounce(\n                pool_transactions", "ignored_bounce(\n                pool_transactions"),
         "controller relay ignored":
