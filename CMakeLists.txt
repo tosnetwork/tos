@@ -1054,10 +1054,12 @@ file(MAKE_DIRECTORY ${SLICE1_GAS_PARITY_DIR})
 
 # Compile a .tol source to a .boc. Tol's --boc-output emits the BoC
 # write directive into its .fif output; running fift on that .fif then
-# materializes the .boc on disk. The stdlib is a dependency too: contracts
-# import it, and a BoC that outlives a stdlib edit silently tests old code.
+# materializes the .boc on disk. The stdlib and the sibling contract files
+# are dependencies too: contracts import them, and a BoC that outlives an edit
+# to an imported file silently tests old code.
 file(GLOB SLICE1_TOL_STDLIB_SOURCES CONFIGURE_DEPENDS
-     ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/tol-stdlib/*.tol)
+     ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/tol-stdlib/*.tol
+     ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/*.tol)
 function(slice1_tol_to_boc TOL_SOURCE OUT_BOC)
     get_filename_component(_stem ${OUT_BOC} NAME_WE)
     set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)

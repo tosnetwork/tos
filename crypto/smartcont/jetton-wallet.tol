@@ -57,6 +57,7 @@ import "@stdlib/common"
 import "@stdlib/gas-payments"
 import "@stdlib/jetton"
 import "@stdlib/jetton-fees"
+import "jetton-wallet-fee-profile"
 
 const OP_TRANSFER: uint32 = JETTON_OP_TRANSFER
 const OP_TRANSFER_NOTIFICATION: uint32 = JETTON_OP_TRANSFER_NOTIFICATION
@@ -129,37 +130,16 @@ struct (OP_EXCESSES) WalletExcesses {
     queryId: uint64;
 }
 
+/// Adds coins to the wallet's balance, e.g. to cover storage; carries no jettons.
+struct (0xd372158c) TopUp {
+    queryId: uint64;
+}
+
 struct (OP_BURN_NOTIFICATION) BurnNotification {
     queryId: uint64;
     amount: coins;
     ownerAddress: any_address;
     responseAddress: any_address;
-}
-
-/// Measured cost inputs of this wallet build and of the minter it reports
-/// burns to, each about 10% above the measurement taken on the C++ TVM by
-/// jetton-wallet-fee-profile-fixture.cpp (2026-10-02):
-///   storage 8977 bits / 20 cells at the maximum balance, carried StateInit
-///   8857 bits / 20 cells, burn notification 754 bits / 1 cell at the maximum
-///   amount; gas: send transfer 7539, receive transfer 7781, send burn 5170,
-///   minter receiving the burn 4483.
-/// The fixture fails if a build makes any value lower than its measurement
-/// or more than 25% above it.
-@pure
-fun walletFeeProfile(): JettonFeeProfile {
-    return JettonFeeProfile {
-        walletStorageBits: 9900,
-        walletStorageCells: 22,
-        walletInitStateBits: 9800,
-        walletInitStateCells: 22,
-        burnNotificationBits: 800,
-        burnNotificationCells: 1,
-        sendTransferGas: 8300,
-        receiveTransferGas: 8600,
-        sendBurnGas: 5700,
-        receiveBurnGas: 5000,
-        minStorageSeconds: JETTON_FEES_DEFAULT_MIN_STORAGE_SECONDS,
-    };
 }
 
 @pure
@@ -313,7 +293,11 @@ fun sendTokens(
     );
     walletFeeProfile().requireTransferValue(msgValue, msg.forwardTosAmount, fwdFee);
 
-    sendRawMessage(outbound, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+    // Bounce on action failure: the request is priced by the forward fee its
+    // sender paid, so if message prices rose before this wallet runs, the
+    // internal transfer can cost more than the request carries. It then bounces
+    // the request with its value instead of keeping that value here.
+    sendRawMessage(outbound, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
     return JettonWalletStorage {
         balance: nextBalance,
         ownerAddress: storage.ownerAddress,
@@ -343,14 +327,10 @@ fun receiveTokens(
         throw FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE;
     }
 
-    val profile = walletFeeProfile();
-    val minStorage = profile.walletMinStorageFee();
-    val tosBalanceBeforeMsg = originalBalance - msgValue;
-    val storageFee = minStorage - min(tosBalanceBeforeMsg, minStorage);
-    var remainingValue = msgValue - (storageFee + calculateGasFee(BASECHAIN, profile.receiveTransferGas));
-
     if (msg.forwardTosAmount != 0) {
-        remainingValue -= msg.forwardTosAmount + fwdFee;
+        // Bounce on action failure: if the notification cannot be paid, the whole
+        // internal transfer bounces back to the sending wallet, which restores the
+        // amount, instead of the credit being rolled back and the jettons lost.
         sendRawMessage(
             buildTransferNotificationMessage(
                 storage.ownerAddress,
@@ -360,14 +340,18 @@ fun receiveTokens(
                 msg.fromAddress,
                 msg.forwardPayload
             ),
-            SEND_MODE_PAY_FEES_SEPARATELY
+            SEND_MODE_PAY_FEES_SEPARATELY + SEND_MODE_BOUNCE_ON_ACTION_FAIL
         );
     }
 
-    if (!msg.responseAddress.isNone() && remainingValue > 0) {
+    if (!msg.responseAddress.isNone()) {
+        // Keep what the wallet held before this message plus any storage debt, and
+        // at least its storage reserve; refund everything else, exactly.
+        val toLeave = originalBalance - msgValue + contract.getStorageDuePayment();
+        reserveToscoinsOnBalance(max(toLeave, walletFeeProfile().walletMinStorageFee()), RESERVE_MODE_AT_MOST);
         sendRawMessage(
-            buildWalletExcessesMessage(msg.responseAddress, remainingValue, msg.queryId),
-            SEND_MODE_IGNORE_ERRORS
+            buildWalletExcessesMessage(msg.responseAddress, 0, msg.queryId),
+            SEND_MODE_CARRY_ALL_BALANCE + SEND_MODE_IGNORE_ERRORS
         );
     }
 
@@ -394,6 +378,8 @@ fun burnTokens(
     if (nextBalance < 0) {
         throw FUNC_THROW_INSUFFICIENT_BALANCE;
     }
+    // Priced at the current prices for a notification of the largest size this
+    // wallet sends, so the send below cannot run short.
     walletFeeProfile().requireBurnValue(msgValue);
 
     sendRawMessage(
@@ -435,6 +421,10 @@ fun onBouncedMessage(in: InMessageBounced) {
 contract JettonWallet {
     storage: JettonWalletStorage
     @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: TopUp) {
+    }
 
     @disclaim_query_id
     receive(msg: TransferRequest) {
