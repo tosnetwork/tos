@@ -1,0 +1,117 @@
+#include "../../../smartcont/stdlib.fc";
+#include "../../../smartcont/multisig-wallet-code.fc";
+
+;; PR #124 regression: fee accounting must include every signer AND proposer
+;; visited by validate_actions, without adding proposers to the approval quorum.
+;; Import the production wallet so these tests exercise its real validator.
+
+() audit_set_c7(tuple c7) impure asm "c7 POP";
+
+slice audit_address(int hash) inline {
+  return begin_cell().store_uint(4, 3).store_int(0, 8).store_uint(hash, 256).end_cell().begin_parse();
+}
+
+() audit_install_context() impure {
+  tuple params = empty_tuple();
+  int i = 0;
+  while (i < 17) {
+    if (i == 8) {
+      params~tpush(audit_address(0xabc)); ;; MYADDR, checked by count_members
+    } else {
+      params~tpush(i == 3 ? 1000 : null());
+    }
+    i += 1;
+  }
+  tuple c7 = empty_tuple();
+  c7~tpush(params);
+  audit_set_c7(c7);
+}
+
+cell audit_members(int count, int base) inline {
+  cell members = new_dict();
+  int i = 0;
+  while (i < count) {
+    members~udict_set(multisig_order::signer_index_bits, i, audit_address(base + i));
+    i += 1;
+  }
+  return members;
+}
+
+cell audit_update(int threshold, cell signers, cell proposers, cell next) inline {
+  return begin_cell()
+      .store_uint(action::update, 32)
+      .store_uint(threshold, 8)
+      .store_ref(signers)
+      .store_dict(proposers)
+      .store_maybe_ref(next)
+      .end_cell();
+}
+
+int main() { return 0; }
+
+int audit_many_proposers_are_priced() method_id(101) {
+  audit_install_context();
+  cell chain = audit_update(1, audit_members(1, 0x1000), audit_members(255, 0x2000), null());
+  (int actions, int visited, int threshold, int signers) = validate_actions(chain, 2, 3);
+  throw_unless(101, (actions == 1) & (visited == 256) & (threshold == 1) & (signers == 1));
+  return 1;
+}
+
+int audit_empty_proposers_preserve_signer_pricing() method_id(102) {
+  audit_install_context();
+  cell chain = audit_update(2, audit_members(3, 0x1000), null(), null());
+  (int actions, int visited, int threshold, int signers) = validate_actions(chain, 1, 1);
+  throw_unless(102, (actions == 1) & (visited == 3) & (threshold == 2) & (signers == 3));
+  return 2;
+}
+
+int audit_every_update_is_priced() method_id(103) {
+  audit_install_context();
+  cell tail = audit_update(2, audit_members(3, 0x3000), audit_members(2, 0x4000), null());
+  cell chain = audit_update(1, audit_members(1, 0x1000), audit_members(255, 0x2000), tail);
+  (int actions, int visited, int threshold, int signers) = validate_actions(chain, 2, 3);
+  throw_unless(103, (actions == 2) & (visited == 261) & (threshold == 2) & (signers == 3));
+  return 3;
+}
+
+int audit_shared_dictionaries_are_not_free_to_revisit() method_id(104) {
+  audit_install_context();
+  cell signers = audit_members(2, 0x1000);
+  cell proposers = audit_members(7, 0x2000);
+  cell tail = audit_update(1, signers, proposers, null());
+  cell chain = audit_update(2, signers, proposers, tail);
+  (int actions, int visited, int threshold, int signer_count) = validate_actions(chain, 2, 3);
+  throw_unless(104, (actions == 2) & (visited == 18) & (threshold == 1) & (signer_count == 2));
+  return 4;
+}
+
+int audit_both_maximum_sets_are_priced() method_id(105) {
+  audit_install_context();
+  cell chain = audit_update(255, audit_members(255, 0x1000), audit_members(255, 0x2000), null());
+  (int actions, int visited, int threshold, int signers) = validate_actions(chain, 2, 3);
+  throw_unless(105, (actions == 1) & (visited == 510) & (threshold == 255) & (signers == 255));
+  return 5;
+}
+
+int audit_proposers_cannot_satisfy_threshold() method_id(106) {
+  audit_install_context();
+  cell chain = audit_update(2, audit_members(1, 0x1000), audit_members(255, 0x2000), null());
+  int rejected = false;
+  try {
+    validate_actions(chain, 2, 3);
+  } catch (_, code) {
+    throw_unless(106, code == multisig_order::error::invalid_config);
+    rejected = true;
+  }
+  throw_unless(107, rejected);
+  return 6;
+}
+
+{-
+TESTCASE | 101 | | 1
+TESTCASE | 102 | | 2
+TESTCASE | 103 | | 3
+TESTCASE | 104 | | 4
+TESTCASE | 105 | | 5
+TESTCASE | 106 | | 6
+-}
