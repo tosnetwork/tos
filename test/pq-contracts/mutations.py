@@ -21,6 +21,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 FUNC_LIB = ROOT / "crypto/smartcont/pq-quorum-signatures.fc"
 TOL_LIB = ROOT / "crypto/smartcont/tol-stdlib/pq-quorum-signatures.tol"
+# Build-consistency checks fail on any change to the compiled source, so they are not
+# evidence that a mutant's removed guard was noticed.
+CONSISTENCY_TESTS = {"test_deploy_script_embeds_this_build"}
 WALLET = ROOT / "crypto/smartcont/pq-highload-wallet-code.fc"
 HIGHLOAD = ("test_pq_highload.py", ())
 QUORUM_FUNC = ("test_pq_quorum.py", ("--harness", str(HERE / "pq-quorum-harness.fc")))
@@ -242,17 +245,24 @@ MUTATIONS = [
         HIGHLOAD,
     ),
     (
-        "wallet-no-destroy",
+        "wallet-mode-mask-reserved-bits",
         WALLET,
-        "(SEND_MODE_DESTROY_IF_ZERO | SEND_MODE_CARRY_INBOUND_VALUE)",
-        "SEND_MODE_CARRY_INBOUND_VALUE",
+        "    throw_unless(error::invalid_mode, (mode & SEND_MODES_ALLOWED) == mode);\n",
+        "    throw_if(error::invalid_mode, mode & (32 | 64));\n",
         HIGHLOAD,
     ),
     (
-        "wallet-no-carry-inbound",
+        "wallet-mode-mask-destroy",
         WALLET,
-        "(SEND_MODE_DESTROY_IF_ZERO | SEND_MODE_CARRY_INBOUND_VALUE)",
-        "SEND_MODE_DESTROY_IF_ZERO",
+        "const int SEND_MODES_ALLOWED = 0x83;",
+        "const int SEND_MODES_ALLOWED = 0xa3;",
+        HIGHLOAD,
+    ),
+    (
+        "wallet-mode-mask-carry-inbound",
+        WALLET,
+        "const int SEND_MODES_ALLOWED = 0x83;",
+        "const int SEND_MODES_ALLOWED = 0xc3;",
         HIGHLOAD,
     ),
     (
@@ -470,9 +480,11 @@ def main():
             path.write_text(original)
         # Killed means the suite ran and an assertion failed, with no test breaking: a mutant
         # that breaks the build, the harness or a test's setup says nothing about the guard.
-        if outcome["testsRun"] > 0 and outcome["failures"] and not outcome["errors"]:
-            verdict = f"killed by {', '.join(t.rsplit('.', 1)[-1] for t in outcome['failures'])}"
-        elif outcome["testsRun"] > 0 and not outcome["failures"] and not outcome["errors"]:
+        evidence = [t.rsplit(".", 1)[-1] for t in outcome["failures"]]
+        evidence = [t for t in evidence if t not in CONSISTENCY_TESTS]
+        if outcome["testsRun"] > 0 and evidence and not outcome["errors"]:
+            verdict = f"killed by {', '.join(evidence)}"
+        elif outcome["testsRun"] > 0 and not evidence and not outcome["errors"]:
             verdict = "SURVIVED"
             survivors.append(name)
         else:

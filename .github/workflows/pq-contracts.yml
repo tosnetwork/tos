@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'crypto/smartcont/**'
+      - 'crypto/block/**'
+      - 'crypto/common/**'
       - 'crypto/vm/**'
       - 'crypto/pq/**'
       - 'crypto/fift/**'
@@ -14,6 +16,7 @@ on:
       - 'tol/**'
       - 'third-party/mldsa-native/**'
       - 'test/auth-extensions/**'
+      - 'tosctl/src/executor/real_boc/default_config.boc'
       - 'test/pq-contracts/**'
       - 'doc/pq-quorum-and-highload.md'
       - '.github/workflows/pq-contracts.yml'

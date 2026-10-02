@@ -9,6 +9,7 @@
   ."<public-key-file>: exactly 1312 raw bytes." cr
   ."The timeout bounds how long a signed request stays valid and how long its query id is "
   ."remembered; it must be 1.." 4194303 . ."seconds, and one hour to one day is the intended range." cr
+  ."The state is checked with the wallet's own get_checked_config before it is saved." cr
   ."Saves the StateInit to <filename-base>.init.boc and the address to <filename-base>.addr. "
   ."Deploy the wallet by sending funds to that address in any internal message carrying the "
   ."StateInit. The wallet runs only on a chain at global version 16 or later." cr 1 halt
@@ -40,6 +41,14 @@ variable chain-cell
 "auto/pq-highload-wallet-code.fif" include =: wallet-code
 <b 1312 32 u, key byte-chain ref, b> =: stored-key
 <b stored-key ref, subwallet-id 32 u, false 1 i, false 1 i, 0 64 u, timeout 22 u, b> =: data
+
+// Run the wallet's own check on this state: get_checked_config, whose method id FunC
+// assigns as (crc16 of the name) | 0x10000. It refuses a key of the wrong shape or a timeout
+// out of range, and returns the key id. It needs only c4, so it runs before any address.
+104661 wallet-code <s data runvm  // ( key-id exit-code data' )
+drop 0<> abort"the wallet refuses this state"
+=: key-id
+."Key id: " key-id 64 0x. cr
 
 <b b{0011} s, wallet-code ref, data ref, null dict, b>  // StateInit
 dup hashu 0 swap 2dup 2constant wallet_addr

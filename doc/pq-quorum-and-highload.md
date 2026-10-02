@@ -261,23 +261,26 @@ output-size and cell-depth limits, or the ceiling is lowered.
 
 Every entry is checked in step 1 and refused, whole request, unless all of these hold:
 
-- the mode has neither +32 (destroy if zero; a redeployed wallet would start with empty
-  replay dictionaries) nor +64 (carry inbound value; the refund already took it). Modes
-  +128 and +1 are allowed, so an owner can sweep the balance;
+- the mode is built only from +1 (fees separately), +2 (ignore errors, forced anyway) and
+  +128 (carry the balance, so an owner can sweep it): the allowed mask is `0x83`. That
+  refuses:
+  - +32, destroy if zero: a redeployed wallet would start with empty replay dictionaries;
+  - +64, carry inbound value: the refund already took it;
+  - +16, which the forced +2 makes meaningless;
+  - +4 and +8, which the executor treats as invalid and would otherwise skip after the
+    id was consumed;
 - the message is a MessageRelaxed with `int_msg_info`, `src` = `addr_none`, not marked as
   bounced, and with no StateInit;
 - an inline body or a referenced body is consumed exactly, as `highload-wallet-v3-code.fc`
   checks;
 - no other action type appears;
-- at least one action is present: an empty batch is refused;
-- no reserved mode bits are set (mode < 256 by encoding; every allowed flag is listed
-  above).
+- at least one action is present: an empty batch is refused.
 
 254 is a limit on the number of actions. Gas, cell depth, per-message size and the
 action phase's total output size apply separately. Several messages sharing one large
 body are counted once per message by the total-output check, so even a short batch can
-exceed it. The whole action phase then fails as in the failure table, and nothing is
-sent.
+exceed it. The message that passes the limit is then skipped alone (+2), as the failure
+table records.
 
 Messages are re-emitted with `send_raw_message(message, mode | 2)` in the **signed order**.
 An `OutList`'s head is its last action, so the wallet first collects the list, then emits
@@ -303,7 +306,9 @@ from the oldest entry.
 
 - The wallet runs only at global version 16 or later. A test shows that version 15
   refuses it; success at v16 does not show that a target chain is activated.
-- `new-pq-highload-wallet.fif` builds the state and checks it with `get_checked_config`.
+- `new-pq-highload-wallet.fif` builds the state and checks it with `get_checked_config`,
+  run on the state itself; the getter needs only c4. The script prints the key id that
+  check derives.
 
 ## Tests
 
@@ -313,9 +318,9 @@ ML-DSA tests run as Python suites on the real C++ executor at global version 16,
 - `test/auth-extensions/{cells,native}.py`;
 - the TEST ONLY deterministic signer `test/mldsa-auth/signer.cpp`.
 
-Every test asserts the final data, every outbound amount, the action result, the skipped
-count, and whether the request can be resubmitted. Emulator success alone is not
-evidence.
+Every test asserts the final data, the action result, and whether the request can be
+resubmitted, and checks outbound messages by destination, value and order. Emulator
+success alone is not evidence.
 
 - **Library**, through a harness contract compiled from FunC and from Tol, with identical
   vectors for both:
@@ -323,7 +328,7 @@ evidence.
     verification;
   - an unknown key; a signature filed under another id;
   - a key filed under the wrong id, refused by `config`; one key under two ids;
-  - a truncated signature, a non-canonical chain, a library cell;
+  - a truncated signature, a non-canonical chain;
   - a wrong context or message;
   - the config invariants;
   - `MAX_QUORUM` verified within the gas limit at a full `MAX_VERIFIERS` set, with cold
@@ -403,8 +408,8 @@ may start. Every finding was accepted.
 - **Exact definitions added:** exact consumption, the address form, the 32 signed bytes,
   empty batches refused, and no reserved mode bits.
 - **Untrusted config tuples.** A config tuple must come from validated, persisted state.
-  The library's own guarantee if it does not: a key that skipped `config` can still
-  authorize nothing, because the verifier refuses malformed keys.
+  This entry also claimed a fallback guarantee: that a key which skipped `config` could
+  still authorize nothing. Round 3 showed the claim was false, and it was withdrawn.
 
 ### Implementation note, quorum library
 
@@ -474,3 +479,27 @@ been checked, at about 481,000 gas the relayer pays. Counting first would add a 
 every valid request.
 
 60 mutants, 37 in the library and 23 in the wallet, are each killed by an assertion.
+
+### Round 4, quorum fixes and the wallet (`0a5baed5c`)
+
+The reviewer confirmed that round 3 is closed. It found no forged-signature, relayer-
+tampering or replay path in the wallet. Every finding was accepted.
+
+- **Medium: reserved mode bits were not refused.** Modes 4 and 8 passed, and the executor
+  then skipped the payment after the id was consumed. Batch modes are now restricted to
+  the mask `0x83` (+1, +2, +128), checked before verification. Tests cover modes 4, 8,
+  16, 1+4 and 1+16+128, and three mutations cover the mask.
+- **Medium: the CI paths missed the executor core.** Added `crypto/block/**`,
+  `crypto/common/**` and the test configuration BoC.
+- **Low: the deployment test's code-hash comparison could pose as mutation evidence.** It
+  is now a separate consistency test, and mutations.py does not count it as a kill.
+  - The wallet getters are now checked through real get-method calls on the TVM
+    emulator.
+  - `get_required_value` equals the threshold the bisection finds, for 1 and for 254
+    actions.
+- **Low: contradictions and overclaims in v4.**
+  - The total-output case is described as a single skip.
+  - The withdrawn config guarantee is marked as withdrawn.
+  - "Skipped count" and library-cell coverage are no longer claimed.
+  - The deployment script now runs `get_checked_config`. It needs only c4, because the
+    workchain check moved to submission time.

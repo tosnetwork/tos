@@ -36,9 +36,12 @@
 ;; The batch is an OutList of 1 to 254 action_send_msg entries; 255 action slots, one for
 ;; the refund. Every entry is checked before verification, and any bad entry refuses the
 ;; whole request:
-;;   - no mode +32 (destroy if zero): a deleted wallet redeployed from its StateInit would
-;;     start with empty replay dictionaries;
-;;   - no mode +64 (carry inbound value): the refund has already carried it;
+;;   - a send mode built only from +1 (fees separately), +2 (ignore errors, forced anyway)
+;;     and +128 (carry the balance). That leaves out +32 (destroy if zero), since a deleted
+;;     wallet redeployed from its StateInit would start with empty replay dictionaries;
+;;     +64 (carry inbound value), which the refund has already carried; +16, which the
+;;     forced +2 makes meaningless; and +4 and +8, which the executor treats as invalid
+;;     and would skip after the id was consumed;
 ;;   - a MessageRelaxed with int_msg_info, src addr_none, not bounced, no StateInit, and a
 ;;     referenced body consumed exactly.
 ;; The messages are sent in their signed order, each with IGNORE_ERRORS forced, so one the
@@ -70,8 +73,9 @@ const int error::invalid_signature = 0x1c0c;
 const int basechain = 0;
 const int max_actions = 254;
 const int SEND_MODE_IGNORE_ERRORS = 2;
-const int SEND_MODE_DESTROY_IF_ZERO = 32;
 const int SEND_MODE_CARRY_INBOUND_VALUE = 64;
+;; +1 pay fees separately, +2 ignore errors, +128 carry the remaining balance
+const int SEND_MODES_ALLOWED = 0x83;
 const int SUBWALLET_ID_BITS = 32;
 const int QUERY_ID_BITS = 23;
 const int CREATED_AT_BITS = 64;
@@ -152,7 +156,7 @@ int required_value(int action_count) inline {
     int mode = node~load_uint(8);
     cell message = node~load_ref();
     node.end_parse();
-    throw_if(error::invalid_mode, mode & (SEND_MODE_DESTROY_IF_ZERO | SEND_MODE_CARRY_INBOUND_VALUE));
+    throw_unless(error::invalid_mode, (mode & SEND_MODES_ALLOWED) == mode);
     require_valid_message(message);
     batch = cons([mode, message], batch);
     node = prev.begin_parse();
@@ -270,13 +274,13 @@ int get_required_value(int action_count) method_id {
 }
 
 ;; For deployment tooling: refuses a state the wallet could never serve -- a key of the
-;; wrong shape, a timeout of zero (which rejects every request and locks the funds), or a
-;; workchain other than 0 -- and otherwise returns the key id.
+;; wrong shape, or a timeout outside 1..max (zero rejects every request and locks the
+;; funds) -- and otherwise returns the key id. Needs only c4, so new-pq-highload-wallet.fif
+;; runs it on the state before the address exists. The workchain is the deployer's choice
+;; of address; every submission refuses any but 0.
 int get_checked_config() method_id {
   (cell public_key, _, [cell, cell, int, int] guard) = load_data();
   [_, _, _, int timeout] = guard;
-  throw_unless(replay_guard::error::invalid_timeout, timeout > 0);
-  (int my_workchain, _) = parse_std_addr(my_address());
-  throw_unless(error::wrong_workchain, my_workchain == basechain);
+  throw_unless(replay_guard::error::invalid_timeout, (timeout > 0) & (timeout <= replay_guard::max_timeout));
   return pq::key_id(pq::algorithm::mldsa44, public_key);
 }

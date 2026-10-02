@@ -300,6 +300,12 @@ class PqHighloadTest(unittest.TestCase):
             ([(1 | 32, good)], "invalid_mode"),
             ([(1 | 64, good)], "invalid_mode"),
             ([(128 | 32, good)], "invalid_mode"),
+            # +4 and +8 the executor treats as invalid, +16 the forced +2 makes meaningless
+            ([(4, good)], "invalid_mode"),
+            ([(8, good)], "invalid_mode"),
+            ([(16, good)], "invalid_mode"),
+            ([(1 | 4, good)], "invalid_mode"),
+            ([(1 | 16 | 128, good)], "invalid_mode"),
             ([(1, relaxed(PAYEE, 1, init=True))], "invalid_message"),
             ([(1, relaxed(PAYEE, 1, src_none=False))], "invalid_message"),
             ([(1, relaxed(PAYEE, 1, bounced=True))], "invalid_message"),
@@ -483,6 +489,8 @@ class PqHighloadTest(unittest.TestCase):
             self.assertEqual(len(at["out"]), n + 1)  # the refund went out too
             self.assertIn(qid, processed_ids(w.shard))
             REPORT[f"required_value_{n}"] = value
+            # the getter a relayer reads quotes exactly this threshold
+            self.assertEqual(self.getter(w, "get_required_value", n), [value])
 
     def run_deploy_script(self, tmp, *args):
         build = Path(ARGS.build).resolve()
@@ -495,6 +503,17 @@ class PqHighloadTest(unittest.TestCase):
             text=True,
         )
 
+    def test_deploy_script_embeds_this_build(self):
+        # A build-consistency check, not a behaviour test: mutations.py does not count it
+        # as evidence, since any change to the compiled source makes it fail.
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp) / "owner.pk"
+            key.write_bytes(pqtest.public_key(OWNER_KEY))
+            result = self.run_deploy_script(tmp, SUBWALLET, TIMEOUT, key, "pqw")
+            self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+            init = pqtest.from_boc((Path(tmp) / "pqw.init.boc").read_bytes())
+            self.assertEqual(init.refs[0].hash, CODE.hash)
+
     def test_deploy_script_builds_a_working_wallet(self):
         with tempfile.TemporaryDirectory() as tmp:
             key = Path(tmp) / "owner.pk"
@@ -504,8 +523,10 @@ class PqHighloadTest(unittest.TestCase):
             init = pqtest.from_boc((Path(tmp) / "pqw.init.boc").read_bytes())
             address = (0, int.from_bytes(init.hash, "big"))
             self.assertIn(f"0:{address[1]:064x}", result.stdout)
-            # the code the script embeds is this build's wallet
-            self.assertEqual(init.refs[0].hash, CODE.hash)
+            # it ran the wallet's own check and reports the key id that check derived
+            self.assertIn(
+                f"Key id: {pqtest.key_id(pqtest.public_key(OWNER_KEY)):064x}", result.stdout
+            )
             # deploy with a real StateInit, at the address it derives
             w = Wallet()
             w.address = address
@@ -552,6 +573,40 @@ class PqHighloadTest(unittest.TestCase):
             result = self.run_deploy_script(tmp, SUBWALLET, TIMEOUT, short, "x")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("1312 bytes", result.stderr)
+
+    def getter(self, w, method, *args):
+        data, balance = native.account_data(w.shard)
+        code, values = pqtest.get_method(CODE, data, w.address, method, args, balance=balance)
+        self.assertEqual(code, 0, (method, values))
+        return values
+
+    def test_getters(self):
+        w = Wallet()
+        self.assertEqual(
+            self.getter(w, "get_key_id"), [pqtest.key_id(pqtest.public_key(OWNER_KEY))]
+        )
+        self.assertEqual(self.getter(w, "get_subwallet_id"), [SUBWALLET])
+        self.assertEqual(self.getter(w, "get_timeout"), [TIMEOUT])
+        self.assertEqual(
+            self.getter(w, "get_checked_config"), [pqtest.key_id(pqtest.public_key(OWNER_KEY))]
+        )
+        self.assertEqual(self.getter(w, "processed?", 80, 0), [0])
+        self.assertExit(w.submit(request([(1, pay(10**9, 1))], 80)), 0)
+        self.assertEqual(self.getter(w, "processed?", 80, 0), [-1])
+        self.assertEqual(self.getter(w, "processed?", 1023, 0), [0])
+        self.assertEqual(self.getter(w, "get_last_clean_time"), [native.NOW])
+        # a state the wallet could never serve is refused
+        short_key = (
+            Cell()
+            .ref(pqtest.stored(b"x" * 1311))
+            .uint(SUBWALLET, 32)
+            .uint(0, 1)
+            .uint(0, 1)
+            .uint(0, 64)
+        ).uint(TIMEOUT, 22)
+        for data in (wallet_data(timeout=0), short_key):
+            code, _ = pqtest.get_method(CODE, data, WALLET, "get_checked_config")
+            self.assertNotEqual(code, 0)
 
     def test_external_messages_refused(self):
         w = Wallet()

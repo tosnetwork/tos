@@ -159,3 +159,104 @@ def run(report, argv, results_path=None, report_path=None):
         Path(report_path).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps(report, sort_keys=True))
     return 0 if outcome.wasSuccessful() else 1
+
+
+def _method_id(name):
+    crc = 0
+    for byte in name.encode():
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc | 0x10000
+
+
+def _stack_value(value):
+    if -(1 << 63) <= value < (1 << 63):
+        return Cell().uint(0x01, 8).sint(value, 64)
+    # vm_stk_int#0201_: the trailing "_" drops the final 1 bit, leaving 15 bits.
+    return Cell().uint(0x0201 >> 1, 15).sint(value, 257)
+
+
+def _encode_stack(values):
+    """VmStack of integers, the last value on top."""
+    rest = Cell()
+    for value in values:
+        node = _stack_value(value)
+        rest = Cell(node.bits, [rest] + node.refs)
+    return (
+        Cell().uint(len(values), 24)
+        if not values
+        else Cell(Cell().uint(len(values), 24).bits + rest.bits, rest.refs)
+    )
+
+
+def _decode_stack(cell):
+    s = cell.slice()
+    depth = s.uint(24)
+    values = []
+    for _ in range(depth):
+        rest = s.ref()
+        tag = s.uint(8)
+        if tag == 0x01:
+            values.append(s.sint(64))
+        elif tag == 0x02 and s.uint(7) == 0:
+            values.append(s.sint(257))
+        elif tag == 0x00:
+            values.append(None)
+        else:
+            values.append(("unsupported", tag))
+        s = rest.slice()
+    return list(reversed(values))
+
+
+def get_method(
+    code, data, address, method, args=(), global_version=16, unixtime=None, balance=10**9
+):
+    """Runs a get-method on the real TVM emulator, with c7 built from the test configuration
+    at `global_version`. Returns (exit code, values bottom to top)."""
+    import ctypes
+    import json
+
+    import native
+
+    lib = ctypes.CDLL(os.environ["EMULATOR_PATH"])
+    lib.tvm_emulator_create.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+    lib.tvm_emulator_create.restype = ctypes.c_void_p
+    lib.tvm_emulator_set_c7.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_uint32,
+        ctypes.c_uint64,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+    ]
+    lib.tvm_emulator_set_c7.restype = ctypes.c_bool
+    lib.tvm_emulator_run_get_method.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p]
+    lib.tvm_emulator_run_get_method.restype = ctypes.c_void_p
+    lib.tvm_emulator_destroy.argtypes = [ctypes.c_void_p]
+    lib.string_destroy.argtypes = [ctypes.c_void_p]
+    lib.emulator_set_verbosity_level(0)
+    emulator = lib.tvm_emulator_create(code.b64(), data.b64(), 0)
+    assert emulator, "the TVM emulator must load the code and data"
+    try:
+        assert lib.tvm_emulator_set_c7(
+            emulator,
+            f"{address[0]}:{address[1]:064x}".encode(),
+            native.NOW if unixtime is None else unixtime,
+            balance,
+            b"00" * 32,
+            native.config(global_version).b64(),
+        )
+        raw = lib.tvm_emulator_run_get_method(
+            emulator, _method_id(method), _encode_stack(list(args)).b64()
+        )
+        try:
+            result = json.loads(ctypes.string_at(raw))
+        finally:
+            lib.string_destroy(raw)
+    finally:
+        lib.tvm_emulator_destroy(emulator)
+    assert result["success"], result
+    return result["vm_exit_code"], _decode_stack(
+        from_boc(__import__("base64").b64decode(result["stack"]))
+    )
