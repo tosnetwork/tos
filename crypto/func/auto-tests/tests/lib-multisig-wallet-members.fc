@@ -11,12 +11,13 @@ slice audit_address(int hash) inline {
   return begin_cell().store_uint(4, 3).store_int(0, 8).store_uint(hash, 256).end_cell().begin_parse();
 }
 
-() audit_install_context() impure {
+() audit_install_workchain(int workchain) impure {
   tuple params = empty_tuple();
   int i = 0;
   while (i < 17) {
     if (i == 8) {
-      params~tpush(audit_address(0xabc)); ;; MYADDR, checked by count_members
+      params~tpush(begin_cell().store_uint(4, 3).store_int(workchain, 8)
+          .store_uint(0xabc, 256).end_cell().begin_parse()); ;; MYADDR
     } else {
       params~tpush(i == 3 ? 1000 : null());
     }
@@ -25,6 +26,10 @@ slice audit_address(int hash) inline {
   tuple c7 = empty_tuple();
   c7~tpush(params);
   audit_set_c7(c7);
+}
+
+() audit_install_context() impure {
+  audit_install_workchain(0);
 }
 
 cell audit_members(int count, int base) inline {
@@ -160,6 +165,83 @@ int audit_checked_signer_count_getter() method_id(109) {
   return 9;
 }
 
+;; The preflight getter must validate the scalar fields actually passed to order init,
+;; not just the dictionary. Do not introduce main(): the imported receiver is method 0.
+() audit_reject_stored_config(int threshold, int stored_count) impure inline {
+  save_data(0, threshold, stored_count, audit_members(2, 0x1000), null(), begin_cell().end_cell());
+  int rejected = false;
+  try {
+    throw_unless(141, get_checked_signer_count() < 0);
+  } catch (_, code) {
+    throw_unless(142, code == multisig_order::error::invalid_config);
+    rejected = true;
+  }
+  throw_unless(143, rejected);
+}
+
+int audit_checked_config_rejects_bad_scalars() method_id(110) {
+  audit_install_context();
+  audit_reject_stored_config(1, 0);
+  audit_reject_stored_config(1, 1);
+  audit_reject_stored_config(1, 3);
+  audit_reject_stored_config(0, 2);
+  audit_reject_stored_config(3, 2);
+  ;; A forged count can make a threshold look valid even though it is unreachable.
+  audit_reject_stored_config(3, 3);
+  save_data(0, 2, 2, audit_members(2, 0x1000), null(), begin_cell().end_cell());
+  throw_unless(144, get_checked_signer_count() == 2);
+  return 10;
+}
+
+int audit_parent_workchain_policy() method_id(111) {
+  audit_install_context();
+  require_supported_workchain();
+  int workchain = -128;
+  int rejected = 0;
+  while (workchain < 128) {
+    if (workchain != 0) {
+      audit_install_workchain(workchain);
+      try {
+        require_supported_workchain();
+      } catch (_, code) {
+        throw_unless(151, code == error::unsupported_workchain);
+        rejected += 1;
+      }
+    }
+    workchain += 1;
+  }
+  throw_unless(152, rejected == 255);
+  return 11;
+}
+
+int audit_masterchain_quote_and_proposal_are_refused() method_id(112) {
+  audit_install_workchain(-1);
+  cell members = audit_members(2, 0x1000);
+  save_data(0, 1, 2, members, null(), begin_cell().end_cell());
+  cell before = get_data();
+  cell actions = audit_update(1, members, null(), null());
+  int rejected = 0;
+  try {
+    throw_unless(161, get_order_estimate(actions, 2000) < 0);
+  } catch (_, code) {
+    throw_unless(162, code == error::unsupported_workchain);
+    rejected += 1;
+  }
+  cell envelope = begin_cell().store_uint(6, 4).store_slice(audit_address(0x1000)).end_cell();
+  slice body = begin_cell().store_uint(op::new_order, 32).store_uint(7, 64)
+      .store_uint(0, 64).store_int(true, 1).store_uint(0, 8)
+      .store_uint(2000, 32).store_ref(actions).end_cell().begin_parse();
+  try {
+    recv_internal(1000000000, 100000000, envelope, body);
+  } catch (_, code) {
+    throw_unless(163, code == error::unsupported_workchain);
+    rejected += 1;
+  }
+  throw_unless(164, rejected == 2);
+  throw_unless(165, get_data().cell_hash() == before.cell_hash());
+  return 12;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -170,4 +252,7 @@ TESTCASE | 106 | | 6
 TESTCASE | 107 | | 7
 TESTCASE | 108 | | 8
 TESTCASE | 109 | | 9
+TESTCASE | 110 | | 10
+TESTCASE | 111 | | 11
+TESTCASE | 112 | | 12
 -}
