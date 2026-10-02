@@ -33,6 +33,11 @@
 ;; and handed to each order, so neither the parent nor the order counts the set on every
 ;; message.
 ;;
+;; Deploy this wallet only in workchain 0. The fee model prices the parent and its
+;; basechain orders with basechain fees; proposals and quotes on other workchains are
+;; refused rather than advertising an unfunded execution path. Signers may still reside
+;; in other workchains.
+;;
 ;; storage: next_seqno:uint64 threshold:uint8 signer_count:uint8 signers:^Cell
 ;;          proposers:(Maybe ^Cell) order_code:^Cell
 
@@ -44,6 +49,7 @@ const int action::send = 0x94f8724f;
 const int action::update = 0xe9973598;
 
 const int error::invalid_action = 0x1a0e;
+const int error::unsupported_workchain = 0x1a13;
 const int error::unknown_op = 0xffff;
 
 const int max_actions = 255;
@@ -74,6 +80,12 @@ tuple fee_profile() inline {
       1990,  ;; parent_execute_gas_per_action
       2070   ;; parent_gas_per_updated_signer
   );
+}
+
+;; Do not use the basechain-only seven-component quote for a masterchain parent.
+() require_supported_workchain() impure inline {
+  (int workchain, _) = parse_std_addr(my_address());
+  throw_unless(error::unsupported_workchain, workchain == multisig_order::basechain);
 }
 
 (int, int, int, cell, cell, cell) load_data() inline {
@@ -200,6 +212,7 @@ int count_members(cell members, int signers) impure inline {
   (int next_seqno, int threshold, int signer_count, cell signers, cell proposers, cell order_code) = load_data();
 
   if (op == op::new_order) {
+    require_supported_workchain();
     int requested_seqno = in_msg_body~load_uint(64);
     int is_signer = in_msg_body~load_int(1);
     int index = in_msg_body~load_uint(8);
@@ -271,11 +284,17 @@ slice get_order_address(int seqno) method_id {
   return multisig_order::address(order_code, my_address(), seqno);
 }
 
-;; Number of signers in the current set; throws unless the set satisfies
-;; multisig_order::signer_count, the rule every update is held to.
+;; Check the signer configuration before deployment/joining: the dictionary must be
+;; canonical and unique, the cached count must match it, and its threshold must be
+;; achievable. A valid dictionary alone does not validate the fields passed to an order.
+;; This getter needs only c4 so deployment tooling can run it before the address exists;
+;; the workchain is checked separately by the script and by proposal/quote admission.
 int get_checked_signer_count() method_id {
-  (_, _, _, cell signers, _, _) = load_data();
-  return multisig_order::signer_count(signers);
+  (_, int threshold, int stored_count, cell signers, _, _) = load_data();
+  int actual_count = multisig_order::signer_count(signers);
+  throw_unless(multisig_order::error::invalid_config, stored_count == actual_count);
+  multisig_order::require_valid_threshold(threshold, actual_count);
+  return actual_count;
 }
 
 tuple get_fee_profile() method_id {
@@ -285,6 +304,7 @@ tuple get_fee_profile() method_id {
 ;; Value a proposal for `actions` expiring at `expires_at` must carry. Computed on a fresh
 ;; VM, so it is never below what the proposal transaction itself will require.
 int get_order_estimate(cell actions, int expires_at) method_id {
+  require_supported_workchain();
   (_, int threshold, int signer_count, cell signers, _, _) = load_data();
   (int action_count, int installed, _, _) = validate_actions(actions, threshold, signer_count);
   return multisig_order::required_new_order_value(fee_profile(), signers, actions, action_count, installed,
