@@ -65,7 +65,14 @@ CASES = [
 
 def build():
     r = subprocess.run(
-        [args.cmake, "--build", str(B), "--target", "test-health-native-snapshot", "-j2"],
+        [
+            args.cmake,
+            "--build",
+            str(B),
+            "--target",
+            "test-health-native-snapshot",
+            f"-j{os.cpu_count() or 2}",
+        ],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

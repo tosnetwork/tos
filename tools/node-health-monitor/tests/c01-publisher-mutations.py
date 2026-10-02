@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Kill C01 publisher mutants with compiled assertion failures and raw logs."""
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,10 +12,12 @@ parser.add_argument("build")
 parser.add_argument("evidence")
 parser.add_argument("--cmake", default="cmake")
 parser.add_argument("--case", action="append", dest="selected")
-parser.add_argument("--jobs", type=int, default=2)
-parser.add_argument("--build-timeout", type=int, default=180)
+parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 2, 64))
+# Builds are not timed by default: a slow machine must not turn a mutant into a failure.
+# The option stays for reproducing earlier recorded runs that passed it.
+parser.add_argument("--build-timeout", type=int, default=None)
 args = parser.parse_args()
-if not 1 <= args.jobs <= 64 or args.build_timeout <= 0:
+if not 1 <= args.jobs <= 64 or (args.build_timeout is not None and args.build_timeout <= 0):
     parser.error("--jobs must be 1..64 and --build-timeout must be positive")
 build_dir = Path(args.build).resolve()
 evidence = Path(args.evidence).resolve()
