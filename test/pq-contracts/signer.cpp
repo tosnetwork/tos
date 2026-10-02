@@ -16,11 +16,15 @@
 #include <vector>
 
 static std::vector<uint8_t> unhex(const std::string& text, std::size_t limit) {
-  if (text == "-") return {};
-  if (text.size() % 2 || text.size() / 2 > limit) throw std::runtime_error("invalid hex length");
+  if (text == "-")
+    return {};
+  if (text.size() % 2 || text.size() / 2 > limit)
+    throw std::runtime_error("invalid hex length");
   auto nibble = [](char c) -> uint8_t {
-    if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
-    if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+    if (c >= '0' && c <= '9')
+      return static_cast<uint8_t>(c - '0');
+    if (c >= 'a' && c <= 'f')
+      return static_cast<uint8_t>(c - 'a' + 10);
     throw std::runtime_error("noncanonical hex");
   };
   std::vector<uint8_t> out;
@@ -30,7 +34,8 @@ static std::vector<uint8_t> unhex(const std::string& text, std::size_t limit) {
   return out;
 }
 
-template <std::size_t N> static std::string hex(const std::array<uint8_t, N>& data) {
+template <std::size_t N>
+static std::string hex(const std::array<uint8_t, N>& data) {
   constexpr char digits[] = "0123456789abcdef";
   std::string out;
   for (uint8_t c : data) {
@@ -67,11 +72,12 @@ int main() {
       std::vector<uint8_t> prefix{0, static_cast<uint8_t>(context.size())};
       prefix.insert(prefix.end(), context.begin(), context.end());
       const int rc = PQ_SIGNER_SYM(signature_internal)(sig.data(), message.data(), message.size(), prefix.data(),
-                                                        prefix.size(), rnd.data(), sk.data(), 0);
+                                                       prefix.size(), rnd.data(), sk.data(), 0);
       volatile uint8_t* wipe = sk.data();
-      for (std::size_t i = 0; i < sk.size(); ++i) wipe[i] = 0;
-      if (rc != 0 || PQ_SIGNER_SYM(verify)(sig.data(), message.data(), message.size(), context.data(),
-                                           context.size(), pk.data()) != 0) {
+      for (std::size_t i = 0; i < sk.size(); ++i)
+        wipe[i] = 0;
+      if (rc != 0 || PQ_SIGNER_SYM(verify)(sig.data(), message.data(), message.size(), context.data(), context.size(),
+                                           pk.data()) != 0) {
         throw std::runtime_error("sign/verify self-check failed");
       }
       std::cout << hex(pk) << ' ' << hex(sig) << '\n';
