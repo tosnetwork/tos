@@ -14,6 +14,11 @@ const int op::signing_hash = 4;   ;; domain:uint32 target:MsgAddress nonce:uint6
 const int op::with_quorum = 5;    ;; quorum:uint8
 const int op::with_verifiers = 6; ;; verifiers:(Maybe ^Cell)
 const int op::expiry = 7;         ;; valid_until:uint32
+const int op::raw_store = 8;      ;; verifiers:(Maybe ^Cell) count:uint8 quorum:uint8, unchecked
+const int op::is_verifier = 9;    ;; key_id:uint256 -> last_hash = 1 or 0
+const int op::add_to_config = 10; ;; stored_key:^Cell
+const int op::remove = 11;        ;; key_id:uint256
+const int op::approve_rotation = 12; ;; hash:uint256 signatures:(Maybe ^Cell) add:^Cell remove:uint256
 
 (cell, int, int, int, int) load_state() inline {
   slice ds = get_data().begin_parse();
@@ -53,6 +58,29 @@ const int op::expiry = 7;         ;; valid_until:uint32
   } elseif (op == op::with_verifiers) {
     [cell v, int c, int q] = pq_quorum::with_verifiers([verifiers, count, quorum], body~load_dict());
     save_state(v, c, q, checks, last_hash);
+  } elseif (op == op::raw_store) {
+    cell raw = body~load_dict();
+    int raw_count = body~load_uint(8);
+    save_state(raw, raw_count, body~load_uint(8), checks, last_hash);
+  } elseif (op == op::is_verifier) {
+    int found = pq_quorum::verifier?([verifiers, count, quorum], body~load_uint(256));
+    save_state(verifiers, count, quorum, checks, found ? 1 : 0);
+  } elseif (op == op::add_to_config) {
+    [cell v, int c, int q] = pq_quorum::with_added_verifier([verifiers, count, quorum], body~load_ref());
+    save_state(v, c, q, checks, last_hash);
+  } elseif (op == op::remove) {
+    [cell v, int c, int q] = pq_quorum::with_removed_verifier([verifiers, count, quorum], body~load_uint(256));
+    save_state(v, c, q, checks, last_hash);
+  } elseif (op == op::approve_rotation) {
+    var config = [verifiers, count, quorum];
+    int hash = body~load_uint(256);
+    pq_quorum::require_quorum(config, hash, body~load_dict());
+    cell incoming = body~load_ref();
+    ;; remove first, so a full set has room for the key that replaces it
+    config = pq_quorum::with_removed_verifier(config, body~load_uint(256));
+    config = pq_quorum::with_added_verifier(config, incoming);
+    [cell v, int c, int q] = config;
+    save_state(v, c, q, checks + 1, last_hash);
   } elseif (op == op::expiry) {
     pq_quorum::require_not_expired(body~load_uint(32));
     save_state(verifiers, count, quorum, checks + 1, last_hash);

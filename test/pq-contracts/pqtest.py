@@ -133,3 +133,29 @@ def details_of(result):
     """The transaction outcome, or an assertion if the emulator refused to run it."""
     assert result["success"], f"emulator refused the message: {result.get('error')}"
     return result["details"]
+
+
+def run(report, argv, results_path=None, report_path=None):
+    """Runs the calling module's tests and writes, besides the measurements in `report`,
+    a structured result for mutations.py: how many tests ran, and which failed an assertion
+    (failures) as opposed to breaking (errors). Returns the process exit status."""
+    import json
+    import unittest
+
+    outcome = unittest.main(argv=argv, exit=False, verbosity=2).result
+    if results_path:
+        Path(results_path).write_text(
+            json.dumps(
+                {
+                    "testsRun": outcome.testsRun,
+                    "failures": [test.id() for test, _ in outcome.failures],
+                    "errors": [test.id() for test, _ in outcome.errors],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+    if report_path:
+        Path(report_path).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(report, sort_keys=True))
+    return 0 if outcome.wasSuccessful() else 1

@@ -9,7 +9,6 @@ and the cases that must fail cheaply also assert that no verification was paid f
 """
 
 import argparse
-import json
 import sys
 import tempfile
 import unittest
@@ -25,6 +24,7 @@ parser.add_argument("--build", required=True)
 parser.add_argument("--signer", required=True)
 parser.add_argument("--harness", default=str(HERE / "pq-quorum-harness.fc"))
 parser.add_argument("--report", help="write measured gas as JSON here")
+parser.add_argument("--results", help="write the structured test outcome as JSON here")
 ARGS, REST = parser.parse_known_args()
 native = pqtest.configure(ARGS.build, ARGS.signer)
 
@@ -92,11 +92,17 @@ class Harness:
         self.emulator = native.Emulator(global_version=version)
         self.shard = native.active_account(ADDRESS, CODE, empty_state(), FUNDING)
 
+    def data_hash(self):
+        return native.account_data(self.shard)[0].hash
+
     def send(self, body, value=50_000_000_000):
+        """Runs one transaction and adopts the account the executor returns, whatever the
+        outcome, so a refusal is judged on the state it actually left behind."""
+        before = self.data_hash()
         result = self.emulator.send(self.shard, native.internal(SENDER, ADDRESS, body, value))
         details = pqtest.details_of(result)
-        if details["exit"] == 0 and details["action"] and details["action"]["success"]:
-            self.shard = pqtest.from_boc(result["shard_account"])
+        self.shard = pqtest.from_boc(result["shard_account"])
+        details["data_changed"] = self.data_hash() != before
         return details
 
     def state(self):
@@ -122,7 +128,15 @@ class Harness:
 
 class PqQuorumTest(unittest.TestCase):
     def assertExit(self, details, name):
-        self.assertEqual(details["exit"], ERR[name] if isinstance(name, str) else name, details)
+        """A refusal must leave the contract's data exactly as it was; a success must have
+        completed both phases."""
+        code = ERR[name] if isinstance(name, str) else name
+        self.assertEqual(details["exit"], code, details)
+        if code == 0:
+            self.assertTrue(details["compute_success"] and not details["aborted"], details)
+            self.assertTrue(details["action"] and details["action"]["success"], details)
+        else:
+            self.assertFalse(details["data_changed"], details)
 
     def first_verification_gas(self, h, message):
         """Gas of a well-formed 3-of-5 request whose first verified entry is invalid: one
@@ -323,8 +337,109 @@ class PqQuorumTest(unittest.TestCase):
         REPORT["max_quorum_gas"] = d["gas"]
         REPORT["max_quorum"] = MAX_QUORUM
         REPORT["gas_limit"] = d["gas_limit"]
-        # The library must leave room for the contract that calls it.
-        self.assertLessEqual(d["gas"], 850_000)
+        # The library must leave room for the contract that calls it: about 250,000 gas at
+        # this sample, the margin the documentation states.
+        self.assertGreaterEqual(d["gas_limit"] - d["gas"], 250_000, d)
+
+    def test_an_unconfigured_state_authorizes_nothing(self):
+        # The stored state before any config: no set, count 0, quorum 0.
+        h = Harness()
+        self.assertExit(h.check(hash_bytes(30), None), "invalid_config")
+
+    def test_trusted_config_precondition_is_real(self):
+        # A set stored without config(): one key filed under two ids satisfies 2-of-2 alone.
+        # The native verifier cannot see ids, so only config() and its siblings prevent
+        # this; a contract must never persist a set they did not produce.
+        h = Harness()
+        key0 = pqtest.public_key(0)
+        forged_id = pqtest.key_id(pqtest.public_key(1))
+        twice = make_dict(
+            {
+                pqtest.key_id(key0): Cell().ref(pqtest.stored(key0)),
+                forged_id: Cell().ref(pqtest.stored(key0)),
+            },
+            256,
+        )
+        self.assertExit(h.send(Cell().uint(8, 32).maybe(twice).uint(2, 8).uint(2, 8)), 0)
+        message = hash_bytes(31)
+        signature = Cell().ref(pqtest.stored(pqtest.sign(0, message, CONTEXT)))
+        sigs = make_dict({pqtest.key_id(key0): signature, forged_id: signature}, 256)
+        self.assertExit(h.check(message, sigs), 0)
+        # and config() refuses that very set
+        self.assertExit(h.send(Cell().uint(1, 32).maybe(twice).uint(2, 8)), "key_id_mismatch")
+
+    def test_membership_query(self):
+        h = self.configured([0, 1], 1)
+        for key, expected in ((1, 1), (2, 0)):
+            self.assertExit(
+                h.send(Cell().uint(9, 32).uint(pqtest.key_id(pqtest.public_key(key)), 256)), 0
+            )
+            self.assertEqual(h.state()["last_hash"], expected)
+
+    def test_single_key_changes(self):
+        h = self.configured([0, 1, 2], 2)
+
+        def add(key):
+            return h.send(Cell().uint(10, 32).ref(pqtest.stored(pqtest.public_key(key))))
+
+        def remove(key):
+            return h.send(Cell().uint(11, 32).uint(pqtest.key_id(pqtest.public_key(key)), 256))
+
+        self.assertExit(add(3), 0)
+        self.assertExit(add(3), "duplicate_verifier")
+        self.assertExit(remove(0), 0)
+        self.assertExit(remove(0), "unknown_signer")
+        self.assertExit(remove(1), 0)
+        self.assertEqual((h.state()["count"], h.state()["quorum"]), (2, 2))
+        # the set may not drop below the quorum
+        self.assertExit(remove(2), "invalid_config")
+        # nor grow past the bound
+        full = self.configured(range(MAX_VERIFIERS), 1)
+        self.assertExit(
+            full.send(Cell().uint(10, 32).ref(pqtest.stored(pqtest.public_key(200)))),
+            "invalid_config",
+        )
+
+    def test_approved_rotation_fits_one_transaction(self):
+        # The largest quorum approves replacing one key of a full set in one transaction.
+        h = self.configured(range(MAX_VERIFIERS), MAX_QUORUM)
+        message = hash_bytes(32)
+        signers = list(range(MAX_QUORUM))
+        body = (
+            Cell()
+            .uint(12, 32)
+            .uint(int.from_bytes(message, "big"), 256)
+            .maybe(signatures([(k, k) for k in signers], message))
+            .ref(pqtest.stored(pqtest.public_key(200)))
+            .uint(pqtest.key_id(pqtest.public_key(63)), 256)
+        )
+        d = h.send(body)
+        self.assertExit(d, 0)
+        self.assertEqual(h.state()["count"], MAX_VERIFIERS)
+        REPORT["approved_rotation_gas"] = d["gas"]
+
+    def test_configuring_a_full_set_costs(self):
+        h = Harness()
+        d = h.configure(range(MAX_VERIFIERS), 1)
+        self.assertExit(d, 0)
+        REPORT["config_64_gas"] = d["gas"]
+
+    def test_malformed_keys_refused(self):
+        key = pqtest.public_key(5)
+        cases = [
+            (Cell().uint(len(key) - 1, 32).ref(pqtest.chain(key[:-1])), "pq_key_length"),
+            (Cell().uint(len(key), 32).ref(pqtest.chain(key[:-1])), "pq_malformed_key"),
+            (
+                Cell().uint(len(key), 32).ref(Cell().raw(key[:100]).ref(pqtest.chain(key[100:]))),
+                "pq_malformed_key",
+            ),
+            (Cell().uint(len(key), 32).ref(pqtest.chain(key)).ref(Cell()), 9),
+        ]
+        for stored, error in cases:
+            h = Harness()
+            self.assertExit(h.send(Cell().uint(2, 32).ref(stored)), error)
+            entry = make_dict({pqtest.key_id(key): Cell().ref(stored)}, 256)
+            self.assertExit(h.send(Cell().uint(1, 32).maybe(entry).uint(1, 8)), error)
 
     def test_version_15_cannot_verify(self):
         # Key ids derive with an instruction older than 16; verification exists only from 16.
@@ -348,8 +463,4 @@ class PqQuorumTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    result = unittest.main(argv=[sys.argv[0]] + REST, exit=False, verbosity=2).result
-    if ARGS.report:
-        Path(ARGS.report).write_text(json.dumps(REPORT, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(REPORT, sort_keys=True))
-    sys.exit(0 if result.wasSuccessful() else 1)
+    sys.exit(pqtest.run(REPORT, [sys.argv[0]] + REST, ARGS.results, ARGS.report))

@@ -4,22 +4,38 @@
 ;; counterpart of quorum-signatures.fc, whose Ed25519 signatures a quantum adversary could
 ;; forge from the public keys that set keeps on chain.
 ;;
-;; Requires TVM version 16: PQCHECKSIG_MLDSA44 verifies, and pq-bytes.fc's SHA256C derives
-;; key identities. Assemble with PQ.fif loaded. On a chain configured below 16 every
-;; verification throws invalid opcode, so nothing here can authorize anything there.
+;; Requires TVM version 16, for PQCHECKSIG_MLDSA44. Assemble with PQ.fif loaded. On a
+;; chain configured below 16 every verification throws invalid opcode, so nothing here can
+;; authorize anything there.
 ;;
 ;; A verifier is identified by its key id, pq::key_id over the stored key -- the identity a
-;; post-quantum key has in every role -- and the set maps each id to the key it names. A
-;; dictionary built by a caller is never trusted: config() and with_verifiers() derive the
-;; id of every key and refuse an entry filed under any other id, since one key filed twice
-;; would otherwise count twice toward the quorum.
+;; post-quantum key has in every role -- and the set maps each id to the key it names.
+;;
+;; Trusted configuration. require_quorum trusts its config: the verifier dictionary and the
+;; count must be ones config(), with_verifiers(), with_added_verifier() or
+;; with_removed_verifier() produced, persisted unchanged by the calling contract. Those
+;; entry points derive every key's id and refuse an entry filed under any other id. The
+;; native verifier cannot do that check, since it sees key bytes and never ids: a set that
+;; bypassed them, with one key filed under two ids, satisfies a 2-of-2 with that one key.
+;; require_quorum repeats only the cheap range checks on count and quorum.
+;;
+;; Costs, measured on the C++ executor (test/pq-contracts):
+;;   - a request: about 61,500 gas per signature; 12-of-64 about 746,000 gas;
+;;   - config() and with_verifiers(): about 13,300 gas per key, since every key is walked
+;;     and hashed; a 64-key set about 850,000 gas.
+;; A full replacement of a large set therefore does not fit in the same transaction as the
+;; quorum approving it. with_added_verifier and with_removed_verifier change one key for
+;; about one key's cost, so an approved rotation can proceed a few keys at a time.
 ;;
 ;; A request carries exactly `quorum` signatures, keyed by signer id, so signers are distinct
-;; by construction. Exactly, not at least: every signature costs some 57,000 gas to verify,
-;; and a submitter must not be able to make the contract verify more than the quorum needs.
-;; The checks run cheapest first -- the count, stopping at the first entry past the quorum;
-;; then every entry's membership and shape; and only then the verifications -- and any
-;; failure rejects the whole request.
+;; by construction. Exactly, not at least: a submitter must not be able to make the contract
+;; verify more signatures than the quorum needs. The checks run cheapest first -- the
+;; config's range; the count, stopping at the first entry past the quorum; every entry's
+;; membership and signature wrapper; and only then the verifications -- and any failure
+;; rejects the whole request. The signature chain itself is checked by the verifier, which
+;; refuses a non-canonical chain, a wrong length or a special cell with cell underflow (9).
+;; Who pays for a request that fails late is the calling contract's funding model: in one
+;; without ACCEPT, the submitter's message value buys every unit of gas spent.
 ;;
 ;; Sign the hash pq_quorum::signing_hash builds, as ML-DSA-44 over its 32 bytes with the
 ;; context "TOS-PQ-QUORUM-v1". The verifying contract must also call
@@ -45,7 +61,7 @@ const int pq_quorum::error::key_id_mismatch = 0x1b09;
 const int pq_quorum::key_bits = 256;
 ;; Upper bounds on the verifier set and on the signatures one request is verified against.
 ;; The quorum bound keeps a full verification, with room for the calling contract, inside
-;; one transaction's gas; pq-quorum fixtures measure it against the configured limit.
+;; one transaction's gas.
 const int pq_quorum::max_verifiers = 64;
 const int pq_quorum::max_quorum = 12;
 
@@ -79,8 +95,8 @@ cell pq_quorum::entry_key(slice entry) impure inline {
   return entry.preload_ref();
 }
 
-;; Adds a stored key (pq-bytes.fc's `len:uint32 ^chain`) under its own id, refusing a
-;; duplicate. A malformed key throws pq-bytes.fc's own codes (61 to 63).
+;; Adds a stored key (pq-bytes.fc's `len:uint32 ^chain`) to a verifier dictionary under its
+;; own id, refusing a duplicate. A malformed key throws pq-bytes.fc's own codes (61 to 63).
 cell pq_quorum::add_verifier(cell verifiers, cell stored_key) impure inline {
   int id = pq::key_id(pq::algorithm::mldsa44, stored_key);
   (cell next, int added) = verifiers.udict_add_builder?(pq_quorum::key_bits, id, begin_cell().store_ref(stored_key));
@@ -95,8 +111,7 @@ cell pq_quorum::add_verifier(cell verifiers, cell stored_key) impure inline {
 }
 
 ;; Builds a config from a verifier dictionary, checking every entry: its shape, its key, and
-;; that it is filed under that key's id. Proportional to the set, so it belongs where the
-;; configuration changes, never in the per-request path.
+;; that it is filed under that key's id. About 13,300 gas per key.
 [cell, int, int] pq_quorum::config(cell verifiers, int quorum) impure inline {
   int count = 0;
   (int id, slice entry, int found) = verifiers.udict_get_min?(pq_quorum::key_bits);
@@ -111,12 +126,29 @@ cell pq_quorum::add_verifier(cell verifiers, cell stored_key) impure inline {
   return [verifiers, count, quorum];
 }
 
-;; Replaces the verifier set, keeping the quorum. A set smaller than the current quorum is
-;; rejected: it would leave no way to reach the quorum, and with it no way to authorize any
-;; later change.
+;; Replaces the verifier set, keeping the quorum, at config()'s cost. A set smaller than the
+;; current quorum is rejected: it would leave no way to reach the quorum, and with it no way
+;; to authorize any later change.
 [cell, int, int] pq_quorum::with_verifiers([cell, int, int] config, cell new_verifiers) impure inline {
   [_, _, int quorum] = config;
   return pq_quorum::config(new_verifiers, quorum);
+}
+
+;; Adds one key to a config, keeping the quorum: one key's cost.
+[cell, int, int] pq_quorum::with_added_verifier([cell, int, int] config, cell stored_key) impure inline {
+  [cell verifiers, int count, int quorum] = config;
+  cell next = pq_quorum::add_verifier(verifiers, stored_key);
+  pq_quorum::require_valid_config(count + 1, quorum);
+  return [next, count + 1, quorum];
+}
+
+;; Removes one key from a config, keeping the quorum, which the smaller set must still reach.
+[cell, int, int] pq_quorum::with_removed_verifier([cell, int, int] config, int key_id) impure inline {
+  [cell verifiers, int count, int quorum] = config;
+  int removed = verifiers~udict_delete?(pq_quorum::key_bits, key_id);
+  throw_unless(pq_quorum::error::unknown_signer, removed);
+  pq_quorum::require_valid_config(count - 1, quorum);
+  return [verifiers, count - 1, quorum];
 }
 
 ;; Replaces the quorum, keeping the verifier set.
@@ -135,9 +167,8 @@ int pq_quorum::verifier?([cell, int, int] config, int key_id) inline {
 ;; The signature chain an entry of a request carries: exactly one reference to a stored
 ;; signature (`len:uint32 ^chain`) declaring the ML-DSA-44 length. The chain itself is not
 ;; walked here: PQCHECKSIG_MLDSA44 refuses a non-canonical chain, a wrong length or a special
-;; cell itself (cell underflow, 9). Walking it in advance only made a malformed request
-;; cheaper to refuse -- gas its own submitter pays -- at about 20,000 gas per signature of
-;; every valid one.
+;; cell (cell underflow, 9). Walking it in advance cost about 20,000 gas per signature of
+;; every valid request, only to refuse a malformed one sooner.
 cell pq_quorum::entry_signature(slice entry) impure inline {
   throw_unless(pq_quorum::error::malformed_signature, (entry.slice_bits() == 0) & (entry.slice_refs() == 1));
   slice stored = entry.preload_ref().pq::parse_ordinary();
@@ -147,9 +178,8 @@ cell pq_quorum::entry_signature(slice entry) impure inline {
   return stored.preload_ref();
 }
 
-;; The key chain the set holds for a signer. Keys are checked when they enter a config, so
-;; the chain is taken as it is; a config that skipped that check can still authorize
-;; nothing, because the verifier refuses a malformed key.
+;; The key chain a trusted config holds for a signer, taken as stored: keys are checked when
+;; they enter a config.
 cell pq_quorum::signer_key([cell, int, int] config, int key_id) impure inline {
   [cell verifiers, _, _] = config;
   (slice entry, int found) = verifiers.udict_get?(pq_quorum::key_bits, key_id);
@@ -158,9 +188,10 @@ cell pq_quorum::signer_key([cell, int, int] config, int key_id) impure inline {
 }
 
 ;; Throws unless `signatures` (signer key id -> ^StoredSignature of `hash`) holds exactly
-;; `quorum` signatures, each by a distinct member of the set, each valid.
+;; `quorum` signatures, each by a distinct member of the trusted config's set, each valid.
 () pq_quorum::require_quorum([cell, int, int] config, int hash, cell signatures) impure inline {
-  [_, _, int quorum] = config;
+  [_, int verifier_count, int quorum] = config;
+  pq_quorum::require_valid_config(verifier_count, quorum);
 
   ;; The count, stopping at the first entry past the quorum.
   int count = 0;

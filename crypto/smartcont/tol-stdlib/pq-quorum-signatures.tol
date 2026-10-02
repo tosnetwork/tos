@@ -11,18 +11,33 @@
 // A verifier is identified by its key id: SHA-256 over
 // "TOS-PQ-CONSENSUS-KEY-v1", the algorithm as two little-endian bytes and the
 // key bytes -- the identity a post-quantum key has in every role (pq-bytes.fc's
-// pq::key_id). The set maps each id to the key it names. A dictionary built by
-// a caller is never trusted: pqQuorumConfigNew and withVerifiers derive the id
-// of every key and refuse an entry filed under any other id, since one key
-// filed twice would otherwise count twice toward the quorum.
+// pq::key_id). The set maps each id to the key it names.
+//
+// Trusted configuration. requireQuorum trusts its config: the verifier
+// dictionary and the count must be ones pqQuorumConfigNew, withVerifiers,
+// withAddedVerifier or withRemovedVerifier produced, persisted unchanged by the
+// calling contract. Those derive every key's id and refuse an entry filed under
+// any other id. The native verifier cannot do that check, since it sees key
+// bytes and never ids: a set that bypassed them, with one key filed under two
+// ids, satisfies a 2-of-2 with that one key. requireQuorum repeats only the
+// cheap range checks on count and quorum.
+//
+// Costs, measured on the C++ executor (test/pq-contracts): a request about
+// 61,500 gas per signature (12-of-64 about 746,000); pqQuorumConfigNew and
+// withVerifiers about 13,300 gas per key (64 keys about 850,000). A full
+// replacement of a large set does not fit in the transaction whose quorum
+// approves it; withAddedVerifier and withRemovedVerifier change one key for
+// about one key's cost.
 //
 // A request carries exactly `quorum` signatures, keyed by signer id, so
-// signers are distinct by construction. Exactly, not at least: every signature
-// costs some 60,000 gas to verify, and a submitter must not be able to make the
-// contract verify more than the quorum needs. The checks run cheapest first --
-// the count, stopping at the first entry past the quorum; then every entry's
-// membership and wrapper; and only then the verifications -- and any failure
-// rejects the whole request.
+// signers are distinct by construction. Exactly, not at least: a submitter
+// must not be able to make the contract verify more signatures than the quorum
+// needs. The checks run cheapest first -- the config's range; the count,
+// stopping at the first entry past the quorum; every entry's membership and
+// signature wrapper; and only then the verifications -- and any failure
+// rejects the whole request. The signature chain itself is checked by the
+// verifier (cell underflow, 9). Who pays for a request that fails late is the
+// calling contract's funding model.
 //
 // Sign the hash pqQuorumSigningHash builds, as ML-DSA-44 over its 32 bytes with
 // the context "TOS-PQ-QUORUM-v1". The verifying contract must also call
@@ -225,6 +240,24 @@ fun PqQuorumConfig.withVerifiers(self, newVerifiers: dict): PqQuorumConfig {
     return pqQuorumConfigNew(newVerifiers, self.quorum);
 }
 
+/// Adds one key to a config, keeping the quorum: one key's cost.
+fun PqQuorumConfig.withAddedVerifier(self, storedKey: cell): PqQuorumConfig {
+    val next = pqQuorumAddVerifier(self.verifiers, storedKey);
+    pqQuorumRequireValidConfig(self.verifierCount + 1, self.quorum);
+    return PqQuorumConfig { verifiers: next, verifierCount: self.verifierCount + 1, quorum: self.quorum };
+}
+
+/// Removes one key from a config, keeping the quorum, which the smaller set
+/// must still reach.
+fun PqQuorumConfig.withRemovedVerifier(self, keyId: int): PqQuorumConfig {
+    var next = self.verifiers;
+    if (!next.uDictDelete(PQ_QUORUM_KEY_BITS, keyId)) {
+        throw PQ_QUORUM_THROW_UNKNOWN_SIGNER;
+    }
+    pqQuorumRequireValidConfig(self.verifierCount - 1, self.quorum);
+    return PqQuorumConfig { verifiers: next, verifierCount: self.verifierCount - 1, quorum: self.quorum };
+}
+
 /// Replaces the quorum, keeping the verifier set.
 fun PqQuorumConfig.withQuorum(self, quorum: int): PqQuorumConfig {
     pqQuorumRequireValidConfig(self.verifierCount, quorum);
@@ -254,9 +287,8 @@ fun pqQuorumEntrySignature(entry: slice): cell {
     return stored.preloadRef();
 }
 
-/// The key chain the set holds for a signer. Keys are checked when they enter
-/// a config; a config that skipped that check can still authorize nothing,
-/// because the verifier refuses a malformed key.
+/// The key chain a trusted config holds for a signer, taken as stored: keys
+/// are checked when they enter a config.
 fun PqQuorumConfig.signerKey(self, keyId: int): cell {
     val (entry, found) = self.verifiers.uDictGet(PQ_QUORUM_KEY_BITS, keyId);
     if (!found) {
@@ -266,9 +298,11 @@ fun PqQuorumConfig.signerKey(self, keyId: int): cell {
 }
 
 /// Throws unless `signatures` (signer key id -> ^StoredSignature of `hash`)
-/// holds exactly `quorum` signatures, each by a distinct member of the set,
-/// each valid.
+/// holds exactly `quorum` signatures, each by a distinct member of the trusted
+/// config's set, each valid.
 fun PqQuorumConfig.requireQuorum(self, hash: int, signatures: dict): void {
+    pqQuorumRequireValidConfig(self.verifierCount, self.quorum);
+
     // The count, stopping at the first entry past the quorum.
     var count = 0;
     var (id, entry, found) = signatures.uDictGetFirst(PQ_QUORUM_KEY_BITS);

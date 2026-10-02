@@ -50,6 +50,26 @@ fun onInternalMessage(in: InMessage) {
     } else if (op == 6) {
         val c = config.withVerifiers(body.loadDict());
         saveState(c.verifiers, c.verifierCount, c.quorum, checks, lastHash);
+    } else if (op == 8) {
+        val v = body.loadDict();
+        val c = body.loadUint(8);
+        saveState(v, c, body.loadUint(8), checks, lastHash);
+    } else if (op == 9) {
+        saveState(verifiers, count, quorum, checks, config.isVerifier(body.loadUint(256)) ? 1 : 0);
+    } else if (op == 10) {
+        val c = config.withAddedVerifier(body.loadRef());
+        saveState(c.verifiers, c.verifierCount, c.quorum, checks, lastHash);
+    } else if (op == 11) {
+        val c = config.withRemovedVerifier(body.loadUint(256));
+        saveState(c.verifiers, c.verifierCount, c.quorum, checks, lastHash);
+    } else if (op == 12) {
+        val hash = body.loadUint(256);
+        config.requireQuorum(hash, body.loadDict());
+        val incoming = body.loadRef();
+        // remove first, so a full set has room for the key that replaces it
+        val removed = config.withRemovedVerifier(body.loadUint(256));
+        val c = removed.withAddedVerifier(incoming);
+        saveState(c.verifiers, c.verifierCount, c.quorum, checks + 1, lastHash);
     } else if (op == 7) {
         pqQuorumRequireNotExpired(body.loadUint(32));
         saveState(verifiers, count, quorum, checks + 1, lastHash);
