@@ -49,24 +49,39 @@ jobs:
           python3 tools/node-health-monitor/tests/native-typed-mutations.py
       - name: Compile and remove native protections
         run: python3 tools/node-health-monitor/tests/native-mutations.py
+  # No job time limit: the result must come from the tests, never from whether a build
+  # finished before a deadline. The build uses every core and a compiler cache instead;
+  # GitHub's default limit remains only as protection against a hung runner.
   native:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build autoconf automake libtool pkg-config libgflags-dev libreadline-dev libgsl-dev libjemalloc-dev
+          sudo apt-get install -y build-essential cmake ninja-build autoconf automake libtool pkg-config libgflags-dev libreadline-dev libgsl-dev libjemalloc-dev ccache
           wget -q https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21
       - run: python3 -m pip install jsonschema
+      - name: Date stamp
+        id: date-stamp
+        run: |
+          echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+      - name: Restore compiler cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-${{ runner.arch }}-node-health-native-ccache-${{ steps.date-stamp.outputs.timestamp }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-node-health-native-ccache
       - name: Build affected native boundaries
         run: |
+          ccache -M 2G
           cmake -S . -B build-health -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SKIP_INSTALL_RULES=ON
-          cmake --build build-health --target test-http-server-limits test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j2
+          cmake --build build-health --target test-http-server-limits test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j"$(nproc)"
+          ccache -s
       - name: Run native behavior tests
         run: |
           python3 tools/node-health-monitor/tests/native-snapshot-http.py build-health/test-health-native-snapshot
