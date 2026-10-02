@@ -94,10 +94,10 @@ Two implementations of similar mechanisms were studied while designing these
 modules. Their code was deliberately not copied, because neither can be
 included in TOS:
 
-- The LayerZero TON endpoint, licensed under the LayerZero Business License
-  1.2. It permits only non-production use before its change date, and its
-  restrictions extend to derivative works.
-- `ton-blockchain/multisig-contract-v2`, which publishes no license.
+- A cross-chain messaging endpoint under a source-available business
+  license. It permits only non-production use before its change date, and
+  its restrictions extend to derivative works.
+- A per-proposal multisig implementation that publishes no license.
 
 Published security reviews of those implementations were used only to pick
 the failure cases these modules must reject. The tests cover each such case:
