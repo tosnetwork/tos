@@ -1321,6 +1321,13 @@ if (NOT NIX)
           "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     endif()
 
+    # The multisig deployment script: signer order, refused inputs, and the wallet's own
+    # check of the state it builds.
+    add_test(
+      NAME test-new-multisig-wallet
+      COMMAND ${PYTHON_VER} ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/tests/test-new-multisig-wallet.py
+              $<TARGET_FILE:fift> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+
     add_test(
       NAME test-func-legacy
       COMMAND ${PYTHON_VER} legacy_tester.py

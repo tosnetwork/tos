@@ -23,8 +23,9 @@
 ;;
 ;; Each signer is one vote. A signer set lists distinct plain addresses in increasing order
 ;; by index (multisig_order::next_signer_key), and every update is checked against that.
-;; The set a wallet is deployed with is the deployer's input, which no code runs on; check
-;; it with get_checked_signer_count before deploying or joining a wallet. (Checking the
+;; The set a wallet is deployed with is the deployer's input, which no code runs on:
+;; new-multisig-wallet.fif builds it in the required order and checks it with
+;; get_checked_signer_count, which anyone joining a wallet can also call. (Checking the
 ;; current set on every proposal instead would cost about 1,500 gas per signer each time.)
 ;;
 ;; The cost a proposal must cover grows with its number of actions and with the size of
