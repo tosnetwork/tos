@@ -17,9 +17,26 @@
 // [multisigOrderRequireExecute] checks all four. Orders also refuse approvals
 // after expiry, so an expired order can never fire. Expiry is always judged
 // against `blockchain.now()`, never a time supplied by a message.
+//
+// Proposals may come from a signer or from a separate proposer set: proposers
+// can open orders but never approve them ([multisigOrderRequireProposer]).
+//
+// Whoever opens an order prepays everything the order needs to reach
+// execution, so it cannot be stranded half-way for lack of funds:
+//   1. the parent's compute phase handling the proposal,
+//   2. forwarding the init message (with the action and the signer set),
+//   3. the order's initialisation,
+//   4. the order's storage for its whole lifetime,
+//   5. the order's compute phase on the approval that fires it,
+//   6. forwarding the execute message back (with the action),
+//   7. the parent's compute phase executing it.
+// Gas units and fixed message/state overheads are measured per build in a
+// [MultisigOrderFeeProfile]; the action and signer sizes are counted at run
+// time and every component is priced from the live fee configuration.
 tol 1.3
 
 import "@stdlib/tvm-dicts"
+import "@stdlib/gas-payments"
 
 const MULTISIG_ORDER_THROW_INVALID_CONFIG = 0x1a01
 const MULTISIG_ORDER_THROW_INVALID_SEQNO = 0x1a02
@@ -30,6 +47,10 @@ const MULTISIG_ORDER_THROW_EXPIRED = 0x1a06
 const MULTISIG_ORDER_THROW_UNAUTHORIZED_EXECUTE = 0x1a07
 const MULTISIG_ORDER_THROW_STALE_SIGNERS = 0x1a08
 const MULTISIG_ORDER_THROW_INSUFFICIENT_APPROVALS = 0x1a09
+const MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER = 0x1a0a
+const MULTISIG_ORDER_THROW_INVALID_PROFILE = 0x1a0b
+const MULTISIG_ORDER_THROW_ORDER_TOO_LARGE = 0x1a0c
+const MULTISIG_ORDER_THROW_INSUFFICIENT_VALUE = 0x1a0d
 
 const MULTISIG_ORDER_OP_INIT: uint32 = 0x16b7a4fb
 const MULTISIG_ORDER_OP_APPROVE: uint32 = 0x9c205aee
@@ -40,6 +61,10 @@ const MULTISIG_ORDER_SIGNER_INDEX_BITS = 8
 const MULTISIG_ORDER_MAX_SIGNERS = 255
 /// Pass as the requested seqno to take the parent's next one.
 const MULTISIG_ORDER_NEXT_SEQNO = 0xffffffffffffffff
+/// Size limits for the run-time size count. A full 255-signer dictionary has
+/// at most 509 cells.
+const MULTISIG_ORDER_MAX_SIGNER_CELLS = 512
+const MULTISIG_ORDER_MAX_ACTION_CELLS = 1024
 
 struct MultisigOrder {
     parent: address
@@ -244,5 +269,137 @@ fun multisigOrderRequireExecute(
     }
     if (blockchain.now() > execute.expiresAt) {
         throw MULTISIG_ORDER_THROW_EXPIRED;
+    }
+}
+
+/// Number of proposers; an empty (null) set is allowed.
+fun multisigOrderProposerCount(proposers: dict): int {
+    var count = 0;
+    var (index, _, found) = proposers.uDictGetFirst(MULTISIG_ORDER_SIGNER_INDEX_BITS);
+    while (found) {
+        count += 1;
+        if (count > MULTISIG_ORDER_MAX_SIGNERS) {
+            throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+        }
+        (index, _, found) = proposers.uDictGetNext(MULTISIG_ORDER_SIGNER_INDEX_BITS, index!);
+    }
+    return count;
+}
+
+/// Accepts a proposal only from the signer (`isSigner`) or the proposer at
+/// `index`, and only if that entry is `sender`.
+fun multisigOrderRequireProposer(signers: cell, proposers: dict, isSigner: bool, index: int, sender: address): void {
+    if (index < 0 || index > MULTISIG_ORDER_MAX_SIGNERS) {
+        throw MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER;
+    }
+    val set: dict = isSigner ? signers : proposers;
+    val (expected, found) = set.uDictGet(MULTISIG_ORDER_SIGNER_INDEX_BITS, index);
+    if (!found || !expected!.bitsEqual(sender as slice)) {
+        throw MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER;
+    }
+}
+
+/// Measured, configuration-independent cost inputs of one parent/order build.
+/// Overheads exclude the action and the signer set, which are sized at run
+/// time. Re-measure whenever either contract changes.
+struct MultisigOrderFeeProfile {
+    parentNewOrderGas: uint32
+    orderInitGas: uint32
+    orderExecuteGas: uint32
+    parentExecuteGas: uint32
+    initMessageBits: uint32
+    initMessageCells: uint32
+    orderStateBits: uint32
+    orderStateCells: uint32
+    executeMessageBits: uint32
+    executeMessageCells: uint32
+}
+
+fun MultisigOrderFeeProfile.requireValid(self): void {
+    if (
+        self.parentNewOrderGas == 0 ||
+        self.orderInitGas == 0 ||
+        self.orderExecuteGas == 0 ||
+        self.parentExecuteGas == 0 ||
+        self.initMessageBits == 0 ||
+        self.initMessageCells == 0 ||
+        self.orderStateBits == 0 ||
+        self.orderStateCells == 0 ||
+        self.executeMessageBits == 0 ||
+        self.executeMessageCells == 0
+    ) {
+        throw MULTISIG_ORDER_THROW_INVALID_PROFILE;
+    }
+}
+
+/// The seven-component cost for an order whose action and signer set have
+/// the given sizes, living `lifetimeSeconds`. `extraParentGas` is gas the
+/// parent spends beyond the profile, such as counting those sizes.
+fun MultisigOrderFeeProfile.requiredValueForSizes(
+    self,
+    actionBits: int,
+    actionCells: int,
+    signerBits: int,
+    signerCells: int,
+    lifetimeSeconds: int,
+    extraParentGas: int
+): coins {
+    self.requireValid();
+    if (lifetimeSeconds <= 0) {
+        throw MULTISIG_ORDER_THROW_EXPIRED;
+    }
+    val compute = calculateGasFee(BASECHAIN, self.parentNewOrderGas + extraParentGas)
+        + calculateGasFee(BASECHAIN, self.orderInitGas)
+        + calculateGasFee(BASECHAIN, self.orderExecuteGas)
+        + calculateGasFee(BASECHAIN, self.parentExecuteGas);
+    val forward = calculateForwardFee(
+            BASECHAIN,
+            self.initMessageBits + actionBits + signerBits,
+            self.initMessageCells + actionCells + signerCells
+        )
+        + calculateForwardFee(
+            BASECHAIN,
+            self.executeMessageBits + actionBits,
+            self.executeMessageCells + actionCells
+        );
+    val storage = calculateStorageFee(
+        BASECHAIN,
+        lifetimeSeconds,
+        self.orderStateBits + actionBits + signerBits,
+        self.orderStateCells + actionCells + signerCells
+    );
+    return compute + forward + storage;
+}
+
+/// Value a proposal must carry for `action` under `signers`, living
+/// `lifetimeSeconds`. Counts both sizes now and adds the gas the count took.
+fun MultisigOrderFeeProfile.requiredNewOrderValue(self, signers: cell, action: cell, lifetimeSeconds: int): coins {
+    val before = getGasConsumedAtTheMoment();
+    val (actionCells, actionBits, _, actionOk) = action.calculateSize(MULTISIG_ORDER_MAX_ACTION_CELLS);
+    val (signerCells, signerBits, _, signerOk) = signers.calculateSize(MULTISIG_ORDER_MAX_SIGNER_CELLS);
+    val countingGas = getGasConsumedAtTheMoment() - before;
+    if (!actionOk || !signerOk) {
+        throw MULTISIG_ORDER_THROW_ORDER_TOO_LARGE;
+    }
+    return self.requiredValueForSizes(
+        actionBits!,
+        actionCells!,
+        signerBits!,
+        signerCells!,
+        lifetimeSeconds,
+        countingGas
+    );
+}
+
+/// Throws unless `msgValue` covers [MultisigOrderFeeProfile.requiredNewOrderValue].
+fun MultisigOrderFeeProfile.requireNewOrderValue(
+    self,
+    msgValue: coins,
+    signers: cell,
+    action: cell,
+    lifetimeSeconds: int
+): void {
+    if (msgValue < self.requiredNewOrderValue(signers, action, lifetimeSeconds)) {
+        throw MULTISIG_ORDER_THROW_INSUFFICIENT_VALUE;
     }
 }

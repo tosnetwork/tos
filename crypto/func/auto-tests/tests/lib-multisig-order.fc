@@ -198,6 +198,153 @@ int test_layout_matches_tol() method_id(109) {
   return multisig_order::pack(o).cell_hash();
 }
 
+slice dave() { return std_addr(0x5555555555555555555555555555555555555555555555555555555555555555); }
+
+cell proposers() {
+  cell d = new_dict();
+  d~udict_set(multisig_order::signer_index_bits, 0, dave());
+  return d;
+}
+
+int test_proposer_authorization() method_id(110) {
+  multisig_order::require_proposer(signers(), proposers(), true, 1, bob());
+  multisig_order::require_proposer(signers(), proposers(), false, 0, dave());
+  int rejected = 0;
+  ;; a proposer is not a signer, and a signer is not a proposer
+  try { multisig_order::require_proposer(signers(), proposers(), true, 0, dave()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 181); rejected += 1; }
+  try { multisig_order::require_proposer(signers(), proposers(), false, 0, alice()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 182); rejected += 1; }
+  try { multisig_order::require_proposer(signers(), proposers(), false, 1, bob()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 183); rejected += 1; }
+  try { multisig_order::require_proposer(signers(), null(), false, 0, dave()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 184); rejected += 1; }
+  try { multisig_order::require_proposer(signers(), proposers(), true, 256, bob()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 185); rejected += 1; }
+  throw_unless(186, rejected == 5);
+  throw_unless(187, multisig_order::proposer_count(null()) == 0);
+  throw_unless(188, multisig_order::proposer_count(proposers()) == 1);
+  cell many = new_dict();
+  int i = 0;
+  while (i < 256) {
+    many~udict_set(multisig_order::signer_index_bits, i, dave());
+    i += 1;
+  }
+  int thrown = false;
+  try { multisig_order::proposer_count(many); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 189); thrown = true; }
+  throw_unless(190, thrown);
+  return 10;
+}
+
+;; Same synthetic fee configuration as the jetton-fees suite:
+;;   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
+;;   forward fee(b, c)   = 400000 + b + 100 * c
+;;   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)
+() install_fee_config() impure {
+  slice storage = begin_cell().store_uint(0xcc, 8).store_uint(0, 32)
+    .store_uint(65536, 64).store_uint(65536 * 500, 64)
+    .store_uint(65536 * 2, 64).store_uint(65536 * 1000, 64).end_cell().begin_parse();
+  slice gas = begin_cell().store_uint(0xd1, 8).store_uint(100, 64).store_uint(100000, 64)
+    .store_uint(0xde, 8).store_uint(65536 * 1000, 64).store_uint(1000000, 64).store_uint(1000000, 64)
+    .store_uint(10000, 64).store_uint(10000000, 64).store_uint(100000000, 64).store_uint(1000000000, 64)
+    .end_cell().begin_parse();
+  slice msg = begin_cell().store_uint(0xea, 8).store_uint(400000, 64).store_uint(65536, 64)
+    .store_uint(65536 * 100, 64).store_uint(98304, 32).store_uint(21845, 16).store_uint(21845, 16)
+    .end_cell().begin_parse();
+  tuple unpacked = empty_tuple();
+  unpacked~tpush(storage);
+  unpacked~tpush(null());
+  unpacked~tpush(gas);
+  unpacked~tpush(gas);
+  unpacked~tpush(msg);
+  unpacked~tpush(msg);
+  unpacked~tpush(null());
+  tuple params = empty_tuple();
+  int i = 0;
+  while (i < 17) {
+    if (i == 3) {
+      params~tpush(1000);
+    } elseif (i == 14) {
+      params~tpush(unpacked);
+    } else {
+      params~tpush(null());
+    }
+    i += 1;
+  }
+  tuple c7 = empty_tuple();
+  c7~tpush(params);
+  set_c7(c7);
+}
+
+tuple fee_profile() {
+  return multisig_order::fee_profile(5000, 4000, 6000, 7000, 1000, 5, 1500, 6, 600, 1);
+}
+
+int test_required_value_for_sizes() method_id(111) {
+  install_fee_config();
+  tuple p = fee_profile();
+  ;; compute 5000000 + 4000000 + 6000000 + 7000000
+  ;; forward (400000 + 1900 + 1200) + (400000 + 700 + 300)
+  ;; storage ((1500 + 100 + 800) + 500 * (6 + 2 + 5)) * 10
+  throw_unless(191, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 10, 0) == 22893100);
+  ;; gas the parent spends counting sizes is charged at the gas price
+  throw_unless(192, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 10, 300) == 23193100);
+  ;; a longer lifetime only adds storage: + 8900 per second
+  throw_unless(193, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 11, 0) == 22902000);
+  return 11;
+}
+
+int test_required_value_counts_real_cells() method_id(112) {
+  install_fee_config();
+  tuple p = fee_profile();
+  cell action = begin_cell().store_uint(0, 100).store_ref(begin_cell().end_cell()).end_cell();
+  (int s_cells, int s_bits, _, int ok) = multisig_order::data_size?(signers(), multisig_order::max_signer_cells);
+  throw_unless(201, ok);
+  int base = multisig_order::required_value_for_sizes(p, 100, 2, s_bits, s_cells, 10, 0);
+  int required = multisig_order::required_new_order_value(p, signers(), action, 10);
+  ;; the counting gas is real, positive, and priced at 1000 per gas unit
+  int extra = required - base;
+  throw_unless(202, extra > 0);
+  throw_unless(203, extra % 1000 == 0);
+  throw_unless(204, extra < 2000 * 1000);
+  return 12;
+}
+
+int test_new_order_value_boundary() method_id(113) {
+  install_fee_config();
+  tuple p = fee_profile();
+  cell action = begin_cell().store_uint(0, 100).store_ref(begin_cell().end_cell()).end_cell();
+  ;; Counting sizes walks the cells, and a cell's first load in a run costs more than a
+  ;; reload; count once first so the requirement and the checks below see the same cache.
+  ;; (On chain each transaction counts once, and a quote from a get-method, made on a fresh
+  ;; VM, is never below it.)
+  multisig_order::required_new_order_value(p, signers(), action, 10);
+  int required = multisig_order::required_new_order_value(p, signers(), action, 10);
+  multisig_order::require_new_order_value(p, required, signers(), action, 10);
+  int thrown = false;
+  try {
+    multisig_order::require_new_order_value(p, required - 1, signers(), action, 10);
+  } catch (_, code) {
+    expect_throw(code, multisig_order::error::insufficient_value, 211);
+    thrown = true;
+  }
+  throw_unless(212, thrown);
+  return 13;
+}
+
+int test_fee_profile_rejections() method_id(114) {
+  install_fee_config();
+  int rejected = 0;
+  tuple p = fee_profile().multisig_order::set_field(0, multisig_order::order_execute_gas);
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_profile, 221); rejected += 1; }
+  try { multisig_order::required_value_for_sizes(fee_profile(), 100, 2, 800, 5, 0, 0); } catch (_, code) { expect_throw(code, multisig_order::error::expired, 222); rejected += 1; }
+  ;; an action larger than the size limit
+  cell big = begin_cell().end_cell();
+  int i = 0;
+  while (i < multisig_order::max_action_cells) {
+    big = begin_cell().store_uint(i, 16).store_ref(big).end_cell();
+    i += 1;
+  }
+  try { multisig_order::required_new_order_value(fee_profile(), signers(), big, 10); } catch (_, code) { expect_throw(code, multisig_order::error::order_too_large, 223); rejected += 1; }
+  throw_unless(224, rejected == 3);
+  return 14;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -207,5 +354,10 @@ TESTCASE | 105 | | 5
 TESTCASE | 106 | | 6
 TESTCASE | 107 | | 7
 TESTCASE | 108 | | 8
+TESTCASE | 110 | | 10
+TESTCASE | 111 | | 11
+TESTCASE | 112 | | 12
+TESTCASE | 113 | | 13
+TESTCASE | 114 | | 14
 TESTCASE | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
 -}

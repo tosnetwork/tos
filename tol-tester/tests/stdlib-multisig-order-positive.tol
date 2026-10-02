@@ -197,6 +197,166 @@ fun test_layout_matches_func(): int {
     return o.toCell().hash();
 }
 
+fun dave(): address { return address("0:5555555555555555555555555555555555555555555555555555555555555555"); }
+
+fun proposers(): dict {
+    var d = createEmptyDict();
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 0, dave() as slice);
+    return d;
+}
+
+@method_id(110)
+fun test_proposer_authorization(): int {
+    multisigOrderRequireProposer(signers(), proposers(), true, 1, bob());
+    multisigOrderRequireProposer(signers(), proposers(), false, 0, dave());
+    var rejected = 0;
+    // a proposer is not a signer, and a signer is not a proposer
+    try { multisigOrderRequireProposer(signers(), proposers(), true, 0, dave()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 181); rejected += 1; }
+    try { multisigOrderRequireProposer(signers(), proposers(), false, 0, alice()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 182); rejected += 1; }
+    try { multisigOrderRequireProposer(signers(), proposers(), false, 1, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 183); rejected += 1; }
+    try { multisigOrderRequireProposer(signers(), null, false, 0, dave()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 184); rejected += 1; }
+    try { multisigOrderRequireProposer(signers(), proposers(), true, 256, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 185); rejected += 1; }
+    assert(rejected == 5) throw 186;
+    assert(multisigOrderProposerCount(null) == 0) throw 187;
+    assert(multisigOrderProposerCount(proposers()) == 1) throw 188;
+    var many = createEmptyDict();
+    var i = 0;
+    while (i < 256) {
+        many.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, i, dave() as slice);
+        i += 1;
+    }
+    var thrown = false;
+    try { multisigOrderProposerCount(many); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 189); thrown = true; }
+    assert(thrown) throw 190;
+    return 10;
+}
+
+// Same synthetic fee configuration as the jetton-fees suite:
+//   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
+//   forward fee(b, c)   = 400000 + b + 100 * c
+//   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)
+fun installFeeConfig(): void {
+    val storage = beginCell().storeUint(0xcc, 8).storeUint(0, 32)
+        .storeUint(65536, 64).storeUint(65536 * 500, 64)
+        .storeUint(65536 * 2, 64).storeUint(65536 * 1000, 64).endCell().beginParse();
+    val gas = beginCell().storeUint(0xd1, 8).storeUint(100, 64).storeUint(100000, 64)
+        .storeUint(0xde, 8).storeUint(65536 * 1000, 64).storeUint(1000000, 64).storeUint(1000000, 64)
+        .storeUint(10000, 64).storeUint(10000000, 64).storeUint(100000000, 64).storeUint(1000000000, 64)
+        .endCell().beginParse();
+    val msg = beginCell().storeUint(0xea, 8).storeUint(400000, 64).storeUint(65536, 64)
+        .storeUint(65536 * 100, 64).storeUint(98304, 32).storeUint(21845, 16).storeUint(21845, 16)
+        .endCell().beginParse();
+    var unpacked: array<unknown> = [];
+    unpacked.push(storage);
+    unpacked.push(null);
+    unpacked.push(gas);
+    unpacked.push(gas);
+    unpacked.push(msg);
+    unpacked.push(msg);
+    unpacked.push(null);
+    var params: array<unknown> = [];
+    var i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(1000, 3);
+    params.set(unpacked, 14);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
+fun feeProfile(): MultisigOrderFeeProfile {
+    return MultisigOrderFeeProfile {
+        parentNewOrderGas: 5000,
+        orderInitGas: 4000,
+        orderExecuteGas: 6000,
+        parentExecuteGas: 7000,
+        initMessageBits: 1000,
+        initMessageCells: 5,
+        orderStateBits: 1500,
+        orderStateCells: 6,
+        executeMessageBits: 600,
+        executeMessageCells: 1,
+    };
+}
+
+@method_id(111)
+fun test_required_value_for_sizes(): int {
+    installFeeConfig();
+    val p = feeProfile();
+    // compute 5000000 + 4000000 + 6000000 + 7000000
+    // forward (400000 + 1900 + 1200) + (400000 + 700 + 300)
+    // storage ((1500 + 100 + 800) + 500 * (6 + 2 + 5)) * 10
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 10, 0) == 22893100) throw 191;
+    // gas the parent spends counting sizes is charged at the gas price
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 10, 300) == 23193100) throw 192;
+    // a longer lifetime only adds storage: + 8900 per second
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 11, 0) == 22902000) throw 193;
+    return 11;
+}
+
+@method_id(112)
+fun test_required_value_counts_real_cells(): int {
+    installFeeConfig();
+    val p = feeProfile();
+    val action = beginCell().storeUint(0, 100).storeRef(beginCell().endCell()).endCell();
+    val (sCells, sBits, _, ok) = signers().calculateSize(MULTISIG_ORDER_MAX_SIGNER_CELLS);
+    assert(ok) throw 201;
+    val base = p.requiredValueForSizes(100, 2, sBits!, sCells!, 10, 0);
+    val required = p.requiredNewOrderValue(signers(), action, 10);
+    // the counting gas is real, positive, and priced at 1000 per gas unit
+    val extra = required - base;
+    assert(extra > 0) throw 202;
+    assert(extra % 1000 == 0) throw 203;
+    assert(extra < 2000 * 1000) throw 204;
+    return 12;
+}
+
+@method_id(113)
+fun test_new_order_value_boundary(): int {
+    installFeeConfig();
+    val p = feeProfile();
+    val action = beginCell().storeUint(0, 100).storeRef(beginCell().endCell()).endCell();
+    // Counting sizes walks the cells, and a cell's first load in a run costs
+    // more than a reload; count once first so the requirement and the checks
+    // below see the same cache. (On chain each transaction counts once, and a
+    // quote from a get-method, made on a fresh VM, is never below it.)
+    p.requiredNewOrderValue(signers(), action, 10);
+    val required = p.requiredNewOrderValue(signers(), action, 10);
+    p.requireNewOrderValue(required, signers(), action, 10);
+    var thrown = false;
+    try {
+        p.requireNewOrderValue(required - 1, signers(), action, 10);
+    } catch (code) {
+        expectThrow(code, MULTISIG_ORDER_THROW_INSUFFICIENT_VALUE, 211);
+        thrown = true;
+    }
+    assert(thrown) throw 212;
+    return 13;
+}
+
+@method_id(114)
+fun test_fee_profile_rejections(): int {
+    installFeeConfig();
+    var rejected = 0;
+    var p = feeProfile();
+    p.orderExecuteGas = 0;
+    try { p.requiredValueForSizes(100, 2, 800, 5, 10, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_PROFILE, 221); rejected += 1; }
+    try { feeProfile().requiredValueForSizes(100, 2, 800, 5, 0, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_EXPIRED, 222); rejected += 1; }
+    // an action larger than the size limit
+    var big = beginCell().endCell();
+    var i = 0;
+    while (i < MULTISIG_ORDER_MAX_ACTION_CELLS) {
+        big = beginCell().storeUint(i, 16).storeRef(big).endCell();
+        i += 1;
+    }
+    try { feeProfile().requiredNewOrderValue(signers(), big, 10); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_ORDER_TOO_LARGE, 223); rejected += 1; }
+    assert(rejected == 3) throw 224;
+    return 14;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -206,5 +366,10 @@ fun test_layout_matches_func(): int {
 @testcase | 106 | | 6
 @testcase | 107 | | 7
 @testcase | 108 | | 8
+@testcase | 110 | | 10
+@testcase | 111 | | 11
+@testcase | 112 | | 12
+@testcase | 113 | | 13
+@testcase | 114 | | 14
 @testcase | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
  */

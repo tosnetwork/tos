@@ -14,6 +14,12 @@
 ;; slot also stores the full nonce, and every read, write and delete compares it, so a nonce
 ;; one window apart can never read or overwrite another nonce's entry.
 ;;
+;; Fixed slots have the same interface and rules, stored as a complete 4-ary tree of depth 4
+;; (exactly window_width leaves) instead of a dictionary. Every operation walks and rebuilds
+;; the same four levels: the same instructions and the same number of cell loads whichever
+;; slot is used and however many are occupied, so its gas can be quoted before the call.
+;; Pending slots store only occupied slots and are cheaper when few are in use.
+;;
 ;; FunC counterpart of the Tol `@stdlib/ordered-delivery`: same rules, same throw codes. A
 ;; window is the pair [next_pending, completed] and packs like the Tol `NonceWindow`; pending
 ;; slots are a plain dictionary keyed by slot index.
@@ -150,4 +156,102 @@ int pending_slots::index(int nonce) inline {
   }
   (cell next, _) = slots.udict_delete?(ordered_delivery::slot_key_bits, slot);
   return (next, true);
+}
+
+const int fixed_slots::fanout = 4;
+;; 4^4 leaves == window_width, so every in-window nonce has its own leaf.
+const int fixed_slots::depth = 4;
+
+cell fixed_slots::ref_at(slice s, int index) asm "PLDREFVAR";
+
+cell fixed_slots::leaf(int occupied, int nonce, int status, cell payload) inline {
+  return begin_cell().store_int(occupied, 1).store_uint(nonce, 64).store_uint(status, 8).store_ref(payload).end_cell();
+}
+
+cell fixed_slots::empty_leaf() inline {
+  return fixed_slots::leaf(false, 0, 0, begin_cell().end_cell());
+}
+
+;; An empty set. Identical empty subtrees share one cell each per level, so storing it costs
+;; five distinct cells, not 341.
+cell fixed_slots::new() inline {
+  cell node = fixed_slots::empty_leaf();
+  repeat (fixed_slots::depth) {
+    node = begin_cell().store_ref(node).store_ref(node).store_ref(node).store_ref(node).end_cell();
+  }
+  return node;
+}
+
+;; Child index taken at `level` (0 = root) on the way to `slot`.
+int fixed_slots::digit(int slot, int level) inline {
+  return (slot >> (2 * (fixed_slots::depth - 1 - level))) & (fixed_slots::fanout - 1);
+}
+
+cell fixed_slots::replace_child(cell node, int index, cell child) inline {
+  slice s = node.begin_parse();
+  builder b = begin_cell();
+  int j = 0;
+  repeat (fixed_slots::fanout) {
+    b = b.store_ref(j == index ? child : fixed_slots::ref_at(s, j));
+    j += 1;
+  }
+  return b.end_cell();
+}
+
+cell fixed_slots::leaf_of(cell root, int slot) inline {
+  cell node = root;
+  int level = 0;
+  repeat (fixed_slots::depth) {
+    node = fixed_slots::ref_at(node.begin_parse(), fixed_slots::digit(slot, level));
+    level += 1;
+  }
+  return node;
+}
+
+;; Writes `leaf` at `slot`, rebuilding the four nodes on its path.
+cell fixed_slots::write_leaf(cell root, int slot, cell leaf) inline {
+  cell n1 = fixed_slots::ref_at(root.begin_parse(), fixed_slots::digit(slot, 0));
+  cell n2 = fixed_slots::ref_at(n1.begin_parse(), fixed_slots::digit(slot, 1));
+  cell n3 = fixed_slots::ref_at(n2.begin_parse(), fixed_slots::digit(slot, 2));
+  cell r3 = fixed_slots::replace_child(n3, fixed_slots::digit(slot, 3), leaf);
+  cell r2 = fixed_slots::replace_child(n2, fixed_slots::digit(slot, 2), r3);
+  cell r1 = fixed_slots::replace_child(n1, fixed_slots::digit(slot, 1), r2);
+  return fixed_slots::replace_child(root, fixed_slots::digit(slot, 0), r1);
+}
+
+;; Same contract as [pending_slots::get].
+(int, int, cell) fixed_slots::get(cell root, int nonce) impure inline {
+  ordered_delivery::require_nonce(nonce);
+  slice s = fixed_slots::leaf_of(root, pending_slots::index(nonce)).begin_parse();
+  int occupied = s~load_int(1);
+  int stored_nonce = s~load_uint(64);
+  int status = s~load_uint(8);
+  if ((~ occupied) | (stored_nonce != nonce)) {
+    return (false, 0, null());
+  }
+  return (true, status, s~load_ref());
+}
+
+;; Same contract as [~pending_slots::put].
+(cell, ()) ~fixed_slots::put(cell root, int nonce, int status, cell payload) impure inline {
+  ordered_delivery::require_nonce(nonce);
+  throw_unless(ordered_delivery::error::invalid_status, (status >= 0) & (status <= 255));
+  int slot = pending_slots::index(nonce);
+  slice s = fixed_slots::leaf_of(root, slot).begin_parse();
+  if (s~load_int(1)) {
+    throw_if(ordered_delivery::error::slot_occupied, s~load_uint(64) != nonce);
+  }
+  return (fixed_slots::write_leaf(root, slot, fixed_slots::leaf(true, nonce, status, payload)), ());
+}
+
+;; Same contract as [~pending_slots::remove].
+(cell, int) ~fixed_slots::remove(cell root, int nonce) impure inline {
+  ordered_delivery::require_nonce(nonce);
+  int slot = pending_slots::index(nonce);
+  slice s = fixed_slots::leaf_of(root, slot).begin_parse();
+  int occupied = s~load_int(1);
+  if ((~ occupied) | (s~load_uint(64) != nonce)) {
+    return (root, false);
+  }
+  return (fixed_slots::write_leaf(root, slot, fixed_slots::empty_leaf()), true);
 }

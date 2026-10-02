@@ -12,6 +12,13 @@
 // distinct slot. Each slot also stores the full nonce, and every read, write
 // and delete compares it, so a nonce one window apart can never read or
 // overwrite another nonce's entry.
+//
+// `FixedSlots` has the same interface and rules, stored as a complete 4-ary
+// tree of depth 4 (exactly NONCE_WINDOW_WIDTH leaves) instead of a
+// dictionary. Every operation walks and rebuilds the same four levels: the
+// same instructions and the same number of cell loads whichever slot is used
+// and however many are occupied, so its gas can be quoted before the call. `PendingSlots` stores
+// only occupied slots and is cheaper when few are in use.
 tol 1.3
 
 import "@stdlib/tvm-dicts"
@@ -154,5 +161,125 @@ fun PendingSlots.remove(mutate self, nonce: int): bool {
         return false;
     }
     self.slots.uDictDelete(NONCE_WINDOW_SLOT_KEY_BITS, slot);
+    return true;
+}
+
+const FIXED_SLOTS_FANOUT = 4
+/// 4^4 leaves == NONCE_WINDOW_WIDTH, so every in-window nonce has its own leaf.
+const FIXED_SLOTS_DEPTH = 4
+
+struct FixedSlots {
+    root: cell
+}
+
+@pure
+fun fixedSlotsRefAt(s: slice, index: int): cell
+    asm "PLDREFVAR"
+
+@pure
+fun fixedSlotsLeaf(occupied: bool, nonce: int, status: int, payload: cell): cell {
+    return beginCell()
+        .storeBool(occupied)
+        .storeUint(nonce, 64)
+        .storeUint(status, 8)
+        .storeRef(payload)
+        .endCell();
+}
+
+@pure
+fun fixedSlotsEmptyLeaf(): cell {
+    return fixedSlotsLeaf(false, 0, 0, createEmptyCell());
+}
+
+/// An empty set. Identical empty subtrees share one cell each per level, so
+/// storing it costs five distinct cells, not 341.
+fun fixedSlotsNew(): FixedSlots {
+    var node = fixedSlotsEmptyLeaf();
+    var level = 0;
+    while (level < FIXED_SLOTS_DEPTH) {
+        node = beginCell().storeRef(node).storeRef(node).storeRef(node).storeRef(node).endCell();
+        level += 1;
+    }
+    return FixedSlots { root: node };
+}
+
+/// Child index taken at `level` (0 = root) on the way to `slot`.
+@pure
+fun fixedSlotsDigit(slot: int, level: int): int {
+    return (slot >> (2 * (FIXED_SLOTS_DEPTH - 1 - level))) & (FIXED_SLOTS_FANOUT - 1);
+}
+
+@pure
+fun fixedSlotsReplaceChild(node: cell, index: int, child: cell): cell {
+    val s = node.beginParse();
+    var b = beginCell();
+    var j = 0;
+    while (j < FIXED_SLOTS_FANOUT) {
+        b.storeRef(j == index ? child : fixedSlotsRefAt(s, j));
+        j += 1;
+    }
+    return b.endCell();
+}
+
+fun FixedSlots.leafOf(self, slot: int): cell {
+    var node = self.root;
+    var level = 0;
+    while (level < FIXED_SLOTS_DEPTH) {
+        node = fixedSlotsRefAt(node.beginParse(), fixedSlotsDigit(slot, level));
+        level += 1;
+    }
+    return node;
+}
+
+/// Writes `leaf` at `slot`, rebuilding the four nodes on its path.
+fun FixedSlots.writeLeaf(mutate self, slot: int, leaf: cell): void {
+    val n0 = self.root;
+    val n1 = fixedSlotsRefAt(n0.beginParse(), fixedSlotsDigit(slot, 0));
+    val n2 = fixedSlotsRefAt(n1.beginParse(), fixedSlotsDigit(slot, 1));
+    val n3 = fixedSlotsRefAt(n2.beginParse(), fixedSlotsDigit(slot, 2));
+    val r3 = fixedSlotsReplaceChild(n3, fixedSlotsDigit(slot, 3), leaf);
+    val r2 = fixedSlotsReplaceChild(n2, fixedSlotsDigit(slot, 2), r3);
+    val r1 = fixedSlotsReplaceChild(n1, fixedSlotsDigit(slot, 1), r2);
+    self.root = fixedSlotsReplaceChild(n0, fixedSlotsDigit(slot, 0), r1);
+}
+
+/// Same contract as [PendingSlots.get].
+fun FixedSlots.get(self, nonce: int): (bool, int, cell?) {
+    orderedDeliveryRequireNonce(nonce);
+    var s = self.leafOf(pendingSlotIndex(nonce)).beginParse();
+    val occupied = s.loadBool();
+    val storedNonce = s.loadUint(64);
+    val status = s.loadUint(8);
+    if (!occupied || storedNonce != nonce) {
+        return (false, 0, null);
+    }
+    return (true, status, s.loadRef());
+}
+
+/// Same contract as [PendingSlots.put].
+fun FixedSlots.put(mutate self, nonce: int, status: int, payload: cell): void {
+    orderedDeliveryRequireNonce(nonce);
+    if (status < 0 || status > 255) {
+        throw ORDERED_DELIVERY_THROW_INVALID_STATUS;
+    }
+    val slot = pendingSlotIndex(nonce);
+    var s = self.leafOf(slot).beginParse();
+    val occupied = s.loadBool();
+    if (occupied && s.loadUint(64) != nonce) {
+        throw ORDERED_DELIVERY_THROW_SLOT_OCCUPIED;
+    }
+    self.writeLeaf(slot, fixedSlotsLeaf(true, nonce, status, payload));
+}
+
+/// Same contract as [PendingSlots.remove].
+fun FixedSlots.remove(mutate self, nonce: int): bool {
+    orderedDeliveryRequireNonce(nonce);
+    val slot = pendingSlotIndex(nonce);
+    var s = self.leafOf(slot).beginParse();
+    val occupied = s.loadBool();
+    if (!occupied || s.loadUint(64) != nonce) {
+        return false;
+    }
+    self.writeLeaf(slot, fixedSlotsEmptyLeaf());
     return true;
 }

@@ -157,6 +157,123 @@ int test_layout_matches_tol() method_id(108) {
   return nonce_window::pack(w).cell_hash();
 }
 
+int test_fixed_slots_key_checked() method_id(109) {
+  cell p = fixed_slots::new();
+  cell payload = begin_cell().store_uint(0xabc, 12).end_cell();
+  p~fixed_slots::put(3, 1, payload);
+  (int found, int status, cell body) = fixed_slots::get(p, 3);
+  throw_unless(181, found & (status == 1));
+  throw_unless(182, body.cell_hash() == payload.cell_hash());
+  (int alias, _, _) = fixed_slots::get(p, 3 + 256);
+  throw_if(183, alias);
+  int thrown = false;
+  try {
+    p~fixed_slots::put(3 + 256, 2, payload);
+  } catch (_, code) {
+    expect_throw(code, ordered_delivery::error::slot_occupied, 184);
+    thrown = true;
+  }
+  throw_unless(185, thrown);
+  throw_if(186, p~fixed_slots::remove(3 + 256));
+  (int still, _, _) = fixed_slots::get(p, 3);
+  throw_unless(187, still);
+  return 9;
+}
+
+int test_fixed_slots_update_remove_reuse() method_id(110) {
+  cell p = fixed_slots::new();
+  cell a = begin_cell().store_uint(1, 8).end_cell();
+  cell b = begin_cell().store_uint(2, 8).end_cell();
+  p~fixed_slots::put(9, 1, a);
+  p~fixed_slots::put(9, 2, b);
+  (_, int status, cell body) = fixed_slots::get(p, 9);
+  throw_unless(191, (status == 2) & (body.cell_hash() == b.cell_hash()));
+  throw_unless(192, p~fixed_slots::remove(9));
+  throw_if(193, p~fixed_slots::remove(9));
+  p~fixed_slots::put(9 + 256, 0, a);
+  (int found, _, _) = fixed_slots::get(p, 9 + 256);
+  throw_unless(194, found);
+  int thrown = false;
+  try {
+    p~fixed_slots::put(10, 256, a);
+  } catch (_, code) {
+    expect_throw(code, ordered_delivery::error::invalid_status, 195);
+    thrown = true;
+  }
+  throw_unless(196, thrown);
+  ;; a removed slot is back to the empty tree, cell for cell
+  cell q = fixed_slots::new();
+  q~fixed_slots::put(77, 3, a);
+  q~fixed_slots::remove(77);
+  throw_unless(197, q.cell_hash() == fixed_slots::new().cell_hash());
+  ;; an empty leaf stores nonce 0: only the occupied flag tells it apart from a real entry
+  ;; for nonce 0
+  (int ghost, _, _) = fixed_slots::get(fixed_slots::new(), 0);
+  throw_if(198, ghost);
+  cell r = fixed_slots::new();
+  r~fixed_slots::put(256, 1, a);
+  r~fixed_slots::remove(256);
+  (int still_ghost, _, _) = fixed_slots::get(r, 0);
+  throw_if(199, still_ghost);
+  throw_if(200, r~fixed_slots::remove(0));
+  return 10;
+}
+
+int gas_consumed() asm "GASCONSUMED";
+
+;; TVM charges 100 gas for the first load of a cell in a run (code cells included) and 25
+;; for each reload, so measurements taken one after another in a single run see different
+;; caches. Each measurement therefore repeats the identical put on a copy first: every data
+;; and code cell it touches is then cached, and what is compared is the instruction path
+;; alone. The number of cell loads per put is fixed by the tree depth. The library inlines
+;; put, so both runs go through one non-inlined wrapper: two inlined copies would sit in
+;; different code cells, and the warm-up would not warm the copy being measured.
+cell put_once(cell p, int nonce, cell payload) impure method_id {
+  p~fixed_slots::put(nonce, 1, payload);
+  return p;
+}
+
+int put_gas(cell p, int nonce) impure method_id {
+  cell payload = begin_cell().store_uint(nonce, 16).end_cell();
+  put_once(p, nonce, payload);
+  int before = gas_consumed();
+  put_once(p, nonce, payload);
+  return gas_consumed() - before;
+}
+
+int test_fixed_slots_gas_is_constant() method_id(111) {
+  cell empty = fixed_slots::new();
+  cell crowded = fixed_slots::new();
+  int n = 0;
+  while (n < 200) {
+    crowded~fixed_slots::put(n + 20, 0, begin_cell().end_cell());
+    n += 1;
+  }
+  ;; inserting: independent of how many slots are occupied and of which slot is written
+  ;; (crowded holds nonces 20..219)
+  int insert = put_gas(empty, 5);
+  throw_unless(201, put_gas(crowded, 5) == insert);
+  throw_unless(202, put_gas(empty, 0) == insert);
+  throw_unless(203, put_gas(empty, 255) == insert);
+  throw_unless(204, put_gas(crowded, 240) == insert);
+  ;; updating a nonce's own slot compares the stored nonce too, at a cost that is again the
+  ;; same everywhere
+  int update = put_gas(crowded, 130);
+  throw_if(205, update == insert);
+  throw_unless(206, put_gas(crowded, 20) == update);
+  throw_unless(207, put_gas(crowded, 219) == update);
+  return 11;
+}
+
+int test_fixed_slots_layout_matches_tol() method_id(112) {
+  ;; The tree must be the very cell the Tol FixedSlots builds; the Tol suite pins the same
+  ;; hash for the same state.
+  cell p = fixed_slots::new();
+  p~fixed_slots::put(3, 1, begin_cell().store_uint(0xabc, 12).end_cell());
+  p~fixed_slots::put(200, 2, begin_cell().end_cell());
+  return p.cell_hash();
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -165,5 +282,9 @@ TESTCASE | 104 | | 4
 TESTCASE | 105 | | 5
 TESTCASE | 106 | | 6
 TESTCASE | 107 | | 7
+TESTCASE | 109 | | 9
+TESTCASE | 110 | | 10
+TESTCASE | 111 | | 11
 TESTCASE | 108 | | 108172638824023323656301294226925930422985867943527330981503674913960755835622
+TESTCASE | 112 | | 67470058507674813740225093116304431827422772986530920139661665217563619817841
 -}
