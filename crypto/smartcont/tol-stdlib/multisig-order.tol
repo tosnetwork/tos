@@ -51,6 +51,7 @@ const MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER = 0x1a0a
 const MULTISIG_ORDER_THROW_INVALID_PROFILE = 0x1a0b
 const MULTISIG_ORDER_THROW_ORDER_TOO_LARGE = 0x1a0c
 const MULTISIG_ORDER_THROW_INSUFFICIENT_VALUE = 0x1a0d
+const MULTISIG_ORDER_THROW_NOT_RECLAIMABLE = 0x1a12
 
 const MULTISIG_ORDER_OP_INIT: uint32 = 0x16b7a4fb
 const MULTISIG_ORDER_OP_APPROVE: uint32 = 0x9c205aee
@@ -152,7 +153,26 @@ fun multisigOrderNew(
     expiresAt: int,
     action: cell
 ): MultisigOrder {
-    multisigOrderRequireValidThreshold(threshold, multisigOrderSignerCount(signers));
+    return multisigOrderNewWithCount(parent, seqno, threshold, signers, multisigOrderSignerCount(signers), expiresAt, action);
+}
+
+/// [multisigOrderNew] with the signer count supplied instead of counted, for
+/// an order whose init comes only from a parent that already validated the
+/// set: counting a 255-signer dictionary costs far more gas than the rest of
+/// initialisation.
+fun multisigOrderNewWithCount(
+    parent: address,
+    seqno: uint64,
+    threshold: int,
+    signers: cell,
+    signerCount: int,
+    expiresAt: int,
+    action: cell
+): MultisigOrder {
+    if (signerCount <= 0 || signerCount > MULTISIG_ORDER_MAX_SIGNERS) {
+        throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+    }
+    multisigOrderRequireValidThreshold(threshold, signerCount);
     if (expiresAt <= blockchain.now()) {
         throw MULTISIG_ORDER_THROW_EXPIRED;
     }
@@ -167,6 +187,15 @@ fun multisigOrderNew(
         executed: false,
         action,
     };
+}
+
+/// An order may hand its balance back to the parent once it has expired
+/// without executing: no approval can fire it any more, and the funds would
+/// otherwise stay stranded in it.
+fun MultisigOrder.requireReclaimable(self): void {
+    if (self.executed || blockchain.now() <= self.expiresAt) {
+        throw MULTISIG_ORDER_THROW_NOT_RECLAIMABLE;
+    }
 }
 
 /// Index of `signer` in the order's signer set.
@@ -313,6 +342,13 @@ struct MultisigOrderFeeProfile {
     orderStateCells: uint32
     executeMessageBits: uint32
     executeMessageCells: uint32
+    /// Gas the parent spends per action when validating a proposal.
+    parentNewOrderGasPerAction: uint32
+    /// Gas the parent spends per action when executing an order.
+    parentExecuteGasPerAction: uint32
+    /// Gas per signer of a set an update action installs (validated at both
+    /// proposal and execution).
+    parentGasPerUpdatedSigner: uint32
 }
 
 fun MultisigOrderFeeProfile.requireValid(self): void {
@@ -326,21 +362,28 @@ fun MultisigOrderFeeProfile.requireValid(self): void {
         self.orderStateBits == 0 ||
         self.orderStateCells == 0 ||
         self.executeMessageBits == 0 ||
-        self.executeMessageCells == 0
+        self.executeMessageCells == 0 ||
+        self.parentNewOrderGasPerAction == 0 ||
+        self.parentExecuteGasPerAction == 0 ||
+        self.parentGasPerUpdatedSigner == 0
     ) {
         throw MULTISIG_ORDER_THROW_INVALID_PROFILE;
     }
 }
 
 /// The seven-component cost for an order whose action and signer set have
-/// the given sizes, living `lifetimeSeconds`. `extraParentGas` is gas the
-/// parent spends beyond the profile, such as counting those sizes.
+/// the given sizes, living `lifetimeSeconds`. The parent's two compute phases
+/// grow with the number of actions and with the size of any signer set an
+/// update action installs; `extraParentGas` is gas the parent spends beyond
+/// the profile, such as counting sizes.
 fun MultisigOrderFeeProfile.requiredValueForSizes(
     self,
     actionBits: int,
     actionCells: int,
     signerBits: int,
     signerCells: int,
+    actionCount: int,
+    updatedSignerCount: int,
     lifetimeSeconds: int,
     extraParentGas: int
 ): coins {
@@ -348,10 +391,20 @@ fun MultisigOrderFeeProfile.requiredValueForSizes(
     if (lifetimeSeconds <= 0) {
         throw MULTISIG_ORDER_THROW_EXPIRED;
     }
-    val compute = calculateGasFee(BASECHAIN, self.parentNewOrderGas + extraParentGas)
+    if (actionCount <= 0 || updatedSignerCount < 0) {
+        throw MULTISIG_ORDER_THROW_INVALID_CONFIG;
+    }
+    val signerGas = self.parentGasPerUpdatedSigner * updatedSignerCount;
+    val compute = calculateGasFee(
+            BASECHAIN,
+            self.parentNewOrderGas + self.parentNewOrderGasPerAction * actionCount + signerGas + extraParentGas
+        )
         + calculateGasFee(BASECHAIN, self.orderInitGas)
         + calculateGasFee(BASECHAIN, self.orderExecuteGas)
-        + calculateGasFee(BASECHAIN, self.parentExecuteGas);
+        + calculateGasFee(
+            BASECHAIN,
+            self.parentExecuteGas + self.parentExecuteGasPerAction * actionCount + signerGas
+        );
     val forward = calculateForwardFee(
             BASECHAIN,
             self.initMessageBits + actionBits + signerBits,
@@ -372,8 +425,17 @@ fun MultisigOrderFeeProfile.requiredValueForSizes(
 }
 
 /// Value a proposal must carry for `action` under `signers`, living
-/// `lifetimeSeconds`. Counts both sizes now and adds the gas the count took.
-fun MultisigOrderFeeProfile.requiredNewOrderValue(self, signers: cell, action: cell, lifetimeSeconds: int): coins {
+/// `lifetimeSeconds`. `actionCount` and `updatedSignerCount` describe the
+/// action, whose format belongs to the parent contract. Counts both sizes now
+/// and adds the gas the count took.
+fun MultisigOrderFeeProfile.requiredNewOrderValue(
+    self,
+    signers: cell,
+    action: cell,
+    actionCount: int,
+    updatedSignerCount: int,
+    lifetimeSeconds: int
+): coins {
     val before = getGasConsumedAtTheMoment();
     val (actionCells, actionBits, _, actionOk) = action.calculateSize(MULTISIG_ORDER_MAX_ACTION_CELLS);
     val (signerCells, signerBits, _, signerOk) = signers.calculateSize(MULTISIG_ORDER_MAX_SIGNER_CELLS);
@@ -386,6 +448,8 @@ fun MultisigOrderFeeProfile.requiredNewOrderValue(self, signers: cell, action: c
         actionCells!,
         signerBits!,
         signerCells!,
+        actionCount,
+        updatedSignerCount,
         lifetimeSeconds,
         countingGas
     );
@@ -397,9 +461,11 @@ fun MultisigOrderFeeProfile.requireNewOrderValue(
     msgValue: coins,
     signers: cell,
     action: cell,
+    actionCount: int,
+    updatedSignerCount: int,
     lifetimeSeconds: int
 ): void {
-    if (msgValue < self.requiredNewOrderValue(signers, action, lifetimeSeconds)) {
+    if (msgValue < self.requiredNewOrderValue(signers, action, actionCount, updatedSignerCount, lifetimeSeconds)) {
         throw MULTISIG_ORDER_THROW_INSUFFICIENT_VALUE;
     }
 }

@@ -3,11 +3,15 @@
 ;; One multisig proposal ("order"), deployed by multisig-wallet-code.fc at the address
 ;; derived from (this code, parent, seqno).
 ;;
-;; The parent's `init` sets the signer set, threshold, expiry and actions, optionally
-;; recording the proposer's own approval. Signers then `approve` by index; each approval
-;; gets an `approve_accepted` or `approve_rejected` reply carrying the remaining value. The
-;; approval that reaches the threshold also sends `execute` to the parent with the order's
-;; whole balance, non-bounceable, exactly once. Expired orders refuse approvals.
+;; The parent's `init` sets the signer set (with its size, which the parent has validated),
+;; threshold, expiry and actions, optionally recording the proposer's own approval. Signers
+;; then approve, either with an `approve` message naming their index or with a plain text
+;; comment "approve" from their address. Each approval gets an `approve_accepted` or
+;; `approve_rejected` reply carrying the remaining value. The approval that reaches the
+;; threshold also sends `execute` to the parent with the order's whole balance,
+;; non-bounceable, exactly once. Expired orders refuse approvals; once expired without
+;; executing, anyone may `reclaim` the order, which hands its balance back to the parent
+;; and destroys it.
 ;;
 ;; storage before init: parent:MsgAddressInt seqno:uint64 (the address-fixing init data)
 ;; storage after init:  the multisig_order::pack layout, which extends that prefix
@@ -16,11 +20,17 @@
 
 const int op::approve_accepted = 0xcbd6e9fd;
 const int op::approve_rejected = 0x3f9143b6;
+const int op::reclaim = 0xc79429cd;
 
 const int error::unauthorized_init = 0x1a0f;
 const int error::already_initialized = 0x1a10;
 const int error::not_initialized = 0x1a11;
 const int error::unknown_op = 0xffff;
+
+const int send_mode::carry_remaining_value = 64;
+const int send_mode::carry_all_balance = 128;
+const int send_mode::destroy_if_zero = 32;
+const int send_mode::bounce_on_action_fail = 16;
 
 ;; addr_std (267 bits) + seqno
 const int init_data_bits = 267 + 64;
@@ -28,12 +38,12 @@ const int init_data_bits = 267 + 64;
 () send_execute([slice, int, int, cell, int, int, int, int, cell] order, int query_id) impure inline {
   [slice parent, _, _, _, _, _, _, _, _] = order;
   send_raw_message(begin_cell()
-      .store_uint(0x10, 6) ;; non-bounceable: a failed execute leaves the funds with the parent
+      .store_uint(0x10, 6) ;; non-bounceable: a refused execute leaves the funds with the parent
       .store_slice(parent)
       .store_coins(0)
       .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; body in a ref
       .store_ref(multisig_order::execute_body(query_id, multisig_order::execute_message(order)))
-      .end_cell(), 128); ;; the order's whole balance
+      .end_cell(), send_mode::carry_all_balance | send_mode::bounce_on_action_fail);
 }
 
 () reply(slice to, int op, int query_id, int exit_code) impure inline {
@@ -47,7 +57,30 @@ const int init_data_bits = 267 + 64;
       .store_coins(0)
       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
       .store_builder(body)
-      .end_cell(), 64); ;; the remaining incoming value
+      .end_cell(), send_mode::carry_remaining_value | send_mode::bounce_on_action_fail);
+}
+
+;; Applies one approval and answers it. Only the approval itself runs inside try, and every
+;; action and the state write happen after it: TVM restores neither c4 nor c5 when it
+;; catches an exception, so nothing may be sent or saved before the point that can throw.
+() approve_and_reply(slice sender, int index, int query_id) impure inline {
+  var order = multisig_order::unpack(get_data());
+  int fired = false;
+  int exit_code = 0;
+  try {
+    fired = order~multisig_order::approve(index, sender);
+  } catch (_, code) {
+    exit_code = code;
+  }
+  if (exit_code) {
+    reply(sender, op::approve_rejected, query_id, exit_code);
+    return ();
+  }
+  reply(sender, op::approve_accepted, query_id, 0);
+  if (fired) {
+    send_execute(order, query_id);
+  }
+  set_data(multisig_order::pack(order));
 }
 
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -57,13 +90,24 @@ const int init_data_bits = 267 + 64;
     return (); ;; bounced
   }
   slice sender = in_msg~load_msg_addr();
-  if (in_msg_body.slice_bits() < 32 + 64) {
+  if (in_msg_body.slice_bits() < 32) {
     return (); ;; top-up
   }
-  int op = in_msg_body~load_uint(32);
-  int query_id = in_msg_body~load_uint(64);
   slice ds = get_data().begin_parse();
   int initialized = ds.slice_bits() > init_data_bits;
+  int op = in_msg_body~load_uint(32);
+
+  if (op == 0) {
+    ;; "approve" as a plain text comment, for signers whose wallets can only send text.
+    throw_unless(error::unknown_op, equal_slice_bits(in_msg_body, "approve"));
+    throw_unless(error::not_initialized, initialized);
+    (int index, int found) = multisig_order::find_signer(multisig_order::unpack(get_data()), sender);
+    throw_unless(multisig_order::error::unknown_signer, found);
+    approve_and_reply(sender, index, cur_lt());
+    return ();
+  }
+
+  int query_id = in_msg_body~load_uint(64);
 
   if (op == multisig_order::op::init) {
     slice parent = ds~load_msg_addr();
@@ -71,11 +115,12 @@ const int init_data_bits = 267 + 64;
     throw_unless(error::unauthorized_init, equal_slice_bits(sender, parent));
     throw_if(error::already_initialized, initialized);
     int threshold = in_msg_body~load_uint(8);
+    int signer_count = in_msg_body~load_uint(8);
     cell signers = in_msg_body~load_ref();
     int expires_at = in_msg_body~load_uint(32);
     cell actions = in_msg_body~load_ref();
     int approve_on_init = in_msg_body~load_int(1);
-    var order = multisig_order::new(parent, seqno, threshold, signers, expires_at, actions);
+    var order = multisig_order::new_with_count(parent, seqno, threshold, signers, signer_count, expires_at, actions);
     if (approve_on_init) {
       int index = in_msg_body~load_uint(8);
       (slice signer, int found) = signers.udict_get?(multisig_order::signer_index_bits, index);
@@ -93,17 +138,21 @@ const int init_data_bits = 267 + 64;
     throw_unless(error::not_initialized, initialized);
     int index = in_msg_body~load_uint(8);
     in_msg_body.end_parse();
+    approve_and_reply(sender, index, query_id);
+    return ();
+  }
+
+  if (op == op::reclaim) {
+    throw_unless(error::not_initialized, initialized);
     var order = multisig_order::unpack(get_data());
-    try {
-      int fired = order~multisig_order::approve(index, sender);
-      reply(sender, op::approve_accepted, query_id, 0);
-      if (fired) {
-        send_execute(order, query_id);
-      }
-      set_data(multisig_order::pack(order));
-    } catch (_, exit_code) {
-      reply(sender, op::approve_rejected, query_id, exit_code);
-    }
+    multisig_order::require_reclaimable(order);
+    [slice parent, _, _, _, _, _, _, _, _] = order;
+    send_raw_message(begin_cell()
+        .store_uint(0x10, 6) ;; non-bounceable, empty body: a plain top-up of the parent
+        .store_slice(parent)
+        .store_coins(0)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .end_cell(), send_mode::carry_all_balance | send_mode::destroy_if_zero);
     return ();
   }
 

@@ -272,20 +272,28 @@ int test_proposer_authorization() method_id(110) {
 }
 
 tuple fee_profile() {
-  return multisig_order::fee_profile(5000, 4000, 6000, 7000, 1000, 5, 1500, 6, 600, 1);
+  return multisig_order::fee_profile(5000, 4000, 6000, 7000, 1000, 5, 1500, 6, 600, 1, 1000, 500, 200);
 }
 
 int test_required_value_for_sizes() method_id(111) {
   install_fee_config();
   tuple p = fee_profile();
-  ;; compute 5000000 + 4000000 + 6000000 + 7000000
+  ;; compute fee(5000 + 1000) + fee(4000) + fee(6000) + fee(7000 + 500)
+  ;;       = 6000000 + 4000000 + 6000000 + 7500000
   ;; forward (400000 + 1900 + 1200) + (400000 + 700 + 300)
   ;; storage ((1500 + 100 + 800) + 500 * (6 + 2 + 5)) * 10
-  throw_unless(191, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 10, 0) == 22893100);
+  throw_unless(191, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 10, 0) == 24393100);
   ;; gas the parent spends counting sizes is charged at the gas price
-  throw_unless(192, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 10, 300) == 23193100);
+  throw_unless(192, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 10, 300) == 24693100);
   ;; a longer lifetime only adds storage: + 8900 per second
-  throw_unless(193, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 11, 0) == 22902000);
+  throw_unless(193, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 11, 0) == 24402000);
+  ;; three actions installing a ten-signer set:
+  ;; fee(5000 + 3000 + 2000) + 4000000 + 6000000 + fee(7000 + 1500 + 2000)
+  throw_unless(194, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 3, 10, 10, 0) == 31393100);
+  int rejected = 0;
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 0, 0, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 195); rejected += 1; }
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, -1, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 196); rejected += 1; }
+  throw_unless(197, rejected == 2);
   return 11;
 }
 
@@ -295,8 +303,8 @@ int test_required_value_counts_real_cells() method_id(112) {
   cell action = begin_cell().store_uint(0, 100).store_ref(begin_cell().end_cell()).end_cell();
   (int s_cells, int s_bits, _, int ok) = multisig_order::data_size?(signers(), multisig_order::max_signer_cells);
   throw_unless(201, ok);
-  int base = multisig_order::required_value_for_sizes(p, 100, 2, s_bits, s_cells, 10, 0);
-  int required = multisig_order::required_new_order_value(p, signers(), action, 10);
+  int base = multisig_order::required_value_for_sizes(p, 100, 2, s_bits, s_cells, 1, 0, 10, 0);
+  int required = multisig_order::required_new_order_value(p, signers(), action, 1, 0, 10);
   ;; the counting gas is real, positive, and priced at 1000 per gas unit
   int extra = required - base;
   throw_unless(202, extra > 0);
@@ -313,12 +321,12 @@ int test_new_order_value_boundary() method_id(113) {
   ;; reload; count once first so the requirement and the checks below see the same cache.
   ;; (On chain each transaction counts once, and a quote from a get-method, made on a fresh
   ;; VM, is never below it.)
-  multisig_order::required_new_order_value(p, signers(), action, 10);
-  int required = multisig_order::required_new_order_value(p, signers(), action, 10);
-  multisig_order::require_new_order_value(p, required, signers(), action, 10);
+  multisig_order::required_new_order_value(p, signers(), action, 1, 0, 10);
+  int required = multisig_order::required_new_order_value(p, signers(), action, 1, 0, 10);
+  multisig_order::require_new_order_value(p, required, signers(), action, 1, 0, 10);
   int thrown = false;
   try {
-    multisig_order::require_new_order_value(p, required - 1, signers(), action, 10);
+    multisig_order::require_new_order_value(p, required - 1, signers(), action, 1, 0, 10);
   } catch (_, code) {
     expect_throw(code, multisig_order::error::insufficient_value, 211);
     thrown = true;
@@ -331,8 +339,8 @@ int test_fee_profile_rejections() method_id(114) {
   install_fee_config();
   int rejected = 0;
   tuple p = fee_profile().multisig_order::set_field(0, multisig_order::order_execute_gas);
-  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_profile, 221); rejected += 1; }
-  try { multisig_order::required_value_for_sizes(fee_profile(), 100, 2, 800, 5, 0, 0); } catch (_, code) { expect_throw(code, multisig_order::error::expired, 222); rejected += 1; }
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_profile, 221); rejected += 1; }
+  try { multisig_order::required_value_for_sizes(fee_profile(), 100, 2, 800, 5, 1, 0, 0, 0); } catch (_, code) { expect_throw(code, multisig_order::error::expired, 222); rejected += 1; }
   ;; an action larger than the size limit
   cell big = begin_cell().end_cell();
   int i = 0;
@@ -340,9 +348,33 @@ int test_fee_profile_rejections() method_id(114) {
     big = begin_cell().store_uint(i, 16).store_ref(big).end_cell();
     i += 1;
   }
-  try { multisig_order::required_new_order_value(fee_profile(), signers(), big, 10); } catch (_, code) { expect_throw(code, multisig_order::error::order_too_large, 223); rejected += 1; }
+  try { multisig_order::required_new_order_value(fee_profile(), signers(), big, 1, 0, 10); } catch (_, code) { expect_throw(code, multisig_order::error::order_too_large, 223); rejected += 1; }
   throw_unless(224, rejected == 3);
   return 14;
+}
+
+int test_new_with_count_and_reclaim() method_id(115) {
+  set_now(1000);
+  var o = multisig_order::new_with_count(parent(), 5, 2, signers(), 3, 2000, action());
+  [_, _, int threshold, _, _, int approval_count, _, _, _] = o;
+  throw_unless(231, (threshold == 2) & (approval_count == 0));
+  int rejected = 0;
+  try { multisig_order::new_with_count(parent(), 5, 2, signers(), 0, 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 232); rejected += 1; }
+  try { multisig_order::new_with_count(parent(), 5, 2, signers(), 256, 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 233); rejected += 1; }
+  try { multisig_order::new_with_count(parent(), 5, 4, signers(), 3, 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 234); rejected += 1; }
+  ;; not reclaimable before expiry, nor at the last valid second
+  try { set_now(2000); multisig_order::require_reclaimable(o); } catch (_, code) { expect_throw(code, multisig_order::error::not_reclaimable, 235); rejected += 1; }
+  set_now(2001);
+  multisig_order::require_reclaimable(o);
+  ;; an executed order never is
+  var done = new_order();
+  set_now(1500);
+  done~multisig_order::approve(0, alice());
+  set_now(1500);
+  done~multisig_order::approve(1, bob());
+  try { set_now(5000); multisig_order::require_reclaimable(done); } catch (_, code) { expect_throw(code, multisig_order::error::not_reclaimable, 236); rejected += 1; }
+  throw_unless(237, rejected == 5);
+  return 15;
 }
 
 {-
@@ -360,4 +392,5 @@ TESTCASE | 112 | | 12
 TESTCASE | 113 | | 13
 TESTCASE | 114 | | 14
 TESTCASE | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
+TESTCASE | 115 | | 15
 -}

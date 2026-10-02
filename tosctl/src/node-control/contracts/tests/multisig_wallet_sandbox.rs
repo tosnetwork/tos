@@ -27,6 +27,8 @@ const OP_APPROVE: u32 = 0x9c205aee;
 const OP_EXECUTE: u32 = 0xe71e90bc;
 const OP_APPROVE_ACCEPTED: u32 = 0xcbd6e9fd;
 const OP_APPROVE_REJECTED: u32 = 0x3f9143b6;
+const OP_RECLAIM: u32 = 0xc79429cd;
+const OP_EXECUTE_INTERNAL: u32 = 0xead7f19d;
 const ACTION_SEND: u32 = 0x94f8724f;
 const ACTION_UPDATE: u32 = 0xe9973598;
 const NEXT_SEQNO: u64 = u64::MAX;
@@ -45,6 +47,7 @@ const ERROR_INVALID_ACTION: i32 = 0x1a0e;
 const ERROR_UNAUTHORIZED_INIT: i32 = 0x1a0f;
 const ERROR_ALREADY_INITIALIZED: i32 = 0x1a10;
 const ERROR_NOT_INITIALIZED: i32 = 0x1a11;
+const ERROR_NOT_RECLAIMABLE: i32 = 0x1a12;
 
 fn smartcont(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../crypto/smartcont").join(name)
@@ -134,6 +137,11 @@ impl Fixture {
     }
 
     fn with_threshold(threshold: u8) -> Self {
+        Self::with_wallet(threshold, 0)
+    }
+
+    /// A wallet whose signers are alice, bob, carol and `extra_signers` more addresses.
+    fn with_wallet(threshold: u8, extra_signers: u8) -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
         bc.set_now(NOW);
         let funder = bc.treasury("funder", 10_000 * TOS).expect("funder");
@@ -148,16 +156,25 @@ impl Fixture {
             .expect("compile order");
         let wallet_code = compile_func_with_stdlib(&[smartcont("multisig-wallet-code.fc")])
             .expect("compile multisig");
-        let signer_dict = address_dict(&[
-            (0, signers[0].address()),
-            (1, signers[1].address()),
-            (2, signers[2].address()),
-        ])
-        .expect("signers");
+        let extra: Vec<MsgAddressInt> = (0..extra_signers)
+            .map(|i| {
+                let mut account = [0x60u8; 32];
+                account[31] = i;
+                MsgAddressInt::with_params(0, chain_block::UInt256::from(account)).unwrap()
+            })
+            .collect();
+        let mut entries: Vec<(u8, &MsgAddressInt)> =
+            vec![(0, signers[0].address()), (1, signers[1].address()), (2, signers[2].address())];
+        for (i, address) in extra.iter().enumerate() {
+            entries.push((3 + i as u8, address));
+        }
+        let signer_count = entries.len() as u8;
+        let signer_dict = address_dict(&entries).expect("signers");
         let proposer_dict = address_dict(&[(0, proposer.address())]);
         let data = cell(|b| {
             b.append_u64(0).unwrap();
             b.append_u8(threshold).unwrap();
+            b.append_u8(signer_count).unwrap();
             b.checked_append_reference(signer_dict).unwrap();
             append_maybe_ref(b, proposer_dict);
             b.checked_append_reference(order_code.clone()).unwrap();
@@ -588,4 +605,183 @@ fn an_order_deployed_ahead_of_its_parent_cannot_be_approved() {
     let r = f.propose_paid(send_action(transfer(f.target.address(), TOS), None));
     assert_eq!(exit_code_on(&r, &order), 0);
     assert_eq!(f.order_int(&order, 0), -1);
+}
+
+fn text_comment(text: &str) -> Cell {
+    cell(|b| {
+        b.append_u32(0).unwrap();
+        b.append_raw(text.as_bytes(), text.len() * 8).unwrap();
+    })
+}
+
+#[test]
+fn signers_can_approve_with_a_text_comment() {
+    let mut f = Fixture::new();
+    f.propose_paid(send_action(transfer(f.target.address(), TOS), None));
+    let order = f.order_address(0);
+    let alice = f.signer(0);
+    let bob = f.signer(1);
+    let eve = f.outsider.address().clone();
+    let target_before = f.balance(f.target.address());
+
+    let msg = MessageBuilder::internal(&eve, &order, TOS).body(text_comment("approve")).build();
+    let r = f.bc.send_message(msg).expect("deliver");
+    assert_eq!(exit_code_on(&r, &order), ERROR_UNKNOWN_SIGNER, "a non-signer's text approval");
+
+    let msg = MessageBuilder::internal(&alice, &order, TOS).body(text_comment("approve")).build();
+    let r = f.bc.send_message(msg).expect("deliver");
+    assert_eq!(approval_reply(&r, &order).0, OP_APPROVE_ACCEPTED);
+    assert_eq!(f.order_int(&order, 7), 1);
+    let msg = MessageBuilder::internal(&bob, &order, TOS).body(text_comment("approve")).build();
+    f.bc.send_message(msg).expect("deliver");
+    assert_received(
+        target_before,
+        f.balance(f.target.address()),
+        TOS,
+        "payout after two text approvals",
+    );
+
+    let msg = MessageBuilder::internal(&alice, &order, TOS).body(text_comment("hello")).build();
+    let r = f.bc.send_message(msg).expect("deliver");
+    assert_eq!(exit_code_on(&r, &order), 0xffff, "any other comment is refused, not swallowed");
+}
+
+#[test]
+fn an_expired_order_hands_its_balance_back() {
+    let mut f = Fixture::new();
+    f.propose_paid(send_action(transfer(f.target.address(), TOS), None));
+    let order = f.order_address(0);
+    let eve = f.outsider.address().clone();
+    let reclaim = cell(|b| {
+        b.append_u32(OP_RECLAIM).unwrap();
+        b.append_u64(0).unwrap();
+    });
+    let msg = MessageBuilder::internal(&eve, &order, TOS / 10).body(reclaim.clone()).build();
+    let r = f.bc.send_message(msg).expect("deliver");
+    assert_eq!(exit_code_on(&r, &order), ERROR_NOT_RECLAIMABLE, "not before expiry");
+
+    f.bc.set_now(NOW + DAY + 1);
+    let order_balance = f.balance(&order);
+    let parent_before = f.balance(&f.multisig);
+    assert!(order_balance > 0);
+    let msg = MessageBuilder::internal(&eve, &order, TOS / 10).body(reclaim).build();
+    let r = f.bc.send_message(msg).expect("deliver");
+    assert_eq!(exit_code_on(&r, &order), 0);
+    assert!(
+        f.balance(&f.multisig) > parent_before + order_balance - TOS / 1_000,
+        "the funds return to the parent"
+    );
+    assert!(
+        f.bc.get_account(&order).map(|a| a.is_none()).unwrap_or(true),
+        "the order is destroyed"
+    );
+}
+
+#[test]
+fn an_executed_order_cannot_be_reclaimed() {
+    let mut f = Fixture::new();
+    f.propose_paid(send_action(transfer(f.target.address(), TOS), None));
+    let order = f.order_address(0);
+    let alice = f.signer(0);
+    let bob = f.signer(1);
+    f.approve(&order, &alice, 0);
+    f.approve(&order, &bob, 1);
+    f.bc.set_now(NOW + DAY + 1);
+    let reclaim = cell(|b| {
+        b.append_u32(OP_RECLAIM).unwrap();
+        b.append_u64(0).unwrap();
+    });
+    let msg = MessageBuilder::internal(&alice, &order, TOS / 10).body(reclaim).build();
+    let r = f.bc.send_message(msg).expect("deliver");
+    assert_eq!(exit_code_on(&r, &order), ERROR_NOT_RECLAIMABLE);
+}
+
+#[test]
+fn execute_internal_runs_further_actions_only_for_the_wallet_itself() {
+    let mut f = Fixture::new();
+    let inner = send_action(
+        transfer(f.target.address(), TOS),
+        Some(send_action(transfer(f.target.address(), 2 * TOS), None)),
+    );
+    let body = cell(|b| {
+        b.append_u32(OP_EXECUTE_INTERNAL).unwrap();
+        b.append_u64(0).unwrap();
+        b.checked_append_reference(inner.clone()).unwrap();
+    });
+    let to_self = {
+        let header = InternalMessageHeader {
+            bounce: false,
+            dst: f.multisig.clone(),
+            value: CurrencyCollection::with_coins(TOS),
+            ..Default::default()
+        };
+        Message::with_int_header_and_body(header, SliceData::load_cell(body.clone()).unwrap())
+            .serialize_as_is()
+            .unwrap()
+            .0
+            .into_cell()
+            .unwrap()
+    };
+    f.propose_paid(send_action(to_self, None));
+    let order = f.order_address(0);
+    let alice = f.signer(0);
+    let bob = f.signer(1);
+    let target_before = f.balance(f.target.address());
+    f.approve(&order, &alice, 0);
+    f.approve(&order, &bob, 1);
+    assert_received(target_before, f.balance(f.target.address()), 3 * TOS, "both chained sends");
+
+    let eve = f.outsider.address().clone();
+    let msg = MessageBuilder::internal(&eve, &f.multisig, TOS).body(body).build();
+    let r = f.bc.send_message(msg).expect("deliver");
+    assert_eq!(exit_code_on(&r, &f.multisig), ERROR_UNAUTHORIZED_EXECUTE);
+}
+
+#[test]
+fn the_wallet_cannot_propose_or_be_made_a_member() {
+    let mut f = Fixture::new();
+    let actions = send_action(transfer(f.target.address(), TOS), None);
+    let expires_at = NOW + DAY;
+    let value = f.estimate(&actions, expires_at);
+    let me = f.multisig.clone();
+    let r = f.propose(&me, false, 0, NEXT_SEQNO, expires_at, actions, value);
+    assert_eq!(exit_code_on(&r, &f.multisig), ERROR_UNAUTHORIZED_PROPOSER);
+
+    let alice = f.signer(0);
+    let with_self = address_dict(&[(0, &alice), (1, &me)]).unwrap();
+    let dave = f.proposer.address().clone();
+    let update = update_action(1, with_self, None, None);
+    let r = f.propose(&dave, false, 0, NEXT_SEQNO, expires_at, update, value);
+    assert_eq!(exit_code_on(&r, &f.multisig), ERROR_INVALID_CONFIG, "self as a signer");
+    let only_alice = address_dict(&[(0, &alice)]).unwrap();
+    let self_proposer = address_dict(&[(0, &me)]);
+    let update = update_action(1, only_alice, self_proposer, None);
+    let r = f.propose(&dave, false, 0, NEXT_SEQNO, expires_at, update, value);
+    assert_eq!(exit_code_on(&r, &f.multisig), ERROR_INVALID_CONFIG, "self as a proposer");
+}
+
+#[test]
+fn a_large_wallet_executes_a_large_order_paid_at_the_quote() {
+    // 64 signers and 50 actions: the sizes at which a fixed, small-point profile left
+    // proposals underfunded. Paying exactly the quote must carry the order all the way.
+    let mut f = Fixture::with_wallet(2, 61);
+    let mut chain = None;
+    for _ in 0..50 {
+        chain = Some(send_action(transfer(f.target.address(), TOS / 100), chain));
+    }
+    let r = f.propose_paid(chain.unwrap());
+    let order = f.order_address(0);
+    assert_eq!(exit_code_on(&r, &order), 0, "the order initialises");
+    let alice = f.signer(0);
+    let bob = f.signer(1);
+    let target_before = f.balance(f.target.address());
+    f.approve(&order, &alice, 0);
+    let r = f.approve(&order, &bob, 1);
+    assert_eq!(exit_code_on(&r, &f.multisig), 0, "the parent executes all 50 actions");
+    assert_received(
+        target_before,
+        f.balance(f.target.address()),
+        50 * (TOS / 100),
+        "all 50 transfers",
+    );
 }
