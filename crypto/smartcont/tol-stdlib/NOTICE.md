@@ -19,7 +19,7 @@ here.
 | Modules | Upstream | Path | Commit | License |
 |---|---|---|---|---|
 | `jetton-fees.tol`, `../jetton-fees.fc` | `ton-blockchain/stablecoin-contract` | `contracts/gas.fc` | `5a3b500267b0bdfc6505a08e5ac661c805cab8b0` | MIT |
-| `replay-guard.tol`, `../replay-guard.fc` | `ton-blockchain/highload-wallet-contract-v3` | `contracts/highload-wallet-v3.func` | `f5d9b592bd5ab5c9ae6ca627819929e140f6bd61` | MIT |
+| `replay-guard.tol`, `../replay-guard.fc`, `../highload-wallet-v3-code.fc` | `ton-blockchain/highload-wallet-contract-v3` | `contracts/highload-wallet-v3.func` | `f5d9b592bd5ab5c9ae6ca627819929e140f6bd61` | MIT |
 
 How each module differs from its upstream:
 
@@ -32,6 +32,12 @@ How each module differs from its upstream:
 - `replay-guard.tol` rejects query ids whose bit index is 1023. Upstream
   leaves that case to a cell-overflow exception. The current time is read
   from the block rather than passed in by the caller.
+- `highload-wallet-v3-code.fc` is a complete wallet built on
+  `replay-guard.fc`. Its request and storage layouts match upstream, so
+  existing signing tools work unchanged. Replay and freshness failures
+  use the library's throw codes (0x1701 to 0x1704), not upstream's 35 and
+  36. A request whose outbound message is malformed throws after the
+  state commit; upstream silently skips one marked as bounced.
 
 ### MIT license texts
 
