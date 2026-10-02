@@ -1,7 +1,7 @@
 #!/usr/bin/fift -s
-// gen-validator-keys.fif — generate N genesis validator key pairs and
-// assemble the `validator-keys.pub` file consumed by `load-keys-from-file`
-// in gen-zerostate*.fif.
+// Legacy classical TEST fixture helper. Not accepted by canonical PQ genesis.
+// Use prepare-pq-genesis-manifest.py for production public submissions.
+// Generates Ed25519 key pairs and a legacy validator-keys.pub file.
 //
 // Usage:
 //   fift -I crypto/fift/lib -s scripts/gen-validator-keys.fif <count> [priv-prefix]

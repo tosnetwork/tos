@@ -1,5 +1,6 @@
 """Regression tests for the development and validator-economics zerostates."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -12,6 +13,7 @@ from pytosiq_core.tlb.config import (
     ConfigParam0,
     ConfigParam2,
     ConfigParam4,
+    ConfigParam8,
     ConfigParam9,
     ConfigParam10,
     ConfigParam14,
@@ -602,14 +604,39 @@ def _punishment_tier(config: dict, severe: bool, interval: int) -> tuple[int, in
     return flat, part
 
 
+def _write_pq_manifest(directory):
+    import re
+
+    directory.chmod(0o700)
+    records = []
+    for index in range(4):
+        seed = hashlib.sha256(f"disposable-genesis-{index}".encode()).hexdigest()
+        proc = subprocess.run(
+            [
+                str(BUILD_DIR / "crypto/pq/tos-pq-consensus-key"),
+                "import",
+                str(directory / f"pq-{index}.seed"),
+            ],
+            input=seed + "\n",
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        public = bytes.fromhex(re.search(r"^public\s+([0-9a-f]+)$", proc.stdout, re.M)[1])
+        key_id = bytes.fromhex(re.search(r"^key_id\s+([0-9a-f]+)$", proc.stdout, re.M)[1])
+        controller = hashlib.sha256(f"controller-{index}".encode()).digest()
+        adnl = hashlib.sha256(f"adnl-{index}".encode()).digest()
+        records.append((controller, adnl, public, key_id))
+    (directory / "validator-pq.pub").write_bytes(b"".join(c + a + p for c, a, p, _ in records))
+    return records
+
+
 def test_canonical_genesis_sets_a_stake_proportional_punishment_schedule(tmp_path):
     """Without ConfigParam 40 the punishment path falls back to a flat fine with
     no proportional component, so a validator's required own funds stop scaling
     with the stake it controls. Pooled-stake contracts read this parameter to
     size that requirement, so genesis must ship a real schedule."""
-    (tmp_path / "validator-keys.pub").write_bytes(
-        b"".join(Key().public_key.key for _ in range(EXPECTED_VALIDATOR_COUNT))
-    )
+    _write_pq_manifest(tmp_path)
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(
         command,
@@ -682,8 +709,7 @@ def test_canonical_genesis_sets_a_stake_proportional_punishment_schedule(tmp_pat
 
 
 def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
-    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
-    (tmp_path / "validator-keys.pub").write_bytes(b"".join(key.public_key.key for key in keys))
+    keys = _write_pq_manifest(tmp_path)
 
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(
@@ -720,13 +746,50 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         canonical_catchain.shard_validators_lifetime,
         canonical_catchain.shard_validators_num,
     ) == (250, 250, 1000, 21)
-    validator_set = _config(state, 34, ConfigParam34).cur_validators
-    assert validator_set.total == EXPECTED_VALIDATOR_COUNT
-    assert [validator_set.list[index].adnl_addr for index in range(EXPECTED_VALIDATOR_COUNT)] == [
-        key.id for key in keys
-    ]
+    import importlib.util
 
-    (tmp_path / "validator-keys.pub").write_bytes(b"".join(key.public_key.key for key in keys[:3]))
+    spec = importlib.util.spec_from_file_location(
+        "genesis_config34", REPO / "scripts/x02_config34_proof.py"
+    )
+    decoder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(decoder)
+    decode_validator_set = decoder.decode_validator_set
+
+    assert _config(state, 8, ConfigParam8).version == 18
+    validator_set = decode_validator_set(state.custom.config.config[34].copy().to_cell())
+    assert validator_set["total"] == EXPECTED_VALIDATOR_COUNT
+    for actual, (controller, adnl, public, key_id) in zip(validator_set["validators"], keys):
+        assert actual["public_key_sha256"] == hashlib.sha256(public).hexdigest()
+        assert actual["algorithm_id"] == 1
+        assert actual["controller_id_hex"] == controller.hex()
+        assert actual["adnl_id_hex"] == adnl.hex()
+        assert actual["consensus_key_id_hex"] == key_id.hex()
+        assert actual["weight"] == 17
+    assert 47 in state.custom.config.config
+    admitted = state.custom.config.config[47].copy().load_dict(256)
+    # Independently compile the same admission artifact and compare its code hash.
+    probe = tmp_path / "controller-hash.fif"
+    probe.write_text('"PQ.fif" include "auto/validator-controller-v1-code.fif" include hashu . cr')
+    compiled = subprocess.run(
+        [
+            str(BUILD_DIR / "crypto/fift"),
+            "-I",
+            str(REPO / "crypto/fift/lib"),
+            "-I",
+            str(BUILD_DIR / "crypto/smartcont"),
+            "-s",
+            str(probe),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert set(admitted) == {int(compiled.stdout.strip())}
+    for parameter in (8, 47):
+        assert parameter in _config(state, 9, ConfigParam9).mandatory_params
+        assert parameter in _config(state, 10, ConfigParam10).critical_params
+
+    (tmp_path / "validator-pq.pub").write_bytes(b"".join(c + a + p for c, a, p, _ in keys[:3]))
     failed = subprocess.run(
         command,
         cwd=tmp_path,
@@ -736,11 +799,9 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         env=_mainnet_genesis_env(),
     )
     assert failed.returncode != 0
-    assert "exactly four 32-byte public keys" in failed.stderr + failed.stdout
+    assert "exactly four 1376-byte records" in failed.stderr + failed.stdout
 
-    (tmp_path / "validator-keys.pub").write_bytes(
-        b"".join([keys[0].public_key.key] * EXPECTED_VALIDATOR_COUNT)
-    )
+    (tmp_path / "validator-pq.pub").write_bytes((keys[0][0] + keys[0][1] + keys[0][2]) * 4)
     failed = subprocess.run(
         command,
         cwd=tmp_path,
@@ -750,13 +811,13 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         env=_mainnet_genesis_env(),
     )
     assert failed.returncode != 0
-    assert "genesis validator public keys must be unique" in (failed.stderr + failed.stdout)
+    assert "genesis PQ identities, public keys and ADNL IDs must be unique" in (
+        failed.stderr + failed.stdout
+    )
 
 
 def test_canonical_genesis_rejects_a_different_timestamp(tmp_path):
-    (tmp_path / "validator-keys.pub").write_bytes(
-        b"".join(Key().public_key.key for _ in range(EXPECTED_VALIDATOR_COUNT))
-    )
+    _write_pq_manifest(tmp_path)
     env = _mainnet_genesis_env()
     env["SOURCE_DATE_EPOCH"] = str(EXPECTED_MAINNET_GENESIS_UTIME + 1)
     failed = subprocess.run(
@@ -772,8 +833,7 @@ def test_canonical_genesis_rejects_a_different_timestamp(tmp_path):
 
 
 def test_validator_rewards_are_the_only_native_tos_issuance_path(tmp_path):
-    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
-    (tmp_path / "validator-keys.pub").write_bytes(b"".join(key.public_key.key for key in keys))
+    _write_pq_manifest(tmp_path)
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(
         command,
@@ -804,8 +864,7 @@ def test_canonical_genesis_makes_global_id_mandatory_and_critical(tmp_path):
     """GLOBALID (used by every wallet's anti-replay check) throws when ConfigParam 19
     is absent, so the canonical genesis must forbid installing a configuration
     without it and must require a critical vote to change it."""
-    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
-    (tmp_path / "validator-keys.pub").write_bytes(b"".join(key.public_key.key for key in keys))
+    _write_pq_manifest(tmp_path)
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(
         command,
@@ -822,7 +881,7 @@ def test_canonical_genesis_makes_global_id_mandatory_and_critical(tmp_path):
     assert 19 in _config(state, 10, ConfigParam10).critical_params
 
 
-def test_validator_key_helper_defaults_to_four_keys(tmp_path):
+def test_legacy_classical_key_helper_defaults_to_four_keys(tmp_path):
     command = [
         str(BUILD_DIR / "crypto/fift"),
         "-I",
@@ -835,3 +894,75 @@ def test_validator_key_helper_defaults_to_four_keys(tmp_path):
     assert (tmp_path / "validator-keys.pub").stat().st_size == 128
     for index in range(1, EXPECTED_VALIDATOR_COUNT + 1):
         assert (tmp_path / f"val-key-{index}").stat().st_size == 32
+
+
+@pytest.mark.parametrize("field", [0, 1, 2])
+def test_canonical_pq_genesis_rejects_individual_identity_reuse(tmp_path, field):
+    keys = _write_pq_manifest(tmp_path)
+    records = [list(row[:3]) for row in keys]
+    records[1][field] = records[0][field]
+    (tmp_path / "validator-pq.pub").write_bytes(b"".join(b"".join(row) for row in records))
+    failed = subprocess.run(
+        _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif"),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=_mainnet_genesis_env(),
+    )
+    assert failed.returncode != 0
+    assert (
+        "genesis PQ identities, public keys and ADNL IDs must be unique"
+        in failed.stderr + failed.stdout
+    )
+
+
+def test_canonical_pq_genesis_rejects_classical_manifest(tmp_path):
+    classic = b"".join(Key().public_key.key for _ in range(4))
+    (tmp_path / "validator-keys.pub").write_bytes(classic)
+    command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
+    missing = subprocess.run(
+        command, cwd=tmp_path, capture_output=True, text=True, env=_mainnet_genesis_env()
+    )
+    assert missing.returncode != 0
+    assert "validator-pq.pub" in missing.stderr + missing.stdout
+    (tmp_path / "validator-pq.pub").write_bytes(classic)
+    short = subprocess.run(
+        command, cwd=tmp_path, capture_output=True, text=True, env=_mainnet_genesis_env()
+    )
+    assert short.returncode != 0
+    assert "exactly four 1376-byte records" in short.stderr + short.stdout
+
+
+@pytest.mark.parametrize("version", [14, 16, 17])
+def test_pq_genesis_rejects_legacy_vm_version(tmp_path, version):
+    pq = PqInitialValidator(bytes([1]) * 32, bytes([2]) * 32, bytes([3]) * 1312, bytes([4]) * 32)
+    with pytest.raises(ValueError, match="PQ genesis requires global version 18"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO), tmp_path, NetworkConfig(global_version=version), [], [pq]
+        )
+
+
+def test_public_pq_manifest_packer_roundtrip_and_rejections(tmp_path):
+    keys = _write_pq_manifest(tmp_path)
+    records = [
+        dict(controller_id=c.hex(), adnl_id=a.hex(), public_key=p.hex()) for c, a, p, _ in keys
+    ]
+    source = tmp_path / "operators.json"
+    source.write_text(json.dumps(records))
+    dest = tmp_path / "packed.pub"
+    import sys
+
+    command = [
+        sys.executable,
+        str(REPO / "scripts/prepare-pq-genesis-manifest.py"),
+        str(source),
+        str(dest),
+    ]
+    subprocess.run(command, check=True, capture_output=True)
+    assert dest.read_bytes() == (tmp_path / "validator-pq.pub").read_bytes()
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    dest.unlink()
+    records[1]["controller_id"] = records[0]["controller_id"]
+    source.write_text(json.dumps(records))
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    assert not dest.exists()
