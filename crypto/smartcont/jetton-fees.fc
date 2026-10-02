@@ -1,0 +1,157 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Jetton fee sufficiency checks priced from the live fee configuration.
+;;
+;; A wallet that compares the attached value against hard-coded nanocoin constants stops
+;; being correct the moment ConfigParams 18/21/25 change: it either rejects transfers it
+;; could afford or accepts transfers whose receiving side then runs out of gas. These
+;; helpers keep only the configuration-independent quantities (gas units, bits and cells,
+;; measured once per contract build) in a profile, and price them at execution time with
+;; GETGASFEE, GETFORWARDFEE(SIMPLE) and GETSTORAGEFEE.
+;;
+;; FunC counterpart of the Tol `@stdlib/jetton-fees`: same rules, same throw codes. The
+;; profile is an 11-entry tuple in the field order of the Tol `JettonFeeProfile`.
+;;
+;; Provenance and license: crypto/smartcont/tol-stdlib/NOTICE.md.
+;;
+;; Requires stdlib.fc and TVM version 6.
+;;
+;; Everything that can throw is `impure`: FunC deletes a call to a pure function whose
+;; result is unused, and a validation that is only called for its exception would vanish.
+
+const int jetton_fees::error::invalid_profile = 0x1601;
+;; The jetton wallet's own codes, so its error mapping applies unchanged.
+const int jetton_fees::error::insufficient_transfer_value = 709;
+const int jetton_fees::error::insufficient_burn_value = 707;
+
+;; Five years, the storage horizon a freshly deployed wallet must be able to pay for out
+;; of the value that deploys it.
+const int jetton_fees::default_min_storage_seconds = 157680000;
+
+const int jetton_fees::basechain = 0;
+
+;; Profile field indexes.
+const int jetton_fees::wallet_storage_bits = 0;
+const int jetton_fees::wallet_storage_cells = 1;
+const int jetton_fees::wallet_init_state_bits = 2;
+const int jetton_fees::wallet_init_state_cells = 3;
+const int jetton_fees::burn_notification_bits = 4;
+const int jetton_fees::burn_notification_cells = 5;
+const int jetton_fees::send_transfer_gas = 6;
+const int jetton_fees::receive_transfer_gas = 7;
+const int jetton_fees::send_burn_gas = 8;
+const int jetton_fees::receive_burn_gas = 9;
+const int jetton_fees::min_storage_seconds = 10;
+const int jetton_fees::profile_size = 11;
+
+int jetton_fees::field(tuple profile, int index) asm "INDEXVAR";
+tuple jetton_fees::set_field(tuple profile, int value, int index) asm "SETINDEXVAR";
+int jetton_fees::tuple_length(tuple t) asm "TLEN";
+
+;; Measured, configuration-independent cost inputs of one jetton wallet build. Gas figures
+;; are gas units of the named compute phase; bits/cells are the sizes the fee formulas are
+;; charged on. Re-measure them whenever the wallet code changes: a stale profile
+;; under-reserves silently.
+tuple jetton_fees::profile(int wallet_storage_bits, int wallet_storage_cells,
+                           int wallet_init_state_bits, int wallet_init_state_cells,
+                           int burn_notification_bits, int burn_notification_cells,
+                           int send_transfer_gas, int receive_transfer_gas,
+                           int send_burn_gas, int receive_burn_gas, int min_storage_seconds) inline {
+  tuple p = empty_tuple();
+  p~tpush(wallet_storage_bits);
+  p~tpush(wallet_storage_cells);
+  p~tpush(wallet_init_state_bits);
+  p~tpush(wallet_init_state_cells);
+  p~tpush(burn_notification_bits);
+  p~tpush(burn_notification_cells);
+  p~tpush(send_transfer_gas);
+  p~tpush(receive_transfer_gas);
+  p~tpush(send_burn_gas);
+  p~tpush(receive_burn_gas);
+  p~tpush(min_storage_seconds);
+  return p;
+}
+
+;; Rejects a profile of the wrong shape or in which any priced quantity is not positive.
+;; A zero there does not mean "free": it means the measurement was never filled in.
+() jetton_fees::require_valid(tuple profile) impure inline {
+  throw_unless(jetton_fees::error::invalid_profile, profile.jetton_fees::tuple_length() == jetton_fees::profile_size);
+  int i = 0;
+  while (i < jetton_fees::profile_size) {
+    throw_unless(jetton_fees::error::invalid_profile, profile.jetton_fees::field(i) > 0);
+    i += 1;
+  }
+}
+
+;; Storage fee for keeping one wallet alive for `min_storage_seconds`.
+int jetton_fees::wallet_min_storage_fee(tuple profile) inline {
+  return get_storage_fee(jetton_fees::basechain,
+                         profile.jetton_fees::field(jetton_fees::min_storage_seconds),
+                         profile.jetton_fees::field(jetton_fees::wallet_storage_bits),
+                         profile.jetton_fees::field(jetton_fees::wallet_storage_cells));
+}
+
+;; Extra forwarding cost of carrying the receiving wallet's StateInit inside the internal
+;; transfer. The lump price is already in the message's own forward fee, so only the
+;; per-bit/per-cell part is added here.
+int jetton_fees::init_state_forward_overhead(tuple profile) inline {
+  return get_simple_forward_fee(jetton_fees::basechain,
+                                profile.jetton_fees::field(jetton_fees::wallet_init_state_bits),
+                                profile.jetton_fees::field(jetton_fees::wallet_init_state_cells));
+}
+
+;; Smallest attached value that is NOT enough for a transfer: the transfer is affordable
+;; only when the attached value is strictly greater than this.
+;;
+;; Covers the forwarded amount, one forward fee per outgoing hop (two when a notification
+;; is forwarded), the StateInit overhead, the compute fee of the sending and the receiving
+;; wallet, and the receiving wallet's storage reserve. `fwd_fee` is the forward fee of the
+;; incoming transfer message.
+int jetton_fees::required_transfer_value(tuple profile, int forward_amount, int fwd_fee) impure inline {
+  jetton_fees::require_valid(profile);
+  int send_gas = profile.jetton_fees::field(jetton_fees::send_transfer_gas);
+  int receive_gas = profile.jetton_fees::field(jetton_fees::receive_transfer_gas);
+  int precompiled = get_precompiled_gas_consumption();
+  ifnot (null?(precompiled)) {
+    send_gas = precompiled;
+    receive_gas = precompiled;
+  }
+  int hops = forward_amount ? 2 : 1;
+  return forward_amount
+      + hops * fwd_fee
+      + jetton_fees::init_state_forward_overhead(profile)
+      + get_compute_fee(jetton_fees::basechain, send_gas)
+      + get_compute_fee(jetton_fees::basechain, receive_gas)
+      + jetton_fees::wallet_min_storage_fee(profile);
+}
+
+;; Throws the jetton wallet's insufficient-value code unless `msg_value` strictly exceeds
+;; [jetton_fees::required_transfer_value].
+() jetton_fees::require_transfer_value(tuple profile, int msg_value, int forward_amount, int fwd_fee) impure inline {
+  throw_unless(jetton_fees::error::insufficient_transfer_value,
+               msg_value > jetton_fees::required_transfer_value(profile, forward_amount, fwd_fee));
+}
+
+;; Smallest attached value that is NOT enough for a burn: the forward fee of the burn
+;; notification plus the compute fee of the burning wallet and of the minter that processes
+;; the notification. The minter is never a precompiled wallet, so its side always uses the
+;; measured gas.
+int jetton_fees::required_burn_value(tuple profile) impure inline {
+  jetton_fees::require_valid(profile);
+  int send_gas = profile.jetton_fees::field(jetton_fees::send_burn_gas);
+  int precompiled = get_precompiled_gas_consumption();
+  ifnot (null?(precompiled)) {
+    send_gas = precompiled;
+  }
+  return get_forward_fee(jetton_fees::basechain,
+                         profile.jetton_fees::field(jetton_fees::burn_notification_bits),
+                         profile.jetton_fees::field(jetton_fees::burn_notification_cells))
+      + get_compute_fee(jetton_fees::basechain, send_gas)
+      + get_compute_fee(jetton_fees::basechain, profile.jetton_fees::field(jetton_fees::receive_burn_gas));
+}
+
+;; Throws the jetton wallet's burn-value code unless `msg_value` strictly exceeds
+;; [jetton_fees::required_burn_value].
+() jetton_fees::require_burn_value(tuple profile, int msg_value) impure inline {
+  throw_unless(jetton_fees::error::insufficient_burn_value, msg_value > jetton_fees::required_burn_value(profile));
+}

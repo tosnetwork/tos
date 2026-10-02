@@ -1,0 +1,34 @@
+// Fee profile of the jetton wallet in jetton-wallet.tol, shared with
+// jetton-minter.tol: the minter prices a mint with the wallet's profile, since
+// a mint delivers an internal transfer that the wallet must then process.
+tol 1.3
+
+import "@stdlib/jetton-fees"
+
+/// Measured cost inputs of this wallet build and of the minter it reports
+/// burns to, each about 10% above what jetton-wallet-fee-profile-fixture.cpp
+/// measured from whole transactions on the C++ executor (2026-10-02):
+///   storage 8967 bits / 21 cells as the storage phase charges the account,
+///   widened to the largest TOS balance; carried StateInit 8657 bits / 21
+///   cells; burn notification 1009 bits / 1 cell at the maximum amount and
+///   the largest response address the wallet accepts; gas: send transfer
+///   7634, receive transfer 8021, send burn 5265, minter receiving the burn
+///   4586.
+/// The fixture fails if a build makes any value lower than its measurement
+/// or more than 25% above it.
+@pure
+fun walletFeeProfile(): JettonFeeProfile {
+    return JettonFeeProfile {
+        walletStorageBits: 9900,
+        walletStorageCells: 23,
+        walletInitStateBits: 9550,
+        walletInitStateCells: 23,
+        burnNotificationBits: 1110,
+        burnNotificationCells: 1,
+        sendTransferGas: 8400,
+        receiveTransferGas: 8850,
+        sendBurnGas: 5800,
+        receiveBurnGas: 5150,
+        minStorageSeconds: JETTON_FEES_DEFAULT_MIN_STORAGE_SECONDS,
+    };
+}

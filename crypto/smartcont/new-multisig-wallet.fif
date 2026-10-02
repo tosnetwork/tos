@@ -1,0 +1,92 @@
+#!/usr/bin/fift -s
+"TosUtil.fif" include
+"Asm.fif" include
+
+{ ."usage: " @' $0 type ." <workchain-id> <threshold> <filename-base> <signer-address>... [-p <proposer-address>...]" cr
+  ."Creates the initial state of a multisig wallet (multisig-wallet-code.fc) in workchain 0 (the fee model is basechain-only), "
+  ."approved by <threshold> of the given signers. Proposers, listed after -p, may open orders but never approve them." cr
+  ."Signers are given indices in increasing address order, as the wallet requires, and the same address twice is refused: "
+  ."approvals are counted per index, so it would vote twice. The state is then checked with the wallet's own "
+  ."get_checked_signer_count." cr
+  ."Saves the StateInit to <filename-base>.init.boc and the address to <filename-base>.addr. "
+  ."Deploy the wallet by sending funds to that address in any internal message carrying the StateInit "
+  ."(for example wallet-v3.fif with -I <filename-base>.init.boc)." cr 1 halt
+} : usage
+$# 4 < ' usage if
+
+$1 parse-workchain-id =: wc
+wc 0<> abort"this multisig wallet supports only workchain 0"
+$2 parse-int =: threshold
+$3 =: file-base
+
+// ( wc addr -- b )  The address as the wallet stores it: a plain addr_std.
+{ <b 4 3 u, rot 8 i, swap 256 u, } : addr-std,
+
+// Signers keyed by workchain + 128, each mapping to a dictionary keyed by account id. Walking
+// both in key order visits the signers in the order the wallet requires, and adding the same
+// account id twice to one workchain fails.
+variable signer-keys  dictnew signer-keys !
+variable proposers  dictnew proposers !
+variable proposer-count  0 proposer-count !
+variable proposing  false proposing !
+
+// ( S -- )
+{ dup "-p" $= {
+    drop true proposing !
+  } {
+    false parse-load-address drop  // ( wc addr )
+    proposing @ {
+      proposer-count @ 255 >= abort"more than 255 proposers"
+      addr-std, proposer-count @ proposers @ 8 b>udict! not abort"cannot add proposer"
+      proposers !  proposer-count @ 1+ proposer-count !
+    } {
+      swap 128 +  dup signer-keys @ 8 udict@ { ref@ } { null } cond  // ( addr w ids )
+      rot <b -rot swap 256 b>udict!+ not abort"the same signer address is listed twice"
+      <b swap ref, swap signer-keys @ 8 b>udict! drop signer-keys !
+    } cond
+  } cond
+} : add-member
+4 { dup $() add-member 1+ } $# 3 - times drop
+
+variable signer-dict  dictnew signer-dict !
+variable signer-count  0 signer-count !
+// ( wc id s -- wc true )  Gives the next signer, in address order, the next index.
+{ drop over swap addr-std,
+  signer-count @ 255 >= abort"more than 255 signers"
+  signer-count @ signer-dict @ 8 b>udict! not abort"cannot add signer"
+  signer-dict !  signer-count @ 1+ signer-count !  true
+} : add-signer
+// ( w s -- true )
+{ ref@ swap 128 - swap 256 ' add-signer dictforeach 2drop true } : add-workchain
+signer-keys @ 8 ' add-workchain dictforeach drop
+signer-dict @ =: signers  signer-count @ =: signer-count
+signer-count 0= abort"no signers given"
+threshold 1 < threshold signer-count > or abort"the threshold must be between 1 and the number of signers"
+
+"auto/multisig-order-code.fif" include =: order-code
+"auto/multisig-wallet-code.fif" include =: wallet-code
+<b 0 64 u, threshold 8 u, signer-count 8 u, signers ref, proposers @ dict, order-code ref, b> =: data
+
+// Run the wallet's own check on this state: get_checked_signer_count, whose method id
+// FunC assigns as (crc16 of the name) | 0x10000. It checks the dictionary, the cached
+// signer count and the threshold together, rather than trusting the serialized scalars.
+108550 wallet-code <s data runvm  // ( count exit-code data' )
+drop 0<> abort"the wallet refuses this signer set"
+signer-count <> abort"the wallet counts a different number of signers"
+
+."Creating a multisig wallet in workchain " wc . ."approved by " threshold . ."of " signer-count . ."signers" cr
+."Signers by index:" cr
+signers 8 { swap ."  " . ."  " 3 u@+ nip 8 i@+ 256 u@ .addr cr true } dictforeach drop
+proposer-count @ 0> {
+  ."Proposers by index:" cr
+  proposers @ 8 { swap ."  " . ."  " 3 u@+ nip 8 i@+ 256 u@ .addr cr true } dictforeach drop
+} if
+
+<b b{0011} s, wallet-code ref, data ref, null dict, b>  // StateInit
+dup hashu wc swap 2dup 2constant wallet_addr
+."New multisig wallet address = " 2dup .addr cr
+2dup file-base +".addr" save-address-verbose
+."Non-bounceable address (for init): " 2dup 7 .Addr cr
+."Bounceable address (for later access): " 6 .Addr cr
+2 boc+>B file-base +".init.boc" tuck B>file
+."(Saved the wallet's StateInit to file " type .")" cr

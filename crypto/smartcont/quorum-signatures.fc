@@ -1,0 +1,139 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; M-of-N Ed25519 authorization against a fixed verifier set.
+;;
+;; Signatures arrive as a dictionary keyed by the signer's public key, so a signer can be
+;; counted at most once by construction. Verification is strict: a signature from a key
+;; outside the set, a malformed signature value, or one that does not verify rejects the
+;; whole request instead of being skipped. Strictness is also the gas bound: entries are
+;; distinct keys, so after `verifier_count` accepted entries the next one is necessarily a
+;; non-member and stops the walk — at most `verifier_count + 1` entries are ever examined.
+;;
+;; A quorum signature carries only what its hash binds. Sign a hash built with
+;; [quorum::signing_hash]: it binds the network (read on chain, so a signature for one
+;; network never verifies on another), a domain tag naming the operation, the target
+;; contract, a nonce and an expiry. The verifying contract must also call
+;; [quorum::require_not_expired] and consume the nonce (for example with
+;; ordered-delivery.fc or replay-guard.fc) in the same transaction.
+;;
+;; FunC counterpart of the Tol `@stdlib/quorum-signatures`: same rules, same throw codes.
+;; A config is the tuple [verifiers, verifier_count, quorum].
+;;
+;; Requires stdlib.fc. Everything that can throw is `impure`: FunC deletes a call to a pure
+;; function whose result is unused, and a check called only for its exception would vanish.
+
+const int quorum::error::invalid_config = 0x1901;
+const int quorum::error::duplicate_verifier = 0x1902;
+const int quorum::error::unknown_signer = 0x1903;
+const int quorum::error::malformed_signature = 0x1904;
+const int quorum::error::invalid_signature = 0x1905;
+const int quorum::error::insufficient_signatures = 0x1906;
+const int quorum::error::expired = 0x1907;
+const int quorum::error::invalid_target = 0x1908;
+
+const int quorum::key_bits = 256;
+const int quorum::signature_bits = 512;
+;; Upper bound on the verifier set, and with it on signature checks per call.
+const int quorum::max_verifiers = 64;
+
+;; The network's global id (ConfigParam 19).
+int quorum::global_id() asm "GLOBALID";
+
+;; Hash that verifiers sign: binds the payload to this network, a purpose, a target contract,
+;; a nonce and an expiry, so a signature cannot be replayed on another network, for another
+;; operation or contract, twice, or late. `target` must be a standard address (addr_std, no
+;; anycast), the same bits the Tol version's typed address stores.
+int quorum::signing_hash(int domain, slice target, int nonce, int valid_until, cell payload) impure inline {
+  ;; FunC's & evaluates both sides, so the size check must come before reading the prefix.
+  throw_unless(quorum::error::invalid_target, (target.slice_bits() == 267) & (target.slice_refs() == 0));
+  throw_unless(quorum::error::invalid_target, target.preload_uint(3) == 4);
+  return begin_cell()
+      .store_int(quorum::global_id(), 32)
+      .store_uint(domain, 32)
+      .store_slice(target)
+      .store_uint(nonce, 64)
+      .store_uint(valid_until, 32)
+      .store_ref(payload)
+      .end_cell()
+      .cell_hash();
+}
+
+;; Rejects a request whose signed expiry has passed.
+() quorum::require_not_expired(int valid_until) impure inline {
+  throw_if(quorum::error::expired, now() > valid_until);
+}
+
+;; Adds `public_key` to a verifier dictionary, rejecting duplicates.
+cell quorum::add_verifier(cell verifiers, int public_key) impure inline {
+  (cell next, int added) = verifiers.udict_add_builder?(quorum::key_bits, public_key, begin_cell());
+  throw_unless(quorum::error::duplicate_verifier, added);
+  return next;
+}
+
+;; Number of entries in a 256-bit-keyed dictionary, refusing to walk past `limit` entries.
+int quorum::count_keys(cell keys, int limit, int overflow_code) impure inline {
+  int count = 0;
+  (int key, _, int found) = keys.udict_get_min?(quorum::key_bits);
+  while (found) {
+    count += 1;
+    throw_if(overflow_code, count > limit);
+    (key, _, found) = keys.udict_get_next?(quorum::key_bits, key);
+  }
+  return count;
+}
+
+() quorum::require_valid_config(int verifier_count, int quorum) impure inline {
+  throw_unless(quorum::error::invalid_config,
+               (verifier_count > 0) & (verifier_count <= quorum::max_verifiers) & (quorum > 0) & (quorum <= verifier_count));
+}
+
+;; Builds a config, counting the set and requiring 1 <= quorum <= count.
+[cell, int, int] quorum::config(cell verifiers, int quorum) impure inline {
+  int count = quorum::count_keys(verifiers, quorum::max_verifiers, quorum::error::invalid_config);
+  quorum::require_valid_config(count, quorum);
+  return [verifiers, count, quorum];
+}
+
+;; Replaces the verifier set, keeping the quorum. A set smaller than the current quorum is
+;; rejected: it would leave no way to reach the quorum, and with it no way to authorize any
+;; later change.
+[cell, int, int] quorum::with_verifiers([cell, int, int] config, cell new_verifiers) impure inline {
+  [_, _, int quorum] = config;
+  return quorum::config(new_verifiers, quorum);
+}
+
+;; Replaces the quorum, keeping the verifier set.
+[cell, int, int] quorum::with_quorum([cell, int, int] config, int quorum) impure inline {
+  [cell verifiers, int count, _] = config;
+  quorum::require_valid_config(count, quorum);
+  return [verifiers, count, quorum];
+}
+
+int quorum::verifier?([cell, int, int] config, int public_key) inline {
+  [cell verifiers, _, _] = config;
+  (_, int found) = verifiers.udict_get?(quorum::key_bits, public_key);
+  return found;
+}
+
+;; Verifies every entry of `signatures` (public key -> 512-bit signature of `hash`) and
+;; returns how many there are. Throws on the first entry that is not a valid signature by a
+;; member of the set.
+int quorum::count_valid_signatures([cell, int, int] config, int hash, cell signatures) impure inline {
+  int count = 0;
+  (int public_key, slice signature, int found) = signatures.udict_get_min?(quorum::key_bits);
+  while (found) {
+    count += 1;
+    throw_unless(quorum::error::unknown_signer, quorum::verifier?(config, public_key));
+    throw_unless(quorum::error::malformed_signature,
+                 (signature.slice_bits() == quorum::signature_bits) & (signature.slice_refs() == 0));
+    throw_unless(quorum::error::invalid_signature, check_signature(hash, signature, public_key));
+    (public_key, signature, found) = signatures.udict_get_next?(quorum::key_bits, public_key);
+  }
+  return count;
+}
+
+;; Throws unless `signatures` carries at least `quorum` valid signatures.
+() quorum::require_quorum([cell, int, int] config, int hash, cell signatures) impure inline {
+  [_, _, int quorum] = config;
+  throw_if(quorum::error::insufficient_signatures, quorum::count_valid_signatures(config, hash, signatures) < quorum);
+}

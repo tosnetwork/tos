@@ -1,0 +1,440 @@
+#include "../../../smartcont/stdlib.fc";
+#include "../../../smartcont/multisig-order.fc";
+
+;; Same vector matrix as tol-tester/tests/stdlib-multisig-order-positive.tol: identical
+;; method ids, inputs, expected values and failure codes.
+
+() set_c7(tuple c7) impure asm "c7 POP";
+
+;; The library reads time with NOW (c7[0][3]); tests move the clock here.
+() set_now(int t) impure {
+  tuple params = empty_tuple();
+  int i = 0;
+  while (i < 17) {
+    params~tpush(i == 3 ? t : null());
+    i += 1;
+  }
+  tuple c7 = empty_tuple();
+  c7~tpush(params);
+  set_c7(c7);
+}
+
+() expect_throw(int code, int expected, int fail_code) impure inline {
+  throw_unless(fail_code, code == expected);
+}
+
+slice std_addr(int hash) {
+  return begin_cell().store_uint(4, 3).store_int(0, 8).store_uint(hash, 256).end_cell().begin_parse();
+}
+
+slice parent() { return std_addr(0xabc); }
+slice alice() { return std_addr(0x1111111111111111111111111111111111111111111111111111111111111111); }
+slice bob() { return std_addr(0x2222222222222222222222222222222222222222222222222222222222222222); }
+slice carol() { return std_addr(0x3333333333333333333333333333333333333333333333333333333333333333); }
+slice mallory() { return std_addr(0x4444444444444444444444444444444444444444444444444444444444444444); }
+cell order_code() { return begin_cell().store_uint(0xc0de, 16).end_cell(); }
+cell action() { return begin_cell().store_uint(0xac7, 12).end_cell(); }
+
+cell signers() {
+  cell d = new_dict();
+  d~udict_set(multisig_order::signer_index_bits, 0, alice());
+  d~udict_set(multisig_order::signer_index_bits, 1, bob());
+  d~udict_set(multisig_order::signer_index_bits, 7, carol());
+  return d;
+}
+
+[slice, int, int, cell, int, int, int, int, cell] new_order() impure {
+  set_now(1000);
+  return multisig_order::new(parent(), 5, 2, signers(), 2000, action());
+}
+
+int main() {
+  return 0;
+}
+
+int test_seqno_allocation() method_id(101) {
+  (int a, int next_a) = multisig_order::allocate_seqno(multisig_order::next_seqno, 5);
+  throw_unless(101, (a == 5) & (next_a == 6));
+  (int b, int next_b) = multisig_order::allocate_seqno(6, 6);
+  throw_unless(102, (b == 6) & (next_b == 7));
+  int rejected = 0;
+  try { multisig_order::allocate_seqno(5, 6); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_seqno, 103); rejected += 1; }
+  try { multisig_order::allocate_seqno(9, 6); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_seqno, 104); rejected += 1; }
+  try { multisig_order::allocate_seqno(multisig_order::next_seqno, multisig_order::next_seqno); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_seqno, 105); rejected += 1; }
+  throw_unless(106, rejected == 3);
+  return 1;
+}
+
+int test_address_derivation() method_id(102) {
+  slice a5 = multisig_order::address(order_code(), parent(), 5);
+  throw_unless(111, equal_slice_bits(a5, multisig_order::address(order_code(), parent(), 5)));
+  throw_if(112, equal_slice_bits(a5, multisig_order::address(order_code(), parent(), 6)));
+  throw_if(113, equal_slice_bits(a5, multisig_order::address(order_code(), alice(), 5)));
+  throw_if(114, equal_slice_bits(a5, multisig_order::address(begin_cell().end_cell(), parent(), 5)));
+  slice expected = std_addr(multisig_order::state_init(order_code(), parent(), 5).cell_hash());
+  throw_unless(115, equal_slice_bits(a5, expected));
+  return 2;
+}
+
+int test_order_validation() method_id(103) {
+  var o = new_order();
+  [_, _, int threshold, _, _, int approval_count, _, int executed, _] = o;
+  throw_unless(121, (threshold == 2) & (approval_count == 0) & (~ executed));
+  int rejected = 0;
+  try { multisig_order::new(parent(), 5, 0, signers(), 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 122); rejected += 1; }
+  try { multisig_order::new(parent(), 5, 4, signers(), 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 123); rejected += 1; }
+  try { multisig_order::new(parent(), 5, 1, begin_cell().end_cell(), 2000, action()); } catch (_, code) { rejected += 1; }
+  try { multisig_order::new(parent(), 5, 2, signers(), 1000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::expired, 125); rejected += 1; }
+  throw_unless(126, rejected == 4);
+  (int idx, int found) = multisig_order::find_signer(o, carol());
+  throw_unless(127, found & (idx == 7));
+  (_, int missing) = multisig_order::find_signer(o, mallory());
+  throw_if(128, missing);
+  return 3;
+}
+
+int test_threshold_fires_exactly_once() method_id(104) {
+  var o = new_order();
+  set_now(1500);
+  throw_if(131, o~multisig_order::approve(0, alice()));
+  set_now(1500);
+  throw_unless(132, o~multisig_order::approve(7, carol()));
+  [_, _, _, _, int approvals, int approval_count, _, int executed, _] = o;
+  throw_unless(133, executed & (approval_count == 2));
+  throw_unless(134, approvals == (1 | (1 << 7)));
+  int thrown = false;
+  try {
+    set_now(1500);
+    o~multisig_order::approve(1, bob());
+  } catch (_, code) {
+    expect_throw(code, multisig_order::error::already_executed, 135);
+    thrown = true;
+  }
+  throw_unless(136, thrown);
+  return 4;
+}
+
+int test_approval_rejections() method_id(105) {
+  var o = new_order();
+  set_now(1500);
+  o~multisig_order::approve(0, alice());
+  int rejected = 0;
+  try { set_now(1500); o~multisig_order::approve(0, alice()); } catch (_, code) { expect_throw(code, multisig_order::error::already_approved, 141); rejected += 1; }
+  ;; right index, wrong sender
+  try { set_now(1500); o~multisig_order::approve(1, mallory()); } catch (_, code) { expect_throw(code, multisig_order::error::unknown_signer, 142); rejected += 1; }
+  ;; index with no signer
+  try { set_now(1500); o~multisig_order::approve(2, bob()); } catch (_, code) { expect_throw(code, multisig_order::error::unknown_signer, 143); rejected += 1; }
+  try { set_now(1500); o~multisig_order::approve(256, bob()); } catch (_, code) { expect_throw(code, multisig_order::error::unknown_signer, 144); rejected += 1; }
+  try { set_now(2001); o~multisig_order::approve(1, bob()); } catch (_, code) { expect_throw(code, multisig_order::error::expired, 145); rejected += 1; }
+  throw_unless(146, rejected == 5);
+  [_, _, _, _, _, int approval_count, _, int executed, _] = o;
+  throw_unless(147, (approval_count == 1) & (~ executed));
+  ;; last valid second
+  set_now(2000);
+  throw_unless(148, o~multisig_order::approve(1, bob()));
+  return 5;
+}
+
+int test_execute_round_trip_and_admission() method_id(106) {
+  var o = new_order();
+  set_now(1500);
+  o~multisig_order::approve(0, alice());
+  set_now(1500);
+  o~multisig_order::approve(1, bob());
+  slice body = multisig_order::execute_body(77, multisig_order::execute_message(o)).begin_parse();
+  throw_unless(151, body~load_uint(32) == multisig_order::op::execute);
+  throw_unless(152, body~load_uint(64) == 77);
+  var execute = multisig_order::parse_execute(body);
+  [int seqno, _, int approval_count, _, cell executed_action] = execute;
+  throw_unless(153, (seqno == 5) & (approval_count == 2));
+  throw_unless(154, executed_action.cell_hash() == action().cell_hash());
+  slice order_address = multisig_order::address(order_code(), parent(), 5);
+  set_now(1600); multisig_order::require_execute(execute, order_address, order_code(), parent(), signers(), 2);
+  return 6;
+}
+
+int test_execute_admission_rejections() method_id(107) {
+  var o = new_order();
+  set_now(1500);
+  o~multisig_order::approve(0, alice());
+  set_now(1500);
+  o~multisig_order::approve(1, bob());
+  var execute = multisig_order::execute_message(o);
+  slice order_address = multisig_order::address(order_code(), parent(), 5);
+  cell changed = new_dict();
+  changed~udict_set(multisig_order::signer_index_bits, 0, alice());
+  changed~udict_set(multisig_order::signer_index_bits, 1, bob());
+  int rejected = 0;
+  ;; sender is the order for a different seqno
+  try { set_now(1600); multisig_order::require_execute(execute, multisig_order::address(order_code(), parent(), 6), order_code(), parent(), signers(), 2); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_execute, 161); rejected += 1; }
+  try { set_now(1600); multisig_order::require_execute(execute, mallory(), order_code(), parent(), signers(), 2); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_execute, 162); rejected += 1; }
+  ;; signer set changed after the order was opened
+  try { set_now(1600); multisig_order::require_execute(execute, order_address, order_code(), parent(), changed, 2); } catch (_, code) { expect_throw(code, multisig_order::error::stale_signers, 163); rejected += 1; }
+  ;; threshold raised after the order was opened
+  try { set_now(1600); multisig_order::require_execute(execute, order_address, order_code(), parent(), signers(), 3); } catch (_, code) { expect_throw(code, multisig_order::error::insufficient_approvals, 164); rejected += 1; }
+  try { set_now(2001); multisig_order::require_execute(execute, order_address, order_code(), parent(), signers(), 2); } catch (_, code) { expect_throw(code, multisig_order::error::expired, 165); rejected += 1; }
+  throw_unless(166, rejected == 5);
+  return 7;
+}
+
+int test_order_storage_round_trip() method_id(108) {
+  var o = new_order();
+  set_now(1500);
+  o~multisig_order::approve(7, carol());
+  var restored = multisig_order::unpack(multisig_order::pack(o));
+  [slice restored_parent, int seqno, _, cell restored_signers, int approvals, int approval_count, _, _, _] = restored;
+  throw_unless(171, (approval_count == 1) & (approvals == (1 << 7)));
+  throw_unless(172, restored_signers.cell_hash() == signers().cell_hash());
+  throw_unless(173, equal_slice_bits(restored_parent, parent()) & (seqno == 5));
+  return 8;
+}
+
+int test_layout_matches_tol() method_id(109) {
+  ;; The packed order must be the very cell the Tol MultisigOrder.toCell() produces; the
+  ;; Tol suite pins the same hash for the same state.
+  var o = new_order();
+  set_now(1500);
+  o~multisig_order::approve(7, carol());
+  return multisig_order::pack(o).cell_hash();
+}
+
+slice dave() { return std_addr(0x5555555555555555555555555555555555555555555555555555555555555555); }
+
+cell proposers() {
+  cell d = new_dict();
+  d~udict_set(multisig_order::signer_index_bits, 0, dave());
+  return d;
+}
+
+int test_proposer_authorization() method_id(110) {
+  multisig_order::require_proposer(signers(), proposers(), true, 1, bob());
+  multisig_order::require_proposer(signers(), proposers(), false, 0, dave());
+  int rejected = 0;
+  ;; a proposer is not a signer, and a signer is not a proposer
+  try { multisig_order::require_proposer(signers(), proposers(), true, 0, dave()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 181); rejected += 1; }
+  try { multisig_order::require_proposer(signers(), proposers(), false, 0, alice()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 182); rejected += 1; }
+  try { multisig_order::require_proposer(signers(), proposers(), false, 1, bob()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 183); rejected += 1; }
+  try { multisig_order::require_proposer(signers(), null(), false, 0, dave()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 184); rejected += 1; }
+  try { multisig_order::require_proposer(signers(), proposers(), true, 256, bob()); } catch (_, code) { expect_throw(code, multisig_order::error::unauthorized_proposer, 185); rejected += 1; }
+  throw_unless(186, rejected == 5);
+  throw_unless(187, multisig_order::proposer_count(null()) == 0);
+  throw_unless(188, multisig_order::proposer_count(proposers()) == 1);
+  cell many = new_dict();
+  int i = 0;
+  while (i < 256) {
+    many~udict_set(multisig_order::signer_index_bits, i, dave());
+    i += 1;
+  }
+  int thrown = false;
+  try { multisig_order::proposer_count(many); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 189); thrown = true; }
+  throw_unless(190, thrown);
+  return 10;
+}
+
+;; Same synthetic fee configuration as the jetton-fees suite:
+;;   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
+;;   forward fee(b, c)   = 400000 + b + 100 * c
+;;   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)
+() install_fee_config() impure {
+  slice storage = begin_cell().store_uint(0xcc, 8).store_uint(0, 32)
+    .store_uint(65536, 64).store_uint(65536 * 500, 64)
+    .store_uint(65536 * 2, 64).store_uint(65536 * 1000, 64).end_cell().begin_parse();
+  slice gas = begin_cell().store_uint(0xd1, 8).store_uint(100, 64).store_uint(100000, 64)
+    .store_uint(0xde, 8).store_uint(65536 * 1000, 64).store_uint(1000000, 64).store_uint(1000000, 64)
+    .store_uint(10000, 64).store_uint(10000000, 64).store_uint(100000000, 64).store_uint(1000000000, 64)
+    .end_cell().begin_parse();
+  slice msg = begin_cell().store_uint(0xea, 8).store_uint(400000, 64).store_uint(65536, 64)
+    .store_uint(65536 * 100, 64).store_uint(98304, 32).store_uint(21845, 16).store_uint(21845, 16)
+    .end_cell().begin_parse();
+  tuple unpacked = empty_tuple();
+  unpacked~tpush(storage);
+  unpacked~tpush(null());
+  unpacked~tpush(gas);
+  unpacked~tpush(gas);
+  unpacked~tpush(msg);
+  unpacked~tpush(msg);
+  unpacked~tpush(null());
+  tuple params = empty_tuple();
+  int i = 0;
+  while (i < 17) {
+    if (i == 3) {
+      params~tpush(1000);
+    } elseif (i == 14) {
+      params~tpush(unpacked);
+    } else {
+      params~tpush(null());
+    }
+    i += 1;
+  }
+  tuple c7 = empty_tuple();
+  c7~tpush(params);
+  set_c7(c7);
+}
+
+tuple fee_profile() {
+  return multisig_order::fee_profile(5000, 4000, 6000, 7000, 1000, 5, 1500, 6, 600, 1, 1000, 500, 200);
+}
+
+int test_required_value_for_sizes() method_id(111) {
+  install_fee_config();
+  tuple p = fee_profile();
+  ;; compute fee(5000 + 1000) + fee(4000) + fee(6000) + fee(7000 + 500)
+  ;;       = 6000000 + 4000000 + 6000000 + 7500000
+  ;; forward (400000 + 1900 + 1200) + (400000 + 700 + 300)
+  ;; storage ((1500 + 100 + 800) + 500 * (6 + 2 + 5)) * 10
+  throw_unless(191, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 10, 0) == 24393100);
+  ;; gas the parent spends counting sizes is charged at the gas price
+  throw_unless(192, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 10, 300) == 24693100);
+  ;; a longer lifetime only adds storage: + 8900 per second
+  throw_unless(193, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 11, 0) == 24402000);
+  ;; three actions installing a ten-signer set:
+  ;; fee(5000 + 3000 + 2000) + 4000000 + 6000000 + fee(7000 + 1500 + 2000)
+  throw_unless(194, multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 3, 10, 10, 0) == 31393100);
+  int rejected = 0;
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 0, 0, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 195); rejected += 1; }
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, -1, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 196); rejected += 1; }
+  throw_unless(197, rejected == 2);
+  return 11;
+}
+
+int test_required_value_counts_real_cells() method_id(112) {
+  install_fee_config();
+  tuple p = fee_profile();
+  cell action = begin_cell().store_uint(0, 100).store_ref(begin_cell().end_cell()).end_cell();
+  (int s_cells, int s_bits, _, int ok) = multisig_order::data_size?(signers(), multisig_order::max_signer_cells);
+  throw_unless(201, ok);
+  int base = multisig_order::required_value_for_sizes(p, 100, 2, s_bits, s_cells, 1, 0, 10, 0);
+  int required = multisig_order::required_new_order_value(p, signers(), action, 1, 0, 10);
+  ;; the counting gas is real, positive, and priced at 1000 per gas unit
+  int extra = required - base;
+  throw_unless(202, extra > 0);
+  throw_unless(203, extra % 1000 == 0);
+  throw_unless(204, extra < 2000 * 1000);
+  return 12;
+}
+
+int test_new_order_value_boundary() method_id(113) {
+  install_fee_config();
+  tuple p = fee_profile();
+  cell action = begin_cell().store_uint(0, 100).store_ref(begin_cell().end_cell()).end_cell();
+  ;; Counting sizes walks the cells, and a cell's first load in a run costs more than a
+  ;; reload; count once first so the requirement and the checks below see the same cache.
+  ;; (On chain each transaction counts once, and a quote from a get-method, made on a fresh
+  ;; VM, is never below it.)
+  multisig_order::required_new_order_value(p, signers(), action, 1, 0, 10);
+  int required = multisig_order::required_new_order_value(p, signers(), action, 1, 0, 10);
+  multisig_order::require_new_order_value(p, required, signers(), action, 1, 0, 10);
+  int thrown = false;
+  try {
+    multisig_order::require_new_order_value(p, required - 1, signers(), action, 1, 0, 10);
+  } catch (_, code) {
+    expect_throw(code, multisig_order::error::insufficient_value, 211);
+    thrown = true;
+  }
+  throw_unless(212, thrown);
+  return 13;
+}
+
+int test_fee_profile_rejections() method_id(114) {
+  install_fee_config();
+  int rejected = 0;
+  tuple p = fee_profile().multisig_order::set_field(0, multisig_order::order_execute_gas);
+  try { multisig_order::required_value_for_sizes(p, 100, 2, 800, 5, 1, 0, 10, 0); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_profile, 221); rejected += 1; }
+  try { multisig_order::required_value_for_sizes(fee_profile(), 100, 2, 800, 5, 1, 0, 0, 0); } catch (_, code) { expect_throw(code, multisig_order::error::expired, 222); rejected += 1; }
+  ;; an action larger than the size limit
+  cell big = begin_cell().end_cell();
+  int i = 0;
+  while (i < multisig_order::max_action_cells) {
+    big = begin_cell().store_uint(i, 16).store_ref(big).end_cell();
+    i += 1;
+  }
+  try { multisig_order::required_new_order_value(fee_profile(), signers(), big, 1, 0, 10); } catch (_, code) { expect_throw(code, multisig_order::error::order_too_large, 223); rejected += 1; }
+  throw_unless(224, rejected == 3);
+  return 14;
+}
+
+int test_new_with_count_and_reclaim() method_id(115) {
+  set_now(1000);
+  var o = multisig_order::new_with_count(parent(), 5, 2, signers(), 3, 2000, action());
+  [_, _, int threshold, _, _, int approval_count, _, _, _] = o;
+  throw_unless(231, (threshold == 2) & (approval_count == 0));
+  int rejected = 0;
+  try { multisig_order::new_with_count(parent(), 5, 2, signers(), 0, 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 232); rejected += 1; }
+  try { multisig_order::new_with_count(parent(), 5, 2, signers(), 256, 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 233); rejected += 1; }
+  try { multisig_order::new_with_count(parent(), 5, 4, signers(), 3, 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 234); rejected += 1; }
+  ;; not reclaimable before expiry, nor at the last valid second
+  try { set_now(2000); multisig_order::require_reclaimable(o); } catch (_, code) { expect_throw(code, multisig_order::error::not_reclaimable, 235); rejected += 1; }
+  set_now(2001);
+  multisig_order::require_reclaimable(o);
+  ;; an executed order never is
+  var done = new_order();
+  set_now(1500);
+  done~multisig_order::approve(0, alice());
+  set_now(1500);
+  done~multisig_order::approve(1, bob());
+  try { set_now(5000); multisig_order::require_reclaimable(done); } catch (_, code) { expect_throw(code, multisig_order::error::not_reclaimable, 236); rejected += 1; }
+  throw_unless(237, rejected == 5);
+  return 15;
+}
+
+slice addr_at(int workchain, int id) {
+  return begin_cell().store_uint(4, 3).store_int(workchain, 8).store_uint(id, 256).end_cell().begin_parse();
+}
+
+cell set_of(slice a, int index_a, slice b, int index_b) {
+  cell d = new_dict();
+  d~udict_set(multisig_order::signer_index_bits, index_a, a);
+  d~udict_set(multisig_order::signer_index_bits, index_b, b);
+  return d;
+}
+
+int test_signer_sets_are_ordered_and_distinct() method_id(116) {
+  ;; ordered by address along the indices, which may be sparse and reach 255
+  cell sparse = new_dict();
+  sparse~udict_set(multisig_order::signer_index_bits, 0, alice());
+  sparse~udict_set(multisig_order::signer_index_bits, 7, bob());
+  sparse~udict_set(multisig_order::signer_index_bits, 255, carol());
+  throw_unless(241, multisig_order::signer_count(sparse) == 3);
+  ;; the workchain orders before the account id
+  slice low = addr_at(-1, ((1 << 255) - 1) * 2 + 1);
+  slice high = addr_at(0, 1);
+  throw_unless(242, multisig_order::signer_count(set_of(low, 0, high, 1)) == 2);
+  int rejected = 0;
+  ;; one address at two indices: it could approve twice
+  try { multisig_order::signer_count(set_of(alice(), 0, alice(), 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 243); rejected += 1; }
+  try { multisig_order::signer_count(set_of(bob(), 0, alice(), 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 244); rejected += 1; }
+  try { multisig_order::signer_count(set_of(high, 0, low, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 245); rejected += 1; }
+  ;; not a plain addr_std: a trailing bit, addr_none, the anycast form, a reference
+  slice trailing = begin_cell().store_slice(bob()).store_uint(0, 1).end_cell().begin_parse();
+  try { multisig_order::signer_count(set_of(alice(), 0, trailing, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 246); rejected += 1; }
+  slice none = begin_cell().store_uint(0, 2).end_cell().begin_parse();
+  try { multisig_order::signer_count(set_of(alice(), 0, none, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 247); rejected += 1; }
+  slice anycast = begin_cell().store_uint(5, 3).store_int(0, 8).store_uint(((1 << 255) - 1) * 2 + 1, 256).end_cell().begin_parse();
+  try { multisig_order::signer_count(set_of(alice(), 0, anycast, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 248); rejected += 1; }
+  slice with_ref = begin_cell().store_slice(bob()).store_ref(begin_cell().end_cell()).end_cell().begin_parse();
+  try { multisig_order::signer_count(set_of(alice(), 0, with_ref, 1)); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 249); rejected += 1; }
+  ;; an order cannot be built over such a set either
+  set_now(1000);
+  try { multisig_order::new(parent(), 5, 1, set_of(alice(), 0, alice(), 1), 2000, action()); } catch (_, code) { expect_throw(code, multisig_order::error::invalid_config, 250); rejected += 1; }
+  throw_unless(251, rejected == 8);
+  return 16;
+}
+
+{-
+TESTCASE | 101 | | 1
+TESTCASE | 102 | | 2
+TESTCASE | 103 | | 3
+TESTCASE | 104 | | 4
+TESTCASE | 105 | | 5
+TESTCASE | 106 | | 6
+TESTCASE | 107 | | 7
+TESTCASE | 108 | | 8
+TESTCASE | 110 | | 10
+TESTCASE | 111 | | 11
+TESTCASE | 112 | | 12
+TESTCASE | 113 | | 13
+TESTCASE | 114 | | 14
+TESTCASE | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
+TESTCASE | 115 | | 15
+TESTCASE | 116 | | 16
+-}

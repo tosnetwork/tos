@@ -1,0 +1,176 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Bounded replay protection for high-volume signed requests.
+;;
+;; A request carries a query id and the time it was created. The guard keeps one bit per
+;; query id in two generations of 1023-bit rows: `queries` holds ids accepted since
+;; `last_clean_time`, `old_queries` the generation before it. Once `timeout` seconds pass
+;; the current generation becomes the old one, and after another `timeout` it is dropped.
+;;
+;; Dropping is safe only together with the freshness rule
+;; `now - timeout < created_at <= now`: by the time a generation is discarded, every
+;; request it recorded has been stale for at least `timeout` seconds and is rejected on its
+;; timestamp instead. The current time is always read from the block (`now()`), never taken
+;; from the caller, so a request cannot choose the clock it is judged by.
+;;
+;; Acceptance comes in two halves so that an external-message contract stays inside the gas
+;; credit it has before accept_message():
+;;   [~replay_guard::check]  rotate, require freshness, require the id unused: lookups only,
+;;                           cheap at any dictionary size;
+;;   [~replay_guard::record] build the row and write it: the expensive part, paid after
+;;                           acceptance.
+;; [~replay_guard::accept] runs both, for internal-message contracts. Calling the pieces in
+;; another order, or skipping check, reopens the replay window.
+;;
+;; FunC counterpart of the Tol `@stdlib/replay-guard`: same rules, same throw codes, and
+;; [replay_guard::pack] produces the same cell as the Tol `ReplayGuard.toCell()`.
+;; A guard is the tuple [old_queries, queries, last_clean_time, timeout].
+;;
+;; Provenance and license: crypto/smartcont/tol-stdlib/NOTICE.md.
+;;
+;; Requires stdlib.fc. Everything that can throw is `impure`: FunC deletes a call to a pure
+;; function whose result is unused, and a check called only for its exception would vanish.
+
+const int replay_guard::error::already_processed = 0x1701;
+const int replay_guard::error::invalid_query_id = 0x1702;
+const int replay_guard::error::invalid_created_at = 0x1703;
+const int replay_guard::error::invalid_timeout = 0x1704;
+
+;; Width of a row index; there are 2^13 rows.
+const int replay_guard::shift_bits = 13;
+;; Width of a bit index inside a row.
+const int replay_guard::bit_number_bits = 10;
+;; Usable bits per row: one cell's data capacity. Bit index 1023 does not exist even though
+;; it fits in replay_guard::bit_number_bits.
+const int replay_guard::row_bits = 1023;
+;; Timeouts are stored in 22 bits (up to ~48 days).
+const int replay_guard::max_timeout = 4194303;
+
+builder replay_guard::store_zeroes(builder b, int count) asm "STZEROES";
+
+;; Creates an empty guard. `timeout` must be in 1..replay_guard::max_timeout; zero would
+;; make every request stale and drop history on every call.
+[cell, cell, int, int] replay_guard::new(int timeout) impure inline {
+  throw_unless(replay_guard::error::invalid_timeout, (timeout > 0) & (timeout <= replay_guard::max_timeout));
+  return [null(), null(), now(), timeout];
+}
+
+;; Splits a query id into (row, bit). Valid ids are `row * 1024 + bit` with `row < 2^13`
+;; and `bit < 1023`; ids whose low ten bits are 1023 are rejected rather than silently
+;; overflowing a row.
+(int, int) replay_guard::split_query_id(int query_id) impure inline {
+  throw_unless(replay_guard::error::invalid_query_id,
+               (query_id >= 0) & (query_id < (1 << (replay_guard::shift_bits + replay_guard::bit_number_bits))));
+  int shift = query_id >> replay_guard::bit_number_bits;
+  int bit_number = query_id & ((1 << replay_guard::bit_number_bits) - 1);
+  throw_unless(replay_guard::error::invalid_query_id, bit_number < replay_guard::row_bits);
+  return (shift, bit_number);
+}
+
+int replay_guard::row_has_bit?(cell rows, int shift, int bit_number) inline {
+  (cell row, int found) = rows.udict_get_ref?(replay_guard::shift_bits, shift);
+  ifnot (found) {
+    return false;
+  }
+  slice s = row.begin_parse();
+  s~skip_bits(bit_number);
+  return s.preload_uint(1) == 1;
+}
+
+;; Ages the generations according to the current time. Idempotent within one timeout.
+([cell, cell, int, int], ()) ~replay_guard::rotate([cell, cell, int, int] guard) impure inline {
+  [cell old_queries, cell queries, int last_clean_time, int timeout] = guard;
+  int now_ts = now();
+  if (last_clean_time < now_ts - timeout) {
+    old_queries = queries;
+    queries = null();
+    if (last_clean_time < now_ts - timeout * 2) {
+      old_queries = null();
+    }
+    last_clean_time = now_ts;
+  }
+  return ([old_queries, queries, last_clean_time, timeout], ());
+}
+
+;; True if the id was accepted in either live generation.
+int replay_guard::processed?([cell, cell, int, int] guard, int query_id) impure inline {
+  [cell old_queries, cell queries, _, _] = guard;
+  (int shift, int bit_number) = replay_guard::split_query_id(query_id);
+  return replay_guard::row_has_bit?(old_queries, shift, bit_number)
+      | replay_guard::row_has_bit?(queries, shift, bit_number);
+}
+
+;; Rejects a request created in the future or more than `timeout` ago.
+() replay_guard::require_fresh([cell, cell, int, int] guard, int created_at) impure inline {
+  [_, _, _, int timeout] = guard;
+  int now_ts = now();
+  throw_if(replay_guard::error::invalid_created_at, (created_at <= now_ts - timeout) | (created_at > now_ts));
+}
+
+;; Records the id in the current generation, rejecting an id already present in either
+;; generation.
+([cell, cell, int, int], ()) ~replay_guard::mark_processed([cell, cell, int, int] guard, int query_id) impure inline {
+  [cell old_queries, cell queries, int last_clean_time, int timeout] = guard;
+  (int shift, int bit_number) = replay_guard::split_query_id(query_id);
+  throw_if(replay_guard::error::already_processed, replay_guard::row_has_bit?(old_queries, shift, bit_number));
+  (cell row, int found) = queries.udict_get_ref?(replay_guard::shift_bits, shift);
+  builder next = begin_cell();
+  if (found) {
+    slice tail = row.begin_parse();
+    slice head = tail~load_bits(bit_number);
+    throw_if(replay_guard::error::already_processed, tail.preload_uint(1) == 1);
+    tail~skip_bits(1);
+    next = next.store_slice(head).store_uint(1, 1).store_slice(tail);
+  } else {
+    next = replay_guard::store_zeroes(next, bit_number);
+    next = next.store_uint(1, 1);
+    next = replay_guard::store_zeroes(next, replay_guard::row_bits - bit_number - 1);
+  }
+  queries~udict_set_ref(replay_guard::shift_bits, shift, next.end_cell());
+  return ([old_queries, queries, last_clean_time, timeout], ());
+}
+
+;; Pre-acceptance half: rotates, rejects a stale or future request, and rejects an id already
+;; used in either generation. Reads only.
+([cell, cell, int, int], ()) ~replay_guard::check([cell, cell, int, int] guard, int query_id, int created_at) impure inline {
+  guard~replay_guard::rotate();
+  replay_guard::require_fresh(guard, created_at);
+  throw_if(replay_guard::error::already_processed, replay_guard::processed?(guard, query_id));
+  return (guard, ());
+}
+
+;; Post-acceptance half: records the id. Call it after [~replay_guard::check] on the same
+;; guard; it still refuses an id already present.
+([cell, cell, int, int], ()) ~replay_guard::record([cell, cell, int, int] guard, int query_id) impure inline {
+  guard~replay_guard::mark_processed(query_id);
+  return (guard, ());
+}
+
+;; Both halves at once. A rejected request throws before the caller can store the updated
+;; guard, so it leaves the stored guard untouched, rotation included.
+([cell, cell, int, int], ()) ~replay_guard::accept([cell, cell, int, int] guard, int query_id, int created_at) impure inline {
+  guard~replay_guard::check(query_id, created_at);
+  guard~replay_guard::record(query_id);
+  return (guard, ());
+}
+
+;; Same layout as the Tol `ReplayGuard`: two maybe-ref dictionaries, uint64, uint22.
+cell replay_guard::pack([cell, cell, int, int] guard) inline {
+  [cell old_queries, cell queries, int last_clean_time, int timeout] = guard;
+  return begin_cell()
+      .store_dict(old_queries)
+      .store_dict(queries)
+      .store_uint(last_clean_time, 64)
+      .store_uint(timeout, 22)
+      .end_cell();
+}
+
+[cell, cell, int, int] replay_guard::unpack(cell packed) impure inline {
+  slice s = packed.begin_parse();
+  cell old_queries = s~load_dict();
+  cell queries = s~load_dict();
+  int last_clean_time = s~load_uint(64);
+  int timeout = s~load_uint(22);
+  s.end_parse();
+  return [old_queries, queries, last_clean_time, timeout];
+}

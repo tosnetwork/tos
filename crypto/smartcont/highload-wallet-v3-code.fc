@@ -1,0 +1,199 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; High-volume wallet: one Ed25519 key, any number of concurrent signed requests, bounded
+;; replay protection.
+;;
+;; A request is an external message `^inner signature:bits512` where inner is
+;;   subwallet_id:uint32 message:^Cell send_mode:uint8 query_id:uint23
+;;   created_at:uint64 timeout:uint22
+;; signed over the hash of `inner`. Requests need no sequence number, so many can be in
+;; flight at once; each carries a query id that replay-guard.fc accepts at most once while
+;; the request is fresh. The request layout and storage layout follow the MIT-licensed
+;; design recorded in tol-stdlib/NOTICE.md (a query id is that design's 13-bit row and
+;; 10-bit bit index stored back to back), so existing signing tools apply unchanged.
+;;
+;; Everything that can reject a request runs before accept_message(): the signature, the
+;; subwallet, the timeout, freshness and the replay lookups. These are reads only
+;; (replay_guard's check half), so they fit the external gas credit at any dictionary size;
+;; writing the query id (the record half) happens after acceptance. The new state is then
+;; committed, so a request that fails in the compute phase afterwards has still consumed
+;; its query id and cannot be replayed to drain gas.
+;;
+;; The outbound message is sent with IGNORE_ERRORS, so an undeliverable one (addr_none
+;; destination, malformed extra currencies, too little balance) is skipped by the action
+;; phase rather than failing it, and the committed query id stands.
+;; highload-wallet-action-phase-fixture.cpp checks this on the node's executor.
+;;
+;; Deployment: timeout must be positive (a zero timeout rejects every request and locks the
+;; funds) and should be between one hour and one day, since the replay dictionary holds up
+;; to two timeouts of ids. A request is bound to subwallet_id and timeout but not to the
+;; network, so use a distinct subwallet_id per key on every network the key is used on.
+;;
+;; Batches: a request may send an internal message to this wallet itself with op
+;; internal_transfer and an action list in its single reference; the wallet installs that
+;; list as its own actions, keeping its code.
+;;
+;; No request may send with DESTROY_IF_ZERO (mode +32), directly or in a batch. Replay
+;; protection is the wallet's state: a deleted wallet can be deployed again at the same
+;; address from its public StateInit with empty replay dictionaries, and once funded again,
+;; every request it accepted that is still fresh could run a second time.
+
+#include "replay-guard.fc";
+
+const int op::internal_transfer = 0xae42e5a4;
+
+const int error::invalid_signature = 33;
+const int error::invalid_subwallet_id = 34;
+const int error::invalid_message_to_send = 37;
+const int error::invalid_timeout = 38;
+const int error::destroy_not_allowed = 39;
+
+const int SIGNATURE_BITS = 512;
+const int PUBLIC_KEY_BITS = 256;
+const int SUBWALLET_ID_BITS = 32;
+const int QUERY_ID_BITS = 23;
+const int CREATED_AT_BITS = 64;
+const int TIMEOUT_BITS = 22;
+const int SEND_MODE_IGNORE_ERRORS = 2;
+const int SEND_MODE_DESTROY_IF_ZERO = 32;
+const int ACTION_SEND_MSG = 0x0ec3c86d;
+
+() set_actions(cell actions) impure asm "c5 POP";
+cell my_code() asm "MYCODE";
+
+;; storage: public_key:uint256 subwallet_id:uint32 then the replay guard
+;; (old_queries, queries, last_clean_time, timeout) exactly as replay_guard::pack lays it out
+(int, int, [cell, cell, int, int]) load_data() inline {
+  slice ds = get_data().begin_parse();
+  int public_key = ds~load_uint(PUBLIC_KEY_BITS);
+  int subwallet_id = ds~load_uint(SUBWALLET_ID_BITS);
+  cell old_queries = ds~load_dict();
+  cell queries = ds~load_dict();
+  int last_clean_time = ds~load_uint(64);
+  int timeout = ds~load_uint(TIMEOUT_BITS);
+  ds.end_parse();
+  return (public_key, subwallet_id, [old_queries, queries, last_clean_time, timeout]);
+}
+
+() save_data(int public_key, int subwallet_id, [cell, cell, int, int] guard) impure inline {
+  set_data(begin_cell()
+      .store_uint(public_key, PUBLIC_KEY_BITS)
+      .store_uint(subwallet_id, SUBWALLET_ID_BITS)
+      .store_slice(replay_guard::pack(guard).begin_parse())
+      .end_cell());
+}
+
+() recv_internal(cell in_msg_full, slice in_msg_body) impure {
+  (int body_bits, int body_refs) = in_msg_body.slice_bits_refs();
+  ifnot ((body_refs == 1) & (body_bits == 32 + 64)) {
+    return (); ;; plain top-up
+  }
+  slice cs = in_msg_full.begin_parse();
+  int flags = cs~load_uint(4);
+  if (flags & 1) {
+    return (); ;; bounced
+  }
+  slice sender = cs~load_msg_addr();
+  ifnot (equal_slice_bits(sender, my_address())) {
+    return ();
+  }
+  if (in_msg_body~load_uint(32) == op::internal_transfer) {
+    in_msg_body~skip_bits(64);
+    cell actions = in_msg_body.preload_ref();
+    ;; OutList: each node is prev:^OutList followed by one action; the empty list has neither.
+    slice node = actions.begin_parse();
+    while (node.slice_refs()) {
+      cell prev = node~load_ref();
+      if (node~load_uint(32) == ACTION_SEND_MSG) {
+        throw_if(error::destroy_not_allowed, node~load_uint(8) & SEND_MODE_DESTROY_IF_ZERO);
+      }
+      node = prev.begin_parse();
+    }
+    set_actions(actions);
+    set_code(my_code()); ;; an action list must not replace the wallet's code
+  }
+}
+
+() recv_external(slice msg_body) impure {
+  cell inner = msg_body~load_ref();
+  slice signature = msg_body~load_bits(SIGNATURE_BITS);
+  msg_body.end_parse();
+
+  (int public_key, int subwallet_id, [cell, cell, int, int] guard) = load_data();
+  throw_unless(error::invalid_signature, check_signature(inner.cell_hash(), signature, public_key));
+
+  slice request = inner.begin_parse();
+  int request_subwallet_id = request~load_uint(SUBWALLET_ID_BITS);
+  cell message_to_send = request~load_ref();
+  int send_mode = request~load_uint(8);
+  int query_id = request~load_uint(QUERY_ID_BITS);
+  int created_at = request~load_uint(CREATED_AT_BITS);
+  int request_timeout = request~load_uint(TIMEOUT_BITS);
+  request.end_parse();
+
+  throw_unless(error::invalid_subwallet_id, request_subwallet_id == subwallet_id);
+  [_, _, _, int timeout] = guard;
+  throw_unless(error::invalid_timeout, request_timeout == timeout);
+  throw_if(error::destroy_not_allowed, send_mode & SEND_MODE_DESTROY_IF_ZERO);
+  guard~replay_guard::check(query_id, created_at);
+
+  accept_message();
+  guard~replay_guard::record(query_id);
+  save_data(public_key, subwallet_id, guard);
+  commit();
+
+  ;; MessageRelaxed with int_msg_info$0: src must be addr_none, no StateInit.
+  slice m = message_to_send.begin_parse();
+  throw_if(error::invalid_message_to_send, m~load_uint(1)); ;; int_msg_info$0
+  int msg_flags = m~load_uint(3); ;; ihr_disabled bounce bounced
+  throw_if(error::invalid_message_to_send, msg_flags & 1);
+  throw_unless(error::invalid_message_to_send, m~load_uint(2) == 0); ;; src: addr_none
+  m~load_msg_addr(); ;; dest
+  m~load_coins(); ;; value
+  m = m.skip_dict(); ;; extra currencies
+  m~load_coins(); ;; ihr_fee
+  m~load_coins(); ;; fwd_fee
+  m~skip_bits(64 + 32); ;; created_lt created_at
+  throw_if(error::invalid_message_to_send, m~load_uint(1)); ;; no StateInit
+  if (m~load_int(1)) {
+    m~load_ref();
+    m.end_parse();
+  }
+  send_raw_message(message_to_send, send_mode | SEND_MODE_IGNORE_ERRORS);
+}
+
+int get_public_key() method_id {
+  (int public_key, _, _) = load_data();
+  return public_key;
+}
+
+int get_subwallet_id() method_id {
+  (_, int subwallet_id, _) = load_data();
+  return subwallet_id;
+}
+
+int get_last_clean_time() method_id {
+  (_, _, [cell, cell, int, int] guard) = load_data();
+  [_, _, int last_clean_time, _] = guard;
+  return last_clean_time;
+}
+
+int get_timeout() method_id {
+  (_, _, [cell, cell, int, int] guard) = load_data();
+  [_, _, _, int timeout] = guard;
+  return timeout;
+}
+
+;; Whether `query_id` was accepted and is still remembered; with `need_clean`, as it will
+;; look after the rotation the next request performs. An id that can never be used (bit
+;; index 1023, negative, or beyond 23 bits) was never processed.
+int processed?(int query_id, int need_clean) method_id {
+  if ((query_id < 0) | (query_id >= (1 << QUERY_ID_BITS)) | ((query_id & 1023) == 1023)) {
+    return false;
+  }
+  (_, _, [cell, cell, int, int] guard) = load_data();
+  if (need_clean) {
+    guard~replay_guard::rotate();
+  }
+  return replay_guard::processed?(guard, query_id);
+}

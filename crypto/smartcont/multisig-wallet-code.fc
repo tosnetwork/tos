@@ -1,0 +1,312 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Multisig wallet: the parent of one-contract-per-proposal orders (multisig-order-code.fc).
+;;
+;; A signer or a proposer opens an order with `new_order`, prepaying everything the order
+;; needs to reach execution. The parent allocates the next sequence number and deploys the
+;; order at the address derived from (order code, parent, seqno); signers approve the order
+;; directly, and the order sends `execute` back once the threshold is reached. The parent
+;; runs the order's actions only after multisig-order.fc's four admission checks: the
+;; derived sender address, the current signer set, the current threshold, and expiry. It
+;; then accepts the message and pays for execution from its own balance, so an order is
+;; never consumed by running out of gas half-way through its actions.
+;;
+;; Actions are a chain of cells, each `tag:uint32 ... next:(Maybe ^Cell)`:
+;;   send#94f8724f   mode:uint8 message:^Cell                                 next
+;;   update#e9973598 threshold:uint8 signers:^Cell proposers:(Maybe ^Cell)    next
+;; at most 255 per order. The chain is validated when the order is opened, so an order that
+;; could never execute is refused up front instead of being funded and left stranded; it is
+;; validated again on execution against the parameters in force then. More actions than one
+;; order holds run as a send to this wallet itself with `execute_internal`, which the wallet
+;; accepts only from itself. Signer and proposer sets may not contain this wallet's own
+;; address, so it can never approve or propose by a message to itself.
+;;
+;; Each signer is one vote. A signer set lists distinct plain addresses in increasing order
+;; by index (multisig_order::next_signer_key), and every update is checked against that.
+;; The set a wallet is deployed with is the deployer's input, which no code runs on:
+;; new-multisig-wallet.fif builds it in the required order and checks it with
+;; get_checked_signer_count, which anyone joining a wallet can also call. (Checking the
+;; current set on every proposal instead would cost about 1,500 gas per signer each time.)
+;;
+;; The cost a proposal must cover grows with its number of actions and with the size of
+;; any signer or proposer set it installs; see fee_profile(). The signer count is stored
+;; and handed to each order, so neither the parent nor the order counts the set on every
+;; message.
+;;
+;; Deploy this wallet only in workchain 0. The fee model prices the parent and its
+;; basechain orders with basechain fees; proposals and quotes on other workchains are
+;; refused rather than advertising an unfunded execution path. Signers may still reside
+;; in other workchains.
+;;
+;; storage: next_seqno:uint64 threshold:uint8 signer_count:uint8 signers:^Cell
+;;          proposers:(Maybe ^Cell) order_code:^Cell
+
+#include "multisig-order.fc";
+
+const int op::new_order = 0x27bace9f;
+const int op::execute_internal = 0xead7f19d;
+const int action::send = 0x94f8724f;
+const int action::update = 0xe9973598;
+
+const int error::invalid_action = 0x1a0e;
+const int error::unsupported_workchain = 0x1a13;
+const int error::unknown_op = 0xffff;
+
+const int max_actions = 255;
+const int send_mode::carry_remaining_value = 64;
+const int send_mode::bounce_on_action_fail = 16;
+
+;; About 10% above what emulator/test/multisig-fee-profile-fixture.cpp measured on the C++
+;; TVM (2026-10-02) at 3 signers and 1 action: proposal 19165, order init 3481, firing
+;; approval 9643 and parent execute 7851 gas; init message 8638 bits / 16 cells, order
+;; state 8793 bits / 14 cells and execute message 456 bits / 1 cell beyond the action and
+;; signer set; per action 834 gas at proposal and 1805 at execution; 1881 gas per signer an
+;; update installs (applied to installed proposers too, which cost less). The fixture fails if a build makes any value lower than its measurement
+;; or more than 25% above it, and checks the linear model against 255-signer wallets and
+;; 255-action orders.
+tuple fee_profile() inline {
+  return multisig_order::fee_profile(
+      21000, ;; parent_new_order_gas
+      3850,  ;; order_init_gas
+      10600, ;; order_execute_gas
+      8600,  ;; parent_execute_gas
+      9500,  ;; init_message_bits
+      18,    ;; init_message_cells
+      9700,  ;; order_state_bits
+      16,    ;; order_state_cells
+      500,   ;; execute_message_bits
+      1,     ;; execute_message_cells
+      920,   ;; parent_new_order_gas_per_action
+      1990,  ;; parent_execute_gas_per_action
+      2070   ;; parent_gas_per_updated_signer
+  );
+}
+
+;; Do not use the basechain-only seven-component quote for a masterchain parent.
+() require_supported_workchain() impure inline {
+  (int workchain, _) = parse_std_addr(my_address());
+  throw_unless(error::unsupported_workchain, workchain == multisig_order::basechain);
+}
+
+(int, int, int, cell, cell, cell) load_data() inline {
+  slice ds = get_data().begin_parse();
+  int next_seqno = ds~load_uint(64);
+  int threshold = ds~load_uint(8);
+  int signer_count = ds~load_uint(8);
+  cell signers = ds~load_ref();
+  cell proposers = ds~load_dict();
+  cell order_code = ds~load_ref();
+  ds.end_parse();
+  return (next_seqno, threshold, signer_count, signers, proposers, order_code);
+}
+
+() save_data(int next_seqno, int threshold, int signer_count, cell signers, cell proposers, cell order_code) impure inline {
+  set_data(begin_cell()
+      .store_uint(next_seqno, 64)
+      .store_uint(threshold, 8)
+      .store_uint(signer_count, 8)
+      .store_ref(signers)
+      .store_dict(proposers)
+      .store_ref(order_code)
+      .end_cell());
+}
+
+;; Number of addresses in a signer or proposer dictionary, refusing this wallet's own
+;; address and more than 255 entries. A signer set (`signers` true) must also list distinct
+;; plain addresses in increasing order (multisig_order::next_signer_key), since each of its
+;; entries is a vote; proposers only open orders, so their set needs no such rule.
+int count_members(cell members, int signers) impure inline {
+  int count = 0;
+  int workchain = 0;
+  int id = 0;
+  (int index, slice member, int found) = members.udict_get_min?(multisig_order::signer_index_bits);
+  while (found) {
+    count += 1;
+    throw_if(multisig_order::error::invalid_config, count > multisig_order::max_signers);
+    throw_if(multisig_order::error::invalid_config, equal_slice_bits(member, my_address()));
+    if (signers) {
+      (workchain, id) = multisig_order::next_signer_key(member, workchain, id, count == 1);
+    }
+    (index, member, found) = members.udict_get_next?(multisig_order::signer_index_bits, index);
+  }
+  return count;
+}
+
+;; Walks the action chain without executing it, starting from the parameters in force; each
+;; update replaces them for the actions that follow. Returns
+;; (action count, members visited by updates, final threshold, final signer count).
+;; The fee counter includes BOTH signer and proposer entries, summed over every update.
+;; It must stay separate from signer_count, which alone determines the approval threshold.
+;; Throws invalid_action, or invalid_config for an update that could never be satisfied.
+(int, int, int, int) validate_actions(cell actions, int threshold, int signer_count) impure inline {
+  slice cs = actions.begin_parse();
+  int count = 0;
+  int installed = 0;
+  int more = true;
+  while (more) {
+    count += 1;
+    throw_if(error::invalid_action, count > max_actions);
+    int tag = cs~load_uint(32);
+    if (tag == action::send) {
+      cs~load_uint(8);
+      cs~load_ref();
+    } elseif (tag == action::update) {
+      threshold = cs~load_uint(8);
+      signer_count = count_members(cs~load_ref(), true);
+      int proposer_count = count_members(cs~load_dict(), false);
+      multisig_order::require_valid_threshold(threshold, signer_count);
+      installed += signer_count + proposer_count;
+    } else {
+      throw(error::invalid_action);
+    }
+    cell next = cs~load_maybe_ref();
+    cs.end_parse();
+    more = ~ cell_null?(next);
+    if (more) {
+      cs = next.begin_parse();
+    }
+  }
+  return (count, installed, threshold, signer_count);
+}
+
+;; Runs a validated action chain; returns the parameters it leaves in force.
+(int, int, cell, cell) run_actions(cell actions, int threshold, int signer_count, cell signers, cell proposers) impure inline {
+  (_, _, int final_threshold, int final_count) = validate_actions(actions, threshold, signer_count);
+  accept_message();
+  slice cs = actions.begin_parse();
+  int more = true;
+  while (more) {
+    int tag = cs~load_uint(32);
+    if (tag == action::send) {
+      int mode = cs~load_uint(8);
+      send_raw_message(cs~load_ref(), mode);
+    } else {
+      cs~load_uint(8);
+      signers = cs~load_ref();
+      proposers = cs~load_dict();
+    }
+    cell next = cs~load_maybe_ref();
+    more = ~ cell_null?(next);
+    if (more) {
+      cs = next.begin_parse();
+    }
+  }
+  return (final_threshold, final_count, signers, proposers);
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  slice in_msg = in_msg_full.begin_parse();
+  int flags = in_msg~load_uint(4);
+  if (flags & 1) {
+    return (); ;; bounced
+  }
+  slice sender = in_msg~load_msg_addr();
+  if (in_msg_body.slice_bits() < 32) {
+    return (); ;; plain top-up, including funds an expired order hands back
+  }
+  int op = in_msg_body~load_uint(32);
+  if (op == 0) {
+    return (); ;; text comment
+  }
+  int query_id = in_msg_body~load_uint(64);
+  (int next_seqno, int threshold, int signer_count, cell signers, cell proposers, cell order_code) = load_data();
+
+  if (op == op::new_order) {
+    require_supported_workchain();
+    int requested_seqno = in_msg_body~load_uint(64);
+    int is_signer = in_msg_body~load_int(1);
+    int index = in_msg_body~load_uint(8);
+    int expires_at = in_msg_body~load_uint(32);
+    cell actions = in_msg_body~load_ref();
+    in_msg_body.end_parse();
+
+    ;; The wallet's own address can never be a signer or a proposer (count_members), so this
+    ;; also refuses a proposal the wallet sends itself.
+    multisig_order::require_proposer(signers, proposers, is_signer, index, sender);
+    (int action_count, int installed, _, _) = validate_actions(actions, threshold, signer_count);
+    ;; also refuses an order that is already expired: its lifetime must be positive
+    multisig_order::require_new_order_value(fee_profile(), msg_value, signers, actions, action_count, installed,
+                                            expires_at - now());
+    (int seqno, int following) = multisig_order::allocate_seqno(requested_seqno, next_seqno);
+
+    builder init = begin_cell()
+        .store_uint(multisig_order::op::init, 32)
+        .store_uint(query_id, 64)
+        .store_uint(threshold, 8)
+        .store_uint(signer_count, 8)
+        .store_ref(signers)
+        .store_uint(expires_at, 32)
+        .store_ref(actions)
+        .store_int(is_signer, 1);
+    if (is_signer) {
+      init = init.store_uint(index, 8);
+    }
+    send_raw_message(begin_cell()
+        .store_uint(0x18, 6) ;; bounceable
+        .store_slice(multisig_order::address(order_code, my_address(), seqno))
+        .store_coins(0)
+        .store_uint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1) ;; StateInit and body in refs
+        .store_ref(multisig_order::state_init(order_code, my_address(), seqno))
+        .store_ref(init.end_cell())
+        .end_cell(), send_mode::carry_remaining_value | send_mode::bounce_on_action_fail);
+    save_data(following, threshold, signer_count, signers, proposers, order_code);
+    return ();
+  }
+
+  if (op == multisig_order::op::execute) {
+    var execute = multisig_order::parse_execute(in_msg_body);
+    multisig_order::require_execute(execute, sender, order_code, my_address(), signers, threshold);
+    [_, _, _, _, cell actions] = execute;
+    (threshold, signer_count, signers, proposers) = run_actions(actions, threshold, signer_count, signers, proposers);
+    save_data(next_seqno, threshold, signer_count, signers, proposers, order_code);
+    return ();
+  }
+
+  if (op == op::execute_internal) {
+    throw_unless(multisig_order::error::unauthorized_execute, equal_slice_bits(sender, my_address()));
+    cell actions = in_msg_body~load_ref();
+    in_msg_body.end_parse();
+    (threshold, signer_count, signers, proposers) = run_actions(actions, threshold, signer_count, signers, proposers);
+    save_data(next_seqno, threshold, signer_count, signers, proposers, order_code);
+    return ();
+  }
+
+  throw(error::unknown_op);
+}
+
+(int, int, cell, cell, int) get_multisig_data() method_id {
+  (int next_seqno, int threshold, int signer_count, cell signers, cell proposers, _) = load_data();
+  return (next_seqno, threshold, signers, proposers, signer_count);
+}
+
+slice get_order_address(int seqno) method_id {
+  (_, _, _, _, _, cell order_code) = load_data();
+  return multisig_order::address(order_code, my_address(), seqno);
+}
+
+;; Check the signer configuration before deployment/joining: the dictionary must be
+;; canonical and unique, the cached count must match it, and its threshold must be
+;; achievable. A valid dictionary alone does not validate the fields passed to an order.
+;; This getter needs only c4 so deployment tooling can run it before the address exists;
+;; the workchain is checked separately by the script and by proposal/quote admission.
+int get_checked_signer_count() method_id {
+  (_, int threshold, int stored_count, cell signers, _, _) = load_data();
+  int actual_count = multisig_order::signer_count(signers);
+  throw_unless(multisig_order::error::invalid_config, stored_count == actual_count);
+  multisig_order::require_valid_threshold(threshold, actual_count);
+  return actual_count;
+}
+
+tuple get_fee_profile() method_id {
+  return fee_profile();
+}
+
+;; Value a proposal for `actions` expiring at `expires_at` must carry. Computed on a fresh
+;; VM, so it is never below what the proposal transaction itself will require.
+int get_order_estimate(cell actions, int expires_at) method_id {
+  require_supported_workchain();
+  (_, int threshold, int signer_count, cell signers, _, _) = load_data();
+  (int action_count, int installed, _, _) = validate_actions(actions, threshold, signer_count);
+  return multisig_order::required_new_order_value(fee_profile(), signers, actions, action_count, installed,
+                                                  expires_at - now());
+}

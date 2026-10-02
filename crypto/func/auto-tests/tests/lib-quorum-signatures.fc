@@ -1,0 +1,238 @@
+#include "../../../smartcont/stdlib.fc";
+#include "../../../smartcont/quorum-signatures.fc";
+
+;; Same vector matrix as tol-tester/tests/stdlib-quorum-signatures-positive.tol: identical
+;; method ids, inputs, expected values and failure codes.
+;;
+;; Deterministic Ed25519 vectors: private key i = sha256("quorum-key-i"), each signing
+;; HASH with CHKSIGNU semantics (the 32-byte big-endian hash).
+const int HASH = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
+const int K1 = 0xA0E39282B780E9EF18283DD09ED1CABA55B468EB9C5014967EA5CAA3256C6795;
+const int K2 = 0x282D5E174AB2122F1538944E31BEA38FAFE5A622656E6BE63CFAB47D16EE57BB;
+const int K3 = 0xECD0DF7591957F3EDA016B66417B8B1165138154D2AFA7184E1517AA324BECE9;
+const int K4 = 0xE77CF320BCB0DF1A4EE7727D1F059E721C61742B20EFA8ACF59803EE86B68BD3;
+
+slice sig1() asm "x{A2622A17A2AFAB596F3E424967925F73908AC39299D77CFCC462EFC9FA8A72EBF11D44355287786746C3F25431DBCC9B8E8C2EB2777FE26254AA2B6BBB512C01} PUSHSLICE";
+slice sig2() asm "x{5C06E198E2E511567AB34AB78D0E3AF51C255A205855BA2FFF818EAE1902E63E8D573590C0FFA47A0B6B23CE31A276C36A04233766758DA090EE7E95A164C200} PUSHSLICE";
+slice sig3() asm "x{323AFC2EC8E836160D7C714FF08B6705500FF5FEC91A665CA9256E2CC05EC4E3BA91EBEAECE1AA57EFD7BD28AB57C2DDFEA4BEF64D0E315B5195F6372058ED03} PUSHSLICE";
+slice sig4() asm "x{C84898D958D8CB5F902745396CCD81E2C15EB3DBD71ABA3D716784403DFD074FDF20149980DD552E87B96FC5E58109DAAE5729C531A1CC228B1DE947F21E7A0F} PUSHSLICE";
+
+() expect_throw(int code, int expected, int fail_code) impure inline {
+  throw_unless(fail_code, code == expected);
+}
+
+cell set123() impure {
+  cell v = new_dict();
+  v = quorum::add_verifier(v, K1);
+  v = quorum::add_verifier(v, K2);
+  v = quorum::add_verifier(v, K3);
+  return v;
+}
+
+cell with_sig(cell signatures, int key, slice signature) {
+  return signatures.udict_set(quorum::key_bits, key, signature);
+}
+
+slice std_addr(int hash) {
+  return begin_cell().store_uint(4, 3).store_int(0, 8).store_uint(hash, 256).end_cell().begin_parse();
+}
+
+int main() {
+  return 0;
+}
+
+int test_vectors_are_real() method_id(101) {
+  ;; Guards the fixtures themselves: if these stop verifying, every other case below would
+  ;; fail for the wrong reason.
+  throw_unless(101, check_signature(HASH, sig1(), K1));
+  throw_unless(102, check_signature(HASH, sig2(), K2));
+  throw_unless(103, check_signature(HASH, sig3(), K3));
+  throw_unless(104, check_signature(HASH, sig4(), K4));
+  throw_if(105, check_signature(HASH + 1, sig1(), K1));
+  return 1;
+}
+
+int test_config_validation() method_id(102) {
+  var c = quorum::config(set123(), 2);
+  [_, int count, int q] = c;
+  throw_unless(111, (count == 3) & (q == 2));
+  throw_unless(112, quorum::verifier?(c, K2) & (~ quorum::verifier?(c, K4)));
+  int rejected = 0;
+  try { quorum::config(set123(), 0); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 113); rejected += 1; }
+  try { quorum::config(set123(), 4); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 114); rejected += 1; }
+  try { quorum::config(new_dict(), 1); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 115); rejected += 1; }
+  try { quorum::add_verifier(set123(), K1); } catch (_, code) { expect_throw(code, quorum::error::duplicate_verifier, 116); rejected += 1; }
+  throw_unless(117, rejected == 4);
+  return 2;
+}
+
+int test_verifier_set_size_capped() method_id(103) {
+  cell v = new_dict();
+  int i = 1;
+  while (i <= quorum::max_verifiers) {
+    v = quorum::add_verifier(v, i);
+    i += 1;
+  }
+  [_, int count, _] = quorum::config(v, quorum::max_verifiers);
+  throw_unless(121, count == quorum::max_verifiers);
+  v = quorum::add_verifier(v, i);
+  int thrown = false;
+  try {
+    quorum::config(v, 1);
+  } catch (_, code) {
+    expect_throw(code, quorum::error::invalid_config, 122);
+    thrown = true;
+  }
+  throw_unless(123, thrown);
+  return 3;
+}
+
+int test_set_cannot_shrink_below_quorum() method_id(104) {
+  var c = quorum::config(set123(), 2);
+  cell two = quorum::add_verifier(quorum::add_verifier(new_dict(), K1), K4);
+  var replaced = quorum::with_verifiers(c, two);
+  [_, int count, int q] = replaced;
+  throw_unless(131, (count == 2) & (q == 2) & quorum::verifier?(replaced, K4));
+  cell one = quorum::add_verifier(new_dict(), K1);
+  int rejected = 0;
+  try { quorum::with_verifiers(c, one); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 132); rejected += 1; }
+  try { quorum::with_quorum(replaced, 3); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 133); rejected += 1; }
+  throw_unless(134, rejected == 2);
+  [_, _, int raised] = quorum::with_quorum(c, 3);
+  throw_unless(135, raised == 3);
+  return 4;
+}
+
+int test_quorum_met_and_missed() method_id(105) {
+  var c = quorum::config(set123(), 2);
+  cell s = with_sig(with_sig(new_dict(), K1, sig1()), K3, sig3());
+  throw_unless(141, quorum::count_valid_signatures(c, HASH, s) == 2);
+  quorum::require_quorum(c, HASH, s);
+  cell single = with_sig(new_dict(), K2, sig2());
+  int thrown = false;
+  try {
+    quorum::require_quorum(c, HASH, single);
+  } catch (_, code) {
+    expect_throw(code, quorum::error::insufficient_signatures, 142);
+    thrown = true;
+  }
+  throw_unless(143, thrown);
+  return 5;
+}
+
+int test_bad_entries_reject_whole_request() method_id(106) {
+  var c = quorum::config(set123(), 2);
+  cell base = with_sig(with_sig(new_dict(), K1, sig1()), K2, sig2());
+  int rejected = 0;
+  ;; a correct signature from a key outside the set
+  try { quorum::require_quorum(c, HASH, with_sig(base, K4, sig4())); } catch (_, code) { expect_throw(code, quorum::error::unknown_signer, 151); rejected += 1; }
+  ;; K1's signature filed under K3
+  try { quorum::require_quorum(c, HASH, with_sig(base, K3, sig1())); } catch (_, code) { expect_throw(code, quorum::error::invalid_signature, 152); rejected += 1; }
+  ;; valid signatures, wrong message
+  try { quorum::require_quorum(c, HASH + 1, base); } catch (_, code) { expect_throw(code, quorum::error::invalid_signature, 153); rejected += 1; }
+  ;; truncated signature
+  try { quorum::require_quorum(c, HASH, with_sig(base, K3, sig3().first_bits(511))); } catch (_, code) { expect_throw(code, quorum::error::malformed_signature, 154); rejected += 1; }
+  ;; signature with trailing data
+  slice padded = begin_cell().store_slice(sig3()).store_uint(0, 1).end_cell().begin_parse();
+  try { quorum::require_quorum(c, HASH, with_sig(base, K3, padded)); } catch (_, code) { expect_throw(code, quorum::error::malformed_signature, 155); rejected += 1; }
+  throw_unless(156, rejected == 5);
+  return 6;
+}
+
+() set_c7(tuple c7) impure asm "c7 POP";
+
+;; GLOBALID reads ConfigParam 19 from c7[0][14][1]; NOW reads c7[0][3].
+() install_chain(int global_id, int now_ts) impure {
+  tuple unpacked = empty_tuple();
+  int i = 0;
+  while (i < 7) {
+    if (i == 1) {
+      unpacked~tpush(begin_cell().store_int(global_id, 32).end_cell().begin_parse());
+    } else {
+      unpacked~tpush(null());
+    }
+    i += 1;
+  }
+  tuple params = empty_tuple();
+  i = 0;
+  while (i < 17) {
+    if (i == 3) {
+      params~tpush(now_ts);
+    } elseif (i == 14) {
+      params~tpush(unpacked);
+    } else {
+      params~tpush(null());
+    }
+    i += 1;
+  }
+  tuple c7 = empty_tuple();
+  c7~tpush(params);
+  set_c7(c7);
+}
+
+int test_signing_hash_binds_context() method_id(107) {
+  install_chain(42, 1000);
+  cell payload = begin_cell().store_uint(7, 8).end_cell();
+  slice target = std_addr(0x1111111111111111111111111111111111111111111111111111111111111111);
+  slice other = std_addr(0x2222222222222222222222222222222222222222222222222222222222222222);
+  int h = quorum::signing_hash(1, target, 5, 2000, payload);
+  throw_unless(161, h == quorum::signing_hash(1, target, 5, 2000, payload));
+  throw_if(162, h == quorum::signing_hash(2, target, 5, 2000, payload));
+  throw_if(163, h == quorum::signing_hash(1, other, 5, 2000, payload));
+  throw_if(164, h == quorum::signing_hash(1, target, 6, 2000, payload));
+  throw_if(165, h == quorum::signing_hash(1, target, 5, 2000, begin_cell().end_cell()));
+  throw_if(166, h == quorum::signing_hash(1, target, 5, 2001, payload));
+  ;; the same request on another network is a different message
+  install_chain(43, 1000);
+  throw_if(167, h == quorum::signing_hash(1, target, 5, 2000, payload));
+  ;; FunC only (Tol's address type cannot express these): a target that is not addr_std
+  int rejected = 0;
+  try { quorum::signing_hash(1, begin_cell().store_uint(0, 2).end_cell().begin_parse(), 5, 2000, payload); } catch (_, code) { expect_throw(code, quorum::error::invalid_target, 168); rejected += 1; }
+  try { quorum::signing_hash(1, begin_cell().store_slice(target).store_uint(0, 1).end_cell().begin_parse(), 5, 2000, payload); } catch (_, code) { expect_throw(code, quorum::error::invalid_target, 169); rejected += 1; }
+  ;; right length, wrong prefix: 267 bits that do not start with addr_std's 100
+  try { quorum::signing_hash(1, begin_cell().store_uint(6, 3).store_uint(0, 256).store_uint(0, 8).end_cell().begin_parse(), 5, 2000, payload); } catch (_, code) { expect_throw(code, quorum::error::invalid_target, 171); rejected += 1; }
+  throw_unless(170, rejected == 3);
+  return 7;
+}
+
+int test_key_count_stops_at_limit() method_id(108) {
+  ;; The walk must stop as soon as the limit is passed, not merely report a large count
+  ;; afterwards: that early stop is the gas bound on huge sets.
+  throw_unless(171, quorum::count_keys(set123(), 3, 77) == 3);
+  int thrown = false;
+  try {
+    quorum::count_keys(set123(), 2, 77);
+  } catch (_, code) {
+    expect_throw(code, 77, 172);
+    thrown = true;
+  }
+  throw_unless(173, thrown);
+  return 8;
+}
+
+int test_expiry() method_id(109) {
+  install_chain(42, 1000);
+  quorum::require_not_expired(1000);
+  quorum::require_not_expired(5000);
+  int thrown = false;
+  try {
+    quorum::require_not_expired(999);
+  } catch (_, code) {
+    expect_throw(code, quorum::error::expired, 181);
+    thrown = true;
+  }
+  throw_unless(182, thrown);
+  return 9;
+}
+
+{-
+TESTCASE | 101 | | 1
+TESTCASE | 102 | | 2
+TESTCASE | 103 | | 3
+TESTCASE | 104 | | 4
+TESTCASE | 105 | | 5
+TESTCASE | 106 | | 6
+TESTCASE | 107 | | 7
+TESTCASE | 108 | | 8
+TESTCASE | 109 | | 9
+-}

@@ -1054,7 +1054,12 @@ file(MAKE_DIRECTORY ${SLICE1_GAS_PARITY_DIR})
 
 # Compile a .tol source to a .boc. Tol's --boc-output emits the BoC
 # write directive into its .fif output; running fift on that .fif then
-# materializes the .boc on disk.
+# materializes the .boc on disk. The stdlib and the sibling contract files
+# are dependencies too: contracts import them, and a BoC that outlives an edit
+# to an imported file silently tests old code.
+file(GLOB SLICE1_TOL_STDLIB_SOURCES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/tol-stdlib/*.tol
+     ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/*.tol)
 function(slice1_tol_to_boc TOL_SOURCE OUT_BOC)
     get_filename_component(_stem ${OUT_BOC} NAME_WE)
     set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)
@@ -1065,7 +1070,7 @@ function(slice1_tol_to_boc TOL_SOURCE OUT_BOC)
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
                 $<TARGET_FILE:fift> ${_fif}
         WORKING_DIRECTORY ${SLICE1_GAS_PARITY_DIR}
-        DEPENDS tol fift ${TOL_SOURCE}
+        DEPENDS tol fift ${TOL_SOURCE} ${SLICE1_TOL_STDLIB_SOURCES}
         COMMENT "Compiling Tol contract ${_stem} -> ${OUT_BOC}"
         VERBATIM
     )
@@ -1126,6 +1131,44 @@ slice1_func_to_boc(${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/stdlib.fc
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc)
+
+# Compile a production FunC contract from crypto/smartcont to a .boc, with
+# stdlib.fc first. ARGN lists the library files the contract includes, so an
+# edit to any of them rebuilds the BoC instead of leaving a stale one.
+function(smartcont_func_to_boc OUT_BOC SOURCE)
+    get_filename_component(_stem ${OUT_BOC} NAME_WE)
+    set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)
+    set(_dir ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont)
+    set(_deps)
+    foreach(_lib ${ARGN})
+        list(APPEND _deps ${_dir}/${_lib})
+    endforeach()
+    add_custom_command(
+        OUTPUT ${OUT_BOC}
+        COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                $<TARGET_FILE:func> -W ${OUT_BOC} -A -P -o ${_fif} ${_dir}/stdlib.fc ${_dir}/${SOURCE}
+        COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                $<TARGET_FILE:fift> ${_fif}
+        WORKING_DIRECTORY ${_dir}
+        DEPENDS func fift ${_dir}/stdlib.fc ${_dir}/${SOURCE} ${_deps}
+        COMMENT "Compiling FunC contract ${SOURCE} -> ${OUT_BOC}"
+        VERBATIM
+    )
+endfunction()
+
+set(MULTISIG_WALLET_BOC ${SLICE1_GAS_PARITY_DIR}/multisig-wallet.boc)
+set(MULTISIG_ORDER_BOC  ${SLICE1_GAS_PARITY_DIR}/multisig-order.boc)
+smartcont_func_to_boc(${MULTISIG_WALLET_BOC} multisig-wallet-code.fc multisig-order.fc)
+smartcont_func_to_boc(${MULTISIG_ORDER_BOC} multisig-order-code.fc multisig-order.fc)
+set(HIGHLOAD_WALLET_V3_BOC ${SLICE1_GAS_PARITY_DIR}/highload-wallet-v3.boc)
+smartcont_func_to_boc(${HIGHLOAD_WALLET_V3_BOC} highload-wallet-v3-code.fc replay-guard.fc)
+
+add_custom_target(smartcont_fixture_contracts
+    DEPENDS
+        ${MULTISIG_WALLET_BOC}
+        ${MULTISIG_ORDER_BOC}
+        ${HIGHLOAD_WALLET_V3_BOC}
+)
 
 add_custom_target(slice1_gas_parity_contracts ALL
     DEPENDS
@@ -1189,9 +1232,17 @@ add_executable(test-emulator
         # (Codex review follow-up, 2026-07-21): closes the gap between the
         # VmState-level test above and the TL-B parse test in
         # tvm-v14-v15-transaction-fixture.cpp.
-        emulator/test/config-param-43-transaction-fixture.cpp)
+        emulator/test/config-param-43-transaction-fixture.cpp
+        # Measures the jetton wallet fee profile against this build and checks
+        # the config-priced transfer/burn requirements end to end.
+        emulator/test/jetton-wallet-fee-profile-fixture.cpp
+        # Measures the multisig fee profile against this build of the parent
+        # and order contracts.
+        emulator/test/multisig-fee-profile-fixture.cpp
+        # High-volume wallet requests through a real action phase.
+        emulator/test/highload-wallet-action-phase-fixture.cpp)
 target_link_libraries(test-emulator PRIVATE emulator fift-lib)
-add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract)
+add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract smartcont_fixture_contracts)
 target_compile_definitions(test-emulator PRIVATE
     SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}"
     SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}"
@@ -1201,6 +1252,9 @@ target_compile_definitions(test-emulator PRIVATE
     SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC="${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC}"
     SLICE5_RECEIVE_CONTEXT_TOL_BOC="${SLICE5_RECEIVE_CONTEXT_TOL_BOC}"
     TOS_REPORT_BOND_ORACLE_BOC="${TOS_REPORT_BOND_ORACLE_BOC}"
+    MULTISIG_WALLET_BOC="${MULTISIG_WALLET_BOC}"
+    MULTISIG_ORDER_BOC="${MULTISIG_ORDER_BOC}"
+    HIGHLOAD_WALLET_V3_BOC="${HIGHLOAD_WALLET_V3_BOC}"
 )
 
 get_directory_property(HAS_PARENT PARENT_DIRECTORY)
@@ -1266,6 +1320,13 @@ if (NOT NIX)
           "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
           "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     endif()
+
+    # The multisig deployment script: signer order, refused inputs, and the wallet's own
+    # check of the state it builds.
+    add_test(
+      NAME test-new-multisig-wallet
+      COMMAND ${PYTHON_VER} ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/tests/test-new-multisig-wallet.py
+              $<TARGET_FILE:fift> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
     add_test(
       NAME test-func-legacy

@@ -1,0 +1,455 @@
+import "@stdlib/tvm-dicts"
+import "@stdlib/multisig-order"
+
+fun setC7(c7: array<unknown>): void
+    asm "c7 POP"
+
+// The libraries read time with NOW (c7[0][3]); tests move the clock here.
+fun setNow(t: int): void {
+    var params: array<unknown> = [];
+    var i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(t, 3);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
+fun main(): int {
+    return 0;
+}
+
+fun expectThrow(code: int, expected: int, failCode: int): void {
+    assert(code == expected) throw failCode;
+}
+
+fun parent(): address { return address("0:0000000000000000000000000000000000000000000000000000000000000abc"); }
+fun alice(): address { return address("0:1111111111111111111111111111111111111111111111111111111111111111"); }
+fun bob(): address { return address("0:2222222222222222222222222222222222222222222222222222222222222222"); }
+fun carol(): address { return address("0:3333333333333333333333333333333333333333333333333333333333333333"); }
+fun mallory(): address { return address("0:4444444444444444444444444444444444444444444444444444444444444444"); }
+fun orderCode(): cell { return beginCell().storeUint(0xc0de, 16).endCell(); }
+fun action(): cell { return beginCell().storeUint(0xac7, 12).endCell(); }
+
+fun signers(): cell {
+    var d = createEmptyDict();
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 0, alice() as slice);
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 1, bob() as slice);
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 7, carol() as slice);
+    return d!;
+}
+
+fun newOrder(): MultisigOrder {
+    setNow(1000);
+    return multisigOrderNew(parent(), 5, 2, signers(), 2000, action());
+}
+
+@method_id(101)
+fun test_seqno_allocation(): int {
+    val (a, nextA) = multisigOrderAllocateSeqno(MULTISIG_ORDER_NEXT_SEQNO, 5);
+    assert(a == 5 && nextA == 6) throw 101;
+    val (b, nextB) = multisigOrderAllocateSeqno(6, 6);
+    assert(b == 6 && nextB == 7) throw 102;
+    var rejected = 0;
+    try { multisigOrderAllocateSeqno(5, 6); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_SEQNO, 103); rejected += 1; }
+    try { multisigOrderAllocateSeqno(9, 6); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_SEQNO, 104); rejected += 1; }
+    try { multisigOrderAllocateSeqno(MULTISIG_ORDER_NEXT_SEQNO, MULTISIG_ORDER_NEXT_SEQNO); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_SEQNO, 105); rejected += 1; }
+    assert(rejected == 3) throw 106;
+    return 1;
+}
+
+@method_id(102)
+fun test_address_derivation(): int {
+    val a5 = multisigOrderAddress(orderCode(), parent(), 5);
+    assert(a5 == multisigOrderAddress(orderCode(), parent(), 5)) throw 111;
+    assert(a5 != multisigOrderAddress(orderCode(), parent(), 6)) throw 112;
+    assert(a5 != multisigOrderAddress(orderCode(), alice(), 5)) throw 113;
+    assert(a5 != multisigOrderAddress(beginCell().endCell(), parent(), 5)) throw 114;
+    val expected = address.fromWorkchainAndHash(BASECHAIN, multisigOrderStateInit(orderCode(), parent(), 5).hash());
+    assert(a5 == expected) throw 115;
+    return 2;
+}
+
+@method_id(103)
+fun test_order_validation(): int {
+    val o = newOrder();
+    assert(o.threshold == 2 && o.approvalCount == 0 && !o.executed) throw 121;
+    var rejected = 0;
+    try { multisigOrderNew(parent(), 5, 0, signers(), 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 122); rejected += 1; }
+    try { multisigOrderNew(parent(), 5, 4, signers(), 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 123); rejected += 1; }
+    try { multisigOrderNew(parent(), 5, 1, beginCell().endCell(), 2000, action()); } catch (code) { rejected += 1; }
+    try { multisigOrderNew(parent(), 5, 2, signers(), 1000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_EXPIRED, 125); rejected += 1; }
+    assert(rejected == 4) throw 126;
+    val (idx, found) = o.findSigner(carol());
+    assert(found && idx == 7) throw 127;
+    val (_, missing) = o.findSigner(mallory());
+    assert(!missing) throw 128;
+    return 3;
+}
+
+@method_id(104)
+fun test_threshold_fires_exactly_once(): int {
+    var o = newOrder();
+    setNow(1500);
+    assert(!o.approve(0, alice())) throw 131;
+    setNow(1500);
+    assert(o.approve(7, carol())) throw 132;
+    assert(o.executed && o.approvalCount == 2) throw 133;
+    assert(o.approvals == (1 | (1 << 7))) throw 134;
+    var thrown = false;
+    try {
+        setNow(1500);
+        o.approve(1, bob());
+    } catch (code) {
+        expectThrow(code, MULTISIG_ORDER_THROW_ALREADY_EXECUTED, 135);
+        thrown = true;
+    }
+    assert(thrown) throw 136;
+    return 4;
+}
+
+@method_id(105)
+fun test_approval_rejections(): int {
+    var o = newOrder();
+    setNow(1500);
+    o.approve(0, alice());
+    var rejected = 0;
+    try { setNow(1500); o.approve(0, alice()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_ALREADY_APPROVED, 141); rejected += 1; }
+    // right index, wrong sender
+    try { setNow(1500); o.approve(1, mallory()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNKNOWN_SIGNER, 142); rejected += 1; }
+    // index with no signer
+    try { setNow(1500); o.approve(2, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNKNOWN_SIGNER, 143); rejected += 1; }
+    try { setNow(1500); o.approve(256, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNKNOWN_SIGNER, 144); rejected += 1; }
+    try { setNow(2001); o.approve(1, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_EXPIRED, 145); rejected += 1; }
+    assert(rejected == 5) throw 146;
+    assert(o.approvalCount == 1 && !o.executed) throw 147;
+    // last valid second
+    setNow(2000);
+    assert(o.approve(1, bob())) throw 148;
+    return 5;
+}
+
+@method_id(106)
+fun test_execute_round_trip_and_admission(): int {
+    var o = newOrder();
+    setNow(1500);
+    o.approve(0, alice());
+    setNow(1500);
+    o.approve(1, bob());
+    var body = multisigOrderBuildExecuteBody(77, o.executeMessage()).beginParse();
+    assert(body.loadUint(32) == MULTISIG_ORDER_OP_EXECUTE) throw 151;
+    assert(body.loadUint(64) == 77) throw 152;
+    val execute = multisigOrderParseExecute(body);
+    assert(execute.seqno == 5 && execute.approvalCount == 2) throw 153;
+    assert(execute.action.hash() == action().hash()) throw 154;
+    val orderAddress = multisigOrderAddress(orderCode(), parent(), 5);
+    setNow(1600); multisigOrderRequireExecute(execute, orderAddress, orderCode(), parent(), signers(), 2);
+    return 6;
+}
+
+@method_id(107)
+fun test_execute_admission_rejections(): int {
+    var o = newOrder();
+    setNow(1500);
+    o.approve(0, alice());
+    setNow(1500);
+    o.approve(1, bob());
+    val execute = o.executeMessage();
+    val orderAddress = multisigOrderAddress(orderCode(), parent(), 5);
+    var changed = createEmptyDict();
+    changed.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 0, alice() as slice);
+    changed.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 1, bob() as slice);
+    var rejected = 0;
+    // sender is the order for a different seqno
+    try { setNow(1600); multisigOrderRequireExecute(execute, multisigOrderAddress(orderCode(), parent(), 6), orderCode(), parent(), signers(), 2); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_EXECUTE, 161); rejected += 1; }
+    try { setNow(1600); multisigOrderRequireExecute(execute, mallory(), orderCode(), parent(), signers(), 2); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_EXECUTE, 162); rejected += 1; }
+    // signer set changed after the order was opened
+    try { setNow(1600); multisigOrderRequireExecute(execute, orderAddress, orderCode(), parent(), changed!, 2); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_STALE_SIGNERS, 163); rejected += 1; }
+    // threshold raised after the order was opened
+    try { setNow(1600); multisigOrderRequireExecute(execute, orderAddress, orderCode(), parent(), signers(), 3); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INSUFFICIENT_APPROVALS, 164); rejected += 1; }
+    try { setNow(2001); multisigOrderRequireExecute(execute, orderAddress, orderCode(), parent(), signers(), 2); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_EXPIRED, 165); rejected += 1; }
+    assert(rejected == 5) throw 166;
+    return 7;
+}
+
+@method_id(108)
+fun test_order_storage_round_trip(): int {
+    var o = newOrder();
+    setNow(1500);
+    o.approve(7, carol());
+    val restored = MultisigOrder.fromCell(o.toCell());
+    assert(restored.approvalCount == 1 && restored.approvals == (1 << 7)) throw 171;
+    assert(restored.signers.hash() == signers().hash()) throw 172;
+    assert(restored.parent == parent() && restored.seqno == 5) throw 173;
+    return 8;
+}
+
+@method_id(109)
+fun test_layout_matches_func(): int {
+    // The stored order must be the very cell crypto/smartcont/multisig-order.fc packs; the
+    // FunC suite pins the same hash for the same state.
+    var o = newOrder();
+    setNow(1500);
+    o.approve(7, carol());
+    return o.toCell().hash();
+}
+
+fun dave(): address { return address("0:5555555555555555555555555555555555555555555555555555555555555555"); }
+
+fun proposers(): dict {
+    var d = createEmptyDict();
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 0, dave() as slice);
+    return d;
+}
+
+@method_id(110)
+fun test_proposer_authorization(): int {
+    multisigOrderRequireProposer(signers(), proposers(), true, 1, bob());
+    multisigOrderRequireProposer(signers(), proposers(), false, 0, dave());
+    var rejected = 0;
+    // a proposer is not a signer, and a signer is not a proposer
+    try { multisigOrderRequireProposer(signers(), proposers(), true, 0, dave()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 181); rejected += 1; }
+    try { multisigOrderRequireProposer(signers(), proposers(), false, 0, alice()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 182); rejected += 1; }
+    try { multisigOrderRequireProposer(signers(), proposers(), false, 1, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 183); rejected += 1; }
+    try { multisigOrderRequireProposer(signers(), null, false, 0, dave()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 184); rejected += 1; }
+    try { multisigOrderRequireProposer(signers(), proposers(), true, 256, bob()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_UNAUTHORIZED_PROPOSER, 185); rejected += 1; }
+    assert(rejected == 5) throw 186;
+    assert(multisigOrderProposerCount(null) == 0) throw 187;
+    assert(multisigOrderProposerCount(proposers()) == 1) throw 188;
+    var many = createEmptyDict();
+    var i = 0;
+    while (i < 256) {
+        many.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, i, dave() as slice);
+        i += 1;
+    }
+    var thrown = false;
+    try { multisigOrderProposerCount(many); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 189); thrown = true; }
+    assert(thrown) throw 190;
+    return 10;
+}
+
+// Same synthetic fee configuration as the jetton-fees suite:
+//   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
+//   forward fee(b, c)   = 400000 + b + 100 * c
+//   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)
+fun installFeeConfig(): void {
+    val storage = beginCell().storeUint(0xcc, 8).storeUint(0, 32)
+        .storeUint(65536, 64).storeUint(65536 * 500, 64)
+        .storeUint(65536 * 2, 64).storeUint(65536 * 1000, 64).endCell().beginParse();
+    val gas = beginCell().storeUint(0xd1, 8).storeUint(100, 64).storeUint(100000, 64)
+        .storeUint(0xde, 8).storeUint(65536 * 1000, 64).storeUint(1000000, 64).storeUint(1000000, 64)
+        .storeUint(10000, 64).storeUint(10000000, 64).storeUint(100000000, 64).storeUint(1000000000, 64)
+        .endCell().beginParse();
+    val msg = beginCell().storeUint(0xea, 8).storeUint(400000, 64).storeUint(65536, 64)
+        .storeUint(65536 * 100, 64).storeUint(98304, 32).storeUint(21845, 16).storeUint(21845, 16)
+        .endCell().beginParse();
+    var unpacked: array<unknown> = [];
+    unpacked.push(storage);
+    unpacked.push(null);
+    unpacked.push(gas);
+    unpacked.push(gas);
+    unpacked.push(msg);
+    unpacked.push(msg);
+    unpacked.push(null);
+    var params: array<unknown> = [];
+    var i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(1000, 3);
+    params.set(unpacked, 14);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
+fun feeProfile(): MultisigOrderFeeProfile {
+    return MultisigOrderFeeProfile {
+        parentNewOrderGas: 5000,
+        orderInitGas: 4000,
+        orderExecuteGas: 6000,
+        parentExecuteGas: 7000,
+        initMessageBits: 1000,
+        initMessageCells: 5,
+        orderStateBits: 1500,
+        orderStateCells: 6,
+        executeMessageBits: 600,
+        executeMessageCells: 1,
+        parentNewOrderGasPerAction: 1000,
+        parentExecuteGasPerAction: 500,
+        parentGasPerUpdatedSigner: 200,
+    };
+}
+
+@method_id(111)
+fun test_required_value_for_sizes(): int {
+    installFeeConfig();
+    val p = feeProfile();
+    // compute fee(5000 + 1000) + fee(4000) + fee(6000) + fee(7000 + 500)
+    //       = 6000000 + 4000000 + 6000000 + 7500000
+    // forward (400000 + 1900 + 1200) + (400000 + 700 + 300)
+    // storage ((1500 + 100 + 800) + 500 * (6 + 2 + 5)) * 10
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 1, 0, 10, 0) == 24393100) throw 191;
+    // gas the parent spends counting sizes is charged at the gas price
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 1, 0, 10, 300) == 24693100) throw 192;
+    // a longer lifetime only adds storage: + 8900 per second
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 1, 0, 11, 0) == 24402000) throw 193;
+    // three actions installing a ten-signer set:
+    // fee(5000 + 3000 + 2000) + 4000000 + 6000000 + fee(7000 + 1500 + 2000)
+    assert(p.requiredValueForSizes(100, 2, 800, 5, 3, 10, 10, 0) == 31393100) throw 194;
+    var rejected = 0;
+    try { p.requiredValueForSizes(100, 2, 800, 5, 0, 0, 10, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 195); rejected += 1; }
+    try { p.requiredValueForSizes(100, 2, 800, 5, 1, -1, 10, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 196); rejected += 1; }
+    assert(rejected == 2) throw 197;
+    return 11;
+}
+
+@method_id(112)
+fun test_required_value_counts_real_cells(): int {
+    installFeeConfig();
+    val p = feeProfile();
+    val action = beginCell().storeUint(0, 100).storeRef(beginCell().endCell()).endCell();
+    val (sCells, sBits, _, ok) = signers().calculateSize(MULTISIG_ORDER_MAX_SIGNER_CELLS);
+    assert(ok) throw 201;
+    val base = p.requiredValueForSizes(100, 2, sBits!, sCells!, 1, 0, 10, 0);
+    val required = p.requiredNewOrderValue(signers(), action, 1, 0, 10);
+    // the counting gas is real, positive, and priced at 1000 per gas unit
+    val extra = required - base;
+    assert(extra > 0) throw 202;
+    assert(extra % 1000 == 0) throw 203;
+    assert(extra < 2000 * 1000) throw 204;
+    return 12;
+}
+
+@method_id(113)
+fun test_new_order_value_boundary(): int {
+    installFeeConfig();
+    val p = feeProfile();
+    val action = beginCell().storeUint(0, 100).storeRef(beginCell().endCell()).endCell();
+    // Counting sizes walks the cells, and a cell's first load in a run costs
+    // more than a reload; count once first so the requirement and the checks
+    // below see the same cache. (On chain each transaction counts once, and a
+    // quote from a get-method, made on a fresh VM, is never below it.)
+    p.requiredNewOrderValue(signers(), action, 1, 0, 10);
+    val required = p.requiredNewOrderValue(signers(), action, 1, 0, 10);
+    p.requireNewOrderValue(required, signers(), action, 1, 0, 10);
+    var thrown = false;
+    try {
+        p.requireNewOrderValue(required - 1, signers(), action, 1, 0, 10);
+    } catch (code) {
+        expectThrow(code, MULTISIG_ORDER_THROW_INSUFFICIENT_VALUE, 211);
+        thrown = true;
+    }
+    assert(thrown) throw 212;
+    return 13;
+}
+
+@method_id(114)
+fun test_fee_profile_rejections(): int {
+    installFeeConfig();
+    var rejected = 0;
+    var p = feeProfile();
+    p.orderExecuteGas = 0;
+    try { p.requiredValueForSizes(100, 2, 800, 5, 1, 0, 10, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_PROFILE, 221); rejected += 1; }
+    try { feeProfile().requiredValueForSizes(100, 2, 800, 5, 1, 0, 0, 0); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_EXPIRED, 222); rejected += 1; }
+    // an action larger than the size limit
+    var big = beginCell().endCell();
+    var i = 0;
+    while (i < MULTISIG_ORDER_MAX_ACTION_CELLS) {
+        big = beginCell().storeUint(i, 16).storeRef(big).endCell();
+        i += 1;
+    }
+    try { feeProfile().requiredNewOrderValue(signers(), big, 1, 0, 10); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_ORDER_TOO_LARGE, 223); rejected += 1; }
+    assert(rejected == 3) throw 224;
+    return 14;
+}
+
+@method_id(115)
+fun test_new_with_count_and_reclaim(): int {
+    setNow(1000);
+    val o = multisigOrderNewWithCount(parent(), 5, 2, signers(), 3, 2000, action());
+    assert(o.threshold == 2 && o.approvalCount == 0) throw 231;
+    var rejected = 0;
+    try { multisigOrderNewWithCount(parent(), 5, 2, signers(), 0, 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 232); rejected += 1; }
+    try { multisigOrderNewWithCount(parent(), 5, 2, signers(), 256, 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 233); rejected += 1; }
+    try { multisigOrderNewWithCount(parent(), 5, 4, signers(), 3, 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 234); rejected += 1; }
+    // not reclaimable before expiry, nor at the last valid second
+    try { setNow(2000); o.requireReclaimable(); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_NOT_RECLAIMABLE, 235); rejected += 1; }
+    setNow(2001);
+    o.requireReclaimable();
+    // an executed order never is
+    var done = newOrder();
+    setNow(1500);
+    done.approve(0, alice());
+    done.approve(1, bob());
+    try { setNow(5000); done.requireReclaimable(); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_NOT_RECLAIMABLE, 236); rejected += 1; }
+    assert(rejected == 5) throw 237;
+    return 15;
+}
+
+fun addrAt(workchain: int, id: int): slice {
+    return beginCell().storeUint(4, 3).storeInt(workchain, 8).storeUint(id, 256).endCell().beginParse();
+}
+
+fun setOf(a: slice, indexA: int, b: slice, indexB: int): cell {
+    var d = createEmptyDict();
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, indexA, a);
+    d.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, indexB, b);
+    return d!;
+}
+
+@method_id(116)
+fun test_signer_sets_are_ordered_and_distinct(): int {
+    // ordered by address along the indices, which may be sparse and reach 255
+    var sparse = createEmptyDict();
+    sparse.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 0, alice() as slice);
+    sparse.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 7, bob() as slice);
+    sparse.uDictSet(MULTISIG_ORDER_SIGNER_INDEX_BITS, 255, carol() as slice);
+    assert(multisigOrderSignerCount(sparse!) == 3) throw 241;
+    // the workchain orders before the account id
+    val low = addrAt(-1, ((1 << 255) - 1) * 2 + 1);
+    val high = addrAt(0, 1);
+    assert(multisigOrderSignerCount(setOf(low, 0, high, 1)) == 2) throw 242;
+    var rejected = 0;
+    // one address at two indices: it could approve twice
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, alice() as slice, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 243); rejected += 1; }
+    try { multisigOrderSignerCount(setOf(bob() as slice, 0, alice() as slice, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 244); rejected += 1; }
+    try { multisigOrderSignerCount(setOf(high, 0, low, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 245); rejected += 1; }
+    // not a plain addr_std: a trailing bit, addr_none, the anycast form, a reference
+    val trailing = beginCell().storeSlice(bob() as slice).storeUint(0, 1).endCell().beginParse();
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, trailing, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 246); rejected += 1; }
+    val none = beginCell().storeUint(0, 2).endCell().beginParse();
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, none, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 247); rejected += 1; }
+    val anycast = beginCell().storeUint(5, 3).storeInt(0, 8).storeUint(((1 << 255) - 1) * 2 + 1, 256).endCell().beginParse();
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, anycast, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 248); rejected += 1; }
+    val withRef = beginCell().storeSlice(bob() as slice).storeRef(beginCell().endCell()).endCell().beginParse();
+    try { multisigOrderSignerCount(setOf(alice() as slice, 0, withRef, 1)); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 249); rejected += 1; }
+    // an order cannot be built over such a set either
+    setNow(1000);
+    try { multisigOrderNew(parent(), 5, 1, setOf(alice() as slice, 0, alice() as slice, 1), 2000, action()); } catch (code) { expectThrow(code, MULTISIG_ORDER_THROW_INVALID_CONFIG, 250); rejected += 1; }
+    assert(rejected == 8) throw 251;
+    return 16;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+@testcase | 108 | | 8
+@testcase | 110 | | 10
+@testcase | 111 | | 11
+@testcase | 112 | | 12
+@testcase | 113 | | 13
+@testcase | 114 | | 14
+@testcase | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
+@testcase | 115 | | 15
+@testcase | 116 | | 16
+ */

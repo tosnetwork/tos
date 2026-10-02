@@ -1,0 +1,384 @@
+import "@stdlib/ordered-delivery"
+import "@stdlib/gas-payments"
+
+fun main(): int {
+    return 0;
+}
+
+fun expectThrow(code: int, expected: int, failCode: int): void {
+    assert(code == expected) throw failCode;
+}
+
+@method_id(101)
+fun test_in_order_completion_advances_head(): int {
+    var w = nonceWindowNew(1);
+    w.complete(1);
+    w.complete(2);
+    w.complete(3);
+    assert(w.nextPending == 4) throw 101;
+    assert(w.completed == 0) throw 102;
+    assert(w.isCompleted(3)) throw 103;
+    assert(!w.isCompleted(4)) throw 104;
+    return 1;
+}
+
+@method_id(102)
+fun test_out_of_order_completion_folds_contiguous_run(): int {
+    var w = nonceWindowNew(10);
+    w.complete(12);
+    w.complete(13);
+    w.complete(15);
+    assert(w.nextPending == 10) throw 111;
+    assert(w.isCompleted(13) && !w.isCompleted(14)) throw 112;
+    w.complete(11);
+    assert(w.nextPending == 10) throw 113;
+    // completing the head folds 10..13 and stops at the gap at 14
+    w.complete(10);
+    assert(w.nextPending == 14) throw 114;
+    assert(w.completed == 2) throw 115;
+    w.complete(14);
+    assert(w.nextPending == 16) throw 116;
+    assert(w.completed == 0) throw 117;
+    return 2;
+}
+
+@method_id(103)
+fun test_window_edges(): int {
+    var w = nonceWindowNew(0);
+    assert(w.lastAcceptable() == 255) throw 121;
+    w.complete(255);
+    var thrown = false;
+    try {
+        w.complete(256);
+    } catch (code) {
+        expectThrow(code, ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW, 122);
+        thrown = true;
+    }
+    assert(thrown) throw 123;
+    assert(!w.isCompleted(256)) throw 124;
+    // completing 0..254 folds the whole window including 255
+    var n = 0;
+    while (n < 255) {
+        w.complete(n);
+        n += 1;
+    }
+    assert(w.nextPending == 256) throw 125;
+    assert(w.completed == 0) throw 126;
+    w.complete(256 + 255);
+    return 3;
+}
+
+@method_id(104)
+fun test_duplicate_and_stale_completions_rejected(): int {
+    var w = nonceWindowNew(5);
+    w.complete(7);
+    var rejected = 0;
+    try { w.complete(7); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 131); rejected += 1; }
+    try { w.complete(4); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 132); rejected += 1; }
+    try { w.complete(-1); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_NONCE, 133); rejected += 1; }
+    try { w.complete(NONCE_WINDOW_MAX_NONCE + 1); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_NONCE, 134); rejected += 1; }
+    assert(rejected == 4) throw 135;
+    assert(w.isCompleted(4)) throw 136;
+    return 4;
+}
+
+@method_id(105)
+fun test_top_of_nonce_space(): int {
+    var w = nonceWindowNew(NONCE_WINDOW_MAX_NONCE - 1);
+    w.complete(NONCE_WINDOW_MAX_NONCE);
+    w.complete(NONCE_WINDOW_MAX_NONCE - 1);
+    // the head may reach 2^64 - 1 and still be stored
+    assert(w.nextPending == NONCE_WINDOW_MAX_NONCE + 1) throw 141;
+    val restored = NonceWindow.fromCell(w.toCell());
+    assert(restored.nextPending == w.nextPending) throw 142;
+    return 5;
+}
+
+@method_id(106)
+fun test_pending_slots_key_checked(): int {
+    var p = pendingSlotsNew();
+    val payload = beginCell().storeUint(0xabc, 12).endCell();
+    p.put(3, 1, payload);
+    val (found, status, body) = p.get(3);
+    assert(found && status == 1) throw 151;
+    assert(body!.hash() == payload.hash()) throw 152;
+    // same slot index, different nonce: never visible, never writable
+    val (alias, _, _) = p.get(3 + 256);
+    assert(!alias) throw 153;
+    var thrown = false;
+    try {
+        p.put(3 + 256, 2, payload);
+    } catch (code) {
+        expectThrow(code, ORDERED_DELIVERY_THROW_SLOT_OCCUPIED, 154);
+        thrown = true;
+    }
+    assert(thrown) throw 155;
+    assert(!p.remove(3 + 256)) throw 156;
+    val (still, _, _) = p.get(3);
+    assert(still) throw 157;
+    return 6;
+}
+
+@method_id(107)
+fun test_pending_slots_update_remove_reuse(): int {
+    var p = pendingSlotsNew();
+    val a = beginCell().storeUint(1, 8).endCell();
+    val b = beginCell().storeUint(2, 8).endCell();
+    p.put(9, 1, a);
+    p.put(9, 2, b);
+    val (_, status, body) = p.get(9);
+    assert(status == 2 && body!.hash() == b.hash()) throw 161;
+    assert(p.remove(9)) throw 162;
+    assert(!p.remove(9)) throw 163;
+    // the freed slot can now carry the nonce one window later
+    p.put(9 + 256, 0, a);
+    val (found, _, _) = p.get(9 + 256);
+    assert(found) throw 164;
+    var thrown = false;
+    try {
+        p.put(10, 256, a);
+    } catch (code) {
+        expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_STATUS, 165);
+        thrown = true;
+    }
+    assert(thrown) throw 166;
+    return 7;
+}
+
+@method_id(108)
+fun test_layout_matches_func(): int {
+    // The stored window must be the very cell crypto/smartcont/ordered-delivery.fc packs;
+    // the FunC suite pins the same hash for the same state.
+    var w = nonceWindowNew(10);
+    w.complete(12);
+    w.complete(15);
+    return w.toCell().hash();
+}
+
+@method_id(109)
+fun test_fixed_slots_key_checked(): int {
+    var p = fixedSlotsNew();
+    val payload = beginCell().storeUint(0xabc, 12).endCell();
+    p.put(3, 1, payload);
+    val (found, status, body) = p.get(3);
+    assert(found && status == 1) throw 181;
+    assert(body!.hash() == payload.hash()) throw 182;
+    val (alias, _, _) = p.get(3 + 256);
+    assert(!alias) throw 183;
+    var thrown = false;
+    try {
+        p.put(3 + 256, 2, payload);
+    } catch (code) {
+        expectThrow(code, ORDERED_DELIVERY_THROW_SLOT_OCCUPIED, 184);
+        thrown = true;
+    }
+    assert(thrown) throw 185;
+    assert(!p.remove(3 + 256)) throw 186;
+    val (still, _, _) = p.get(3);
+    assert(still) throw 187;
+    return 9;
+}
+
+@method_id(110)
+fun test_fixed_slots_update_remove_reuse(): int {
+    var p = fixedSlotsNew();
+    val a = beginCell().storeUint(1, 8).endCell();
+    val b = beginCell().storeUint(2, 8).endCell();
+    p.put(9, 1, a);
+    p.put(9, 2, b);
+    val (_, status, body) = p.get(9);
+    assert(status == 2 && body!.hash() == b.hash()) throw 191;
+    assert(p.remove(9)) throw 192;
+    assert(!p.remove(9)) throw 193;
+    p.put(9 + 256, 0, a);
+    val (found, _, _) = p.get(9 + 256);
+    assert(found) throw 194;
+    var thrown = false;
+    try {
+        p.put(10, 256, a);
+    } catch (code) {
+        expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_STATUS, 195);
+        thrown = true;
+    }
+    assert(thrown) throw 196;
+    // a removed slot is back to the empty tree, cell for cell
+    var q = fixedSlotsNew();
+    q.put(77, 3, a);
+    q.remove(77);
+    assert(q.root.hash() == fixedSlotsNew().root.hash()) throw 197;
+    // an empty leaf stores nonce 0: only the occupied flag tells it apart from
+    // a real entry for nonce 0
+    val (ghost, _, _) = fixedSlotsNew().get(0);
+    assert(!ghost) throw 198;
+    var r = fixedSlotsNew();
+    r.put(256, 1, a);
+    r.remove(256);
+    val (stillGhost, _, _) = r.get(0);
+    assert(!stillGhost) throw 199;
+    assert(!r.remove(0)) throw 200;
+    return 10;
+}
+
+// TVM charges 100 gas for the first load of a cell in a run (code cells
+// included) and 25 for each reload, so measurements taken one after another
+// in a single run see different caches. Each measurement therefore repeats
+// the identical put on a copy first: every data and code cell it touches is
+// then cached, and what is compared is the instruction path alone. The
+// number of cell loads per put is fixed by the tree depth. Not inlined, so
+// every measurement runs the same code with the same stack layout.
+@noinline
+fun putGas(p: FixedSlots, nonce: int): int {
+    val payload = beginCell().storeUint(nonce, 16).endCell();
+    var warm = p;
+    warm.put(nonce, 1, payload);
+    var q = p;
+    val before = getGasConsumedAtTheMoment();
+    q.put(nonce, 1, payload);
+    return getGasConsumedAtTheMoment() - before;
+}
+
+@method_id(111)
+fun test_fixed_slots_gas_is_constant(): int {
+    val empty = fixedSlotsNew();
+    var crowded = fixedSlotsNew();
+    var n = 0;
+    while (n < 200) {
+        crowded.put(n + 20, 0, createEmptyCell());
+        n += 1;
+    }
+    // inserting: independent of how many slots are occupied and of which
+    // slot is written (crowded holds nonces 20..219)
+    val insert = putGas(empty, 5);
+    assert(putGas(crowded, 5) == insert) throw 201;
+    assert(putGas(empty, 0) == insert) throw 202;
+    assert(putGas(empty, 255) == insert) throw 203;
+    assert(putGas(crowded, 240) == insert) throw 204;
+    // updating a nonce's own slot compares the stored nonce too, at a cost
+    // that is again the same everywhere
+    val update = putGas(crowded, 130);
+    assert(update != insert) throw 205;
+    assert(putGas(crowded, 20) == update) throw 206;
+    assert(putGas(crowded, 219) == update) throw 207;
+    return 11;
+}
+
+@method_id(112)
+fun test_fixed_slots_layout_matches_func(): int {
+    // The tree must be the very cell crypto/smartcont/ordered-delivery.fc builds; the FunC
+    // suite pins the same hash for the same state.
+    var p = fixedSlotsNew();
+    p.put(3, 1, beginCell().storeUint(0xabc, 12).endCell());
+    p.put(200, 2, beginCell().endCell());
+    return p.root.hash();
+}
+
+@method_id(113)
+fun test_full_window_folds_completely(): int {
+    // Every nonce above the head completes first, so completing the head
+    // must fold all 256 at once: the bitmap is all ones at that moment.
+    var w = nonceWindowNew(0);
+    var n = 1;
+    while (n < 256) {
+        w.complete(n);
+        n += 1;
+    }
+    assert(w.completed == NONCE_WINDOW_FULL_MASK - 1) throw 211;
+    w.complete(0);
+    assert(w.nextPending == 256) throw 212;
+    assert(w.completed == 0) throw 213;
+    w.complete(256 + 255);
+    return 13;
+}
+
+@method_id(114)
+fun test_complete_range(): int {
+    var w = nonceWindowNew(10);
+    w.completeRange(12, 14);
+    assert(w.nextPending == 10 && w.isCompleted(13) && !w.isCompleted(11)) throw 221;
+    w.completeRange(10, 11);
+    assert(w.nextPending == 15 && w.completed == 0) throw 222;
+    w.complete(17);
+    var rejected = 0;
+    try { w.completeRange(20, 19); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_INVALID_NONCE, 223); rejected += 1; }
+    try { w.completeRange(14, 16); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 224); rejected += 1; }
+    try { w.completeRange(16, 15 + 256); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW, 225); rejected += 1; }
+    // overlapping an already completed nonce changes nothing
+    try { w.completeRange(16, 18); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 226); rejected += 1; }
+    assert(rejected == 4) throw 227;
+    assert(w.nextPending == 15 && !w.isCompleted(16)) throw 228;
+    // the whole window at once
+    var full = nonceWindowNew(0);
+    full.completeRange(0, 255);
+    assert(full.nextPending == 256 && full.completed == 0) throw 229;
+    return 14;
+}
+
+@method_id(115)
+fun test_pending_slots_bound_to_window(): int {
+    var w = nonceWindowNew(0);
+    var p = pendingSlotsNew();
+    val a = beginCell().storeUint(1, 8).endCell();
+    p.putInWindow(w, 3, 1, a);
+    val (held, holder) = p.occupant(3 + 256);
+    assert(held && holder == 3) throw 231;
+    var rejected = 0;
+    // the nonce one window later is not in the window yet
+    try { p.putInWindow(w, 3 + 256, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW, 232); rejected += 1; }
+    // once 0..3 complete, nonce 3's never-removed entry is stale and is reclaimed
+    w.completeRange(0, 3);
+    p.putInWindow(w, 3 + 256, 2, a);
+    val (now, _, _) = p.get(3 + 256);
+    val (old, _, _) = p.get(3);
+    assert(now && !old) throw 233;
+    try { p.putInWindow(w, 2, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 234); rejected += 1; }
+    // a holder that is not below the head is never displaced
+    p.put(5 + 512, 1, a);
+    try { p.putInWindow(w, 5, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_SLOT_OCCUPIED, 235); rejected += 1; }
+    assert(rejected == 3) throw 236;
+    val (empty, _) = pendingSlotsNew().occupant(9);
+    assert(!empty) throw 237;
+    return 15;
+}
+
+@method_id(116)
+fun test_fixed_slots_bound_to_window(): int {
+    var w = nonceWindowNew(0);
+    var p = fixedSlotsNew();
+    val a = beginCell().storeUint(1, 8).endCell();
+    p.putInWindow(w, 3, 1, a);
+    val (held, holder) = p.occupant(3 + 256);
+    assert(held && holder == 3) throw 241;
+    var rejected = 0;
+    try { p.putInWindow(w, 3 + 256, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW, 242); rejected += 1; }
+    w.completeRange(0, 3);
+    p.putInWindow(w, 3 + 256, 2, a);
+    val (now, _, _) = p.get(3 + 256);
+    val (old, _, _) = p.get(3);
+    assert(now && !old) throw 243;
+    try { p.putInWindow(w, 2, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_ALREADY_COMPLETED, 244); rejected += 1; }
+    p.put(5 + 512, 1, a);
+    try { p.putInWindow(w, 5, 1, a); } catch (code) { expectThrow(code, ORDERED_DELIVERY_THROW_SLOT_OCCUPIED, 245); rejected += 1; }
+    assert(rejected == 3) throw 246;
+    val (empty, _) = fixedSlotsNew().occupant(0);
+    assert(!empty) throw 247;
+    return 16;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+@testcase | 109 | | 9
+@testcase | 110 | | 10
+@testcase | 111 | | 11
+@testcase | 108 | | 108172638824023323656301294226925930422985867943527330981503674913960755835622
+@testcase | 112 | | 67470058507674813740225093116304431827422772986530920139661665217563619817841
+@testcase | 113 | | 13
+@testcase | 114 | | 14
+@testcase | 115 | | 15
+@testcase | 116 | | 16
+ */
