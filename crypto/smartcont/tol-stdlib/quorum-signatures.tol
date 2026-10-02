@@ -8,10 +8,13 @@
 // `verifierCount` accepted entries the next one is necessarily a non-member
 // and stops the walk — at most `verifierCount + 1` entries are ever examined.
 //
-// A quorum signature says nothing about freshness. Sign a hash built with
-// [quorumSigningHash] over a domain tag, the target contract and a nonce, and
-// consume the nonce (for example with `@stdlib/ordered-delivery` or
-// `@stdlib/replay-guard`) in the same transaction.
+// A quorum signature carries only what its hash binds. Sign a hash built with
+// [quorumSigningHash]: it binds the network (read on chain, so a signature
+// for one network never verifies on another), a domain tag naming the
+// operation, the target contract, a nonce and an expiry. The verifying
+// contract must also call [quorumRequireNotExpired] and consume the nonce
+// (for example with `@stdlib/ordered-delivery` or `@stdlib/replay-guard`) in
+// the same transaction.
 tol 1.3
 
 import "@stdlib/tvm-dicts"
@@ -22,6 +25,7 @@ const QUORUM_THROW_UNKNOWN_SIGNER = 0x1903
 const QUORUM_THROW_MALFORMED_SIGNATURE = 0x1904
 const QUORUM_THROW_INVALID_SIGNATURE = 0x1905
 const QUORUM_THROW_INSUFFICIENT_SIGNATURES = 0x1906
+const QUORUM_THROW_EXPIRED = 0x1907
 
 const QUORUM_KEY_BITS = 256
 const QUORUM_SIGNATURE_BITS = 512
@@ -35,16 +39,30 @@ struct QuorumConfig {
     quorum: uint16
 }
 
-/// Hash that verifiers sign: binds the payload to a purpose, a target
-/// contract and a nonce so a signature cannot be replayed elsewhere.
-fun quorumSigningHash(domain: uint32, target: address, nonce: uint64, payload: cell): int {
+/// The network's global id (ConfigParam 19).
+fun quorumGlobalId(): int
+    asm "GLOBALID"
+
+/// Hash that verifiers sign: binds the payload to this network, a purpose, a
+/// target contract, a nonce and an expiry, so a signature cannot be replayed
+/// on another network, for another operation or contract, twice, or late.
+fun quorumSigningHash(domain: uint32, target: address, nonce: uint64, validUntil: uint32, payload: cell): int {
     return beginCell()
+        .storeInt(quorumGlobalId(), 32)
         .storeUint(domain, 32)
         .storeAddress(target)
         .storeUint(nonce, 64)
+        .storeUint(validUntil, 32)
         .storeRef(payload)
         .endCell()
         .hash();
+}
+
+/// Rejects a request whose signed expiry has passed.
+fun quorumRequireNotExpired(validUntil: int): void {
+    if (blockchain.now() > validUntil) {
+        throw QUORUM_THROW_EXPIRED;
+    }
 }
 
 /// Adds `publicKey` to a verifier dictionary, rejecting duplicates.

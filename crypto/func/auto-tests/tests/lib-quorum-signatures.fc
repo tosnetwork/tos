@@ -139,16 +139,59 @@ int test_bad_entries_reject_whole_request() method_id(106) {
   return 6;
 }
 
+() set_c7(tuple c7) impure asm "c7 POP";
+
+;; GLOBALID reads ConfigParam 19 from c7[0][14][1]; NOW reads c7[0][3].
+() install_chain(int global_id, int now_ts) impure {
+  tuple unpacked = empty_tuple();
+  int i = 0;
+  while (i < 7) {
+    if (i == 1) {
+      unpacked~tpush(begin_cell().store_int(global_id, 32).end_cell().begin_parse());
+    } else {
+      unpacked~tpush(null());
+    }
+    i += 1;
+  }
+  tuple params = empty_tuple();
+  i = 0;
+  while (i < 17) {
+    if (i == 3) {
+      params~tpush(now_ts);
+    } elseif (i == 14) {
+      params~tpush(unpacked);
+    } else {
+      params~tpush(null());
+    }
+    i += 1;
+  }
+  tuple c7 = empty_tuple();
+  c7~tpush(params);
+  set_c7(c7);
+}
+
 int test_signing_hash_binds_context() method_id(107) {
+  install_chain(42, 1000);
   cell payload = begin_cell().store_uint(7, 8).end_cell();
   slice target = std_addr(0x1111111111111111111111111111111111111111111111111111111111111111);
   slice other = std_addr(0x2222222222222222222222222222222222222222222222222222222222222222);
-  int h = quorum::signing_hash(1, target, 5, payload);
-  throw_unless(161, h == quorum::signing_hash(1, target, 5, payload));
-  throw_if(162, h == quorum::signing_hash(2, target, 5, payload));
-  throw_if(163, h == quorum::signing_hash(1, other, 5, payload));
-  throw_if(164, h == quorum::signing_hash(1, target, 6, payload));
-  throw_if(165, h == quorum::signing_hash(1, target, 5, begin_cell().end_cell()));
+  int h = quorum::signing_hash(1, target, 5, 2000, payload);
+  throw_unless(161, h == quorum::signing_hash(1, target, 5, 2000, payload));
+  throw_if(162, h == quorum::signing_hash(2, target, 5, 2000, payload));
+  throw_if(163, h == quorum::signing_hash(1, other, 5, 2000, payload));
+  throw_if(164, h == quorum::signing_hash(1, target, 6, 2000, payload));
+  throw_if(165, h == quorum::signing_hash(1, target, 5, 2000, begin_cell().end_cell()));
+  throw_if(166, h == quorum::signing_hash(1, target, 5, 2001, payload));
+  ;; the same request on another network is a different message
+  install_chain(43, 1000);
+  throw_if(167, h == quorum::signing_hash(1, target, 5, 2000, payload));
+  ;; FunC only (Tol's address type cannot express these): a target that is not addr_std
+  int rejected = 0;
+  try { quorum::signing_hash(1, begin_cell().store_uint(0, 2).end_cell().begin_parse(), 5, 2000, payload); } catch (_, code) { expect_throw(code, quorum::error::invalid_target, 168); rejected += 1; }
+  try { quorum::signing_hash(1, begin_cell().store_slice(target).store_uint(0, 1).end_cell().begin_parse(), 5, 2000, payload); } catch (_, code) { expect_throw(code, quorum::error::invalid_target, 169); rejected += 1; }
+  ;; right length, wrong prefix: 267 bits that do not start with addr_std's 100
+  try { quorum::signing_hash(1, begin_cell().store_uint(6, 3).store_uint(0, 256).store_uint(0, 8).end_cell().begin_parse(), 5, 2000, payload); } catch (_, code) { expect_throw(code, quorum::error::invalid_target, 171); rejected += 1; }
+  throw_unless(170, rejected == 3);
   return 7;
 }
 
@@ -167,6 +210,21 @@ int test_key_count_stops_at_limit() method_id(108) {
   return 8;
 }
 
+int test_expiry() method_id(109) {
+  install_chain(42, 1000);
+  quorum::require_not_expired(1000);
+  quorum::require_not_expired(5000);
+  int thrown = false;
+  try {
+    quorum::require_not_expired(999);
+  } catch (_, code) {
+    expect_throw(code, quorum::error::expired, 181);
+    thrown = true;
+  }
+  throw_unless(182, thrown);
+  return 9;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -176,4 +234,5 @@ TESTCASE | 105 | | 5
 TESTCASE | 106 | | 6
 TESTCASE | 107 | | 7
 TESTCASE | 108 | | 8
+TESTCASE | 109 | | 9
 -}

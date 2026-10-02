@@ -141,17 +141,46 @@ fun test_bad_entries_reject_whole_request(): int {
     return 6;
 }
 
+fun setC7(c7: array<unknown>): void
+    asm "c7 POP"
+
+// GLOBALID reads ConfigParam 19 from c7[0][14][1]; NOW reads c7[0][3].
+fun installChain(globalId: int, nowTs: int): void {
+    var unpacked: array<unknown> = [];
+    var i = 0;
+    while (i < 7) {
+        unpacked.push(i == 1 ? beginCell().storeInt(globalId, 32).endCell().beginParse() as unknown : null);
+        i += 1;
+    }
+    var params: array<unknown> = [];
+    i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(nowTs, 3);
+    params.set(unpacked, 14);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
 @method_id(107)
 fun test_signing_hash_binds_context(): int {
+    installChain(42, 1000);
     val payload = beginCell().storeUint(7, 8).endCell();
     val target = address("0:1111111111111111111111111111111111111111111111111111111111111111");
     val other = address("0:2222222222222222222222222222222222222222222222222222222222222222");
-    val h = quorumSigningHash(1, target, 5, payload);
-    assert(h == quorumSigningHash(1, target, 5, payload)) throw 161;
-    assert(h != quorumSigningHash(2, target, 5, payload)) throw 162;
-    assert(h != quorumSigningHash(1, other, 5, payload)) throw 163;
-    assert(h != quorumSigningHash(1, target, 6, payload)) throw 164;
-    assert(h != quorumSigningHash(1, target, 5, beginCell().endCell())) throw 165;
+    val h = quorumSigningHash(1, target, 5, 2000, payload);
+    assert(h == quorumSigningHash(1, target, 5, 2000, payload)) throw 161;
+    assert(h != quorumSigningHash(2, target, 5, 2000, payload)) throw 162;
+    assert(h != quorumSigningHash(1, other, 5, 2000, payload)) throw 163;
+    assert(h != quorumSigningHash(1, target, 6, 2000, payload)) throw 164;
+    assert(h != quorumSigningHash(1, target, 5, 2000, beginCell().endCell())) throw 165;
+    assert(h != quorumSigningHash(1, target, 5, 2001, payload)) throw 166;
+    // the same request on another network is a different message
+    installChain(43, 1000);
+    assert(h != quorumSigningHash(1, target, 5, 2000, payload)) throw 167;
     return 7;
 }
 
@@ -171,6 +200,22 @@ fun test_key_count_stops_at_limit(): int {
     return 8;
 }
 
+@method_id(109)
+fun test_expiry(): int {
+    installChain(42, 1000);
+    quorumRequireNotExpired(1000);
+    quorumRequireNotExpired(5000);
+    var thrown = false;
+    try {
+        quorumRequireNotExpired(999);
+    } catch (code) {
+        expectThrow(code, QUORUM_THROW_EXPIRED, 181);
+        thrown = true;
+    }
+    assert(thrown) throw 182;
+    return 9;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -180,4 +225,5 @@ fun test_key_count_stops_at_limit(): int {
 @testcase | 106 | | 6
 @testcase | 107 | | 7
 @testcase | 108 | | 8
+@testcase | 109 | | 9
  */

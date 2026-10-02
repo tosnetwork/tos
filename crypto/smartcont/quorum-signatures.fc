@@ -9,10 +9,12 @@
 ;; distinct keys, so after `verifier_count` accepted entries the next one is necessarily a
 ;; non-member and stops the walk — at most `verifier_count + 1` entries are ever examined.
 ;;
-;; A quorum signature says nothing about freshness. Sign a hash built with
-;; [quorum::signing_hash] over a domain tag, the target contract and a nonce, and consume
-;; the nonce (for example with ordered-delivery.fc or replay-guard.fc) in the same
-;; transaction.
+;; A quorum signature carries only what its hash binds. Sign a hash built with
+;; [quorum::signing_hash]: it binds the network (read on chain, so a signature for one
+;; network never verifies on another), a domain tag naming the operation, the target
+;; contract, a nonce and an expiry. The verifying contract must also call
+;; [quorum::require_not_expired] and consume the nonce (for example with
+;; ordered-delivery.fc or replay-guard.fc) in the same transaction.
 ;;
 ;; FunC counterpart of the Tol `@stdlib/quorum-signatures`: same rules, same throw codes.
 ;; A config is the tuple [verifiers, verifier_count, quorum].
@@ -26,22 +28,39 @@ const int quorum::error::unknown_signer = 0x1903;
 const int quorum::error::malformed_signature = 0x1904;
 const int quorum::error::invalid_signature = 0x1905;
 const int quorum::error::insufficient_signatures = 0x1906;
+const int quorum::error::expired = 0x1907;
+const int quorum::error::invalid_target = 0x1908;
 
 const int quorum::key_bits = 256;
 const int quorum::signature_bits = 512;
 ;; Upper bound on the verifier set, and with it on signature checks per call.
 const int quorum::max_verifiers = 64;
 
-;; Hash that verifiers sign: binds the payload to a purpose, a target contract and a nonce
-;; so a signature cannot be replayed elsewhere.
-int quorum::signing_hash(int domain, slice target, int nonce, cell payload) inline {
+;; The network's global id (ConfigParam 19).
+int quorum::global_id() asm "GLOBALID";
+
+;; Hash that verifiers sign: binds the payload to this network, a purpose, a target contract,
+;; a nonce and an expiry, so a signature cannot be replayed on another network, for another
+;; operation or contract, twice, or late. `target` must be a standard address (addr_std, no
+;; anycast), the same bits the Tol version's typed address stores.
+int quorum::signing_hash(int domain, slice target, int nonce, int valid_until, cell payload) impure inline {
+  ;; FunC's & evaluates both sides, so the size check must come before reading the prefix.
+  throw_unless(quorum::error::invalid_target, (target.slice_bits() == 267) & (target.slice_refs() == 0));
+  throw_unless(quorum::error::invalid_target, target.preload_uint(3) == 4);
   return begin_cell()
+      .store_int(quorum::global_id(), 32)
       .store_uint(domain, 32)
       .store_slice(target)
       .store_uint(nonce, 64)
+      .store_uint(valid_until, 32)
       .store_ref(payload)
       .end_cell()
       .cell_hash();
+}
+
+;; Rejects a request whose signed expiry has passed.
+() quorum::require_not_expired(int valid_until) impure inline {
+  throw_if(quorum::error::expired, now() > valid_until);
 }
 
 ;; Adds `public_key` to a verifier dictionary, rejecting duplicates.
