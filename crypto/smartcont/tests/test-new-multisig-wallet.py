@@ -6,7 +6,8 @@ The wallet gives each signer index one vote, so the script must list signers in 
 address order and refuse an address given twice; it then checks the state it built with the
 wallet's own get_checked_signer_count. This test runs the script on accepted and refused
 inputs, reads the StateInit it saves back through the wallet code, and runs a copy of the
-script that skips the ordering to show the wallet's check refuses it.
+script that skips the ordering to show the wallet's check refuses it. It also refuses
+unsupported parent workchains and serialized count/threshold mutations before saving files.
 
 usage: test-new-multisig-wallet.py <fift> <source-root> <build-root>
 """
@@ -90,6 +91,17 @@ def main():
         assert (count, threshold) == (3, 2), (count, threshold)
         assert ("0:" + address) in result.stdout, "the printed address is the StateInit hash"
 
+        # The parent and its orders are priced only for workchain 0. Cross-workchain
+        # signer addresses remain accepted above; only the wallet's workchain is restricted.
+        for workchain in ("-1", "1"):
+            base = "unsupported-" + workchain
+            expect_refused(
+                work, [workchain, "1", base, A, B],
+                "this multisig wallet supports only workchain 0",
+            )
+            assert not os.path.exists(os.path.join(work, base + ".init.boc"))
+            assert not os.path.exists(os.path.join(work, base + ".addr"))
+
         # Refused.
         expect_refused(work, ["0", "1", "x", A, B, A], "the same signer address is listed twice")
         expect_refused(work, ["0", "1", "x", A, B, friendly(work, A)], "the same signer address is listed twice")
@@ -107,6 +119,26 @@ def main():
         with open(mutant, "w") as f:
             f.write(source.replace(walk, "256 ' add-signer dictforeachrev"))
         expect_refused(work, ["0", "1", "x", A, B], "the wallet refuses this signer set", mutant)
+        # Valid CLI inputs must not conceal corrupt scalar fields in serialized data.
+        # These mutations leave the dictionary and the script's CLI checks untouched.
+        fields = "threshold 8 u, signer-count 8 u, signers ref,"
+        assert source.count(fields) == 1
+        bad_fields = (
+            "threshold 8 u, 0 8 u, signers ref,",
+            "threshold 8 u, 1 8 u, signers ref,",
+            "threshold 8 u, 3 8 u, signers ref,",
+            "0 8 u, signer-count 8 u, signers ref,",
+            "3 8 u, signer-count 8 u, signers ref,",
+            "3 8 u, 3 8 u, signers ref,",
+        )
+        for index, replacement in enumerate(bad_fields):
+            base = "bad-config-%d" % index
+            mutant = os.path.join(work, base + ".fif")
+            with open(mutant, "w") as f:
+                f.write(source.replace(fields, replacement))
+            expect_refused(work, ["0", "1", base, A, B], "the wallet refuses this signer set", mutant)
+            assert not os.path.exists(os.path.join(work, base + ".init.boc"))
+            assert not os.path.exists(os.path.join(work, base + ".addr"))
     print("new-multisig-wallet.fif: all checks passed")
 
 
