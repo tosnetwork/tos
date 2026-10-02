@@ -1,0 +1,59 @@
+// Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+//
+// TEST ONLY: the Tol twin of pq-quorum-harness.fc, with the same messages and
+// storage, so one suite runs against both compiled libraries.
+//
+// storage: verifiers:(Maybe ^Cell) count:uint8 quorum:uint8 checks:uint32 last_hash:uint256
+tol 1.3
+
+import "@stdlib/tvm-dicts"
+import "@stdlib/pq-quorum-signatures"
+
+fun saveState(verifiers: dict, count: int, quorum: int, checks: int, lastHash: int): void {
+    contract.setData(beginCell().storeDict(verifiers).storeUint(count, 8).storeUint(quorum, 8)
+        .storeUint(checks, 32).storeUint(lastHash, 256).endCell());
+}
+
+fun onInternalMessage(in: InMessage) {
+    var body = in.body;
+    if (body.remainingBitsCount() < 32) {
+        return;
+    }
+    val op = body.loadUint(32);
+    var ds = contract.getData().beginParse();
+    val verifiers = ds.loadDict();
+    val count = ds.loadUint(8);
+    val quorum = ds.loadUint(8);
+    val checks = ds.loadUint(32);
+    val lastHash = ds.loadUint(256);
+    val config = PqQuorumConfig { verifiers, verifierCount: count, quorum };
+    if (op == 1) {
+        val c = pqQuorumConfigNew(body.loadDict(), body.loadUint(8));
+        saveState(c.verifiers, c.verifierCount, c.quorum, checks, lastHash);
+    } else if (op == 2) {
+        val next = pqQuorumAddVerifier(verifiers, body.loadRef());
+        saveState(next, count + 1, quorum, checks, lastHash);
+    } else if (op == 3) {
+        val hash = body.loadUint(256);
+        config.requireQuorum(hash, body.loadDict());
+        saveState(verifiers, count, quorum, checks + 1, lastHash);
+    } else if (op == 4) {
+        val domain = body.loadUint(32);
+        val target = body.loadAddress();
+        val nonce = body.loadUint(64);
+        val validUntil = body.loadUint(32);
+        val hash = pqQuorumSigningHash(domain, target, nonce, validUntil, body.loadRef());
+        saveState(verifiers, count, quorum, checks, hash);
+    } else if (op == 5) {
+        val c = config.withQuorum(body.loadUint(8));
+        saveState(c.verifiers, c.verifierCount, c.quorum, checks, lastHash);
+    } else if (op == 6) {
+        val c = config.withVerifiers(body.loadDict());
+        saveState(c.verifiers, c.verifierCount, c.quorum, checks, lastHash);
+    } else if (op == 7) {
+        pqQuorumRequireNotExpired(body.loadUint(32));
+        saveState(verifiers, count, quorum, checks + 1, lastHash);
+    } else {
+        throw 0xffff;
+    }
+}

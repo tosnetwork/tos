@@ -1,6 +1,7 @@
 # Post-quantum quorum signatures and high-volume wallet: design
 
-Status: design v2, revised after review round 1 (recorded at the end), before any code.
+Status: design v3. Reviews are recorded at the end. The quorum library is implemented;
+the wallet is next.
 Two deliverables on one branch:
 
 1. `pq-quorum-signatures`, a library:
@@ -108,8 +109,17 @@ configuration changes, which is rare, never per request.
 - Order of checks:
   1. **Count.** Walk the signature dictionary, rejecting as soon as a `quorum + 1`th
      entry appears, so the walk is bounded. Reject a count below quorum.
-  2. **Shape.** For every entry, check its membership in the set and its signature's
-     shape (`pq::stored_signature`). This is cheap.
+  2. **Membership and wrapper.** For every entry, check its membership in the set, and
+     check that its signature wrapper is exactly one reference to `len:uint32 ^chain` with
+     `len = 2420`. These checks cost the same whatever the input.
+
+     The chain is deliberately not walked here. `PQCHECKSIG_MLDSA44` itself refuses a
+     non-canonical chain, a wrong length or a special cell, with cell underflow 9.
+     Walking the chain beforehand only made a malformed request cheaper to refuse,
+     saving gas its own submitter pays. The cost was about 20,000 gas per signature on
+     every valid request: measured 86,000 gas per signature with the walk, 61,500
+     without. Keys are walked once, when they enter a config, and taken as stored
+     afterwards.
   3. **Verification.** Only then verify each signature.
 - Any failure rejects the whole request.
 - Message: the 32-byte commitment. Context: `"TOS-PQ-QUORUM-v1"`. Scheme: Pure
@@ -117,11 +127,11 @@ configuration changes, which is rare, never per request.
 
 ### Limits
 
-- **`MAX_QUORUM`.** The candidate is 12. The final value is the largest quorum whose
-  complete `require_quorum` fits the configured gas limit with room left for a calling
-  contract. That room is not an estimate: it is measured, covering the stored-chain
-  checks, the dictionary walk and lookups, and cold loads of every key and signature. A
-  fixture checks the value against the configured gas limit.
+- **`MAX_QUORUM`: 12.** Measured on the C++ executor, a 12-of-64 `require_quorum`
+  through a harness costs 745,000–747,000 gas (FunC and Tol). That leaves about 250,000 of
+  the 1,000,000 limit for the calling contract.
+  - Each further signature costs about 61,500 gas, so 13 would leave about 190,000.
+  - The suite fails if 12 at a full set exceeds 850,000.
 - **`MAX_VERIFIERS`.** The candidate is 64. Lookup cost depends on the dictionary's depth,
   so the measurement runs on a full set.
 
@@ -134,6 +144,14 @@ configuration changes, which is rare, never per request.
 - Shape errors from `pq-bytes.fc` (61–63) pass through.
 
 ## 2. `pq-highload-wallet-code.fc`
+
+### Workchain
+
+The wallet runs on workchain 0 only. `recv_internal` refuses any other `my_address()`
+workchain. With the wallet and the relayer both on basechain:
+
+- the refund's forwarding price is the basechain price;
+- the state-size limits are the basechain ones.
 
 ### Entry and funding (the relayer model)
 
@@ -158,14 +176,26 @@ This follows `mldsa44-auth-module.fc`: verification is paid by whoever submits.
 
   An underfunded request is refused before the expensive work and stays unused.
   Boundary tests separate a compute failure, a refund failure and success.
-- **Refund.** The wallet builds it itself, as the first action:
+- **Refund.** It is best effort. The wallet builds it itself, as the first action:
   - destination: the sender;
   - mode 64 + 2, so it never fails the action phase;
   - value 0, carrying the inbound remainder;
   - non-bounceable;
   - body `excesses#d53276db relayer_query_id:uint64`.
 
+  If the refund is skipped (+2), for instance because prices rose past the profile, the
+  relayer's remainder stays in the wallet's balance. A later +128 sweep in the same batch
+  can carry it to the signed destination. A relayer is not guaranteed a refund. It is
+  guaranteed only that its value never pays for anything but its own transaction.
+- **Bounce.** Relayers should submit bounceable messages. A failed non-bounceable
+  submission leaves its remainder in the wallet, which costs only the relayer.
+
 ### Request
+
+Every structure is consumed exactly: `submit`, `Request`, the stored signature, every
+`OutList` node and its empty terminator, and every message body. `wallet` is a canonical
+`addr_std` without anycast, compared bit for bit with `my_address()`. The signed message
+is the request cell hash as 32 raw big-endian bytes.
 
 ```
 Request = global_id:int32 wallet:MsgAddressInt subwallet_id:uint32 query_id:uint23
@@ -198,10 +228,14 @@ Failure classes:
 
 | Where | Effect |
 | --- | --- |
-| Steps 1–3 | Nothing changes. The query id stays unused; the relayer's remainder bounces when it covers the bounce fee. |
+| Steps 1–3 | Contract data is not updated and no business message is sent. The query id stays unused. The relayer's remainder bounces only if the submission was bounceable and the remainder covers the bounce. |
 | Step 5 runs out of gas | Rolls back to the state before the message: the id stays unused, nothing is sent. Step 2 makes this unreachable for a correctly funded request. |
 | A batch message the action phase cannot deliver | Skipped (+2). The id is consumed and the other messages go out. |
-| Refund | Mode +2, so it cannot fail the action phase. |
+| Refund | Mode +2, so a refund that cannot be paid is skipped rather than failing the action phase. |
+| The whole action phase fails (state size over the limit, total output size over the limit) | New data and every queued message roll back; fees may still be charged. The id is unused and the request can be resubmitted. |
+
+"The id is consumed and the messages go out" holds only when the whole action phase
+succeeds.
 
 ### Batch
 
@@ -219,7 +253,16 @@ Every entry is checked in step 1 and refused, whole request, unless all of these
   bounced, and with no StateInit;
 - an inline body or a referenced body is consumed exactly, as `highload-wallet-v3-code.fc`
   checks;
-- no other action type appears.
+- no other action type appears;
+- at least one action is present: an empty batch is refused;
+- no reserved mode bits are set (mode < 256 by encoding; every allowed flag is listed
+  above).
+
+254 is a limit on the number of actions. Gas, cell depth, per-message size and the
+action phase's total output size apply separately. Several messages sharing one large
+body are counted once per message by the total-output check, so even a short batch can
+exceed it. The whole action phase then fails as in the failure table, and nothing is
+sent.
 
 Messages are re-emitted with `send_raw_message(message, mode | 2)` in the **signed order**.
 An `OutList`'s head is its last action, so the wallet first collects the list, then emits
@@ -321,3 +364,34 @@ Every finding was accepted.
   messages (skipped); stop counting at quorum + 1; send-only batches; a provisional 254
   ceiling; replay-boundary, worst-state, v15 and deployment tests; and assertions on
   real-transaction outcomes.
+
+### Round 2, design v2 (`fc0f3fef0`)
+
+Conditional pass: the signed preimage, field order and contexts are frozen, and coding
+may start. Every finding was accepted.
+
+- **Medium: the failure table omitted whole action-phase failure.** That covers a state
+  size or total output size over the limit, which rolls back data and messages. It is
+  added, and "id consumed" is now conditional on the whole action phase succeeding.
+- **Medium: a skipped refund leaves the relayer's remainder in the wallet.** The refund
+  is now documented as best effort. The wallet is fixed to workchain 0, so its refund is
+  priced at the basechain rate.
+- **Low: the bounce promise.** It is conditional on a bounceable submission.
+- **Low: 254 is an action-count limit only.** The other limits apply separately, and a
+  shared-body test is planned.
+- **Exact definitions added:** exact consumption, the address form, the 32 signed bytes,
+  empty batches refused, and no reserved mode bits.
+- **Untrusted config tuples.** A config tuple must come from validated, persisted state.
+  The library's own guarantee if it does not: a key that skipped `config` can still
+  authorize nothing, because the verifier refuses malformed keys.
+
+### Implementation note, quorum library
+
+Measurement changed one design point.
+
+- **Signature chains are no longer walked before verification.** The walk cost about
+  20,000 gas per signature on every valid request (86,000 against 61,500). The verifier
+  refuses the same inputs itself.
+- **Keys.** They are walked once, at configuration time.
+- **`MAX_QUORUM = 12`.** Confirmed by measurement: 745,000–747,000 gas at a full
+  64-verifier set.
