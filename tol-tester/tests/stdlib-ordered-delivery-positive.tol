@@ -144,6 +144,16 @@ fun test_pending_slots_update_remove_reuse(): int {
     return 7;
 }
 
+@method_id(108)
+fun test_layout_matches_func(): int {
+    // The stored window must be the very cell crypto/smartcont/ordered-delivery.fc packs;
+    // the FunC suite pins the same hash for the same state.
+    var w = nonceWindowNew(10);
+    w.complete(12);
+    w.complete(15);
+    return w.toCell().hash();
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -152,4 +162,5 @@ fun test_pending_slots_update_remove_reuse(): int {
 @testcase | 105 | | 5
 @testcase | 106 | | 6
 @testcase | 107 | | 7
+@testcase | 108 | | 108172638824023323656301294226925930422985867943527330981503674913960755835622
  */

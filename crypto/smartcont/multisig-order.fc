@@ -1,0 +1,221 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Multisig with one contract per proposal ("order").
+;;
+;; A single-contract multisig keeps every open proposal and every approval in its own
+;; storage, which grows with the number of proposals and lets one busy period make every
+;; later call more expensive. Here the parent contract only allocates a sequence number and
+;; deploys an order contract at an address derived from (order code, parent, seqno).
+;; Approvals accumulate in that order; when the threshold is reached the order sends one
+;; execute message to the parent.
+;;
+;; The parent trusts an execute message only if
+;;   * it comes from the address derived for the claimed seqno,
+;;   * the order was approved under the signer set the parent has *now* (orders opened
+;;     before a signer change cannot execute afterwards),
+;;   * the approvals reach the parent's *current* threshold, and
+;;   * the order has not expired.
+;; [multisig_order::require_execute] checks all four. Orders also refuse approvals after
+;; expiry, so an expired order can never fire. Expiry is always judged against `now()`,
+;; never a time supplied by a message.
+;;
+;; FunC counterpart of the Tol `@stdlib/multisig-order`: same rules, opcodes, throw codes and
+;; order addresses; [multisig_order::pack] produces the same cell as the Tol
+;; `MultisigOrder.toCell()`. An order is the tuple
+;;   [parent, seqno, threshold, signers, approvals, approval_count, expires_at, executed, action]
+;; and an execute message the tuple [seqno, expires_at, approval_count, signers_hash, action].
+;;
+;; Requires stdlib.fc. Everything that can throw is `impure`: FunC deletes a call to a pure
+;; function whose result is unused, and a check called only for its exception would vanish.
+
+const int multisig_order::error::invalid_config = 0x1a01;
+const int multisig_order::error::invalid_seqno = 0x1a02;
+const int multisig_order::error::unknown_signer = 0x1a03;
+const int multisig_order::error::already_approved = 0x1a04;
+const int multisig_order::error::already_executed = 0x1a05;
+const int multisig_order::error::expired = 0x1a06;
+const int multisig_order::error::unauthorized_execute = 0x1a07;
+const int multisig_order::error::stale_signers = 0x1a08;
+const int multisig_order::error::insufficient_approvals = 0x1a09;
+
+const int multisig_order::op::init = 0x16b7a4fb;
+const int multisig_order::op::approve = 0x9c205aee;
+const int multisig_order::op::execute = 0xe71e90bc;
+
+;; Signers are indexed 0..255; the approval set is a 256-bit mask.
+const int multisig_order::signer_index_bits = 8;
+const int multisig_order::max_signers = 255;
+;; Pass as the requested seqno to take the parent's next one.
+const int multisig_order::next_seqno = 0xffffffffffffffff;
+
+;; The immutable data an order is deployed with; it alone fixes the address.
+cell multisig_order::init_data(slice parent, int seqno) inline {
+  return begin_cell().store_slice(parent).store_uint(seqno, 64).end_cell();
+}
+
+cell multisig_order::state_init(cell order_code, slice parent, int seqno) inline {
+  return begin_cell()
+      .store_uint(0, 2)
+      .store_maybe_ref(order_code)
+      .store_maybe_ref(multisig_order::init_data(parent, seqno))
+      .store_uint(0, 1)
+      .end_cell();
+}
+
+slice multisig_order::address(cell order_code, slice parent, int seqno) inline {
+  return begin_cell()
+      .store_uint(4, 3)
+      .store_int(0, 8)
+      .store_uint(multisig_order::state_init(order_code, parent, seqno).cell_hash(), 256)
+      .end_cell()
+      .begin_parse();
+}
+
+;; Returns (seqno to use, parent's next seqno afterwards). The request must be exactly the
+;; parent's next seqno or multisig_order::next_seqno, so two proposals can never claim the
+;; same order address.
+(int, int) multisig_order::allocate_seqno(int requested, int next_seqno) impure inline {
+  throw_unless(multisig_order::error::invalid_seqno, (next_seqno >= 0) & (next_seqno < multisig_order::next_seqno));
+  throw_unless(multisig_order::error::invalid_seqno,
+               (requested == multisig_order::next_seqno) | (requested == next_seqno));
+  return (next_seqno, next_seqno + 1);
+}
+
+;; Number of signers, or invalid_config if the dictionary is empty or larger than
+;; multisig_order::max_signers.
+int multisig_order::signer_count(cell signers) impure inline {
+  int count = 0;
+  (int index, _, int found) = signers.udict_get_min?(multisig_order::signer_index_bits);
+  while (found) {
+    count += 1;
+    throw_if(multisig_order::error::invalid_config, count > multisig_order::max_signers);
+    (index, _, found) = signers.udict_get_next?(multisig_order::signer_index_bits, index);
+  }
+  throw_if(multisig_order::error::invalid_config, count == 0);
+  return count;
+}
+
+() multisig_order::require_valid_threshold(int threshold, int signer_count) impure inline {
+  throw_unless(multisig_order::error::invalid_config, (threshold > 0) & (threshold <= signer_count));
+}
+
+;; A fresh, unapproved order. Rejects an empty or oversized signer set, a threshold outside
+;; 1..signer_count, and an expiry not after the current time.
+[slice, int, int, cell, int, int, int, int, cell] multisig_order::new(slice parent, int seqno, int threshold,
+                                                                      cell signers, int expires_at, cell action) impure inline {
+  multisig_order::require_valid_threshold(threshold, multisig_order::signer_count(signers));
+  throw_unless(multisig_order::error::expired, expires_at > now());
+  return [parent, seqno, threshold, signers, 0, 0, expires_at, false, action];
+}
+
+;; Index of `signer` in the order's signer set, and whether it was found.
+(int, int) multisig_order::find_signer([slice, int, int, cell, int, int, int, int, cell] order, slice signer) inline {
+  [_, _, _, cell signers, _, _, _, _, _] = order;
+  (int index, slice value, int found) = signers.udict_get_min?(multisig_order::signer_index_bits);
+  while (found) {
+    if (equal_slice_bits(value, signer)) {
+      return (index, true);
+    }
+    (index, value, found) = signers.udict_get_next?(multisig_order::signer_index_bits, index);
+  }
+  return (-1, false);
+}
+
+;; Records the approval of the signer at `signer_index`, whose address must be `sender`.
+;; Returns true exactly once: on the approval that reaches the threshold, which also marks
+;; the order executed. The caller sends [multisig_order::execute_body] to the parent when it
+;; returns true.
+([slice, int, int, cell, int, int, int, int, cell], int) ~multisig_order::approve(
+    [slice, int, int, cell, int, int, int, int, cell] order, int signer_index, slice sender) impure inline {
+  [slice parent, int seqno, int threshold, cell signers, int approvals, int approval_count,
+   int expires_at, int executed, cell action] = order;
+  throw_if(multisig_order::error::already_executed, executed);
+  throw_if(multisig_order::error::expired, now() > expires_at);
+  throw_unless(multisig_order::error::unknown_signer,
+               (signer_index >= 0) & (signer_index <= multisig_order::max_signers));
+  (slice expected, int found) = signers.udict_get?(multisig_order::signer_index_bits, signer_index);
+  throw_unless(multisig_order::error::unknown_signer, found);
+  throw_unless(multisig_order::error::unknown_signer, equal_slice_bits(expected, sender));
+  int bit = 1 << signer_index;
+  throw_if(multisig_order::error::already_approved, approvals & bit);
+  approvals |= bit;
+  approval_count += 1;
+  int fired = approval_count >= threshold;
+  if (fired) {
+    executed = true;
+  }
+  return ([parent, seqno, threshold, signers, approvals, approval_count, expires_at, executed, action], fired);
+}
+
+[int, int, int, int, cell] multisig_order::execute_message([slice, int, int, cell, int, int, int, int, cell] order) inline {
+  [_, int seqno, _, cell signers, _, int approval_count, int expires_at, _, cell action] = order;
+  return [seqno, expires_at, approval_count, signers.cell_hash(), action];
+}
+
+cell multisig_order::execute_body(int query_id, [int, int, int, int, cell] execute) inline {
+  [int seqno, int expires_at, int approval_count, int signers_hash, cell action] = execute;
+  return begin_cell()
+      .store_uint(multisig_order::op::execute, 32)
+      .store_uint(query_id, 64)
+      .store_uint(seqno, 64)
+      .store_uint(expires_at, 32)
+      .store_uint(approval_count, 8)
+      .store_uint(signers_hash, 256)
+      .store_ref(action)
+      .end_cell();
+}
+
+;; Parses an execute body (op and query id already consumed).
+[int, int, int, int, cell] multisig_order::parse_execute(slice body) impure inline {
+  int seqno = body~load_uint(64);
+  int expires_at = body~load_uint(32);
+  int approval_count = body~load_uint(8);
+  int signers_hash = body~load_uint(256);
+  cell action = body~load_ref();
+  body.end_parse();
+  return [seqno, expires_at, approval_count, signers_hash, action];
+}
+
+;; Parent-side admission of an execute message; see the file header for the four
+;; conditions.
+() multisig_order::require_execute([int, int, int, int, cell] execute, slice sender, cell order_code,
+                                   slice parent, cell current_signers, int current_threshold) impure inline {
+  [int seqno, int expires_at, int approval_count, int signers_hash, _] = execute;
+  throw_unless(multisig_order::error::unauthorized_execute,
+               equal_slice_bits(sender, multisig_order::address(order_code, parent, seqno)));
+  throw_unless(multisig_order::error::stale_signers, signers_hash == current_signers.cell_hash());
+  throw_unless(multisig_order::error::insufficient_approvals, approval_count >= current_threshold);
+  throw_if(multisig_order::error::expired, now() > expires_at);
+}
+
+;; Same layout as the Tol `MultisigOrder`.
+cell multisig_order::pack([slice, int, int, cell, int, int, int, int, cell] order) inline {
+  [slice parent, int seqno, int threshold, cell signers, int approvals, int approval_count,
+   int expires_at, int executed, cell action] = order;
+  return begin_cell()
+      .store_slice(parent)
+      .store_uint(seqno, 64)
+      .store_uint(threshold, 8)
+      .store_ref(signers)
+      .store_uint(approvals, 256)
+      .store_uint(approval_count, 8)
+      .store_uint(expires_at, 32)
+      .store_int(executed, 1)
+      .store_ref(action)
+      .end_cell();
+}
+
+[slice, int, int, cell, int, int, int, int, cell] multisig_order::unpack(cell packed) impure inline {
+  slice s = packed.begin_parse();
+  slice parent = s~load_msg_addr();
+  int seqno = s~load_uint(64);
+  int threshold = s~load_uint(8);
+  cell signers = s~load_ref();
+  int approvals = s~load_uint(256);
+  int approval_count = s~load_uint(8);
+  int expires_at = s~load_uint(32);
+  int executed = s~load_int(1);
+  cell action = s~load_ref();
+  s.end_parse();
+  return [parent, seqno, threshold, signers, approvals, approval_count, expires_at, executed, action];
+}

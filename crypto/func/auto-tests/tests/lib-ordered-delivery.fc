@@ -1,0 +1,169 @@
+#include "../../../smartcont/stdlib.fc";
+#include "../../../smartcont/ordered-delivery.fc";
+
+;; Same vector matrix as tol-tester/tests/stdlib-ordered-delivery-positive.tol: identical
+;; method ids, inputs, expected values and failure codes.
+
+() expect_throw(int code, int expected, int fail_code) impure inline {
+  throw_unless(fail_code, code == expected);
+}
+
+int main() {
+  return 0;
+}
+
+int test_in_order_completion_advances_head() method_id(101) {
+  var w = nonce_window::new(1);
+  w~nonce_window::complete(1);
+  w~nonce_window::complete(2);
+  w~nonce_window::complete(3);
+  [int next_pending, int completed] = w;
+  throw_unless(101, next_pending == 4);
+  throw_unless(102, completed == 0);
+  throw_unless(103, nonce_window::completed?(w, 3));
+  throw_if(104, nonce_window::completed?(w, 4));
+  return 1;
+}
+
+int test_out_of_order_completion_folds_contiguous_run() method_id(102) {
+  var w = nonce_window::new(10);
+  w~nonce_window::complete(12);
+  w~nonce_window::complete(13);
+  w~nonce_window::complete(15);
+  [int next_pending, _] = w;
+  throw_unless(111, next_pending == 10);
+  throw_unless(112, nonce_window::completed?(w, 13) & (~ nonce_window::completed?(w, 14)));
+  w~nonce_window::complete(11);
+  [next_pending, _] = w;
+  throw_unless(113, next_pending == 10);
+  ;; completing the head folds 10..13 and stops at the gap at 14
+  w~nonce_window::complete(10);
+  [next_pending, int completed] = w;
+  throw_unless(114, next_pending == 14);
+  throw_unless(115, completed == 2);
+  w~nonce_window::complete(14);
+  [next_pending, completed] = w;
+  throw_unless(116, next_pending == 16);
+  throw_unless(117, completed == 0);
+  return 2;
+}
+
+int test_window_edges() method_id(103) {
+  var w = nonce_window::new(0);
+  throw_unless(121, nonce_window::last_acceptable(w) == 255);
+  w~nonce_window::complete(255);
+  int thrown = false;
+  try {
+    w~nonce_window::complete(256);
+  } catch (_, code) {
+    expect_throw(code, ordered_delivery::error::outside_window, 122);
+    thrown = true;
+  }
+  throw_unless(123, thrown);
+  throw_if(124, nonce_window::completed?(w, 256));
+  ;; completing 0..254 folds the whole window including 255
+  int n = 0;
+  while (n < 255) {
+    w~nonce_window::complete(n);
+    n += 1;
+  }
+  [int next_pending, int completed] = w;
+  throw_unless(125, next_pending == 256);
+  throw_unless(126, completed == 0);
+  w~nonce_window::complete(256 + 255);
+  return 3;
+}
+
+int test_duplicate_and_stale_completions_rejected() method_id(104) {
+  var w = nonce_window::new(5);
+  w~nonce_window::complete(7);
+  int rejected = 0;
+  try { w~nonce_window::complete(7); } catch (_, code) { expect_throw(code, ordered_delivery::error::already_completed, 131); rejected += 1; }
+  try { w~nonce_window::complete(4); } catch (_, code) { expect_throw(code, ordered_delivery::error::already_completed, 132); rejected += 1; }
+  try { w~nonce_window::complete(-1); } catch (_, code) { expect_throw(code, ordered_delivery::error::invalid_nonce, 133); rejected += 1; }
+  try { w~nonce_window::complete(ordered_delivery::max_nonce + 1); } catch (_, code) { expect_throw(code, ordered_delivery::error::invalid_nonce, 134); rejected += 1; }
+  throw_unless(135, rejected == 4);
+  throw_unless(136, nonce_window::completed?(w, 4));
+  return 4;
+}
+
+int test_top_of_nonce_space() method_id(105) {
+  var w = nonce_window::new(ordered_delivery::max_nonce - 1);
+  w~nonce_window::complete(ordered_delivery::max_nonce);
+  w~nonce_window::complete(ordered_delivery::max_nonce - 1);
+  ;; the head may reach 2^64 - 1 and still be stored
+  [int next_pending, _] = w;
+  throw_unless(141, next_pending == ordered_delivery::max_nonce + 1);
+  [int restored_next, _] = nonce_window::unpack(nonce_window::pack(w));
+  throw_unless(142, restored_next == next_pending);
+  return 5;
+}
+
+int test_pending_slots_key_checked() method_id(106) {
+  cell p = new_dict();
+  cell payload = begin_cell().store_uint(0xabc, 12).end_cell();
+  p~pending_slots::put(3, 1, payload);
+  (int found, int status, cell body) = pending_slots::get(p, 3);
+  throw_unless(151, found & (status == 1));
+  throw_unless(152, body.cell_hash() == payload.cell_hash());
+  ;; same slot index, different nonce: never visible, never writable
+  (int alias, _, _) = pending_slots::get(p, 3 + 256);
+  throw_if(153, alias);
+  int thrown = false;
+  try {
+    p~pending_slots::put(3 + 256, 2, payload);
+  } catch (_, code) {
+    expect_throw(code, ordered_delivery::error::slot_occupied, 154);
+    thrown = true;
+  }
+  throw_unless(155, thrown);
+  throw_if(156, p~pending_slots::remove(3 + 256));
+  (int still, _, _) = pending_slots::get(p, 3);
+  throw_unless(157, still);
+  return 6;
+}
+
+int test_pending_slots_update_remove_reuse() method_id(107) {
+  cell p = new_dict();
+  cell a = begin_cell().store_uint(1, 8).end_cell();
+  cell b = begin_cell().store_uint(2, 8).end_cell();
+  p~pending_slots::put(9, 1, a);
+  p~pending_slots::put(9, 2, b);
+  (_, int status, cell body) = pending_slots::get(p, 9);
+  throw_unless(161, (status == 2) & (body.cell_hash() == b.cell_hash()));
+  throw_unless(162, p~pending_slots::remove(9));
+  throw_if(163, p~pending_slots::remove(9));
+  ;; the freed slot can now carry the nonce one window later
+  p~pending_slots::put(9 + 256, 0, a);
+  (int found, _, _) = pending_slots::get(p, 9 + 256);
+  throw_unless(164, found);
+  int thrown = false;
+  try {
+    p~pending_slots::put(10, 256, a);
+  } catch (_, code) {
+    expect_throw(code, ordered_delivery::error::invalid_status, 165);
+    thrown = true;
+  }
+  throw_unless(166, thrown);
+  return 7;
+}
+
+int test_layout_matches_tol() method_id(108) {
+  ;; The packed window must be the very cell the Tol NonceWindow.toCell() produces; the
+  ;; Tol suite pins the same hash for the same state.
+  var w = nonce_window::new(10);
+  w~nonce_window::complete(12);
+  w~nonce_window::complete(15);
+  return nonce_window::pack(w).cell_hash();
+}
+
+{-
+TESTCASE | 101 | | 1
+TESTCASE | 102 | | 2
+TESTCASE | 103 | | 3
+TESTCASE | 104 | | 4
+TESTCASE | 105 | | 5
+TESTCASE | 106 | | 6
+TESTCASE | 107 | | 7
+TESTCASE | 108 | | 108172638824023323656301294226925930422985867943527330981503674913960755835622
+-}

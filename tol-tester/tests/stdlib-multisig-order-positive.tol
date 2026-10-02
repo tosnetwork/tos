@@ -187,6 +187,16 @@ fun test_order_storage_round_trip(): int {
     return 8;
 }
 
+@method_id(109)
+fun test_layout_matches_func(): int {
+    // The stored order must be the very cell crypto/smartcont/multisig-order.fc packs; the
+    // FunC suite pins the same hash for the same state.
+    var o = newOrder();
+    setNow(1500);
+    o.approve(7, carol());
+    return o.toCell().hash();
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -196,4 +206,5 @@ fun test_order_storage_round_trip(): int {
 @testcase | 106 | | 6
 @testcase | 107 | | 7
 @testcase | 108 | | 8
+@testcase | 109 | | 12739493716426086653603001419376314880446471976331329098592251646104014986521
  */

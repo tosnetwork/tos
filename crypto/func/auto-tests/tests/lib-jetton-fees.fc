@@ -1,0 +1,174 @@
+#include "../../../smartcont/stdlib.fc";
+#include "../../../smartcont/jetton-fees.fc";
+
+;; Same vector matrix as tol-tester/tests/stdlib-jetton-fees-positive.tol: identical
+;; method ids, inputs, expected values and failure codes.
+;;
+;; The fee instructions read the unpacked config tuple at c7[0][14], so every test
+;; installs a synthetic configuration whose prices make each fee easy to derive by hand:
+;;   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
+;;   forward fee(b, c)   = 400000 + b + 100 * c
+;;   forward simple(b,c) = b + 100 * c
+;;   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)
+
+() set_c7(tuple c7) impure asm "c7 POP";
+
+slice gas_prices(int gas_price) {
+  return begin_cell().store_uint(0xd1, 8).store_uint(100, 64).store_uint(100000, 64)
+    .store_uint(0xde, 8).store_uint(gas_price, 64).store_uint(1000000, 64).store_uint(1000000, 64)
+    .store_uint(10000, 64).store_uint(10000000, 64).store_uint(100000000, 64).store_uint(1000000000, 64)
+    .end_cell().begin_parse();
+}
+
+() install_fee_config(int gas_price, int precompiled_gas) impure {
+  slice storage = begin_cell().store_uint(0xcc, 8).store_uint(0, 32)
+    .store_uint(65536, 64).store_uint(65536 * 500, 64)
+    .store_uint(65536 * 2, 64).store_uint(65536 * 1000, 64).end_cell().begin_parse();
+  slice msg = begin_cell().store_uint(0xea, 8).store_uint(400000, 64).store_uint(65536, 64)
+    .store_uint(65536 * 100, 64).store_uint(98304, 32).store_uint(21845, 16).store_uint(21845, 16)
+    .end_cell().begin_parse();
+  slice gas = gas_prices(gas_price);
+  tuple unpacked = empty_tuple();
+  unpacked~tpush(storage);
+  unpacked~tpush(null());
+  unpacked~tpush(gas);
+  unpacked~tpush(gas);
+  unpacked~tpush(msg);
+  unpacked~tpush(msg);
+  unpacked~tpush(null());
+  tuple params = empty_tuple();
+  int i = 0;
+  while (i < 17) {
+    if (i == 14) {
+      params~tpush(unpacked);
+    } elseif (i == 16) {
+      params~tpush(precompiled_gas);
+    } else {
+      params~tpush(null());
+    }
+    i += 1;
+  }
+  tuple c7 = empty_tuple();
+  c7~tpush(params);
+  set_c7(c7);
+}
+
+() install_default_fee_config() impure {
+  install_fee_config(65536 * 1000, null());
+}
+
+tuple profile() {
+  return jetton_fees::profile(1033, 3, 931, 3, 754, 1, 9255, 10355, 5791, 6775, 10);
+}
+
+int main() {
+  return 0;
+}
+
+int test_components() method_id(101) {
+  install_default_fee_config();
+  tuple p = profile();
+  ;; (1033 + 500 * 3) * 10
+  throw_unless(101, jetton_fees::wallet_min_storage_fee(p) == 25330);
+  ;; 931 + 100 * 3, no lump price
+  throw_unless(102, jetton_fees::init_state_forward_overhead(p) == 1231);
+  return 1;
+}
+
+int test_required_transfer_value() method_id(102) {
+  install_default_fee_config();
+  tuple p = profile();
+  ;; 0 + 1 * 5000 + 1231 + 9255000 + 10355000 + 25330
+  throw_unless(111, jetton_fees::required_transfer_value(p, 0, 5000) == 19641561);
+  ;; a forwarded notification adds the amount and a second forward fee
+  throw_unless(112, jetton_fees::required_transfer_value(p, 1000000, 5000) == 20646561);
+  return 2;
+}
+
+int test_transfer_value_boundary() method_id(103) {
+  install_default_fee_config();
+  tuple p = profile();
+  jetton_fees::require_transfer_value(p, 19641562, 0, 5000);
+  int thrown = false;
+  try {
+    jetton_fees::require_transfer_value(p, 19641561, 0, 5000);
+  } catch (_, code) {
+    throw_unless(121, code == jetton_fees::error::insufficient_transfer_value);
+    thrown = true;
+  }
+  throw_unless(122, thrown);
+  return 3;
+}
+
+int test_burn_value_and_boundary() method_id(104) {
+  install_default_fee_config();
+  tuple p = profile();
+  ;; (400000 + 754 + 100) + 5791000 + 6775000
+  throw_unless(131, jetton_fees::required_burn_value(p) == 12966854);
+  jetton_fees::require_burn_value(p, 12966855);
+  int thrown = false;
+  try {
+    jetton_fees::require_burn_value(p, 12966854);
+  } catch (_, code) {
+    throw_unless(132, code == jetton_fees::error::insufficient_burn_value);
+    thrown = true;
+  }
+  throw_unless(133, thrown);
+  return 4;
+}
+
+int test_precompiled_gas_overrides_wallet_side_only() method_id(105) {
+  install_fee_config(65536 * 1000, 2000);
+  tuple p = profile();
+  ;; both wallet compute phases priced at 2000 gas = 2000000 each
+  throw_unless(141, jetton_fees::required_transfer_value(p, 0, 5000) == 4031561);
+  ;; the minter side of a burn keeps its measured gas
+  throw_unless(142, jetton_fees::required_burn_value(p) == 9175854);
+  return 5;
+}
+
+int test_zero_profile_field_rejected() method_id(106) {
+  install_default_fee_config();
+  tuple p = profile().jetton_fees::set_field(0, jetton_fees::receive_burn_gas);
+  int thrown = false;
+  try {
+    jetton_fees::required_burn_value(p);
+  } catch (_, code) {
+    throw_unless(151, code == jetton_fees::error::invalid_profile);
+    thrown = true;
+  }
+  throw_unless(152, thrown);
+  tuple q = profile().jetton_fees::set_field(0, jetton_fees::min_storage_seconds);
+  thrown = false;
+  try {
+    jetton_fees::required_transfer_value(q, 0, 0);
+  } catch (_, code) {
+    throw_unless(153, code == jetton_fees::error::invalid_profile);
+    thrown = true;
+  }
+  throw_unless(154, thrown);
+  return 6;
+}
+
+int test_fee_follows_config_not_constants() method_id(107) {
+  ;; Same profile, cheaper gas: the requirement must move with the config.
+  install_default_fee_config();
+  int before = jetton_fees::required_transfer_value(profile(), 0, 5000);
+  install_fee_config(65536 * 10, null());
+  int after = jetton_fees::required_transfer_value(profile(), 0, 5000);
+  ;; gas fee(g) becomes 100000 + (g - 100) * 10
+  ;; 5000 + 1231 + 191550 + 202550 + 25330
+  throw_unless(161, after == 425661);
+  throw_unless(162, after < before);
+  return 7;
+}
+
+{-
+TESTCASE | 101 | | 1
+TESTCASE | 102 | | 2
+TESTCASE | 103 | | 3
+TESTCASE | 104 | | 4
+TESTCASE | 105 | | 5
+TESTCASE | 106 | | 6
+TESTCASE | 107 | | 7
+-}

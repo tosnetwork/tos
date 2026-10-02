@@ -1,20 +1,25 @@
-# Third-party notices for tol-stdlib
+# Third-party notices for tol-stdlib and its FunC counterparts
 
 This file records where stdlib modules come from when that is not the TOS
-project itself, and how each was produced.
+project itself, and how each was produced. Every Tol module listed here has a
+FunC counterpart in `crypto/smartcont/` with the same rules and throw codes
+(and, where a module stores state, the same cell layout), tested against the
+same vector matrix in
+`crypto/func/auto-tests/tests/lib-*.fc`; provenance applies to both.
 
 ## Adapted from MIT-licensed sources
 
-Each module below re-implements the mechanism of the listed upstream file in
-Tol. The code was rewritten rather than transliterated: the upstream audits
-cover the upstream FunC, not these modules. The TOS tests
-(`tol-tester/tests/stdlib-*-positive.tol`) are what establish the behavior
+Each module below re-implements the mechanism of the listed upstream file.
+The code was rewritten rather than transliterated, the FunC counterparts
+included: the upstream audits cover the upstream FunC, not these modules. The
+TOS tests (`tol-tester/tests/stdlib-*-positive.tol` and
+`crypto/func/auto-tests/tests/lib-*.fc`) are what establish the behavior
 here.
 
-| Module | Upstream | Path | Commit | License |
+| Modules | Upstream | Path | Commit | License |
 |---|---|---|---|---|
-| `jetton-fees.tol` | `ton-blockchain/stablecoin-contract` | `contracts/gas.fc` | `5a3b500267b0bdfc6505a08e5ac661c805cab8b0` | MIT |
-| `replay-guard.tol` | `ton-blockchain/highload-wallet-contract-v3` | `contracts/highload-wallet-v3.func` | `f5d9b592bd5ab5c9ae6ca627819929e140f6bd61` | MIT |
+| `jetton-fees.tol`, `../jetton-fees.fc` | `ton-blockchain/stablecoin-contract` | `contracts/gas.fc` | `5a3b500267b0bdfc6505a08e5ac661c805cab8b0` | MIT |
+| `replay-guard.tol`, `../replay-guard.fc` | `ton-blockchain/highload-wallet-contract-v3` | `contracts/highload-wallet-v3.func` | `f5d9b592bd5ab5c9ae6ca627819929e140f6bd61` | MIT |
 
 How each module differs from its upstream:
 
@@ -84,8 +89,8 @@ SOFTWARE.
 
 ## Independent implementations
 
-`ordered-delivery.tol`, `quorum-signatures.tol` and `multisig-order.tol`
-contain no third-party code. They implement general mechanisms: a bounded
+`ordered-delivery`, `quorum-signatures` and `multisig-order`, in both their
+`.tol` and `.fc` forms, contain no third-party code. They implement general mechanisms: a bounded
 out-of-order completion window, M-of-N Ed25519 authorization, and
 one-contract-per-proposal multisig. Their data layouts, interfaces, opcodes
 and error codes are TOS's own.

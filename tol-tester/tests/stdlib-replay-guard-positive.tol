@@ -177,6 +177,18 @@ fun test_row_edges_and_serialization(): int {
     return 8;
 }
 
+@method_id(109)
+fun test_layout_matches_func(): int {
+    // The stored guard must be the very cell crypto/smartcont/replay-guard.fc packs; the
+    // FunC suite pins the same hash for the same state.
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1000); g.accept(0, 1000);
+    setNow(1000); g.accept(1022, 1000);
+    setNow(1000); g.accept(5 * 1024 + 7, 1000);
+    return g.toCell().hash();
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -186,4 +198,5 @@ fun test_row_edges_and_serialization(): int {
 @testcase | 106 | | 6
 @testcase | 107 | | 7
 @testcase | 108 | | 8
+@testcase | 109 | | 49751840920418588745216052838403757172391007160505045324086559891392396194906
  */

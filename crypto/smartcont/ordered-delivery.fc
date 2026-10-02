@@ -1,0 +1,153 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Bounded bookkeeping for a stream of nonces that arrive and complete out of order: a
+;; completion window plus a fixed set of pending slots.
+;;
+;; A nonce window answers "has nonce n been completed?" for every n without growing:
+;; nonces below `next_pending` are all complete, nonces in the next
+;; ordered_delivery::window_width positions are tracked by one bit each, and anything
+;; further ahead is refused until the head catches up. That refusal is the back-pressure
+;; that keeps storage bounded.
+;;
+;; Pending slots hold at most ordered_delivery::window_width in-flight payloads, one per
+;; slot `nonce mod window_width`. Every in-window nonce therefore owns a distinct slot. Each
+;; slot also stores the full nonce, and every read, write and delete compares it, so a nonce
+;; one window apart can never read or overwrite another nonce's entry.
+;;
+;; FunC counterpart of the Tol `@stdlib/ordered-delivery`: same rules, same throw codes. A
+;; window is the pair [next_pending, completed] and packs like the Tol `NonceWindow`; pending
+;; slots are a plain dictionary keyed by slot index.
+;;
+;; Requires stdlib.fc. Everything that can throw is `impure`: FunC deletes a call to a pure
+;; function whose result is unused, and a check called only for its exception would vanish.
+
+const int ordered_delivery::error::invalid_nonce = 0x1801;
+const int ordered_delivery::error::already_completed = 0x1802;
+const int ordered_delivery::error::outside_window = 0x1803;
+const int ordered_delivery::error::slot_occupied = 0x1804;
+const int ordered_delivery::error::invalid_status = 0x1805;
+
+const int ordered_delivery::window_width = 256;
+const int ordered_delivery::slot_key_bits = 8;
+;; Largest nonce the stream may use, chosen so that `next_pending` (which can reach
+;; `nonce + 1`) still fits in 64 bits.
+const int ordered_delivery::max_nonce = 0xfffffffffffffffe;
+
+int ordered_delivery::bit_size(int x) asm "UBITSIZE";
+
+() ordered_delivery::require_nonce(int nonce) impure inline {
+  throw_unless(ordered_delivery::error::invalid_nonce, (nonce >= 0) & (nonce <= ordered_delivery::max_nonce));
+}
+
+;; A window whose first expected nonce is `first_nonce`. Bit i of `completed` set means
+;; nonce `next_pending + i` is complete; bit 0 is always clear between calls, since a
+;; complete head is folded into `next_pending`.
+[int, int] nonce_window::new(int first_nonce) impure inline {
+  ordered_delivery::require_nonce(first_nonce);
+  return [first_nonce, 0];
+}
+
+;; Highest nonce [~nonce_window::complete] currently accepts.
+int nonce_window::last_acceptable([int, int] window) inline {
+  [int next_pending, _] = window;
+  return next_pending + (ordered_delivery::window_width - 1);
+}
+
+;; True for every nonce below the head and for tracked completed nonces. Nonces beyond the
+;; window are reported as not completed.
+int nonce_window::completed?([int, int] window, int nonce) impure inline {
+  ordered_delivery::require_nonce(nonce);
+  [int next_pending, int completed] = window;
+  if (nonce < next_pending) {
+    return true;
+  }
+  int offset = nonce - next_pending;
+  if (offset >= ordered_delivery::window_width) {
+    return false;
+  }
+  return ((completed >> offset) & 1) == 1;
+}
+
+;; Marks `nonce` complete and advances the head over every contiguous completed nonce.
+;; Throws already_completed for a nonce completed before (including any nonce below the
+;; head) and outside_window for a nonce more than window_width - 1 positions ahead of the
+;; head.
+([int, int], ()) ~nonce_window::complete([int, int] window, int nonce) impure inline {
+  ordered_delivery::require_nonce(nonce);
+  [int next_pending, int completed] = window;
+  throw_if(ordered_delivery::error::already_completed, nonce < next_pending);
+  int offset = nonce - next_pending;
+  throw_if(ordered_delivery::error::outside_window, offset >= ordered_delivery::window_width);
+  int bit = 1 << offset;
+  throw_if(ordered_delivery::error::already_completed, completed & bit);
+  int marked = completed | bit;
+  ;; (~marked) & (marked + 1) isolates the lowest clear bit; its position is the number of
+  ;; completed nonces contiguous with the head.
+  int run = ordered_delivery::bit_size((~ marked) & (marked + 1)) - 1;
+  return ([next_pending + run, marked >> run], ());
+}
+
+;; Same layout as the Tol `NonceWindow`: uint64 head, uint256 bitmap.
+cell nonce_window::pack([int, int] window) inline {
+  [int next_pending, int completed] = window;
+  return begin_cell().store_uint(next_pending, 64).store_uint(completed, 256).end_cell();
+}
+
+[int, int] nonce_window::unpack(cell packed) impure inline {
+  slice s = packed.begin_parse();
+  int next_pending = s~load_uint(64);
+  int completed = s~load_uint(256);
+  s.end_parse();
+  return [next_pending, completed];
+}
+
+int pending_slots::index(int nonce) inline {
+  return nonce & (ordered_delivery::window_width - 1);
+}
+
+;; Returns (found, status, payload) for exactly `nonce`. A slot occupied by a different
+;; nonce reads as not found.
+(int, int, cell) pending_slots::get(cell slots, int nonce) impure inline {
+  ordered_delivery::require_nonce(nonce);
+  (slice entry, int found) = slots.udict_get?(ordered_delivery::slot_key_bits, pending_slots::index(nonce));
+  ifnot (found) {
+    return (false, 0, null());
+  }
+  int stored_nonce = entry~load_uint(64);
+  if (stored_nonce != nonce) {
+    return (false, 0, null());
+  }
+  int status = entry~load_uint(8);
+  return (true, status, entry~load_ref());
+}
+
+;; Stores `payload` with an 8-bit `status` for `nonce`. Updating the same nonce is
+;; allowed; a slot held by another nonce throws slot_occupied.
+(cell, ()) ~pending_slots::put(cell slots, int nonce, int status, cell payload) impure inline {
+  ordered_delivery::require_nonce(nonce);
+  throw_unless(ordered_delivery::error::invalid_status, (status >= 0) & (status <= 255));
+  int slot = pending_slots::index(nonce);
+  (slice entry, int found) = slots.udict_get?(ordered_delivery::slot_key_bits, slot);
+  if (found) {
+    throw_if(ordered_delivery::error::slot_occupied, entry.preload_uint(64) != nonce);
+  }
+  slots~udict_set_builder(ordered_delivery::slot_key_bits, slot,
+                          begin_cell().store_uint(nonce, 64).store_uint(status, 8).store_ref(payload));
+  return (slots, ());
+}
+
+;; Frees the slot of `nonce`. Returns false, changing nothing, when the slot is empty or
+;; belongs to another nonce.
+(cell, int) ~pending_slots::remove(cell slots, int nonce) impure inline {
+  ordered_delivery::require_nonce(nonce);
+  int slot = pending_slots::index(nonce);
+  (slice entry, int found) = slots.udict_get?(ordered_delivery::slot_key_bits, slot);
+  ifnot (found) {
+    return (slots, false);
+  }
+  if (entry.preload_uint(64) != nonce) {
+    return (slots, false);
+  }
+  (cell next, _) = slots.udict_delete?(ordered_delivery::slot_key_bits, slot);
+  return (next, true);
+}
