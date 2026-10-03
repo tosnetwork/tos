@@ -176,6 +176,17 @@ class WalletTests(unittest.TestCase):
             restore(b'{"metadata":1,"metadata":2}', password, self.b)
         with self.assertRaises(ValueError):
             encrypt(self.h, b"short", 42, a, r)
+        with patch("backup.os.urandom", side_effect=[b"x", b"n" * 12]):
+            with self.assertRaises(ValueError):
+                encrypt(self.h, password, 42, a, r)
+        for field, name in [("kdf", "salt"), ("aead", "nonce")]:
+            altered = json.loads(raw)
+            text = altered["metadata"][field][name]
+            altered["metadata"][field][name] = "  " + text[2:]
+            # A malformed canonical field must fail before allocating KDF work.
+            with patch("backup.derive", side_effect=AssertionError("KDF must not run")):
+                with self.assertRaises(ValueError):
+                    restore(json.dumps(altered).encode(), password, self.b)
 
     def test_secret_redaction_rng_failure_and_local_self_check(self):
         self.assertEqual(repr(self.h), "FalconKeyHandle(<redacted>)")

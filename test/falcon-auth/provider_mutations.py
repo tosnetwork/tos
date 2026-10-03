@@ -14,8 +14,6 @@ def main():
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
     args = parser.parse_args()
-    source = ROOT / "tools/falcon/provider.py"
-    original = source.read_text()
     command = [
         sys.executable,
         str(ROOT / "test/falcon-auth/test_wallet.py"),
@@ -31,13 +29,34 @@ def main():
     if run().returncode:
         raise RuntimeError("migration preflight baseline failed")
     reports = []
-    for name, guard in [
-        ("deployed-destination", 'if destination.status != "active":'),
+    for name, filename, guard, test_name in [
+        (
+            "deployed-destination",
+            "provider.py",
+            'if destination.status != "active":',
+            "test_cutover_requires_new_key_backup_and_explicit_factor_choice",
+        ),
         (
             "factor-confirmation",
+            "provider.py",
             "if (old_profile != PROFILE or auth.mode != target_mode) and confirm_security_change is not True:",
+            "test_cutover_requires_new_key_backup_and_explicit_factor_choice",
+        ),
+        (
+            "backup-encoding",
+            "backup.py",
+            "if len(raw) != size or raw.hex() != value:",
+            "test_backup_restores_exact_key_and_association",
+        ),
+        (
+            "backup-entropy",
+            "backup.py",
+            "if len(salt) != 16 or len(nonce) != 12:",
+            "test_backup_restores_exact_key_and_association",
         ),
     ]:
+        source = ROOT / "tools/falcon" / filename
+        original = source.read_text()
         if original.count(guard) != 1:
             raise ValueError("missing or ambiguous preflight mutation target")
         mutated = original.replace(guard, "if False:")
@@ -49,8 +68,7 @@ def main():
             killed = (
                 result.returncode != 0
                 and "AssertionError:" in result.stderr
-                and "test_cutover_requires_new_key_backup_and_explicit_factor_choice"
-                in result.stderr
+                and test_name in result.stderr
             )
             if not killed:
                 raise RuntimeError("preflight mutation did not reach its target assertion")
@@ -69,9 +87,7 @@ def main():
         if run().returncode:
             raise RuntimeError("restored migration preflight baseline failed")
     (args.artifacts / "provider-mutations.json").write_text(json.dumps(reports, indent=2) + "\n")
-    print(
-        "PASS: two preflight guard mutations reached failing assertions; restored baselines green"
-    )
+    print("PASS: four client guard mutations reached failing assertions; restored baselines green")
 
 
 if __name__ == "__main__":

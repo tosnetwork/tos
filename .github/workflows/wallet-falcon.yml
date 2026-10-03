@@ -125,5 +125,5 @@ jobs:
               mutations=json.loads((root/'mutations.json').read_text())
               assert len(mutations)==8 and all(m['compiled'] and m['killed'] for m in mutations)
               preflight=json.loads((root/'provider-mutations.json').read_text())
-              assert len(preflight)==2 and all(m['compiled'] and m['killed'] for m in preflight)
+              assert len(preflight)==4 and all(m['compiled'] and m['killed'] for m in preflight)
           PY

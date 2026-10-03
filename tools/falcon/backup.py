@@ -23,7 +23,10 @@ def exact(value, fields):
 def decode_hex(value, size):
     if type(value) is not str or len(value) != size * 2:
         raise ValueError("incorrect backup field length")
-    return bytes.fromhex(value)
+    raw = bytes.fromhex(value)
+    if len(raw) != size or raw.hex() != value:
+        raise ValueError("noncanonical backup field encoding")
+    return raw
 
 
 def association(network, account, root):
@@ -59,6 +62,8 @@ def encrypt(handle, password, network, account, root):
     if handle.closed:
         raise ValueError("key handle is closed")
     salt, nonce = os.urandom(16), os.urandom(12)
+    if len(salt) != 16 or len(nonce) != 12:
+        raise ValueError("OS entropy failed for backup protection")
     metadata = dict(
         version=1,
         profile=PROFILE,
