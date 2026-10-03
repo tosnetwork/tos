@@ -39,7 +39,7 @@ SLOT = 3600
 START_SLOT = 5
 EPOCH0 = NOW - START_SLOT * SLOT - 10  # NOW lies 10 s into slot 5
 MAX_VALUE = 2_000_000_000
-RESCUE_SUBMIT = 0x534C4831
+RESCUE_SUBMIT = 0x53554231  # "SUB1"
 # Smallest balance above the value that the uncached solvency check admitted, bisected at
 # commit 59f960ec6 under the emulator's fee configuration. It is the vault's fee budget plus
 # what the transaction deducts before the compute phase (inbound import and storage).

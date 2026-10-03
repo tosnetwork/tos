@@ -4,6 +4,7 @@
 #include "pq/falcon512.h"
 #include "pq/lms-fee.h"
 #include "pq/mldsa44.h"
+#include "pq/slhdsa128s.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/excno.hpp"
 #include "vm/log.h"
@@ -155,6 +156,19 @@ int exec_pq_suite(VmState* st) {
           read_pq_bytes(st, signature_cell, tos::pq::falcon512_signature_bytes, pq_falcon512_byte_gas);
       const auto message = read_pq_bytes(st, message_cell, tos::pq::falcon512_max_message_bytes, pq_falcon512_byte_gas);
       push_verify_result(stack, tos::pq::verify_falcon512_padded(message, signature, key), "Falcon-512");
+      return 0;
+    }
+    case pq_suite_slhdsa128s: {
+      st->consume_gas_chk(pq_slhdsa128s_base_gas);
+      const auto key =
+          read_pq_bytes(st, public_key_cell, tos::pq::slhdsa128s_public_key_bytes, pq_slhdsa128s_byte_gas);
+      const auto signature =
+          read_pq_bytes(st, signature_cell, tos::pq::slhdsa128s_signature_bytes, pq_slhdsa128s_byte_gas);
+      const auto context =
+          read_pq_bytes(st, context_cell, tos::pq::slhdsa128s_max_context_bytes, pq_slhdsa128s_byte_gas);
+      const auto message =
+          read_pq_bytes(st, message_cell, tos::pq::slhdsa128s_max_message_bytes, pq_slhdsa128s_byte_gas);
+      push_verify_result(stack, tos::pq::verify_slhdsa128s(message, context, signature, key), "SLH-DSA-SHA2-128s");
       return 0;
     }
     case pq_suite_lms_fee: {

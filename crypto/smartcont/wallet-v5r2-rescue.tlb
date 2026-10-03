@@ -55,7 +55,10 @@ auth_recover_migrate#4d494752
 // named by request.role and never ACCEPTs external input.
 rescue_submit_v1#53554231 request:^AuthRequestV2 signature:^Cell = InternalMsgBody;   // "SUB1"
 // Module -> account: relays a verified request with the funded remainder (mode 64).
-auth_relay_v2#41553242 request:^AuthRequestV2 cosignature:(Maybe ^Cell) = InternalMsgBody; // "AU2B"
+// funded_by is the module's view of who paid; the account refuses PRIMARY funded by its own
+// fee vault, keeping that route RESCUE-only without spending the vault's external credit.
+auth_relay_v2#41553242 request:^AuthRequestV2 cosignature:(Maybe ^Cell) funded_by:MsgAddressInt
+  = InternalMsgBody; // "AU2B"
 
 // ---- Module (immutable StateInit data; no admin, no withdrawal of earlier balance)
 // Module code pins the fee-vault code hash; there is no editable code list.
@@ -67,8 +70,9 @@ module_data_v1#01 global_id:int32 network_tag:bits256
 
 // ---- Account AUTH state (trailing reference of V5R2 data; absent is refused, never legacy)
 fee_route_v1#01
+  vault:bits256                                 // validated cache of the paired vault address
   fee_profile:uint8                             // suite-4 profile id frozen with the HSS bytes
-  fee_tree_id:bits256 fee_public_key:bits480    // one-level HSS key, 60 bytes
+  fee_tree_id:bits256 fee_public_key:^Cell     // one-level HSS key, 60-byte chain
   slot_seconds:uint32 per_slot:uint16 epoch0:uint32   // time-slot leaves; per_slot = 0 means counter mode
   = FeeRoute;
 

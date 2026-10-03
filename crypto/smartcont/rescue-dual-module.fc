@@ -1,0 +1,116 @@
+;; PROTOTYPE dual-root AUTH module for Wallet V5R2: ML-DSA-44 daily root (PRIMARY) and
+;; SLH-DSA-SHA2-128s rescue root (RESCUE). Wire format: crypto/smartcont/wallet-v5r2-rescue.tlb.
+;; Immutable code and data; no ACCEPT, no admin, no withdrawal of earlier balance. Relays only
+;; the funded incoming remainder, and tells the account who funded it, so that the account can
+;; keep its fee vault RESCUE-only without the vault spending external credit on the check. Not yet in this prototype: global retirement policy (proposed
+;; ConfigParam 48), successor StateInit witness validation, POP and fee preparation.
+;;
+;; Data: module_data_v1#01 global_id:int32 network_tag:bits256 daily:uint8 primary_key:^Cell
+;;       rescue_key:bits256 policy:uint8
+#include "pq.fc";
+
+int global_id() asm "GLOBALID";
+
+const int dual::submit = 0x53554231;       ;; "SUB1" rescue_submit_v1
+const int dual::relay = 0x41553242;        ;; "AU2B" auth_relay_v2
+const int dual::request = 0x41553252;      ;; "AU2R" auth_request_v2
+const int dual::role_primary = 1;
+const int dual::role_rescue = 2;
+const int dual::kind_execute = 0;
+const int dual::kind_configure = 1;
+const int dual::kind_lock = 3;
+const int dual::kind_migrate = 4;
+const int dual::policy_ready = 1;
+const int dual::policy_required = 2;
+const int dual::suite_mldsa44 = 1;
+const int dual::suite_slhdsa = 3;
+const int dual::max_ttl = 3600;
+
+const int dual::external_refused = 1900;
+const int dual::role_mismatch = 1901;
+const int dual::bad_request = 1902;
+const int dual::wrong_network = 1801;
+const int dual::wrong_account = 1802;
+const int dual::expired = 1805;
+const int dual::bad_signature = 1808;
+const int dual::kind_not_allowed = 1812;
+const int dual::payload_mismatch = 1814;
+const int dual::policy_requires_rescue = 1817;
+
+() recv_external(slice body) impure {
+  throw(dual::external_refused);  ;; external admission is the fee vault's job
+}
+
+int payload_tag(int kind) inline {
+  if (kind == dual::kind_execute) { return 0x45584543; }    ;; "EXEC"
+  if (kind == dual::kind_configure) { return 0x434f4e46; }  ;; "CONF"
+  if (kind == dual::kind_lock) { return 0x4c4f434b; }       ;; "LOCK"
+  if (kind == dual::kind_migrate) { return 0x4d494752; }    ;; "MIGR"
+  throw(dual::kind_not_allowed);
+  return 0;
+}
+
+() recv_internal(int balance, int value, cell full_message, slice body) impure {
+  slice ms = full_message.begin_parse();
+  if (ms~load_uint(4) & 1) { return (); }
+  slice funded_by = ms~load_msg_addr();
+  if (body.slice_bits() < 32) { return (); }   ;; deposit
+  if (body.preload_uint(32) != dual::submit) { return (); }
+  body~load_uint(32);
+  cell request = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+
+  slice ds = get_data().begin_parse();
+  throw_unless(dual::bad_request, ds~load_uint(8) == 1);
+  int network = ds~load_int(32);
+  int network_tag = ds~load_uint(256);
+  int daily = ds~load_uint(8);
+  cell primary_key = ds~load_ref();
+  int rescue_key = ds~load_uint(256);
+  int policy = ds~load_uint(8);
+  ds.end_parse();
+  throw_unless(dual::wrong_network, network == global_id());
+
+  slice rs = request.begin_parse();
+  throw_unless(dual::bad_request, rs~load_uint(32) == dual::request);
+  throw_unless(dual::wrong_network, rs~load_int(32) == network);
+  throw_unless(dual::wrong_network, rs~load_uint(256) == network_tag);
+  slice account = rs~load_msg_addr();
+  throw_unless(dual::wrong_account, (account.slice_bits() == 267) & (account.preload_uint(3) == 4));
+  (int wc, _) = parse_std_addr(account);
+  throw_unless(dual::wrong_account, wc == 0);
+  (_, int my_hash) = parse_std_addr(my_address());
+  throw_unless(dual::wrong_account, rs~load_uint(256) == my_hash);
+  int role = rs~load_uint(8);
+  rs~load_uint(64);  ;; epoch: authenticated here, enforced by the account
+  rs~load_uint(64);  ;; nonce: authenticated here, enforced by the account
+  int valid_until = rs~load_uint(32);
+  throw_unless(dual::expired, (valid_until > now()) & (valid_until <= now() + dual::max_ttl));
+  int kind = rs~load_uint(8);
+  cell payload = rs~load_ref();
+  rs.end_parse();
+  throw_unless(dual::payload_mismatch, payload.begin_parse().preload_uint(32) == payload_tag(kind));
+
+  cell digest = begin_cell().store_uint(cell_hash(begin_cell().store_uint(0x544f532d41555448, 64)
+    .store_ref(request).end_cell()), 256).end_cell();
+  if (role == dual::role_primary) {
+    throw_unless(dual::policy_requires_rescue, policy == dual::policy_ready);
+    throw_unless(dual::kind_not_allowed, kind == dual::kind_execute);
+    cell context = begin_cell().store_uint(0x544f532d415554482d56322d4d4c2d4453412d34342d7631, 192).end_cell();
+    throw_unless(dual::bad_signature, pq_check_suite(digest, context, signature, primary_key, dual::suite_mldsa44));
+  } else {
+    throw_unless(dual::role_mismatch, role == dual::role_rescue);
+    cell context = begin_cell().store_uint(0x544f532d415554482d534c482d4453412d534841322d313238532d7631, 232).end_cell();
+    cell key = begin_cell().store_uint(rescue_key, 256).end_cell();
+    throw_unless(dual::bad_signature, pq_check_suite(digest, context, signature, key, dual::suite_slhdsa));
+  }
+
+  ;; Keep the pre-message balance; forward only the incoming remainder.
+  raw_reserve(max(0, balance - value), 2);
+  send_raw_message(begin_cell().store_uint(0x18, 6).store_slice(account).store_coins(0)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1).store_uint(1, 1)
+    .store_ref(begin_cell().store_uint(dual::relay, 32).store_ref(request).store_uint(0, 1)
+      .store_slice(funded_by).end_cell())
+    .end_cell(), 64);
+}

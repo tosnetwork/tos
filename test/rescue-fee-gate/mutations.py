@@ -102,17 +102,89 @@ VAULTS = {
             ),
         },
     ),
+    "module": (
+        "rescue-dual-module.fc",
+        "test_rescue_e2e.py",
+        {
+            "drop network tag": (
+                "  throw_unless(dual::wrong_network, rs~load_uint(256) == network_tag);\n",
+                "  rs~load_uint(256);\n",
+            ),
+            "drop workchain-0 account": ("  throw_unless(dual::wrong_account, wc == 0);\n", ""),
+            "drop root binding": (
+                "  throw_unless(dual::wrong_account, rs~load_uint(256) == my_hash);\n",
+                "  rs~load_uint(256);\n",
+            ),
+            "drop expiry": (
+                "  throw_unless(dual::expired, (valid_until > now()) & (valid_until <= now() + dual::max_ttl));\n",
+                "",
+            ),
+            "drop payload/kind match": (
+                "  throw_unless(dual::payload_mismatch, payload.begin_parse().preload_uint(32) == payload_tag(kind));\n",
+                "",
+            ),
+            "drop REQUIRED policy for PRIMARY": (
+                "    throw_unless(dual::policy_requires_rescue, policy == dual::policy_ready);\n",
+                "",
+            ),
+            "drop PRIMARY execute-only": (
+                "    throw_unless(dual::kind_not_allowed, kind == dual::kind_execute);\n",
+                "",
+            ),
+            "drop SLH signature check": (
+                "    throw_unless(dual::bad_signature, pq_check_suite(digest, context, signature, key, dual::suite_slhdsa));\n",
+                "    pq_check_suite(digest, context, signature, key, dual::suite_slhdsa);\n",
+            ),
+            "drop ML-DSA signature check": (
+                "    throw_unless(dual::bad_signature, pq_check_suite(digest, context, signature, primary_key, dual::suite_mldsa44));\n",
+                "",
+            ),
+            "relay without funded_by": (".store_slice(funded_by).end_cell())", ".store_slice(my_address()).end_cell())"),
+        },
+    ),
+    "account": (
+        "rescue-v5r2-account.fc",
+        "test_rescue_e2e.py",
+        {
+            "drop sender == root": (
+                "  throw_unless(acc::not_module, (sender_wc == 0) & (sender_hash == root));\n",
+                "",
+            ),
+            "drop epoch check": ("  throw_unless(acc::stale_epoch, rs~load_uint(64) == epoch);\n", "  rs~load_uint(64);\n"),
+            "drop primary nonce": ("    throw_unless(acc::bad_nonce, nonce == primary_nonce);\n", ""),
+            "drop local retirement": ("    throw_if(acc::primary_retired, (local_retired >> daily) & 1);\n", ""),
+            "drop fee-route PRIMARY refusal": (
+                "    throw_if(acc::primary_on_fee_route,\n",
+                "    throw_if(0 & acc::primary_on_fee_route,\n",
+            ),
+            "drop successor address check": (
+                "      throw_unless(acc::bad_successor, module == module_init_hash);\n",
+                "",
+            ),
+            "lock does not set the bit": ("      local_retired |= (1 << daily);\n", ""),
+            "control does not advance epoch": ("    epoch += 1;\n", ""),
+        },
+    ),
 }
 
 
-def run(test, source_name):
-    env = dict(os.environ, VAULT_SOURCE=source_name, NO_COLOR="1", PYTHON_COLORS="0")
+# Which environment variable makes each test compile the mutant instead of the original.
+SOURCE_VARIABLE = {
+    "rescue-dual-module.fc": "MODULE_SOURCE",
+    "rescue-v5r2-account.fc": "ACCOUNT_SOURCE",
+}
+
+
+def run(test, source_name, variable="VAULT_SOURCE"):
+    env = dict(os.environ, NO_COLOR="1", PYTHON_COLORS="0")
+    env[variable] = source_name
     return subprocess.run([sys.executable, str(HERE / test)], capture_output=True, text=True, env=env)
 
 
 def check(label, source_name, test, mutations):
     source = ROOT / "crypto/smartcont" / source_name
-    base = run(test, source.name)
+    variable = SOURCE_VARIABLE.get(source_name, "VAULT_SOURCE")
+    base = run(test, source.name, variable)
     if base.returncode != 0:
         sys.exit(f"{label} baseline failed:\n" + base.stdout + base.stderr)
     print(f"{label} baseline: passed")
@@ -121,10 +193,10 @@ def check(label, source_name, test, mutations):
     for name, (old, new) in mutations.items():
         if text.count(old) != 1:
             sys.exit(f"{label} {name}: anchor not found exactly once")
-        mutant = source.with_name("rescue-fee-vault-mutant.fc")
+        mutant = source.with_name("rescue-mutant.fc")
         mutant.write_text(text.replace(old, new))
         try:
-            r = run(test, mutant.name)
+            r = run(test, mutant.name, variable)
         finally:
             mutant.unlink()
         out = r.stdout + r.stderr

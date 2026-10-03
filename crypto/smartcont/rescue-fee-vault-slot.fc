@@ -31,7 +31,10 @@ const int fee::value_too_high = 2010;
 const int fee::not_rescue = 2011;
 const int fee::suite_lms = 4;
 const int fee::slot_window = 1;          ;; current slot or the previous one
-const int fee::rescue_submit = 0x534c4831; ;; "SLH1": the dual module's rescue submit
+const int fee::rescue_submit = 0x53554231; ;; "SUB1": rescue_submit_v1 to the dual module
+;; The vault does not read the request inside: the role check (RESCUE only on this route) is made
+;; by the account, which knows its own vault, from the sender the module relays. Reading the
+;; request here cost ~440 gas of the external credit.
 ;; Solvency bounds. The payload is never loaded before ACCEPT (an SLH submission is ~62 cells,
 ;; ~6,200 gas to load), so fees are budgeted for size caps; a larger payload than the cap may
 ;; leave the send unfunded, which mode 1 + 2 turns into a skipped send with the leaf consumed.

@@ -1,0 +1,187 @@
+;; PROTOTYPE minimal Wallet V5R2 receiver: the AUTH v2 checks and state transitions only, without
+;; the V5 transfer interface. Wire format: crypto/smartcont/wallet-v5r2-rescue.tlb.
+;; Accepts relays only from the installed module, in workchain 0. Not yet in this prototype:
+;; mode 3 (Ed25519 AND module), global retirement policy, the V5 action list (execute carries a
+;; single message), fee-route descriptor checks beyond storing it.
+;;
+;; Data: auth_state_v2#02 mode:uint2 root:bits256 root_code_hash:bits256 daily:uint8 policy:uint8
+;;       local_retired:uint16 epoch:uint64 primary_nonce:uint64 rescue_nonce:uint64 fee_route:^Cell
+;;   fee_route starts with vault:bits256, a cache validated at creation and migration.
+
+const int acc::relay = 0x41553242;     ;; "AU2B"
+const int acc::request = 0x41553252;   ;; "AU2R"
+const int acc::role_primary = 1;
+const int acc::role_rescue = 2;
+const int acc::kind_execute = 0;
+const int acc::kind_configure = 1;
+const int acc::kind_lock = 3;
+const int acc::kind_migrate = 4;
+const int acc::policy_ready = 1;
+const int acc::policy_required = 2;
+const int acc::max_counter = 18446744073709551615;
+const int acc::max_ttl = 3600;
+
+const int acc::not_module = 1800;
+const int acc::wrong_network = 1801;
+const int acc::wrong_account = 1802;
+const int acc::stale_epoch = 1803;
+const int acc::bad_nonce = 1804;
+const int acc::expired = 1805;
+const int acc::bad_mode = 1806;
+const int acc::counter_exhausted = 1810;
+const int acc::kind_not_allowed = 1812;
+const int acc::primary_retired = 1813;
+const int acc::payload_mismatch = 1814;
+const int acc::bad_successor = 1815;
+const int acc::policy_requires_rescue = 1817;
+const int acc::primary_on_fee_route = 1818;
+
+int global_id() asm "GLOBALID";
+
+() recv_external(slice body) impure {
+  throw(acc::not_module);
+}
+
+() recv_internal(int balance, int value, cell full_message, slice body) impure {
+  slice ms = full_message.begin_parse();
+  if (ms~load_uint(4) & 1) { return (); }
+  slice sender = ms~load_msg_addr();
+  if (body.slice_bits() < 32) { return (); }   ;; deposit
+  if (body.preload_uint(32) != acc::relay) { return (); }
+  body~load_uint(32);
+  cell request = body~load_ref();
+  throw_unless(acc::bad_mode, body~load_uint(1) == 0);  ;; no cosignature: mode 2 only here
+  slice funded_by = body~load_msg_addr();
+  body.end_parse();
+
+  slice ds = get_data().begin_parse();
+  throw_unless(acc::bad_mode, ds~load_uint(8) == 2);
+  int mode = ds~load_uint(2);
+  int root = ds~load_uint(256);
+  int root_code_hash = ds~load_uint(256);
+  int daily = ds~load_uint(8);
+  int policy = ds~load_uint(8);
+  int local_retired = ds~load_uint(16);
+  int epoch = ds~load_uint(64);
+  int primary_nonce = ds~load_uint(64);
+  int rescue_nonce = ds~load_uint(64);
+  cell fee_route = ds~load_ref();
+  ds.end_parse();
+  throw_unless(acc::bad_mode, mode == 2);
+
+  throw_unless(acc::not_module, (sender.slice_bits() == 267) & (sender.preload_uint(3) == 4));
+  (int sender_wc, int sender_hash) = parse_std_addr(sender);
+  throw_unless(acc::not_module, (sender_wc == 0) & (sender_hash == root));
+
+  slice rs = request.begin_parse();
+  throw_unless(acc::payload_mismatch, rs~load_uint(32) == acc::request);
+  throw_unless(acc::wrong_network, rs~load_int(32) == global_id());
+  rs~load_uint(256);  ;; network tag: bound by the module's signature check
+  throw_unless(acc::wrong_account, equal_slice_bits(rs~load_msg_addr(), my_address()));
+  throw_unless(acc::not_module, rs~load_uint(256) == root);
+  int role = rs~load_uint(8);
+  throw_unless(acc::stale_epoch, rs~load_uint(64) == epoch);
+  int nonce = rs~load_uint(64);
+  int valid_until = rs~load_uint(32);
+  throw_unless(acc::expired, (valid_until > now()) & (valid_until <= now() + acc::max_ttl));
+  int kind = rs~load_uint(8);
+  slice ps = rs~load_ref().begin_parse();
+  rs.end_parse();
+
+  if (role == acc::role_primary) {
+    throw_unless(acc::kind_not_allowed, kind == acc::kind_execute);
+    throw_unless(acc::policy_requires_rescue, policy == acc::policy_ready);
+    throw_if(acc::primary_retired, (local_retired >> daily) & 1);
+    throw_unless(acc::bad_nonce, nonce == primary_nonce);
+    ;; The fee vault funds RESCUE only. fee_route_v1 starts with the vault's address hash.
+    (int funder_wc, int funder_hash) = parse_std_addr(funded_by);
+    throw_if(acc::primary_on_fee_route,
+      (funder_wc == 0) & (funder_hash == fee_route.begin_parse().preload_uint(256)));
+  } else {
+    throw_unless(acc::kind_not_allowed, role == acc::role_rescue);
+    throw_unless(acc::bad_nonce, nonce == rescue_nonce);
+  }
+
+  if (kind == acc::kind_execute) {
+    throw_unless(acc::payload_mismatch, ps~load_uint(32) == 0x45584543);
+    cell actions = ps~load_ref();
+    ps.end_parse();
+    slice as = actions.begin_parse();
+    int send_mode = as~load_uint(8);
+    cell out = as~load_ref();
+    as.end_parse();
+    ;; No self-destruction or balance-draining modes from this prototype path.
+    throw_if(acc::payload_mismatch, send_mode & (32 + 128));
+    throw_if(acc::counter_exhausted, nonce == acc::max_counter);
+    if (role == acc::role_primary) {
+      primary_nonce = nonce + 1;
+    } else {
+      rescue_nonce = nonce + 1;
+    }
+    send_raw_message(out, send_mode);
+  } else {
+    ;; Control operations: only RESCUE gets here (checked above). Each advances the epoch and
+    ;; resets both role nonces; the epoch never wraps.
+    throw_if(acc::counter_exhausted, epoch == acc::max_counter);
+    if (kind == acc::kind_lock) {
+      throw_unless(acc::payload_mismatch, ps~load_uint(32) == 0x4c4f434b);
+      throw_unless(acc::payload_mismatch, ps~load_uint(8) == daily);
+      ps.end_parse();
+      local_retired |= (1 << daily);
+    } elseif (kind == acc::kind_migrate) {
+      throw_unless(acc::payload_mismatch, ps~load_uint(32) == 0x4d494752);
+      int module = ps~load_uint(256);
+      int module_init_hash = ps~load_uint(256);
+      int new_policy = ps~load_uint(8);
+      int new_daily = ps~load_uint(8);
+      ps~load_uint(256);  ;; vault StateInit hash: validated by the current module (not yet)
+      cell new_fee_route = ps~load_ref();
+      ps.end_parse();
+      ;; A standard address is the hash of the whole StateInit.
+      throw_unless(acc::bad_successor, module == module_init_hash);
+      throw_unless(acc::bad_successor, (new_policy == acc::policy_ready) | (new_policy == acc::policy_required));
+      throw_unless(acc::bad_successor, new_daily == 1);
+      ;; A retired daily suite may only continue under SLH_REQUIRED.
+      throw_if(acc::bad_successor, ((local_retired >> new_daily) & 1) & (new_policy == acc::policy_ready));
+      root = module;
+      root_code_hash = module_init_hash;
+      policy = new_policy;
+      daily = new_daily;
+      fee_route = new_fee_route;
+    } elseif (kind == acc::kind_configure) {
+      throw_unless(acc::payload_mismatch, ps~load_uint(32) == 0x434f4e46);
+      int new_mode = ps~load_uint(2);
+      cell new_fee_route = ps~load_maybe_ref();
+      ps.end_parse();
+      throw_unless(acc::bad_mode, new_mode == 2);  ;; mode 3 not in this prototype
+      ifnot (cell_null?(new_fee_route)) {
+        fee_route = new_fee_route;
+      }
+    } else {
+      throw(acc::kind_not_allowed);
+    }
+    epoch += 1;
+    primary_nonce = 0;
+    rescue_nonce = 0;
+  }
+
+  set_data(begin_cell().store_uint(2, 8).store_uint(mode, 2).store_uint(root, 256)
+    .store_uint(root_code_hash, 256).store_uint(daily, 8).store_uint(policy, 8)
+    .store_uint(local_retired, 16).store_uint(epoch, 64).store_uint(primary_nonce, 64)
+    .store_uint(rescue_nonce, 64).store_ref(fee_route).end_cell());
+}
+
+(int, int, int, int, int, int, int, int) get_auth_state() method_id {
+  slice ds = get_data().begin_parse();
+  ds~load_uint(8);
+  int mode = ds~load_uint(2);
+  int root = ds~load_uint(256);
+  ds~load_uint(256);
+  int daily = ds~load_uint(8);
+  int policy = ds~load_uint(8);
+  int local_retired = ds~load_uint(16);
+  int epoch = ds~load_uint(64);
+  int primary_nonce = ds~load_uint(64);
+  int rescue_nonce = ds~load_uint(64);
+  return (mode, root, daily, policy, local_retired, epoch, primary_nonce, rescue_nonce);
+}
