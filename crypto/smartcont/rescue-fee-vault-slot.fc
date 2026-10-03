@@ -29,7 +29,17 @@ const int fee::not_rescue = 2011;
 const int fee::suite_lms = 4;
 const int fee::slot_window = 1;          ;; current slot or the previous one
 const int fee::rescue_submit = 0x534c4831; ;; "SLH1": the dual module's rescue submit
-const int fee::reserve = 50000000;       ;; kept for storage and action fees (prototype constant)
+;; Solvency bounds. The payload is never loaded before ACCEPT (an SLH submission is ~62 cells,
+;; ~6,200 gas to load), so fees are budgeted for size caps; a larger payload than the cap may
+;; leave the send unfunded, which mode 1 + 2 turns into a skipped send with the leaf consumed.
+const int fee::max_gas = 20000;           ;; whole transaction, measured at ~12,000
+const int fee::max_out_cells = 72;
+const int fee::max_out_bits = 72 * 1023;
+const int fee::max_in_cells = 128;        ;; intent + payload cap + digest + signature chains
+const int fee::max_in_bits = 128 * 1023;
+const int fee::state_cells = 32;          ;; code + data, generous
+const int fee::state_bits = 32 * 1023;
+const int fee::storage_horizon = 31536000; ;; keep one year of storage after paying
 
 int gas_consumed() asm "GASCONSUMED";
 
@@ -82,7 +92,12 @@ int gas_consumed() asm "GASCONSUMED";
   throw_unless(fee::digest_mismatch, dg.preload_uint(256) == cell_hash(intent));
 
   throw_unless(fee::bad_signature, pq_check_suite(digest, context, signature, public_key, fee::suite_lms));
-  throw_unless(fee::insufficient_balance, value + fee::reserve <= get_balance().pair_first());
+  int required = value
+    + get_compute_fee(0, fee::max_gas)
+    + get_forward_fee(0, fee::max_in_bits, fee::max_in_cells)
+    + get_forward_fee(0, fee::max_out_bits, fee::max_out_cells)
+    + get_storage_fee(0, fee::storage_horizon, fee::state_bits, fee::state_cells);
+  throw_unless(fee::insufficient_balance, required <= get_balance().pair_first());
 
   accept_message();
   int gas = gas_consumed();

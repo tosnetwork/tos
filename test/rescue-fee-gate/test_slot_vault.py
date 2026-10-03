@@ -127,6 +127,18 @@ def intent(
     )
 
 
+def rescue_intent(leaf, payload, value=1_000_000_000, now=NOW):
+    return (
+        Cell()
+        .sint(GLOBAL_ID, 32)
+        .addr(VAULT)
+        .uint(leaf, 32)
+        .uint(now + 600, 32)
+        .coins(value)
+        .ref(payload)
+    )
+
+
 def body(intent_cell, signature, digest=None):
     digest = digest if digest is not None else intent_cell.hash
     return Cell().ref(intent_cell).ref(chain(digest)).ref(chain(b"")).ref(chain(signature))
@@ -215,6 +227,50 @@ class SlotVaultTests(unittest.TestCase):
                 self.assertEqual(s.addr(), TARGET)
                 self.assertEqual(s.coins(), 1_000_000_000)
                 RESULTS.append((params, len(key.public), gas, result["details"]["gas"]))
+
+    def solvency_case(self, balance, payload=None):
+        key = self.device()
+        i = intent(START_SLOT, value=MAX_VALUE) if payload is None else rescue_intent(START_SLOT, payload)
+        return self.submit(self.vault(key, balance=balance), body(i, key.sign_at(START_SLOT, i.hash)))
+
+    def test_solvency_edge_pays_in_full(self):
+        # Bisect the smallest balance the vault admits; at that edge the send must go out with
+        # the full value and the account must stay active, one nanoton less must be refused.
+        low, high = MAX_VALUE, 100 * MAX_VALUE
+        while high - low > 1:
+            mid = (low + high) // 2
+            result = self.solvency_case(mid)
+            if self.admitted(result):
+                high = mid
+            else:
+                self.assertEqual(result.get("vm_exit_code"), 2008, f"balance {mid}")
+                low = mid
+        edge = self.solvency_case(high)
+        self.assertTrue(self.admitted(edge))
+        self.assertTrue(edge["details"]["action"]["success"])
+        sent = outgoing(from_boc(edge["transaction"]))
+        self.assertEqual(len(sent), 1, "admitted at the edge but the send was skipped")
+        s = sent[0].slice()
+        s.uint(4), s.addr(), s.addr()
+        self.assertEqual(s.coins(), MAX_VALUE)
+        _, left = account_data(from_boc(edge["shard_account"]))
+        self.assert_refused(self.solvency_case(high - 1), 2008, "one nanoton short")
+        RESULTS.append(("solvency edge", 60, high - MAX_VALUE, left))
+
+    def test_real_size_rescue_payload(self):
+        # A rescue submission carries an SLH-DSA-SHA2-128s signature (7,856 bytes, 62 cells).
+        # The vault must admit it without loading it, inside the credit, and forward all of it.
+        payload = Cell().uint(RESCUE_SUBMIT, 32).ref(chain(bytes(range(256)) * 30 + bytes(176)))
+        key = self.device()
+        i = rescue_intent(START_SLOT, payload)
+        result = self.submit(self.vault(key), body(i, key.sign_at(START_SLOT, i.hash)))
+        self.assertTrue(self.admitted(result), result.get("error"))
+        _, gas = self.state(result)
+        self.assertLessEqual(gas, CREDIT)
+        sent = outgoing(from_boc(result["transaction"]))
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0].refs[-1].hash, payload.hash)
+        RESULTS.append(("10/4 + 7,856 B SLH payload", 60, gas, result["details"]["gas"]))
 
     def test_slot_window(self):
         key = self.device()

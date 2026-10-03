@@ -81,9 +81,18 @@ VAULTS = {
                 "  throw_unless(fee::not_rescue, ps.preload_uint(32) == fee::rescue_submit);\n",
                 "",
             ),
+            "drop compute budget": ("    + get_compute_fee(0, fee::max_gas)\n", ""),
+            "drop outbound forwarding budget": (
+                "    + get_forward_fee(0, fee::max_out_bits, fee::max_out_cells)\n",
+                "",
+            ),
+            "drop storage floor": (
+                "    + get_storage_fee(0, fee::storage_horizon, fee::state_bits, fee::state_cells);\n",
+                ";\n",
+            ),
             "drop q == leaf": ("  throw_unless(fee::leaf_mismatch, ss~load_uint(32) == leaf);\n", ""),
             "drop balance check": (
-                "  throw_unless(fee::insufficient_balance, value + fee::reserve <= get_balance().pair_first());\n",
+                "  throw_unless(fee::insufficient_balance, required <= get_balance().pair_first());\n",
                 "",
             ),
             "pay the intent signer instead of the pinned target": (
