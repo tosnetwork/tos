@@ -4,16 +4,13 @@
 
 This adds a C/C++ verifier and a general-purpose TVM instruction, not a wallet,
 key store, authentication module or validator-signature migration. Existing
-Wallet V5 and Agent Account contracts and their bytecode are unchanged. The
-separate Rust VM under `tosctl/src/vm` does not gain this instruction from this
-C++ integration; callers must use the native VM/emulator until that execution
-route has a separately reviewed compatible implementation.
+Wallet V5 and Agent Account contracts and their bytecode are unchanged. The Rust VM under `tosctl/src/vm` also implements this instruction; the
+readiness suite compares both executors and compiled language bindings.
 
 `PQCHECKSIG_MLDSA44` is codepage-0 instruction **F93100 (24 bits)**, registered
 with `require_version(16)`. Versions 0 through 15 reject it as invalid opcode
-(6). `SUPPORTED_VERSION` is **16**, with no build option to select anything
-else; `test/pq-readiness/test_release_profile.py` fails if a second profile
-reappears or if the ceiling and `pq_mldsa44_min_version` ever disagree.
+(6). `SUPPORTED_VERSION` is **19** in this source tree. ML-DSA retains its version-16
+activation gate and wire format; see [Global Versions](GlobalVersions.md).
 
 That constant is not an execution gate, and must not be read as one. A node
 whose configuration names a higher version logs an error and keeps collating and

@@ -33,7 +33,8 @@ PROBE = """
 #include <iostream>
 int main() {
   std::cout << tos::SUPPORTED_VERSION << ' ' << vm::pq_mldsa44_min_version << ' '
-            << vm::poseidon2_min_version << ' ' << vm::poseidon2_path7_min_version;
+            << vm::poseidon2_min_version << ' ' << vm::poseidon2_path7_min_version << ' '
+            << vm::pq_falcon512_min_version;
 }
 """
 
@@ -43,6 +44,7 @@ GATES = {
     'PQCHECKSIG_MLDSA44': 16,
     'POSEIDON2_PERM8/POSEIDON2_HASH7': 17,
     'POSEIDON2_PATH7': 18,
+    'PQCHECKSIG_FALCON512_PADDED': 19,
 }
 
 

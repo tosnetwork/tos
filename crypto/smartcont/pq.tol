@@ -2,3 +2,5 @@
 // Operands follow the canonical byte-chain ABI in doc/tvm-mldsa44.md.
 fun pqCheckMldsa44(message: cell, context: cell, signature: cell, publicKey: cell): bool
     asm "PQCHECKSIG_MLDSA44";
+
+fun pqCheckFalcon512Padded(message: cell, signature: cell, publicKey: cell): bool asm "PQCHECKSIG_FALCON512_PADDED";

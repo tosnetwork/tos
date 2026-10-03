@@ -480,8 +480,7 @@ mod pq_mldsa44_tests {
 
     #[test]
     fn a_neighbouring_code_is_not_read_as_the_pq_instruction() {
-        // F9 31 01 is not allocated; the disassembler must not report the
-        // verifier for it.
+        // F9 31 01 is a different profile; it must not decode as ML-DSA.
         let mut slice = compile_code("PQCHECKSIG_MLDSA44").expect("assembles");
         let text = disasm(&mut slice).expect("disassembles");
         assert!(text.contains("PQCHECKSIG_MLDSA44"));
@@ -546,5 +545,16 @@ mod poseidon2_tests {
             !reported.contains("POSEIDON2"),
             "F93202 decoded as a Poseidon2 instruction: {reported}"
         );
+    }
+}
+
+#[cfg(test)]
+mod pq_falcon512_tests {
+    #[test]
+    fn padded_profile_round_trip() {
+        let mut code = crate::compile_code("PQCHECKSIG_FALCON512_PADDED").expect("assemble");
+        assert_eq!(code.get_bytestring(0), [0xf9, 0x31, 1]);
+        assert_eq!(crate::disasm::disasm(&mut code).expect("disassemble").trim(),
+                   "PQCHECKSIG_FALCON512_PADDED");
     }
 }

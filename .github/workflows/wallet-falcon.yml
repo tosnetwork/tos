@@ -1,0 +1,126 @@
+name: Falcon wallet AUTH
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/wallet-falcon.yml'
+      - 'crypto/pq/**'
+      - 'crypto/vm/**'
+      - 'crypto/smartcont/**'
+      - 'crypto/fift/**'
+      - 'third-party/falcon-reference/**'
+      - 'common/global-version.h'
+      - 'tosctl/**'
+      - 'test/pq-falcon512/**'
+      - 'test/falcon-auth/**'
+      - 'test/tostester/**'
+      - 'tools/falcon/**'
+permissions:
+  contents: read
+concurrency:
+  group: falcon-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  conformance:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install toolchain and fixed Python dependencies
+        run: |
+          scripts/install-rust-toolchain.sh
+          python -m pip install bitarray==3.7.2 PyNaCl==1.5.0 pycryptodome==3.23.0 cryptography==46.0.4
+          cd third-party/falcon-reference
+          sha256sum -c SHA256SUMS
+      - name: Build both VMs and offline signer
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOSLIBJSON_STATIC=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)" -DUSE_QUIC=OFF
+          cmake --build build --target func fift tol emulator test-pq-falcon512-parity -j2
+          cmake -S tools/falcon -B build-falcon -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-falcon -j2
+          cmake -S test/mldsa-auth -B build-old-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-old-signer -j2
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example falcon-parity
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --example pq-tx-parity
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_assembler pq_falcon512
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --lib executor::
+      - name: Frozen profile and both compiled bindings
+        run: |
+          mkdir -p artifacts
+          git rev-parse HEAD > artifacts/commit.txt
+          python test/pq-falcon512/prepare.py --library build-falcon/libtos_falcon_offline.so --out artifacts
+          python test/pq-falcon512/compile_probes.py --build build --out artifacts
+          python test/pq-falcon512/exotic.py artifacts/scenarios.tsv
+          build/crypto/pq/test-pq-falcon512-parity artifacts/scenarios.tsv > artifacts/cpp.tsv
+          tosctl/src/target/release/examples/falcon-parity artifacts/scenarios.tsv > artifacts/rust.tsv
+          python test/pq-falcon512/compare.py artifacts/scenarios.tsv artifacts/cpp.tsv artifacts/rust.tsv --out artifacts/parity.json
+      - name: Real account delivery, migration, backup and funding boundaries
+        run: |
+          python test/falcon-auth/e2e.py --build build --signer build-falcon/libtos_falcon_offline.so \
+            --old-signer build-old-signer/test-mldsa44-sign --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts
+          python test/falcon-auth/test_boundaries.py --build build --signer build-falcon/libtos_falcon_offline.so --out artifacts/boundaries
+          python test/falcon-auth/test_wallet.py --library build-falcon/libtos_falcon_offline.so --artifacts artifacts
+          python test/falcon-auth/tx_parity.py --build build --signer build-falcon/libtos_falcon_offline.so \
+            --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts/transactions
+      - name: Sensitive compiled mutations and unchanged ML-DSA authorization
+        run: |
+          python test/pq-falcon512/mutations.py --build build --artifacts artifacts \
+            --library build-falcon/libtos_falcon_offline.so --old-signer build-old-signer/test-mldsa44-sign
+          python test/pq-falcon512/fault_injection.py --build build --artifacts artifacts
+          FUNC_PATH=$PWD/build/crypto/func FIFT_PATH=$PWD/build/crypto/fift TOL_PATH=$PWD/build/tol/tol EMULATOR_PATH=$PWD/build/emulator/libemulator.so python test/auth-extensions/mutations.py
+          python test/mldsa-auth/e2e.py --build build --signer build-old-signer/test-mldsa44-sign --out artifacts/mldsa
+      - name: Sanitizers and complete VM calibration
+        run: |
+          cmake -S crypto/pq -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+            -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          cmake --build build-sanitize --target test-falcon512-fuzz -j2
+          build-sanitize/test-falcon512-fuzz artifacts/public_key.bin artifacts/signature.bin artifacts/message.bin | tee artifacts/sanitize.txt
+          python test/pq-falcon512/benchmark.py --cpp build/crypto/pq/test-pq-falcon512-parity \
+            --rust tosctl/src/target/release/examples/falcon-parity --scenarios artifacts/scenarios.tsv --out artifacts/benchmark
+          nm build/crypto/pq/libtos_falcon512_native.a > artifacts/verifier-symbols.txt
+          if grep -E 'falcon_(sign|keygen)|tos_falcon_inner_(sign|keygen|sampler|prng)' artifacts/verifier-symbols.txt; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: falcon-${{ matrix.arch }}
+          path: artifacts
+          retention-days: 30
+  parity:
+    needs: conformance
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: falcon-*
+          path: results
+      - name: Require architecture-independent execution and module identities
+        run: |
+          for name in commit.txt vectors.json cpp.tsv rust.tsv scenarios.tsv module-func.boc module-tol.boc wallet-func.boc wallet-tol.boc agent.boc transactions/emulator.tsv transactions/rust.tsv two-hop-cpp.tsv two-hop-rust.tsv; do
+            cmp "results/falcon-x86_64/$name" "results/falcon-aarch64/$name"
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for root in Path('results').glob('falcon-*'):
+              for name in ['parity.json', 'backend-fault.json', 'e2e.json', 'two-hop-parity.json', 'transactions/tx-parity.json', 'boundaries/boundaries.json']:
+                  assert json.loads((root/name).read_text())['success'] is True
+              mutations=json.loads((root/'mutations.json').read_text())
+              assert len(mutations)==8 and all(m['compiled'] and m['killed'] for m in mutations)
+          PY

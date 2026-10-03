@@ -35,3 +35,6 @@ from .pq_auth import AuthRequest, AuthState, Mldsa44ModuleBlueprint, NativeMldsa
 __all__ += ["WalletV5", "WalletV5Blueprint", "WalletV5State", "AgentAccount",
             "AgentAccountBlueprint", "AgentAccountState", "AgentPolicy", "AuthRequest",
             "AuthState", "Mldsa44ModuleBlueprint", "NativeMldsa44Signer"]
+
+from .falcon_auth import Falcon512ModuleBlueprint, FalconModuleState
+__all__ += ["Falcon512ModuleBlueprint", "FalconModuleState"]
