@@ -43,7 +43,7 @@
 ;;     forced +2 makes meaningless; and +4 and +8, which the executor treats as invalid
 ;;     and would skip after the id was consumed;
 ;;   - a MessageRelaxed with int_msg_info, src addr_none, not bounced, no StateInit, and a
-;;     referenced body consumed exactly.
+;;     inline or referenced body, with only the currently active extra_flags bits.
 ;; The messages are sent in their signed order, each with IGNORE_ERRORS forced, so one the
 ;; action phase cannot deliver is skipped and the others go out.
 ;;
@@ -76,6 +76,9 @@ const int SEND_MODE_IGNORE_ERRORS = 2;
 const int SEND_MODE_CARRY_INBOUND_VALUE = 64;
 ;; +1 pay fees separately, +2 ignore errors, +128 carry the remaining balance
 const int SEND_MODES_ALLOWED = 0x83;
+;; Matches tol/extra-flags-constants.h: new bounce format (+1), full bounce body (+2).
+;; Bits 2 and above are reserved. This field replaced ihr_fee before the PQ activation.
+const int MESSAGE_EXTRA_FLAGS_ALLOWED = 3;
 const int SUBWALLET_ID_BITS = 32;
 const int QUERY_ID_BITS = 23;
 const int CREATED_AT_BITS = 64;
@@ -119,8 +122,9 @@ int required_value(int action_count) inline {
 }
 
 ;; Throws unless `message` is one the wallet will send for its owner: a MessageRelaxed with
-;; int_msg_info, src addr_none, not marked bounced, no StateInit, and a referenced body
-;; consumed exactly. Undeliverable destinations and values are left to the action phase.
+;; int_msg_info, src addr_none, not marked bounced, no StateInit, active extra_flags only,
+;; and an inline or referenced body consumed exactly. Undeliverable destinations and values
+;; are left to the action phase.
 () require_valid_message(cell message) impure inline {
   slice m = message.begin_parse();
   throw_if(error::invalid_message, m~load_uint(1)); ;; int_msg_info$0
@@ -130,7 +134,8 @@ int required_value(int action_count) inline {
   m~load_msg_addr(); ;; dest
   m~load_coins(); ;; value
   m = m.skip_dict(); ;; extra currencies
-  m~load_coins(); ;; ihr_fee
+  int extra_flags = m~load_coins(); ;; extra_flags since global version 12, not ihr_fee
+  throw_unless(error::invalid_message, (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);
   m~load_coins(); ;; fwd_fee
   m~skip_bits(64 + 32); ;; created_lt created_at
   throw_if(error::invalid_message, m~load_uint(1)); ;; no StateInit
@@ -270,6 +275,7 @@ int processed?(int query_id, int need_clean) method_id {
 
 ;; The value a relayer must attach to a request of `action_count` messages.
 int get_required_value(int action_count) method_id {
+  throw_unless(error::invalid_action, (action_count > 0) & (action_count <= max_actions));
   return required_value(action_count);
 }
 
