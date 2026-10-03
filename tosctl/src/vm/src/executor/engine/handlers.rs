@@ -996,7 +996,10 @@ impl Handlers {
                 .set(0x26, execute_ristretto_255_pushl)
                 .add_subset(
                     0x31,
-                    Handlers::new().set(0x00, execute_pq_mldsa44).set(0x01, execute_pq_falcon512),
+                    Handlers::new()
+                        .set(0x00, execute_pq_mldsa44)
+                        .set(0x01, execute_pq_falcon512)
+                        .set(0x02, execute_pq_suite),
                 )
                 .add_subset(
                     0x32,

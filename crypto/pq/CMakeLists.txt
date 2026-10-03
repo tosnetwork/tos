@@ -360,6 +360,8 @@ if(TARGET tos_crypto)
   target_link_libraries(tos_crypto PRIVATE tos_falcon512)
   add_executable(test-pq-falcon512-parity "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-falcon512/parity.cpp")
   target_link_libraries(test-pq-falcon512-parity PRIVATE tos_crypto)
+  add_executable(test-pq-suite-parity "${CMAKE_CURRENT_SOURCE_DIR}/../../test/rescue-fee-gate/suite-parity.cpp")
+  target_link_libraries(test-pq-suite-parity PRIVATE tos_crypto)
 endif()
 install(FILES "${TOS_FALCON_SOURCE_DIR}/LICENSE" DESTINATION share/tos/licenses/falcon-reference)
 

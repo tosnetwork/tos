@@ -1,4 +1,5 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
+use super::lms_fee;
 use super::{
     engine::{storage::fetch_stack, Engine},
     gas::gas_state::Gas,
@@ -28,7 +29,16 @@ extern "C" {
     static tos_rust_mldsa44_invalid_signature: i32;
 }
 
-fn read_bytes(engine: &mut Engine, mut cell: Cell, limit: usize) -> Result<Vec<u8>> {
+fn read_bytes(engine: &mut Engine, cell: Cell, limit: usize) -> Result<Vec<u8>> {
+    read_bytes_priced(engine, cell, limit, 1)
+}
+
+fn read_bytes_priced(
+    engine: &mut Engine,
+    mut cell: Cell,
+    limit: usize,
+    byte_gas: i64,
+) -> Result<Vec<u8>> {
     let mut result = Vec::new();
     loop {
         if cell.level() != 0 {
@@ -50,7 +60,11 @@ fn read_bytes(engine: &mut Engine, mut cell: Cell, limit: usize) -> Result<Vec<u
         {
             fail!(ExceptionCode::CellUnderflow, "noncanonical PQ byte chain");
         }
-        engine.try_use_gas(size as i64)?;
+        let charge = (size as i64).checked_mul(byte_gas);
+        let Some(charge) = charge else {
+            fail!(ExceptionCode::OutOfGas);
+        };
+        engine.try_use_gas(charge)?;
         result.extend_from_slice(&slice.get_bytestring(0));
         if refs == 0 {
             return Ok(result);
@@ -178,4 +192,168 @@ pub(super) fn execute_pq_falcon512(engine: &mut Engine) -> Status {
     };
     engine.cc.stack.push(StackItem::boolean(valid));
     Ok(())
+}
+
+extern "C" {
+    fn tos_rust_slhdsa128s_verify(
+        message: *const u8,
+        message_len: usize,
+        signature: *const u8,
+        signature_len: usize,
+        context: *const u8,
+        context_len: usize,
+        public_key: *const u8,
+    ) -> i32;
+}
+
+// PROTOTYPE generic instruction F93102 (version 19 in this prototype; the R0a proposal moves
+// it to a new version gate): message context signature public_key suite -> bool. Order of pops,
+// charges and errors follows the C++ VM exactly; the parity scenarios check that.
+const SUITE_MLDSA44: i32 = 1;
+const SUITE_FALCON512: i32 = 2;
+const SUITE_SLHDSA128S: i32 = 3;
+const SUITE_LMS_FEE: i32 = 4;
+const SLH_BASE_GAS: i64 = 750_000;
+const SLH_PUBLIC_KEY_BYTES: usize = 32;
+const SLH_SIGNATURE_BYTES: usize = 7856;
+const LMS_BASE_GAS: i64 = 500;
+const LMS_GAS_PER_COMPRESSION: i64 = 3;
+
+fn push_outcome(engine: &mut Engine, valid: Option<bool>, name: &str) -> Status {
+    match valid {
+        Some(v) => {
+            engine.cc.stack.push(StackItem::boolean(v));
+            Ok(())
+        }
+        None => fail!(ExceptionCode::CellUnderflow, "malformed {} input", name),
+    }
+}
+
+pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
+    if engine.block_version() < 19 {
+        if engine.block_version() >= 4 {
+            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
+        } else {
+            engine.use_gas(Gas::basic_gas_price(0, 0));
+        }
+        fail!(ExceptionCode::InvalidOpcode);
+    }
+    engine.load_instruction(Instruction::new("PQCHECKSIG_SUITE"))?;
+    if engine.cc.stack.depth() < 5 {
+        fail!(ExceptionCode::StackUnderflow);
+    }
+    fetch_stack(engine, 5)?;
+    let suite = engine.cmd.var(0).as_integer_value(0..=255)?;
+    let key = engine.cmd.var(1).as_cell()?.clone();
+    let signature = engine.cmd.var(2).as_cell()?.clone();
+    let context = engine.cmd.var(3).as_cell()?.clone();
+    let message = engine.cmd.var(4).as_cell()?.clone();
+    match suite {
+        SUITE_MLDSA44 => {
+            engine.try_use_gas(BASE_GAS)?;
+            let key = read_bytes(engine, key, PUBLIC_KEY_BYTES)?;
+            let signature = read_bytes(engine, signature, SIGNATURE_BYTES)?;
+            let context = read_bytes(engine, context, MAX_CONTEXT_BYTES)?;
+            let message = read_bytes(engine, message, MAX_MESSAGE_BYTES)?;
+            if key.len() != PUBLIC_KEY_BYTES || signature.len() != SIGNATURE_BYTES {
+                fail!(ExceptionCode::CellUnderflow, "malformed ML-DSA-44 input");
+            }
+            // SAFETY: fixed-size buffers checked above, owned for this synchronous call.
+            let status = unsafe {
+                tos_rust_mldsa44_native_verify(
+                    signature.as_ptr(),
+                    message.as_ptr(),
+                    message.len(),
+                    context.as_ptr(),
+                    context.len(),
+                    key.as_ptr(),
+                )
+            };
+            // SAFETY: reading a const int the shim defines at compile time.
+            let invalid_signature = unsafe { tos_rust_mldsa44_invalid_signature };
+            if status == 0 {
+                push_outcome(engine, Some(true), "ML-DSA-44")
+            } else if status == invalid_signature {
+                push_outcome(engine, Some(false), "ML-DSA-44")
+            } else {
+                fail!(ExceptionCode::FatalError, "ML-DSA-44 verifier backend failure")
+            }
+        }
+        SUITE_FALCON512 => {
+            engine.try_use_gas(20_000)?;
+            // Falcon has no context parameter; only the empty context is accepted.
+            read_bytes(engine, context, 0)?;
+            let key = read_bytes(engine, key, 897)?;
+            let signature = read_bytes(engine, signature, 666)?;
+            let message = read_bytes(engine, message, 8192)?;
+            // SAFETY: bounded owned buffers outlive this synchronous, verify-only call.
+            let result = unsafe {
+                tos_falcon512_padded_verify(
+                    message.as_ptr(),
+                    message.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                    key.as_ptr(),
+                    key.len(),
+                )
+            };
+            match result {
+                1 => push_outcome(engine, Some(true), "Falcon-512"),
+                0 => push_outcome(engine, Some(false), "Falcon-512"),
+                -1 => push_outcome(engine, None, "Falcon-512"),
+                _ => fail!(ExceptionCode::FatalError, "Falcon-512 verifier backend failure"),
+            }
+        }
+        SUITE_SLHDSA128S => {
+            engine.try_use_gas(SLH_BASE_GAS)?;
+            let key = read_bytes(engine, key, SLH_PUBLIC_KEY_BYTES)?;
+            let signature = read_bytes(engine, signature, SLH_SIGNATURE_BYTES)?;
+            let context = read_bytes(engine, context, MAX_CONTEXT_BYTES)?;
+            let message = read_bytes(engine, message, MAX_MESSAGE_BYTES)?;
+            if key.len() != SLH_PUBLIC_KEY_BYTES || signature.len() != SLH_SIGNATURE_BYTES {
+                return push_outcome(engine, None, "SLH-DSA-SHA2-128s");
+            }
+            // SAFETY: lengths checked above; owned buffers outlive this synchronous call.
+            let result = unsafe {
+                tos_rust_slhdsa128s_verify(
+                    message.as_ptr(),
+                    message.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                    context.as_ptr(),
+                    context.len(),
+                    key.as_ptr(),
+                )
+            };
+            match result {
+                1 => push_outcome(engine, Some(true), "SLH-DSA-SHA2-128s"),
+                0 => push_outcome(engine, Some(false), "SLH-DSA-SHA2-128s"),
+                _ => fail!(ExceptionCode::FatalError, "SLH-DSA-SHA2-128s verifier backend failure"),
+            }
+        }
+        SUITE_LMS_FEE => {
+            read_bytes_priced(engine, context, 0, 0)?;
+            let key = read_bytes_priced(engine, key, lms_fee::PUBLIC_KEY_BYTES, 0)?;
+            let message = read_bytes_priced(engine, message, lms_fee::MAX_MESSAGE_BYTES, 0)?;
+            let Some(worst) = lms_fee::worst_compressions(&key, message.len()) else {
+                fail!(ExceptionCode::CellUnderflow, "unsupported LMS fee profile");
+            };
+            // Charge the worst case for this profile before reading or verifying the signature.
+            let charge = i64::try_from(worst)
+                .ok()
+                .and_then(|w| w.checked_mul(LMS_GAS_PER_COMPRESSION))
+                .and_then(|g| g.checked_add(LMS_BASE_GAS));
+            let Some(charge) = charge else {
+                fail!(ExceptionCode::OutOfGas);
+            };
+            engine.try_use_gas(charge)?;
+            let signature = read_bytes_priced(engine, signature, lms_fee::MAX_SIGNATURE_BYTES, 0)?;
+            match lms_fee::verify(&message, &signature, &key) {
+                lms_fee::Outcome::Valid => push_outcome(engine, Some(true), "LMS fee"),
+                lms_fee::Outcome::Invalid => push_outcome(engine, Some(false), "LMS fee"),
+                lms_fee::Outcome::Malformed => push_outcome(engine, None, "LMS fee"),
+            }
+        }
+        _ => fail!(ExceptionCode::RangeCheckError, "unknown PQ suite"),
+    }
 }
