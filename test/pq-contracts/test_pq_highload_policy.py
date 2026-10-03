@@ -28,7 +28,9 @@ REPORT = {}
 
 
 def extra_currency_dict(entries):
-    return pqtest.make_dict({key: Cell().varuint(amount, 32) for key, amount in entries.items()}, 32)
+    return pqtest.make_dict(
+        {key: Cell().varuint(amount, 32) for key, amount in entries.items()}, 32
+    )
 
 
 def read_extra(root):
@@ -69,13 +71,25 @@ def account_extra(shard):
 
 
 def payment(extra_flags=0, tag=1, value=10**9, extra=None):
-    return (Cell().uint(0x10, 6).addr(wallet.PAYEE).coins(value).maybe(extra)
-            .coins(extra_flags).coins(0).uint(0, 64).uint(0, 32)
-            .uint(0, 1).uint(1, 1).ref(Cell().uint(tag, 32)))
+    return (
+        Cell()
+        .uint(0x10, 6)
+        .addr(wallet.PAYEE)
+        .coins(value)
+        .maybe(extra)
+        .coins(extra_flags)
+        .coins(0)
+        .uint(0, 64)
+        .uint(0, 32)
+        .uint(0, 1)
+        .uint(1, 1)
+        .ref(Cell().uint(tag, 32))
+    )
 
 
 class AssetWallet(wallet.Wallet):
     """Adopt every real post-transaction state and retain the outbound currency maps."""
+
     def send(self, message):
         before = self.data_hash()
         result = self.emulator.send(self.shard, message)
@@ -135,18 +149,35 @@ class MessagePolicyTest(unittest.TestCase):
 
     def getter(self, w, method, *args):
         data, balance = native.account_data(w.shard)
-        code, values = pqtest.get_method(wallet.CODE, data, w.address, method, args,
-                                         balance=balance, global_version=w.test_version)
+        code, values = pqtest.get_method(
+            wallet.CODE,
+            data,
+            w.address,
+            method,
+            args,
+            balance=balance,
+            global_version=w.test_version,
+        )
         self.assertEqual(code, 0, (method, values))
         return values
 
     def credit_assets(self, w, amounts):
         # Separate one-currency deposits keep the fixture valid even with live limit 1.
         for key, amount in amounts.items():
-            deposit = (Cell().uint(4, 4).addr(wallet.RELAYER).addr(wallet.WALLET)
-                       .coins(10**9).maybe(extra_currency_dict({key: amount}))
-                       .coins(0).coins(0).uint(0, 64).uint(native.NOW, 32)
-                       .uint(0, 1).uint(0, 1))
+            deposit = (
+                Cell()
+                .uint(4, 4)
+                .addr(wallet.RELAYER)
+                .addr(wallet.WALLET)
+                .coins(10**9)
+                .maybe(extra_currency_dict({key: amount}))
+                .coins(0)
+                .coins(0)
+                .uint(0, 64)
+                .uint(native.NOW, 32)
+                .uint(0, 1)
+                .uint(0, 1)
+            )
             d = w.send(deposit)
             self.assertExit(d, 0)
             self.assertEqual(d["out"], [])
@@ -154,11 +185,14 @@ class MessagePolicyTest(unittest.TestCase):
 
     def assertPayments(self, d, amounts, extras=None, tags=None):
         self.assertExit(d, 0)
-        self.assertEqual([o["dest"] for o in d["out"]],
-                         [wallet.RELAYER] + [wallet.PAYEE] * len(amounts))
+        self.assertEqual(
+            [o["dest"] for o in d["out"]], [wallet.RELAYER] + [wallet.PAYEE] * len(amounts)
+        )
         self.assertEqual([o["value"] for o in d["out"][1:]], amounts)
-        self.assertEqual([o["extra"] for o in d["out"][1:]],
-                         extras if extras is not None else [{} for _ in amounts])
+        self.assertEqual(
+            [o["extra"] for o in d["out"][1:]],
+            extras if extras is not None else [{} for _ in amounts],
+        )
         if tags is not None:
             self.assertEqual([o["body"].slice().uint(32) for o in d["out"][1:]], tags)
 
@@ -238,13 +272,19 @@ class MessagePolicyTest(unittest.TestCase):
     def test_nonminimal_extra_amounts_refused(self):
         for version in VERSIONS:
             w = self.new_wallet(version)
-            leaves = (Cell().uint(1, 5).uint(0, 8),
-                      Cell().uint(2, 5).uint(1, 16),
-                      Cell().uint(31, 5).uint(1, 248))
+            leaves = (
+                Cell().uint(1, 5).uint(0, 8),
+                Cell().uint(2, 5).uint(1, 16),
+                Cell().uint(31, 5).uint(1, 248),
+            )
             for i, leaf in enumerate(leaves):
                 with self.subTest(version=version, vector=i):
-                    req = wallet.request([(1, payment(extra=pqtest.make_dict({1: leaf}, 32)))], 260 + i)
-                    self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", 260 + i)
+                    req = wallet.request(
+                        [(1, payment(extra=pqtest.make_dict({1: leaf}, 32)))], 260 + i
+                    )
+                    self.assertRefusedBeforeVerification(
+                        w, w.submit(req), "invalid_message", 260 + i
+                    )
             for leaf in (Cell().uint(0, 5).uint(1, 1), Cell().uint(0, 5).ref(Cell())):
                 req = wallet.request([(1, payment(extra=pqtest.make_dict({1: leaf}, 32)))], 265)
                 self.assertRefusedBeforeVerification(w, w.submit(req), 9, 265)
@@ -254,7 +294,7 @@ class MessagePolicyTest(unittest.TestCase):
             gas = []
             for n in (EXTRA_BUDGET + 1, 128, 1024, 4096):
                 # Exercise the independent wallet work bound, not the chain count of 2.
-                with configured_limit(2, 0xffffffff):
+                with configured_limit(2, 0xFFFFFFFF):
                     w = self.new_wallet(version)
                 # Valid positive amounts are essential: zeros would trip a different guard
                 # on the first leaf and falsely appear to prove the traversal bound.
@@ -287,9 +327,14 @@ class MessagePolicyTest(unittest.TestCase):
         cases = [(None, 2), (1, 2)] + [(tag, n) for tag in (2, 3) for n in (0, 1, 2, 3)]
         for version in VERSIONS:
             for tag, limit in cases:
-                with self.subTest(version=version, tag=tag, limit=limit), configured_limit(tag, limit):
+                with (
+                    self.subTest(version=version, tag=tag, limit=limit),
+                    configured_limit(tag, limit),
+                ):
                     w = self.new_wallet(version)
-                    self.assertEqual(self.getter(w, "get_extra_currency_limits"), [limit, EXTRA_BUDGET])
+                    self.assertEqual(
+                        self.getter(w, "get_extra_currency_limits"), [limit, EXTRA_BUDGET]
+                    )
                     denied = extra_currency_dict({i: 1 for i in range(limit + 1)})
                     req = wallet.request([(1, payment(extra=denied))], 290)
                     self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", 290)
@@ -332,8 +377,15 @@ class MessagePolicyTest(unittest.TestCase):
             w = self.new_wallet(version)
             data, balance = native.account_data(w.shard)
             for n in (-1, 0, 255, 256, (1 << 256) - 1):
-                code, values = pqtest.get_method(wallet.CODE, data, w.address, "get_required_value", (n,),
-                                                 balance=balance, global_version=version)
+                code, values = pqtest.get_method(
+                    wallet.CODE,
+                    data,
+                    w.address,
+                    "get_required_value",
+                    (n,),
+                    balance=balance,
+                    global_version=version,
+                )
                 self.assertEqual(code, wallet.ERR["invalid_action"], (n, code, values))
             for n in (1, wallet.MAX_ACTIONS):
                 self.assertGreater(self.getter(w, "get_required_value", n)[0], 0)
@@ -344,18 +396,26 @@ class MessagePolicyTest(unittest.TestCase):
             qid = (8191 << 10) | wallet.MAX_ACTIONS
             sends = [(1, payment(3, i, value=1)) for i in range(wallet.MAX_ACTIONS)]
             quote = self.getter(w, "get_required_value", wallet.MAX_ACTIONS)[0]
-            self.assertPayments(w.submit(wallet.request(sends, qid), value=quote),
-                                [1] * wallet.MAX_ACTIONS, tags=list(range(wallet.MAX_ACTIONS)))
+            self.assertPayments(
+                w.submit(wallet.request(sends, qid), value=quote),
+                [1] * wallet.MAX_ACTIONS,
+                tags=list(range(wallet.MAX_ACTIONS)),
+            )
 
     def test_maximum_extra_work_at_exact_quote(self):
         source = Path(wallet.ARGS.source).read_text()
-        profile = {k: int(re.search(rf"const int fee::{k} = (\d+);", source).group(1))
-                   for k in ("base_gas", "gas_per_action", "extra_gas")}
+        profile = {
+            k: int(re.search(rf"const int fee::{k} = (\d+);", source).group(1))
+            for k in ("base_gas", "gas_per_action", "extra_gas")
+        }
         large = (1 << 248) - 1
         for version in VERSIONS:
             for n in (1, wallet.MAX_ACTIONS):
                 for spread in (False, True) if n > 1 else (False,):
-                    with self.subTest(version=version, actions=n, spread=spread), configured_limit(2, EXTRA_BUDGET):
+                    with (
+                        self.subTest(version=version, actions=n, spread=spread),
+                        configured_limit(2, EXTRA_BUDGET),
+                    ):
                         w = self.new_wallet(version, dense=True)
                         maps = [{} for _ in range(n)]
                         if spread:
@@ -365,7 +425,10 @@ class MessagePolicyTest(unittest.TestCase):
                             maps[-1] = {i: large for i in range(EXTRA_BUDGET)}
                         funds = {k: v for m in maps for k, v in m.items() if v}
                         self.credit_assets(w, funds)
-                        sends = [(1, payment(3, i, 1, extra_currency_dict(m))) for i, m in enumerate(maps)]
+                        sends = [
+                            (1, payment(3, i, 1, extra_currency_dict(m)))
+                            for i, m in enumerate(maps)
+                        ]
                         qid = (8191 << 10) | n
                         quote = self.getter(w, "get_required_value", n)[0]
                         req = wallet.request(sends, qid)
@@ -376,17 +439,28 @@ class MessagePolicyTest(unittest.TestCase):
                         self.assertPayments(d, [1] * n, extras=expected, tags=list(range(n)))
                         self.assertEqual(account_extra(w.shard), {})
                         self.assertIn(qid, wallet.processed_ids(w.shard))
-                        bound = profile["base_gas"] + n * profile["gas_per_action"] + profile["extra_gas"]
+                        bound = (
+                            profile["base_gas"]
+                            + n * profile["gas_per_action"]
+                            + profile["extra_gas"]
+                        )
                         self.assertLessEqual(d["gas"], bound)
                         self.assertLess(bound, 1_000_000)
                         REPORT[f"extra_work_v{version}_n{n}_spread{int(spread)}"] = {
-                            "gas": d["gas"], "bound": bound, "quote": quote,
-                            "refund": d["out"][0]["value"], "out_count": len(d["out"])}
+                            "gas": d["gas"],
+                            "bound": bound,
+                            "quote": quote,
+                            "refund": d["out"][0]["value"],
+                            "out_count": len(d["out"]),
+                        }
 
 
 def run_tests(method=None):
-    suite = (unittest.TestSuite([MessagePolicyTest(method)]) if method else
-             unittest.defaultTestLoader.loadTestsFromTestCase(MessagePolicyTest))
+    suite = (
+        unittest.TestSuite([MessagePolicyTest(method)])
+        if method
+        else unittest.defaultTestLoader.loadTestsFromTestCase(MessagePolicyTest)
+    )
     return unittest.TextTestRunner(verbosity=2).run(suite)
 
 
@@ -398,22 +472,66 @@ def main():
     source = Path(wallet.ARGS.source).resolve()
     text = source.read_text()
     mutations = (
-        ("extra_flags", "  throw_unless(error::invalid_message, (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);\n", "", "test_reserved_flags_refused_before_verification"),
-        ("fee_count", "  throw_unless(error::invalid_action, (action_count > 0) & (action_count <= max_actions));\n", "", "test_fee_getter_rejects_impossible_counts"),
-        ("extra_collection", "    entries = require_valid_extra_currencies(extra, extra_left);\n", "", "test_extra_currency_collection_is_preflighted"),
-        ("entry_scan_bound", "    throw_unless(error::invalid_message, visited < remaining);\n", "", "test_extra_entries_are_bounded"),
-        ("batch_work_bound", "    extra_left -= require_valid_message(message, extra_left);\n", "    require_valid_message(message, extra_left);\n", "test_extra_budget_is_shared_across_the_batch"),
-        ("minimal_amount", "      throw_unless(error::invalid_message, value.preload_uint(8) != 0);\n", "", "test_nonminimal_extra_amounts_refused"),
-        ("live_limit", "  int limit = message_extra_currency_limit();\n", "  int limit = 2;\n", "test_live_config_limits_and_defaults"),
-        ("positive_amount", "    throw_unless(error::invalid_message, bytes > 0);\n", "", "test_zero_extra_amounts_refused"),
+        (
+            "extra_flags",
+            "  throw_unless(error::invalid_message, (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);\n",
+            "",
+            "test_reserved_flags_refused_before_verification",
+        ),
+        (
+            "fee_count",
+            "  throw_unless(error::invalid_action, (action_count > 0) & (action_count <= max_actions));\n",
+            "",
+            "test_fee_getter_rejects_impossible_counts",
+        ),
+        (
+            "extra_collection",
+            "    entries = require_valid_extra_currencies(extra, extra_left);\n",
+            "",
+            "test_extra_currency_collection_is_preflighted",
+        ),
+        (
+            "entry_scan_bound",
+            "    throw_unless(error::invalid_message, visited < remaining);\n",
+            "",
+            "test_extra_entries_are_bounded",
+        ),
+        (
+            "batch_work_bound",
+            "    extra_left -= require_valid_message(message, extra_left);\n",
+            "    require_valid_message(message, extra_left);\n",
+            "test_extra_budget_is_shared_across_the_batch",
+        ),
+        (
+            "minimal_amount",
+            "      throw_unless(error::invalid_message, value.preload_uint(8) != 0);\n",
+            "",
+            "test_nonminimal_extra_amounts_refused",
+        ),
+        (
+            "live_limit",
+            "  int limit = message_extra_currency_limit();\n",
+            "  int limit = 2;\n",
+            "test_live_config_limits_and_defaults",
+        ),
+        (
+            "positive_amount",
+            "    throw_unless(error::invalid_message, bytes > 0);\n",
+            "",
+            "test_zero_extra_amounts_refused",
+        ),
     )
     killed = []
     try:
         for name, old, replacement, method in mutations:
             if text.count(old) != 1:
                 raise RuntimeError(f"expected exactly one {name} mutation target")
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".fc", prefix=".pq-policy-mutant-",
-                                             dir=source.parent) as mutant, tempfile.TemporaryDirectory() as output:
+            with (
+                tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".fc", prefix=".pq-policy-mutant-", dir=source.parent
+                ) as mutant,
+                tempfile.TemporaryDirectory() as output,
+            ):
                 mutant.write(text.replace(old, replacement, 1))
                 mutant.flush()
                 wallet.CODE = pqtest.compile_source(mutant.name, Path(output) / "mutant.boc")
@@ -425,9 +543,18 @@ def main():
     finally:
         wallet.CODE = original_code
     restored = run_tests()
-    print(json.dumps({"baseline_tests": baseline.testsRun, "killed": killed,
-                      "restored_tests": restored.testsRun, "restored_ok": restored.wasSuccessful(),
-                      "measurements": REPORT}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "baseline_tests": baseline.testsRun,
+                "killed": killed,
+                "restored_tests": restored.testsRun,
+                "restored_ok": restored.wasSuccessful(),
+                "measurements": REPORT,
+            },
+            sort_keys=True,
+        )
+    )
     return 0 if restored.wasSuccessful() else 1
 
 
