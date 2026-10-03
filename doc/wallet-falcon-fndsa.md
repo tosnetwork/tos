@@ -70,8 +70,9 @@ cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_exec
 ```
 
 On macOS, pass the selected SDK to native dependency builds. On a fresh build,
-OpenSSL headers/libraries must be available before PQ CMake discovery; the CI
-workflow explicitly selects the system OpenSSL installation. Follow
+OpenSSL headers/libraries must be available before PQ CMake discovery. The CI
+workflow selects system OpenSSL for the AArch64 VM checks and bundled OpenSSL
+with QUIC for the x86_64 complete-node checks. Follow
 [wallet-falcon.yml](../.github/workflows/wallet-falcon.yml) for the full sequence:
 fixed KATs, raw and compiled opcode parity, real two-hop transaction parity,
 backup/RNG/migration tests, funding boundaries, compiled mutations, injected
@@ -149,6 +150,9 @@ module; there is no refund promise. Frozen/deleted account snapshots are refused
 by the client, rather than interpreted as permission for classical recovery.
 
 ## Acceptance evidence and remaining work
+
+For this delivery, P3 is scoped to MacBook host validation. iOS/Android product
+integration and genuine-device release qualification are deferred.
 
 | Design tests | Delivered executable coverage | Remaining qualification |
 | --- | --- | --- |
