@@ -57,10 +57,17 @@ jobs:
           sha256sum -c SHA256SUMS
       - name: Build both VMs and offline signer
         run: |
+          if [ '${{ matrix.arch }}' = x86_64 ]; then
+            # The complete node links QUIC and requires the bundled OpenSSL.
+            falcon_crypto_args=(-DUSE_QUIC=ON)
+          else
+            falcon_crypto_args=(-DUSE_QUIC=OFF
+              -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so"
+              -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so"
+              -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)")
+          fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOSLIBJSON_STATIC=OFF \
-            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
-            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
-            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)" -DUSE_QUIC=OFF
+            "${falcon_crypto_args[@]}"
           cmake --build build --target func fift tol emulator test-pq-falcon512-parity -j2
           cmake -S tools/falcon -B build-falcon -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build-falcon -j2
@@ -68,7 +75,7 @@ jobs:
           cmake --build build-old-signer -j2
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example falcon-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --example pq-tx-parity
-          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_assembler pq_falcon512
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_assembler pq_
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --lib executor::
       - name: Frozen profile and both compiled bindings
         run: |
@@ -156,7 +163,7 @@ jobs:
               for name in ['parity.json', 'backend-fault.json', 'e2e.json', 'two-hop-parity.json', 'transactions/tx-parity.json', 'boundaries/boundaries.json']:
                   assert json.loads((root/name).read_text())['success'] is True
               mutations=json.loads((root/'mutations.json').read_text())
-              assert len(mutations)==8 and all(m['compiled'] and m['killed'] for m in mutations)
+              assert len(mutations)==12 and all(m['compiled'] and m['killed'] for m in mutations)
               preflight=json.loads((root/'provider-mutations.json').read_text())
               assert len(preflight)==6 and all(m['compiled'] and m['killed'] for m in preflight)
           live=json.loads(Path('results/falcon-x86_64/live/live-falcon.json').read_text())

@@ -115,11 +115,11 @@ def record(label, phase, result, shard):
 
 
 class Module:
-    def __init__(self, language, workchain=-1, key=0, version=19, profile=1):
+    def __init__(self, language, workchain=-1, key=0, version=19, profile=1, network=GLOBAL_ID):
         self.language, self.workchain, self.key = language, workchain, key
         self.version = version
         self.code = MODULE_CODES[language]
-        self.data = module_data(SIGNER.public_key(key), GLOBAL_ID, profile)
+        self.data = module_data(SIGNER.public_key(key), network, profile)
         self.address = (workchain, int.from_bytes(state_init(self.code, self.data).hash, "big"))
         self.shard = active_account(self.address, self.code, self.data, BALANCE)
         self.e = Emulator(version)
@@ -379,6 +379,18 @@ class FalconAuthTests(unittest.TestCase):
                 ("payload", a.request(payload=changed_payload), 1808),
                 ("network", a.request(global_id=GLOBAL_ID + 1), 1801),
             ]
+            # These proofs are cryptographically valid for the wrong network.
+            # Removing a network guard must reach forwarding, rather than merely
+            # changing which signature-format check rejects the request.
+            wrong_request = a.request(global_id=GLOBAL_ID + 1)
+            m.call(m.signed(a, wrong_request), 1801, label=self.label(p, "signed-wrong-network"))
+            wrong_module = Module(m.language, m.workchain, network=GLOBAL_ID + 1)
+            self.addCleanup(wrong_module.close)
+            wrong_module.call(
+                wrong_module.signed(a, wrong_request),
+                1801,
+                label=self.label(p, "wrong-chain-module"),
+            )
             for name, changed, error in cases:
                 m.call(submission(a.envelope(changed), sig), error, label=self.label(p, name))
             p.execute(m.signed(a), label=self.label(p, "positive-control"))

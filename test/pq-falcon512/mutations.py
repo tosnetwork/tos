@@ -125,6 +125,30 @@ for name, file, old, new in [
         "    assert (ds.loadUint(16) == 1) throw 1811;",
         "    ds.loadUint(16);",
     ),
+    (
+        "request-network-func",
+        "crypto/smartcont/falcon512-auth-module.fc",
+        "  throw_unless(auth::wrong_network, cs~load_int(32) == network);",
+        "  cs~load_int(32);",
+    ),
+    (
+        "request-network-tol",
+        "crypto/smartcont/falcon512-auth-module.tol",
+        "    assert (cs.loadInt(32) == network) throw 1801;",
+        "    cs.loadInt(32);",
+    ),
+    (
+        "chain-network-func",
+        "crypto/smartcont/falcon512-auth-module.fc",
+        "  throw_unless(auth::wrong_network, network == auth_global_id());",
+        "  ;; mutation: skip actual-chain binding",
+    ),
+    (
+        "chain-network-tol",
+        "crypto/smartcont/falcon512-auth-module.tol",
+        "    assert (network == authGlobalId()) throw 1801;",
+        "    // mutation: skip actual-chain binding",
+    ),
 ]:
     path = R / file
     original = path.read_text()
@@ -145,7 +169,9 @@ for name, file, old, new in [
         "--module",
         language,
         "--case",
-        "test_root_domain_and_profile_are_bound",
+        "test_every_request_field_and_payload_are_authenticated"
+        if "network" in name
+        else "test_root_domain_and_profile_are_bound",
     ]
     try:
         path.write_text(original.replace(old, new))

@@ -484,12 +484,22 @@ mod pq_mldsa44_tests {
         let mut slice = compile_code("PQCHECKSIG_MLDSA44").expect("assembles");
         let text = disasm(&mut slice).expect("disassembles");
         assert!(text.contains("PQCHECKSIG_MLDSA44"));
-        let mut other = chain_block::SliceData::new(vec![0xF9, 0x31, 0x01, 0x80]);
-        let reported = disasm(&mut other).unwrap_or_default();
+        let mut other = compile_code("PQCHECKSIG_FALCON512_PADDED").expect("assembles");
+        let reported = disasm(&mut other).expect("disassembles the adjacent Falcon profile");
+        assert_eq!(reported.trim(), "PQCHECKSIG_FALCON512_PADDED");
         assert!(
             !reported.contains("PQCHECKSIG_MLDSA44"),
             "F93101 decoded as the verifier: {reported}"
         );
+        // An unallocated neighbour remains an opaque blob. Disassembly operates
+        // on a cell-backed slice, including when its source is raw bytecode.
+        let raw = chain_block::SliceData::new(vec![0xF9, 0x31, 0x02, 0x80])
+            .into_cell()
+            .expect("bytecode cell");
+        let mut unknown = chain_block::SliceData::load_cell(raw).expect("load bytecode cell");
+        let unallocated = disasm(&mut unknown).expect("preserves unknown bytecode");
+        assert!(!unallocated.contains("PQCHECKSIG_MLDSA44"));
+        assert!(!unallocated.contains("PQCHECKSIG_FALCON512_PADDED"));
     }
 }
 
