@@ -12,10 +12,10 @@
 ;; best effort, not atomic. +32 is forbidden: redeployment would erase replay history.
 ;;
 ;; Extra currencies have two independent limits: live ConfigParam 43 encoded entries
-;; per message, and at most 8 encoded entries across the whole batch. Both include
-;; zeros; shared dictionaries count on every use. The executor counts BEFORE filtering
-;; zero values. The batch cap bounds compute, not chain asset supply. Split larger
-;; batches. VarUInteger 32 leaves must be minimally encoded. See the security audit.
+;; per message, and at most 8 encoded entries across the whole batch. Shared dictionaries
+;; count on every use. Amounts must be positive and minimally encoded: the executor's
+;; CurrencyCollection validator uses VarUIntegerPos_32 before its zero-filter helper.
+;; Omit zero entries. The batch cap bounds compute, not asset supply; split larger batches.
 ;;
 ;; Storage and signing layout are unchanged. Code changes require new deployment BoCs
 ;; and addresses. Storage rent and action-phase size/balance limits still apply.
@@ -121,8 +121,9 @@ int message_extra_currency_limit() impure inline {
 ;; Non-null Hashmap 32 (VarUInteger 32). Count every leaf toward BOTH limits.
 ;; CurrencyCollection::remove_zero_extra_currencies checks count before the amount.
 ;; At most one lookahead follows the last permitted leaf; key width bounds traversal
-;; depth. Canonical zero is len=0; a non-empty amount must start with a non-zero byte,
-;; matching VarUInteger::validate_skip in crypto/block/block-parse.cpp.
+;; depth. Every amount must have non-zero length and a non-zero leading byte, matching
+;; VarUIntegerPos::validate_skip and ExtraCurrencyCollection::validate. A later
+;; zero-filter helper does not make zero-valued entries admissible at this earlier gate.
 int require_valid_extra_currencies(cell extra, int remaining) impure inline {
   throw_unless(error::invalid_message, remaining > 0);
   int limit = message_extra_currency_limit();
@@ -138,6 +139,7 @@ int require_valid_extra_currencies(cell extra, int remaining) impure inline {
       value~skip_bits(bytes * 8);
     }
     value.end_parse();
+    throw_unless(error::invalid_message, bytes > 0);
     (id, value, found) = extra.udict_get_next?(32, id);
   }
   return visited;

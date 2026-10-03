@@ -213,14 +213,27 @@ class MessagePolicyTest(unittest.TestCase):
             d = w.submit(wallet.request([(1, payment(extra=ok))], 235))
             self.assertPayments(d, [10**9], extras=[{1: 1, 2: 2}])
             self.assertEqual(account_extra(w.shard), {1: 9, 2: 18, 3: 30})
-            # The executor counts encoded entries BEFORE it filters zeros.
+            # Zero amounts fail the native positive-integer validation before filtering.
             zeros = extra_currency_dict({1: 0, 2: 0, 3: 0, 4: 0})
             req = wallet.request([(1, payment(extra=zeros))], 238)
             self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", 238)
             zeros = extra_currency_dict({1: 0, 2: 0})
-            d = w.submit(wallet.request([(1, payment(extra=zeros))], 238))
-            self.assertPayments(d, [10**9])
+            req = wallet.request([(1, payment(extra=zeros))], 238)
+            self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", 238)
+            self.assertPayments(w.submit(wallet.request([(1, payment())], 238)), [10**9])
             self.assertEqual(account_extra(w.shard), {1: 9, 2: 18, 3: 30})
+
+    def test_zero_extra_amounts_refused(self):
+        for version in VERSIONS:
+            with configured_limit(2, EXTRA_BUDGET):
+                w = self.new_wallet(version)
+            for i, amounts in enumerate(({1: 0}, {1: 1, 2: 0}, {1: 0, 2: 1})):
+                with self.subTest(version=version, amounts=amounts):
+                    qid = 310 + i
+                    req = wallet.request([(1, payment(extra=extra_currency_dict(amounts)))], qid)
+                    self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", qid)
+                    self.assertNotIn(qid, wallet.processed_ids(w.shard))
+                    self.assertPayments(w.submit(wallet.request([(1, payment())], qid)), [10**9])
 
     def test_nonminimal_extra_amounts_refused(self):
         for version in VERSIONS:
@@ -236,33 +249,38 @@ class MessagePolicyTest(unittest.TestCase):
                 req = wallet.request([(1, payment(extra=pqtest.make_dict({1: leaf}, 32)))], 265)
                 self.assertRefusedBeforeVerification(w, w.submit(req), 9, 265)
 
-    def test_zero_entries_are_bounded(self):
+    def test_extra_entries_are_bounded(self):
         for version in VERSIONS:
             gas = []
             for n in (EXTRA_BUDGET + 1, 128, 1024, 4096):
                 # Exercise the independent wallet work bound, not the chain count of 2.
                 with configured_limit(2, 0xffffffff):
                     w = self.new_wallet(version)
-                zeros = extra_currency_dict({i: 0 for i in range(n)})
-                req = wallet.request([(1, payment(extra=zeros))], 270)
+                # Valid positive amounts are essential: zeros would trip a different guard
+                # on the first leaf and falsely appear to prove the traversal bound.
+                entries = extra_currency_dict({i: 1 for i in range(n)})
+                req = wallet.request([(1, payment(extra=entries))], 270)
                 d = w.submit(req)
                 self.assertRefusedBeforeVerification(w, d, "invalid_message", 270)
                 gas.append(d["gas"])
             # Some extra dictionary depth is permitted, not a walk proportional to n.
             self.assertLess(max(gas) - min(gas), 15_000, gas)
-            REPORT[f"bounded_zero_scan_v{version}"] = gas
+            REPORT[f"bounded_entry_scan_v{version}"] = gas
 
     def test_extra_budget_is_shared_across_the_batch(self):
         for version in VERSIONS:
             with configured_limit(2, 4):
                 w = self.new_wallet(version)
-            extra = extra_currency_dict({i: 0 for i in range(4)})
+            self.credit_assets(w, {i: 2 for i in range(4)})
+            sent = {i: 1 for i in range(4)}
+            extra = extra_currency_dict(sent)
             shared = payment(extra=extra)
             req = wallet.request([(1, shared)] * 3, 280)
             self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", 280)
             # The same cell referenced twice counts twice; 4+4 is exactly the budget.
             req = wallet.request([(1, shared)] * 2, 280)
-            self.assertPayments(w.submit(req), [10**9] * 2)
+            self.assertPayments(w.submit(req), [10**9] * 2, extras=[sent, sent])
+            self.assertEqual(account_extra(w.shard), {})
             self.assertIn(280, wallet.processed_ids(w.shard))
 
     def test_live_config_limits_and_defaults(self):
@@ -281,12 +299,11 @@ class MessagePolicyTest(unittest.TestCase):
                     d = w.submit(wallet.request([(1, payment(extra=allowed))], 290))
                     self.assertPayments(d, [10**9], extras=[amounts])
                     self.assertEqual(account_extra(w.shard), {})
-                    # The encoded-entry cap also applies to zero-valued currencies.
-                    z = extra_currency_dict({i: 0 for i in range(limit + 1)})
+                    # Even one zero-valued entry is invalid, regardless of the count cap.
+                    z = extra_currency_dict({0: 0})
                     req = wallet.request([(1, payment(extra=z))], 291)
                     self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", 291)
-                    z = extra_currency_dict({i: 0 for i in range(limit)})
-                    self.assertPayments(w.submit(wallet.request([(1, payment(extra=z))], 291)), [10**9])
+                    self.assertPayments(w.submit(wallet.request([(1, payment())], 291)), [10**9])
 
     def test_active_flags_are_still_signed(self):
         for version in VERSIONS:
@@ -345,7 +362,7 @@ class MessagePolicyTest(unittest.TestCase):
                             for i in range(EXTRA_BUDGET):
                                 maps[i] = {(1 << 31) + i: large}
                         else:
-                            maps[-1] = {i: large if i < 2 else 0 for i in range(EXTRA_BUDGET)}
+                            maps[-1] = {i: large for i in range(EXTRA_BUDGET)}
                         funds = {k: v for m in maps for k, v in m.items() if v}
                         self.credit_assets(w, funds)
                         sends = [(1, payment(3, i, 1, extra_currency_dict(m))) for i, m in enumerate(maps)]
@@ -384,10 +401,11 @@ def main():
         ("extra_flags", "  throw_unless(error::invalid_message, (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);\n", "", "test_reserved_flags_refused_before_verification"),
         ("fee_count", "  throw_unless(error::invalid_action, (action_count > 0) & (action_count <= max_actions));\n", "", "test_fee_getter_rejects_impossible_counts"),
         ("extra_collection", "    entries = require_valid_extra_currencies(extra, extra_left);\n", "", "test_extra_currency_collection_is_preflighted"),
-        ("zero_scan_bound", "    throw_unless(error::invalid_message, visited < remaining);\n", "", "test_zero_entries_are_bounded"),
+        ("entry_scan_bound", "    throw_unless(error::invalid_message, visited < remaining);\n", "", "test_extra_entries_are_bounded"),
         ("batch_work_bound", "    extra_left -= require_valid_message(message, extra_left);\n", "    require_valid_message(message, extra_left);\n", "test_extra_budget_is_shared_across_the_batch"),
         ("minimal_amount", "      throw_unless(error::invalid_message, value.preload_uint(8) != 0);\n", "", "test_nonminimal_extra_amounts_refused"),
         ("live_limit", "  int limit = message_extra_currency_limit();\n", "  int limit = 2;\n", "test_live_config_limits_and_defaults"),
+        ("positive_amount", "    throw_unless(error::invalid_message, bytes > 0);\n", "", "test_zero_extra_amounts_refused"),
     )
     killed = []
     try:
