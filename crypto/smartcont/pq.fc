@@ -4,3 +4,7 @@ int pq_check_mldsa44(cell message, cell context, cell signature, cell public_key
   asm "PQCHECKSIG_MLDSA44";
 
 int pq_check_falcon512_padded(cell message, cell signature, cell public_key) asm "PQCHECKSIG_FALCON512_PADDED";
+
+;; PROTOTYPE generic verifier: suite 1 ML-DSA-44, 2 Falcon-512 padded, 4 rescue-fee HSS/LMS.
+int pq_check_suite(cell message, cell context, cell signature, cell public_key, int suite)
+  asm "PQCHECKSIG_SUITE";
