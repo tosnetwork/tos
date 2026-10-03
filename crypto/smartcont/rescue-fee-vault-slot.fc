@@ -1,0 +1,91 @@
+;; EXPERIMENT: rescue fee vault whose fee-key leaf is fixed by chain time, so a signer restored
+;; from the mnemonic alone never needs the lost device's leaf state. Leaf q may be used only in
+;; time slot q (or the slot right after it, for delivery delay). After a restore the signer waits
+;; for the next slot boundary before signing, so no honest signer signs twice with one leaf, and a
+;; signature disclosed but never mined expires with its slot instead of lingering.
+;;
+;; Data: global_id:int32 epoch0:uint32 slot_seconds:uint32 next_leaf:uint32
+;;       max_value:Coins target:MsgAddressInt public_key:^Cell gas_at_accept:uint32
+;;   target is pinned: the intent cannot name a destination.
+;; External body: intent:^Cell digest:^Cell context:^Cell signature:^Cell
+;;   intent = global_id:int32 vault:MsgAddressInt leaf:uint32 valid_until:uint32
+;;            value:Coins payload:^Cell
+;;   payload must start with a rescue-submission opcode.
+#include "pq.fc";
+
+const int fee::wrong_network = 2001;
+const int fee::wrong_vault = 2002;
+const int fee::expired = 2003;
+const int fee::stale_leaf = 2004;
+const int fee::leaf_mismatch = 2005;
+const int fee::digest_mismatch = 2006;
+const int fee::bad_signature = 2007;
+const int fee::insufficient_balance = 2008;
+const int fee::wrong_slot = 2009;
+const int fee::value_too_high = 2010;
+const int fee::not_rescue = 2011;
+const int fee::suite_lms = 4;
+const int fee::slot_window = 1;          ;; current slot or the previous one
+const int fee::rescue_submit = 0x534c4831; ;; "SLH1": the dual module's rescue submit
+const int fee::reserve = 50000000;       ;; kept for storage and action fees (prototype constant)
+
+int gas_consumed() asm "GASCONSUMED";
+
+() recv_internal(slice body) impure {
+  ;; Deposits only.
+}
+
+() recv_external(slice body) impure {
+  cell intent = body~load_ref();
+  cell digest = body~load_ref();
+  cell context = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+
+  slice ds = get_data().begin_parse();
+  int network = ds~load_int(32);
+  int epoch0 = ds~load_uint(32);
+  int slot_seconds = ds~load_uint(32);
+  int next_leaf = ds~load_uint(32);
+  int max_value = ds~load_coins();
+  slice target = ds~load_msg_addr();
+  cell public_key = ds~load_ref();
+
+  slice is = intent.begin_parse();
+  throw_unless(fee::wrong_network, is~load_int(32) == network);
+  throw_unless(fee::wrong_vault, equal_slice_bits(is~load_msg_addr(), my_address()));
+  int leaf = is~load_uint(32);
+  int valid_until = is~load_uint(32);
+  int value = is~load_coins();
+  cell payload = is~load_ref();
+  is.end_parse();
+
+  int t = now();
+  throw_unless(fee::expired, (valid_until > t) & (valid_until <= t + 2 * slot_seconds));
+  throw_unless(fee::stale_leaf, leaf >= next_leaf);
+  int slot = (t - epoch0) / slot_seconds;
+  throw_unless(fee::wrong_slot, (leaf <= slot) & (leaf + fee::slot_window >= slot));
+  throw_unless(fee::value_too_high, value <= max_value);
+  slice ps = payload.begin_parse();
+  throw_unless(fee::not_rescue, ps.preload_uint(32) == fee::rescue_submit);
+
+  slice ss = signature.begin_parse();
+  throw_unless(fee::leaf_mismatch, ss~load_uint(32) == 0);
+  throw_unless(fee::leaf_mismatch, ss~load_uint(32) == leaf);
+
+  slice dg = digest.begin_parse();
+  throw_unless(fee::digest_mismatch, (dg.slice_bits() == 256) & (dg.slice_refs() == 0));
+  throw_unless(fee::digest_mismatch, dg.preload_uint(256) == cell_hash(intent));
+
+  throw_unless(fee::bad_signature, pq_check_suite(digest, context, signature, public_key, fee::suite_lms));
+  throw_unless(fee::insufficient_balance, value + fee::reserve <= get_balance().pair_first());
+
+  accept_message();
+  int gas = gas_consumed();
+  set_data(begin_cell().store_int(network, 32).store_uint(epoch0, 32).store_uint(slot_seconds, 32)
+    .store_uint(leaf + 1, 32).store_coins(max_value).store_slice(target)
+    .store_ref(public_key).store_uint(gas, 32).end_cell());
+  commit();
+  send_raw_message(begin_cell().store_uint(0x18, 6).store_slice(target).store_coins(value)
+    .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1).store_ref(payload).end_cell(), 1 + 2);
+}

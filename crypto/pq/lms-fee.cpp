@@ -31,13 +31,17 @@ std::optional<OtsParams> ots_params(std::uint32_t type) {
   }
 }
 
-// The prototype admits LMS heights 5 and 10 only (RFC 8554 Table 2 types 5 and 6).
+// LMS heights 5, 10, 15 and 20 (RFC 8554 Table 2 types 5-8); H25 is not admitted.
 std::optional<unsigned> lms_height(std::uint32_t type) {
   switch (type) {
     case 5:
       return 5u;
     case 6:
       return 10u;
+    case 7:
+      return 15u;
+    case 8:
+      return 20u;
     default:
       return std::nullopt;
   }
