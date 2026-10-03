@@ -60,6 +60,10 @@ jobs:
         run: |
           python3 test/pq-contracts/test_pq_highload.py --build build \
             --signer build-pq-signer/test-pq-contracts-sign
+      - name: Wallet message policy and guard mutations at v16 and v18
+        run: |
+          python3 test/pq-contracts/test_pq_highload_policy.py --build build \
+            --signer build-pq-signer/test-pq-contracts-sign
       - name: Remove every guard in turn
         run: |
           python3 test/pq-contracts/mutations.py --build build \
