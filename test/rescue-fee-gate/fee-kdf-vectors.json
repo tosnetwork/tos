@@ -1,0 +1,41 @@
+{
+  "scope": "Public test vectors for a proposed fee-key derivation; never use for production keys.",
+  "kdf": "HKDF-SHA256, salt TOS-WALLET-DUALROOT-KDF-v1, output SEED[32] || I[16]",
+  "label": "TOS-FEE-LMS-SHA256-M32-v1",
+  "info_encoding": "0x01 || uint8(len(label)) || ASCII(label) || network_tag[32] || int32be(global_id) || uint32be(account_index) || uint32be(key_generation) || fee_tree_id[32]",
+  "keygen": "RFC 8554 Appendix A; LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4; one-level HSS public key",
+  "inputs": {
+    "master_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "network_tag_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "global_id": -239
+  },
+  "vectors": [
+    {
+      "account_index": 0,
+      "key_generation": 0,
+      "fee_tree_id_hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "info_hex": "0119544f532d4645452d4c4d532d5348413235362d4d33322d7631202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fffffff110000000000000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "SEED_hex": "5169cfdc6dac3befe15b3204d98c5bc6b26458ff10d342890ea5cbfd4befcedf",
+      "I_hex": "29816078a9bdffedf4036e0558c3c687",
+      "hss_public_key_hex": "00000001000000060000000329816078a9bdffedf4036e0558c3c687974ab2c9bfd92c918b078ed2ce7e6a6b2ebd40f7781d9a6b1ec07e82ea6af462"
+    },
+    {
+      "account_index": 0,
+      "key_generation": 0,
+      "fee_tree_id_hex": "a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6",
+      "info_hex": "0119544f532d4645452d4c4d532d5348413235362d4d33322d7631202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fffffff110000000000000000a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6",
+      "SEED_hex": "ac999fa55ec443415e17f5e016fb6b6e4f0b0ea25b8ab89768e379f1ab09c60d",
+      "I_hex": "70cecdb284835eb86839568c9de2f026",
+      "hss_public_key_hex": "00000001000000060000000370cecdb284835eb86839568c9de2f0265aaac11dc201c6109c38fa23520121b00750287e62aff77d487c75b3e59bec95"
+    },
+    {
+      "account_index": 1,
+      "key_generation": 1,
+      "fee_tree_id_hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "info_hex": "0119544f532d4645452d4c4d532d5348413235362d4d33322d7631202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fffffff110000000100000001a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "SEED_hex": "6606477fc18461092b93eed4bfbc67e149209062d8d479aa760a7a84e57d3bac",
+      "I_hex": "8f78c93be70cb56b446a82b43665de20",
+      "hss_public_key_hex": "0000000100000006000000038f78c93be70cb56b446a82b43665de20e74c74fc988f58b6f21d3ef23a1d8874a648204eb3758839dafba0812ce21b31"
+    }
+  ]
+}
