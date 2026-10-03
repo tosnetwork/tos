@@ -163,3 +163,76 @@ does not turn an in-progress run into a passing result.
 - The patch changes compiled wallet code and therefore deployment StateInit/address.
   Regenerate deployment artifacts from this build; do not reuse an old code/address
   pair. There is no state-layout migration and no change to the ML-DSA signature suite.
+
+
+## Round 2 — ExtraCurrencyCollection preflight hardening
+
+Second-round review started from the post-round-1 HEAD and focused on differences
+between the wallet's compute-time parser and the executor's action-phase acceptance
+rules. The round-1 CI for HEAD `eb64996e857f` completed successfully before these new
+changes were made.
+
+### F3 — Medium: invalid or over-limit ExtraCurrencyCollection can be skipped after replay consumption
+
+The wallet previously parsed the native value and then used `skip_dict()` for the
+`ExtraCurrencyCollection`. That checks only the HashmapE presence/root shape enough to
+advance the slice; it does not validate each `HashmapE 32 (VarUInteger 32)` value and
+does not enforce the executor's configured `max_msg_extra_currencies` limit.
+
+The executor validates and unpacks `CurrencyCollection` in action phase. With
+`extra_currency_v2`, it removes zero-valued extra currencies and then rejects a
+message whose remaining non-zero currency count exceeds ConfigParam 43
+`max_msg_extra_currencies`. The canonical configuration used by the PQ test executor
+sets this limit to **2**. These errors are subject to `check_skip_invalid`; because the
+PQ wallet forces send mode +2, the affected business message can be skipped while the
+transaction succeeds and the query id remains consumed.
+
+The repository's existing classic-highload action-phase fixture independently documents
+the same class of behavior for malformed extra-currency dictionaries: IGNORE_ERRORS can
+turn an action-phase message defect into a skipped send with replay state retained.
+
+Impact is payment reliability / replay semantics, not an authentication bypass: the
+owner must have signed the malformed or over-limit message. A relayer cannot alter the
+signed action list without invalidating ML-DSA.
+
+### Patch
+
+`pq-highload-wallet-code.fc` now preflights `ExtraCurrencyCollection` before signature
+verification:
+
+- walk the dictionary as unsigned 32-bit currency ids;
+- require each leaf to be exactly a canonical `VarUInteger 32` value;
+- count only non-zero amounts, matching executor filtering semantics;
+- reject when more than two non-zero currencies are present.
+
+This runs before verification, replay recording, state persistence, refund queuing and
+business sends. The current constant mirrors the active canonical ConfigParam 43 value,
+and the policy test is intended to fail if configuration changes without an explicit
+wallet-policy update.
+
+Commits in this round:
+
+- `667c9c437507` — add bounded extra-currency preflight;
+- `a5c13c1f024b` — add real-executor regression and mutation coverage;
+- `ce6798dbdb92` — mirror zero-value filtering semantics;
+- `366475ce776d` — add zero-valued extra-currency regression.
+
+### New regression coverage
+
+The policy suite now exercises versions 16 and 18 and checks:
+
+1. three non-zero extra currencies are refused before verification and leave the query id unused;
+2. malformed `VarUInteger 32` leaf encoding is refused and leaves the id unused;
+3. exactly two non-zero extra currencies remain usable;
+4. more than two zero-valued entries remain usable, matching executor filtering;
+5. removing the new preflight call must cause an assertion failure rather than a build/test error.
+
+### Status
+
+The previous round's latest-head CI (`eb64996e857f`) was observed fully green, including
+the dedicated PQ contracts workflow and all related PQ/authentication checks.
+
+The round-2 HEAD is `366475ce776dc78d9f659fd44c6edea33e1fd989`. At the time this
+section was written, GitHub had not yet published workflow-run records for this newest
+commit. Therefore round 2 remains gated on a successful latest-head CI run; the report
+does not claim the new patch has passed the real executor until that run completes.
