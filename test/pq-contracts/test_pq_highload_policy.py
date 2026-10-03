@@ -144,6 +144,13 @@ class MessagePolicyTest(unittest.TestCase):
                 self.assertExit(d, 0)
                 self.assertIn(qid, wallet.processed_ids(w.shard))
 
+                # Executor removes zero-valued currencies before applying the count limit.
+                zeros = extra_currency_dict({1: 0, 2: 0, 3: 0, 4: 0})
+                qid = 238
+                d = w.submit(wallet.request([(1, payment(0, extra=zeros))], qid))
+                self.assertExit(d, 0)
+                self.assertIn(qid, wallet.processed_ids(w.shard))
+
     def test_active_flags_are_still_signed(self):
         for version in VERSIONS:
             with self.subTest(version=version):
