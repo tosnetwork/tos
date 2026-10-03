@@ -136,10 +136,12 @@ int required_value(int action_count) inline {
     ;; VarUInteger 32: 5-bit byte length, then exactly len*8 value bits.
     int bytes = value~load_uint(5);
     throw_if(error::invalid_message, bytes >= 32);
-    value~skip_bits(bytes * 8);
+    int amount = bytes ? value~load_uint(bytes * 8) : 0;
     value.end_parse();
-    count += 1;
-    throw_if(error::invalid_message, count > MESSAGE_MAX_EXTRA_CURRENCIES);
+    if (amount != 0) {
+      count += 1;
+      throw_if(error::invalid_message, count > MESSAGE_MAX_EXTRA_CURRENCIES);
+    }
     (id, value, found) = extra.udict_get_next?(32, id);
   }
 }
