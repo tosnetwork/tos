@@ -30,16 +30,30 @@ COUNT_GUARD = (
     "  throw_unless(error::invalid_action, "
     "(action_count > 0) & (action_count <= max_actions));\n"
 )
+EXTRA_COLLECTION_GUARD = "  require_valid_extra_currencies(extra);\n"
 
 
-def payment(extra_flags, tag=1, value=10**9):
+def extra_currency_dict(entries):
+    """HashmapE 32 -> VarUInteger 32 values."""
+    return pqtest.make_dict(
+        {
+            key: Cell().uint((amount.bit_length() + 7) // 8, 5).uint(
+                amount, ((amount.bit_length() + 7) // 8) * 8
+            )
+            for key, amount in entries.items()
+        },
+        32,
+    )
+
+
+def payment(extra_flags, tag=1, value=10**9, extra=None):
     """The VarUInteger 16 before fwd_fee is extra_flags, not the obsolete ihr_fee."""
     return (
         Cell()
         .uint(0x10, 6)  # internal, ihr_disabled, non-bounceable, src addr_none
         .addr(wallet.PAYEE)
         .coins(value)
-        .uint(0, 1)  # no extra currencies
+        .maybe(extra)
         .coins(extra_flags)
         .coins(0)  # fwd_fee
         .uint(0, 64)
@@ -105,6 +119,31 @@ class MessagePolicyTest(unittest.TestCase):
                 self.assertEqual([o["body"].slice().uint(32) for o in d["out"][1:]], [1, 2, 3])
                 self.assertIn(230, wallet.processed_ids(w.shard))
 
+    def test_extra_currency_collection_is_preflighted(self):
+        for version in VERSIONS:
+            with self.subTest(version=version):
+                w = wallet.Wallet(version=version)
+                # Three non-zero currencies exceed the active ConfigParam 43 limit of 2.
+                too_many = extra_currency_dict({1: 1, 2: 1, 3: 1})
+                qid = 235
+                req = wallet.request([(1, payment(0, extra=too_many))], qid)
+                self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", qid)
+                self.assertNotIn(qid, wallet.processed_ids(w.shard))
+
+                # Malformed VarUInteger 32 leaf: declares one byte but carries none.
+                malformed = pqtest.make_dict({1: Cell().uint(1, 5)}, 32)
+                qid = 236
+                req = wallet.request([(1, payment(0, extra=malformed))], qid)
+                self.assertRefusedBeforeVerification(w, w.submit(req), 9, qid)
+                self.assertNotIn(qid, wallet.processed_ids(w.shard))
+
+                # The active maximum remains usable.
+                ok = extra_currency_dict({1: 1, 2: 2})
+                qid = 237
+                d = w.submit(wallet.request([(1, payment(0, extra=ok))], qid))
+                self.assertExit(d, 0)
+                self.assertIn(qid, wallet.processed_ids(w.shard))
+
     def test_active_flags_are_still_signed(self):
         for version in VERSIONS:
             with self.subTest(version=version):
@@ -164,6 +203,7 @@ def main():
     mutations = (
         ("extra_flags", FLAGS_GUARD, "test_reserved_flags_refused_before_verification"),
         ("fee_count", COUNT_GUARD, "test_fee_getter_rejects_impossible_counts"),
+        ("extra_collection", EXTRA_COLLECTION_GUARD, "test_extra_currency_collection_is_preflighted"),
     )
     try:
         for name, guard, method in mutations:
