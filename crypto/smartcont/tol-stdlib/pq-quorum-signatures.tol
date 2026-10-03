@@ -1,0 +1,338 @@
+// M-of-N ML-DSA-44 authorization against a fixed verifier set: the
+// post-quantum counterpart of `@stdlib/quorum-signatures`, whose Ed25519
+// signatures a quantum adversary could forge from the public keys that set
+// keeps on chain. Tol counterpart of pq-quorum-signatures.fc: same rules, same
+// throw codes, same wire shapes.
+//
+// Requires TVM version 16, and PQ.fif loaded when assembling: verification is
+// PQCHECKSIG_MLDSA44. On a chain configured below 16 every verification throws
+// invalid opcode, so nothing here can authorize anything there.
+//
+// A verifier is identified by its key id: SHA-256 over
+// "TOS-PQ-CONSENSUS-KEY-v1", the algorithm as two little-endian bytes and the
+// key bytes -- the identity a post-quantum key has in every role (pq-bytes.fc's
+// pq::key_id). The set maps each id to the key it names.
+//
+// Trusted configuration. requireQuorum trusts its config: the verifier
+// dictionary and the count must be ones pqQuorumConfigNew, withVerifiers,
+// withAddedVerifier or withRemovedVerifier produced, persisted unchanged by the
+// calling contract. Those derive every key's id and refuse an entry filed under
+// any other id. The native verifier cannot do that check, since it sees key
+// bytes and never ids: a set that bypassed them, with one key filed under two
+// ids, satisfies a 2-of-2 with that one key. requireQuorum repeats only the
+// cheap range checks on count and quorum.
+//
+// Costs, measured on the C++ executor (test/pq-contracts): a request about
+// 61,500 gas per signature (12-of-64 about 746,000); pqQuorumConfigNew and
+// withVerifiers about 13,300 gas per key (64 keys about 850,000). A full
+// replacement of a large set does not fit in the transaction whose quorum
+// approves it; withAddedVerifier and withRemovedVerifier change one key for
+// about one key's cost.
+//
+// A request carries exactly `quorum` signatures, keyed by signer id, so
+// signers are distinct by construction. Exactly, not at least: a submitter
+// must not be able to make the contract verify more signatures than the quorum
+// needs. The checks run cheapest first -- the config's range; the count,
+// stopping at the first entry past the quorum; every entry's membership and
+// signature wrapper; and only then the verifications -- and any failure
+// rejects the whole request. The signature chain itself is checked by the
+// verifier (cell underflow, 9). Who pays for a request that fails late is the
+// calling contract's funding model.
+//
+// Sign the hash pqQuorumSigningHash builds, as ML-DSA-44 over its 32 bytes with
+// the context "TOS-PQ-QUORUM-v1". The verifying contract must also call
+// pqQuorumRequireNotExpired, use its own operation domain, build the hash with
+// its own address as the target, and consume the nonce in the same
+// transaction.
+tol 1.3
+
+import "@stdlib/tvm-dicts"
+
+const PQ_QUORUM_THROW_INVALID_CONFIG = 0x1b01
+const PQ_QUORUM_THROW_DUPLICATE_VERIFIER = 0x1b02
+const PQ_QUORUM_THROW_UNKNOWN_SIGNER = 0x1b03
+const PQ_QUORUM_THROW_MALFORMED_SIGNATURE = 0x1b04
+const PQ_QUORUM_THROW_INVALID_SIGNATURE = 0x1b05
+const PQ_QUORUM_THROW_WRONG_SIGNATURE_COUNT = 0x1b06
+const PQ_QUORUM_THROW_EXPIRED = 0x1b07
+const PQ_QUORUM_THROW_KEY_ID_MISMATCH = 0x1b09
+// pq-bytes.fc's codes for a key whose length or chain is wrong.
+const PQ_QUORUM_THROW_KEY_LENGTH = 62
+const PQ_QUORUM_THROW_MALFORMED_KEY = 63
+
+const PQ_QUORUM_KEY_BITS = 256
+/// Upper bounds on the verifier set and on the signatures one request is
+/// verified against. The quorum bound keeps a full verification, with room
+/// for the calling contract, inside one transaction's gas.
+const PQ_QUORUM_MAX_VERIFIERS = 64
+const PQ_QUORUM_MAX_QUORUM = 12
+
+const PQ_QUORUM_KEY_BYTES = 1312
+const PQ_QUORUM_SIGNATURE_BYTES = 2420
+const PQ_QUORUM_CHUNK_BYTES = 127
+
+struct PqQuorumConfig {
+    /// key id -> ^StoredKey (len:uint32 ^chain)
+    verifiers: dict
+    verifierCount: uint16
+    quorum: uint16
+}
+
+/// The network's global id (ConfigParam 19).
+fun pqQuorumGlobalId(): int
+    asm "GLOBALID"
+
+fun pqQuorumParseMaybeSpecial(c: cell): (slice, bool)
+    asm "XCTOS"
+
+fun pqQuorumSnakeHash(c: cell): int
+    asm "SHA256C"
+
+fun pqQuorumCheckMldsa44(message: cell, context: cell, signature: cell, publicKey: cell): bool
+    asm "PQCHECKSIG_MLDSA44"
+
+/// Parsing that refuses a cell which is not ordinary: a library cell would
+/// resolve to the key it names here, but the node decodes it as a special
+/// cell it refuses.
+fun pqQuorumParseOrdinary(c: cell): slice {
+    val (cs, special) = pqQuorumParseMaybeSpecial(c);
+    if (special) {
+        throw PQ_QUORUM_THROW_MALFORMED_KEY;
+    }
+    return cs;
+}
+
+/// Walks a stored key's chain and requires exactly `expected` bytes in the
+/// canonical shape: byte-aligned cells, at most one continuation each, every
+/// chunk but the last exactly full, and a last chunk neither empty nor
+/// oversized. The walk is bounded by the declared length.
+fun pqQuorumCheckChainBytes(chain: cell, expected: int): void {
+    var remaining = expected;
+    var link = chain;
+    var walking = true;
+    while (walking) {
+        val cs = pqQuorumParseOrdinary(link);
+        val bits = cs.remainingBitsCount();
+        val refs = cs.remainingRefsCount();
+        if ((bits & 7) != 0 || refs > 1) {
+            throw PQ_QUORUM_THROW_MALFORMED_KEY;
+        }
+        val bytes = bits >> 3;
+        if (bytes > remaining) {
+            throw PQ_QUORUM_THROW_MALFORMED_KEY;
+        }
+        if (refs == 1) {
+            if (bytes != PQ_QUORUM_CHUNK_BYTES) {
+                throw PQ_QUORUM_THROW_MALFORMED_KEY;
+            }
+            link = cs.preloadRef();
+        } else {
+            if (bytes <= 0 || bytes > PQ_QUORUM_CHUNK_BYTES) {
+                throw PQ_QUORUM_THROW_MALFORMED_KEY;
+            }
+            walking = false;
+        }
+        remaining -= bytes;
+    }
+    if (remaining != 0) {
+        throw PQ_QUORUM_THROW_MALFORMED_KEY;
+    }
+}
+
+/// The chain of a stored key (`len:uint32 ^chain`), after checking its
+/// declared length and its canonical shape.
+fun pqQuorumStoredKeyChain(stored: cell): cell {
+    var cs = pqQuorumParseOrdinary(stored);
+    val declared = cs.loadUint(32);
+    val chain = cs.loadRef();
+    cs.assertEnd();
+    if (declared != PQ_QUORUM_KEY_BYTES) {
+        throw PQ_QUORUM_THROW_KEY_LENGTH;
+    }
+    pqQuorumCheckChainBytes(chain, declared);
+    return chain;
+}
+
+/// pq::key_id for an ML-DSA-44 stored key.
+fun pqQuorumKeyId(stored: cell): int {
+    val chain = pqQuorumStoredKeyChain(stored);
+    return pqQuorumSnakeHash(beginCell()
+        .storeUint(0x544f532d50512d434f4e53454e5355532d4b45592d7631, 184) // "TOS-PQ-CONSENSUS-KEY-v1"
+        .storeUint(0x0100, 16) // algorithm 1, little-endian
+        .storeRef(chain)
+        .endCell());
+}
+
+/// Hash that verifiers sign: binds the payload to this network, a purpose, a
+/// target contract, a nonce and an expiry. The same layout as
+/// quorumSigningHash; the signing context, not the hash, keeps the two
+/// schemes' signatures apart.
+fun pqQuorumSigningHash(domain: uint32, target: address, nonce: uint64, validUntil: uint32, payload: cell): int {
+    return beginCell()
+        .storeInt(pqQuorumGlobalId(), 32)
+        .storeUint(domain, 32)
+        .storeAddress(target)
+        .storeUint(nonce, 64)
+        .storeUint(validUntil, 32)
+        .storeRef(payload)
+        .endCell()
+        .hash();
+}
+
+/// Rejects a request whose signed expiry has passed.
+fun pqQuorumRequireNotExpired(validUntil: int): void {
+    if (blockchain.now() > validUntil) {
+        throw PQ_QUORUM_THROW_EXPIRED;
+    }
+}
+
+/// The stored key a set entry names: the entry is exactly one reference.
+fun pqQuorumEntryKey(entry: slice): cell {
+    if (entry.remainingBitsCount() != 0 || entry.remainingRefsCount() != 1) {
+        throw PQ_QUORUM_THROW_INVALID_CONFIG;
+    }
+    return entry.preloadRef();
+}
+
+/// Adds a stored key under its own id, refusing a duplicate. A malformed key
+/// throws pq-bytes.fc's codes (62, 63).
+fun pqQuorumAddVerifier(verifiers: dict, storedKey: cell): dict {
+    val id = pqQuorumKeyId(storedKey);
+    var next = verifiers;
+    if (!next.uDictSetBuilderIfNotExists(PQ_QUORUM_KEY_BITS, id, beginCell().storeRef(storedKey))) {
+        throw PQ_QUORUM_THROW_DUPLICATE_VERIFIER;
+    }
+    return next;
+}
+
+fun pqQuorumRequireValidConfig(verifierCount: int, quorum: int): void {
+    if (verifierCount <= 0 || verifierCount > PQ_QUORUM_MAX_VERIFIERS || quorum <= 0 || quorum > verifierCount
+        || quorum > PQ_QUORUM_MAX_QUORUM) {
+        throw PQ_QUORUM_THROW_INVALID_CONFIG;
+    }
+}
+
+/// Builds a config from a verifier dictionary, checking every entry: its
+/// shape, its key, and that it is filed under that key's id. Proportional to
+/// the set, so it belongs where the configuration changes, never in the
+/// per-request path.
+fun pqQuorumConfigNew(verifiers: dict, quorum: int): PqQuorumConfig {
+    var count = 0;
+    var (id, entry, found) = verifiers.uDictGetFirst(PQ_QUORUM_KEY_BITS);
+    while (found) {
+        count += 1;
+        if (count > PQ_QUORUM_MAX_VERIFIERS) {
+            throw PQ_QUORUM_THROW_INVALID_CONFIG;
+        }
+        if (pqQuorumKeyId(pqQuorumEntryKey(entry!)) != id!) {
+            throw PQ_QUORUM_THROW_KEY_ID_MISMATCH;
+        }
+        (id, entry, found) = verifiers.uDictGetNext(PQ_QUORUM_KEY_BITS, id!);
+    }
+    pqQuorumRequireValidConfig(count, quorum);
+    return PqQuorumConfig { verifiers, verifierCount: count, quorum };
+}
+
+/// Replaces the verifier set, keeping the quorum. A set smaller than the
+/// current quorum is rejected: it would leave no way to reach the quorum, and
+/// with it no way to authorize any later change.
+fun PqQuorumConfig.withVerifiers(self, newVerifiers: dict): PqQuorumConfig {
+    return pqQuorumConfigNew(newVerifiers, self.quorum);
+}
+
+/// Adds one key to a config, keeping the quorum: one key's cost.
+fun PqQuorumConfig.withAddedVerifier(self, storedKey: cell): PqQuorumConfig {
+    val next = pqQuorumAddVerifier(self.verifiers, storedKey);
+    pqQuorumRequireValidConfig(self.verifierCount + 1, self.quorum);
+    return PqQuorumConfig { verifiers: next, verifierCount: self.verifierCount + 1, quorum: self.quorum };
+}
+
+/// Removes one key from a config, keeping the quorum, which the smaller set
+/// must still reach.
+fun PqQuorumConfig.withRemovedVerifier(self, keyId: int): PqQuorumConfig {
+    var next = self.verifiers;
+    if (!next.uDictDelete(PQ_QUORUM_KEY_BITS, keyId)) {
+        throw PQ_QUORUM_THROW_UNKNOWN_SIGNER;
+    }
+    pqQuorumRequireValidConfig(self.verifierCount - 1, self.quorum);
+    return PqQuorumConfig { verifiers: next, verifierCount: self.verifierCount - 1, quorum: self.quorum };
+}
+
+/// Replaces the quorum, keeping the verifier set.
+fun PqQuorumConfig.withQuorum(self, quorum: int): PqQuorumConfig {
+    pqQuorumRequireValidConfig(self.verifierCount, quorum);
+    return PqQuorumConfig { verifiers: self.verifiers, verifierCount: self.verifierCount, quorum };
+}
+
+fun PqQuorumConfig.isVerifier(self, keyId: uint256): bool {
+    val (_, found) = self.verifiers.uDictGet(PQ_QUORUM_KEY_BITS, keyId);
+    return found;
+}
+
+/// The signature chain a request entry carries: exactly one reference to a
+/// stored signature (`len:uint32 ^chain`) declaring the ML-DSA-44 length. The
+/// chain itself is left to PQCHECKSIG_MLDSA44, which refuses a non-canonical
+/// chain, a wrong length or a special cell (cell underflow, 9).
+fun pqQuorumEntrySignature(entry: slice): cell {
+    if (entry.remainingBitsCount() != 0 || entry.remainingRefsCount() != 1) {
+        throw PQ_QUORUM_THROW_MALFORMED_SIGNATURE;
+    }
+    val stored = pqQuorumParseOrdinary(entry.preloadRef());
+    if (stored.remainingBitsCount() != 32 || stored.remainingRefsCount() != 1) {
+        throw PQ_QUORUM_THROW_MALFORMED_SIGNATURE;
+    }
+    if (stored.preloadUint(32) != PQ_QUORUM_SIGNATURE_BYTES) {
+        throw PQ_QUORUM_THROW_MALFORMED_SIGNATURE;
+    }
+    return stored.preloadRef();
+}
+
+/// The key chain a trusted config holds for a signer, taken as stored: keys
+/// are checked when they enter a config.
+fun PqQuorumConfig.signerKey(self, keyId: int): cell {
+    val (entry, found) = self.verifiers.uDictGet(PQ_QUORUM_KEY_BITS, keyId);
+    if (!found) {
+        throw PQ_QUORUM_THROW_UNKNOWN_SIGNER;
+    }
+    return pqQuorumEntryKey(entry!).beginParse().preloadRef();
+}
+
+/// Throws unless `signatures` (signer key id -> ^StoredSignature of `hash`)
+/// holds exactly `quorum` signatures, each by a distinct member of the trusted
+/// config's set, each valid.
+fun PqQuorumConfig.requireQuorum(self, hash: int, signatures: dict): void {
+    pqQuorumRequireValidConfig(self.verifierCount, self.quorum);
+
+    // The count, stopping at the first entry past the quorum.
+    var count = 0;
+    var (id, entry, found) = signatures.uDictGetFirst(PQ_QUORUM_KEY_BITS);
+    while (found) {
+        count += 1;
+        if (count > self.quorum) {
+            throw PQ_QUORUM_THROW_WRONG_SIGNATURE_COUNT;
+        }
+        (id, entry, found) = signatures.uDictGetNext(PQ_QUORUM_KEY_BITS, id!);
+    }
+    if (count != self.quorum) {
+        throw PQ_QUORUM_THROW_WRONG_SIGNATURE_COUNT;
+    }
+
+    // Membership and wrapper of every entry, before paying for any verification.
+    (id, entry, found) = signatures.uDictGetFirst(PQ_QUORUM_KEY_BITS);
+    while (found) {
+        self.signerKey(id!);
+        pqQuorumEntrySignature(entry!);
+        (id, entry, found) = signatures.uDictGetNext(PQ_QUORUM_KEY_BITS, id!);
+    }
+
+    // Pure ML-DSA-44 over the 32 bytes of the hash, under this library's context.
+    val message = beginCell().storeUint(hash, 256).endCell();
+    val context = beginCell().storeUint(0x544f532d50512d51554f52554d2d7631, 128).endCell(); // "TOS-PQ-QUORUM-v1"
+    (id, entry, found) = signatures.uDictGetFirst(PQ_QUORUM_KEY_BITS);
+    while (found) {
+        if (!pqQuorumCheckMldsa44(message, context, pqQuorumEntrySignature(entry!), self.signerKey(id!))) {
+            throw PQ_QUORUM_THROW_INVALID_SIGNATURE;
+        }
+        (id, entry, found) = signatures.uDictGetNext(PQ_QUORUM_KEY_BITS, id!);
+    }
+}
