@@ -6,6 +6,14 @@ Archive SHA-256: d9f982bd825b9903b57b686d6d26018dac173a1dff09f224cc39302f9d85a59
 Imported files are byte-for-byte copies; SHA256SUMS records the import boundary.
 License: MIT (see LICENSE and each source header).
 
+The unmodified `test_falcon.c` is included for optional offline conformance
+tests only. Its SHA-256 is
+`a1c5772cc6a6227c37f385313e020bc296243295e24a57f7b35e7b3241c64bdd`.
+It checks the official NIST KAT digests, including Falcon-512
+`a57400cbaee7109358859a56c735a3cf048a9da2`. See
+`test/pq-falcon512/official/PROVENANCE.md` for the separately published response
+file. This test source is never compiled into node or wallet libraries.
+
 The node and Rust VM compile only codec.c, common.c, shake.c, vrfy.c and the
 TOS fixed-profile adapter. No falcon.c, keygen, sampler, FFT, fpr, RNG or signing
 code enters the verifier target. The separate offline signer compiles the full

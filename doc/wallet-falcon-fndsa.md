@@ -81,6 +81,18 @@ x86_64 and AArch64 and compares deterministic transcripts and module BOCs.
 Artifact retention is 30 days; benchmark timings/compiler binary digests are
 host-specific and are not required to be byte-identical across architectures.
 
+Official original Falcon-512 known-answer coverage is separate from the TOS
+fixed-profile corpus: `test/pq-falcon512/official/falcon512-KAT.rsp` contains all
+100 published Round 3 answers, imported verbatim with source/archive/file
+digests. CI verifies the original compressed signatures and key pairs, with
+100 altered-message rejection controls, then runs the unmodified official
+`test_falcon.c`. Its complete suite regenerates 100 Falcon-512 and 100
+Falcon-1024 NIST answers against the upstream expected digests. Skipped KATs
+fail CI. Enable `-DFALCON_BUILD_OFFICIAL_TESTS=ON` in the offline signer build,
+then run `test/pq-falcon512/official_kat.py --library <offline-library> --suite
+<test_falcon-executable> --out <artifact-directory>`. These official answers
+are not relabelled as TOS PADDED vectors or independent implementation evidence.
+
 The module compiler manifest records source commit, compiler SHA-256, code hash,
 BOC digest and StateInit encoding separately for FunC and Tol. Trust a reviewed
 manifest and verify the downloaded BOC digest/code hash before using it.
