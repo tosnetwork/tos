@@ -79,6 +79,9 @@ const int SEND_MODES_ALLOWED = 0x83;
 ;; Matches tol/extra-flags-constants.h: new bounce format (+1), full bounce body (+2).
 ;; Bits 2 and above are reserved. This field replaced ihr_fee before the PQ activation.
 const int MESSAGE_EXTRA_FLAGS_ALLOWED = 3;
+;; Mirrors the active ConfigParam 43 limit used by the canonical genesis. Keep the
+;; policy regression test in lockstep with the executor configuration.
+const int MESSAGE_MAX_EXTRA_CURRENCIES = 2;
 const int SUBWALLET_ID_BITS = 32;
 const int QUERY_ID_BITS = 23;
 const int CREATED_AT_BITS = 64;
@@ -121,10 +124,30 @@ int required_value(int action_count) inline {
        + get_forward_fee(basechain, 0, 0);
 }
 
+;; Validates ExtraCurrencyCollection = HashmapE 32 (VarUInteger 32) using a bounded
+;; dictionary walk. The executor enforces the same active count limit in action phase;
+;; checking here prevents mode +2 from silently skipping a signed payment after the replay
+;; id was recorded. Zero values are accepted here, as the executor removes them before
+;; applying its count limit.
+() require_valid_extra_currencies(cell extra) impure inline {
+  int count = 0;
+  (int id, slice value, int found) = extra.udict_get_min?(32);
+  while (found) {
+    ;; VarUInteger 32: 5-bit byte length, then exactly len*8 value bits.
+    int bytes = value~load_uint(5);
+    throw_if(error::invalid_message, bytes >= 32);
+    value~skip_bits(bytes * 8);
+    value.end_parse();
+    count += 1;
+    throw_if(error::invalid_message, count > MESSAGE_MAX_EXTRA_CURRENCIES);
+    (id, value, found) = extra.udict_get_next?(32, id);
+  }
+}
+
 ;; Throws unless `message` is one the wallet will send for its owner: a MessageRelaxed with
 ;; int_msg_info, src addr_none, not marked bounced, no StateInit, active extra_flags only,
-;; and an inline or referenced body consumed exactly. Undeliverable destinations and values
-;; are left to the action phase.
+;; a valid bounded ExtraCurrencyCollection, and an inline or referenced body consumed
+;; exactly. Undeliverable destinations and values are left to the action phase.
 () require_valid_message(cell message) impure inline {
   slice m = message.begin_parse();
   throw_if(error::invalid_message, m~load_uint(1)); ;; int_msg_info$0
@@ -133,7 +156,8 @@ int required_value(int action_count) inline {
   throw_unless(error::invalid_message, m~load_uint(2) == 0); ;; src: addr_none
   m~load_msg_addr(); ;; dest
   m~load_coins(); ;; value
-  m = m.skip_dict(); ;; extra currencies
+  cell extra = m~load_dict(); ;; ExtraCurrencyCollection
+  require_valid_extra_currencies(extra);
   int extra_flags = m~load_coins(); ;; extra_flags since global version 12, not ihr_fee
   throw_unless(error::invalid_message, (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);
   m~load_coins(); ;; fwd_fee
