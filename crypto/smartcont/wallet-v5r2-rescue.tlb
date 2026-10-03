@@ -1,0 +1,132 @@
+// PROPOSAL (R0a interface freeze candidate), not a deployed schema.
+// Wallet V5R2 with a dual-root (ML-DSA-44 daily, SLH-DSA-SHA2-128s rescue) AUTH module and a
+// per-wallet fee vault. Basechain only: every MsgAddressInt below must be addr_std, no anycast,
+// workchain 0, and every contract refuses anything else. Trailing bits or references after any
+// constructor are rejected. Tags are ASCII where possible.
+// Checked with: tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb
+
+// ---- Enumerations (exact values; unknown values are rejected, never defaulted)
+
+auth_role_primary#01 = AuthRole;
+auth_role_rescue#02 = AuthRole;
+
+auth_kind_execute#00 = AuthKind;
+auth_kind_configure#01 = AuthKind;
+auth_kind_lock_primary#03 = AuthKind;
+auth_kind_recover_migrate#04 = AuthKind;
+// 0x02 (V5R1 "manage") is not admitted in V5R2.
+
+policy_rescue_ready#01 = RescuePolicy;
+policy_slh_required#02 = RescuePolicy;
+
+// Daily-suite numbers follow PQCHECKSIG_SUITE; only suite 1 (ML-DSA-44) is admitted initially.
+daily_suite_mldsa44#01 = DailySuite;
+
+fee_class_rescue_submit#01 = FeeClass;
+fee_class_pop#02 = FeeClass;
+fee_class_prepare#03 = FeeClass;
+
+// ---- AUTH v2 request, signed by exactly one root
+// Digest: D = cell_hash(uint64("TOS-AUTH") ++ ^AuthRequestV2), 32 bytes, signed as the Pure
+// message. Contexts: PRIMARY "TOS-AUTH-V2-ML-DSA-44-v1" (24 bytes), RESCUE
+// "TOS-AUTH-SLH-DSA-SHA2-128S-v1" (29 bytes). The v2 tag keeps v1 and v2 bytes disjoint; the new
+// PRIMARY context keeps a V5R1 module signature from verifying as v2 even if bytes coincided.
+
+auth_request_v2#41553252
+  global_id:int32 network_tag:bits256
+  account:MsgAddressInt
+  root:bits256                  // installed module address hash
+  role:AuthRole epoch:uint64 nonce:uint64 valid_until:uint32
+  kind:AuthKind payload:^Cell
+  = AuthRequestV2;
+
+// Payloads, selected by kind; the module and the account both check the match.
+auth_execute_v2#45584543 actions:^Cell = AuthPayload;          // "EXEC": V5 action list
+auth_configure_v2#434f4e46 new_mode:(## 2) fee_route:(Maybe ^FeeRoute)
+  = AuthPayload;                                                // "CONF": mode 2 or 3 only
+auth_lock_primary#4c4f434b suite:DailySuite = AuthPayload;     // "LOCK": no successor, no value
+auth_recover_migrate#4d494752
+  module:bits256 module_init_hash:bits256 policy:RescuePolicy daily:DailySuite
+  vault_init_hash:bits256 fee_route:^FeeRoute
+  = AuthPayload;                                                // "MIGR": no value
+
+// ---- Messages
+// Vault -> module: the fee-funded submission. The module verifies `signature` with the root
+// named by request.role and never ACCEPTs external input.
+rescue_submit_v1#53554231 request:^AuthRequestV2 signature:^Cell = InternalMsgBody;   // "SUB1"
+// Module -> account: relays a verified request with the funded remainder (mode 64).
+auth_relay_v2#41553242 request:^AuthRequestV2 cosignature:(Maybe ^Cell) = InternalMsgBody; // "AU2B"
+
+// ---- Module (immutable StateInit data; no admin, no withdrawal of earlier balance)
+// Module code pins the fee-vault code hash; there is no editable code list.
+module_data_v1#01 global_id:int32 network_tag:bits256
+  daily:DailySuite primary_key:^Cell           // canonical 1,312-byte ML-DSA-44 chain
+  rescue_key:bits256                           // SLH-DSA-SHA2-128s public key
+  policy:RescuePolicy
+  = ModuleData;
+
+// ---- Account AUTH state (trailing reference of V5R2 data; absent is refused, never legacy)
+fee_route_v1#01
+  fee_profile:uint8                             // suite-4 profile id frozen with the HSS bytes
+  fee_tree_id:bits256 fee_public_key:bits480    // one-level HSS key, 60 bytes
+  slot_seconds:uint32 per_slot:uint16 epoch0:uint32   // time-slot leaves; per_slot = 0 means counter mode
+  = FeeRoute;
+
+auth_state_v2#02 mode:(## 2)                  // 2 = module only, 3 = Ed25519 AND module
+  root:bits256 root_code_hash:bits256
+  daily:DailySuite policy:RescuePolicy
+  local_retired:uint16                         // bit s = daily suite s retired here; set-only
+  epoch:uint64 primary_nonce:uint64 rescue_nonce:uint64
+  fee_route:^FeeRoute
+  = AuthStateV2;
+
+// ---- Fee vault (immutable code; data mutates only in next_leaf, budget and diagnostics)
+// header_hash = cell_hash(FeeHeader) of this vault: one comparison binds network, vault, wallet,
+// module, profile and tree without loading any of them before ACCEPT.
+fee_parties_v1$_ vault:MsgAddressInt wallet:MsgAddressInt module:MsgAddressInt = FeeParties;
+fee_header_v1#46454548 global_id:int32 network_tag:bits256
+  fee_profile:uint8 fee_tree_id:bits256 parties:^FeeParties
+  = FeeHeader;                                                  // "FEEH"
+
+fee_caps_v1$_ max_submit:Tomis max_pop:Tomis max_prepare:Tomis = FeeCaps;
+fee_vault_data_v1#01 header_hash:bits256
+  module:MsgAddressInt                          // pinned payment target
+  epoch0:uint32 slot_seconds:uint32 per_slot:uint16
+  next_leaf:uint32 budget:Tomis
+  caps:^FeeCaps public_key:^Cell gas_at_accept:uint32
+  = FeeVaultData;
+
+// Signed by the fee key: suite 4 verifies the HSS signature of digest = cell_hash(FeeIntent).
+fee_intent_v1#46454531 header:^FeeHeader
+  leaf:uint32 valid_until:uint32 class:FeeClass value:Tomis body:^Cell
+  = FeeIntent;                                                  // "FEE1"
+
+fee_external_v1#56455854 intent:^FeeIntent digest:^Cell context:^Cell signature:^Cell
+  = ExternalMsgBody;                                            // "VEXT"
+
+// ---- Possession proof (non-executable; separate transaction)
+pop_keys_v1$_ primary_key_hash:bits256 rescue_key:bits256 policy:RescuePolicy = PopKeys;
+pop_challenge_v1#504f5031 global_id:int32 network_tag:bits256
+  account:MsgAddressInt module:bits256
+  challenge:bits256 valid_until:uint32 keys:^PopKeys
+  = PopChallenge;                                               // "POP1"
+pop_submit_v1#504f5053 challenge:^PopChallenge signature:^Cell = InternalMsgBody; // "POPS"
+
+// ---- Successor fee preparation (SLH-authorized at the current module; spends only its own
+// incoming amount; no wallet AUTH meaning)
+prepare_targets_v1$_ module_init_hash:bits256 vault_init_hash:bits256 fee_tree_id:bits256
+  module_amount:Tomis vault_amount:Tomis
+  = PrepareTargets;
+fee_prepare_v1#50524550 global_id:int32 network_tag:bits256
+  wallet:MsgAddressInt source_module:bits256 valid_until:uint32
+  targets:^PrepareTargets
+  = FeePrepare;                                                 // "PREP"
+fee_prepare_submit_v1#50524553 prepare:^FeePrepare signature:^Cell = InternalMsgBody; // "PREPS"
+
+// ---- Global AUTH retirement policy (mandatory, monotonic)
+auth_policy_v1#a1 network_tag:bits256 policy_sequence:uint64
+  retired:uint16                                // absorbing bitset of daily suites
+  retire_at:(HashmapE 8 uint32)                 // suite -> unixtime; may move earlier only
+  policy_spec_hash:bits256
+  = AuthPolicy;
+// Proposed: _ AuthPolicy = ConfigParam 48;  (free on main at the R0a baseline)
