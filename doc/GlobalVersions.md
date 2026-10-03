@@ -2,7 +2,7 @@
 
 Global versioning is controlled by `ConfigParam 8`, defined in [block.tlb](../crypto/block/block.tlb).
 
-This source tree advertises `SUPPORTED_VERSION = 18` in
+This source tree advertises `SUPPORTED_VERSION = 19` in
 [`global-version.h`](../common/global-version.h). That is a binary capability;
 the active version of a network is its on-chain ConfigParam 8.
 
@@ -498,3 +498,18 @@ this sequence -- evidence bound to one release, explicit owner approvals, and a 
 every validator acknowledges the binary it runs -- and emits an unsigned `ConfigParam 8` payload.
 A validated proposal is not an activation. The proposal checker and its tests
 are under [`tools/pq/`](../tools/pq/) and [`test/pq-readiness/`](../test/pq-readiness/).
+
+## Version 19 candidate: original Falcon wallet authorization
+
+`PQCHECKSIG_FALCON512_PADDED` has candidate codepage-0 allocation `F93101` and
+minimum global version 19. It consumes message/signature/public-key Cells,
+uses the fixed original Falcon-512 padded profile and returns a TVM boolean.
+The development proposal charges 20,000 base gas plus one gas per decoded byte
+and ordinary instruction/cell loads. Historical versions reject the opcode.
+See [the frozen profile](falcon512-profile-v1.json) and
+[implementation and remaining gates](wallet-falcon-fndsa.md).
+
+The binary capability ceiling is 19. This change does not alter a network's
+ConfigParam 8 or canonical genesis. The candidate allocation, version and gas
+must receive protocol approval before activation; profile acceptance bytes
+cannot later be reinterpreted as formal FN-DSA.

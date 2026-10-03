@@ -2,3 +2,5 @@
 ;; All operands are canonical ordinary-cell byte chains; see doc/tvm-mldsa44.md.
 int pq_check_mldsa44(cell message, cell context, cell signature, cell public_key)
   asm "PQCHECKSIG_MLDSA44";
+
+int pq_check_falcon512_padded(cell message, cell signature, cell public_key) asm "PQCHECKSIG_FALCON512_PADDED";

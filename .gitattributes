@@ -46,3 +46,6 @@ third_party/** linguist-vendored
 # one would be caught only by a hash check -- so the handling is stated rather
 # than left to auto-detection.
 artifacts/phase1/*.bin binary
+
+# Preserve the official response file byte-for-byte, including its final blank line.
+test/pq-falcon512/official/falcon512-KAT.rsp -text whitespace=-blank-at-eof

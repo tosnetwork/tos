@@ -23,7 +23,7 @@ target_compile_definitions(tos_mldsa_native PRIVATE MLD_CONFIG_FILE="mldsa44-con
 add_library(tos_mldsa44 STATIC mldsa44.cpp)
 set_target_properties(tos_mldsa44 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(tos_mldsa44 PUBLIC cxx_std_17)
-target_include_directories(tos_mldsa44 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+target_include_directories(tos_mldsa44 PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" "$<INSTALL_INTERFACE:include/tos/pq>"
   PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
 target_compile_definitions(tos_mldsa44 PRIVATE MLD_CONFIG_FILE="mldsa44-config.h")
 target_link_libraries(tos_mldsa44 PRIVATE tos_mldsa_native)
@@ -35,7 +35,7 @@ find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 add_library(tos_pq_consensus STATIC pq-consensus.cpp)
 set_target_properties(tos_pq_consensus PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(tos_pq_consensus PUBLIC cxx_std_20)
-target_include_directories(tos_pq_consensus PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(tos_pq_consensus PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" "$<INSTALL_INTERFACE:include/tos/pq>")
 target_link_libraries(tos_pq_consensus PUBLIC tos_mldsa44 PRIVATE OpenSSL::Crypto)
 
 # Validator CONSENSUS PQ signer: a separate sign-enabled backend (own namespace),
@@ -323,3 +323,35 @@ endif()
 
 install(FILES "${TOS_MLDSA_SOURCE_DIR}/LICENSE"
   DESTINATION share/tos/licenses/mldsa-native)
+
+# Fixed original Falcon profile. The verifier target is integer-only.
+set(TOS_FALCON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/falcon-reference")
+add_library(tos_falcon512_native STATIC falcon512-native.c
+  "${TOS_FALCON_SOURCE_DIR}/codec.c" "${TOS_FALCON_SOURCE_DIR}/common.c"
+  "${TOS_FALCON_SOURCE_DIR}/shake.c" "${TOS_FALCON_SOURCE_DIR}/vrfy.c")
+set_target_properties(tos_falcon512_native PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+target_include_directories(tos_falcon512_native PRIVATE "${TOS_FALCON_SOURCE_DIR}")
+target_compile_definitions(tos_falcon512_native PRIVATE FALCON_FPEMU=1 FALCON_FPNATIVE=0
+  FALCON_AVX2=0 FALCON_FMA=0 FALCON_PREFIX=tos_falcon_inner)
+add_library(tos_falcon512 STATIC falcon512.cpp)
+target_compile_features(tos_falcon512 PUBLIC cxx_std_17)
+set_target_properties(tos_falcon512 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(tos_falcon512 PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" "$<INSTALL_INTERFACE:include/tos/pq>")
+target_link_libraries(tos_falcon512 PRIVATE tos_falcon512_native)
+if(TARGET tos_crypto)
+  target_link_libraries(tos_crypto PRIVATE tos_falcon512)
+  add_executable(test-pq-falcon512-parity "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-falcon512/parity.cpp")
+  target_link_libraries(test-pq-falcon512-parity PRIVATE tos_crypto)
+endif()
+install(FILES "${TOS_FALCON_SOURCE_DIR}/LICENSE" DESTINATION share/tos/licenses/falcon-reference)
+
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  # Static SDK consumers need the transitive verifier libraries in the export.
+  install(TARGETS tos_mldsa_native tos_mldsa44 tos_pq_consensus
+    tos_falcon512_native tos_falcon512 EXPORT Toslib ARCHIVE DESTINATION lib)
+  install(FILES mldsa44.h pq-consensus.h falcon512.h falcon512-native.h
+    DESTINATION include/tos/pq)
+endif()
+add_executable(test-falcon512-fuzz "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-falcon512/fuzz.c")
+target_include_directories(test-falcon512-fuzz PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(test-falcon512-fuzz PRIVATE tos_falcon512_native)

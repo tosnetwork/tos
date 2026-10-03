@@ -1,0 +1,5 @@
+# Preserve the checksum-pinned upstream source formatting.
+*.c -whitespace
+*.h -whitespace
+*.txt -whitespace
+* linguist-vendored

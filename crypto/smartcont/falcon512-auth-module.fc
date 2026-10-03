@@ -1,0 +1,80 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;; Immutable, relayer-funded Falcon-512 padded root for the existing AUTH protocol.
+;; Data: global_id:int32 profile_version:uint16 public_key:^Cell (canonical 897-byte chain).
+;; No ACCEPT, SETCODE, SETDATA, owner, signing key, or recovery bypass.
+#include "auth-extension.fc";
+#include "pq.fc";
+
+const int falcon_auth::submit = 0x46414c31;
+
+() recv_external(slice body) impure {
+  throw(1900);  ;; PQ verification must not spend external admission credit.
+}
+
+() recv_internal(int balance, int value, cell full_message, slice body) impure {
+  if (full_message.begin_parse().preload_uint(4) & 1) { return (); }
+  ;; Unknown/empty internal messages are deposits only, like the Tol dispatcher.
+  if (body.slice_bits() < 32) { return (); }
+  if (body.preload_uint(32) != falcon_auth::submit) { return (); }
+  body~load_uint(32);
+  body~load_uint(64);  ;; unsigned relayer query_id, not an authorization field
+  cell envelope = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+
+  slice ds = get_data().begin_parse();
+  int network = ds~load_int(32);
+  throw_unless(auth::bad_operation, ds~load_uint(16) == 1);
+  cell public_key = ds~load_ref();
+  ds.end_parse();
+  throw_unless(auth::wrong_network, network == auth_global_id());
+
+  slice auth = envelope.begin_parse();
+  throw_unless(auth::bad_operation, auth~load_uint(32) == auth::opcode);
+  cell request = auth~load_ref();
+  cell cosignature = auth~load_maybe_ref();
+  auth.end_parse();
+  ifnot (cell_null?(cosignature)) {
+    slice co = cosignature.begin_parse();
+    throw_unless(auth::bad_signature, (co.slice_bits() == 512) & (co.slice_refs() == 0));
+  }
+
+  slice cs = request.begin_parse();
+  throw_unless(auth::wrong_network, cs~load_int(32) == network);
+  slice account = cs~load_msg_addr();
+  ;; Rejects non-standard encodings, another workchain and a self-send. The target
+  ;; is signed, never relayer-chosen. Called for its checks: the helper is impure,
+  ;; so this call is not eliminated even though its result is unused.
+  auth_module_hash(account);
+  cs~load_uint(64);  ;; epoch: authenticated here, enforced by the account
+  cs~load_uint(64);  ;; nonce: authenticated here, enforced by the account
+  int valid_until = cs~load_uint(32);
+  throw_unless(auth::expired, (valid_until > now()) & (valid_until <= now() + 3600));
+  throw_unless(auth::bad_operation, cs~load_uint(8) <= 2);
+  cs~load_ref();
+  cs.end_parse();
+
+  (int root_wc, int root_hash) = parse_std_addr(my_address());
+  cell message = begin_cell()
+    .store_uint(0x544f532d415554482d46414c434f4e3531322d5041444445442d7631, 224)
+    .store_uint(0, 8).store_int(root_wc, 32).store_uint(root_hash, 256)
+    .store_uint(auth_request_hash(request), 256).end_cell();
+  throw_unless(auth::bad_signature, pq_check_falcon512_padded(message, signature, public_key));
+
+  ;; Preserve the pre-message balance (after storage charges). Mode 64 carries
+  ;; only the incoming remainder; no +1, +2, +32, +128 or subsidy from storage.
+  raw_reserve(max(0, balance - value), 2);
+  cell relay = begin_cell().store_uint(0x18, 6).store_slice(account)
+    .store_coins(0).store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
+    .store_uint(1, 1).store_ref(envelope).end_cell();
+  send_raw_message(relay, 64);
+}
+
+(int, int, cell) get_falcon512_config() method_id {
+  slice ds = get_data().begin_parse();
+  int network = ds~load_int(32);
+  int profile = ds~load_uint(16);
+  cell key = ds~load_ref();
+  ds.end_parse();
+  return (network, profile, key);
+}

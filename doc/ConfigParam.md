@@ -68,7 +68,7 @@ The only parameter that decides what a network executes is `version` here.
 
 ### Versions 16–18 in this build
 
-The compiled [SUPPORTED_VERSION](../common/global-version.h) is now **18**. It
+The compiled [SUPPORTED_VERSION](../common/global-version.h) is now **19**. It
 does not activate that version on a network. The configured value gates these
 instructions:
 
@@ -273,3 +273,5 @@ Each bridge parameter file also fixes the chain id its contract compares against
 
 - [Zerostate.md](Zerostate.md)
 - [block.tlb](../crypto/block/block.tlb)
+
+Falcon wallet verification adds a version-19 candidate capability. See [wallet-falcon-fndsa.md](wallet-falcon-fndsa.md). Network activation and protocol approval remain separate from compiling support.
