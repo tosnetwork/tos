@@ -1,37 +1,24 @@
 ;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
 ;;
-;; Post-quantum high-volume wallet: one ML-DSA-44 key, concurrent signed requests,
-;; bounded replay protection and one signature per batch of outbound messages.
-;; Requires TVM version 16; assemble with PQ.fif loaded. Workchain 0 only.
+;; ML-DSA-44 high-volume wallet. TVM v16+, workchain 0, PQ.fif required.
+;; No external handler or ACCEPT: the relayer's internal value pays compute.
+;; submit#50514857 relayer_query_id:uint64 request:^Request signature:^StoredSignature
+;; Request = global_id:int32 wallet:MsgAddressInt subwallet_id:uint32 query_id:uint23
+;;           created_at:uint64 timeout:uint22 actions:^OutList
+;; Sign the 32-byte big-endian request hash under "TOS-PQ-HIGHLOAD-v1".
+;; Network, address, subwallet, timeout and all actions are bound. Only refund routing
+;; is unsigned. No early COMMIT; failures roll back state, including the replay id.
+;; Refund first (64+2), then 1..254 sends in signed order, with +2 forced. Delivery is
+;; best effort, not atomic. +32 is forbidden: redeployment would erase replay history.
 ;;
-;; No external entry and no ACCEPT: the relayer's internal message value buys gas.
-;;   submit#50514857 relayer_query_id:uint64 request:^Request signature:^StoredSignature
-;;   Request = global_id:int32 wallet:MsgAddressInt subwallet_id:uint32 query_id:uint23
-;;             created_at:uint64 timeout:uint22 actions:^OutList
-;; Sign the request cell hash as 32 big-endian bytes, Pure ML-DSA-44 under
-;; "TOS-PQ-HIGHLOAD-v1". Network, wallet, subwallet, timeout and all actions are bound.
-;; The unsigned relayer address/query id only route the relayer's own excess value.
+;; Extra currencies have two independent limits: live ConfigParam 43 encoded entries
+;; per message, and at most 8 encoded entries across the whole batch. Both include
+;; zeros; shared dictionaries count on every use. The executor counts BEFORE filtering
+;; zero values. The batch cap bounds compute, not chain asset supply. Split larger
+;; batches. VarUInteger 32 leaves must be minimally encoded. See the security audit.
 ;;
-;; The quote covers compute and the refund's forwarding. Excess is refunded first,
-;; best effort, with mode 64+2. A skipped refund stays in the wallet. Storage rent
-;; still applies. No early COMMIT: a compute failure leaves the replay id unused.
-;; The id is consumed only when the entire transaction, action phase included, succeeds.
-;;
-;; A batch contains 1..254 sends in signed order; one of 255 action slots is the refund.
-;; Allowed send bits are +1, +2 and +128. +2 is forced: payments are best effort, NOT
-;; an atomic batch. +32 is forbidden because deletion/redeployment loses replay history;
-;; +64 conflicts with the refund; +4/+8 are invalid; +16 is meaningless with forced +2.
-;; Messages must have int_msg_info, src addr_none, not bounced, no StateInit, active
-;; extra_flags, and an inline or exactly consumed referenced body.
-;;
-;; Extra currencies have TWO independent limits: the current ConfigParam 43 non-zero
-;; count per message, and at most 8 encoded dictionary entries across the WHOLE batch,
-;; including zeros and repeated references. The latter is a wallet compute policy, not
-;; a chain currency limit. Split larger requests. VarUInteger 32 leaves must be minimal.
-;; See doc/pq-quorum-and-highload.md and the security audit for the validation boundary.
-;;
-;; Storage layout is unchanged: public_key:^StoredKey subwallet_id:uint32 followed by
-;; replay_guard::pack(old_queries, queries, last_clean_time, timeout).
+;; Storage and signing layout are unchanged. Code changes require new deployment BoCs
+;; and addresses. Storage rent and action-phase size/balance limits still apply.
 
 #include "replay-guard.fc";
 #include "pq-bytes.fc";
@@ -61,7 +48,6 @@ const int SEND_MODE_CARRY_INBOUND_VALUE = 64;
 const int SEND_MODES_ALLOWED = 0x83;
 ;; Matches tol/extra-flags-constants.h: new bounce format (+1), full bounce body (+2).
 const int MESSAGE_EXTRA_FLAGS_ALLOWED = 3;
-;; Independent compute bound, including zero leaves and each use of a shared dictionary.
 const int BATCH_MAX_EXTRA_ENTRIES = 8;
 const int SUBWALLET_ID_BITS = 32;
 const int QUERY_ID_BITS = 23;
@@ -69,11 +55,9 @@ const int CREATED_AT_BITS = 64;
 const int TIMEOUT_BITS = 22;
 
 ;; Historical empty-extra measurement: 79,546 base + 2,708/action at afb2e27f9.
-;; The per-action allowance now includes preflight bookkeeping. A separate fixed
-;; reserve covers all eight permitted extra entries and live-config reads, including
-;; cold loads. get_required_value(n) stays a one-argument conservative quote; unused
-;; reserve is refunded, not a fixed fee. The real-executor gas/profile and exact-quote
-;; regressions are release gates for these allowances, not just arithmetic tests.
+;; Per-action allowance includes preflight bookkeeping. A fixed reserve covers all
+;; eight extra entries and live-config reads. It is refunded when unused, not charged
+;; as a flat fee. Real-executor profile and exact-quote tests gate these allowances.
 const int fee::base_gas = 87600;
 const int fee::gas_per_action = 3300;
 const int fee::extra_gas = 60000;
@@ -105,9 +89,8 @@ int required_value(int action_count) inline {
        + get_forward_fee(basechain, 0, 0);
 }
 
-;; crypto/block/block.tlb, SizeLimitsConfig #01/#02/#03. The executor defaults to 2
-;; if parameter 43 is absent or uses #01 (which has no extra-currency count field).
-;; Never substitute that default for an explicit zero. Unknown versions fail closed.
+;; SizeLimitsConfig #01/#02/#03, crypto/block/block.tlb. Absent/#01 defaults to 2.
+;; An explicit zero is NOT a missing value. Unknown constructors fail closed.
 int message_extra_currency_limit() impure inline {
   cell config = config_param(43);
   if (cell_null?(config)) {
@@ -135,26 +118,24 @@ int message_extra_currency_limit() impure inline {
   return count;
 }
 
-;; Non-null Hashmap 32 (VarUInteger 32). Count EVERY visited leaf toward the batch
-;; budget, not just non-zero amounts. At most one lookahead follows the last permitted
-;; leaf; dictionary key width additionally bounds each traversal's depth. Canonical zero
-;; is len=0. For len>0 the leading byte must be non-zero, as VarUInteger::validate_skip
-;; requires in crypto/block/block-parse.cpp. Shape failures leave the replay id unused.
+;; Non-null Hashmap 32 (VarUInteger 32). Count every leaf toward BOTH limits.
+;; CurrencyCollection::remove_zero_extra_currencies checks count before the amount.
+;; At most one lookahead follows the last permitted leaf; key width bounds traversal
+;; depth. Canonical zero is len=0; a non-empty amount must start with a non-zero byte,
+;; matching VarUInteger::validate_skip in crypto/block/block-parse.cpp.
 int require_valid_extra_currencies(cell extra, int remaining) impure inline {
   throw_unless(error::invalid_message, remaining > 0);
   int limit = message_extra_currency_limit();
   int visited = 0;
-  int count = 0;
   (int id, slice value, int found) = extra.udict_get_min?(32);
   while (found) {
     throw_unless(error::invalid_message, visited < remaining);
     visited += 1;
+    throw_if(error::invalid_message, visited > limit);
     int bytes = value~load_uint(5);
     if (bytes) {
       throw_unless(error::invalid_message, value.preload_uint(8) != 0);
       value~skip_bits(bytes * 8);
-      count += 1;
-      throw_if(error::invalid_message, count > limit);
     }
     value.end_parse();
     (id, value, found) = extra.udict_get_next?(32, id);
@@ -162,9 +143,8 @@ int require_valid_extra_currencies(cell extra, int remaining) impure inline {
   return visited;
 }
 
-;; Returns the number of extra-currency leaves visited for this message. Empty maps
-;; bypass the dictionary/config walk. Destination deliverability and available balance
-;; remain action-phase decisions; preflight is not a promise that a recipient executes.
+;; Return extra entries visited. Empty maps bypass the dictionary/config walk.
+;; Destination deliverability and available balance remain action-phase decisions.
 int require_valid_message(cell message, int extra_left) impure inline {
   slice m = message.begin_parse();
   throw_if(error::invalid_message, m~load_uint(1)); ;; int_msg_info$0

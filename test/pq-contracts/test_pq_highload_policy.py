@@ -213,7 +213,11 @@ class MessagePolicyTest(unittest.TestCase):
             d = w.submit(wallet.request([(1, payment(extra=ok))], 235))
             self.assertPayments(d, [10**9], extras=[{1: 1, 2: 2}])
             self.assertEqual(account_extra(w.shard), {1: 9, 2: 18, 3: 30})
+            # The executor counts encoded entries BEFORE it filters zeros.
             zeros = extra_currency_dict({1: 0, 2: 0, 3: 0, 4: 0})
+            req = wallet.request([(1, payment(extra=zeros))], 238)
+            self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", 238)
+            zeros = extra_currency_dict({1: 0, 2: 0})
             d = w.submit(wallet.request([(1, payment(extra=zeros))], 238))
             self.assertPayments(d, [10**9])
             self.assertEqual(account_extra(w.shard), {1: 9, 2: 18, 3: 30})
@@ -236,7 +240,9 @@ class MessagePolicyTest(unittest.TestCase):
         for version in VERSIONS:
             gas = []
             for n in (EXTRA_BUDGET + 1, 128, 1024, 4096):
-                w = self.new_wallet(version)
+                # Exercise the independent wallet work bound, not the chain count of 2.
+                with configured_limit(2, 0xffffffff):
+                    w = self.new_wallet(version)
                 zeros = extra_currency_dict({i: 0 for i in range(n)})
                 req = wallet.request([(1, payment(extra=zeros))], 270)
                 d = w.submit(req)
@@ -248,7 +254,8 @@ class MessagePolicyTest(unittest.TestCase):
 
     def test_extra_budget_is_shared_across_the_batch(self):
         for version in VERSIONS:
-            w = self.new_wallet(version)
+            with configured_limit(2, 4):
+                w = self.new_wallet(version)
             extra = extra_currency_dict({i: 0 for i in range(4)})
             shared = payment(extra=extra)
             req = wallet.request([(1, shared)] * 3, 280)
@@ -274,8 +281,11 @@ class MessagePolicyTest(unittest.TestCase):
                     d = w.submit(wallet.request([(1, payment(extra=allowed))], 290))
                     self.assertPayments(d, [10**9], extras=[amounts])
                     self.assertEqual(account_extra(w.shard), {})
-                    # Zero-valued entries remain usable even when the non-zero limit is 0.
-                    z = extra_currency_dict({0: 0, 1: 0})
+                    # The encoded-entry cap also applies to zero-valued currencies.
+                    z = extra_currency_dict({i: 0 for i in range(limit + 1)})
+                    req = wallet.request([(1, payment(extra=z))], 291)
+                    self.assertRefusedBeforeVerification(w, w.submit(req), "invalid_message", 291)
+                    z = extra_currency_dict({i: 0 for i in range(limit)})
                     self.assertPayments(w.submit(wallet.request([(1, payment(extra=z))], 291)), [10**9])
 
     def test_active_flags_are_still_signed(self):
@@ -328,7 +338,7 @@ class MessagePolicyTest(unittest.TestCase):
         for version in VERSIONS:
             for n in (1, wallet.MAX_ACTIONS):
                 for spread in (False, True) if n > 1 else (False,):
-                    with self.subTest(version=version, actions=n, spread=spread):
+                    with self.subTest(version=version, actions=n, spread=spread), configured_limit(2, EXTRA_BUDGET):
                         w = self.new_wallet(version, dense=True)
                         maps = [{} for _ in range(n)]
                         if spread:

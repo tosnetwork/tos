@@ -1,238 +1,113 @@
-# PR #128 security review — 2026-10-03
+# PR #128 security audit — rounds 1–3 — 2026-10-03
 
-## Scope and revision
+## Status, provenance and scope
 
-Repository: `tosnetwork/tos`. PR: #128, **Add ML-DSA-44 quorum signatures and a
-relayer-funded post-quantum high-volume wallet**. Reviewed input revision:
-`5195571a49b40153823669b234ea5597a8af76da`, branch `pq-quorum-and-highload`,
-base `bc9ca41d9357a02ef614df8711cbaf27dd3e6495`.
+Repository: `tosnetwork/tos`; PR #128, **Add ML-DSA-44 quorum signatures and a relayer-funded post-quantum high-volume wallet**; branch `pq-quorum-and-highload`.
 
-The review follows the FunC and Tol quorum implementations, the wallet's request,
-message and signature parsing, replay-guard integration, relayer funding/refund,
-deployment checks, test harnesses and relevant C++ action-phase behavior. This is a
-source-level security review, not a new independent audit of ML-DSA's mathematical
-construction or a production network/load certification.
+This is the consolidated current report. The complete earlier report remains in Git history:
 
-Two findings were patched directly on the existing PR branch. No merge or deployment
-was requested or performed. The quorum libraries, signature contexts, signed request
-layout, stored state layout and native ML-DSA implementation are unchanged.
+- [Rounds 1–2, tos at 831ff96207b4](https://github.com/tosnetwork/tos/blob/831ff96207b447e1ff8508d74f6586cc64888a0c/doc/pq-contracts-security-audit-20261003.md)
+- [Rounds 1–2, memo at 8f87d4f58de1](https://github.com/tosnetwork/memo/blob/8f87d4f58de15cdf8ced3c0d7fb13d94810d4e0c/pq-contracts-security-audit-20261003.md)
 
-## F1 — Medium: reserved extra_flags silently skip a signed payment and consume its id
+Both copies were verified to have blob `44bd13565252cad74ae7a3347205a712af430d7e` at the start of round 3. The current report is synchronized to `memo/main/pq-contracts-security-audit-20261003.md` as requested; the tos copy is retained, not deleted.
 
-### Observation and cause
+Round 1 reviewed `5195571a49b40153823669b234ea5597a8af76da`. Round 3 started from `831ff96207b447e1ff8508d74f6586cc64888a0c`, including the round-2 changes. Its focus is wallet/executor agreement, bounded pre-verification work, funding assumptions and whether tests prove asset delivery. The FunC/Tol quorum libraries, native ML-DSA implementation, signed request layout, signature contexts and persisted storage layout are unchanged in this round.
 
-The original `require_valid_message` reads the VarUInteger 16 between the extra-currency
-map and `fwd_fee` as `m~load_coins(); ;; ihr_fee`, discarding it without validation.
-Since global version 12 this field is `extra_flags`; both supported PQ versions (16
-and 18) use that interpretation.
+**Important correction:** the round-2 statement that the executor removes zeros *before counting currencies* was wrong. The C++ implementation counts encoded entries first. The earlier tests did not establish delivery. Sections R3-1 and R3-4 supersede those claims, including the earlier statement that four zero entries are usable under limit 2. This report does not treat previous review acceptance or a green old revision as proof about the new code.
 
-The executor's `try_action_send_msg` checks `extra_flags_within_valid_mask`. The active
-mask is **3**, defined by `tol/extra-flags-constants.h`: bits 0 and 1 are permitted,
-while bits 2 and above are reserved. Invalid flags reach `check_skip_invalid(45)`.
-Because the wallet forces send mode +2, an invalid-flags payment is skipped rather
-than aborting the action phase. The refund and other valid payments may still succeed,
-so the wallet persists the query id even though the flagged payment was not sent.
+**Release status:** source fixes and real-executor regressions are supplied. Latest-head native execution, gas measurements and mutation outcomes remain a merge gate until the corresponding workflow completes successfully. The PR review records the exact final revision and observed CI state. No merge or deployment is authorized by this report.
 
-This contradicts the wallet policy of refusing statically invalid batch entries whole
-before verification, analogous to its existing reserved-send-mode checks.
+## Findings retained from rounds 1–2
 
-### Trigger and impact
+### F1 — Medium — Reserved extra_flags can skip a signed payment
 
-An owner-signed batch containing a payment with `extra_flags=4`, `8`, or another
-reserved bit passes the former compute-time message check. Submission can therefore
-complete with that payment absent and the original query id consumed. A mixed batch
-can execute only its other payments.
+The wallet originally discarded the field before `fwd_fee` as legacy `ihr_fee`. It is `extra_flags` at the supported versions. The active executor mask is 3; an invalid bit can reach action-phase `check_skip_invalid(45)` and, with forced send mode +2, skip a payment while the query id is consumed. The round-1 patch validates mask 3 before verification, recording or queuing actions. Values 0..3 remain permitted. This is a signed-message reliability defect, not a relayer signature forgery.
 
-This is a signed-message validation / payment-reliability defect, **not an
-unauthenticated signature forgery or arbitrary-funds theft**. The relayer cannot alter
-flags in an otherwise valid signed request without invalidating its signature. A
-signing client or owner must have produced the malformed signed payment.
+### F2 — Low — Unsupported counts received fee quotes
 
-### Patch
+`get_required_value` formerly accepted arbitrary integers although batches require 1..254 actions. It now refuses counts outside that range before fee arithmetic. Valid quotes remain conservative attached-value requirements, not promises that the whole quoted amount will be spent.
 
-`crypto/smartcont/pq-highload-wallet-code.fc` now declares
-`MESSAGE_EXTRA_FLAGS_ALLOWED = 3`, naming the matching executor constant, and checks:
+### F3 — Medium — ExtraCurrencyCollection was not preflighted
 
-```func
-int extra_flags = m~load_coins();
-throw_unless(error::invalid_message,
-             (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);
+`skip_dict()` did not inspect extra-currency leaves or enforce message currency limits. Round 2 added a walk, but its non-zero-only counting, fixed limit, resource assumptions and positive tests were inadequate. Do not consider F3 closed based on the round-2 patch alone; the following corrections complete this round's implementation work and still require the native test gate.
+
+## Third-round findings and fixes
+
+### R3-1 — Medium — Count semantics and live configuration disagreed with the executor
+
+**Evidence.** In `crypto/block/block.cpp`, `CurrencyCollection::remove_zero_extra_currencies` does, in order:
+
+```cpp
+++count;
+if (count > max_currencies) {
+  return -1;
+}
+// Only after the count check is the amount decoded and zero filtered.
 ```
 
-The check executes inside `checked_batch`, before ML-DSA verification, replay recording,
-state persistence or queuing any refund/business action. Values 0, 1, 2 and 3 remain
-accepted, matching the executor exactly. A rejected batch leaves its query id usable;
-a corrected batch must be signed again because its request hash changes.
+Thus `max_msg_extra_currencies` bounds **encoded entries, including zeros**, not only non-zero balances. At limit 2, a dictionary containing four canonical zero amounts is over-limit. The old preflight admitted it and the action phase could skip its payment. The old hardcoded `MESSAGE_MAX_EXTRA_CURRENCIES = 2` also became too permissive when the live limit was lowered and too restrictive when raised.
 
-Source references at the reviewed revision:
+**Fix.** Every visited leaf counts against the live per-message limit. `message_extra_currency_limit()` reads ConfigParam 43, supporting constructors #01/#02/#03, including the v3 optional field. Absent/#01 uses the executor default 2; an explicit limit 0 is retained as zero; unknown constructors fail closed. `get_extra_currency_limits()` exposes the live message-entry limit and the independent wallet batch-work limit.
 
-- [Wallet parser and request order](https://github.com/tosnetwork/tos/blob/5195571a49b40153823669b234ea5597a8af76da/crypto/smartcont/pq-highload-wallet-code.fc)
-- [Executor extra_flags validation and skip behavior](https://github.com/tosnetwork/tos/blob/5195571a49b40153823669b234ea5597a8af76da/crypto/block/transaction.cpp)
-- [Active flag mask](https://github.com/tosnetwork/tos/blob/5195571a49b40153823669b234ea5597a8af76da/tol/extra-flags-constants.h)
+Tests construct actual ConfigParam 43 cells and feed them to the real emulator, rather than mocking its decisions. They cover absence, #01, #02/#03 with limits 0/1/2/3, both zero and non-zero entries, and corrected re-submission using an unused query id. At limit 0 only an empty extra dictionary is admitted. At limit 2 up to two zero entries can be filtered and the native payment sent; four zero entries must fail preflight.
 
-## F2 — Low: fee getter quotes unsupported batch counts
+### R3-2 — Medium — Zero walks and aggregate work were not covered by the funding profile
 
-`get_required_value` formerly forwarded an unrestricted integer to the linear fee
-calculation, although accepted batches contain exactly 1..254 actions. In particular,
-zero, -1 and 255 could receive a plausible positive fee quote for a request the wallet
-will never accept. Extreme inputs could instead fail incidentally in fee arithmetic.
+The round-2 loop incremented its counter only for non-zero amounts. Arbitrarily many zero leaves could therefore be traversed before verification/funding admission. Even a correct per-message currency limit would not by itself bound aggregate extra work across 254 messages. The old action-count-only gas profile had been measured on messages without extra dictionaries.
 
-This is a public API validation/integration defect, not a demonstrated wallet-balance
-drain. The getter now rejects every count outside 1..254 using
-`error::invalid_action` before fee arithmetic. The internal `required_value` calculation
-is unchanged; the transaction path already validates its action count. Valid quotes
-and the funded-entry protocol are unchanged.
+**Fix.** `BATCH_MAX_EXTRA_ENTRIES = 8` bounds the total encoded extra-currency leaves visited across the entire signed batch. Zeros count. A shared dictionary counts again on each use. Each message receives the remaining budget, and the batch subtracts the returned work. The loop checks its budget before parsing the next leaf; only a bounded lookahead is needed. The 32-bit key width also bounds traversal depth. Empty maps bypass the dictionary/configuration walk.
 
-## Regression and mutation coverage added
+This is an explicit **wallet resource policy**, separate from the chain's per-message limit. A batch exceeding eight encoded extra entries is rejected unused and must be split/re-signed. The 254-action ceiling remains; it is not a promise of 254 maximally complex messages.
 
-`test/pq-contracts/test_pq_highload_policy.py` reuses the existing real-executor helpers,
-compiler and deterministic TEST ONLY signer. It does not mock transaction outcomes.
-The existing quorum and wallet suites and their 61 mutations are retained.
+The conservative compute quote is now:
 
-Seven new test methods cover:
-
-1. The wallet's active flag mask matches the executor header; policy drift requires
-   an explicit vector update.
-2. Reserved flags, including high bits of VarUInteger 16, fail before verification
-   with unchanged data and an unused query id at versions 16 and 18.
-3. All four active values (0..3) still send the intended amounts in signed order at
-   both versions.
-4. A good/bad/good batch is rejected whole; a corrected, newly signed batch using
-   the same query id subsequently succeeds at both versions.
-5. Changing one allowed flag value to another without re-signing still fails the
-   ML-DSA check at both versions.
-6. The real fee getter rejects -1, 0, 255, 256 and the maximum positive TVM integer,
-   while the valid endpoints 1 and 254 return positive quotes.
-7. A 254-action batch with active flags, dense replay state and exactly the quoted
-   funding completes with its refund at both versions.
-
-The runner first requires a passing seven-test baseline. It then removes each new
-guard independently in a temporary sibling FunC source, recompiles, and requires an
-actual assertion failure in the corresponding behavioral test. Compiler errors,
-emulator errors and zero tests do **not** count as kills. It restores the original
-compiled code and requires another passing baseline. The checked-in source is never
-overwritten by these two additional mutation checks.
-
-The existing `pq-contracts` workflow now invokes this runner before its original
-mutation suite:
-
-```sh
-python3 test/pq-contracts/test_pq_highload_policy.py --build build \
-  --signer build-pq-signer/test-pq-contracts-sign
+```text
+87,600 + 3,300 * action_count + 60,000 gas
 ```
 
-## Evidence and merge gate
+The fixed extra-work reserve keeps the one-argument getter usable. Unspent attached value is refunded under the existing mode 64+2 semantics; the reserve is not a fixed fee. At 254 actions the arithmetic bound is 985,800 gas, below the fixture's 1,000,000 cap. **This arithmetic is not a measurement or proof of sufficiency.** Tests require real full-batch execution at exactly the getter quote, including dense replay state, cold/independent extra dictionaries, maximum 31-byte amounts and the entire eight-entry budget. One unit below the quote must reject the request unused. Older gas figures in the original design/PR description are historical, not measurements of this revision.
 
-The pre-patch `pq-contracts` run
-[37083845884](https://github.com/tosnetwork/tos/actions/runs/37083845884), associated
-with input HEAD `5195571a49b4`, was observed successful. It is baseline evidence only,
-not evidence that these newly added regressions pass.
+### R3-3 — Medium — Non-minimal extra amounts bypassed compute-time validation
 
-Local checks available during review verified the captured original wallet against
-its Git blob SHA (`c63ec95c9382a729fed9ec248f9fc0948bccf60b`), the patched source
-against its returned Git blob SHA, Python syntax of the new test runner, and all
-65,536 flag values in a bounded predicate truth-table check. The latter is **not**
-a substitute for compilation or real TVM execution. This review environment has no
-local TOS compiler/emulator build and cannot clone the repository through its shell.
+Reading a five-bit length and that many bytes did not establish canonical `VarUInteger 32`. `VarUInteger::validate_skip` in `crypto/block/block-parse.cpp` requires a non-empty encoding to start with a non-zero byte. Examples previously admitted by the wallet include zero encoded with length 1 and value 1 encoded with length 2 and a leading zero. Native action validation can reject such a payment after the wallet's intended preflight point.
 
-**Merge gate:** require a successful latest-head `pq-contracts` run including the new
-message-policy step, existing FunC/Tol/wallet suites, original mutation suite, gas
-profile and deployment/code-hash checks. The PR review comment records the exact
-observed post-patch revision/run and whether that gate has completed; this document
-does not turn an in-progress run into a passing result.
+**Fix.** For non-zero length, require a non-zero leading byte, then consume exactly the declared bytes and the entire leaf. Zero is represented by length 0. Truncated values and trailing bits/references remain rejected. The old `bytes >= 32` guard was removed: a five-bit unsigned read cannot produce 32, so that condition provided no protection.
 
-## Boundaries retained
+Tests cover non-minimal zero, leading-zero positive values, a 31-byte non-minimal value, truncated leaves and trailing bits/references. A separate mutation removes the leading-byte check and must fail a behavioral assertion.
 
-- The M-of-N API still requires configuration produced by its validated constructors
-  and persisted unchanged. Caller-supplied unvalidated tuples are not safe configs.
-  Expiry, operation domain, target address and nonce consumption remain caller duties.
-- No additional authentication bypass was identified in the examined request paths.
-  This is not a claim that all possible bugs or exotic-cell inputs have been ruled out.
-- Mode +2 is best-effort per-message delivery, **not atomic all-or-nothing payment
-  execution**. Owners/relayers must inspect outbound results and reconcile skipped
-  payments. A successful compute phase alone does not establish delivery.
-- The wallet's preflight parser does not recursively validate every referenced
-  extra-currency structure. Executor validation/state limits remain authoritative;
-  do not interpret the earlier design's "no input reaches a whole action-phase
-  failure" sentence as a proof that every malformed cell graph is excluded.
-- Replay safety depends on retained account state and the signed freshness interval.
-  Disallowing send mode +32 is not a general guarantee against storage-rent-driven
-  account deletion. Keep the wallet funded for storage and do not assume deletion
-  and redeployment preserve replay history. No new rent-deletion exploit is claimed
-  as reproduced in this review.
-- The patch changes compiled wallet code and therefore deployment StateInit/address.
-  Regenerate deployment artifacts from this build; do not reuse an old code/address
-  pair. There is no state-layout migration and no change to the ML-DSA signature suite.
+### R3-4 — Medium — Positive tests could pass when no assets were sent
 
+The round-2 "two currencies remain usable" test started from a wallet with no extra-currency balance. It asserted transaction success and replay-id consumption, but not the business outbound message. Under forced +2 an insufficient-extra-balance send can be skipped while those assertions still pass. The four-zero-entry test similarly did not prove that the native payment was emitted.
 
-## Round 2 — ExtraCurrencyCollection preflight hardening
+**Fix.** `AssetWallet` adopts the actual post-transaction state on success and failure and preserves extra-currency maps from actual outbound messages. Positive tests first credit assets through real internal deposits. They then assert destination, native value, currency ids/amounts, signed order and remaining wallet asset balances. The zero cases check the real native payment, not just a consumed id. Tampering with extra amounts without re-signing must fail verification and leave funds unchanged. Getter tests now explicitly use the same v16/v18 version as the wallet under test.
 
-Second-round review started from the post-round-1 HEAD and focused on differences
-between the wallet's compute-time parser and the executor's action-phase acceptance
-rules. The round-1 CI for HEAD `eb64996e857f` completed successfully before these new
-changes were made.
+## Test inventory and execution boundary
 
-### F3 — Medium: invalid or over-limit ExtraCurrencyCollection can be skipped after replay consumption
+`test/pq-contracts/test_pq_highload_policy.py` now contains **14 test methods**, running behavior at versions 16 and 18, and **7 targeted mutations**. It retains coverage of the round-1 flags/count guards and adds removal/substitution tests for the extra preflight, total-visit bound, aggregate batch budget, minimal amount encoding and live limit.
 
-The wallet previously parsed the native value and then used `skip_dict()` for the
-`ExtraCurrencyCollection`. That checks only the HashmapE presence/root shape enough to
-advance the slice; it does not validate each `HashmapE 32 (VarUInteger 32)` value and
-does not enforce the executor's configured `max_msg_extra_currencies` limit.
+A mutation counts as killed only after a passing baseline, actual test execution, at least one assertion failure and no test errors. Sources are not overwritten: each mutant is compiled from a temporary sibling file. The original compiled wallet is restored and the complete baseline must pass again. The original FunC/Tol quorum suites, wallet suite and 61-mutation runner remain in the existing workflow.
 
-The executor validates and unpacks `CurrencyCollection` in action phase. With
-`extra_currency_v2`, it removes zero-valued extra currencies and then rejects a
-message whose remaining non-zero currency count exceeds ConfigParam 43
-`max_msg_extra_currencies`. The canonical configuration used by the PQ test executor
-sets this limit to **2**. These errors are subject to `check_skip_invalid`; because the
-PQ wallet forces send mode +2, the affected business message can be skipped while the
-transaction succeeds and the query id remains consumed.
+Additional vectors exercise 9/128/1,024/4,096 zero entries under an enlarged live limit, so the wallet's independent work bound is tested rather than accidentally relying on the default chain limit of 2. Shared 4-entry dictionaries use a live per-message limit 4: two sends fit the batch budget; three do not. Exact-quote worst-work vectors enlarge the per-message limit to 8 where needed, while separate cases verify the default limit 2.
 
-The repository's existing classic-highload action-phase fixture independently documents
-the same class of behavior for malformed extra-currency dictionaries: IGNORE_ERRORS can
-turn an action-phase message defect into a skipped send with replay state retained.
+Local evidence for this round: Python syntax checking, AST inventory, all seven mutation targets matching exactly once, balanced source delimiters, and Git blob consistency of the prepared source/test files. These are **not** a FunC compilation, a TVM execution, an ML-DSA proof or a passing CI verdict. Shell cloning was attempted but DNS resolution for github.com failed, and no local TOS compiler/emulator build was available.
 
-Impact is payment reliability / replay semantics, not an authentication bypass: the
-owner must have signed the malformed or over-limit message. A relayer cannot alter the
-signed action list without invalidating ML-DSA.
+The earlier dedicated run [37091479871](https://github.com/tosnetwork/tos/actions/runs/37091479871) belongs to round-1 HEAD `eb64996e857f`; its success cannot validate round 2 or 3. Do not interpret earlier broad "all CI green" wording as a latest-head result. The required merge gate is a successful dedicated workflow for the final head, including compilation, generated deployment code, original suites, policy tests, exact-quote/gas checks and both mutation runners.
 
-### Patch
+## Boundaries and rollout
 
-`pq-highload-wallet-code.fc` now preflights `ExtraCurrencyCollection` before signature
-verification:
+- This is a source-level review with added regressions, not a comprehensive proof that every cell graph or every future configuration is safe.
+- The quorum library still requires validated, persisted configuration. Expiry, operation domain, target binding and nonce consumption remain calling-contract responsibilities. No quorum-library API or signature suite is changed here.
+- Forced +2 remains per-message best effort, not atomic payment execution. Native action/state limits, destination validity and sufficient balances still govern delivery. This bounded parser is not a complete independent TL-B validator.
+- Relayers must use the current getter; attached-value requirements increased. A skipped refund may remain in the wallet. Storage rent still applies, and deletion/redeployment does not preserve replay history.
+- The eight-entry aggregate budget is a new explicit admission restriction. Clients must count encoded entries, including zeros and repeated uses, and split larger extra-currency batches.
+- Bytecode changes alter StateInit/address. Regenerate deployment artifacts. Stored data and signed request field layout are unchanged; there is no state-layout migration.
+- No merge, deployment, main-branch code edit or wallet transaction was performed by this review. Repository writes are limited to the PR branch and the requested memo report.
 
-- walk the dictionary as unsigned 32-bit currency ids;
-- require each leaf to be exactly a canonical `VarUInteger 32` value;
-- count only non-zero amounts, matching executor filtering semantics;
-- reject when more than two non-zero currencies are present.
+## Primary source references
 
-This runs before verification, replay recording, state persistence, refund queuing and
-business sends. The current constant mirrors the active canonical ConfigParam 43 value,
-and the policy test is intended to fail if configuration changes without an explicit
-wallet-policy update.
-
-Commits in this round:
-
-- `667c9c437507` — add bounded extra-currency preflight;
-- `a5c13c1f024b` — add real-executor regression and mutation coverage;
-- `ce6798dbdb92` — mirror zero-value filtering semantics;
-- `366475ce776d` — add zero-valued extra-currency regression.
-
-### New regression coverage
-
-The policy suite now exercises versions 16 and 18 and checks:
-
-1. three non-zero extra currencies are refused before verification and leave the query id unused;
-2. malformed `VarUInteger 32` leaf encoding is refused and leaves the id unused;
-3. exactly two non-zero extra currencies remain usable;
-4. more than two zero-valued entries remain usable, matching executor filtering;
-5. removing the new preflight call must cause an assertion failure rather than a build/test error.
-
-### Status
-
-The previous round's latest-head CI (`eb64996e857f`) was observed fully green, including
-the dedicated PQ contracts workflow and all related PQ/authentication checks.
-
-The round-2 HEAD is `366475ce776dc78d9f659fd44c6edea33e1fd989`. At the time this
-section was written, GitHub had not yet published workflow-run records for this newest
-commit. Therefore round 2 remains gated on a successful latest-head CI run; the report
-does not claim the new patch has passed the real executor until that run completes.
+- [Round-3 input wallet](https://github.com/tosnetwork/tos/blob/831ff96207b447e1ff8508d74f6586cc64888a0c/crypto/smartcont/pq-highload-wallet-code.fc)
+- [Round-3 input tests](https://github.com/tosnetwork/tos/blob/831ff96207b447e1ff8508d74f6586cc64888a0c/test/pq-contracts/test_pq_highload_policy.py)
+- [CurrencyCollection count-before-filter implementation](https://github.com/tosnetwork/tos/blob/831ff96207b447e1ff8508d74f6586cc64888a0c/crypto/block/block.cpp)
+- [Native VarUInteger canonical validation](https://github.com/tosnetwork/tos/blob/831ff96207b447e1ff8508d74f6586cc64888a0c/crypto/block/block-parse.cpp)
+- [ConfigParam 43 wire layouts](https://github.com/tosnetwork/tos/blob/831ff96207b447e1ff8508d74f6586cc64888a0c/crypto/block/block.tlb)
+- [Action-phase message handling](https://github.com/tosnetwork/tos/blob/831ff96207b447e1ff8508d74f6586cc64888a0c/crypto/block/transaction.cpp)
