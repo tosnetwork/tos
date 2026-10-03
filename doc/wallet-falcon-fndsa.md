@@ -84,6 +84,24 @@ The module compiler manifest records source commit, compiler SHA-256, code hash,
 BOC digest and StateInit encoding separately for FunC and Tol. Trust a reviewed
 manifest and verify the downloaded BOC digest/code hash before using it.
 
+An opt-in disposable local-chain runner exercises funded deployment, paid bad
+proof rejection, successful transfer and actual replay for both module languages
+in modes 2 and 3. It treats the operator-controlled test node as its trust anchor;
+account/config reads use one masterchain block. It does not provide production
+checkpoint discovery or validator authentication. Build the node/lite-client and
+generate the SDK API before starting a fresh test directory:
+
+```sh
+cmake --build build --target validator-engine dht-server validator-engine-console lite-client create-state generate-random-id tos-pq-consensus-key toslibjson -j2
+python test/tostester/generate_tl.py
+PYTHONPATH=test/tostester/src TOS_BUILD_DIR=$PWD/build TOS_GLOBAL_VERSION=19 python scripts/localnet-jsonrpc.py --rpc 127.0.0.1:28545 --control 127.0.0.1:28745 --base-port 29000 --workdir work/falcon-devnet
+# In another terminal, after the test chain is ready:
+python test/falcon-auth/live_relay.py --build build --library build-falcon/libtos_falcon_offline.so --lite-client build/lite-client/lite-client --lite-config work/falcon-devnet/lite-client.json --control 127.0.0.1:28745 --out work/falcon-live-artifacts
+```
+
+Stop only the test network process when the run completes. Never point this
+runner at a production/shared network or use its ephemeral keys for real assets.
+
 ## Offline wallet
 
 ```sh
