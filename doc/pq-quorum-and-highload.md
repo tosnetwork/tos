@@ -365,7 +365,7 @@ untested by mutation.
 
 ## Review record
 
-### Round 1, design v1 (`31d982c2b`)
+### Round 1, design v1 (`2c2cfacb7`)
 
 Every finding was accepted.
 
@@ -392,7 +392,7 @@ Every finding was accepted.
   ceiling; replay-boundary, worst-state, v15 and deployment tests; and assertions on
   real-transaction outcomes.
 
-### Round 2, design v2 (`fc0f3fef0`)
+### Round 2, design v2 (`088ad9c56`)
 
 Conditional pass: the signed preimage, field order and contexts are frozen, and coding
 may start. Every finding was accepted.
@@ -423,7 +423,7 @@ Measurement changed one design point.
 - **`MAX_QUORUM = 12`.** Confirmed by measurement: 745,000–747,000 gas at a full
   64-verifier set.
 
-### Round 3, quorum library code (`656ea5427`)
+### Round 3, quorum library code (`ab2cfd3d6`)
 
 The reviewer accepted dropping the chain walk before verification: it found no input
 the verifier accepts that the walk would have refused. Every other finding was accepted.
@@ -460,7 +460,7 @@ the verifier accepts that the walk would have refused. Every other finding was a
 
 ### Implementation notes, wallet
 
-Measured on the C++ executor at commit 571852002 (the suite's `--report` output), with both
+Measured on the C++ executor at commit afb2e27f9 (the suite's `--report` output), with both
 replay generations dense and the id needing a new row:
 
 | Measurement | Value |
@@ -481,7 +481,7 @@ every valid request.
 
 60 mutants, 37 in the library and 23 in the wallet, are each killed by an assertion.
 
-### Round 4, quorum fixes and the wallet (`0a5baed5c`)
+### Round 4, quorum fixes and the wallet (`976ef3ff2`)
 
 The reviewer confirmed that round 3 is closed. It found no forged-signature, relayer-
 tampering or replay path in the wallet. Every finding was accepted.
@@ -505,7 +505,7 @@ tampering or replay path in the wallet. Every finding was accepted.
   - The deployment script now runs `get_checked_config`. It needs only c4, because the
     workchain check moved to submission time.
 
-### Round 5, final acceptance (`571852002`)
+### Round 5, final acceptance (`afb2e27f9`)
 
 The reviewer accepted the code. All four round-4 findings are closed, and no new
 blocking issue was found. In an independent rerun, both quorum suites and the wallet
@@ -513,7 +513,7 @@ suite passed 20 of 20 each. All 61 mutants were killed by assertions, and the ba
 passed before and after.
 
 - **Low: stale gas figures.** The source comment and the measurement table still quoted
-  an earlier build. They now give the values this suite reports at `571852002`: 2,708 gas
+  an earlier build. They now give the values this suite reports at `afb2e27f9`: 2,708 gas
   per action, 767,378 gas for a full batch and about 492,000 gas to refuse 255 actions.
   The funding profile of 87,600 base and 2,930 per action still covers them.
 
