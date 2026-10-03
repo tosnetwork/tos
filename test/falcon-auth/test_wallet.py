@@ -368,7 +368,18 @@ class WalletTests(unittest.TestCase):
         e["target"] = dict(compute_success=True, action_success=True, nonce_consumed=True)
         self.assertEqual(self.p.trackReceipt(self.request, e).state, "target outcome incomplete")
         e["target"]["final_state_verified"] = True
-        self.assertEqual(self.p.trackReceipt(self.request, e).state, "actions completed")
+        # Phase success and a genuine nonce/state do not prove the requested
+        # operation. A skipped or partial batch can have all these booleans.
+        for counts in (
+            {},
+            {"skipped_actions": 1, "msgs_created": 0},
+            {"skipped_actions": 1, "msgs_created": 1},
+        ):
+            e["target"].update(counts)
+            self.assertEqual(
+                self.p.trackReceipt(self.request, e).state, "target outcome incomplete"
+            )
+            self.assertNotIn("separately observed", self.p.trackReceipt(self.request, e).funds)
 
     def test_migration_cli_rehearses_recovery_and_signs_with_current_root(self):
         import wallet

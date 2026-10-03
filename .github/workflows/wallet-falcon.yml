@@ -97,6 +97,10 @@ jobs:
             --old-signer build-old-signer/test-mldsa44-sign --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts
           python test/falcon-auth/test_boundaries.py --build build --signer build-falcon/libtos_falcon_offline.so --out artifacts/boundaries
           python test/falcon-auth/test_wallet.py --library build-falcon/libtos_falcon_offline.so --artifacts artifacts
+          python test/falcon-auth/receipt_e2e.py --build build --library build-falcon/libtos_falcon_offline.so \
+            --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts/receipts
+          python test/falcon-auth/receipt_mutations.py --build build --library build-falcon/libtos_falcon_offline.so \
+            --artifacts artifacts --out artifacts/receipts/controls
           python test/falcon-auth/provider_mutations.py --library build-falcon/libtos_falcon_offline.so --artifacts artifacts
           python test/falcon-auth/tx_parity.py --build build --signer build-falcon/libtos_falcon_offline.so \
             --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts/transactions
@@ -157,7 +161,7 @@ jobs:
           path: results
       - name: Require architecture-independent execution and module identities
         run: |
-          for name in commit.txt official/official-kat.json vectors.json cpp.tsv rust.tsv scenarios.tsv module-func.boc module-tol.boc wallet-func.boc wallet-tol.boc agent.boc transactions/emulator.tsv transactions/rust.tsv two-hop-cpp.tsv two-hop-rust.tsv; do
+          for name in commit.txt official/official-kat.json vectors.json cpp.tsv rust.tsv scenarios.tsv module-func.boc module-tol.boc wallet-func.boc wallet-tol.boc agent.boc transactions/emulator.tsv transactions/rust.tsv two-hop-cpp.tsv two-hop-rust.tsv receipts/receipt-e2e.json receipts/receipt-cpp.tsv receipts/receipt-rust.tsv; do
             cmp "results/falcon-x86_64/$name" "results/falcon-aarch64/$name"
           done
           python - <<'PY'
@@ -177,6 +181,12 @@ jobs:
               assert len(mutations)==12 and all(m['compiled'] and m['killed'] for m in mutations)
               preflight=json.loads((root/'provider-mutations.json').read_text())
               assert len(preflight)==6 and all(m['compiled'] and m['killed'] for m in preflight)
+              receipts=json.loads((root/'receipts/receipt-e2e.json').read_text())
+              assert receipts['success'] is True and receipts['cases']==64
+              assert receipts['transactions_compared']==164
+              receipt_controls=json.loads((root/'receipts/controls/receipt-mutations.json').read_text())
+              assert receipt_controls['success'] is True and len(receipt_controls['controls'])==4
+              assert all(c['compiled'] and c['killed'] and c['restored_baseline_passed'] for c in receipt_controls['controls'])
           live=json.loads(Path('results/falcon-x86_64/live/live-falcon.json').read_text())
           assert live['success'] is True and live['cases']==4 and live['global_version']==19
           PY

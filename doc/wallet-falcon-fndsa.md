@@ -154,12 +154,55 @@ objects require fresh preflight. The provider retains at most 128 pending
 request fingerprints; evicted requests must be prepared again. This client
 preflight record does not cache cryptographic verification or affect VM fees.
 
-Receipts distinguish waiting, module computation/forwarding failure, target
-rejection, consumed-nonce refusal, action rejection/completion and unresolved
-bounce/reserve funds. Completion requires observed target actions and verified
-final state. Deposits and bounced funds can remain locked in this immutable
-module; there is no refund promise. Frozen/deleted account snapshots are refused
-by the client, rather than interpreted as permission for classical recovery.
+Receipts distinguish nonce consumption from the requested operation's result.
+The old dictionary contract provides progress/failure hints only: phase-success,
+nonce and final-state booleans never certify completion or observed funds.
+`trackReceipt` requires `TrustedReceiptEvidence` from an authenticated chain
+adapter for completion. Its `network` and `module`, `target`, `deliveries` and
+`bounce_returns` observations must be inclusion/finality checked by that adapter;
+constructing the Python object or decoding RPC BOCs does not authenticate them.
+Each `TrustedTransactionObservation` contains the original transaction Cell and
+optional full `Account` Cells `before`/`after`. Target completion requires both
+Account proofs, with hashes matching that transaction's `HASH_UPDATE`, rather
+than an arbitrary genuine later snapshot or StateInit/data alone.
+
+The classifier binds the module submission to the exact signed request and
+root, then the target input to the exact emitted relay. It parses real action
+counts and the action-list hash, matches requested outgoing destinations,
+bodies, StateInit and value semantics, and checks the requested AUTH state.
+`+2` ignored sends become `target actions skipped`; a partly emitted batch
+becomes `target actions partially completed`, even when action-phase success and
+nonce consumption are true. Missing operation evidence remains incomplete.
+Every expected send must also have a matching recipient transaction before
+`actions completed`; otherwise the receipt says `actions emitted; delivery
+pending`. This certifies the requested account actions and recipient acceptance,
+not an unspecified downstream business result. Wallet fees/carry-value modes
+are bound by the authenticated action list, not guessed from a nominal amount.
+Unknown operation matchers remain incomplete.
+
+Configure operations need no outbound message: verify the requested root/mode,
+incremented AUTH epoch and reset nonce in the transaction-bound account state.
+Agent controller sends/cancellation and owner policy/controller changes also
+match their signed operation and resulting state. Recipient rejection and a
+later bounce update the delivery outcome without undoing a consumed nonce.
+`delivery`, `bounce` and `reserve` are separate observations: an emitted bounce
+is still return-pending until its actual return transaction credits the source;
+module reserve preservation requires transaction-bound balance proofs and
+accounts for collected storage fees. Missing funds evidence stays `not observed`.
+Deposits and bounced funds can remain locked in the immutable module; there is
+no refund promise. Frozen/deleted snapshots require separate storage recovery.
+
+`test/falcon-auth/receipt_e2e.py` executes 64 native transaction-to-`trackReceipt`
+cases across both module languages, Wallet V5 implementations and modes, plus
+Agent operations. It covers ignored sends, partial batches, successful delivery,
+zero-send configuration/cancellation, policy changes and delayed bounce return.
+The Rust executor independently compares all 164 captured transactions.
+Configuration-state tampering controls use explicitly synthetic adapter cells;
+they are not reported as genuine chain executions. Four compiled client guard
+bypasses must reach targeted assertions, then restored baselines must pass.
+CI retains these reports and compares deterministic receipt artifacts on both
+architectures. The emulator is the local test trust anchor; this regression is
+not a production chain adapter or a new live-network qualification claim.
 
 ## Acceptance evidence and remaining work
 

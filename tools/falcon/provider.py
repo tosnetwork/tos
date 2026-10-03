@@ -20,6 +20,7 @@ from contract.falcon_auth import (
 from contract.pq_auth import AuthRequest, address, transfer_message
 from contract.wallet_v5 import WalletV5State
 from pytosiq_core import Address, Builder, Cell, StateInit
+from receipts import MultiHopReceipt
 
 
 @dataclass(frozen=True)
@@ -317,9 +318,19 @@ class AuthProvider:
             return hashlib.sha256(raw_backup).hexdigest()
 
     def trackReceipt(self, signing_request, evidence):
-        # Evidence must come from a trusted transaction/state adapter. A submission
-        # hash or compute success alone cannot produce an action-complete receipt.
-        return MultiHopReceipt.from_evidence(request_identity(signing_request.request), evidence)
+        if not isinstance(signing_request, SigningRequest):
+            raise TypeError("provider SigningRequest required")
+        account_types = {
+            self.manifest[name]["code_hash"]: "agent" if name == "agent" else "wallet"
+            for name in ("wallet-func", "wallet-tol", "agent")
+        }
+        return MultiHopReceipt.from_evidence(
+            request_identity(signing_request.request),
+            evidence,
+            request=signing_request.request,
+            root=signing_request.root,
+            account_types=account_types,
+        )
 
     def _requireMigrationPreflight(self, request, root):
         identity = (root.to_str(is_user_friendly=False), request.commitment)
@@ -353,55 +364,6 @@ class AuthProvider:
             snapshot.account,
             dict(kind=1, payload=request.payload, valid_until=request.valid_until),
         )
-
-
-@dataclass(frozen=True)
-class MultiHopReceipt:
-    identity: tuple
-    state: str
-    nonce_consumed: bool
-    funds: str
-
-    @classmethod
-    def from_evidence(cls, identity, evidence):
-        if evidence is None:
-            return cls(identity, "waiting for relayer", False, "not observed")
-        if evidence.get("identity") != identity:
-            raise ValueError("receipt request identity mismatch")
-        module = evidence.get("module")
-        if not module:
-            return cls(identity, "waiting for relayer", False, "not observed")
-        if module.get("compute_success") is False:
-            return cls(identity, "module computation failed", False, "inspect bounce and reserve")
-        if module.get("action_success") is False:
-            return cls(identity, "module forwarding failed", False, "inspect bounce and reserve")
-        if (
-            module.get("compute_success") is not True
-            or module.get("action_success") is not True
-            or module.get("relay_observed") is not True
-        ):
-            return cls(identity, "module outcome incomplete", False, "not observed")
-        target = evidence.get("target")
-        if not target:
-            return cls(identity, "waiting for target", False, "forwarded")
-        consumed = target.get("nonce_consumed") is True
-        if target.get("compute_success") is False:
-            return cls(
-                identity,
-                "target consumed nonce but refused operation" if consumed else "target rejected",
-                consumed,
-                "inspect bounce",
-            )
-        if target.get("action_success") is False:
-            return cls(identity, "target actions rejected", consumed, "inspect target state")
-        if (
-            target.get("compute_success") is True
-            and target.get("action_success") is True
-            and consumed
-            and target.get("final_state_verified") is True
-        ):
-            return cls(identity, "actions completed", True, "bounce/reserve separately observed")
-        return cls(identity, "target outcome incomplete", consumed, "not observed")
 
 
 def buildMigrationRequest(
