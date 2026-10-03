@@ -310,7 +310,7 @@ fn replies(result: &tos_sandbox::SendResult) -> Vec<u32> {
 /// configuration requires four participants and forty thousand TOS between them.
 fn elect_four() -> (Chain, u32, Vec<PqValidator>) {
     let (mut chain, treasury, election) = open_election("validator-set-a", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let mut validators = Vec::new();
     for index in 0..4u8 {
         let validator = PqValidator::new(0x40 + index);
@@ -391,7 +391,7 @@ fn returned_value(result: &tos_sandbox::SendResult) -> u128 {
 #[test]
 fn the_legacy_stake_operation_has_no_authority_and_returns_the_money() {
     let (mut chain, treasury, election) = open_election("legacy-stake-op", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let sent = 11_000 * TOS;
 
     let result = chain
@@ -467,7 +467,7 @@ fn a_closed_election_sends_its_set_to_the_configuration_contract() {
 #[test]
 fn an_elected_set_with_duplicate_adnl_is_refused_before_installation() {
     let (mut chain, _treasury, election) = open_election("duplicate-adnl-election", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let mut first_adnl = None;
     for index in 0..4u8 {
         let mut validator = PqValidator::new(0x60 + index);
@@ -730,7 +730,7 @@ fn a_closed_election_with_no_stake_is_given_up_once_the_term_it_would_follow_end
 #[test]
 fn a_closed_election_below_the_minimum_returns_every_stake_to_its_owner() {
     let (mut chain, _treasury, election) = open_election("short-election", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     // Two members at 11 000 each: below the forty thousand the configuration requires.
     let stake = 11_000 * TOS;
     install_synthetic_book_owned(&mut chain, 2, stake, 1, &|index, _| refund_owner(index));
@@ -761,7 +761,7 @@ fn a_closed_election_below_the_minimum_returns_every_stake_to_its_owner() {
 #[test]
 fn a_failed_election_is_given_up_and_each_stake_comes_back_exactly_once() {
     let (mut chain, _treasury, election) = open_election("failed-election", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     // Enough admitted money to pass the total, too few members to seat a set: the attempt
     // runs and fails. Member 1 sits under a profile retired after it staked, which is the
     // one stake the selection itself credits back before failing -- so a cancellation
@@ -850,7 +850,7 @@ struct Scenario {
 fn scenario(outcome: Outcome) -> Scenario {
     let (mut chain, _treasury, election) =
         open_election(&format!("lifecycle-{outcome:?}"), 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let (stakes, profiles): (Vec<u64>, u16) = match outcome {
         Outcome::Empty => (Vec::new(), 1),
         Outcome::BelowMinimum => (vec![11_000 * TOS; 2], 1),
@@ -1105,7 +1105,7 @@ fn every_exit_returns_each_stake_exactly_once_to_its_owner() {
 #[test]
 fn a_refused_late_stake_does_not_strand_the_election_or_the_staker() {
     let (mut chain, _treasury, election) = open_election("late-stake", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let close = election - chain.elect_end_before;
 
     let validators: Vec<PqValidator> =
@@ -1181,7 +1181,7 @@ fn a_refused_late_stake_does_not_strand_the_election_or_the_staker() {
 #[test]
 fn an_absent_operator_costs_windows_never_the_chain() {
     let (mut chain, _treasury, first) = open_election("absent-operator", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let mut election = first;
     for window in 0..3 {
         let closed = tick_at_close(&mut chain, election, "the close");
@@ -1291,7 +1291,7 @@ fn has_past_election(chain: &Chain, election: u32) -> bool {
 #[test]
 fn a_served_sets_bonuses_reach_its_stakers_in_proportion_and_nowhere_else() {
     let (mut chain, _treasury, election) = open_election("bonus-round", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let address_of = |account: &tos_sandbox::Treasury| -> [u8; 32] {
         account.address().address().get_bytestring(0).try_into().expect("an address")
     };
@@ -2623,7 +2623,7 @@ fn governance_cannot_vote_itself_an_administrator() {
 #[test]
 fn a_retired_profile_cannot_make_an_election_look_ready() {
     let (mut chain, treasury, election) = open_election("readiness-retired", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
 
     // Enough stake, from enough members, that the election would close.
     let mut accounts = Vec::new();
@@ -3159,7 +3159,7 @@ fn govern_install_pq(
 fn a_contract_can_send_the_witness_but_not_the_proof_it_replaced() {
     use chain_block::{GetRepresentationHash, IBitstring};
     let (mut chain, _treasury, election) = open_election("witness-vs-proof", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let mut validator = deploy_rooted_validator(&mut chain, 9);
     admit_code_of(&mut chain, &validator.address);
 
@@ -3601,7 +3601,7 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
     use contracts::nominator::{NewStakeParams, new_stake_with_witness};
 
     let (mut chain, _treasury, election) = open_election("pool-e2e", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
 
     // Four controllers, so the election has enough behind it to conduct, and the code
     // they were deployed as is the only one admitted.
@@ -3785,7 +3785,7 @@ fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakePr
     }
 
     let (mut chain, _treasury, election) = open_election("multi-pool-first-stake", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = deploy_rooted_validator(&mut chain, 0x31);
     admit_code_of(&mut chain, &validator.address);
     let operator = chain.blockchain.treasury("multi-pool-operator", 100_000 * TOS).expect("wallet");
@@ -3914,7 +3914,7 @@ fn a_multi_nominator_first_stake_with_forwarding_allowance_is_accepted() {
 #[test]
 fn post_quantum_authority_holds_from_the_controller_to_the_governed_change() {
     let (mut chain, _treasury, election) = open_election("cutover-e2e", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
 
     // --- the controllers, and the only code the configuration admits ----------------
     let mut validators: Vec<RootedValidator> =
@@ -4232,7 +4232,7 @@ fn synthetic_set(now: u32, count: u16) -> chain_block::Cell {
 #[test]
 fn the_pre_install_check_is_measured_at_the_enforced_launch_sizes() {
     let (mut chain, _treasury, _election) = open_election("preinstall-scale", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     raise_validator_ceiling(&mut chain, 21);
 
     let mut measured = Vec::new();
@@ -4512,7 +4512,7 @@ fn an_election_is_measured_at_the_sizes_the_chain_allows() {
     for count in [4u16, 21] {
         let (mut chain, _treasury, election) =
             open_election(&format!("election-scale-{count}"), 200_000 * TOS);
-        raise_to_post_quantum_version(&mut chain);
+        require_post_quantum_version(&mut chain);
         raise_validator_ceiling(&mut chain, 21);
         install_synthetic_book(&mut chain, count, 11_000 * TOS);
 
@@ -4593,7 +4593,7 @@ fn owed(chain: &Chain, account: &[u8; 32]) -> u128 {
 #[test]
 fn the_unused_part_of_a_stake_goes_to_its_owner_and_not_to_the_validator() {
     let (mut chain, _treasury, election) = open_election("stake-owner", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
 
     // Each member's money belongs to a different account from its identity.
     let owner_of = |index: u16, _identity: [u8; 32]| {
@@ -4638,7 +4638,7 @@ fn the_unused_part_of_a_stake_goes_to_its_owner_and_not_to_the_validator() {
 #[test]
 fn the_stake_and_its_unused_part_both_come_back_to_the_owner() {
     let (mut chain, _treasury, election) = open_election("owner-round", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
 
     let owner_of = |index: u16, _identity: [u8; 32]| {
         let mut owner = [0xEEu8; 32];
@@ -4714,7 +4714,7 @@ fn the_stake_and_its_unused_part_both_come_back_to_the_owner() {
 #[test]
 fn the_owner_a_real_stake_records_is_the_account_that_sent_it() {
     let (mut chain, treasury, election) = open_election("recorded-owner", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let _ = treasury;
 
     let mut senders = Vec::new();
@@ -4782,7 +4782,7 @@ fn the_owner_a_real_stake_records_is_the_account_that_sent_it() {
 #[test]
 fn a_retired_profiles_stake_returns_to_its_owner() {
     let (mut chain, _treasury, election) = open_election("retired-owner", 400_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
 
     let owner_of = |index: u16, _identity: [u8; 32]| {
         let mut owner = [0xEEu8; 32];
@@ -4851,7 +4851,7 @@ fn the_effective_total_is_measured_over_one_profile_and_over_eight() {
     for profiles in [1u16, 8] {
         let (mut chain, _treasury, election) =
             open_election(&format!("profiles-{profiles}"), 200_000 * TOS);
-        raise_to_post_quantum_version(&mut chain);
+        require_post_quantum_version(&mut chain);
         raise_validator_ceiling(&mut chain, 21);
         install_synthetic_book_over(&mut chain, 21, 11_000 * TOS, profiles);
 
@@ -5940,38 +5940,20 @@ fn pq_stake_body_owned(
     body.into_cell().expect("stake body")
 }
 
-/// The post-quantum instruction is gated on global version 16, and the zerostate declares
-/// 14. Raising it here is what the design assumes and the activation gate will make true; the
-/// classical tests above stay on the zerostate's version, which is what keeps them
-/// evidence about the chain as it is.
-fn raise_to_post_quantum_version(chain: &mut Chain) {
-    let mut config = chain.blockchain.config_params().clone();
+/// The post-quantum instruction is gated on global version 16. The canonical zerostate
+/// declares a version at or above it, so these tests run at the version the chain launches
+/// with. A zerostate that drops below 16 fails here, not in every stake that follows.
+fn require_post_quantum_version(chain: &mut Chain) {
+    let config = chain.blockchain.config_params().clone();
     let version = match config.config(8).expect("parameter 8") {
         Some(chain_block::ConfigParamEnum::ConfigParam8(v)) => v.global_version,
         _ => panic!("the chain states no global version"),
     };
-    assert!(version.version < 16, "the fixture is raising a version that is already there");
-    config
-        .set_config(chain_block::ConfigParamEnum::ConfigParam8(chain_block::ConfigParam8 {
-            global_version: chain_block::GlobalVersion { version: 16, ..version },
-        }))
-        .expect("set the global version");
-    let raised = config
-        .config_params
-        .get(
-            chain_block::SliceData::load_builder({
-                use chain_block::IBitstring;
-                let mut key = chain_block::BuilderData::new();
-                key.append_i32(8).expect("the parameter index");
-                key
-            })
-            .expect("a key slice"),
-        )
-        .expect("lookup")
-        .expect("the version was just set")
-        .reference(0)
-        .expect("the parameter value is stored behind a reference");
-    set_contract_parameter(chain, 8, raised);
+    assert!(
+        version.version >= 16,
+        "the zerostate declares global version {}, below the post-quantum instruction's 16",
+        version.version
+    );
 
     // A post-quantum stake is admitted only from an account born with a controller code
     // the configuration admits. Every sandbox account shares one code, so admitting it
@@ -6079,7 +6061,7 @@ fn answered(result: &tos_sandbox::SendResult) -> (MsgAddressInt, u32, u32, u128)
 #[test]
 fn a_relayed_stake_is_answered_to_its_owner_and_not_to_the_relay() {
     let (mut chain, treasury, election) = open_election("relayed-answer", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let pool = chain_block::UInt256::from_slice(&[0x9f; 32]);
     let pool_address =
         MsgAddressInt::with_standart(None, -1, pool.as_slice().into()).expect("the pool address");
@@ -6138,7 +6120,7 @@ fn a_relayed_stake_is_answered_to_its_owner_and_not_to_the_relay() {
 #[test]
 fn a_stake_refused_before_admission_still_goes_back_to_the_account_it_names() {
     let (mut chain, treasury, election) = open_election("refused-early", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let named = chain_block::UInt256::from_slice(&[0x9f; 32]);
     let named_address =
         MsgAddressInt::with_standart(None, -1, named.as_slice().into()).expect("an address");
@@ -6174,7 +6156,7 @@ fn a_stake_refused_before_admission_still_goes_back_to_the_account_it_names() {
 #[test]
 fn a_controller_may_stake_for_an_account_that_is_not_itself() {
     let (mut chain, treasury, election) = open_election("relayed-stake", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(71);
     let pool = chain_block::UInt256::from_slice(&[0x9f; 32]);
 
@@ -6250,7 +6232,7 @@ fn a_controller_may_stake_for_an_account_that_is_not_itself() {
 #[test]
 fn a_controller_cannot_state_a_funding_account_it_was_not_authorised_for() {
     let (mut chain, treasury, election) = open_election("relayed-wrong", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(72);
     let authorised = chain_block::UInt256::from_slice(&[0x9f; 32]);
     let other = chain_block::UInt256::from_slice(&[0xa0; 32]);
@@ -6278,7 +6260,7 @@ fn a_controller_cannot_state_a_funding_account_it_was_not_authorised_for() {
 #[test]
 fn a_stake_stating_the_zero_account_as_its_owner_is_refused() {
     let (mut chain, treasury, election) = open_election("relayed-zero", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(73);
     let zero = chain_block::UInt256::default();
 
@@ -6449,7 +6431,7 @@ fn pq_key_holder(chain: &Chain, key_id: &chain_block::UInt256) -> Option<chain_b
 #[test]
 fn a_signed_post_quantum_stake_registers_the_sender_as_the_validator() {
     let (mut chain, treasury, election) = open_election("pq-validator-a", 40_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(0);
 
     let result = pq_stake(&mut chain, &treasury, &validator, election, 1, 11_000 * TOS);
@@ -6501,7 +6483,7 @@ fn compute_gas(result: &tos_sandbox::SendResult) -> u64 {
 #[test]
 fn a_post_quantum_stake_signed_by_another_key_is_returned() {
     let (mut chain, treasury, election) = open_election("pq-validator-b", 40_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(1);
     let impostor = PqValidator::new(2);
 
@@ -6543,7 +6525,7 @@ fn a_post_quantum_stake_signed_by_another_key_is_returned() {
 #[test]
 fn a_post_quantum_stake_signed_for_another_sender_is_returned() {
     let (mut chain, treasury, election) = open_election("pq-validator-c", 40_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let elsewhere = chain.blockchain.treasury("pq-validator-c-elsewhere", TOS).expect("an account");
     let validator = PqValidator::new(3);
 
@@ -6562,7 +6544,7 @@ fn a_post_quantum_stake_signed_for_another_sender_is_returned() {
 #[test]
 fn a_key_already_registered_by_another_controller_is_returned() {
     let (mut chain, first, election) = open_election("pq-validator-d", 40_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let second =
         chain.blockchain.treasury("pq-validator-d-second", 40_000 * TOS).expect("an account");
     let validator = PqValidator::new(4);
@@ -6596,7 +6578,7 @@ fn a_key_already_registered_by_another_controller_is_returned() {
 #[test]
 fn a_key_released_by_a_rotation_is_registrable_by_the_controller_it_was_refused_to() {
     let (mut chain, first, election) = open_election("pq-release", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let second = chain.blockchain.treasury("pq-release-second", 60_000 * TOS).expect("an account");
     let contested = PqValidator::new(12);
     let rotated = PqValidator::new(13);
@@ -6638,7 +6620,7 @@ fn a_key_released_by_a_rotation_is_registrable_by_the_controller_it_was_refused_
 #[test]
 fn a_controller_rotates_its_key_and_releases_the_one_it_held() {
     let (mut chain, treasury, election) = open_election("pq-validator-e", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let held = PqValidator::new(5);
     let rotated = PqValidator::new(6);
 
@@ -6746,7 +6728,7 @@ fn rewrite_election_with_book_fields(chain: &mut Chain, book_fields: usize) {
 #[test]
 fn an_election_missing_its_books_is_refused_without_losing_its_declared_principal() {
     let (mut chain, treasury, election) = open_election("legacy-elect", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let opening =
         pq_stake(&mut chain, &treasury, &PqValidator::new(0xf1), election, 1, 11_000 * TOS);
     assert_eq!(reply(&opening), (STAKE_ACCEPTED, 0), "the fixture needs a member");
@@ -6781,7 +6763,7 @@ fn an_election_missing_its_books_is_refused_without_losing_its_declared_principa
 #[test]
 fn a_stake_refused_without_its_key_does_not_pay_for_a_verification() {
     let (mut chain, treasury, election) = open_election("pq-refusal-cost", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(11);
 
     let refused = pq_stake(&mut chain, &treasury, &validator, election + 1, 1, 11_000 * TOS);
@@ -6810,7 +6792,7 @@ fn a_stake_refused_without_its_key_does_not_pay_for_a_verification() {
 #[test]
 fn half_a_post_quantum_book_is_refused_rather_than_read_as_empty() {
     let (mut chain, treasury, election) = open_election("legacy-partial", 40_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let opening =
         pq_stake(&mut chain, &treasury, &PqValidator::new(0xf3), election, 1, 11_000 * TOS);
     assert_eq!(reply(&opening), (STAKE_ACCEPTED, 0), "the fixture needs a member");
@@ -6832,7 +6814,7 @@ fn half_a_post_quantum_book_is_refused_rather_than_read_as_empty() {
 #[test]
 fn a_post_quantum_top_up_adds_only_the_money_it_brings_to_the_election_total() {
     let (mut chain, treasury, election) = open_election("pq-validator-g", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(8);
 
     let first = pq_stake(&mut chain, &treasury, &validator, election, 1, 11_000 * TOS);
@@ -6874,7 +6856,7 @@ fn a_post_quantum_top_up_adds_only_the_money_it_brings_to_the_election_total() {
 #[test]
 fn a_members_stake_owner_is_fixed_by_its_first_stake() {
     let (mut chain, _treasury, election) = open_election("owner-fixed", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let network = global_id(&chain);
 
     // The validator, the key it stakes with, and two accounts that each say the money is
@@ -7059,7 +7041,7 @@ fn a_members_stake_owner_is_fixed_by_its_first_stake() {
 #[test]
 fn a_stake_stating_a_factor_below_one_is_returned() {
     let (mut chain, treasury, election) = open_election("pq-factor", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(14);
 
     let result = pq_stake_with_max_factor(
@@ -7083,7 +7065,7 @@ fn a_stake_stating_a_factor_below_one_is_returned() {
 #[test]
 fn a_stake_below_the_minimum_is_returned() {
     let (mut chain, treasury, election) = open_election("pq-minimum", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(15);
 
     let result = pq_stake(&mut chain, &treasury, &validator, election, 1, 2 * TOS);
@@ -7176,7 +7158,7 @@ fn pq_member_max_factor(chain: &Chain, controller: &tos_sandbox::Treasury) -> u3
 #[test]
 fn a_stake_registers_the_weight_factor_it_asked_for() {
     let (mut chain, treasury, election) = open_election("pq-factor-kept", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(19);
     let asked = 0x2_5000;
 
@@ -7269,7 +7251,7 @@ fn pq_stake_signed_over(
 #[test]
 fn every_signed_field_of_a_stake_is_covered_by_its_signature() {
     let (mut chain, treasury, election) = open_election("pq-binding", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(17);
     let other = PqValidator::new(18);
 
@@ -7364,7 +7346,7 @@ fn every_signed_field_of_a_stake_is_covered_by_its_signature() {
 #[test]
 fn a_refused_rotation_leaves_both_controllers_as_they_were() {
     let (mut chain, mine, election) = open_election("pq-atomic", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let theirs = chain.blockchain.treasury("pq-atomic-other", 60_000 * TOS).expect("an account");
     let held = PqValidator::new(20);
     let wanted = PqValidator::new(21);
@@ -7420,7 +7402,7 @@ fn a_refused_rotation_leaves_both_controllers_as_they_were() {
 fn a_stake_naming_an_unadmitted_suite_is_refused() {
     use chain_block::IBitstring;
     let (mut chain, treasury, election) = open_election("pq-suite", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(24);
 
     let mut body = chain_block::BuilderData::new();
@@ -7453,7 +7435,7 @@ fn a_stake_naming_an_unadmitted_suite_is_refused() {
 #[test]
 fn a_stake_after_the_election_closes_is_returned_before_the_tick_conducts_it() {
     let (mut chain, treasury, election) = open_election("pq-after-close", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(16);
 
     chain.blockchain.set_now(election - chain.elect_end_before);
@@ -7523,7 +7505,7 @@ fn sender_code_hash(chain: &Chain, who: &tos_sandbox::Treasury) -> chain_block::
 #[test]
 fn a_stake_from_an_unadmitted_controller_is_returned() {
     let (mut chain, treasury, election) = open_election("pq-unadmitted", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(25);
 
     // A policy that admits some other code: the sender's is well formed and unlisted.
@@ -7561,7 +7543,7 @@ fn a_stake_from_an_unadmitted_controller_is_returned() {
 #[test]
 fn a_stake_carrying_another_accounts_witness_is_returned() {
     let (mut chain, treasury, election) = open_election("pq-foreign-proof", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let other = chain.blockchain.treasury("pq-foreign-proof-other", TOS).expect("an account");
     let validator = PqValidator::new(26);
 
@@ -7695,7 +7677,7 @@ fn pq_stake_as(
 #[test]
 fn a_retired_profile_stops_raising_the_floor_under_everyone_else() {
     let (mut chain, treasury, election) = open_election("pq-effective", 4_000_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let (other, other_proof, other_code) = account_with_code(0x7e);
     let treasury_code = sender_code_hash(&chain, &treasury);
     set_policy(&mut chain, &[treasury_code, other_code.clone()]);
@@ -7735,7 +7717,7 @@ fn a_retired_profile_stops_raising_the_floor_under_everyone_else() {
 #[test]
 fn retiring_a_controller_code_stops_the_members_that_used_it() {
     let (mut chain, treasury, election) = open_election("pq-retire", 60_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let validator = PqValidator::new(27);
     let rotated = PqValidator::new(28);
 
@@ -7782,7 +7764,7 @@ fn retiring_a_controller_code_stops_the_members_that_used_it() {
 #[test]
 fn a_post_quantum_stake_without_a_transport_address_is_returned() {
     let (mut chain, treasury, election) = open_election("pq-validator-f", 40_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
     let mut validator = PqValidator::new(7);
     validator.adnl = [0u8; 32];
 
@@ -7949,7 +7931,7 @@ fn num_to_uint256(decimal: &str) -> chain_block::UInt256 {
 #[test]
 fn the_operator_tools_carry_a_validator_from_no_key_to_a_governed_change() {
     let (mut chain, _treasury, election) = open_election("n39-sequence", 200_000 * TOS);
-    raise_to_post_quantum_version(&mut chain);
+    require_post_quantum_version(&mut chain);
 
     // --- controllers as an operator first has them: a root, and no consensus key -----
     let mut validators: Vec<RootedValidator> =

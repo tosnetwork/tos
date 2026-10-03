@@ -20,6 +20,15 @@ on:
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
+      # What the recorded answers depend on: the tests that record them, the record, its
+      # checker, and the code the four test binaries run.
+      - "crypto/test/**"
+      - "crypto/fift/**"
+      - "crypto/vm/**"
+      - "crypto/block/**"
+      - "crypto/pq/**"
+      - "test/regression-tests.ans"
+      - "scripts/check-regression-db.sh"
       - ".github/workflows/contract-sandboxes.yml"
     types: [opened, reopened, synchronize, ready_for_review]
   # Restricted to the integration branches on purpose. Without this, a push to
@@ -36,6 +45,15 @@ on:
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
+      # What the recorded answers depend on: the tests that record them, the record, its
+      # checker, and the code the four test binaries run.
+      - "crypto/test/**"
+      - "crypto/fift/**"
+      - "crypto/vm/**"
+      - "crypto/block/**"
+      - "crypto/pq/**"
+      - "test/regression-tests.ans"
+      - "scripts/check-regression-db.sh"
       - ".github/workflows/contract-sandboxes.yml"
   workflow_dispatch:
 

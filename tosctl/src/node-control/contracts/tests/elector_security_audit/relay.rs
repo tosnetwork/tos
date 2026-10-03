@@ -28,7 +28,7 @@ impl Fixture {
     }
     fn unfunded(label: &str) -> Self {
         let (mut chain, _, election) = open_election(label, 200_000 * TOS);
-        raise_to_post_quantum_version(&mut chain);
+        require_post_quantum_version(&mut chain);
         if std::env::var_os("R3_FEE_TRACE").is_some() {
             for parameter in [20, 24] {
                 let config = raw_parameter(&chain, parameter).expect("fee configuration");

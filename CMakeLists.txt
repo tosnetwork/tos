@@ -607,7 +607,7 @@ add_executable(test-vm test/test-td-main.cpp ${TOSVM_TEST_SOURCE})
 target_link_libraries(test-vm PRIVATE tos_crypto fift-lib)
 
 add_executable(test-smartcont test/test-td-main.cpp ${SMARTCONT_TEST_SOURCE})
-target_link_libraries(test-smartcont PRIVATE smc-envelope fift-lib tos_db)
+target_link_libraries(test-smartcont PRIVATE smc-envelope fift-lib tos_db tos_pq_consensus_signer tos_pq_consensus)
 target_compile_definitions(test-smartcont PRIVATE TOS_CRYPTO_BUILD_DIR="${CMAKE_CURRENT_BINARY_DIR}/crypto")
 add_dependencies(test-smartcont create-state)
 
