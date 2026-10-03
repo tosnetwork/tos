@@ -31,6 +31,12 @@ def main():
     reports = []
     for name, filename, guard, test_name in [
         (
+            "configure-preflight",
+            "provider.py",
+            "if request.kind == 1 and identity not in self._approved_migrations:",
+            "test_cutover_requires_new_key_backup_and_explicit_factor_choice",
+        ),
+        (
             "deployed-destination",
             "provider.py",
             'if destination.status != "active":',
@@ -87,7 +93,7 @@ def main():
         if run().returncode:
             raise RuntimeError("restored migration preflight baseline failed")
     (args.artifacts / "provider-mutations.json").write_text(json.dumps(reports, indent=2) + "\n")
-    print("PASS: four client guard mutations reached failing assertions; restored baselines green")
+    print("PASS: five client guard mutations reached failing assertions; restored baselines green")
 
 
 if __name__ == "__main__":

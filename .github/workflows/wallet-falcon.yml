@@ -158,7 +158,7 @@ jobs:
               mutations=json.loads((root/'mutations.json').read_text())
               assert len(mutations)==8 and all(m['compiled'] and m['killed'] for m in mutations)
               preflight=json.loads((root/'provider-mutations.json').read_text())
-              assert len(preflight)==4 and all(m['compiled'] and m['killed'] for m in preflight)
+              assert len(preflight)==5 and all(m['compiled'] and m['killed'] for m in preflight)
           live=json.loads(Path('results/falcon-x86_64/live/live-falcon.json').read_text())
           assert live['success'] is True and live['cases']==4 and live['global_version']==19
           PY

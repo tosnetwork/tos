@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "test/tostester/src"))
 from backend import Backend
 from backup import association, encrypt, restore, unique
 from contract.falcon_auth import Falcon512ModuleBlueprint
-from provider import AuthProvider, TrustedChainSnapshot
+from provider import AuthProvider, TrustedChainSnapshot, TrustedModuleSnapshot
 from pytosiq_core import Address, Cell
 
 
@@ -65,6 +65,16 @@ def snapshot(document):
     return TrustedChainSnapshot(**values)
 
 
+def destination_snapshot(document):
+    if set(document) != {"network", "global_version", "now", "root", "code", "data", "status"}:
+        raise ValueError("incomplete reviewed destination deployment snapshot")
+    values = dict(document)
+    values["root"] = Address(values["root"])
+    for key in ("code", "data"):
+        values[key] = boc(values[key])
+    return TrustedModuleSnapshot(**values)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--library", type=Path, required=True)
@@ -89,6 +99,21 @@ def main():
     s.add_argument("--funding", type=int, required=True)
     s.add_argument("--ed25519-cosignature")
     s.add_argument("--out", type=Path, required=True)
+    m = sub.add_parser(
+        "migrate", help="Prepare rotation from a current Falcon root after recovery preflight"
+    )
+    m.add_argument("--snapshot", type=Path, required=True)
+    m.add_argument("--manifest", type=Path, required=True)
+    m.add_argument("--destination", type=Path, required=True)
+    m.add_argument("--new-backup", type=Path, required=True)
+    m.add_argument("--backup", type=Path, required=True)
+    m.add_argument("--target-mode", type=int, choices=(2, 3), required=True)
+    m.add_argument("--valid-until", type=int, required=True)
+    m.add_argument("--confirm-security-change", action="store_true")
+    m.add_argument("--relayer", required=True)
+    m.add_argument("--funding", type=int, required=True)
+    m.add_argument("--ed25519-cosignature")
+    m.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
     backend = Backend(a.library)
     provider = AuthProvider(backend, read_json(a.manifest))
@@ -135,9 +160,33 @@ def main():
 
         print(json.dumps(asdict(provider.describe(state)), indent=2))
         return
-    intent = read_json(a.intent)
-    intent["payload"] = boc(intent["payload"])
-    request = provider.buildSigningRequest(state, state.account, intent)
+    if a.command == "migrate":
+        destination = destination_snapshot(read_json(a.destination))
+        recovery_password = getpass.getpass(
+            "Destination PQ backup password (recovery rehearsal): "
+        ).encode()
+        request = provider.buildMigrationSigningRequest(
+            state,
+            destination,
+            a.new_backup.read_bytes(),
+            recovery_password,
+            a.target_mode,
+            a.valid_until,
+            a.confirm_security_change,
+        )
+        print(
+            json.dumps(
+                dict(
+                    new_root=destination.root.to_str(is_user_friendly=False),
+                    target_mode=a.target_mode,
+                ),
+                indent=2,
+            )
+        )
+    else:
+        intent = read_json(a.intent)
+        intent["payload"] = boc(intent["payload"])
+        request = provider.buildSigningRequest(state, state.account, intent)
     # Display the reconstructed request for offline operator review.
     print(
         json.dumps(

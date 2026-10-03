@@ -92,6 +92,7 @@ class AuthProvider:
     def __init__(self, backend, manifest):
         self.backend = backend
         self.manifest = manifest
+        self._approved_migrations = set()
         for name in ("module-func", "module-tol", "wallet-func", "wallet-tol", "agent"):
             row = manifest.get(name, {})
             for field in ("code_hash", "boc_sha256", "source_commit", "compiler_sha256"):
@@ -199,6 +200,7 @@ class AuthProvider:
             intent["payload"],
         )
         request.serialize()
+        self._requireMigrationPreflight(request, snapshot.root)
         snapshot_hash = hashlib.sha256(
             snapshot.account_code.hash
             + snapshot.account_data.hash
@@ -216,6 +218,7 @@ class AuthProvider:
         )
 
     def sign(self, handle, signing_request):
+        self._requireMigrationPreflight(signing_request.request, signing_request.root)
         if handle.public_key != signing_request.public_key:
             raise ValueError("wrong key handle")
         proof = AuthProof(
@@ -239,6 +242,7 @@ class AuthProvider:
         )
 
     def buildSubmission(self, signing_request, proof, optionalEd25519Cosignature=None, query_id=0):
+        self._requireMigrationPreflight(signing_request.request, signing_request.root)
         if not self.verifyLocal(signing_request, proof):
             raise ValueError("proof is not for this request/root")
         if signing_request.account_mode == 3:
@@ -283,6 +287,39 @@ class AuthProvider:
         # Evidence must come from a trusted transaction/state adapter. A submission
         # hash or compute success alone cannot produce an action-complete receipt.
         return MultiHopReceipt.from_evidence(request_identity(signing_request.request), evidence)
+
+    def _requireMigrationPreflight(self, request, root):
+        identity = (root.to_str(is_user_friendly=False), request.commitment)
+        if request.kind == 1 and identity not in self._approved_migrations:
+            raise ValueError(
+                "configure requests require destination deployment and recovery preflight"
+            )
+
+    def buildMigrationSigningRequest(
+        self,
+        snapshot,
+        destination,
+        raw_backup,
+        password,
+        target_mode,
+        valid_until,
+        confirm_security_change=False,
+    ):
+        request = buildMigrationRequest(
+            self,
+            snapshot,
+            destination,
+            raw_backup,
+            password,
+            target_mode,
+            valid_until,
+            confirm_security_change,
+        )
+        return self.buildSigningRequest(
+            snapshot,
+            snapshot.account,
+            dict(kind=1, payload=request.payload, valid_until=request.valid_until),
+        )
 
 
 @dataclass(frozen=True)
@@ -465,6 +502,10 @@ def buildMigrationRequest(
         if not provider.backend.verify(challenge, proof, module.public_key):
             raise ValueError("new key possession failed")
     payload = Builder().store_uint(target_mode, 2).store_address(new_root).end_cell()
-    return AuthRequest(
+    request = AuthRequest(
         old_snapshot.network, old_snapshot.account, auth.epoch, auth.nonce, valid_until, 1, payload
     )
+    provider._approved_migrations.add(
+        (old_snapshot.root.to_str(is_user_friendly=False), request.commitment)
+    )
+    return request

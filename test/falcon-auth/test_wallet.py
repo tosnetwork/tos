@@ -4,29 +4,38 @@
 # ruff: noqa: E402
 
 import argparse
+import contextlib
+import io
 import json
 import sys
+import tempfile
 import unittest
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 from unittest.mock import patch
 
 R = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(R / "tools/falcon"), str(R / "test/tostester/src")]
 import nacl.signing
-from backend import Backend, KeyHandle
+from backend import PROFILE, Backend, KeyHandle
 from backup import association, encrypt, restore
-from contract.falcon_auth import Falcon512ModuleBlueprint, request_identity
-from contract.pq_auth import AuthState
+from contract.falcon_auth import (
+    Falcon512ModuleBlueprint,
+    read_chain,
+    request_identity,
+    signing_message,
+)
+from contract.pq_auth import AuthRequest, AuthState
 from contract.wallet_v5 import WalletV5State
 from provider import (
+    AuthProof,
     AuthProvider,
     MultiHopReceipt,
     TrustedChainSnapshot,
     TrustedModuleSnapshot,
     buildMigrationRequest,
 )
-from pytosiq_core import Address, Cell
+from pytosiq_core import Address, Builder, Cell, MessageAny
 
 ARGS = None
 
@@ -232,6 +241,33 @@ class WalletTests(unittest.TestCase):
                 proposed.state_init.data,
                 "active",
             )
+            forged = replace(
+                self.request,
+                request=replace(
+                    self.request.request,
+                    kind=1,
+                    payload=Builder().store_uint(2, 2).store_address(proposed.address).end_cell(),
+                ),
+            )
+            # A generic raw configure intent cannot bypass the recovery/deployment
+            # checks by constructing a SigningRequest or a locally valid proof.
+            with self.assertRaises(ValueError):
+                self.p.buildSigningRequest(
+                    self.snapshot,
+                    self.account,
+                    dict(kind=1, payload=forged.request.payload, valid_until=1600),
+                )
+            with self.assertRaises(ValueError):
+                self.p.sign(self.h, forged)
+            raw_proof = AuthProof(
+                PROFILE,
+                request_identity(forged.request),
+                self.module.address.to_str(is_user_friendly=False),
+                self.b.sign(self.h, forged.message),
+            )
+            self.assertTrue(self.p.verifyLocal(forged, raw_proof))
+            with self.assertRaises(ValueError):
+                self.p.buildSubmission(forged, raw_proof)
 
             def prepare(raw=backup, mode=2, confirm=False, code=None, proof=None):
                 observed = proof or replace(destination, code=code or destination.code)
@@ -284,6 +320,125 @@ class WalletTests(unittest.TestCase):
         self.assertEqual(self.p.trackReceipt(self.request, e).state, "target outcome incomplete")
         e["target"]["final_state_verified"] = True
         self.assertEqual(self.p.trackReceipt(self.request, e).state, "actions completed")
+
+    def test_migration_cli_rehearses_recovery_and_signs_with_current_root(self):
+        import wallet
+
+        password = b"correct horse battery PQ"
+        account = self.account.to_str(is_user_friendly=False)
+        with (
+            tempfile.TemporaryDirectory(dir=ARGS.artifacts) as directory,
+            self.b.generate_key() as new,
+        ):
+            root = Path(directory)
+            proposed = Falcon512ModuleBlueprint(
+                self.snapshot.module_code, 0, 42, new.public_key, self.b.validate_public_key
+            )
+            destination = TrustedModuleSnapshot(
+                42,
+                19,
+                1000,
+                proposed.address,
+                self.snapshot.module_code,
+                proposed.state_init.data,
+                "active",
+            )
+
+            def save_snapshot(filename, state):
+                document = {}
+                for field in fields(state):
+                    value = getattr(state, field.name)
+                    if isinstance(value, Cell):
+                        value = value.to_boc().hex()
+                    if isinstance(value, Address):
+                        value = value.to_str(is_user_friendly=False)
+                    document[field.name] = value
+                (root / filename).write_text(json.dumps(document))
+
+            save_snapshot("snapshot.json", self.snapshot)
+            save_snapshot("destination.json", destination)
+            (root / "manifest.json").write_text(json.dumps(self.manifest))
+            (root / "current.backup").write_bytes(
+                encrypt(
+                    self.h,
+                    password,
+                    42,
+                    account,
+                    self.module.address.to_str(is_user_friendly=False),
+                )
+            )
+            (root / "new.backup").write_bytes(
+                encrypt(new, password, 42, account, proposed.address.to_str(is_user_friendly=False))
+            )
+            command = [
+                "wallet",
+                "--library",
+                str(ARGS.library),
+                "migrate",
+                "--snapshot",
+                str(root / "snapshot.json"),
+                "--destination",
+                str(root / "destination.json"),
+                "--manifest",
+                str(root / "manifest.json"),
+                "--backup",
+                str(root / "current.backup"),
+                "--new-backup",
+                str(root / "new.backup"),
+                "--target-mode",
+                "2",
+                "--valid-until",
+                "1600",
+                "--relayer",
+                "0:" + "62" * 32,
+                "--funding",
+                "1000000000",
+                "--out",
+                str(root / "submit.boc"),
+            ]
+            with (
+                patch("sys.argv", command),
+                patch("getpass.getpass", return_value=password.decode()),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                wallet.main()
+            raw = (root / "submit.boc").read_bytes()
+            message = MessageAny.deserialize(Cell.one_from_boc(raw).begin_parse())
+            self.assertEqual(message.info.dest, self.module.address)
+            body = message.body.begin_parse()
+            self.assertEqual(body.load_uint(32), 0x46414C31)
+            body.load_uint(64)
+            envelope, signature = body.load_ref().begin_parse(), read_chain(body.load_ref(), 666)
+            self.assertEqual(envelope.load_uint(32), 0x41555448)
+            decoded = envelope.load_ref().begin_parse()
+            request = AuthRequest(
+                decoded.load_int(32),
+                decoded.load_address(),
+                decoded.load_uint(64),
+                decoded.load_uint(64),
+                decoded.load_uint(32),
+                decoded.load_uint(8),
+                decoded.load_ref(),
+            )
+            self.assertEqual(request.kind, 1)
+            self.assertTrue(
+                self.b.verify(
+                    signing_message(self.module.address, request), signature, self.h.public_key
+                )
+            )
+            self.assertFalse(
+                self.b.verify(
+                    signing_message(self.module.address, request), signature, new.public_key
+                )
+            )
+            with (
+                patch("sys.argv", command),
+                patch("getpass.getpass", return_value=password.decode()),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                with self.assertRaises(FileExistsError):
+                    wallet.main()
+            self.assertEqual((root / "submit.boc").read_bytes(), raw)
 
 
 if __name__ == "__main__":

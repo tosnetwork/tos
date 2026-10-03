@@ -116,6 +116,17 @@ requires the matching associated backup, verifies the proof, checks an optional
 Ed25519 cosignature against D, and writes a funded **internal** message BOC.
 It does not transmit a message or claim final delivery.
 
+`migrate` prepares a funded rotation from a current Falcon root. It takes the
+current account snapshot/backup, a destination deployment snapshot and the new
+associated backup; it rehearses new-key recovery before loading the current
+signing key. Mode changes require `--confirm-security-change`, and hybrid still
+requires the current Ed25519 cosignature. Destination fields are network,
+global_version, now, root, code, data, status; code/data are BOC hex. The two
+snapshots must refer to the same chain time. Generic `sign-submit` and manually
+constructed provider requests cannot bypass this preflight for kind=configure.
+The independent ML-DSA provider remains responsible for authorizing an ML-DSA to
+Falcon cutover; `buildMigrationRequest` prepares its D after the same checks.
+
 A trusted chain adapter must validate snapshot/receipt authenticity and
 freshness. The CLI's local JSON snapshot is an operator-reviewed offline input,
 not a cryptographically verified RPC/lite-client proof. Its required fields are
