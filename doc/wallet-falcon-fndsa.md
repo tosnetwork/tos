@@ -40,7 +40,8 @@ identity, acceptance vectors and migration. Unknown profiles fail closed.
   N=32768 or 65536, r=8, p=1; AES-256-GCM authenticates metadata. Duplicate JSON
   keys, unknown formats and excessive resource parameters fail before KDF work.
   Independent Falcon keys are not recoverable from legacy 24-word backups.
-- Migration request preparation requires backup recovery/new-key possession,
+- Migration request preparation requires an active destination deployment in the
+  same trusted chain snapshot, backup recovery/new-key possession,
   approved module identities and explicit confirmation of category/factor
   changes. The resulting kind=configure request still requires the **current**
   root under its current policy. Real two-hop tests cover ML-DSA to Falcon,
@@ -121,7 +122,7 @@ by the client, rather than interpreted as permission for classical recovery.
 | T12–T13 | Legacy staging/cutover, old-policy ML-DSA to Falcon, root review, explicit factor confirmation, possession and encrypted recovery, wrong passwords/metadata/versions/KDF limits | Future formal FN-DSA profile and mobile integration require new releases |
 | T14 | Checked OS entropy, RNG failures, matching key handles, self-verification, native scratch wipe and redaction | Python/native stack copies are not a forensic wipe guarantee; phone/release/side-channel qualification remains |
 | T15–T16 | ASan/UBSan, 20,000 bounded fuzz inputs, complete-VM valid/invalid/max-message load, compiled verifier/version/gas/canonical/root/profile mutations; existing account nonce mutants | Long-running coverage-guided fuzz and complete-node invalid-proof flood/pricing qualification remain |
-| T17 | PQ genesis codec and strict account execution; client refusal of frozen/deleted/unsupported state | Full storage arrears, freeze, deletion/redeployment and durable recovery qualification remains |
+| T17 | Actual funded PQ-from-genesis deployment from absent accounts; rejection of mismatched legacy StateInit; strict account execution; client refusal of frozen/deleted/unsupported state and undeployed migration roots | Full storage arrears, freeze, deletion/redeployment and durable recovery qualification remains |
 | T18 | Existing ML-DSA AUTH, highload/quorum and account nonce regressions; unchanged validator wire/IDs and privacy source | Existing final-head CI remains the validator/privacy regression gate; a broad local Rust VM run passed 74 tests and found 4 unrelated getter tests blocked by missing node fixture zerostate_blank_elections.json |
 
 P0/P1/P2 have executable repository implementations and the above bounded local

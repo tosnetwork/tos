@@ -554,7 +554,9 @@ mod pq_falcon512_tests {
     fn padded_profile_round_trip() {
         let mut code = crate::compile_code("PQCHECKSIG_FALCON512_PADDED").expect("assemble");
         assert_eq!(code.get_bytestring(0), [0xf9, 0x31, 1]);
-        assert_eq!(crate::disasm::disasm(&mut code).expect("disassemble").trim(),
-                   "PQCHECKSIG_FALCON512_PADDED");
+        assert_eq!(
+            crate::disasm::disasm(&mut code).expect("disassemble").trim(),
+            "PQCHECKSIG_FALCON512_PADDED"
+        );
     }
 }

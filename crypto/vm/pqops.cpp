@@ -1,15 +1,16 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-#include "pqops.h"
-
 #include <string>
-#include "pq/mldsa44.h"
+
 #include "pq/falcon512.h"
+#include "pq/mldsa44.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/excno.hpp"
 #include "vm/log.h"
 #include "vm/opctable.h"
 #include "vm/stack.hpp"
 #include "vm/vm.h"
+
+#include "pqops.h"
 
 namespace vm {
 namespace {
@@ -19,7 +20,8 @@ constexpr std::size_t max_chunk_bytes = 127;
 
 // Canonical byte chain: full 127-byte non-final cells, at most one reference,
 // nonempty final cell (except the sole root of an empty string), level zero.
-std::string read_pq_bytes(VmState* st, td::Ref<Cell> cell, std::size_t limit, long long byte_gas = pq_mldsa44_byte_gas) {
+std::string read_pq_bytes(VmState* st, td::Ref<Cell> cell, std::size_t limit,
+                          long long byte_gas = pq_mldsa44_byte_gas) {
   std::string result;
   while (true) {
     if (cell->get_level() != 0) {
@@ -94,8 +96,12 @@ int exec_pq_falcon512(VmState* st) {
   const auto signature = read_pq_bytes(st, signature_cell, tos::pq::falcon512_signature_bytes, pq_falcon512_byte_gas);
   const auto message = read_pq_bytes(st, message_cell, tos::pq::falcon512_max_message_bytes, pq_falcon512_byte_gas);
   switch (tos::pq::verify_falcon512_padded(message, signature, key)) {
-    case tos::pq::VerifyResult::valid: stack.push_bool(true); return 0;
-    case tos::pq::VerifyResult::invalid: stack.push_bool(false); return 0;
+    case tos::pq::VerifyResult::valid:
+      stack.push_bool(true);
+      return 0;
+    case tos::pq::VerifyResult::invalid:
+      stack.push_bool(false);
+      return 0;
     case tos::pq::VerifyResult::malformed_input:
       throw VmError{Excno::cell_und, "incorrect Falcon-512 padded length"};
     case tos::pq::VerifyResult::backend_error:

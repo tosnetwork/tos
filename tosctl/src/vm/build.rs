@@ -33,9 +33,16 @@ fn main() {
     for source in ["codec.c", "common.c", "shake.c", "vrfy.c"] {
         build.file(falcon.join(source));
     }
-    build.file(adapter.join("falcon512-native.c")).include(&falcon).include(&adapter)
-        .define("FALCON_FPEMU", "1").define("FALCON_FPNATIVE", "0")
-        .define("FALCON_AVX2", "0").define("FALCON_FMA", "0")
-        .define("FALCON_PREFIX", "tos_falcon_inner").std("c99").warnings(false)
+    build
+        .file(adapter.join("falcon512-native.c"))
+        .include(&falcon)
+        .include(&adapter)
+        .define("FALCON_FPEMU", "1")
+        .define("FALCON_FPNATIVE", "0")
+        .define("FALCON_AVX2", "0")
+        .define("FALCON_FMA", "0")
+        .define("FALCON_PREFIX", "tos_falcon_inner")
+        .std("c99")
+        .warnings(false)
         .compile("tos_rust_falcon512");
 }

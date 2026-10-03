@@ -121,18 +121,29 @@ pub(super) fn execute_pq_mldsa44(engine: &mut Engine) -> Status {
 mod tests;
 
 extern "C" {
-    fn tos_falcon512_padded_verify(message: *const u8, message_len: usize,
-        signature: *const u8, signature_len: usize, key: *const u8, key_len: usize) -> i32;
+    fn tos_falcon512_padded_verify(
+        message: *const u8,
+        message_len: usize,
+        signature: *const u8,
+        signature_len: usize,
+        key: *const u8,
+        key_len: usize,
+    ) -> i32;
 }
 
 pub(super) fn execute_pq_falcon512(engine: &mut Engine) -> Status {
     if engine.block_version() < 19 {
-        if engine.block_version() >= 4 { engine.try_use_gas(Gas::basic_gas_price(0, 0))?; }
-        else { engine.use_gas(Gas::basic_gas_price(0, 0)); }
+        if engine.block_version() >= 4 {
+            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
+        } else {
+            engine.use_gas(Gas::basic_gas_price(0, 0));
+        }
         fail!(ExceptionCode::InvalidOpcode);
     }
     engine.load_instruction(Instruction::new("PQCHECKSIG_FALCON512_PADDED"))?;
-    if engine.cc.stack.depth() < 3 { fail!(ExceptionCode::StackUnderflow); }
+    if engine.cc.stack.depth() < 3 {
+        fail!(ExceptionCode::StackUnderflow);
+    }
     engine.try_use_gas(20_000)?;
     fetch_stack(engine, 3)?;
     let key = engine.cmd.var(0).as_cell()?.clone();
@@ -145,13 +156,25 @@ pub(super) fn execute_pq_falcon512(engine: &mut Engine) -> Status {
         fail!(ExceptionCode::CellUnderflow, "incorrect Falcon-512 padded length");
     }
     // SAFETY: bounded owned buffers outlive this synchronous, verify-only call.
-    let result = unsafe { tos_falcon512_padded_verify(message.as_ptr(), message.len(),
-        signature.as_ptr(), signature.len(), key.as_ptr(), key.len()) };
+    let result = unsafe {
+        tos_falcon512_padded_verify(
+            message.as_ptr(),
+            message.len(),
+            signature.as_ptr(),
+            signature.len(),
+            key.as_ptr(),
+            key.len(),
+        )
+    };
     let valid = match result {
         1 => true,
         0 => false,
-        -1 => { fail!(ExceptionCode::CellUnderflow); }
-        _ => { fail!(ExceptionCode::FatalError, "Falcon-512 verifier backend failure"); }
+        -1 => {
+            fail!(ExceptionCode::CellUnderflow);
+        }
+        _ => {
+            fail!(ExceptionCode::FatalError, "Falcon-512 verifier backend failure");
+        }
     };
     engine.cc.stack.push(StackItem::boolean(valid));
     Ok(())

@@ -76,6 +76,7 @@ jobs:
             --old-signer build-old-signer/test-mldsa44-sign --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts
           python test/falcon-auth/test_boundaries.py --build build --signer build-falcon/libtos_falcon_offline.so --out artifacts/boundaries
           python test/falcon-auth/test_wallet.py --library build-falcon/libtos_falcon_offline.so --artifacts artifacts
+          python test/falcon-auth/provider_mutations.py --library build-falcon/libtos_falcon_offline.so --artifacts artifacts
           python test/falcon-auth/tx_parity.py --build build --signer build-falcon/libtos_falcon_offline.so \
             --driver tosctl/src/target/release/examples/pq-tx-parity --out artifacts/transactions
       - name: Sensitive compiled mutations and unchanged ML-DSA authorization
@@ -123,4 +124,6 @@ jobs:
                   assert json.loads((root/name).read_text())['success'] is True
               mutations=json.loads((root/'mutations.json').read_text())
               assert len(mutations)==8 and all(m['compiled'] and m['killed'] for m in mutations)
+              preflight=json.loads((root/'provider-mutations.json').read_text())
+              assert len(preflight)==2 and all(m['compiled'] and m['killed'] for m in preflight)
           PY
