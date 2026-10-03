@@ -4,7 +4,8 @@ fee vault (LMS, external) -> dual-root module (SLH-DSA or ML-DSA, internal) -> V
 Every hop is a separate transaction fed with the previous one's actual outgoing message.
 
 Environment: as test_fee_gate.py, plus SLH_TOOL and MLDSA_TOOL (test-only signers built from the
-pinned slhdsa-c and the vendored mldsa-native).
+pinned slhdsa-c and the vendored mldsa-native). OPENSSL (an OpenSSL 3.5+ command) adds an
+independent SLH-DSA signer, so suite 3 is not only checked against its own backend.
 """
 
 # ruff: noqa: E402
@@ -123,7 +124,7 @@ class RescueLoopTests(unittest.TestCase):
         self.vault = self.h.vault(self.fee, per_slot=4)
         self.leaf = slot.START_SLOT * 4
 
-    def module(self, policy=READY):
+    def module(self, policy=READY, slh_pk=None):
         data = (
             Cell()
             .uint(1, 8)
@@ -131,7 +132,7 @@ class RescueLoopTests(unittest.TestCase):
             .raw(NETWORK_TAG)
             .uint(1, 8)
             .ref(slot.chain(self.sign.ml_pk.read_bytes()))
-            .raw(self.sign.slh_pk)
+            .raw(slh_pk or self.sign.slh_pk)
             .uint(policy, 8)
         )
         return active_account(MODULE, self.module_code, data, balance=1_000_000_000)
@@ -269,6 +270,33 @@ class RescueLoopTests(unittest.TestCase):
         req = request(PRIMARY, K_EXECUTE, pay(PAYEE, 1))
         mr, _ = self.deliver(self.module(policy=REQUIRED), internal(RELAYER, MODULE, submission(req, self.sign.ml(digest(req)))))
         self.assertEqual(mr["details"]["exit"], 1817)
+
+    @unittest.skipUnless(os.environ.get("OPENSSL"), "OPENSSL (3.5+) not set")
+    def test_independent_openssl_signature_is_accepted_and_context_bound(self):
+        d = Path(self.tmp.name)
+        openssl = os.environ["OPENSSL"]
+        run(openssl, "genpkey", "-algorithm", "SLH-DSA-SHA2-128s", "-out", d / "o.pem")
+        run(openssl, "pkey", "-in", d / "o.pem", "-pubout", "-outform", "DER", "-out", d / "o.der")
+        slh_pk = (d / "o.der").read_bytes()[-32:]
+
+        def openssl_sign(message, context):
+            (d / "o.msg").write_bytes(message)
+            args = [openssl, "pkeyutl", "-sign", "-rawin", "-inkey", d / "o.pem", "-in", d / "o.msg",
+                    "-out", d / "o.sig"]
+            if context:
+                args += ["-pkeyopt", "context-string:" + context.decode("ascii")]
+            run(*args)
+            return (d / "o.sig").read_bytes()
+
+        lock = request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8))
+        # Without the AUTH context the same key and message must not verify.
+        no_ctx = submission(lock, openssl_sign(digest(lock), b""))
+        mr, _ = self.deliver(self.module(slh_pk=slh_pk), internal(RELAYER, MODULE, no_ctx, value=2_000_000_000))
+        self.assertEqual(mr["details"]["exit"], 1808, "context must be bound")
+        sub = submission(lock, openssl_sign(digest(lock), CTX_RESCUE))
+        _, ar, _, acc = self.hop(self.module(slh_pk=slh_pk), self.account(), self.through_vault(sub), "openssl rescue lock")
+        self.assertTrue(ar["details"]["compute_success"], ar["details"])
+        self.assertEqual(self.state(acc)["retired"], 1 << 1)
 
     def test_account_accepts_relays_only_from_its_module(self):
         # Anyone can send the relay constructor; without the sender check no signature at all
