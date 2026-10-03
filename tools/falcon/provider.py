@@ -5,6 +5,8 @@ This library does not promote an RPC capability string to trusted chain state.
 """
 
 import hashlib
+import json
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from contract.agent_account import AgentAccountState
@@ -93,6 +95,7 @@ class AuthProvider:
         self.backend = backend
         self.manifest = manifest
         self._approved_migrations = set()
+        self._prepared_requests = OrderedDict()
         for name in ("module-func", "module-tol", "wallet-func", "wallet-tol", "agent"):
             row = manifest.get(name, {})
             for field in ("code_hash", "boc_sha256", "source_commit", "compiler_sha256"):
@@ -207,7 +210,7 @@ class AuthProvider:
             + snapshot.module_code.hash
             + snapshot.module_data.hash
         ).hexdigest()
-        return SigningRequest(
+        prepared = SigningRequest(
             request,
             snapshot.root,
             PROFILE,
@@ -216,9 +219,38 @@ class AuthProvider:
             state.public_key,
             snapshot_hash,
         )
+        fingerprint = self._requestFingerprint(prepared)
+        self._prepared_requests[fingerprint] = None
+        self._prepared_requests.move_to_end(fingerprint)
+        if len(self._prepared_requests) > 128:
+            self._prepared_requests.popitem(last=False)
+        return prepared
+
+    @staticmethod
+    def _requestFingerprint(prepared):
+        if not isinstance(prepared, SigningRequest):
+            raise TypeError("provider SigningRequest required")
+        metadata = json.dumps(
+            [
+                prepared.root.to_str(is_user_friendly=False),
+                prepared.profile,
+                prepared.public_key.hex(),
+                prepared.account_mode,
+                prepared.classical_public_key.hex(),
+                prepared.snapshot_commitment,
+            ],
+            separators=(",", ":"),
+        ).encode()
+        return hashlib.sha256(prepared.request.serialize().to_boc() + b"\x00" + metadata).digest()
+
+    def _requirePrepared(self, prepared):
+        fingerprint = self._requestFingerprint(prepared)
+        if fingerprint not in self._prepared_requests:
+            raise ValueError("request must be prepared from a trusted snapshot by this provider")
 
     def sign(self, handle, signing_request):
         self._requireMigrationPreflight(signing_request.request, signing_request.root)
+        self._requirePrepared(signing_request)
         if handle.public_key != signing_request.public_key:
             raise ValueError("wrong key handle")
         proof = AuthProof(
@@ -243,6 +275,7 @@ class AuthProvider:
 
     def buildSubmission(self, signing_request, proof, optionalEd25519Cosignature=None, query_id=0):
         self._requireMigrationPreflight(signing_request.request, signing_request.root)
+        self._requirePrepared(signing_request)
         if not self.verifyLocal(signing_request, proof):
             raise ValueError("proof is not for this request/root")
         if signing_request.account_mode == 3:

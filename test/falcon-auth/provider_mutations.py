@@ -31,6 +31,12 @@ def main():
     reports = []
     for name, filename, guard, test_name in [
         (
+            "prepared-snapshot",
+            "provider.py",
+            "if fingerprint not in self._prepared_requests:",
+            "test_signing_cannot_bypass_prepared_snapshot",
+        ),
+        (
             "configure-preflight",
             "provider.py",
             "if request.kind == 1 and identity not in self._approved_migrations:",
@@ -93,7 +99,7 @@ def main():
         if run().returncode:
             raise RuntimeError("restored migration preflight baseline failed")
     (args.artifacts / "provider-mutations.json").write_text(json.dumps(reports, indent=2) + "\n")
-    print("PASS: five client guard mutations reached failing assertions; restored baselines green")
+    print("PASS: six client guard mutations reached failing assertions; restored baselines green")
 
 
 if __name__ == "__main__":

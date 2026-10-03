@@ -134,6 +134,12 @@ network, global_version, now, account, account_code, account_data, root,
 module_code, module_data, account_status and module_status. Cells are BOC hex;
 addresses are raw `workchain:hash`. Intent contains kind, payload (BOC hex),
 valid_until. Production adapters and a managed relayer remain to be integrated.
+Signing and submission require a request prepared by the same provider from a
+reviewed snapshot. The binding covers the serialized request, root, profile,
+public keys, account mode and snapshot commitment. Altered or imported request
+objects require fresh preflight. The provider retains at most 128 pending
+request fingerprints; evicted requests must be prepared again. This client
+preflight record does not cache cryptographic verification or affect VM fees.
 
 Receipts distinguish waiting, module computation/forwarding failure, target
 rejection, consumed-nonce refusal, action rejection/completion and unresolved

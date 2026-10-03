@@ -126,6 +126,51 @@ class WalletTests(unittest.TestCase):
                 },
             )
 
+    def test_signing_cannot_bypass_prepared_snapshot(self):
+        for forged in [
+            replace(self.request, root=Address((0, b"r" * 32))),
+            replace(self.request, account_mode=1),
+            replace(self.request, classical_public_key=b"k" * 32),
+            replace(self.request, snapshot_commitment="f" * 64),
+            replace(self.request, request=replace(self.request.request, nonce=1)),
+            replace(self.request, request=replace(self.request.request, network=43)),
+            replace(
+                self.request, request=replace(self.request.request, account=Address((0, b"d" * 32)))
+            ),
+            replace(
+                self.request,
+                request=replace(
+                    self.request.request, payload=Builder().store_uint(1, 1).end_cell()
+                ),
+            ),
+        ]:
+            proof = AuthProof(
+                PROFILE,
+                request_identity(forged.request),
+                forged.root.to_str(is_user_friendly=False),
+                self.b.sign(self.h, forged.message),
+            )
+            self.assertTrue(self.p.verifyLocal(forged, proof))
+            with self.assertRaises(ValueError):
+                self.p.sign(self.h, forged)
+            with self.assertRaises(ValueError):
+                self.p.buildSubmission(forged, proof)
+        detached = AuthProvider(self.b, self.manifest)
+        with self.assertRaises(ValueError):
+            detached.sign(self.h, self.request)
+        prepared = detached.buildSigningRequest(self.snapshot, self.account, self.intent)
+        proof = detached.sign(self.h, prepared)
+        detached.buildSubmission(prepared, proof)
+        # Keep memory bounded; a displaced request must be prepared again.
+        for nonce in range(1, 129):
+            state = replace(self.state, auth=AuthState(2, 1, nonce, self.module.address.hash_part))
+            detached.buildSigningRequest(
+                replace(self.snapshot, account_data=state.serialize()), self.account, self.intent
+            )
+        self.assertEqual(len(detached._prepared_requests), 128)
+        with self.assertRaises(ValueError):
+            detached.sign(self.h, prepared)
+
     def test_hybrid_is_and_on_same_commitment(self):
         state = replace(self.state, auth=AuthState(3, 1, 0, self.module.address.hash_part))
         req = self.p.buildSigningRequest(
@@ -278,7 +323,11 @@ class WalletTests(unittest.TestCase):
             request = prepare()
             self.assertEqual((request.kind, request.epoch, request.nonce), (1, 1, 0))
             # The request remains for the old key/root, even though possession of the new key was proven.
-            old_signing = replace(self.request, request=request)
+            old_signing = self.p.buildSigningRequest(
+                self.snapshot,
+                self.account,
+                dict(kind=1, payload=request.payload, valid_until=request.valid_until),
+            )
             proof = self.p.sign(self.h, old_signing)
             self.assertTrue(self.p.verifyLocal(old_signing, proof))
             with self.assertRaises(ValueError):
