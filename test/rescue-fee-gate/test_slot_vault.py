@@ -40,6 +40,12 @@ START_SLOT = 5
 EPOCH0 = NOW - START_SLOT * SLOT - 10  # NOW lies 10 s into slot 5
 MAX_VALUE = 2_000_000_000
 RESCUE_SUBMIT = 0x534C4831
+# Smallest balance above the value that the uncached solvency check admitted, bisected at
+# commit 59f960ec6 under the emulator's fee configuration. It is the vault's fee budget plus
+# what the transaction deducts before the compute phase (inbound import and storage).
+UNCACHED_EDGE_OVERHEAD = 294_350_821
+# The budget the vault computes after ACCEPT under that configuration.
+BUDGET = 270_051_821
 RESULTS = []
 
 
@@ -170,7 +176,7 @@ class SlotVaultTests(unittest.TestCase):
         d.keep_seed()
         return d
 
-    def vault(self, key, next_leaf=0, balance=100_000_000_000, per_slot=1):
+    def vault(self, key, next_leaf=0, balance=100_000_000_000, per_slot=1, budget=BUDGET):
         data = (
             Cell()
             .sint(GLOBAL_ID, 32)
@@ -179,6 +185,7 @@ class SlotVaultTests(unittest.TestCase):
             .uint(per_slot, 16)
             .uint(next_leaf, 32)
             .coins(MAX_VALUE)
+            .coins(budget)
             .addr(TARGET)
             .ref(chain(key.public))
             .uint(0, 32)
@@ -196,7 +203,10 @@ class SlotVaultTests(unittest.TestCase):
         s = data.slice()
         s.sint(32), s.uint(32), s.uint(32), s.uint(16)
         next_leaf = s.uint(32)
-        s.coins(), s.addr(), s.ref()
+        s.coins()
+        budget = s.coins()
+        s.addr(), s.ref()
+        self.last_budget = budget
         return next_leaf, s.uint(32)
 
     def assert_refused(self, result, exit_code, name):
@@ -228,10 +238,12 @@ class SlotVaultTests(unittest.TestCase):
                 self.assertEqual(s.coins(), 1_000_000_000)
                 RESULTS.append((params, len(key.public), gas, result["details"]["gas"]))
 
-    def solvency_case(self, balance, payload=None):
+    def solvency_case(self, balance, budget=BUDGET):
         key = self.device()
-        i = intent(START_SLOT, value=MAX_VALUE) if payload is None else rescue_intent(START_SLOT, payload)
-        return self.submit(self.vault(key, balance=balance), body(i, key.sign_at(START_SLOT, i.hash)))
+        i = intent(START_SLOT, value=MAX_VALUE)
+        return self.submit(
+            self.vault(key, balance=balance, budget=budget), body(i, key.sign_at(START_SLOT, i.hash))
+        )
 
     def test_solvency_edge_pays_in_full(self):
         # Bisect the smallest balance the vault admits; at that edge the send must go out with
@@ -255,7 +267,33 @@ class SlotVaultTests(unittest.TestCase):
         self.assertEqual(s.coins(), MAX_VALUE)
         _, left = account_data(from_boc(edge["shard_account"]))
         self.assert_refused(self.solvency_case(high - 1), 2008, "one nanoton short")
+        # With the cached budget equal to the fresh one, the edge must be exactly where the
+        # uncached check put it.
+        self.assertEqual(high - MAX_VALUE, UNCACHED_EDGE_OVERHEAD)
+        self.state(edge)
+        self.assertEqual(self.last_budget, BUDGET, "budget recomputed after ACCEPT")
         RESULTS.append(("solvency edge", 60, high - MAX_VALUE, left))
+
+    def test_stale_low_budget_skips_the_send_and_heals(self):
+        # A cached budget below the real overhead (the configuration raised fees since the last
+        # payment) admits a payment the vault cannot fund: the send is skipped, the leaf stays
+        # consumed, and the refreshed budget refuses the next underfunded attempt.
+        key = self.device()
+        # Enough for the pre-compute deductions and the value, not for gas and forwarding.
+        shard = self.vault(key, balance=MAX_VALUE + 30_000_000, budget=0)
+        i = intent(START_SLOT, value=MAX_VALUE)
+        result = self.submit(shard, body(i, key.sign_at(START_SLOT, i.hash)))
+        self.assertTrue(self.admitted(result))
+        self.assertEqual(outgoing(from_boc(result["transaction"])), [])
+        next_leaf, _ = self.state(result)
+        self.assertEqual(next_leaf, START_SLOT + 1)
+        self.assertEqual(self.last_budget, BUDGET)
+        after = from_boc(result["shard_account"])
+        self.clock(at_slot(START_SLOT + 1))
+        j = intent(START_SLOT + 1, value=MAX_VALUE, now=at_slot(START_SLOT + 1))
+        self.assert_refused(
+            self.submit(after, body(j, key.sign_at(START_SLOT + 1, j.hash))), 2008, "refreshed budget"
+        )
 
     def test_real_size_rescue_payload(self):
         # A rescue submission carries an SLH-DSA-SHA2-128s signature (7,856 bytes, 62 cells).

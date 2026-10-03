@@ -31,7 +31,7 @@ RESULTS = []
 
 COMMIT = "  commit();\n"
 BALANCE = (
-    "  throw_unless(fee::insufficient_balance, required <= get_balance().pair_first());\n"
+    "  throw_unless(fee::insufficient_balance, value + budget <= get_balance().pair_first());\n"
 )
 SEND_MODE = ".store_ref(payload).end_cell(), 1 + 2);"
 

@@ -7,7 +7,10 @@
 ;; with its window instead of lingering.
 ;;
 ;; Data: global_id:int32 epoch0:uint32 slot_seconds:uint32 per_slot:uint16 next_leaf:uint32
-;;       max_value:Coins target:MsgAddressInt public_key:^Cell gas_at_accept:uint32
+;;       max_value:Coins budget:Coins target:MsgAddressInt public_key:^Cell gas_at_accept:uint32
+;;   budget is the fee overhead (compute, forwarding, storage floor) under the fee configuration
+;;   seen at the last payment, recomputed after each ACCEPT; checking against the cached value
+;;   keeps ~430 gas of fee-opcode work out of the external credit.
 ;;   target is pinned: the intent cannot name a destination.
 ;; External body: intent:^Cell digest:^Cell context:^Cell signature:^Cell
 ;;   intent = global_id:int32 vault:MsgAddressInt leaf:uint32 valid_until:uint32
@@ -61,6 +64,7 @@ int gas_consumed() asm "GASCONSUMED";
   int per_slot = ds~load_uint(16);
   int next_leaf = ds~load_uint(32);
   int max_value = ds~load_coins();
+  int budget = ds~load_coins();
   slice target = ds~load_msg_addr();
   cell public_key = ds~load_ref();
 
@@ -92,17 +96,17 @@ int gas_consumed() asm "GASCONSUMED";
   throw_unless(fee::digest_mismatch, dg.preload_uint(256) == cell_hash(intent));
 
   throw_unless(fee::bad_signature, pq_check_suite(digest, context, signature, public_key, fee::suite_lms));
-  int required = value
-    + get_compute_fee(0, fee::max_gas)
-    + get_forward_fee(0, fee::max_in_bits, fee::max_in_cells)
-    + get_forward_fee(0, fee::max_out_bits, fee::max_out_cells)
-    + get_storage_fee(0, fee::storage_horizon, fee::state_bits, fee::state_cells);
-  throw_unless(fee::insufficient_balance, required <= get_balance().pair_first());
+  throw_unless(fee::insufficient_balance, value + budget <= get_balance().pair_first());
 
   accept_message();
   int gas = gas_consumed();
+  int fresh_budget = get_compute_fee(0, fee::max_gas)
+    + get_forward_fee(0, fee::max_in_bits, fee::max_in_cells)
+    + get_forward_fee(0, fee::max_out_bits, fee::max_out_cells)
+    + get_storage_fee(0, fee::storage_horizon, fee::state_bits, fee::state_cells);
   set_data(begin_cell().store_int(network, 32).store_uint(epoch0, 32).store_uint(slot_seconds, 32)
-    .store_uint(per_slot, 16).store_uint(leaf + 1, 32).store_coins(max_value).store_slice(target)
+    .store_uint(per_slot, 16).store_uint(leaf + 1, 32).store_coins(max_value)
+    .store_coins(fresh_budget).store_slice(target)
     .store_ref(public_key).store_uint(gas, 32).end_cell());
   commit();
   send_raw_message(begin_cell().store_uint(0x18, 6).store_slice(target).store_coins(value)
