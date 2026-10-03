@@ -60,16 +60,20 @@ VAULTS = {
                 "valid_until > t",
             ),
             "drop slot check": (
-                "  throw_unless(fee::wrong_slot, (leaf <= slot) & (leaf + fee::slot_window >= slot));\n",
+                "  throw_unless(fee::wrong_slot, (leaf_slot <= slot) & (leaf_slot + fee::slot_window >= slot));\n",
                 "",
             ),
             "drop slot upper bound": (
-                "(leaf <= slot) & (leaf + fee::slot_window >= slot)",
-                "leaf + fee::slot_window >= slot",
+                "(leaf_slot <= slot) & (leaf_slot + fee::slot_window >= slot)",
+                "leaf_slot + fee::slot_window >= slot",
             ),
             "drop slot lower bound": (
-                "(leaf <= slot) & (leaf + fee::slot_window >= slot)",
-                "leaf <= slot",
+                "(leaf_slot <= slot) & (leaf_slot + fee::slot_window >= slot)",
+                "leaf_slot <= slot",
+            ),
+            "slot by leaf, ignoring leaves per slot": (
+                "  int leaf_slot = leaf / per_slot;\n",
+                "  int leaf_slot = leaf;\n",
             ),
             "widen slot window": ("const int fee::slot_window = 1;", "const int fee::slot_window = 2;"),
             "drop value cap": ("  throw_unless(fee::value_too_high, value <= max_value);\n", ""),

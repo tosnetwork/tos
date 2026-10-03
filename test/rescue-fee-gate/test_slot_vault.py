@@ -158,12 +158,13 @@ class SlotVaultTests(unittest.TestCase):
         d.keep_seed()
         return d
 
-    def vault(self, key, next_leaf=0, balance=100_000_000_000):
+    def vault(self, key, next_leaf=0, balance=100_000_000_000, per_slot=1):
         data = (
             Cell()
             .sint(GLOBAL_ID, 32)
             .uint(EPOCH0, 32)
             .uint(SLOT, 32)
+            .uint(per_slot, 16)
             .uint(next_leaf, 32)
             .coins(MAX_VALUE)
             .addr(TARGET)
@@ -181,7 +182,7 @@ class SlotVaultTests(unittest.TestCase):
     def state(self, result):
         data, _ = account_data(from_boc(result["shard_account"]))
         s = data.slice()
-        s.sint(32), s.uint(32), s.uint(32)
+        s.sint(32), s.uint(32), s.uint(32), s.uint(16)
         next_leaf = s.uint(32)
         s.coins(), s.addr(), s.ref()
         return next_leaf, s.uint(32)
@@ -313,6 +314,43 @@ class SlotVaultTests(unittest.TestCase):
         second = self.submit(shard, body(rescue, restored.sign_at(slot_now + 1, rescue.hash)))
         self.assertTrue(self.admitted(second), second.get("error"))
         self.assertEqual(self.state(second)[0], slot_now + 2)
+
+    def test_several_leaves_per_slot(self):
+        k = 4
+        phone = self.device()
+        shard = self.vault(phone, per_slot=k)
+        first = START_SLOT * k
+        # A device with intact state spends its slot's leaves in order.
+        for leaf in range(first, first + k):
+            i = intent(leaf, value=leaf)
+            result = self.submit(shard, body(i, phone.sign_at(leaf, i.hash)))
+            self.assertTrue(self.admitted(result), f"leaf {leaf}: {result.get('error')}")
+            shard = from_boc(result["shard_account"])
+        self.assertEqual(self.state(result)[0], first + k)
+        # The slot is used up; the next slot's first leaf is not yet valid.
+        early = intent(first + k)
+        early_sig = phone.restore("early_k").sign_at(first + k, early.hash)
+        self.assert_refused(self.submit(shard, body(early, early_sig)), 2009, "next slot")
+        # Restored device: wait for the boundary, start at that slot's first leaf.
+        restored = phone.restore("restored_k")
+        t = at_slot(START_SLOT + 1, offset=1)
+        self.clock(t)
+        rescue = intent(first + k, value=7, now=t)
+        result = self.submit(shard, body(rescue, restored.sign_at(first + k, rescue.hash)))
+        self.assertTrue(self.admitted(result), result.get("error"))
+        # The window counts slots, not leaves: the previous slot's last leaf is accepted,
+        # a leaf two slots old is not.
+        self.clock(NOW)
+        other = self.device()
+        late = intent(first - 1)
+        late_sig = other.sign_at(first - 1, late.hash)
+        too_old = self.device()
+        old = intent(first - k - 1)
+        old_sig = too_old.sign_at(first - k - 1, old.hash)
+        self.assert_refused(
+            self.submit(self.vault(too_old, per_slot=k), body(old, old_sig)), 2009, "two slots old"
+        )
+        self.assertTrue(self.admitted(self.submit(self.vault(other, per_slot=k), body(late, late_sig))))
 
     def test_unmined_signature_expires_with_its_window(self):
         key = self.device()
