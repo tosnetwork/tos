@@ -22,36 +22,80 @@ const ACTION_SEND_MSG = 0x0ec3c86d;
 const AUTH_SIGNED_EXTERNAL = 0x7369676e;
 
 describe("WalletV5R1", () => {
+  it("requires an explicit network ID in TypeScript and at runtime", () => {
+    expect(() => {
+      // @ts-expect-error networkGlobalId is required, including for JS callers.
+      WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    }).toThrow("networkGlobalId must be an explicitly supplied signed int32 integer");
+  });
+
+  it.each([NaN, Infinity, -Infinity, 1.5, -2147483649, 2147483648])(
+    "rejects invalid network ID %s before building a wallet",
+    (networkGlobalId) => {
+      expect(() => WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId }))
+        .toThrow("networkGlobalId must be an explicitly supplied signed int32 integer");
+    },
+  );
+
+  it.each([-2147483648, -239, 0, 1, 2, 3, 2147483647])(
+    "signs the exact supplied network ID %s independently of subwallet ID",
+    (networkGlobalId) => {
+      const wallet = WalletV5R1.create({
+        publicKey: KEY_PAIR.publicKey,
+        networkGlobalId,
+        subwalletNumber: 7,
+      });
+      const args = {
+        seqno: 1,
+        secretKey: KEY_PAIR.secretKey,
+        validUntil: 1000000,
+        messages: [{ to: DEST, value: 1n }],
+      };
+      const transfer = wallet.createTransfer(args);
+      const slice = transfer.beginParse();
+      expect(slice.loadUint(32)).toBe(AUTH_SIGNED_EXTERNAL);
+      expect(slice.loadInt(32)).toBe(networkGlobalId);
+      expect(slice.loadUint(32)).toBe(7);
+      const otherNetwork = WalletV5R1.create({
+        publicKey: KEY_PAIR.publicKey,
+        networkGlobalId: networkGlobalId === 3 ? 1 : 3,
+        subwalletNumber: 7,
+      });
+      expect(wallet.address.equals(otherNetwork.address)).toBe(true);
+      expect(transfer.equals(otherNetwork.createTransfer(args))).toBe(false);
+    },
+  );
+
   // -----------------------------------------------------------------------
   // Address derivation
   // -----------------------------------------------------------------------
 
   it("creates a wallet with a deterministic address", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     expect(wallet.address).toBeInstanceOf(Address);
     expect(wallet.address.workchain).toBe(0);
   });
 
   it("same public key always yields the same address", () => {
-    const a = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
-    const b = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const a = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
+    const b = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     expect(a.address.equals(b.address)).toBe(true);
   });
 
   it("different public keys produce different addresses", () => {
-    const a = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
-    const b = WalletV5R1.create({ publicKey: KEY_PAIR_B.publicKey });
+    const a = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
+    const b = WalletV5R1.create({ publicKey: KEY_PAIR_B.publicKey, networkGlobalId: 3 });
     expect(a.address.equals(b.address)).toBe(false);
   });
 
   it("V5R1 address differs from V4R2 address for the same key", () => {
-    const v5 = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const v5 = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     const v4 = WalletV4R2.create({ publicKey: KEY_PAIR.publicKey });
     expect(v5.address.equals(v4.address)).toBe(false);
   });
 
   it("has a StateInit with code and data cells", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     expect(wallet.init.code).toBeInstanceOf(Cell);
     expect(wallet.init.data).toBeInstanceOf(Cell);
   });
@@ -61,7 +105,7 @@ describe("WalletV5R1", () => {
   // -----------------------------------------------------------------------
 
   it("createTransfer returns a Cell", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     const transfer = wallet.createTransfer({
       seqno: 0,
       secretKey: KEY_PAIR.secretKey,
@@ -72,7 +116,7 @@ describe("WalletV5R1", () => {
   });
 
   it("transfer cell survives BOC round-trip", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     const transfer = wallet.createTransfer({
       seqno: 1,
       secretKey: KEY_PAIR.secretKey,
@@ -85,7 +129,7 @@ describe("WalletV5R1", () => {
   });
 
   it("transfer cell has valid V5 external message structure with actions ref", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     const seqno = 5;
     const validUntil = 9999999;
     const transfer = wallet.createTransfer({
@@ -128,7 +172,7 @@ describe("WalletV5R1", () => {
   });
 
   it("actions list contains ACTION_SEND_MSG entries for each message", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     const transfer = wallet.createTransfer({
       seqno: 0,
       secretKey: KEY_PAIR.secretKey,
@@ -174,7 +218,7 @@ describe("WalletV5R1", () => {
   });
 
   it("signature is valid Ed25519 over the signing message", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     const transfer = wallet.createTransfer({
       seqno: 3,
       secretKey: KEY_PAIR.secretKey,
@@ -206,7 +250,7 @@ describe("WalletV5R1", () => {
   });
 
   it("createTransfer is deterministic with same inputs", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     const args = {
       seqno: 10,
       secretKey: KEY_PAIR.secretKey,
@@ -219,7 +263,7 @@ describe("WalletV5R1", () => {
   });
 
   it("rejects zero messages", () => {
-    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey });
+    const wallet = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
     expect(() =>
       wallet.createTransfer({
         seqno: 0,
