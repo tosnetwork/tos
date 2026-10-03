@@ -1,54 +1,37 @@
 ;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
 ;;
-;; Post-quantum high-volume wallet: one ML-DSA-44 key, any number of concurrent requests
-;; with bounded replay protection, one signature per batch of outbound messages.
-;; doc/pq-quorum-and-highload.md is the design and its review record.
+;; Post-quantum high-volume wallet: one ML-DSA-44 key, concurrent signed requests,
+;; bounded replay protection and one signature per batch of outbound messages.
+;; Requires TVM version 16; assemble with PQ.fif loaded. Workchain 0 only.
 ;;
-;; Requires TVM version 16 (PQCHECKSIG_MLDSA44); assemble with PQ.fif loaded. Runs on
-;; workchain 0 only.
-;;
-;; Funding. One verification costs about 60,000 gas, more than the 10,000-gas external
-;; admission credit, so there is no external path and no ACCEPT: the contract has no
-;; recv_external, and an external message, finding no handler, is never accepted. A request
-;; arrives in an
-;; internal message from any relayer on workchain 0, whose value buys the gas:
-;;
+;; No external entry and no ACCEPT: the relayer's internal message value buys gas.
 ;;   submit#50514857 relayer_query_id:uint64 request:^Request signature:^StoredSignature
-;;
-;; The value must cover required_value(actions) -- the measured compute bound and the
-;; refund's forwarding, priced from the live configuration -- before anything expensive
-;; runs, so an underfunded request is refused unused. A bad signature fails the compute
-;; phase: contract data is not updated and nothing is sent. The wallet's balance pays only
-;; the batch the owner signed. The relayer's remainder goes back to it as a best-effort
-;; refund (mode 64 + 2) ahead of the batch; if that refund is skipped, the remainder stays
-;; in the wallet.
-;;
 ;;   Request = global_id:int32 wallet:MsgAddressInt subwallet_id:uint32 query_id:uint23
 ;;             created_at:uint64 timeout:uint22 actions:^OutList
+;; Sign the request cell hash as 32 big-endian bytes, Pure ML-DSA-44 under
+;; "TOS-PQ-HIGHLOAD-v1". Network, wallet, subwallet, timeout and all actions are bound.
+;; The unsigned relayer address/query id only route the relayer's own excess value.
 ;;
-;; The owner signs, as Pure ML-DSA-44 with the context "TOS-PQ-HIGHLOAD-v1", the 32
-;; big-endian bytes of the request cell's hash. That binds the network, this wallet's full
-;; address, the subwallet, the timeout, the query id and every action. query_id and
-;; created_at go through replay-guard.fc. There is no early COMMIT: every compute failure
-;; rolls back completely, and the id is consumed only when the whole transaction, action
-;; phase included, succeeds.
+;; The quote covers compute and the refund's forwarding. Excess is refunded first,
+;; best effort, with mode 64+2. A skipped refund stays in the wallet. Storage rent
+;; still applies. No early COMMIT: a compute failure leaves the replay id unused.
+;; The id is consumed only when the entire transaction, action phase included, succeeds.
 ;;
-;; The batch is an OutList of 1 to 254 action_send_msg entries; 255 action slots, one for
-;; the refund. Every entry is checked before verification, and any bad entry refuses the
-;; whole request:
-;;   - a send mode built only from +1 (fees separately), +2 (ignore errors, forced anyway)
-;;     and +128 (carry the balance). That leaves out +32 (destroy if zero), since a deleted
-;;     wallet redeployed from its StateInit would start with empty replay dictionaries;
-;;     +64 (carry inbound value), which the refund has already carried; +16, which the
-;;     forced +2 makes meaningless; and +4 and +8, which the executor treats as invalid
-;;     and would skip after the id was consumed;
-;;   - a MessageRelaxed with int_msg_info, src addr_none, not bounced, no StateInit, and a
-;;     inline or referenced body, with only the currently active extra_flags bits.
-;; The messages are sent in their signed order, each with IGNORE_ERRORS forced, so one the
-;; action phase cannot deliver is skipped and the others go out.
+;; A batch contains 1..254 sends in signed order; one of 255 action slots is the refund.
+;; Allowed send bits are +1, +2 and +128. +2 is forced: payments are best effort, NOT
+;; an atomic batch. +32 is forbidden because deletion/redeployment loses replay history;
+;; +64 conflicts with the refund; +4/+8 are invalid; +16 is meaningless with forced +2.
+;; Messages must have int_msg_info, src addr_none, not bounced, no StateInit, active
+;; extra_flags, and an inline or exactly consumed referenced body.
 ;;
-;; storage: public_key:^StoredKey subwallet_id:uint32 then the replay guard
-;;          (old_queries, queries, last_clean_time, timeout) as replay_guard::pack lays it out
+;; Extra currencies have TWO independent limits: the current ConfigParam 43 non-zero
+;; count per message, and at most 8 encoded dictionary entries across the WHOLE batch,
+;; including zeros and repeated references. The latter is a wallet compute policy, not
+;; a chain currency limit. Split larger requests. VarUInteger 32 leaves must be minimal.
+;; See doc/pq-quorum-and-highload.md and the security audit for the validation boundary.
+;;
+;; Storage layout is unchanged: public_key:^StoredKey subwallet_id:uint32 followed by
+;; replay_guard::pack(old_queries, queries, last_clean_time, timeout).
 
 #include "replay-guard.fc";
 #include "pq-bytes.fc";
@@ -77,23 +60,23 @@ const int SEND_MODE_CARRY_INBOUND_VALUE = 64;
 ;; +1 pay fees separately, +2 ignore errors, +128 carry the remaining balance
 const int SEND_MODES_ALLOWED = 0x83;
 ;; Matches tol/extra-flags-constants.h: new bounce format (+1), full bounce body (+2).
-;; Bits 2 and above are reserved. This field replaced ihr_fee before the PQ activation.
 const int MESSAGE_EXTRA_FLAGS_ALLOWED = 3;
-;; Mirrors the active ConfigParam 43 limit used by the canonical genesis. Keep the
-;; policy regression test in lockstep with the executor configuration.
-const int MESSAGE_MAX_EXTRA_CURRENCIES = 2;
+;; Independent compute bound, including zero leaves and each use of a shared dictionary.
+const int BATCH_MAX_EXTRA_ENTRIES = 8;
 const int SUBWALLET_ID_BITS = 32;
 const int QUERY_ID_BITS = 23;
 const int CREATED_AT_BITS = 64;
 const int TIMEOUT_BITS = 22;
 
-;; Measured compute bound, about 10% above what test/pq-contracts/test_pq_highload.py
-;; measured on the C++ executor at global version 16 (commit afb2e27f9), with both replay
-;; generations dense and the id needing a new row: 79,546 gas plus 2,708 per action, so a
-;; full 254-action batch is about 767,400 gas. The suite fails if a build makes either value
-;; lower than its measurement or more than 25% above it.
+;; Historical empty-extra measurement: 79,546 base + 2,708/action at afb2e27f9.
+;; The per-action allowance now includes preflight bookkeeping. A separate fixed
+;; reserve covers all eight permitted extra entries and live-config reads, including
+;; cold loads. get_required_value(n) stays a one-argument conservative quote; unused
+;; reserve is refunded, not a fixed fee. The real-executor gas/profile and exact-quote
+;; regressions are release gates for these allowances, not just arithmetic tests.
 const int fee::base_gas = 87600;
-const int fee::gas_per_action = 2930;
+const int fee::gas_per_action = 3300;
+const int fee::extra_gas = 60000;
 
 () set_actions(cell actions) impure asm "c5 POP";
 
@@ -117,40 +100,72 @@ const int fee::gas_per_action = 2930;
       .end_cell());
 }
 
-;; The refund carries no value of its own and a fixed inline body, so it forwards only the
-;; root cell: priced at the lump rate.
 int required_value(int action_count) inline {
-  return get_compute_fee(basechain, fee::base_gas + fee::gas_per_action * action_count)
+  return get_compute_fee(basechain, fee::base_gas + fee::gas_per_action * action_count + fee::extra_gas)
        + get_forward_fee(basechain, 0, 0);
 }
 
-;; Validates ExtraCurrencyCollection = HashmapE 32 (VarUInteger 32) using a bounded
-;; dictionary walk. The executor enforces the same active count limit in action phase;
-;; checking here prevents mode +2 from silently skipping a signed payment after the replay
-;; id was recorded. Zero values are accepted here, as the executor removes them before
-;; applying its count limit.
-() require_valid_extra_currencies(cell extra) impure inline {
+;; crypto/block/block.tlb, SizeLimitsConfig #01/#02/#03. The executor defaults to 2
+;; if parameter 43 is absent or uses #01 (which has no extra-currency count field).
+;; Never substitute that default for an explicit zero. Unknown versions fail closed.
+int message_extra_currency_limit() impure inline {
+  cell config = config_param(43);
+  if (cell_null?(config)) {
+    return 2;
+  }
+  slice limits = config.begin_parse();
+  int tag = limits~load_uint(8);
+  if (tag == 1) {
+    limits~skip_bits(160);
+    limits.end_parse();
+    return 2;
+  }
+  throw_unless(error::invalid_message, (tag == 2) | (tag == 3));
+  ;; Six common fields occupy 160 bits, followed by four uint32 fields.
+  limits~skip_bits(288);
+  int count = limits~load_uint(32);
+  limits~skip_bits(8 + 32);
+  if (tag == 3) {
+    if (limits~load_uint(1)) {
+      limits~skip_bits(32);
+    }
+    limits~skip_bits(64);
+  }
+  limits.end_parse();
+  return count;
+}
+
+;; Non-null Hashmap 32 (VarUInteger 32). Count EVERY visited leaf toward the batch
+;; budget, not just non-zero amounts. At most one lookahead follows the last permitted
+;; leaf; dictionary key width additionally bounds each traversal's depth. Canonical zero
+;; is len=0. For len>0 the leading byte must be non-zero, as VarUInteger::validate_skip
+;; requires in crypto/block/block-parse.cpp. Shape failures leave the replay id unused.
+int require_valid_extra_currencies(cell extra, int remaining) impure inline {
+  throw_unless(error::invalid_message, remaining > 0);
+  int limit = message_extra_currency_limit();
+  int visited = 0;
   int count = 0;
   (int id, slice value, int found) = extra.udict_get_min?(32);
   while (found) {
-    ;; VarUInteger 32: 5-bit byte length, then exactly len*8 value bits.
+    throw_unless(error::invalid_message, visited < remaining);
+    visited += 1;
     int bytes = value~load_uint(5);
-    throw_if(error::invalid_message, bytes >= 32);
-    int amount = bytes ? value~load_uint(bytes * 8) : 0;
-    value.end_parse();
-    if (amount != 0) {
+    if (bytes) {
+      throw_unless(error::invalid_message, value.preload_uint(8) != 0);
+      value~skip_bits(bytes * 8);
       count += 1;
-      throw_if(error::invalid_message, count > MESSAGE_MAX_EXTRA_CURRENCIES);
+      throw_if(error::invalid_message, count > limit);
     }
+    value.end_parse();
     (id, value, found) = extra.udict_get_next?(32, id);
   }
+  return visited;
 }
 
-;; Throws unless `message` is one the wallet will send for its owner: a MessageRelaxed with
-;; int_msg_info, src addr_none, not marked bounced, no StateInit, active extra_flags only,
-;; a valid bounded ExtraCurrencyCollection, and an inline or referenced body consumed
-;; exactly. Undeliverable destinations and values are left to the action phase.
-() require_valid_message(cell message) impure inline {
+;; Returns the number of extra-currency leaves visited for this message. Empty maps
+;; bypass the dictionary/config walk. Destination deliverability and available balance
+;; remain action-phase decisions; preflight is not a promise that a recipient executes.
+int require_valid_message(cell message, int extra_left) impure inline {
   slice m = message.begin_parse();
   throw_if(error::invalid_message, m~load_uint(1)); ;; int_msg_info$0
   int flags = m~load_uint(3); ;; ihr_disabled bounce bounced
@@ -158,8 +173,11 @@ int required_value(int action_count) inline {
   throw_unless(error::invalid_message, m~load_uint(2) == 0); ;; src: addr_none
   m~load_msg_addr(); ;; dest
   m~load_coins(); ;; value
-  cell extra = m~load_dict(); ;; ExtraCurrencyCollection
-  require_valid_extra_currencies(extra);
+  cell extra = m~load_dict();
+  int entries = 0;
+  ifnot (cell_null?(extra)) {
+    entries = require_valid_extra_currencies(extra, extra_left);
+  }
   int extra_flags = m~load_coins(); ;; extra_flags since global version 12, not ihr_fee
   throw_unless(error::invalid_message, (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);
   m~load_coins(); ;; fwd_fee
@@ -169,15 +187,14 @@ int required_value(int action_count) inline {
     m~load_ref();
     m.end_parse();
   }
+  return entries;
 }
 
-;; Walks the signed OutList, checking every entry, and returns its sends oldest first as a
-;; list of [mode, message] with their count. An OutList node is prev:^OutList followed by
-;; one action; its head is the newest action, so pushing each entry onto a list while
-;; walking from the head leaves the oldest at the front.
+;; OutList heads are newest first; collecting with cons yields signed execution order.
 (tuple, int) checked_batch(cell actions) impure inline {
   tuple batch = null();
   int count = 0;
+  int extra_left = BATCH_MAX_EXTRA_ENTRIES;
   slice node = actions.begin_parse();
   while (node.slice_refs()) {
     count += 1;
@@ -188,7 +205,7 @@ int required_value(int action_count) inline {
     cell message = node~load_ref();
     node.end_parse();
     throw_unless(error::invalid_mode, (mode & SEND_MODES_ALLOWED) == mode);
-    require_valid_message(message);
+    extra_left -= require_valid_message(message, extra_left);
     batch = cons([mode, message], batch);
     node = prev.begin_parse();
   }
@@ -285,9 +302,7 @@ int get_last_clean_time() method_id {
   return last_clean_time;
 }
 
-;; Whether `query_id` was accepted and is still remembered; with `need_clean`, as it will
-;; look after the rotation the next request performs. An id that can never be used (bit
-;; index 1023, negative, or beyond 23 bits) was never processed.
+;; Whether query_id is remembered, optionally applying the next request's rotation.
 int processed?(int query_id, int need_clean) method_id {
   if ((query_id < 0) | (query_id >= (1 << QUERY_ID_BITS)) | ((query_id & 1023) == 1023)) {
     return false;
@@ -299,17 +314,17 @@ int processed?(int query_id, int need_clean) method_id {
   return replay_guard::processed?(guard, query_id);
 }
 
-;; The value a relayer must attach to a request of `action_count` messages.
+;; Conservative value quote including the entire extra-entry compute reserve.
 int get_required_value(int action_count) method_id {
   throw_unless(error::invalid_action, (action_count > 0) & (action_count <= max_actions));
   return required_value(action_count);
 }
 
-;; For deployment tooling: refuses a state the wallet could never serve -- a key of the
-;; wrong shape, or a timeout outside 1..max (zero rejects every request and locks the
-;; funds) -- and otherwise returns the key id. Needs only c4, so new-pq-highload-wallet.fif
-;; runs it on the state before the address exists. The workchain is the deployer's choice
-;; of address; every submission refuses any but 0.
+(int, int) get_extra_currency_limits() method_id {
+  return (message_extra_currency_limit(), BATCH_MAX_EXTRA_ENTRIES);
+}
+
+;; Deployment check needs only c4, so it runs before an address has been derived.
 int get_checked_config() method_id {
   (cell public_key, _, [cell, cell, int, int] guard) = load_data();
   [_, _, _, int timeout] = guard;
