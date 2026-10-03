@@ -29,11 +29,11 @@ defaults:
   run:
     shell: bash
 jobs:
-  # No job time limit: the result must come from the tests, never from whether a build
-  # finished before a deadline. GitHub's default limit remains only as protection against
-  # a hung runner.
+  # GitHub's default job limit remains protection against a hung runner.
   contracts:
     runs-on: ubuntu-24.04
+    outputs:
+      policy_diagnostics: ${{ steps.policy.outputs.diagnostics }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -61,11 +61,70 @@ jobs:
           python3 test/pq-contracts/test_pq_highload.py --build build \
             --signer build-pq-signer/test-pq-contracts-sign
       - name: Wallet message policy and guard mutations at v16 and v18
+        id: policy
         run: |
-          python3 test/pq-contracts/test_pq_highload_policy.py --build build \
-            --signer build-pq-signer/test-pq-contracts-sign
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          command = [sys.executable, "test/pq-contracts/test_pq_highload_policy.py",
+                     "--build", "build", "--signer", "build-pq-signer/test-pq-contracts-sign"]
+          result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          log = result.stdout
+          print(log, end="", flush=True)
+          Path("policy-test.log").write_text(log)
+          diagnostics = []
+          if result.returncode:
+              blocks = re.split(r"(?m)^={20,}\n", log)
+              for block in blocks:
+                  match = re.match(r"(FAIL|ERROR): (test_\w+)[^\n]*", block)
+                  if not match:
+                      continue
+                  errors = re.findall(r"(?m)^([\w.]+(?:Error|Exception):[^\n]*)", block)
+                  detail = errors[-1] if errors else "see policy-test.log for traceback"
+                  item = f"{match[1]} {match[2]}: {detail}"[:400]
+                  if item not in diagnostics:
+                      diagnostics.append(item)
+              if not diagnostics:
+                  lines = [line for line in log.splitlines() if line.strip()]
+                  diagnostics = [f"policy exit {result.returncode}: " + " | ".join(lines[-3:])[:360]]
+          else:
+              diagnostics = ["PASS: policy baseline, targeted mutations and restored baseline"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("diagnostics=" + json.dumps(diagnostics[:16], ensure_ascii=True) + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("## PQ policy test outcome\n\n")
+              summary.write(f"Process exit status: `{result.returncode}`. The original failure gate is retained.\n\n")
+              for item in diagnostics:
+                  summary.write("- " + item + "\n")
+              summary.write("\n<details><summary>Execution log (tail)</summary>\n\n```text\n")
+              summary.write(log[-45000:].replace("```", "'''"))
+              summary.write("\n```\n</details>\n")
+          sys.exit(result.returncode if result.returncode >= 0 else 1)
+          PY
       - name: Remove every guard in turn
         run: |
           python3 test/pq-contracts/mutations.py --build build \
             --signer build-pq-signer/test-pq-contracts-sign
           git diff --exit-code
+  # Surface the exact failing assertion in job metadata as well as logs/summary.
+  # This remains readable when a client's redirected job-log download is unavailable.
+  # Read-only permissions; no PR comments, tokens or repository writes from test code.
+  policy_diagnostic:
+    needs: contracts
+    if: ${{ always() && needs.contracts.outputs.policy_diagnostics != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        diagnostic: ${{ fromJSON(needs.contracts.outputs.policy_diagnostics) }}
+    name: "Policy diagnostic — ${{ matrix.diagnostic }}"
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Show diagnostic (does not override the contracts job result)
+        env:
+          DIAGNOSTIC: ${{ matrix.diagnostic }}
+        run: printf '%s\n' "$DIAGNOSTIC"
