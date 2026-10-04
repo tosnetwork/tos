@@ -47,6 +47,13 @@ The validation boundaries and retained receipts are indexed in
 covers actual VM acceptance/rejection, cross-language parity, real generated
 zerostates, contract execution, provider policy and both mobile clients.
 
+The follow-up CI harness validation is indexed in
+[`protocol-v16-ci-validation.json`](protocol-v16-ci-validation.json). It records
+the full answer-database check, the v18/v16 deterministic genesis control,
+five compiled ML-DSA guard mutations with restored passing baselines, and
+lint/format checks across all changed Python files. Hosted CI remains a
+separate check against the pushed commit.
+
 The sensitivity runner intentionally sets each changed gate to 15 and 17,
 requires its intended assertion to fail, restores the original headers and
 requires both suites to pass again:
