@@ -2371,7 +2371,9 @@ void ValidatorEngine::start_validator() {
   // before the validator manager exists so it is never written while
   // block-apply actors may already be reading it.
   // The hook only queues the block for a dedicated indexing worker, so block
-  // application never waits on the index.
+  // application does not wait on index processing or its WAL writes. An apply
+  // without block data in hand does wait for one block-data read before the
+  // handoff (test/integration/evidence/wc0-index-apply-readback-addendum.md).
   // When the index cannot be opened or made safe to index into, no worker is
   // started and no hook installed: a worker with nothing to mark into would
   // hold queued blocks forever, and the account-index RPC reports the index

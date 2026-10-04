@@ -14,6 +14,9 @@ index really was slow and its queue really did fill.
 
 The run fails when the slow node's apply or hook latency departs from the
 node without an index, which is what restoring a synchronous hook does.
+
+It does not cover an apply that must first read its block data back for the
+index; see evidence/wc0-index-apply-readback-addendum.md.
 """
 
 import argparse
@@ -256,7 +259,9 @@ async def main(args: argparse.Namespace) -> None:
         )
     require(slowed > 0, "no sync of the slow node's index was delayed")
 
-    # The claim: however slow the index, block application does not wait on it.
+    # The claim: however slow the index's processing and WAL writes, block
+    # application does not wait on them. The block-data read-back path is
+    # outside this run (evidence/wc0-index-apply-readback-addendum.md).
     for name in ("on", "slow"):
         require(
             nodes[name]["hook_wc0"]["max_s"] <= args.hook_max_s,

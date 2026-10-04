@@ -118,8 +118,10 @@ void stop_wc0_index_worker();
 // (in memory, for when recording that fact durably failed too).
 bool wc0_index_degraded();
 // The block-apply hook: hands the block to the indexing worker and returns at
-// once, so applying a block never waits on the index's lock, TVM getters or
-// WAL sync. When the worker is kWc0IndexQueueCapacity blocks behind, the block is not
+// once, so the hook itself never waits on the index's lock, TVM getters or WAL
+// sync. When ApplyBlock does not have the block data, it reads the data back
+// before calling the hook, so that apply does wait for one block-data read
+// (see test/integration/evidence/wc0-index-apply-readback-addendum.md). When the worker is kWc0IndexQueueCapacity blocks behind, the block is not
 // indexed now; it is marked incomplete instead, and the startup recovery
 // re-indexes marked blocks.
 void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
