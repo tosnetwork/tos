@@ -7,9 +7,9 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FUNC_BIN=${FUNC_BIN:-"$REPO_ROOT/build/crypto/func"}
 FIFT_BIN=${FIFT_BIN:-"$REPO_ROOT/build/crypto/fift"}
 OUTPUT=${1:-"$REPO_ROOT/crypto/smartcont/artifacts/tos-service-stablecoin-escrow-v2.boc"}
-EXPECTED_CODE_HASH=8bb0b7c809b9abfc8c3446a6a283f8cf4278c31dadc7f3bbd377d984e7d27544
-EXPECTED_BOC_SHA256=cb6ca9b958230c55222d521e29c7222cb24121fdc48e9add1edc696f2860b2f0
-EXPECTED_BOC_BYTES=2609
+EXPECTED_CODE_HASH=5a2ee6f907a03738d2eef3586ece125ebd6e10b8dbd91408e0fa4a3fd2bf51ba
+EXPECTED_BOC_SHA256=324f7d5fca5edd0a00728daad9e59bf15e158545cc4a39dae17aab2f0f12e9a7
+EXPECTED_BOC_BYTES=2864
 
 for binary in "$FUNC_BIN" "$FIFT_BIN"; do
   [[ -x "$binary" ]] || { echo "required compiler is unavailable: $binary" >&2; exit 1; }

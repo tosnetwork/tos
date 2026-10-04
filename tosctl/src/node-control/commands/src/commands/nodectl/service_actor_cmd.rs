@@ -1007,6 +1007,7 @@ impl ServiceActorSendCmd {
                                     anyhow::anyhow!("request {id} is not pending on chain")
                                 })?;
                             let domain_hash = contracts::service_respond_domain_hash(
+                                super::utils::network_global_id(&rpc_client).await?,
                                 &destination_service,
                                 &request.caller,
                                 id,

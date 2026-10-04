@@ -31,6 +31,9 @@
 ;;   rotate_key#41545402 query_id:uint64 new_public_key:uint256 = InternalMsgBody;
 ;;   revoke#41545403 query_id:uint64 = InternalMsgBody;
 
+#include "strong-ed25519-key.fc";
+#include "signing-domain.fc";
+
 const int op::attest = 0x41545401;
 const int op::rotate_key = 0x41545402;
 const int op::revoke = 0x41545403;
@@ -39,6 +42,10 @@ const int err::revoked = 2100;
 const int err::bad_signature = 2101;
 const int err::not_owner = 2102;
 const int err::unknown_op = 2103;
+const int err::weak_key = 2104;
+
+;; The attestor signs: tag, network, this attestation contract, the attested hash.
+const int domain::attestation = 0x50415432; ;; "PAT2"
 
 (slice, int, int, int, int, int, int) load_state() inline {
   slice ds = get_data().begin_parse();
@@ -97,9 +104,9 @@ const int err::unknown_op = 2103;
     ;; same attested_hash value -- the bare hash used previously had no such
     ;; binding. Same pattern as Task Escrow/Dispute/Service Actor attestation
     ;; and Agent Account's controller signature.
-    (int wc, int addr) = my_address().parse_std_addr();
-    int domain_hash = cell_hash(begin_cell()
-      .store_int(wc, 8).store_uint(addr, 256).store_uint(new_attested_hash, 256).end_cell());
+    throw_if(err::weak_key, weak_ed25519_key?(public_key));
+    int domain_hash = cell_hash(begin_signing_domain(domain::attestation)
+      .store_uint(new_attested_hash, 256).end_cell());
     throw_unless(err::bad_signature, check_signature(domain_hash, signature, public_key));
     save_state(owner, public_key, revoked, 1, now(), subject_hash, new_attested_hash);
     return ();
@@ -109,6 +116,7 @@ const int err::unknown_op = 2103;
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     int new_public_key = in_msg~load_uint(256);
     in_msg.end_parse();
+    throw_if(err::weak_key, weak_ed25519_key?(new_public_key));
     ;; A rotated key invalidates any existing attestation: it was recorded
     ;; under the authority of the previous key and is no longer meaningful.
     save_state(owner, new_public_key, revoked, 0, 0, subject_hash, 0);

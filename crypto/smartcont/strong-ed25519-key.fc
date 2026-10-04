@@ -1,0 +1,31 @@
+;; Ed25519 public keys a contract must not accept as an independent authority.
+;;
+;; CHKSIGNU rejects off-curve encodings and the identity, but a key in the
+;; Ed25519 8-torsion subgroup still lets anyone forge signatures for it, and a
+;; non-canonical y encodes a point CHKSIGNU may accept under another name. A
+;; contract that checks a signature against a stored key on behalf of someone
+;; else (an attestor, a verifier, a settlement authority) must refuse these,
+;; or whoever configures the key can name one nobody needs a secret for.
+;;
+;; The same list as Agent Account's require_strong_controller_key: the eight
+;; canonical encodings of the torsion subgroup, plus every encoding whose y is
+;; at least 2^255 - 19. Callers throw their own error code.
+
+int weak_ed25519_key?(int public_key) inline_ref {
+  ;; y is little-endian in the low 255 bits, x's sign in the top bit of the last
+  ;; byte. y >= 2^255 - 19 can only appear as 0x[ed..ff] ff..ff [7f|ff].
+  int y_last = (public_key & 255) & 127;
+  int y_middle = (public_key >> 8) & ((1 << 240) - 1);
+  int y_first = public_key >> 248;
+  if ((y_last == 127) & (y_middle == ((1 << 240) - 1)) & (y_first >= 237)) {
+    return true;
+  }
+  return (public_key == 0x0100000000000000000000000000000000000000000000000000000000000000)
+    | (public_key == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a)
+    | (public_key == 0x0000000000000000000000000000000000000000000000000000000000000080)
+    | (public_key == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05)
+    | (public_key == 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f)
+    | (public_key == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85)
+    | (public_key == 0x0000000000000000000000000000000000000000000000000000000000000000)
+    | (public_key == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+}

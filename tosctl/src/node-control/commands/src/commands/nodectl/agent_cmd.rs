@@ -1824,6 +1824,7 @@ fn validate_controller_task_action(
 }
 
 struct ControllerTaskActionContext<'a> {
+    global_id: i32,
     task_address: &'a MsgAddressInt,
     now: u64,
     payout: Option<u64>,
@@ -1876,11 +1877,13 @@ fn validate_controller_task_attestation(
         context.attestation_signature.context("Task Escrow requires an attestation signature")?;
     let domain_hash = match operation {
         AgentTaskOperation::Settle => contracts::settle_domain_hash(
+            context.global_id,
             context.task_address,
             &task.result_hash,
             context.payout.context("settle requires payout")?,
         )?,
         AgentTaskOperation::Resolve => contracts::resolve_domain_hash(
+            context.global_id,
             context.task_address,
             &task.result_hash,
             &task.dispute_hash,
@@ -1981,6 +1984,7 @@ impl AgentTaskSendCmd {
                         .await?;
                     let chain_task = TaskEscrowContract::decode_data(&stack)?;
                     let domain_hash = contracts::settle_domain_hash(
+                        super::utils::network_global_id(&rpc_client).await?,
                         &destination,
                         &chain_task.result_hash,
                         payout,
@@ -1999,6 +2003,7 @@ impl AgentTaskSendCmd {
                         .await?;
                     let chain_task = TaskEscrowContract::decode_data(&stack)?;
                     let domain_hash = contracts::resolve_domain_hash(
+                        super::utils::network_global_id(&rpc_client).await?,
                         &destination,
                         &chain_task.result_hash,
                         &chain_task.dispute_hash,
@@ -2114,6 +2119,7 @@ impl AgentTaskSendCmd {
                 u64::MAX
             };
             let validation_context = ControllerTaskActionContext {
+                global_id: super::utils::network_global_id(&rpc_client).await?,
                 task_address: &destination,
                 now: validation_now,
                 payout: payout_nanotos,
@@ -11995,8 +12001,11 @@ mod tests {
         }
     }
 
+    const TEST_GLOBAL_ID: i32 = 42;
+
     fn controller_task_context(task_address: &MsgAddressInt) -> ControllerTaskActionContext<'_> {
         ControllerTaskActionContext {
+            global_id: TEST_GLOBAL_ID,
             task_address,
             now: 100,
             payout: Some(500_000_000),
@@ -14323,8 +14332,13 @@ mod tests {
         task.review_deadline = 100;
         task.result_hash = [8; 32];
         task.attestor_pubkey = Some(signing_key.verifying_key().to_bytes());
-        let domain =
-            contracts::settle_domain_hash(&task_address, &task.result_hash, 500_000_000).unwrap();
+        let domain = contracts::settle_domain_hash(
+            TEST_GLOBAL_ID,
+            &task_address,
+            &task.result_hash,
+            500_000_000,
+        )
+        .unwrap();
         let signature = signing_key.sign(&domain).to_bytes();
         let mut context = controller_task_context(&task_address);
         context.attestation_signature = Some(&signature);
@@ -14395,6 +14409,7 @@ mod tests {
         disputed.verifier = Some(address(3));
         disputed.dispute_hash = [11; 32];
         let resolve_domain = contracts::resolve_domain_hash(
+            TEST_GLOBAL_ID,
             &task_address,
             &disputed.result_hash,
             &disputed.dispute_hash,

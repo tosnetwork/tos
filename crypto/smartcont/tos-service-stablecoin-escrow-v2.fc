@@ -4,6 +4,9 @@
 ;; StateInit starts pending_acceptance and only the exact buyer wallet may
 ;; accept the Quote before accept_by. Funding is a distinct later transition.
 
+#include "strong-ed25519-key.fc";
+#include "signing-domain.fc";
+
 const int op::release = 0x4e450001;
 const int op::refund = 0x4e450002;
 const int op::accept = 0x4e450003;
@@ -53,6 +56,7 @@ const int err::bad_signature = 2407;
 const int err::bad_confirmation = 2408;
 const int err::bad_acceptance = 2409;
 const int err::insufficient_gas = 2410;
+const int err::weak_key = 2411;
 
 ;; Fixed native-TON budget attached to a settlement's jetton transfer, sized
 ;; (per the vendored third-party DEX reference under crypto/smartcont/reference/)
@@ -139,6 +143,7 @@ int parse_authorization(cell authorization, int expected_hash) inline {
   int public_key = a~load_uint(256);
   a.end_parse();
   throw_unless(err::bad_state, public_key != 0);
+  throw_if(err::weak_key, weak_ed25519_key?(public_key));
   return public_key;
 }
 
@@ -412,9 +417,14 @@ int settlement_required_balance(int forward_fee) inline {
 
 cell settlement_intent(int query_id, int charged, int quote_hash,
     int receipt_hash) inline {
-  return begin_cell().store_uint(magic::intent, 32).store_uint(1, 16)
+  ;; Version 2 names the network: a version 1 intent signed for one network
+  ;; settled the same escrow state on any other that shared it. The two hashes
+  ;; move to a reference, since the network id no longer leaves room for them.
+  return begin_cell().store_uint(magic::intent, 32).store_uint(2, 16)
+    .store_int(signing_global_id(), 32)
     .store_uint(query_id, 64).store_uint(charged, 128).store_slice(my_address())
-    .store_uint(quote_hash, 256).store_uint(receipt_hash, 256).end_cell();
+    .store_ref(begin_cell().store_uint(quote_hash, 256).store_uint(receipt_hash, 256).end_cell())
+    .end_cell();
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice body) impure {

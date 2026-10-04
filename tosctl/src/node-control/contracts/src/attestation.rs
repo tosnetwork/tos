@@ -11,14 +11,31 @@
 //! instance sharing the same attestor key, plus whatever additional state
 //! that particular check needs to be meaningful: `settle`/`resolve` also
 //! bind the exact payout, `respond` also binds which request it answers.
-//! `domain_bound_hash` is the plain two-field form (contract + one hash)
-//! used where nothing else needs binding. Each variant must match its
-//! contract's own FunC computation byte-for-byte.
+//! `domain_bound_hash` is the plain form (contract + one hash) used where
+//! nothing else needs binding. Each variant must match its contract's own
+//! FunC computation byte-for-byte.
+//!
+//! Every variant starts with the prefix `signing-domain.fc` builds: a 32-bit
+//! tag naming the statement and its version, the network's signed 32-bit
+//! GLOBALID, then the contract address. Without the network a signature was
+//! valid on every network running the same code at the same address with the
+//! same keys; without the tag one kind of statement could be read as another.
 
 use chain_block::{BuilderData, Coins, IBitstring, MsgAddressInt, Serializable};
 
+/// Dispute `rule`: the ruling hash.
+pub const DOMAIN_DISPUTE_RULING: u32 = 0x4452_5532;
+/// Proof Attestation `attest`: the attested hash.
+pub const DOMAIN_PROOF_ATTESTATION: u32 = 0x5041_5432;
+/// Task Escrow `settle`: result hash and payout.
+pub const DOMAIN_TASK_SETTLE: u32 = 0x5453_4532;
+/// Task Escrow `resolve`: result hash, dispute hash and payout.
+pub const DOMAIN_TASK_RESOLVE: u32 = 0x5452_4532;
+/// Service Actor `respond`: the request it answers.
+pub const DOMAIN_SERVICE_RESPOND: u32 = 0x5352_5032;
+
 /// Extracts the (workchain, 32-byte address) pair every domain-bound hash
-/// in this module starts with, matching each contract's own
+/// in this module carries, matching each contract's own
 /// `my_address().parse_std_addr()` in FunC.
 fn wc_and_addr(contract_address: &MsgAddressInt) -> anyhow::Result<(i8, [u8; 32])> {
     let wc = contract_address.workchain_id();
@@ -26,6 +43,21 @@ fn wc_and_addr(contract_address: &MsgAddressInt) -> anyhow::Result<(i8, [u8; 32]
     let addr: [u8; 32] =
         addr_bytes.try_into().map_err(|_| anyhow::anyhow!("address must be 32 bytes"))?;
     Ok((wc as i8, addr))
+}
+
+/// The prefix `begin_signing_domain` in `signing-domain.fc` stores.
+fn signing_domain(
+    tag: u32,
+    global_id: i32,
+    contract_address: &MsgAddressInt,
+) -> anyhow::Result<BuilderData> {
+    let (wc, addr) = wc_and_addr(contract_address)?;
+    let mut b = BuilderData::new();
+    b.append_u32(tag)?;
+    b.append_i32(global_id)?;
+    b.append_i8(wc)?;
+    b.append_u256(&addr)?;
+    Ok(b)
 }
 
 /// Compute the domain-bound hash that the attestor key must sign for
@@ -36,13 +68,12 @@ fn wc_and_addr(contract_address: &MsgAddressInt) -> anyhow::Result<(i8, [u8; 32]
 /// carry a payout, or a second piece of state like a request, the signature
 /// needs to additionally bind.
 pub fn domain_bound_hash(
+    tag: u32,
+    global_id: i32,
     contract_address: &MsgAddressInt,
     original_hash: &[u8; 32],
 ) -> anyhow::Result<[u8; 32]> {
-    let (wc, addr) = wc_and_addr(contract_address)?;
-    let mut b = BuilderData::new();
-    b.append_i8(wc)?;
-    b.append_u256(&addr)?;
+    let mut b = signing_domain(tag, global_id, contract_address)?;
     b.append_u256(original_hash)?;
     let cell = b.into_cell()?;
     Ok(*cell.repr_hash().as_array())
@@ -56,14 +87,12 @@ pub fn domain_bound_hash(
 /// amount actually paid out. Must match `crypto/smartcont/task-escrow-code.fc`'s
 /// `settle` computation byte-for-byte.
 pub fn settle_domain_hash(
+    global_id: i32,
     contract_address: &MsgAddressInt,
     result_hash: &[u8; 32],
     payout: u64,
 ) -> anyhow::Result<[u8; 32]> {
-    let (wc, addr) = wc_and_addr(contract_address)?;
-    let mut b = BuilderData::new();
-    b.append_i8(wc)?;
-    b.append_u256(&addr)?;
+    let mut b = signing_domain(DOMAIN_TASK_SETTLE, global_id, contract_address)?;
     b.append_u256(result_hash)?;
     Coins::new(payout).write_to(&mut b)?;
     let cell = b.into_cell()?;
@@ -80,15 +109,13 @@ pub fn settle_domain_hash(
 /// some point". Must match `crypto/smartcont/task-escrow-code.fc`'s
 /// `resolve` computation byte-for-byte.
 pub fn resolve_domain_hash(
+    global_id: i32,
     contract_address: &MsgAddressInt,
     result_hash: &[u8; 32],
     dispute_hash: &[u8; 32],
     payout: u64,
 ) -> anyhow::Result<[u8; 32]> {
-    let (wc, addr) = wc_and_addr(contract_address)?;
-    let mut b = BuilderData::new();
-    b.append_i8(wc)?;
-    b.append_u256(&addr)?;
+    let mut b = signing_domain(DOMAIN_TASK_RESOLVE, global_id, contract_address)?;
     b.append_u256(result_hash)?;
     b.append_u256(dispute_hash)?;
     Coins::new(payout).write_to(&mut b)?;
@@ -154,6 +181,7 @@ pub fn service_actor_terms_hash(
 /// byte-for-byte, including the exact cell split.
 #[allow(clippy::too_many_arguments)]
 pub fn service_respond_domain_hash(
+    global_id: i32,
     contract_address: &MsgAddressInt,
     caller: &MsgAddressInt,
     request_id: u64,
@@ -164,8 +192,6 @@ pub fn service_respond_domain_hash(
     response_deadline: u64,
     refund_claim_deadline: u64,
 ) -> anyhow::Result<[u8; 32]> {
-    let (wc, addr) = wc_and_addr(contract_address)?;
-
     let mut tail = BuilderData::new();
     caller.write_to(&mut tail)?;
     tail.append_u256(terms_hash)?;
@@ -173,9 +199,7 @@ pub fn service_respond_domain_hash(
     tail.append_u64(response_deadline)?;
     tail.append_u64(refund_claim_deadline)?;
 
-    let mut root = BuilderData::new();
-    root.append_i8(wc)?;
-    root.append_u256(&addr)?;
+    let mut root = signing_domain(DOMAIN_SERVICE_RESPOND, global_id, contract_address)?;
     root.append_u64(request_id)?;
     root.append_u256(request_hash)?;
     root.append_u256(response_hash)?;

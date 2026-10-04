@@ -3,6 +3,9 @@
 ;; The creator funds the actor at deployment, an agent accepts and submits a
 ;; result, and the creator settles or cancels the task.
 
+#include "strong-ed25519-key.fc";
+#include "signing-domain.fc";
+
 const int op::accept = 0x54415301;
 const int op::result = 0x54415302;
 const int op::settle = 0x54415303;
@@ -19,6 +22,11 @@ const int err::attestor_frozen = 130;
 const int err::bad_resolve_signature = 131;
 const int err::review_period_too_short = 132;
 const int err::budget_not_escrowed = 133;
+const int err::weak_attestor = 134;
+
+;; The attestor signs: tag, network, this task, then the payout terms.
+const int domain::settle = 0x54534532; ;; "TSE2"
+const int domain::resolve = 0x54524532; ;; "TRE2"
 
 ;; Floor on the creator's review window once a result is submitted. timeout()
 ;; defaults an unattended, no-verifier result to full payment (see op::timeout
@@ -187,10 +195,9 @@ const int status::disputed = 7;
       ;; This never replaces the sender authorization above -- it is an
       ;; extra requirement layered on top.
       slice signature = in_msg~load_bits(512);
-      (int wc, int addr) = my_address().parse_std_addr();
-      int domain_hash = cell_hash(begin_cell()
-        .store_int(wc, 8).store_uint(addr, 256).store_uint(result_hash, 256)
-        .store_tomis(payout).end_cell());
+      throw_if(err::weak_attestor, weak_ed25519_key?(attestor_pubkey));
+      int domain_hash = cell_hash(begin_signing_domain(domain::settle)
+        .store_uint(result_hash, 256).store_tomis(payout).end_cell());
       throw_unless(127, check_signature(domain_hash, signature, attestor_pubkey));
     }
     in_msg.end_parse();
@@ -280,10 +287,9 @@ const int status::disputed = 7;
       ;; meaningful together with the dispute it resolves and the amount it
       ;; actually pays.
       slice signature = in_msg~load_bits(512);
-      (int wc, int addr) = my_address().parse_std_addr();
-      int domain_hash = cell_hash(begin_cell()
-        .store_int(wc, 8).store_uint(addr, 256).store_uint(result_hash, 256)
-        .store_uint(dispute_hash, 256).store_tomis(payout).end_cell());
+      throw_if(err::weak_attestor, weak_ed25519_key?(attestor_pubkey));
+      int domain_hash = cell_hash(begin_signing_domain(domain::resolve)
+        .store_uint(result_hash, 256).store_uint(dispute_hash, 256).store_tomis(payout).end_cell());
       throw_unless(err::bad_resolve_signature, check_signature(domain_hash, signature, attestor_pubkey));
     }
     in_msg.end_parse();
@@ -315,6 +321,7 @@ const int status::disputed = 7;
       (status == status::rejected) | (status == status::expired));
     attestor_pubkey = in_msg~load_uint(256);
     in_msg.end_parse();
+    throw_if(err::weak_attestor, weak_ed25519_key?(attestor_pubkey));
     has_attestor = 1;
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status, result_hash, evidence_hash, policy_hash, review_period,

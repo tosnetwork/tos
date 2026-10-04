@@ -64,6 +64,16 @@ pub async fn load_config_vault(
     Ok((config, vault))
 }
 
+/// The network's GLOBALID (ConfigParam 19). Attestation and settlement
+/// signatures name it, so a signature made for one network does not verify on
+/// another that runs the same contract at the same address.
+pub async fn network_global_id(rpc_client: &ClientJsonRpc) -> anyhow::Result<i32> {
+    match rpc_client.get_config_param(19).await? {
+        chain_block::ConfigParamEnum::ConfigParam19(value) => Ok(value as i32),
+        _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+    }
+}
+
 pub async fn check_chain_rpc_connection(rpc_client: &ClientJsonRpc) -> anyhow::Result<()> {
     rpc_client.get_config_param(1).await.map(|_| ())
 }

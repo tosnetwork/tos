@@ -95,7 +95,10 @@ fn main() -> anyhow::Result<()> {
     // payout. The attestor is independent of the creator/verifier who
     // authorizes the settle call.
     let payout = task_init.budget;
-    let domain_hash = contracts::settle_domain_hash(&task_address, &result_hash, payout)?;
+    // The network the task lives on: a signature names it.
+    let global_id: i32 = 42;
+    let domain_hash =
+        contracts::settle_domain_hash(global_id, &task_address, &result_hash, payout)?;
     let attestation: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     print_cell(
         "settle message body (attested)",

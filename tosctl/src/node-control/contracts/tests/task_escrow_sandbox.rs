@@ -19,6 +19,8 @@ use contracts::{TaskEscrowContract, TaskEscrowInit};
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 
+mod weak_ed25519;
+
 const TOS: u64 = 1_000_000_000;
 const STATUS_OPEN: i128 = 0;
 const STATUS_ACCEPTED: i128 = 1;
@@ -631,7 +633,9 @@ fn settle_on_an_attestor_configured_task_requires_a_valid_signature() {
     f.send_from(&creator_addr, TaskEscrowContract::settle(3, TOS).unwrap()).expect_aborted();
     assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
 
-    let domain_hash = contracts::settle_domain_hash(&f.escrow, &result_hash, TOS).unwrap();
+    let domain_hash =
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS)
+            .unwrap();
 
     // A signature from the wrong key is rejected. (Domain-bound hashing and
     // signature verification both run before the signature is judged
@@ -701,7 +705,8 @@ fn settle_signature_is_bound_to_the_exact_payout_amount() {
 
     // The attestor signs off on a payout of TOS / 2.
     let approved_payout_domain_hash =
-        contracts::settle_domain_hash(&f.escrow, &result_hash, TOS / 2).unwrap();
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS / 2)
+            .unwrap();
     let signature: [u8; 64] = attestor.sign(&approved_payout_domain_hash).to_bytes();
 
     // Settling with a larger payout, reusing that same signature, is rejected:
@@ -753,8 +758,14 @@ fn resolve_on_an_attestor_configured_task_requires_a_valid_signature() {
     f.send_from(&verifier_addr, TaskEscrowContract::resolve(4, TOS).unwrap()).expect_aborted();
     assert_eq!(f.status(), STATUS_DISPUTED);
 
-    let domain_hash =
-        contracts::resolve_domain_hash(&f.escrow, &result_hash, &dispute_hash, TOS).unwrap();
+    let domain_hash = contracts::resolve_domain_hash(
+        sandbox_global_id(&f.bc),
+        &f.escrow,
+        &result_hash,
+        &dispute_hash,
+        TOS,
+    )
+    .unwrap();
 
     // A signature from the wrong key is rejected.
     let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
@@ -770,7 +781,9 @@ fn resolve_on_an_attestor_configured_task_requires_a_valid_signature() {
 
     // A signature over the settle-style domain (result_hash + payout, no
     // dispute_hash) is rejected: resolve's domain also binds dispute_hash.
-    let settle_style_hash = contracts::settle_domain_hash(&f.escrow, &result_hash, TOS).unwrap();
+    let settle_style_hash =
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS)
+            .unwrap();
     let mismatched_domain_signature: [u8; 64] = attestor.sign(&settle_style_hash).to_bytes();
     f.send_from_with_value(
         &verifier_addr,
@@ -854,7 +867,9 @@ fn creator_can_rotate_and_revoke_the_attestor_key_others_rejected() {
 
     // Creator settles with a valid attestor signature, reaching the terminal
     // settled state -- where rotate/revoke are unfrozen again.
-    let domain_hash = contracts::settle_domain_hash(&f.escrow, &result_hash, TOS).unwrap();
+    let domain_hash =
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS)
+            .unwrap();
     let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     f.send_from_with_value(
         &creator_addr,
@@ -931,8 +946,14 @@ fn attestor_rotate_and_revoke_are_frozen_once_the_agent_has_accepted() {
     // The verifier resolves the dispute, reaching the terminal settled
     // status -- rotate/revoke are unfrozen again.
     let verifier_addr = f.verifier.address().clone();
-    let domain_hash =
-        contracts::resolve_domain_hash(&f.escrow, &[0xAA; 32], &[0xCC; 32], TOS).unwrap();
+    let domain_hash = contracts::resolve_domain_hash(
+        sandbox_global_id(&f.bc),
+        &f.escrow,
+        &[0xAA; 32],
+        &[0xCC; 32],
+        TOS,
+    )
+    .unwrap();
     let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     f.send_from_with_value(
         &verifier_addr,
@@ -966,7 +987,9 @@ fn configured_attestor_is_immutable_even_while_task_is_open() {
     f.send_from(&agent_addr, TaskEscrowContract::result(3, result_hash, [0xBB; 32]).unwrap())
         .expect_success();
 
-    let domain_hash = contracts::settle_domain_hash(&f.escrow, &result_hash, TOS).unwrap();
+    let domain_hash =
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS)
+            .unwrap();
 
     // The deployment key remains authoritative.
     let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
@@ -1032,8 +1055,13 @@ fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_ta
     task_a
         .send_from(&agent_a, TaskEscrowContract::result(2, shared_result_hash, [0; 32]).unwrap())
         .expect_success();
-    let domain_hash_a =
-        contracts::settle_domain_hash(&task_a.escrow, &shared_result_hash, TOS / 2).unwrap();
+    let domain_hash_a = contracts::settle_domain_hash(
+        sandbox_global_id(&task_a.bc),
+        &task_a.escrow,
+        &shared_result_hash,
+        TOS / 2,
+    )
+    .unwrap();
     let signature: [u8; 64] = attestor.sign(&domain_hash_a).to_bytes();
     task_a
         .send_from_with_value(
@@ -1073,8 +1101,13 @@ fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_ta
     );
 
     // A correctly re-signed (domain-bound to task_b) signature still works.
-    let domain_hash_b =
-        contracts::settle_domain_hash(&task_b.escrow, &shared_result_hash, TOS / 2).unwrap();
+    let domain_hash_b = contracts::settle_domain_hash(
+        sandbox_global_id(&task_b.bc),
+        &task_b.escrow,
+        &shared_result_hash,
+        TOS / 2,
+    )
+    .unwrap();
     let signature_b: [u8; 64] = attestor.sign(&domain_hash_b).to_bytes();
     task_b
         .send_from_with_value(
@@ -1138,4 +1171,152 @@ fn a_dispute_with_the_reserved_zero_commitment_is_refused() {
     f.send_from(&creator_addr, TaskEscrowContract::dispute(4, [0xCC; 32]).unwrap())
         .expect_success();
     assert_eq!(f.status(), STATUS_DISPUTED);
+}
+
+/// The network the sandbox runs, as GLOBALID reads it from ConfigParam 19.
+fn sandbox_global_id(bc: &Blockchain) -> i32 {
+    match bc.config_params().config(19).expect("parameter 19") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        other => panic!("parameter 19 is not the global id: {other:?}"),
+    }
+}
+
+const ERR_WEAK_ATTESTOR: i32 = 134;
+
+/// An attestor key anyone could sign for is refused when the creator sets it,
+/// and refused at settlement when it arrived in a hand-built StateInit.
+#[test]
+fn weak_attestor_keys_are_refused_when_set_and_when_used() {
+    for weak in weak_ed25519::weak_keys() {
+        let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+        let creator = f.creator.address().clone();
+        f.send_from(&creator, TaskEscrowContract::rotate_attestor_key(1, weak).unwrap())
+            .expect_aborted()
+            .expect_exit_code(ERR_WEAK_ATTESTOR);
+        assert!(!f.has_attestor(), "a refused key must not be stored");
+    }
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let creator = f.creator.address().clone();
+    let strong = SigningKey::from_bytes(&[0x77; 32]).verifying_key().to_bytes();
+    f.send_from(&creator, TaskEscrowContract::rotate_attestor_key(1, strong).unwrap())
+        .expect_success();
+    assert!(f.has_attestor());
+
+    let weak = weak_ed25519::weak_keys()[0];
+    let mut f = Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, weak);
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    f.send_from_with_value(
+        &creator,
+        TaskEscrowContract::settle_signed(3, TOS, &[0u8; 64]).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_WEAK_ATTESTOR);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+}
+
+/// A settlement signed for another network does not settle this one.
+#[test]
+fn an_attestor_signature_for_another_network_is_refused() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let result_hash = [0xAA; 32];
+    let mut f =
+        Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, attestor.verifying_key().to_bytes());
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent, TaskEscrowContract::result(2, result_hash, [0xBB; 32]).unwrap())
+        .expect_success();
+    let here = sandbox_global_id(&f.bc);
+    let elsewhere =
+        contracts::settle_domain_hash(here.wrapping_add(1), &f.escrow, &result_hash, TOS).unwrap();
+    f.send_from_with_value(
+        &creator,
+        TaskEscrowContract::settle_signed(3, TOS, &attestor.sign(&elsewhere).to_bytes()).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(127);
+    let this_network = contracts::settle_domain_hash(here, &f.escrow, &result_hash, TOS).unwrap();
+    f.send_from_with_value(
+        &creator,
+        TaskEscrowContract::settle_signed(4, TOS, &attestor.sign(&this_network).to_bytes())
+            .unwrap(),
+        TOS / 4,
+    )
+    .expect_success();
+}
+
+/// Drives an attestor-configured task to `disputed`.
+fn disputed_with_attestor(
+    attestor_pubkey: [u8; 32],
+    result_hash: [u8; 32],
+    dispute_hash: [u8; 32],
+) -> Fixture {
+    let mut f = Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, attestor_pubkey);
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent, TaskEscrowContract::result(2, result_hash, [0xBB; 32]).unwrap())
+        .expect_success();
+    f.send_from(&creator, TaskEscrowContract::dispute(3, dispute_hash).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_DISPUTED);
+    f
+}
+
+/// resolve() authorizes a payout as settle() does, so a weak attestor key that
+/// arrived in a hand-built StateInit is refused there too.
+#[test]
+fn a_weak_attestor_key_cannot_resolve_a_dispute() {
+    let mut f = disputed_with_attestor(weak_ed25519::weak_keys()[0], [0xAA; 32], [0xCC; 32]);
+    let verifier = f.verifier.address().clone();
+    f.send_from_with_value(
+        &verifier,
+        TaskEscrowContract::resolve_signed(4, TOS, &[0u8; 64]).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_WEAK_ATTESTOR);
+    assert_eq!(f.status(), STATUS_DISPUTED);
+}
+
+/// A resolution signed for another network does not resolve this dispute.
+#[test]
+fn a_resolution_signed_for_another_network_is_refused() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let (result_hash, dispute_hash) = ([0xAA; 32], [0xCC; 32]);
+    let mut f =
+        disputed_with_attestor(attestor.verifying_key().to_bytes(), result_hash, dispute_hash);
+    let verifier = f.verifier.address().clone();
+    let here = sandbox_global_id(&f.bc);
+    let elsewhere = contracts::resolve_domain_hash(
+        here.wrapping_add(1),
+        &f.escrow,
+        &result_hash,
+        &dispute_hash,
+        TOS,
+    )
+    .unwrap();
+    f.send_from_with_value(
+        &verifier,
+        TaskEscrowContract::resolve_signed(4, TOS, &attestor.sign(&elsewhere).to_bytes()).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(131);
+    assert_eq!(f.status(), STATUS_DISPUTED);
+    let this_network =
+        contracts::resolve_domain_hash(here, &f.escrow, &result_hash, &dispute_hash, TOS).unwrap();
+    f.send_from_with_value(
+        &verifier,
+        TaskEscrowContract::resolve_signed(5, TOS, &attestor.sign(&this_network).to_bytes())
+            .unwrap(),
+        TOS / 4,
+    )
+    .expect_success();
+    assert_eq!(f.status(), STATUS_SETTLED);
 }

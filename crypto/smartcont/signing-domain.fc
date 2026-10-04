@@ -1,0 +1,21 @@
+;; The prefix every signed statement a contract checks for someone else begins
+;; with: which statement it is, in which version, on which network, for which
+;; contract.
+;;
+;; Binding the contract address alone left a signature valid on every network
+;; that runs the same code at the same address with the same keys -- a test
+;; network seeded from the same state, or a fork. The network's GLOBALID and a
+;; per-statement tag close that: a signature names the network it was made for,
+;; and a statement of one kind cannot be read as another. A fork that keeps the
+;; same GLOBALID is beyond what this can distinguish.
+
+int signing_global_id() asm "GLOBALID";
+
+builder begin_signing_domain(int tag) inline {
+  (int wc, int addr) = my_address().parse_std_addr();
+  return begin_cell()
+    .store_uint(tag, 32)
+    .store_int(signing_global_id(), 32)
+    .store_int(wc, 8)
+    .store_uint(addr, 256);
+}

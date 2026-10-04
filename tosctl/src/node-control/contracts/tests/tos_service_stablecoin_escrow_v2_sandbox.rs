@@ -166,6 +166,13 @@ impl Fixture {
     }
 
     fn new_with(endpoint: &[u8], amount: u128) -> Self {
+        Self::new_full(endpoint, amount, None)
+    }
+
+    /// `authorization_key` replaces the settlement signer's public key in the
+    /// deployed state: how a hand-built StateInit would carry a key the
+    /// contract never admitted.
+    fn new_full(endpoint: &[u8], amount: u128, authorization_key: Option<[u8; 32]>) -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).unwrap();
         bc.set_workchain(0);
         let relayer = bc.treasury("tos-service-v2-relayer", 1_000 * TOS).unwrap();
@@ -193,7 +200,7 @@ impl Fixture {
             .unwrap()
             .append_u16(1)
             .unwrap()
-            .append_u256(&signer.verifying_key().to_bytes())
+            .append_u256(&authorization_key.unwrap_or_else(|| signer.verifying_key().to_bytes()))
             .unwrap();
         let authorization = authorization.into_cell().unwrap();
 
@@ -549,22 +556,31 @@ impl Fixture {
     }
 
     fn release_body(&self, query_id: u64, receipt: Cell) -> Cell {
+        self.release_body_for(self.global_id(), query_id, receipt)
+    }
+
+    /// A release whose settlement intent names `global_id` as its network.
+    fn release_body_for(&self, global_id: i32, query_id: u64, receipt: Cell) -> Cell {
         let mut intent = BuilderData::new();
         intent
             .append_u32(MAGIC_INTENT)
             .unwrap()
-            .append_u16(1)
+            .append_u16(2)
+            .unwrap()
+            .append_i32(global_id)
             .unwrap()
             .append_u64(query_id)
             .unwrap()
             .append_u128(self.amount)
             .unwrap();
         self.escrow.write_to(&mut intent).unwrap();
-        intent
+        let mut hashes = BuilderData::new();
+        hashes
             .append_raw(self.quote.hash(0).as_slice(), 256)
             .unwrap()
             .append_raw(receipt.hash(0).as_slice(), 256)
             .unwrap();
+        intent.checked_append_reference(hashes.into_cell().unwrap()).unwrap();
         let signature = self.signer.sign(intent.into_cell().unwrap().hash(0).as_slice()).to_bytes();
         let mut body = BuilderData::new();
         body.append_u32(OP_RELEASE)
@@ -718,6 +734,15 @@ impl Fixture {
             )
             .unwrap()
             .expect_success();
+    }
+
+    /// The network the sandbox runs, as GLOBALID reads it from ConfigParam 19:
+    /// a version 2 settlement intent names it.
+    fn global_id(&self) -> i32 {
+        match self.bc.config_params().config(19).expect("parameter 19") {
+            Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+            other => panic!("parameter 19 is not the global id: {other:?}"),
+        }
     }
 
     fn relayer_wallet(&self) -> MsgAddressInt {
@@ -1520,4 +1545,40 @@ fn rejected_funding_return_actually_delivers_jettons_to_the_funder() {
     );
     assert_eq!(f.own_wallet_balance(), 0);
     assert_eq!(f.state().0, STATUS_AWAITING_FUNDING);
+}
+
+mod weak_ed25519;
+
+const ERR_BAD_SIGNATURE: i32 = 2407;
+const ERR_WEAK_KEY: i32 = 2411;
+
+/// A settlement key anyone could sign for, carried in the deployed state, makes
+/// the escrow refuse every message rather than accept forged settlements.
+#[test]
+fn a_weak_settlement_key_in_the_deployed_state_is_refused() {
+    for weak in weak_ed25519::weak_keys() {
+        let mut fixture = Fixture::new_full(b"http://127.0.0.1:8080", AMOUNT as u128, Some(weak));
+        let buyer = fixture.buyer.address().clone();
+        let acceptance = fixture.accept_body(2);
+        // The all-zero encoding is one of the eight, but the escrow already
+        // refused a zero key as malformed state before it learned the others.
+        let expected = if weak == [0u8; 32] { ERR_BAD_STATE } else { ERR_WEAK_KEY };
+        fixture.send(&buyer, acceptance).expect_aborted().expect_exit_code(expected);
+        assert_eq!(fixture.state(), (STATUS_PENDING, 0));
+    }
+}
+
+/// A release whose intent names another network does not release here.
+#[test]
+fn a_release_signed_for_another_network_is_refused() {
+    let mut fixture = Fixture::new();
+    fixture.fund();
+    let relayer = fixture.relayer.address().clone();
+    let elsewhere =
+        fixture.release_body_for(fixture.global_id().wrapping_add(1), 19, fixture.receipt(0xa3));
+    fixture.send(&relayer, elsewhere).expect_aborted().expect_exit_code(ERR_BAD_SIGNATURE);
+    assert_eq!(fixture.state().0, STATUS_FUNDED);
+    let here = fixture.release_body(19, fixture.receipt(0xa3));
+    fixture.send(&relayer, here).expect_success();
+    assert_eq!(fixture.state().0, STATUS_RELEASE_PENDING);
 }
