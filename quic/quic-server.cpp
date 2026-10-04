@@ -48,7 +48,8 @@ QuicServer::QuicServer(td::UdpSocketFd fd, td::uint64 default_mtu, ServerIdentit
     , alpn_(std::move(alpn))
     , identities_(td::make_ref<ServerIdentities>())
     , options_(options)
-    , conn_rate_limiters_(options.new_connection_rate_limit_capacity, options.new_connection_rate_limit_period)
+    , conn_rate_limiters_(options.new_connection_rate_limit_capacity, options.new_connection_rate_limit_period,
+                          options.max_tracked_new_connection_sources)
     , global_conn_rate_limiter_(options.global_new_connection_rate_limit_capacity,
                                 options.global_new_connection_rate_limit_period)
     , gso_enabled_(options.enable_gso && td::UdpSocketFd::is_gso_supported())

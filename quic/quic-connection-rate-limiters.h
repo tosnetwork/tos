@@ -14,6 +14,10 @@ namespace tos::quic {
 // a connection recently; an entry whose bucket has refilled is dropped by
 // cleanup().
 inline constexpr size_t kQuicMaxTrackedAddresses = 1 << 16;
+// A full table is scanned for refilled entries at most this often; between
+// scans new addresses are refused without one, so a stream of fresh sources
+// against a full table costs a lookup each, not a scan of the table.
+inline constexpr double kQuicFullTableCleanupInterval = 1.0;
 
 class QuicConnectionRateLimiters {
  public:
@@ -38,7 +42,14 @@ class QuicConnectionRateLimiters {
       return td::Status::Error("new connection rate limit exceeded");
     }
     if (it == limiters_.end() && limiters_.size() >= max_tracked_) {
-      drop_refilled();
+      if (!global.can_take()) {
+        return td::Status::Error("global new connection rate limit exceeded");
+      }
+      if (next_full_table_cleanup_.is_in_past()) {
+        drop_refilled();
+        full_table_cleanups_++;
+        next_full_table_cleanup_ = td::Timestamp::in(kQuicFullTableCleanupInterval);
+      }
       if (limiters_.size() >= max_tracked_) {
         return td::Status::Error("new connection rate limit table full");
       }
@@ -65,6 +76,10 @@ class QuicConnectionRateLimiters {
   size_t tracked() const {
     return limiters_.size();
   }
+  // How many times a full table was scanned for room.
+  size_t full_table_cleanups() const {
+    return full_table_cleanups_;
+  }
 
   td::Timestamp next_cleanup_at() const {
     return cleanup_at_;
@@ -84,6 +99,8 @@ class QuicConnectionRateLimiters {
   td::uint32 capacity_ = 0;
   double period_ = 0.0;
   size_t max_tracked_ = kQuicMaxTrackedAddresses;
+  size_t full_table_cleanups_ = 0;
+  td::Timestamp next_full_table_cleanup_ = td::Timestamp::now();
   std::unordered_map<std::string, adnl::RateLimiter> limiters_;
   td::Timestamp cleanup_at_ = td::Timestamp::never();
 };

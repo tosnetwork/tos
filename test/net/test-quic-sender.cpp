@@ -14,10 +14,14 @@
     You should have received a copy of the GNU General Public License
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include <arpa/inet.h>
 #include <atomic>
 #include <iostream>
 #include <mutex>
+#include <netinet/in.h>
 #include <optional>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <unordered_set>
 
 #include "adnl/adnl-network-manager.h"
@@ -2140,6 +2144,125 @@ TEST(QuicConnectionLimit, MaxConnectionsRejectsBeyondCap) {
 
     ASSERT_TRUE(server.state->get_inbound_cid().has_value());
     ASSERT_EQ(server.state->get_inbound_cid().value(), c1_in);
+    co_return td::Unit{};
+  });
+}
+
+// New-connection admission through the real inbound path. QuicServer binds
+// the wildcard address, so its clients all arrive from 127.0.0.1; to present
+// distinct sources, a real client's Initial is captured once and then sent by
+// plain UDP sockets bound to other loopback addresses. With stateless Retry on
+// (the default), an Initial without a token never creates a connection, so
+// every copy goes through admission.
+int bound_udp_socket(const std::string& ip, int port) {
+  int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+  CHECK(fd >= 0);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(static_cast<uint16_t>(port));
+  CHECK(::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) == 1);
+  CHECK(::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+  return fd;
+}
+
+int local_port(int fd) {
+  sockaddr_in addr{};
+  socklen_t len = sizeof(addr);
+  CHECK(::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0);
+  return ntohs(addr.sin_port);
+}
+
+td::actor::Task<std::string> capture_initial(RawQuicTestRunner& t) {
+  int capture = bound_udp_socket("127.0.0.1", 0);
+  auto client = co_await t.create_endpoint(quic_test_options());
+  auto started =
+      co_await td::actor::ask(client.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"),
+                              local_port(capture), clone_quic_key(client.key), td::Slice("tos"), td::Slice(""))
+          .wrap();
+  ASSERT_TRUE(started.is_ok());
+  std::string datagram(65536, '\0');
+  ssize_t n = -1;
+  for (int i = 0; i < 100 && n <= 0; i++) {
+    n = ::recv(capture, datagram.data(), datagram.size(), MSG_DONTWAIT);
+    if (n <= 0) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
+    }
+  }
+  ::close(capture);
+  ASSERT_TRUE(n > 0);
+  datagram.resize(static_cast<size_t>(n));
+  co_return datagram;
+}
+
+void send_initial_from(const std::string& source_ip, int server_port, const std::string& datagram) {
+  int fd = bound_udp_socket(source_ip, 0);
+  sockaddr_in to{};
+  to.sin_family = AF_INET;
+  to.sin_port = htons(static_cast<uint16_t>(server_port));
+  CHECK(::inet_pton(AF_INET, "127.0.0.1", &to.sin_addr) == 1);
+  auto sent = ::sendto(fd, datagram.data(), datagram.size(), 0, reinterpret_cast<sockaddr*>(&to), sizeof(to));
+  CHECK(sent == static_cast<ssize_t>(datagram.size()));
+  ::close(fd);
+}
+
+tos::quic::QuicServer::Options admission_test_options() {
+  auto options = quic_test_options();
+  options.flood_control = 100;
+  options.stateless_retry = true;
+  return options;
+}
+
+td::actor::Task<size_t> tracked_sources(RawQuicEndpoint& server) {
+  co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+  auto tracked = co_await td::actor::ask(server.server, &tos::quic::QuicServer::tracked_new_connection_sources);
+  co_return tracked;
+}
+
+TEST(QuicAdmission, SourcesRefusedByTheGlobalLimitAreNotTracked) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto initial = co_await capture_initial(t);
+    auto server_options = admission_test_options();
+    server_options.new_connection_rate_limit_capacity = 1;
+    server_options.new_connection_rate_limit_period = 3600;
+    server_options.global_new_connection_rate_limit_capacity = 2;
+    server_options.global_new_connection_rate_limit_period = 3600;
+    auto server = co_await t.create_endpoint(server_options);
+
+    // The first two sources reach admission and take the global tokens.
+    send_initial_from("127.0.0.2", server.port, initial);
+    send_initial_from("127.0.0.3", server.port, initial);
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(2));
+    // Every later source is refused by the global limit and leaves no entry.
+    for (int i = 4; i < 40; i++) {
+      send_initial_from(PSTRING() << "127.0.0." << i, server.port, initial);
+    }
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(2));
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicAdmission, AFullSourceTableAdmitsAgainOnceEntriesRefill) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto initial = co_await capture_initial(t);
+    auto server_options = admission_test_options();
+    server_options.new_connection_rate_limit_capacity = 4;
+    server_options.new_connection_rate_limit_period = 0.2;
+    server_options.max_tracked_new_connection_sources = 2;
+    auto server = co_await t.create_endpoint(server_options);
+
+    send_initial_from("127.0.0.2", server.port, initial);
+    send_initial_from("127.0.0.3", server.port, initial);
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(2));
+    // Full, and both entries still draining: more sources are refused.
+    for (int i = 4; i < 20; i++) {
+      send_initial_from(PSTRING() << "127.0.0." << i, server.port, initial);
+    }
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(2));
+    // Once the entries have refilled (and the scan budget has passed), the
+    // table makes room: they are dropped and the new source is the only one.
+    co_await td::actor::coro_sleep(td::Timestamp::in(2.0));
+    send_initial_from("127.0.0.30", server.port, initial);
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(1));
     co_return td::Unit{};
   });
 }

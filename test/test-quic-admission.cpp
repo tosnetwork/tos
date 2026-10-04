@@ -79,3 +79,16 @@ TEST(QuicAdmission, WithoutPerAddressLimitsOnlyTheGlobalOneApplies) {
   ASSERT_TRUE(per_address.take_new_connection(source(1), global).is_error());
   ASSERT_EQ(per_address.tracked(), static_cast<size_t>(0));
 }
+
+TEST(QuicAdmission, AFloodAgainstAFullTableDoesNotScanItPerAddress) {
+  QuicConnectionRateLimiters per_address(1, kNoRefill, 4);
+  RateLimiter global(100000, 0.00001);
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_TRUE(per_address.take_new_connection(source(i), global).is_ok());
+  }
+  for (int i = 4; i < 2000; ++i) {
+    ASSERT_TRUE(per_address.take_new_connection(source(i), global).is_error());
+  }
+  // One scan for room, not one per refused address.
+  ASSERT_EQ(per_address.full_table_cleanups(), static_cast<size_t>(1));
+}

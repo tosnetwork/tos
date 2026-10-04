@@ -60,6 +60,8 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     double new_connection_rate_limit_period = 0.2;
     td::uint32 global_new_connection_rate_limit_capacity = 100000;
     double global_new_connection_rate_limit_period = 0.00001;
+    // Source addresses the per-address limiter tracks at once.
+    size_t max_tracked_new_connection_sources = kQuicMaxTrackedAddresses;
     // Hard ceiling on the number of live connections held in the connection
     // table. The per-IP flood control and the per-IP/global rate limiters bound
     // how fast new connections arrive, but none of them bound the live total: a
@@ -114,6 +116,10 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
   };
 
   void send_stream_data(QuicConnectionId cid, QuicStreamID sid, td::BufferSlice data);
+  // Source addresses the new-connection limiter currently tracks.
+  td::Result<size_t> tracked_new_connection_sources() {
+    return conn_rate_limiters_.tracked();
+  }
   void send_stream_end(QuicConnectionId cid, QuicStreamID sid);
   td::Result<QuicStreamID> open_stream(QuicConnectionId cid, StreamOptions options = {});
 

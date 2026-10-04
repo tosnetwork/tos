@@ -1686,10 +1686,16 @@ add_test(NAME quic-outbound-query-deadline COMMAND test-quic-sender
   -p 31000 -d tmp-dir-test-quic-outbound -f PartialResponseDoesNotExtendDeadline)
 add_test(NAME quic-connection-count-cap COMMAND test-quic-sender
   -p 41000 -d tmp-dir-test-quic-cap -f MaxConnectionsRejectsBeyondCap)
+add_test(NAME quic-admission-global-limit COMMAND test-quic-sender
+  -p 43000 -d tmp-dir-test-quic-admission-global -f SourcesRefusedByTheGlobalLimitAreNotTracked)
+add_test(NAME quic-admission-full-table COMMAND test-quic-sender
+  -p 45000 -d tmp-dir-test-quic-admission-table -f AFullSourceTableAdmitsAgainOnceEntriesRefill)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
   quic-connection-count-cap
+  quic-admission-global-limit
+  quic-admission-full-table
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
   PROPERTIES LABELS "network-safety")
