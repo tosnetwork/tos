@@ -94,7 +94,8 @@ pub(super) const NOMINATOR_LEDGER_STATE_SCHEMA: &str =
     );
     INSERT OR IGNORE INTO nominator_ledger_state (id, status) VALUES (1, 'rebuild_required');";
 
-/// Columns v11 adds to `nominator_ledger`, for databases created earlier.
+/// Provenance columns of `nominator_ledger`, in the order the migrations add
+/// them to a ledger created without them.
 const PROVENANCE_COLUMNS: &[(&str, &str)] = &[
     ("last_mc_seqno", "INTEGER"),
     ("last_mc_root_hash", "TEXT"),
@@ -102,13 +103,31 @@ const PROVENANCE_COLUMNS: &[(&str, &str)] = &[
     ("coverage_gap_count", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
+/// Columns every `nominator_ledger` layout carries ahead of its provenance
+/// columns, in declaration order.
+const LEDGER_BASE_COLUMNS: &[&str] = &[
+    "pool_address",
+    "nominator_address",
+    "deposited_total",
+    "rewarded_total",
+    "unattributed_total",
+    "last_amount",
+    "last_pending",
+    "last_pool_state",
+    "first_seen_at",
+    "updated_at",
+];
+
+/// Column names of `nominator_ledger`, in declaration order.
+fn ledger_columns(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut columns = conn.prepare("PRAGMA table_info(nominator_ledger)")?;
+    columns.query_map([], |row| row.get::<_, String>(1))?.collect()
+}
+
 /// v11 ledger migration: a v10 ledger has no canonical provenance, so it is
 /// marked for a genesis replay and cannot be served until that completes.
 pub(super) fn migrate_nominator_ledger(conn: &Connection) -> rusqlite::Result<()> {
-    let names = {
-        let mut columns = conn.prepare("PRAGMA table_info(nominator_ledger)")?;
-        columns.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()?
-    };
+    let names = ledger_columns(conn)?;
     for (column, definition) in PROVENANCE_COLUMNS {
         if !names.iter().any(|name| name == column) {
             conn.execute(
@@ -119,6 +138,44 @@ pub(super) fn migrate_nominator_ledger(conn: &Connection) -> rusqlite::Result<()
     }
     conn.execute_batch(NOMINATOR_LEDGER_STATE_SCHEMA)?;
     mark_rebuild_required(conn)?;
+    Ok(())
+}
+
+/// v13 ledger repair: a database first written at schema version 11 before
+/// the ledger carried provenance never ran the v11 ledger migration, so its
+/// ledger may lack any of [`PROVENANCE_COLUMNS`] at any later version.
+///
+/// Each missing column is added. A column added here holds a default -- no
+/// provenance, zero coverage gaps -- that no observation established, so a
+/// ledger missing any of them is marked for a genesis replay and its totals
+/// stop being served until that replay completes. A ledger that already has
+/// every column is left exactly as it is, state included. Any other column
+/// set is refused rather than guessed at. Runs inside the caller's per-step
+/// transaction, so a failure leaves the table and the ledger state intact.
+pub(super) fn repair_nominator_ledger_provenance(conn: &Connection) -> rusqlite::Result<()> {
+    let names = ledger_columns(conn)?;
+    let base_len = LEDGER_BASE_COLUMNS.len().min(names.len());
+    let (base, provenance) = names.split_at(base_len);
+    let known = |name: &String| PROVENANCE_COLUMNS.iter().any(|(column, _)| name == column);
+    if base != LEDGER_BASE_COLUMNS || !provenance.iter().all(known) {
+        return Err(super::migration_error(format!(
+            "nominator_ledger has unexpected columns {names:?}"
+        )));
+    }
+    let mut added = false;
+    for (column, definition) in PROVENANCE_COLUMNS {
+        if !provenance.iter().any(|name| name == column) {
+            conn.execute(
+                &format!("ALTER TABLE nominator_ledger ADD COLUMN {column} {definition}"),
+                [],
+            )?;
+            added = true;
+        }
+    }
+    conn.execute_batch(NOMINATOR_LEDGER_STATE_SCHEMA)?;
+    if added {
+        mark_rebuild_required(conn)?;
+    }
     Ok(())
 }
 
