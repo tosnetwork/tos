@@ -85,6 +85,32 @@ pub struct NativePolicy {
 /// or duplicate key, a weight of zero or above the maximum, an empty or
 /// unknown purpose set, a zero threshold, a timelock above the maximum, or a
 /// threshold the controllers holding its purpose cannot reach.
+/// Encodings of the Ed25519 8-torsion points, and the sign-bit aliases of the
+/// two with x = 0, as stored: anyone can produce a signature that verifies
+/// under them. The contract's `weak_ed25519_key?` refuses the same set.
+const FORGEABLE_ED25519_KEYS: [&str; 10] = [
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+];
+
+/// Whether the contract refuses `key` as a controller: one of
+/// [`FORGEABLE_ED25519_KEYS`], or an encoding whose y is at least 2^255 - 19
+/// (a second spelling of a point). Mirrors the contract exactly, so a key it
+/// admits is never refused here and the reverse.
+fn is_forgeable_ed25519_key(key: &[u8; 32]) -> bool {
+    let y_not_reduced =
+        key[0] >= 0xed && key[1..31].iter().all(|&b| b == 0xff) && key[31] & 0x7f == 0x7f;
+    y_not_reduced || FORGEABLE_ED25519_KEYS.contains(&hex::encode(key).as_str())
+}
+
 pub fn build_policy(policy: &NativePolicy) -> Result<Cell> {
     let count = policy.controllers.len();
     if count == 0 {
@@ -113,6 +139,12 @@ pub fn build_policy(policy: &NativePolicy) -> Result<Cell> {
     for (index, controller) in sorted.iter().enumerate() {
         if controller.public_key == [0u8; 32] {
             bail!("a Native Registry controller key must be nonzero");
+        }
+        if is_forgeable_ed25519_key(&controller.public_key) {
+            bail!(
+                "Native Registry controller key {} is one anyone can sign for",
+                hex::encode(controller.public_key)
+            );
         }
         if index > 0 && sorted[index - 1].public_key == controller.public_key {
             bail!(
@@ -233,5 +265,34 @@ mod tests {
         let mut long = policy(1);
         long.recovery_timelock = NATIVE_REGISTRY_MAX_RECOVERY_TIMELOCK + 1;
         assert!(build_policy(&long).is_err());
+    }
+
+    #[test]
+    fn keys_anyone_can_sign_for_are_refused_like_the_contract_refuses_them() {
+        let mut refused: Vec<[u8; 32]> = FORGEABLE_ED25519_KEYS
+            .iter()
+            .filter_map(|text| hex::decode(text).ok()?.try_into().ok())
+            .collect();
+        assert_eq!(refused.len(), FORGEABLE_ED25519_KEYS.len());
+        // y = 2^255 - 19 and y = 2^255 - 1, each with and without the sign bit.
+        for (first, last) in [(0xed, 0x7f), (0xed, 0xff), (0xff, 0x7f), (0xff, 0xff)] {
+            let mut key = [0xffu8; 32];
+            key[0] = first;
+            key[31] = last;
+            refused.push(key);
+        }
+        for key in refused {
+            let mut weak = policy(2);
+            weak.controllers[1].public_key = key;
+            let refused_here = build_policy(&weak).is_err();
+            assert!(refused_here, "{} was admitted", hex::encode(key));
+        }
+        // y = 2^255 - 20 is an ordinary encoding the contract admits.
+        let mut ordinary = policy(2);
+        let mut key = [0xffu8; 32];
+        key[0] = 0xec;
+        key[31] = 0x7e;
+        ordinary.controllers[1].public_key = key;
+        assert!(build_policy(&ordinary).is_ok());
     }
 }
