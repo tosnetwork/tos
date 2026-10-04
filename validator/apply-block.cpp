@@ -30,6 +30,26 @@ namespace tos {
 
 namespace validator {
 
+namespace {
+
+// Calls the wc0 index hook and reports how long block application waited on
+// it. The hook only queues the block for the indexing worker, so this should
+// stay small however slow the index itself is.
+template <class Call>
+void call_index_hook(td::actor::ActorId<ValidatorManager> manager, const BlockIdExt &id, Call &&call) {
+  double started = td::Time::now();
+  try {
+    call();
+  } catch (...) {
+    // Indexing must never affect block application.
+  }
+  double took = td::Time::now() - started;
+  VLOG(VALIDATOR_DEBUG) << "wc0 index hook for " << id.to_str() << " took " << took << " s";
+  td::actor::send_closure(manager, &ValidatorManager::add_perf_timer_stat, "wc0indexhook", took);
+}
+
+}  // namespace
+
 void ApplyBlock::abort_query(td::Status reason) {
   if (promise_) {
     VLOG(VALIDATOR_WARNING) << "aborting apply block query for " << id_.to_str() << ": " << reason;
@@ -39,7 +59,8 @@ void ApplyBlock::abort_query(td::Status reason) {
 }
 
 void ApplyBlock::finish_query() {
-  VLOG(VALIDATOR_DEBUG) << "successfully finishing apply block query in " << perf_timer_.elapsed() << " s";
+  VLOG(VALIDATOR_DEBUG) << "successfully finishing apply block query for " << id_.to_str() << " in "
+                        << perf_timer_.elapsed() << " s";
   handle_->set_processed();
   handle_->set_applied_stored();
   ValidatorInvariants::check_post_apply(handle_);
@@ -282,24 +303,17 @@ void ApplyBlock::applied_set() {
   if (g_wc0_block_index_hook && handle_->id().id.workchain == 0 && handle_->id().seqno() > 0) {
     auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
     if (block_.not_null()) {
-      try {
-        g_wc0_block_index_hook(block_->root_cell(), state_root, handle_->id());
-      } catch (...) {
-        // Indexing must never affect block application.
-      }
+      call_index_hook(manager_, handle_->id(),
+                      [&] { g_wc0_block_index_hook(block_->root_cell(), state_root, handle_->id()); });
     } else {
-      td::actor::send_closure(
-          manager_, &ValidatorManager::get_block_data_from_db, handle_,
-          [id = handle_->id(), state_root](td::Result<td::Ref<BlockData>> R) {
-            if (R.is_error() || R.ok().is_null() || !g_wc0_block_index_hook) {
-              return;
-            }
-            try {
-              g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id);
-            } catch (...) {
-              // Indexing must never affect block application.
-            }
-          });
+      td::actor::send_closure(manager_, &ValidatorManager::get_block_data_from_db, handle_,
+                              [manager = manager_, id = handle_->id(), state_root](td::Result<td::Ref<BlockData>> R) {
+                                if (R.is_error() || R.ok().is_null() || !g_wc0_block_index_hook) {
+                                  return;
+                                }
+                                call_index_hook(manager, id,
+                                                [&] { g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id); });
+                              });
     }
   }
   if (handle_->id().seqno() > 0) {

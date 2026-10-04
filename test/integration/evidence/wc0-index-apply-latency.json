@@ -1,0 +1,139 @@
+{
+  "binary_source": "commit d8f42534bfb5fb451bd4978bfbc89bc93ffc2f6a plus the apply-block hook timing committed with this file",
+  "claim": "Block application does not wait on the wc0 index, however slow the index is.",
+  "command": "uv run python test/integration/wc0_index_apply_latency.py --working-dir <new dir> --base-port <free port> --shim <built slow_sync_preload.so> --out <json>",
+  "control": {
+    "exit_status": 1,
+    "failed_assertion": "slow: the hook held block application for 14.038522 s",
+    "mutation": "enqueue_wc0_index_block calls index_queued_block synchronously instead of queueing",
+    "summary": {
+      "commit": "d8f42534bfb5fb451bd4978bfbc89bc93ffc2f6a",
+      "duration_s": 420.0,
+      "nodes": {
+        "off": {
+          "apply_wc0": {
+            "max_s": 0.035687,
+            "p50_s": 0.003413,
+            "p95_s": 0.011892,
+            "samples": 1064
+          },
+          "hook_wc0": {
+            "samples": 0
+          },
+          "hooked_blocks_not_applied": 0,
+          "peak_rss_kib": 157580,
+          "queue_saturation_warnings": 0,
+          "rss_kib": 157580
+        },
+        "on": {
+          "apply_wc0": {
+            "max_s": 0.035545,
+            "p50_s": 0.003409,
+            "p95_s": 0.011815,
+            "samples": 1064
+          },
+          "hook_wc0": {
+            "max_s": 0.020213,
+            "p50_s": 0.001533,
+            "p95_s": 0.005827,
+            "samples": 1063
+          },
+          "hooked_blocks_not_applied": 0,
+          "peak_rss_kib": 159900,
+          "queue_saturation_warnings": 0,
+          "rss_kib": 159900
+        },
+        "slow": {
+          "apply_wc0": {
+            "max_s": 0.141536,
+            "p50_s": 0.013047,
+            "p95_s": 0.048287,
+            "samples": 216
+          },
+          "hook_wc0": {
+            "max_s": 14.038522,
+            "p50_s": 13.801517,
+            "p95_s": 14.009514,
+            "samples": 208
+          },
+          "hooked_blocks_not_applied": 0,
+          "peak_rss_kib": 186644,
+          "queue_saturation_warnings": 0,
+          "rss_kib": 186644
+        }
+      },
+      "scenario": "wc0-index-apply-latency",
+      "slow_index_syncs_delayed": 425,
+      "slow_other_syncs": 5889,
+      "slow_sync_ms": 1000,
+      "wallets_deployed": 291
+    }
+  },
+  "raw_logs": "not retained: several hundred MB of node debug logs per run; the runner regenerates them",
+  "result": {
+    "exit_status": 0,
+    "summary": {
+      "commit": "d8f42534bfb5fb451bd4978bfbc89bc93ffc2f6a",
+      "duration_s": 420.0,
+      "nodes": {
+        "off": {
+          "apply_wc0": {
+            "max_s": 0.063124,
+            "p50_s": 0.003619,
+            "p95_s": 0.012635,
+            "samples": 1064
+          },
+          "hook_wc0": {
+            "samples": 0
+          },
+          "hooked_blocks_not_applied": 0,
+          "peak_rss_kib": 161808,
+          "queue_saturation_warnings": 0,
+          "rss_kib": 161808
+        },
+        "on": {
+          "apply_wc0": {
+            "max_s": 0.06431,
+            "p50_s": 0.00359,
+            "p95_s": 0.01272,
+            "samples": 1064
+          },
+          "hook_wc0": {
+            "max_s": 2.9e-05,
+            "p50_s": 5e-06,
+            "p95_s": 9e-06,
+            "samples": 1063
+          },
+          "hooked_blocks_not_applied": 0,
+          "peak_rss_kib": 158484,
+          "queue_saturation_warnings": 0,
+          "rss_kib": 158484
+        },
+        "slow": {
+          "apply_wc0": {
+            "max_s": 0.06427,
+            "p50_s": 0.003582,
+            "p95_s": 0.012806,
+            "samples": 1064
+          },
+          "hook_wc0": {
+            "max_s": 0.000149,
+            "p50_s": 9e-06,
+            "p95_s": 2.1e-05,
+            "samples": 1063
+          },
+          "hooked_blocks_not_applied": 0,
+          "peak_rss_kib": 180964,
+          "queue_saturation_warnings": 704,
+          "rss_kib": 180964
+        }
+      },
+      "scenario": "wc0-index-apply-latency",
+      "slow_index_syncs_delayed": 426,
+      "slow_other_syncs": 28148,
+      "slow_sync_ms": 1000,
+      "wallets_deployed": 292
+    }
+  },
+  "runner": "test/integration/wc0_index_apply_latency.py (slow disk: test/integration/slow_sync_preload.c)"
+}
