@@ -9,7 +9,12 @@ infrastructure.
 
 NOTE: this rehearsal still deploys the DEPRECATED escrow v1 (see its release
 manifest). Production quotes must use escrow v2; migrating this rehearsal to
-the v2 schema is tracked with the service protocol specification.
+the v2 schema is tracked with the service protocol specification. Escrow v1
+assumes one jetton wallet layout: funding through a jetton whose wallet lays out
+its data differently is credited to a wallet v1 never addresses, and v1 refuses
+the notification, orphaning the funds (escrow v2 returns them). The rehearsal
+therefore refuses to run unless --allow-deprecated-escrow-v1 is given, and then
+only against the local test stablecoin.
 """
 
 import argparse
@@ -265,7 +270,18 @@ def main() -> int:
         default=[],
         help="repeat for each local JSON-RPC endpoint",
     )
+    parser.add_argument(
+        "--allow-deprecated-escrow-v1",
+        action="store_true",
+        help="deploy the deprecated escrow v1 for a local rehearsal with test assets",
+    )
     args = parser.parse_args()
+    if not args.allow_deprecated_escrow_v1:
+        raise SystemExit(
+            "refusing to deploy the deprecated escrow v1: it orphans funding from a jetton "
+            "whose wallet layout differs. Pass --allow-deprecated-escrow-v1 to rehearse "
+            "locally with the test stablecoin, or migrate this rehearsal to escrow v2."
+        )
 
     config = Path(args.global_config).resolve()
     state_dir = Path(args.state_dir).resolve()
