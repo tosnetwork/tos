@@ -28,6 +28,7 @@ crypto/block/signature-set.h	*	2	definition	the public classical verification bo
 lite-client/lite-client-common.cpp	*	1	reachable	the checked lite parser accepts classical history and PQ carriers; trusted carrier verification remains downstream
 sdk/js/packages/client/src/types.ts	*	2	reachable	the public client response model has only ordinary/simplex classical signature shapes; the API carrier unit owns it
 test/pq-native/c04-real-state-proof-test.cpp	cpp_fetch	2	historical	test-only proof fixture parses valid and wrong-set #13 PQ cells; generic fetch marker does not emit a classical carrier
+test/pq-native/custom-overlay-relay-dedup-test.cpp	cpp_factory	1	historical	relay dedup test builds an ordinary set only as opaque evidence content to key finality forwarding; nothing verifies or emits it
 test/pq-native/n6-microbench.cpp	cpp_fetch	2	historical	benchmark fixture parses #13 PQ cells to measure verification work; no production carrier selection
 test/pq-native/pending-finality-cache-test.cpp	cpp_fetch	2	historical	pending-finality negative fixtures parse wrong-set #13 PQ cells to exercise refusal paths
 test/pq-native/pq-block-signature-conformance-test.cpp	*	1	historical	crypto conformance exercises the explicitly test-only carried-session verifier
