@@ -265,11 +265,9 @@ void check_version_gate() {
     require(run(opcode, inputs, 16).exit == 0, "an opcode was refused at version 16");
   }
   for (int version = 0; version < 16; ++version) {
-    require(run(vm::poseidon2_path7_opcode, {}, version).exit == 6,
-            "PATH7 was accepted before version 16");
+    require(run(vm::poseidon2_path7_opcode, {}, version).exit == 6, "PATH7 was accepted before version 16");
   }
-  require(run(vm::poseidon2_path7_opcode, {}, 16).exit == 2,
-          "PATH7 must reach operand validation at version 16");
+  require(run(vm::poseidon2_path7_opcode, {}, 16).exit == 2, "PATH7 must reach operand validation at version 16");
   // The ML-DSA instruction shares the same activation boundary. At 16 it
   // is reachable, so it fails on its own arguments rather than on the version.
   const auto mldsa = run(vm::pq_mldsa44_opcode, {}, 16);
