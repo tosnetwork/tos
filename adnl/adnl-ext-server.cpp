@@ -350,45 +350,47 @@ void AdnlExtServerImpl::accepted(td::SocketFd fd) {
     note_refused_connection("unknown peer address");
     return;
   }
-  auto peer_ip = peer_address.get_ip_host();
-  if (!connection_limits_.try_acquire(peer_ip)) {
+  // Admission is counted per source (IPv4 address or IPv6 /64); the exact
+  // address stays the connection's identity and logging key.
+  auto admitted = connection_limits_.try_acquire(peer_address);
+  if (!admitted) {
     note_refused_connection("connection limit exceeded");
     return;
   }
+  auto peer_ip = peer_address.get_ip_host();
 
   class Callback final : public AdnlExtConnection::Callback {
    public:
-    Callback(td::actor::ActorId<AdnlExtServerImpl> server, std::string peer_ip)
-        : server_(server), peer_ip_(std::move(peer_ip)) {
+    Callback(td::actor::ActorId<AdnlExtServerImpl> server, std::string source)
+        : server_(server), source_(std::move(source)) {
     }
     void on_close(td::actor::ActorId<AdnlExtConnection>) override {
-      td::actor::send_closure(server_, &AdnlExtServerImpl::connection_closed, std::move(peer_ip_));
+      td::actor::send_closure(server_, &AdnlExtServerImpl::connection_closed, std::move(source_));
     }
     void on_ready(td::actor::ActorId<AdnlExtConnection>) override {
     }
 
    private:
     td::actor::ActorId<AdnlExtServerImpl> server_;
-    std::string peer_ip_;
+    std::string source_;
   };
 
   // Derive the anonymous identity and the rate-limiting key together, before
   // the call, so neither depends on the order the arguments below happen to be
   // evaluated in.
   auto identity = make_ext_connection_identity(std::move(peer_ip));
-  // Pending input is charged to the peer's source (its IPv4 address or IPv6
-  // /64) across all of that source's connections.
-  auto input_source = network_source_key(peer_address);
+  // Pending input is charged to the same source the connection was admitted
+  // under, across all of that source's connections.
+  auto source = std::move(*admitted);
   td::actor::create_actor<AdnlInboundConnection>(
       td::actor::ActorOptions().with_name("inconn").with_poll(), std::move(fd), peer_table_, actor_id(this),
       AdnlNodeIdShort{identity.anonymous_id}, identity.peer_ip, query_limits_, failure_policy_,
-      std::make_unique<Callback>(actor_id(this), identity.peer_ip), output_bytes_, input_bytes_, input_source_shares_,
-      std::move(input_source))
+      std::make_unique<Callback>(actor_id(this), source), output_bytes_, input_bytes_, input_source_shares_, source)
       .release();
 }
 
-void AdnlExtServerImpl::connection_closed(std::string peer_ip) {
-  connection_limits_.release(peer_ip);
+void AdnlExtServerImpl::connection_closed(std::string source) {
+  connection_limits_.release(source);
 }
 
 void AdnlExtServerImpl::decrypt_init_packet(AdnlNodeIdShort dst, td::BufferSlice data,

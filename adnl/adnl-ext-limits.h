@@ -53,7 +53,10 @@ inline constexpr std::size_t adnl_ext_max_server_pending_input_bytes = std::size
 // external connection that needed to read would be closed. Sources are keyed by
 // IPv4 address or IPv6 /64 (see network_source_key). This isolates sources; it
 // is not a Sybil-resistant availability guarantee: eight sources can still
-// together hold the whole budget.
+// together hold the whole budget. The same source key counts the server's
+// connections (64 per source). Lite clients colocated on one address or behind
+// one NAT share one allowance; see adnl-source-share.h before relying on the
+// default for a deployment.
 inline constexpr std::size_t adnl_ext_max_source_pending_input_bytes =
     default_source_share(adnl_ext_max_server_pending_input_bytes);
 

@@ -112,7 +112,8 @@ class AdnlExtServerImpl : public AdnlExtServer {
   void set_query_failure_encoder(std::shared_ptr<const ExtQueryFailureEncoder> encoder) override;
   void accepted(td::SocketFd fd);
   void tcp_port_listening(td::uint16 port, td::Status status);
-  void connection_closed(std::string peer_ip);
+  // `source` is the key the connection was admitted under.
+  void connection_closed(std::string source);
   void decrypt_init_packet(AdnlNodeIdShort dst, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
 
   void start_up() override {
@@ -145,6 +146,7 @@ class AdnlExtServerImpl : public AdnlExtServer {
   std::map<td::uint16, td::actor::ActorOwn<td::TcpInfiniteListener>> listeners_;
   std::vector<td::Promise<td::Unit>> listening_waiters_;
   td::Status listening_status_;
+  // 1024 connections in all, 64 for any one source (IPv4 address or IPv6 /64).
   ExtServerConnectionLimits connection_limits_{1024, 64};
   // Unread output held by all of this server's connections.
   std::shared_ptr<AdnlExtOutputBudget> output_bytes_ = std::make_shared<AdnlExtOutputBudget>();

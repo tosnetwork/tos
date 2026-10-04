@@ -20,6 +20,15 @@ namespace tos::adnl {
 // share per address and can together exhaust the global budget. The budgets
 // these shares divide bound pending or attributable bytes; they are not bounds
 // on total process memory.
+//
+// For operators: a share belongs to an address, not to a peer. Everything that
+// reaches a node from one address shares one allowance: nodes colocated on one
+// host or behind one address, and every user behind one NAT or carrier-grade
+// NAT gateway. Loopback is not exempt, so a testnet whose nodes all run on one
+// host gives all of them together one eighth of each budget. The one-eighth
+// default has not been validated against live load; run a load test of the
+// intended deployment before claiming the defaults suit it. Any future
+// per-deployment override of a share must keep the global ceiling it divides.
 inline constexpr std::size_t kSourceShareDivisor = 8;
 
 // One eighth of `global_limit`, but never nothing while the limit is not
@@ -32,9 +41,11 @@ inline constexpr std::size_t default_source_share(std::size_t global_limit) {
 // The key a source's share is charged under.
 //
 // IPv4: the address. IPv6: its /64 prefix. A single host or subscriber is
-// routinely assigned a whole /64 and may send from any address in it, so a
-// per-address key would give one host 2^64 shares; /64 is the smallest prefix
-// that is normally one administrative end site. IPv4-mapped IPv6 addresses
+// often assigned a whole /64 and may send from any address in it, so a
+// per-address key would give one host 2^64 shares. /64 is a chosen aggregation
+// boundary, not a fact about ownership: a /64 may be shared by unrelated users
+// (who then share one allowance), and one party may hold many /64s (and then
+// many allowances). IPv4-mapped IPv6 addresses
 // (a dual-stack socket receiving IPv4) are keyed as the IPv4 address they
 // carry, so the same peer is one source whichever socket it reached.
 inline std::string network_source_key(const td::IPAddress &address) {

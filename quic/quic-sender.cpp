@@ -38,8 +38,9 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     CHECK(!server.empty());
     TRY_RESULT(peer_id, parse_peer_id(peer_public_key));
     connections_[cid].peer_id = peer_id;
-    // Streams the peer opens on this connection, whichever side opened it,
-    // are charged to the peer's source share as well as the global budget.
+    // Streams the peer opens on this connection, whichever side opened the
+    // connection, are charged to its initial-source allowance as well as the
+    // global budget, for the connection's life.
     connections_[cid].source = source;
     TRY_RESULT(local_id, parse_peer_id(local_public_key));
     connections_[cid].local_id = local_id;
@@ -132,6 +133,10 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     if (std::get<1>(R.ok())) {
       // A stream opened for our own query: its answer's bytes are charged to
       // the same budget, its count is bounded by the queries that opened it.
+      // The server calls this only for a stream id its transport has just
+      // opened locally, so the stream cannot be one the peer created; a stream
+      // the peer creates is admitted in get_or_admit_stream against the
+      // connection's source and never reaches this unattributed path.
       state.hold_reservation(QuicInboundStreamReservation::bytes_only(inbound_budget_));
     }
     apply_stream_options(state, options);

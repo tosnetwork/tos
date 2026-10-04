@@ -5,6 +5,7 @@
  */
 
 #include <algorithm>
+#include <string>
 #include <vector>
 
 #include "adnl/adnl-ext-server-limits.h"
@@ -14,15 +15,66 @@
 namespace tos {
 namespace {
 
+td::IPAddress peer(const std::string &host) {
+  td::IPAddress address;
+  auto status =
+      host.find(':') == std::string::npos ? address.init_ipv4_port(host, 4000) : address.init_ipv6_port(host, 4000);
+  CHECK(status.is_ok());
+  return address;
+}
+
 TEST(LiteServerAdmission, ConnectionCapsAreReleased) {
   adnl::ExtServerConnectionLimits limits(2, 1);
-  EXPECT(limits.try_acquire("192.0.2.1"));
-  EXPECT(!limits.try_acquire("192.0.2.1"));
-  EXPECT(limits.try_acquire("192.0.2.2"));
-  EXPECT(!limits.try_acquire("192.0.2.3"));
-  limits.release("192.0.2.1");
-  EXPECT(limits.try_acquire("192.0.2.3"));
+  auto first = limits.try_acquire(peer("192.0.2.1"));
+  EXPECT(first.has_value());
+  EXPECT(!limits.try_acquire(peer("192.0.2.1")));
+  EXPECT(limits.try_acquire(peer("192.0.2.2")));
+  EXPECT(!limits.try_acquire(peer("192.0.2.3")));
+  limits.release(*first);
+  EXPECT(limits.try_acquire(peer("192.0.2.3")));
   EXPECT(limits.connections() == 2);
+}
+
+// Connections are counted per source, not per exact address: every address of
+// one IPv6 /64 shares a single allowance, an IPv4-mapped address shares its
+// IPv4 address's, an unrelated source is still admitted, and closing returns
+// the allowance and drops the source's entry.
+TEST(LiteServerAdmission, ConnectionCapsAreCountedPerSource) {
+  adnl::ExtServerConnectionLimits limits(16, 3);
+  std::vector<std::string> held;
+  for (const auto *host : {"2001:db8:1:2::1", "2001:db8:1:2::2", "2001:db8:1:2:ffff:ffff:ffff:ffff"}) {
+    auto source = limits.try_acquire(peer(host));
+    EXPECT(source.has_value());
+    held.push_back(*source);
+  }
+  EXPECT(held[0] == held[1] && held[1] == held[2]);
+  // A fourth address in the same /64 is refused while the table has room.
+  EXPECT(!limits.try_acquire(peer("2001:db8:1:2:abcd::9")));
+  EXPECT(limits.connections() == 3);
+  EXPECT(limits.connections_from(held[0]) == 3);
+  // The neighbouring /64 and unrelated IPv4 sources are admitted.
+  EXPECT(limits.try_acquire(peer("2001:db8:1:3::1")));
+  auto v4 = limits.try_acquire(peer("192.0.2.1"));
+  EXPECT(v4.has_value());
+
+  // An IPv4-mapped address is the IPv4 source it carries.
+  auto mapped = limits.try_acquire(peer("::ffff:192.0.2.1"));
+  EXPECT(mapped.has_value() && *mapped == *v4);
+  EXPECT(limits.connections_from(*v4) == 2);
+  EXPECT(limits.try_acquire(peer("192.0.2.1")));
+  EXPECT(!limits.try_acquire(peer("::ffff:192.0.2.1")));
+
+  // Closing one of the /64's connections admits another address of it.
+  limits.release(held.back());
+  held.pop_back();
+  auto again = limits.try_acquire(peer("2001:db8:1:2:abcd::9"));
+  EXPECT(again.has_value());
+  held.push_back(*again);
+  for (auto &source : held) {
+    limits.release(source);
+  }
+  EXPECT(limits.connections_from(held[0]) == 0);
+  EXPECT(limits.sources() == 2);
 }
 
 TEST(LiteServerAdmission, PerConnectionRateAndInflightCapsCompose) {

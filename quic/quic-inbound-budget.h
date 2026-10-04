@@ -13,10 +13,22 @@ namespace tos::quic {
 
 using adnl::SourceShareLedger;
 
-// The source an inbound stream's slot and bytes are charged to: the connection
-// peer's network_source_key. Empty for what this side asked for itself (the
-// answers to our own queries), which is charged to the global budget only:
-// their count and size are set by our own queries, not by the peer.
+// The source an inbound stream's slot and bytes are charged to: the
+// connection's initial-source allowance, the network_source_key of the peer
+// address the connection was established with. It is not a statement about the
+// connection's current network address. The key is fixed when the connection
+// is set up and copied into every reservation it makes (the connection's
+// inbound slot, each stream's reservation and byte charge, the transport
+// allocator); nothing recomputes it, so a peer that moves to another address
+// neither resets nor moves its outstanding charges: they stay on the initial
+// source until released.
+//
+// Empty only for the answer to a stream this side opened for its own query
+// (QuicInboundStreamReservation::bytes_only), which is charged to the global
+// budget only: its count and size are set by our own queries, not by the peer.
+// A stream the peer creates always carries the connection's source; the
+// callback creates unattributed state only for a stream id the local transport
+// has just opened, which the peer cannot have opened first.
 using QuicBudgetSource = std::string;
 
 // Peer-initiated streams, and the stream bytes delivered by the transport,
@@ -34,8 +46,9 @@ using QuicBudgetSource = std::string;
 // delivers anything, data received out of order included, is bounded by the
 // transport memory budget below.
 //
-// Each source address (IPv4 address or IPv6 /64) may hold at most one eighth
-// of the streams and of the bytes, summed across all of its connections, so
+// Each source (the initial-source allowance of a connection: IPv4 address or
+// IPv6 /64) may hold at most one eighth of the streams and of the bytes, summed
+// across all of its connections, so
 // one ordinary source cannot take the slots or bytes another source needs. A
 // stream or chunk past its source's share is refused exactly as one past the
 // global budget is: that stream is reset, nothing else is touched. This is not
@@ -335,8 +348,9 @@ class QuicInboundStreamReservation {
 // connection bookkeeping and stream buffers outside the transport are not
 // counted here (stream buffers have the budget above).
 //
-// Each connection's allocations are also charged to its peer's source address
-// (IPv4 address or IPv6 /64), and each source may hold at most one eighth of
+// Each connection's allocations are also charged to its initial-source
+// allowance (the IPv4 address or IPv6 /64 it was established from, fixed for
+// the connection's life; see QuicBudgetSource), and each source may hold at most one eighth of
 // the budget across all of its connections; the connection whose allocation
 // does not fit its source's share is closed, as one past the global budget is.
 // One source cannot then fill the budget with out-of-order data on many
