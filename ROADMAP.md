@@ -212,7 +212,7 @@ Examples:
   Escrow, Dispute, Service Actor, Capability Registry, Proof Attestation): none of them checked
   the `bounced` header flag on incoming internal messages before parsing the body as a real
   operation, unlike this codebase's own established convention elsewhere (`wallet-v4-code.fc`,
-  `elector-code.fc`, `dns-auto-code.fc`, `config-code.fc`, `payment-channel-code.fc` all check
+  `elector-code.fc`, `dns-auto-code.fc`, `config-code.fc` all check
   `flags & 1` and return immediately). A message the network automatically bounces back to a
   contract carries the *original destination* as its `sender` -- exactly the kind of address
   (`agent`/`creator`/`verifier`/`owner`) these contracts already treat as authorized for
