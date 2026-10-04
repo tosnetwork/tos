@@ -762,20 +762,21 @@ async fn drain_address_refresh(
             None | Some("unclassified") => true,
             Some(kind) => kind == NOMINATOR_POOL_KIND,
         };
-        // Other contract kinds read latest state: one visit covers every
-        // height queued for them.
+        // Other contract kinds keep no per-height history: visit them once,
+        // at their highest queued height (some read state at that height),
+        // and drop the heights below it.
         if !ledger_relevant {
-            if let Err(e) =
-                visit_address(chain_provider, store, known, &refresh, probe_budget).await
+            let latest = store.latest_address_refresh(&refresh.address)?.unwrap_or(refresh);
+            if let Err(e) = visit_address(chain_provider, store, known, &latest, probe_budget).await
             {
                 tracing::warn!(
                     target: "indexer",
-                    address = %refresh.address,
+                    address = %latest.address,
                     error = %format!("{e:#}"),
                     "failed to index account"
                 );
             }
-            store.complete_all_address_refresh(&refresh.address)?;
+            store.complete_address_refresh_through(&latest.address, latest.checkpoint.seqno)?;
             continue;
         }
         match visit_address(chain_provider, store, known, &refresh, probe_budget).await {
@@ -2842,10 +2843,12 @@ mod tests {
     /// arbitrary.
     struct NotFoundLifecycleProvider {
         get_method_calls: StdMutex<usize>,
+        /// Heights of checkpoint-pinned reads, which then fail.
+        pinned_reads: StdMutex<Vec<u32>>,
     }
 
     #[tokio::test]
-    async fn one_visit_clears_every_queued_height_of_a_latest_state_kind() {
+    async fn a_kind_without_height_history_is_visited_once_at_its_highest_height() {
         let store = IndexerStore::open_in_memory().unwrap();
         let address = "0:".to_owned() + &"ab".repeat(32);
         store
@@ -2864,10 +2867,13 @@ mod tests {
         for height in [5, 6, 7] {
             store.queue_address_refresh_for_test(&address, height, 0).unwrap();
         }
-        let provider: Arc<dyn ChainProvider> =
-            Arc::new(NotFoundLifecycleProvider { get_method_calls: StdMutex::new(0) });
+        let provider = Arc::new(NotFoundLifecycleProvider {
+            get_method_calls: StdMutex::new(0),
+            pinned_reads: StdMutex::new(Vec::new()),
+        });
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         drain_address_refresh(
-            &provider,
+            &dyn_provider,
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
@@ -2875,13 +2881,29 @@ mod tests {
         )
         .await
         .unwrap();
-        // The kind reads latest state, so whether or not the visit succeeded,
-        // no older height is left to visit again.
+        // A DNS domain is read at a checkpoint: the visit that stands for all
+        // three heights reads the newest one, and only once.
+        assert_eq!(*provider.pinned_reads.lock().unwrap(), vec![7]);
         assert!(store.address_refresh_queue(10).unwrap().is_empty());
+
+        // A height published after the visit is not dropped with the others.
+        store.queue_address_refresh_for_test(&address, 9, 0).unwrap();
+        store.complete_address_refresh_through(&address, 7).unwrap();
+        assert_eq!(store.address_refresh_queue(10).unwrap().len(), 1);
     }
 
     #[async_trait::async_trait]
     impl ChainProvider for NotFoundLifecycleProvider {
+        async fn run_get_method_at(
+            &self,
+            _address: String,
+            _method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+            checkpoint: &contracts::chain_provider::MasterchainCheckpoint,
+        ) -> anyhow::Result<TvmStackParser> {
+            self.pinned_reads.lock().unwrap().push(checkpoint.seqno);
+            anyhow::bail!("pinned read recorded")
+        }
         async fn run_get_method(
             &self,
             _address: String,
@@ -2987,7 +3009,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_hostile_next_request_id_only_materialises_a_bounded_batch_per_visit() {
-        let provider = Arc::new(NotFoundLifecycleProvider { get_method_calls: StdMutex::new(0) });
+        let provider = Arc::new(NotFoundLifecycleProvider {
+            get_method_calls: StdMutex::new(0),
+            pinned_reads: StdMutex::new(Vec::new()),
+        });
         let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
         let store = IndexerStore::open_in_memory().unwrap();
         // The counter is contract-controlled state: a deployer can report any

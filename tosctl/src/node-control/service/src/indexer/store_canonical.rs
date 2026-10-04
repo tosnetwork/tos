@@ -739,7 +739,9 @@ impl IndexerStore {
     /// cannot fill the window and stop fresh work behind them, and they are
     /// still retried every pass.
     pub fn address_refresh_queue(&self, limit: usize) -> anyhow::Result<Vec<AddressRefresh>> {
-        let retry_share = limit.div_ceil(ADDRESS_REFRESH_RETRY_SHARE_DIVISOR);
+        // A window too small to split leaves failed rows to whatever room
+        // fresh rows do not take.
+        let retry_share = limit / ADDRESS_REFRESH_RETRY_SHARE_DIVISOR;
         let fresh_limit = limit.saturating_sub(retry_share);
         let conn = self.lock()?;
         let mut queue =
@@ -759,11 +761,30 @@ impl IndexerStore {
         Ok(queue)
     }
 
-    /// Removes every queued height of one address, for contract kinds whose
-    /// visit reads the latest state and so covers all of them at once.
-    pub fn complete_all_address_refresh(&self, address: &str) -> anyhow::Result<()> {
+    /// The highest queued height of one address, if any.
+    pub fn latest_address_refresh(&self, address: &str) -> anyhow::Result<Option<AddressRefresh>> {
         let conn = self.lock()?;
-        conn.execute("DELETE FROM indexer_address_refresh WHERE address = ?1", params![address])?;
+        let mut statement = conn.prepare(
+            "SELECT address, touch_count, last_block_seqno, last_gen_utime,
+                    mc_seqno, mc_root_hash, mc_file_hash, attempts
+             FROM indexer_address_refresh WHERE address = ?1
+             ORDER BY mc_seqno DESC LIMIT 1",
+        )?;
+        Ok(statement.query_row(params![address], address_refresh_row).optional()?)
+    }
+
+    /// Removes the queued heights of one address up to and including
+    /// `through`: they are covered by a visit at height `through`.
+    pub fn complete_address_refresh_through(
+        &self,
+        address: &str,
+        through: u32,
+    ) -> anyhow::Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM indexer_address_refresh WHERE address = ?1 AND mc_seqno <= ?2",
+            params![address, through],
+        )?;
         Ok(())
     }
 
@@ -783,11 +804,14 @@ impl IndexerStore {
 /// One in this many places of a refresh pass is held for rows that failed before.
 const ADDRESS_REFRESH_RETRY_SHARE_DIVISOR: usize = 8;
 
+// A row is its address's head when no lower height of the address is
+// queued; the primary key answers that per row, so a scan in schedule order
+// stops after `limit` heads.
 const ADDRESS_REFRESH_HEAD: &str = "SELECT address, touch_count, last_block_seqno, last_gen_utime,
         mc_seqno, mc_root_hash, mc_file_hash, attempts
-     FROM indexer_address_refresh AS r
-     WHERE mc_seqno = (SELECT MIN(mc_seqno) FROM indexer_address_refresh
-                       WHERE address = r.address)";
+     FROM indexer_address_refresh AS r INDEXED BY idx_address_refresh_schedule
+     WHERE NOT EXISTS (SELECT 1 FROM indexer_address_refresh AS lower
+                       WHERE lower.address = r.address AND lower.mc_seqno < r.mc_seqno)";
 
 fn read_address_refresh_heads(
     conn: &Connection,
@@ -1323,7 +1347,75 @@ mod tests {
         queue_refresh(&store, "0:pool", 7, 0);
         queue_refresh(&store, "0:pool", 5, 0);
         assert_eq!(queued(&store, 10), vec![("0:pool".to_owned(), 5)]);
-        store.complete_all_address_refresh("0:pool").unwrap();
+        store.complete_address_refresh_through("0:pool", 7).unwrap();
         assert!(queued(&store, 10).is_empty());
+    }
+
+    #[test]
+    fn a_window_too_small_to_split_serves_fresh_rows_first() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        queue_refresh(&store, "0:retry", 1, 2);
+        for n in 0..3 {
+            queue_refresh(&store, &format!("0:fresh{n}"), 10 + n, 0);
+        }
+        // Below eight places there is no reserved share: fresh rows first,
+        // and the failed row takes the place they leave.
+        let queue = queued(&store, 4);
+        assert_eq!(queue.len(), 4);
+        assert_eq!(queue[3], ("0:retry".to_owned(), 1));
+        assert_eq!(queued(&store, 1), vec![("0:fresh0".to_owned(), 10)]);
+    }
+
+    /// Cost of one queue read on a large queue. Run on demand:
+    /// `cargo test -p service --lib refresh_queue_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn refresh_queue_cost_on_a_large_queue() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        // 100,000 addresses with three heights each, a tenth of them failing,
+        // plus one address whose failed head holds 50,000 fresh heights back.
+        {
+            let conn = store.lock().unwrap();
+            conn.execute_batch("BEGIN").unwrap();
+            for n in 0..100_000u32 {
+                for height in 0..3u32 {
+                    conn.execute(
+                        "INSERT INTO indexer_address_refresh
+                            (address, touch_count, last_block_seqno, last_gen_utime,
+                             mc_seqno, mc_root_hash, mc_file_hash, attempts)
+                         VALUES (?1, 1, ?2, 1, ?2, ?3, ?3, ?4)",
+                        params![
+                            format!("0:{n:08}"),
+                            n + height * 200_000,
+                            hash(n),
+                            u32::from(n % 10 == 0)
+                        ],
+                    )
+                    .unwrap();
+                }
+            }
+            for height in 0..50_000u32 {
+                conn.execute(
+                    "INSERT INTO indexer_address_refresh
+                        (address, touch_count, last_block_seqno, last_gen_utime,
+                         mc_seqno, mc_root_hash, mc_file_hash, attempts)
+                     VALUES ('0:poison', 1, ?1, 1, ?1, ?2, ?2, ?3)",
+                    // Its head failed; the later heights are fresh rows that
+                    // every read has to step past, the scan's worst case.
+                    params![height, hash(height), u32::from(height == 0)],
+                )
+                .unwrap();
+            }
+            conn.execute_batch("COMMIT").unwrap();
+        }
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            let queue = store.address_refresh_queue(4096).unwrap();
+            println!(
+                "REFRESH_QUEUE_COST rows=350000 returned={} elapsed_ms={}",
+                queue.len(),
+                started.elapsed().as_millis()
+            );
+        }
     }
 }

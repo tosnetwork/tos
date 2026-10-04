@@ -383,7 +383,11 @@ const TRAVERSAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS canonical_shard_front
         mc_file_hash TEXT NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(address, mc_seqno)
-    );";
+    );
+    -- The refresh scheduler walks rows in this order and stops once its
+    -- window is full, instead of sorting the whole queue on every pass.
+    CREATE INDEX IF NOT EXISTS idx_address_refresh_schedule
+        ON indexer_address_refresh(attempts, mc_seqno, address);";
 
 /// Tables holding canonical progress; emptied together whenever the index
 /// is replayed from genesis.
