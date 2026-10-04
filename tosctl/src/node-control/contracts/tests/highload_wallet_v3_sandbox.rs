@@ -9,8 +9,9 @@
 //! of concurrent signed requests and each query id at most once while it is fresh. These
 //! tests deploy the compiled source into the sandbox and drive it with real signed external
 //! messages: a transfer, a replay, every pre-acceptance rejection, a request that fails
-//! only after acceptance, a batch, and a replay attempted after the wallet has forgotten
-//! the query id.
+//! only after acceptance, a batch, a replay attempted after the wallet has forgotten
+//! the query id, and the same signed request replayed on another wallet and on another
+//! network.
 
 use chain_block::{
     BuilderData, Cell, Coins, CurrencyCollection, IBitstring, InternalMessageHeader, Message,
@@ -26,12 +27,15 @@ const TOS: u64 = 1_000_000_000;
 const SUBWALLET_ID: u32 = 0x5157;
 const TIMEOUT: u32 = 3_600;
 const NOW: u32 = 1_800_000_000;
+const NETWORK: i32 = -217;
 const SEND_MODE_PAY_FEES_SEPARATELY: u8 = 1;
 const OP_INTERNAL_TRANSFER: u32 = 0xae42e5a4;
 
 const ERROR_INVALID_SIGNATURE: i32 = 33;
 const ERROR_INVALID_SUBWALLET_ID: i32 = 34;
 const ERROR_INVALID_TIMEOUT: i32 = 38;
+const ERROR_WRONG_NETWORK: i32 = 40;
+const ERROR_WRONG_WALLET: i32 = 41;
 const ERROR_ALREADY_PROCESSED: i32 = 0x1701;
 const ERROR_INVALID_QUERY_ID: i32 = 0x1702;
 const ERROR_INVALID_CREATED_AT: i32 = 0x1703;
@@ -151,6 +155,8 @@ fn transfer_with_extra_currency(dest: &MsgAddressInt, value: u64) -> Cell {
 }
 
 struct Request {
+    global_id: i32,
+    wallet: MsgAddressInt,
     subwallet_id: u32,
     message: Cell,
     send_mode: u8,
@@ -173,9 +179,35 @@ impl Fixture {
 
     /// A wallet deployed with the given replay dictionaries and clean time.
     fn with_guard(old_queries: Option<Cell>, queries: Option<Cell>, last_clean_time: u64) -> Self {
+        Self::deploy(NETWORK, old_queries, queries, last_clean_time)
+    }
+
+    /// The same wallet -- same key, subwallet, timeout and so the same address -- on a
+    /// network with another global id.
+    fn on_network(global_id: i32) -> Self {
+        Self::deploy(global_id, None, None, 0)
+    }
+
+    fn deploy(
+        global_id: i32,
+        old_queries: Option<Cell>,
+        queries: Option<Cell>,
+        last_clean_time: u64,
+    ) -> Self {
         // Genesis global version, with basechain admitted so the wallet can pay out to
         // basechain accounts.
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
+        let mut config = bc.config_params().clone();
+        config
+            .set_config(chain_block::ConfigParamEnum::ConfigParam19(global_id as u32))
+            .expect("network identity");
+        // Installing a configuration also requires the fundamental contracts list.
+        config
+            .set_config(chain_block::ConfigParamEnum::ConfigParam31(chain_block::ConfigParam31 {
+                fundamental_smc_addr: chain_block::FundamentalSmcAddresses::default(),
+            }))
+            .expect("fundamental contracts");
+        bc.set_config(config).expect("the chain adopts its identity");
         bc.set_now(NOW);
         let funder = bc.treasury("funder", 1_000 * TOS).expect("funder");
         let target = bc.treasury("target", 1_000 * TOS).expect("target");
@@ -201,6 +233,8 @@ impl Fixture {
 
     fn request(&self, query_id: u32, message: Cell) -> Request {
         Request {
+            global_id: NETWORK,
+            wallet: self.wallet.clone(),
             subwallet_id: SUBWALLET_ID,
             message,
             send_mode: SEND_MODE_PAY_FEES_SEPARATELY,
@@ -212,6 +246,8 @@ impl Fixture {
 
     fn signed(&self, request: &Request, key: &SigningKey) -> Cell {
         let inner = cell(|b| {
+            b.append_i32(request.global_id).unwrap();
+            request.wallet.write_to(b).unwrap();
             b.append_u32(request.subwallet_id).unwrap();
             b.checked_append_reference(request.message.clone()).unwrap();
             b.append_u8(request.send_mode).unwrap();
@@ -329,6 +365,16 @@ fn every_pre_acceptance_check_rejects() {
     let forged = f.signed(&request, &impostor);
     f.expect_rejected(forged, ERROR_INVALID_SIGNATURE);
 
+    let mut other_network = f.request(2, message.clone());
+    other_network.global_id = NETWORK + 1;
+    let body = f.signed(&other_network, &f.key.clone());
+    f.expect_rejected(body, ERROR_WRONG_NETWORK);
+
+    let mut other_wallet = f.request(2, message.clone());
+    other_wallet.wallet = f.target.address().clone();
+    let body = f.signed(&other_wallet, &f.key.clone());
+    f.expect_rejected(body, ERROR_WRONG_WALLET);
+
     let mut other_subwallet = f.request(2, message.clone());
     other_subwallet.subwallet_id = SUBWALLET_ID + 1;
     let body = f.signed(&other_subwallet, &f.key.clone());
@@ -361,6 +407,33 @@ fn every_pre_acceptance_check_rejects() {
     let mut edge = f.request(6, message);
     edge.created_at = (NOW - TIMEOUT + 1) as u64;
     f.send_signed(&edge).expect("accepted").expect_success();
+}
+
+#[test]
+fn a_request_runs_only_on_the_wallet_it_was_signed_for() {
+    // Two wallets with one key, subwallet and timeout; a different clean time gives the
+    // second its own address.
+    let mut first = Fixture::new();
+    let mut second = Fixture::with_guard(None, None, 1);
+    assert_ne!(first.wallet, second.wallet);
+    let message = relaxed_transfer(first.target.address(), TOS);
+    let body = first.signed(&first.request(1, message), &first.key.clone());
+    first.send(body.clone()).expect("accepted").expect_success();
+    second.expect_rejected(body, ERROR_WRONG_WALLET);
+    assert!(!second.processed(1, false), "the refused request must not consume the id");
+}
+
+#[test]
+fn a_request_runs_only_on_the_network_it_was_signed_for() {
+    // One wallet deployed at one address on two networks.
+    let mut here = Fixture::new();
+    let mut elsewhere = Fixture::on_network(NETWORK + 1);
+    assert_eq!(here.wallet, elsewhere.wallet, "the address does not depend on the network");
+    let message = relaxed_transfer(here.target.address(), TOS);
+    let body = here.signed(&here.request(1, message), &here.key.clone());
+    here.send(body.clone()).expect("accepted").expect_success();
+    elsewhere.expect_rejected(body, ERROR_WRONG_NETWORK);
+    assert!(!elsewhere.processed(1, false), "the refused request must not consume the id");
 }
 
 #[test]

@@ -4,13 +4,19 @@
 ;; replay protection.
 ;;
 ;; A request is an external message `^inner signature:bits512` where inner is
-;;   subwallet_id:uint32 message:^Cell send_mode:uint8 query_id:uint23
-;;   created_at:uint64 timeout:uint22
+;;   global_id:int32 wallet:MsgAddressInt subwallet_id:uint32 message:^Cell
+;;   send_mode:uint8 query_id:uint23 created_at:uint64 timeout:uint22
 ;; signed over the hash of `inner`. Requests need no sequence number, so many can be in
 ;; flight at once; each carries a query id that replay-guard.fc accepts at most once while
-;; the request is fresh. The request layout and storage layout follow the MIT-licensed
-;; design recorded in tol-stdlib/NOTICE.md (a query id is that design's 13-bit row and
-;; 10-bit bit index stored back to back), so existing signing tools apply unchanged.
+;; the request is fresh. The storage layout and the rest of the request follow the
+;; MIT-licensed design recorded in tol-stdlib/NOTICE.md (a query id is that design's 13-bit
+;; row and 10-bit bit index stored back to back).
+;;
+;; A signature authorizes one wallet on one network: the request names the network's
+;; global id (ConfigParam 19) and this wallet's address, and both must match. That design's
+;; request names neither, so a request signed for any wallet sharing the key, subwallet and
+;; timeout -- on any network -- would run here while fresh. Its signing tools therefore do
+;; not produce requests this wallet accepts; that incompatibility is the point.
 ;;
 ;; Everything that can reject a request runs before accept_message(): the signature, the
 ;; subwallet, the timeout, freshness and the replay lookups. These are reads only
@@ -26,8 +32,7 @@
 ;;
 ;; Deployment: timeout must be positive (a zero timeout rejects every request and locks the
 ;; funds) and should be between one hour and one day, since the replay dictionary holds up
-;; to two timeouts of ids. A request is bound to subwallet_id and timeout but not to the
-;; network, so use a distinct subwallet_id per key on every network the key is used on.
+;; to two timeouts of ids.
 ;;
 ;; Batches: a request may send an internal message to this wallet itself with op
 ;; internal_transfer and an action list in its single reference; the wallet installs that
@@ -47,6 +52,8 @@ const int error::invalid_subwallet_id = 34;
 const int error::invalid_message_to_send = 37;
 const int error::invalid_timeout = 38;
 const int error::destroy_not_allowed = 39;
+const int error::wrong_network = 40;
+const int error::wrong_wallet = 41;
 
 const int SIGNATURE_BITS = 512;
 const int PUBLIC_KEY_BITS = 256;
@@ -59,6 +66,7 @@ const int SEND_MODE_DESTROY_IF_ZERO = 32;
 const int ACTION_SEND_MSG = 0x0ec3c86d;
 
 () set_actions(cell actions) impure asm "c5 POP";
+int global_id() asm "GLOBALID";
 cell my_code() asm "MYCODE";
 
 ;; storage: public_key:uint256 subwallet_id:uint32 then the replay guard
@@ -123,6 +131,8 @@ cell my_code() asm "MYCODE";
   throw_unless(error::invalid_signature, check_signature(inner.cell_hash(), signature, public_key));
 
   slice request = inner.begin_parse();
+  throw_unless(error::wrong_network, request~load_int(32) == global_id());
+  throw_unless(error::wrong_wallet, equal_slice_bits(request~load_msg_addr(), my_address()));
   int request_subwallet_id = request~load_uint(SUBWALLET_ID_BITS);
   cell message_to_send = request~load_ref();
   int send_mode = request~load_uint(8);

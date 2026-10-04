@@ -33,8 +33,12 @@ How each module differs from its upstream:
   leaves that case to a cell-overflow exception. The current time is read
   from the block rather than passed in by the caller.
 - `highload-wallet-v3-code.fc` is a complete wallet built on
-  `replay-guard.fc`. Its request and storage layouts match upstream, so
-  existing signing tools work unchanged. Replay and freshness failures
+  `replay-guard.fc`. Its storage layout matches upstream. Its request
+  adds two leading fields, the network's global id and the wallet's
+  address, checked with throw codes 40 and 41: upstream's request names
+  neither, so a signature would run on any wallet sharing the key,
+  subwallet and timeout, on any network. Upstream signing tools therefore
+  do not produce requests this wallet accepts. Replay and freshness failures
   use the library's throw codes (0x1701 to 0x1704), not upstream's 35 and
   36. A request whose outbound message is malformed throws after the
   state commit; upstream silently skips one marked as bounced. A request
