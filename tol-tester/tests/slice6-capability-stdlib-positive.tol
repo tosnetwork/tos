@@ -412,6 +412,38 @@ fun test_dual_bound_grant_requires_signature_path(): int {
     return 0;
 }
 
+// A real Ed25519 vector: the grantee key from a private key of 32 bytes 0x11
+// signs CAP_H, the signature hash of capStrongGrant() in capCtxDefault().
+const CAP_STRONG_GRANTEE: uint256 = 0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737
+const CAP_H = 0xd69aa731a7cd1c5c40ad760713d215ac748d9c8b65effabf44f124d66a562c2d
+
+fun capStrongSignature(): cell { return beginCell().storeSlice("77DBA658133B4167C5897477E0E28A34070EE795FB9D8B4C2B7D04ACDCD72DEAA7A82A0AAE9F2A52741AF2EC494B118E80639F726A190F6416267B4E084BE104".hexToSlice()).endCell(); }
+
+fun capStrongGrant(): Slice6CapabilityGrantV1 {
+    return slice6CapabilityGrant(capIssuer(), capTarget(), null, CAP_STRONG_GRANTEE, 0x43415001, capConstraints(), 10, 100, 7, 2);
+}
+
+@method_id(730)
+fun test_strong_grantee_vector_is_real(): int {
+    // Guards the fixture: if it stops verifying, the cases below fail for the
+    // wrong reason.
+    assert(capStrongGrant().signatureHash(capConstraints(), capCtxDefault()) == CAP_H) throw 7301;
+    assert(isSignatureValid(CAP_H, capStrongSignature().beginParse(), CAP_STRONG_GRANTEE)) throw 7302;
+    assert(!isSignatureValid(CAP_H + 1, capStrongSignature().beginParse(), CAP_STRONG_GRANTEE)) throw 7303;
+    return 1;
+}
+
+@method_id(731)
+fun test_strong_grantee_signature_path_succeeds(): int {
+    val grant = capStrongGrant();
+    assert(grant.signatureBoundValid(capConstraints(), capCtxDefault(), capStrongSignature())) throw 7311;
+    var reg = slice6CapabilityRegistry(4, 2, 2);
+    reg.registerGrant(grant);
+    reg.requireCapabilityWithSignature(grant, capConstraints(), capCtxDefault(), capStrongSignature(), true, true);
+    assert(reg.consumedNonceCount == 1) throw 7312;
+    return 1;
+}
+
 /**
 @testcase | 701 | | 50689
 @testcase | 702 | | 1
@@ -442,4 +474,6 @@ fun test_dual_bound_grant_requires_signature_path(): int {
 @testcase | 727 | | 1
 @testcase | 728 | | 5128
 @testcase | 729 | | 5137
+@testcase | 730 | | 1
+@testcase | 731 | | 1
  */

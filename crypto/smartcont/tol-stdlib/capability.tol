@@ -261,11 +261,12 @@ fun Slice6CapabilityGrantV1.signatureHash(
     constraints: Slice6CapabilityConstraintsV1,
     context: Slice6CapabilityUseContext
 ): uint256 {
+    // Two hashes and two standard addresses are 1,046 bits, more than one cell
+    // holds, so the addresses go in a referenced cell.
     return beginCell()
         .storeUint(self.handleId(), 256)
         .storeUint(constraints.constraintsHash(), 256)
-        .storeAddress(context.sender)
-        .storeAddress(context.target)
+        .storeRef(beginCell().storeAddress(context.sender).storeAddress(context.target).endCell())
         .storeUint(context.selector, 32)
         .storeCoins(context.valueCoins)
         .storeUint(context.currentMcSeqno, 64)
