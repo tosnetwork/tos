@@ -166,7 +166,9 @@ td::Result<std::unique_ptr<WalletIndexDb>> WalletIndexDb::open(std::string path)
   return index;
 }
 
-WalletIndexDb::WalletIndexDb(std::unique_ptr<td::RocksDb> db) : db_(std::move(db)) {}
+WalletIndexDb::WalletIndexDb(std::unique_ptr<td::RocksDb> db)
+    : db_(std::move(db)), marker_db_(std::make_unique<td::RocksDb>(db_->clone())) {
+}
 
 td::Result<std::unique_ptr<WalletIndexDb>> WalletIndexDb::read_snapshot() {
   auto view = std::make_unique<td::RocksDb>(db_->clone());
@@ -659,6 +661,19 @@ td::Status WalletIndexDb::put_incomplete_block(const tos::BlockIdExt& block_id) 
   // for that (manual_wal_flush=true means writes aren't synced by default) —
   // no need for a full memtable flush.
   return db_->flush_wal(true);
+}
+
+td::Status WalletIndexDb::mark_blocks_incomplete(const std::vector<tos::BlockIdExt>& block_ids) {
+  if (block_ids.empty()) {
+    return td::Status::OK();
+  }
+  char val[kIncompleteBlockValueLen] = {0};
+  for (const auto& block_id : block_ids) {
+    char key[kIncompleteBlockKeyLen];
+    make_incomplete_block_key(block_id, key);
+    TRY_STATUS(marker_db_->set(td::Slice{key, kIncompleteBlockKeyLen}, td::Slice{val, kIncompleteBlockValueLen}));
+  }
+  return marker_db_->flush_wal(true);
 }
 
 td::Status WalletIndexDb::delete_incomplete_block(const tos::BlockIdExt& block_id) {

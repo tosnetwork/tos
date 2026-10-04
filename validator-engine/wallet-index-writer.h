@@ -77,4 +77,20 @@ class WalletIndexVerificationBudget {
 // unique across a shard split/merge.
 void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
 
+// Blocks waiting to be indexed at most. Each holds its block and state cells.
+constexpr size_t kWc0IndexQueueCapacity = 256;
+
+// Start the indexing worker. Call once, before installing
+// enqueue_wc0_index_block as the block-apply hook.
+void start_wc0_index_worker();
+// Stop it: the block in hand is finished, queued ones stay marked. Call
+// before the index database is closed.
+void stop_wc0_index_worker();
+// The block-apply hook: hands the block to the indexing worker and returns at
+// once, so applying a block never waits on the index's lock, TVM getters or
+// WAL sync. When the worker is kWc0IndexQueueCapacity blocks behind, the block is not
+// indexed now; it is marked incomplete instead, and the startup recovery
+// re-indexes marked blocks.
+void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
+
 }  // namespace tos_wallet_index

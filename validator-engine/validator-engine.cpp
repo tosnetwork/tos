@@ -2360,11 +2360,12 @@ void ValidatorEngine::start_validator() {
   // would report the index as disabled. When enabled, the hook is installed
   // before the validator manager exists so it is never written while
   // block-apply actors may already be reading it.
-  // Note: on RPC nodes the hook still runs synchronously on the block-apply
-  // path; moving it off that path is a separate change.
+  // The hook only queues the block for a dedicated indexing worker, so block
+  // application never waits on the index.
   if (json_rpc_addr_) {
     tos_wallet_index::open_wallet_index_db(db_root_);
-    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::wc0_index_block;
+    tos_wallet_index::start_wc0_index_worker();
+    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
   }
 
   validator_manager_ = tos::validator::ValidatorManagerFactory::create(
@@ -6986,5 +6987,9 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Stop the indexing worker while the index it writes to still exists;
+  // blocks it did not reach stay marked for the next start.
+  tos::validator::g_wc0_block_index_hook = nullptr;
+  tos_wallet_index::stop_wc0_index_worker();
   return 0;
 }

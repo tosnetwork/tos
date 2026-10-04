@@ -32,12 +32,17 @@
 // different shards, and a legacy-format marker left on disk by an older
 // binary must not crash the new scanner or be silently treated as a valid
 // entry.
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "../validator-engine/wallet-index-queue.h"
 #include "../validator-engine/wallet-index-writer.h"
 #include "../validator-engine/wallet-index.h"
 #include "td/db/RocksDb.h"
@@ -1257,5 +1262,162 @@ TEST(WalletIndex, AnEntryDroppedAsMalformedDoesNotHideItsCandidateDeferredInTheS
     }).ensure();
   ASSERT_TRUE(waiting);
   ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(2));
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+struct QueueLog {
+  std::mutex mutex;
+  std::vector<int> recorded;
+  std::vector<int> processed;
+  // Every id processed had been recorded first.
+  bool processed_before_recorded = false;
+};
+
+}  // namespace
+
+TEST(WalletIndexQueue, PushingNeverWaitsForTheWork) {
+  QueueLog log;
+  std::atomic<bool> release{false};
+  {
+    tos_wallet_index::BoundedWorkQueue<int, int> queue(
+        8,
+        [&](const std::vector<int> &ids) {
+          std::lock_guard<std::mutex> lock(log.mutex);
+          log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
+        },
+        [&](int &) {
+          while (!release.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+          }
+        });
+    auto started = std::chrono::steady_clock::now();
+    for (int i = 0; i < 4; ++i) {
+      ASSERT_TRUE(queue.push(i, i));
+    }
+    auto took = std::chrono::steady_clock::now() - started;
+    // The worker is stuck on the first item; pushing did not wait for it.
+    ASSERT_TRUE(took < std::chrono::milliseconds(50));
+    release = true;
+  }
+}
+
+TEST(WalletIndexQueue, WorkIsRecordedFirstAndDoneInOrder) {
+  QueueLog log;
+  {
+    tos_wallet_index::BoundedWorkQueue<int, int> queue(
+        64,
+        [&](const std::vector<int> &ids) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(2));
+          std::lock_guard<std::mutex> lock(log.mutex);
+          log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
+        },
+        [&](int &item) {
+          std::lock_guard<std::mutex> lock(log.mutex);
+          if (std::find(log.recorded.begin(), log.recorded.end(), item) == log.recorded.end()) {
+            log.processed_before_recorded = true;
+          }
+          log.processed.push_back(item);
+        });
+    for (int i = 0; i < 40; ++i) {
+      ASSERT_TRUE(queue.push(i, i));
+    }
+    for (int spin = 0; spin < 400; ++spin) {
+      {
+        std::lock_guard<std::mutex> lock(log.mutex);
+        if (log.processed.size() == 40) {
+          break;
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
+  ASSERT_TRUE(!log.processed_before_recorded);
+  ASSERT_EQ(log.processed.size(), static_cast<size_t>(40));
+  for (int i = 0; i < 40; ++i) {
+    ASSERT_EQ(log.processed[i], i);
+  }
+}
+
+TEST(WalletIndexQueue, AFullQueueDropsTheWorkButStillRecordsIt) {
+  QueueLog log;
+  std::atomic<bool> release{false};
+  std::atomic<bool> first_started{false};
+  {
+    tos_wallet_index::BoundedWorkQueue<int, int> queue(
+        2,
+        [&](const std::vector<int> &ids) {
+          std::lock_guard<std::mutex> lock(log.mutex);
+          log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
+        },
+        [&](int &item) {
+          first_started = true;
+          while (!release.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+          }
+          std::lock_guard<std::mutex> lock(log.mutex);
+          log.processed.push_back(item);
+        });
+    ASSERT_TRUE(queue.push(0, 0));
+    while (!first_started.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    // One item is being worked on; two may wait; the next is dropped.
+    ASSERT_TRUE(queue.push(1, 1));
+    ASSERT_TRUE(queue.push(2, 2));
+    ASSERT_TRUE(!queue.push(3, 3));
+    ASSERT_EQ(queue.dropped(), static_cast<size_t>(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    release = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  // The dropped item was never done, but its id was recorded, so it is not lost.
+  ASSERT_TRUE(std::find(log.processed.begin(), log.processed.end(), 3) == log.processed.end());
+  for (int id = 0; id < 4; ++id) {
+    ASSERT_TRUE(std::find(log.recorded.begin(), log.recorded.end(), id) != log.recorded.end());
+  }
+}
+
+TEST(WalletIndexQueue, WorkLeftAtShutdownStaysRecordedAndUndone) {
+  QueueLog log;
+  std::atomic<bool> release{false};
+  {
+    tos_wallet_index::BoundedWorkQueue<int, int> queue(
+        8,
+        [&](const std::vector<int> &ids) {
+          std::lock_guard<std::mutex> lock(log.mutex);
+          log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
+        },
+        [&](int &item) {
+          while (!release.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+          }
+          std::lock_guard<std::mutex> lock(log.mutex);
+          log.processed.push_back(item);
+        });
+    for (int i = 0; i < 5; ++i) {
+      queue.push(i, i);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    release = true;
+  }
+  // Shutdown finished the item in hand and left the rest to recovery.
+  ASSERT_TRUE(log.processed.size() < 5);
+  ASSERT_EQ(log.recorded.size(), static_cast<size_t>(5));
+}
+
+TEST(WalletIndex, MarkingQueuedBlocksDoesNotJoinAnOpenBatch) {
+  auto path = std::string("test-wallet-index-db-mark-queued");
+  auto db = open_fresh_db(path);
+  auto first = make_test_block_id(0, tos::shardIdAll, 11, 0x01, 0x02);
+  auto second = make_test_block_id(0, tos::shardIdAll, 12, 0x03, 0x04);
+  // The indexing worker has a block's batch open on another thread.
+  db->begin_batch().ensure();
+  db->mark_blocks_incomplete({first, second}).ensure();
+  db->abort_batch();
+  // The marks were written directly and survive the aborted batch.
+  ASSERT_TRUE(db->has_incomplete_block(first).move_as_ok());
+  ASSERT_TRUE(db->has_incomplete_block(second).move_as_ok());
   td::rmrf(path).ignore();
 }

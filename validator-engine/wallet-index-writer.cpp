@@ -14,21 +14,22 @@
               collection must resolve back to the item.
     Only verified facts are indexed. Best-effort and off the consensus path.
 */
-#include "wallet-index-writer.h"
-#include "wallet-index.h"
-
-#include "block/block.h"
-#include "block/block-auto.h"
-#include "block/block-parse.h"
-#include "smc-envelope/SmartContract.h"
-#include "vm/cells.h"
-#include "vm/dict.h"
-#include "td/utils/logging.h"
-
 #include <memory>
 #include <mutex>
 #include <set>
 #include <vector>
+
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "block/block.h"
+#include "smc-envelope/SmartContract.h"
+#include "td/utils/logging.h"
+#include "vm/cells.h"
+#include "vm/dict.h"
+
+#include "wallet-index-queue.h"
+#include "wallet-index-writer.h"
+#include "wallet-index.h"
 
 namespace tos_wallet_index {
 
@@ -716,6 +717,72 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
     // Never persist a partial block: a parse failure, or a half-written
     // event/age pair. The retained incomplete-block marker triggers a re-index.
     db->abort_batch();
+  }
+}
+
+namespace {
+
+struct BlockToIndex {
+  td::Ref<vm::Cell> block_root;
+  td::Ref<vm::Cell> state_root;
+  tos::BlockIdExt block_id;
+};
+
+std::unique_ptr<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>> g_index_queue;
+std::mutex g_index_queue_mutex;
+
+// Durably mark queued blocks before any of them is indexed: a block the worker
+// never reaches (dropped, or the node stopped first) stays marked, startup
+// recovery re-indexes it, and RPC reports the index unfinished until then.
+void mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
+  auto* db = wallet_index_db();
+  if (db == nullptr) {
+    return;
+  }
+  auto status = db->mark_blocks_incomplete(block_ids);
+  if (status.is_error()) {
+    LOG(ERROR) << "wc0-index: could not mark " << block_ids.size()
+               << " queued block(s) for recovery: " << status.message();
+  }
+}
+
+void index_queued_block(BlockToIndex& block) {
+  try {
+    wc0_index_block(std::move(block.block_root), std::move(block.state_root), block.block_id);
+  } catch (...) {
+    LOG(ERROR) << "wc0-index: indexing block " << block.block_id.id.to_str() << " threw";
+  }
+}
+
+}  // namespace
+
+void start_wc0_index_worker() {
+  std::lock_guard<std::mutex> guard(g_index_queue_mutex);
+  if (g_index_queue) {
+    return;
+  }
+  g_index_queue = std::make_unique<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>>(
+      kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block);
+}
+
+void stop_wc0_index_worker() {
+  std::unique_ptr<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>> queue;
+  {
+    std::lock_guard<std::mutex> guard(g_index_queue_mutex);
+    queue = std::move(g_index_queue);
+  }
+  // Joined here, outside the lock, so a hook call in flight is not blocked on it.
+  queue.reset();
+}
+
+void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
+  std::lock_guard<std::mutex> guard(g_index_queue_mutex);
+  if (!g_index_queue) {
+    return;
+  }
+  if (!g_index_queue->push(block_id, BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
+    LOG(WARNING) << "wc0-index: indexing is " << kWc0IndexQueueCapacity << " blocks behind; block "
+                 << block_id.id.to_str() << " left marked for re-indexing at the next start";
   }
 }
 

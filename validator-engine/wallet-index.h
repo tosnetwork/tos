@@ -287,6 +287,10 @@ class WalletIndexDb {
   // put_incomplete_block is durable on return (WAL-synced); delete_incomplete_block
   // joins the open write batch when one is active.
   td::Status put_incomplete_block(const tos::BlockIdExt& block_id);
+  // Mark several blocks in progress with one WAL sync. Writes through a
+  // separate handle, so it neither joins nor waits for a write batch another
+  // thread has open; safe to call without write_mutex().
+  td::Status mark_blocks_incomplete(const std::vector<tos::BlockIdExt>& block_ids);
   td::Status delete_incomplete_block(const tos::BlockIdExt& block_id);
   td::Result<bool> has_incomplete_block(const tos::BlockIdExt& block_id);
   // Crash-recovery scan: calls `cb(block_id)` for every currently-recorded
@@ -336,6 +340,8 @@ class WalletIndexDb {
   td::Status clear_namespace(uint8_t tag);
 
   std::unique_ptr<td::RocksDb> db_;
+  // Same database, own (never batched) write path, for mark_blocks_incomplete.
+  std::unique_ptr<td::RocksDb> marker_db_;
   std::mutex write_mutex_;
   bool batch_open_ = false;
 
