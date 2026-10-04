@@ -140,8 +140,8 @@ pub struct WalletLsCmd {
 pub struct WalletImportCmd {
     #[arg(short = 'n', long = "name", help = "Wallet name")]
     name: String,
-    #[arg(short = 'k', long = "private-key", help = "Base64-encoded private key")]
-    private_key: String,
+    #[command(flatten)]
+    private_key: super::key_cmd::PrivateKeyInput,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
     #[arg(short = 'w', long = "workchain", default_value = "-1")]
@@ -168,20 +168,22 @@ pub struct WalletMnemonicGenerateCmd {
 pub struct WalletMnemonicImportCmd {
     #[arg(short = 'n', long = "name")]
     name: String,
-    #[arg(
-        long,
-        conflicts_with = "mnemonic_file",
-        required_unless_present = "mnemonic_file",
-        help = "12- or 24-word TOS mnemonic phrase (prefer --mnemonic-file to avoid shell history)"
-    )]
+    /// No longer accepted; kept only to explain the replacement.
+    #[arg(long, hide = true, allow_hyphen_values = true)]
     mnemonic: Option<String>,
     #[arg(
         long,
-        conflicts_with = "mnemonic",
-        required_unless_present = "mnemonic",
-        help = "Read the mnemonic from a mode-0600 file"
+        conflicts_with = "mnemonic_fd",
+        help = "Read the mnemonic from a file you own with mode 0600"
     )]
     mnemonic_file: Option<PathBuf>,
+    #[arg(
+        long,
+        conflicts_with = "mnemonic_file",
+        help = "Read the mnemonic from an inherited file descriptor (0 for standard input, or 3 \
+                and above). Neither option: prompt without echo"
+    )]
+    mnemonic_fd: Option<i32>,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
     #[arg(short = 'w', long = "workchain", default_value = "-1")]
@@ -816,17 +818,15 @@ async fn print_wallets_table(
 
 impl WalletImportCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        // Read the key before opening the configuration or vault, so a
+        // refused or unreadable input changes nothing.
+        let private_key_bytes = self.private_key.read()?;
         let path = Path::new(config_path);
         let (mut config, vault) = super::utils::load_config_vault(path).await?;
 
         if config.wallets.contains_key(&self.name) {
             anyhow::bail!("Wallet '{}' already exists in config", self.name);
         }
-
-        // Decode and import private key into vault
-        let private_key_bytes =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &self.private_key)
-                .context("Invalid base64 private key")?;
 
         let secret_name = format!("wallet-{}", self.name);
         let secret_id = secret_name.as_str().into();
@@ -926,16 +926,38 @@ impl WalletMnemonicGenerateCmd {
     }
 }
 
+/// Message for the retired `--mnemonic` option. It never repeats the value.
+pub const LEGACY_MNEMONIC_MESSAGE: &str = "--mnemonic is no longer accepted: a phrase in process \
+arguments is visible to other local processes and is kept by shell history. Pass \
+--mnemonic-file <PATH> (a file you own with mode 0600), --mnemonic-fd <N> (an inherited \
+descriptor, 0 for standard input), or neither to be prompted without echo. Treat the phrase \
+you passed as exposed.";
+
 impl WalletMnemonicImportCmd {
+    /// Reads the mnemonic from the selected protected channel. Errors never
+    /// contain any word of it.
+    fn read_mnemonic(&self) -> anyhow::Result<zeroize::Zeroizing<String>> {
+        if self.mnemonic.is_some() {
+            anyhow::bail!(LEGACY_MNEMONIC_MESSAGE);
+        }
+        let source = secrets_vault::secret_input::select_source(
+            self.mnemonic_file.as_deref(),
+            self.mnemonic_fd,
+            "--mnemonic-file",
+            "--mnemonic-fd",
+            "Mnemonic (hidden): ",
+        )?;
+        let text = secrets_vault::secret_input::read_secret(&source)?;
+        let trimmed = secrets_vault::secret_input::trim_ascii(&text);
+        let phrase = std::str::from_utf8(trimmed)
+            .map_err(|_| anyhow::anyhow!("mnemonic is not valid UTF-8"))?;
+        Ok(zeroize::Zeroizing::new(phrase.to_owned()))
+    }
+
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let mut phrase = match (&self.mnemonic, &self.mnemonic_file) {
-            (Some(phrase), None) => phrase.clone(),
-            (None, Some(path)) => std::fs::read_to_string(path)
-                .with_context(|| format!("read mnemonic file {}", path.display()))?,
-            _ => anyhow::bail!("Provide exactly one of --mnemonic or --mnemonic-file"),
-        };
-        let mut seed = super::tos_mnemonic::private_seed(phrase.trim(), "")?;
-        phrase.zeroize();
+        let phrase = self.read_mnemonic()?;
+        let mut seed = super::tos_mnemonic::private_seed(&phrase, "")?;
+        drop(phrase);
         let mut wallet = parse_wallet_identity(&self.version, self.workchain, self.subwallet_id)?;
         let address = store_wallet_seed(config_path, &self.name, &mut wallet, &mut seed).await?;
         println!("{} Wallet '{}' recovered at {}", "OK".green().bold(), self.name, address);
@@ -1776,5 +1798,76 @@ mod wallet_send_cli_tests {
             command.try_get_matches_from(["ls", "--format", "json", "--offline"]).unwrap();
         let parsed = WalletLsCmd::from_arg_matches(&matches).unwrap();
         assert!(parsed.offline);
+    }
+}
+
+#[cfg(test)]
+mod wallet_secret_input_tests {
+    use super::{WalletImportCmd, WalletMnemonicImportCmd};
+    use clap::{Args, Command, FromArgMatches};
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mnemonic_import(args: &[&str]) -> WalletMnemonicImportCmd {
+        let mut argv = vec!["mnemonic-import", "-n", "w"];
+        argv.extend_from_slice(args);
+        let matches = WalletMnemonicImportCmd::augment_args(Command::new("mnemonic-import"))
+            .try_get_matches_from(argv)
+            .expect("parse");
+        WalletMnemonicImportCmd::from_arg_matches(&matches).expect("args")
+    }
+
+    fn protected_file(dir: &std::path::Path, contents: &str, mode: u32) -> String {
+        let path = dir.join("secret");
+        std::fs::write(&path, contents).expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        path.to_str().expect("utf8").to_owned()
+    }
+
+    #[test]
+    fn legacy_mnemonic_argument_is_a_hard_error_that_does_not_echo_it() {
+        let phrase = super::super::tos_mnemonic::generate(12).expect("generate").join(" ");
+        let cmd = mnemonic_import(&["--mnemonic", &phrase]);
+        let text = format!("{:#}", cmd.read_mnemonic().expect_err("must refuse"));
+        assert!(text.contains("--mnemonic-file"), "{text}");
+        for word in phrase.split(' ') {
+            assert!(!text.split_whitespace().any(|token| token == word), "{text}");
+        }
+    }
+
+    #[test]
+    fn mnemonic_is_read_from_a_protected_file_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let phrase = super::super::tos_mnemonic::generate(12).expect("generate").join(" ");
+        let path = protected_file(dir.path(), &format!("{phrase}\n"), 0o600);
+        let cmd = mnemonic_import(&["--mnemonic-file", &path]);
+        assert_eq!(cmd.read_mnemonic().expect("read").as_str(), phrase);
+
+        let path = protected_file(dir.path(), &phrase, 0o640);
+        let cmd = mnemonic_import(&["--mnemonic-file", &path]);
+        let text = format!("{:#}", cmd.read_mnemonic().expect_err("group-readable"));
+        assert!(text.contains("mode 0640"), "{text}");
+    }
+
+    #[test]
+    fn unknown_mnemonic_word_is_reported_by_position_only() {
+        let mut words = super::super::tos_mnemonic::generate(12).expect("generate");
+        words[4] = "zzzsecretword".into();
+        let text = format!(
+            "{:#}",
+            super::super::tos_mnemonic::validate(&words.join(" "), "").expect_err("unknown word")
+        );
+        assert_eq!(text, "Unknown mnemonic word at position 5");
+    }
+
+    #[test]
+    fn wallet_import_refuses_the_legacy_private_key_argument() {
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+        let matches = WalletImportCmd::augment_args(Command::new("import"))
+            .try_get_matches_from(["import", "-n", "w", "-k", key])
+            .expect("parse");
+        let cmd = WalletImportCmd::from_arg_matches(&matches).expect("args");
+        let text = format!("{:#}", cmd.private_key.read().expect_err("must refuse"));
+        assert!(text.contains("--private-key-file"), "{text}");
+        assert!(!text.contains(key), "{text}");
     }
 }

@@ -4084,6 +4084,7 @@ dependencies = [
  "rand_chacha 0.9.0",
  "reqwest",
  "rmp-serde",
+ "rpassword",
  "rsa",
  "scopeguard",
  "serde",
