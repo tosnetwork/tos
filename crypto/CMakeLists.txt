@@ -562,12 +562,14 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
   GenFif(DEST smartcont/auto/validator-controller-v1-code SOURCE smartcont/validator-controller-v1.fc NAME validator-controller-v1
     EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
-  GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig)
+  GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet)
   GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)
   GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3)
   GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
-  GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow)
+  GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/pq-highload-wallet-code SOURCE smartcont/pq-highload-wallet-code.fc
     NAME pq-highload-wallet EXTRA_DEPS smartcont/replay-guard.fc smartcont/pq-bytes.fc smartcont/pq.fc)
   GenFif(DEST smartcont/auto/multisig-wallet-code SOURCE smartcont/multisig-wallet-code.fc NAME multisig-wallet
@@ -584,7 +586,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
       ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
-    DEPENDS func fift smartcont/stdlib.fc
+    DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc
       smartcont/tos-service-native-registry-v1.boc.base64
       smartcont/tos-service-native-registry-v1.release.json
       ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-native-registry-v1.sh

@@ -1,7 +1,13 @@
 // Slice 3 multisig package foundation and signer/threshold helpers.
+//
+// A signer key anyone can sign for (`@stdlib/strong-ed25519-key`) would add an
+// approval with no secret behind it. It is refused when it joins the signer
+// set and again whenever it would act or be counted as a signer, so a set
+// stored or built without [multisigAddSigner] still cannot use one.
 tol 1.3
 
 import "@stdlib/slice3-common"
+import "@stdlib/strong-ed25519-key"
 import "@stdlib/tvm-dicts"
 import "@stdlib/wallet"
 
@@ -14,6 +20,7 @@ const MULTISIG_FUNC_THROW_INSUFFICIENT_SIGNATURES = 1804
 const MULTISIG_FUNC_THROW_PROPOSAL_REPLAY = 1805
 const MULTISIG_FUNC_THROW_EXPIRED = 1806
 const MULTISIG_FUNC_THROW_INVALID_ACTIONS = 1807
+const MULTISIG_FUNC_THROW_WEAK_SIGNER = 1808
 
 const MULTISIG_STDLIB_ERROR_BAD_THRESHOLD = 2801
 const MULTISIG_STDLIB_ERROR_NOT_SIGNER = 2802
@@ -22,6 +29,7 @@ const MULTISIG_STDLIB_ERROR_INSUFFICIENT_SIGNATURES = 2804
 const MULTISIG_STDLIB_ERROR_PROPOSAL_REPLAY = 2805
 const MULTISIG_STDLIB_ERROR_EXPIRED = 2806
 const MULTISIG_STDLIB_ERROR_INVALID_ACTIONS = 2807
+const MULTISIG_STDLIB_ERROR_WEAK_SIGNER = 2808
 
 const MULTISIG_SIGNER_KEY_BITS = 256
 const MULTISIG_PROPOSAL_KEY_BITS = 64
@@ -70,6 +78,9 @@ fun multisigErrorForFuncThrow(funcThrow: int, originalOp: uint32, queryId: uint6
     if (funcThrow == MULTISIG_FUNC_THROW_EXPIRED) {
         return slice3Error(queryId, originalOp, ErrorClass.Permanent, MULTISIG_STDLIB_ERROR_EXPIRED);
     }
+    if (funcThrow == MULTISIG_FUNC_THROW_WEAK_SIGNER) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, MULTISIG_STDLIB_ERROR_WEAK_SIGNER);
+    }
     return slice3Error(queryId, originalOp, ErrorClass.Protocol, MULTISIG_STDLIB_ERROR_INVALID_ACTIONS);
 }
 
@@ -102,13 +113,22 @@ fun multisigHasSigner(signers: dict, publicKey: uint256): bool {
     return found;
 }
 
+/// Throws unless `publicKey` is a key someone has to hold a secret to sign for.
+fun multisigRequireStrongSigner(publicKey: int): void {
+    if (ed25519IsWeakKey(publicKey)) {
+        throw MULTISIG_FUNC_THROW_WEAK_SIGNER;
+    }
+}
+
 fun multisigRequireSigner(signers: dict, publicKey: uint256): void {
     if (!multisigHasSigner(signers, publicKey)) {
         throw MULTISIG_FUNC_THROW_NOT_SIGNER;
     }
+    multisigRequireStrongSigner(publicKey);
 }
 
 fun multisigAddSigner(signers: dict, publicKey: uint256): dict {
+    multisigRequireStrongSigner(publicKey);
     var next = signers;
     val inserted = next.uDictSetBuilderIfNotExists(
         MULTISIG_SIGNER_KEY_BITS,
@@ -122,6 +142,7 @@ fun multisigAddSigner(signers: dict, publicKey: uint256): dict {
 }
 
 fun multisigAddApproval(approvals: dict, publicKey: uint256): dict {
+    multisigRequireStrongSigner(publicKey);
     var next = approvals;
     val inserted = next.uDictSetBuilderIfNotExists(
         MULTISIG_SIGNER_KEY_BITS,

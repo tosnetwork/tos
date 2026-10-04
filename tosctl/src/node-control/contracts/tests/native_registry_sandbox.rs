@@ -1484,3 +1484,418 @@ fn capability_rejects_duplicate_version_and_failed_transfer_is_state_atomic() {
     assert_eq!(f.state_at(&capability.address).hash(0), before_duplicate.hash(0));
     assert_eq!(capability_owner(&f.state_at(&capability.address)), old_owner_id);
 }
+
+mod weak_ed25519;
+
+const ERR_THRESHOLD: i32 = 2209;
+const ERR_WEAK_KEY: i32 = 2214;
+const ALL_PURPOSES: u16 = 0x0f;
+
+/// Exit code a policy naming `key` is refused with. The all-zero key already
+/// fails the older nonzero check, which runs first and answers with
+/// `bad_policy`; every other weak key reaches the weak-key check.
+fn weak_admission_code(key: &[u8; 32]) -> i32 {
+    if key == &[0u8; 32] { ERR_BAD_POLICY } else { ERR_WEAK_KEY }
+}
+
+/// A policy over `(public_key, weight, purposes, recovery)` controllers, sorted
+/// by key the way the contract requires.
+fn policy_of(
+    threshold: u32,
+    recovery_threshold: u32,
+    controllers: &[([u8; 32], u32, u16, bool)],
+) -> Cell {
+    let mut sorted = controllers.to_vec();
+    sorted.sort_by_key(|entry| entry.0);
+    let mut next: Option<Cell> = None;
+    for (public_key, weight, purposes, recovery) in sorted.into_iter().rev() {
+        let mut controller = BuilderData::new();
+        controller
+            .append_u256(&public_key)
+            .unwrap()
+            .append_u256(&public_key)
+            .unwrap()
+            .append_u32(weight)
+            .unwrap()
+            .append_u16(purposes)
+            .unwrap()
+            .append_bit_bool(recovery)
+            .unwrap();
+        if let Some(cell) = next {
+            controller.checked_append_reference(cell).unwrap();
+        }
+        next = Some(controller.into_cell().unwrap());
+    }
+    let mut root = BuilderData::new();
+    root.append_u32(MAGIC_POLICY)
+        .unwrap()
+        .append_u16(1)
+        .unwrap()
+        .append_u32(threshold)
+        .unwrap()
+        .append_u32(recovery_threshold)
+        .unwrap()
+        .append_u64(10)
+        .unwrap()
+        .append_u8(controllers.len() as u8)
+        .unwrap()
+        .checked_append_reference(next.unwrap())
+        .unwrap();
+    root.into_cell().unwrap()
+}
+
+/// A signature list from `(public_key, signature)` pairs, sorted by key.
+fn signature_entries(mut entries: Vec<([u8; 32], [u8; 64])>) -> Cell {
+    entries.sort_by_key(|entry| entry.0);
+    let count = entries.len() as u8;
+    let mut next: Option<Cell> = None;
+    for (public_key, signature) in entries.into_iter().rev() {
+        let mut entry = BuilderData::new();
+        entry.append_u256(&public_key).unwrap().append_raw(&signature, 512).unwrap();
+        if let Some(cell) = next {
+            entry.checked_append_reference(cell).unwrap();
+        }
+        next = Some(entry.into_cell().unwrap());
+    }
+    let mut root = BuilderData::new();
+    root.append_u8(count).unwrap().checked_append_reference(next.unwrap()).unwrap();
+    root.into_cell().unwrap()
+}
+
+fn signed(key: &SigningKey, action: &Cell) -> ([u8; 32], [u8; 64]) {
+    (key.verifying_key().to_bytes(), key.sign(action.hash(0).as_slice()).to_bytes())
+}
+
+/// The order-2 torsion key: canonical, on the curve, and forgeable for about
+/// half of all messages.
+fn forgeable_weak_key() -> [u8; 32] {
+    let key = weak_ed25519::weak_keys()[4];
+    assert_eq!(key[0], 0xec, "the order-2 point (y = -1)");
+    key
+}
+
+/// Builds the action `make(nonce)` for successive nonces until the weak key's
+/// signature over it can be forged, and returns both.
+fn forge_for(weak: &[u8; 32], make: impl Fn(u8) -> Cell) -> (Cell, [u8; 64]) {
+    (100..=255)
+        .find_map(|nonce| {
+            let action = make(nonce);
+            weak_ed25519::forge(weak, action.hash(0).as_slice()).map(|sig| (action, sig))
+        })
+        .expect("some nonce admits a forged signature")
+}
+
+impl Fixture {
+    /// Replaces the agent's stored policy without going through any action,
+    /// as a hand-built account state could carry it.
+    fn install_policy(&mut self, policy: Cell) {
+        let mut state = SliceData::load_cell(self.state()).unwrap();
+        let header = state.get_next_slice(32 + 16 + 8 + 1 + 64 + 64 + 256).unwrap();
+        state.checked_drain_reference().unwrap();
+        let delegations = state.checked_drain_reference().unwrap();
+        let recovery = state.checked_drain_reference().unwrap();
+        let mut next_state = BuilderData::new();
+        next_state
+            .append_builder(&header.as_builder().unwrap())
+            .unwrap()
+            .checked_append_reference(policy)
+            .unwrap()
+            .checked_append_reference(delegations)
+            .unwrap()
+            .checked_append_reference(recovery)
+            .unwrap();
+        let mut data = BuilderData::new();
+        data.append_u32(MAGIC_DATA)
+            .unwrap()
+            .append_u16(1)
+            .unwrap()
+            .append_u8(1)
+            .unwrap()
+            .append_u256(&self.object_id)
+            .unwrap()
+            .checked_append_reference(self.config.clone())
+            .unwrap()
+            .append_bit_one()
+            .unwrap()
+            .checked_append_reference(next_state.into_cell().unwrap())
+            .unwrap();
+        let mut account = self.bc.get_account(&self.registry).unwrap().clone();
+        assert!(account.set_data(data.into_cell().unwrap()));
+        self.bc.set_account(self.registry.clone(), account);
+    }
+
+    fn delegate_action(&self, sequence: u64, nonce: u8) -> Cell {
+        let mut payload = BuilderData::new();
+        payload.append_u256(&[nonce; 32]).unwrap();
+        self.build_action(DELEGATE_AGENT, 1, sequence, nonce, payload.into_cell().unwrap())
+    }
+
+    /// Deploys a new agent registering `agent_policy`, signed by `authority`.
+    fn register_with(
+        &mut self,
+        agent_policy: Cell,
+        object_nonce: [u8; 32],
+        authority: impl Fn(&Cell) -> Cell,
+    ) -> (SendResult, MsgAddressInt) {
+        let mut identity = BuilderData::new();
+        identity
+            .append_u32(MAGIC_IDENTITY)
+            .unwrap()
+            .append_u8(1)
+            .unwrap()
+            .append_u256(&object_nonce)
+            .unwrap()
+            .append_raw(agent_policy.hash(0).as_slice(), 256)
+            .unwrap()
+            .checked_append_reference(self.identity_domain.clone())
+            .unwrap();
+        let object_id = *identity.into_cell().unwrap().hash(0).as_slice();
+        let (address, state_init) = self.object_address(1, &object_id);
+        let mut payload = BuilderData::new();
+        payload.append_u256(&object_nonce).unwrap().checked_append_reference(agent_policy).unwrap();
+        let register = action(
+            REGISTER_AGENT,
+            1,
+            1,
+            1,
+            &object_id,
+            &[0; 32],
+            object_nonce[0],
+            &self.domain,
+            payload.into_cell().unwrap(),
+        );
+        let deploy = MessageBuilder::internal(self.relayer.address(), &address, 20 * TOS)
+            .bounce(false)
+            .state_init(state_init)
+            .body(submit_body(register.clone(), authority(&register), empty_signatures()))
+            .build();
+        (self.bc.send_message(deploy).expect("register"), address)
+    }
+
+    fn registered(&self, address: &MsgAddressInt) -> bool {
+        self.bc.get_account(address).and_then(|account| account.get_data()).is_some_and(|data| {
+            let mut slice = SliceData::load_cell(data).unwrap();
+            slice.move_by(32 + 16 + 8 + 256).unwrap();
+            slice.checked_drain_reference().unwrap();
+            slice.get_next_bit().unwrap()
+        })
+    }
+}
+
+/// Every weak key is refused when an agent registers a policy naming it, even
+/// next to a strong key that alone meets every threshold.
+#[test]
+fn registration_refuses_every_weak_controller_key() {
+    let mut f = Fixture::new();
+    let strong = SigningKey::from_bytes(&[0xc1; 32]);
+    for (i, weak) in weak_ed25519::weak_keys().into_iter().enumerate() {
+        let weak_policy = policy_of(
+            1,
+            1,
+            &[
+                (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
+                (weak, 1, ALL_PURPOSES, true),
+            ],
+        );
+        let nonce = [0xd0 + i as u8; 32];
+        let (result, address) = f.register_with(weak_policy, nonce, |register| {
+            signature_entries(vec![signed(&strong, register), (weak, [0u8; 64])])
+        });
+        result.expect_aborted().expect_exit_code(weak_admission_code(&weak));
+        assert!(!f.registered(&address), "weak key {i} must not leave a registered agent");
+    }
+    // The same strong key alone registers: the refusals above are the weak key's.
+    let strong_policy =
+        policy_of(1, 1, &[(strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true)]);
+    let (result, address) = f.register_with(strong_policy, [0xcf; 32], |register| {
+        signature_entries(vec![signed(&strong, register)])
+    });
+    result.expect_success();
+    assert!(f.registered(&address));
+}
+
+/// Every weak key is refused when an existing agent rotates to a policy naming it.
+#[test]
+fn policy_update_refuses_every_weak_controller_key() {
+    let mut f = Fixture::new();
+    let before = f.state().hash(0);
+    let strong = SigningKey::from_bytes(&[0xc2; 32]);
+    for weak in weak_ed25519::weak_keys() {
+        let weak_policy = policy_of(
+            1,
+            1,
+            &[
+                (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
+                (weak, 1, ALL_PURPOSES, true),
+            ],
+        );
+        let mut payload = BuilderData::new();
+        payload.checked_append_reference(weak_policy).unwrap();
+        let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 40, payload.into_cell().unwrap());
+        f.send(submit_body(
+            update.clone(),
+            signature_set(&f.old_key, &update),
+            signature_entries(vec![signed(&strong, &update), (weak, [0u8; 64])]),
+        ))
+        .expect_aborted()
+        .expect_exit_code(weak_admission_code(&weak));
+        assert_eq!(f.state().hash(0), before, "a refused policy must not be installed");
+    }
+}
+
+/// A recovery policy naming a weak key is refused when recovery is initiated.
+#[test]
+fn recovery_initiation_refuses_a_weak_controller_key() {
+    let mut f = Fixture::new();
+    let before = f.state().hash(0);
+    let weak = forgeable_weak_key();
+    let strong = SigningKey::from_bytes(&[0xc3; 32]);
+    let recovery_policy = policy_of(
+        1,
+        1,
+        &[
+            (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
+            (weak, 1, ALL_PURPOSES, true),
+        ],
+    );
+    let execute_after = u64::from(f.bc.now()) + 10;
+    let (initiate, forged) = forge_for(&weak, |nonce| {
+        let mut payload = BuilderData::new();
+        payload
+            .append_u64(execute_after)
+            .unwrap()
+            .checked_append_reference(recovery_policy.clone())
+            .unwrap();
+        f.build_action(INITIATE_RECOVERY, 1, 2, nonce, payload.into_cell().unwrap())
+    });
+    f.send(submit_body(
+        initiate.clone(),
+        signature_set(&f.old_key, &initiate),
+        signature_entries(vec![signed(&strong, &initiate), (weak, forged)]),
+    ))
+    .expect_aborted()
+    .expect_exit_code(ERR_WEAK_KEY);
+    assert_eq!(f.state().hash(0), before);
+}
+
+/// Proof of possession for a weak key proves nothing: a signature forged with
+/// no secret verifies under it, and the policy is still refused.
+#[test]
+fn a_forged_possession_signature_does_not_install_a_weak_key() {
+    let mut f = Fixture::new();
+    let before = f.state().hash(0);
+    let weak = forgeable_weak_key();
+    let strong = SigningKey::from_bytes(&[0xc4; 32]);
+    let weak_policy = policy_of(
+        1,
+        1,
+        &[
+            (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
+            (weak, 1, ALL_PURPOSES, true),
+        ],
+    );
+    let (update, forged) = forge_for(&weak, |nonce| {
+        let mut payload = BuilderData::new();
+        payload.checked_append_reference(weak_policy.clone()).unwrap();
+        f.build_action(UPDATE_AGENT_POLICY, 1, 2, nonce, payload.into_cell().unwrap())
+    });
+    f.send(submit_body(
+        update.clone(),
+        signature_set(&f.old_key, &update),
+        signature_entries(vec![signed(&strong, &update), (weak, forged)]),
+    ))
+    .expect_aborted()
+    .expect_exit_code(ERR_WEAK_KEY);
+    assert_eq!(f.state().hash(0), before, "a forged possession proof installed a weak key");
+}
+
+/// A stored policy that names a weak key -- one no action could have installed
+/// -- is refused when it is used, so a threshold met only by counting the weak
+/// key's forged signature authorizes nothing.
+#[test]
+fn a_stored_weak_key_does_not_count_toward_a_threshold() {
+    let mut f = Fixture::new();
+    let weak = forgeable_weak_key();
+    let strong = SigningKey::from_bytes(&[0xc5; 32]);
+    let second = SigningKey::from_bytes(&[0xc6; 32]);
+
+    // Positive control for the injection itself: a stored 2-of-2 of strong keys
+    // authorizes with both signatures and not with one.
+    f.install_policy(policy_of(
+        2,
+        1,
+        &[
+            (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
+            (second.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
+        ],
+    ));
+    let one = f.delegate_action(2, 50);
+    f.send(submit_body(one.clone(), signature_set(&strong, &one), empty_signatures()))
+        .expect_aborted()
+        .expect_exit_code(ERR_THRESHOLD);
+    let both = f.delegate_action(2, 51);
+    f.send(submit_body(
+        both.clone(),
+        signature_set_many(&[&strong, &second], &both),
+        empty_signatures(),
+    ))
+    .expect_success();
+    assert_eq!(f.state_position(), (1, 2));
+
+    // The same threshold where the second key is weak: the strong signature
+    // alone is short, and the weak key's forged signature must not fill the gap.
+    f.install_policy(policy_of(
+        2,
+        1,
+        &[
+            (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
+            (weak, 1, ALL_PURPOSES, true),
+        ],
+    ));
+    let before = f.state().hash(0);
+    let (counted, forged) = forge_for(&weak, |nonce| f.delegate_action(3, nonce));
+    f.send(submit_body(
+        counted.clone(),
+        signature_entries(vec![signed(&strong, &counted), (weak, forged)]),
+        empty_signatures(),
+    ))
+    .expect_aborted()
+    .expect_exit_code(ERR_WEAK_KEY);
+    assert_eq!(f.state().hash(0), before, "a forged weak signature completed a threshold");
+}
+
+/// Gas for the widest policy that registers in one transaction, every
+/// controller signing both the possession proof and the authorization.
+#[test]
+fn widest_policy_registration_gas() {
+    // Each controller costs a weak-key check in all three validations a
+    // registration runs, so the widest policy that fits one transaction's gas
+    // limit is narrower than the 64 the contract declares. Pin the widest that
+    // currently fits so a cost increase that narrows it further fails here.
+    const WIDEST_REGISTRABLE: u8 = 27;
+    let mut f = Fixture::new();
+    let (gas, limit, exit, registered) = registration_gas(&mut f, WIDEST_REGISTRABLE);
+    eprintln!("width {WIDEST_REGISTRABLE}: gas {gas} of {limit}, exit {exit}");
+    assert_eq!(exit, 0, "a {WIDEST_REGISTRABLE}-controller policy must still register");
+    assert!(registered);
+}
+
+/// Registers an agent whose policy has `width` controllers, each signing both
+/// the possession proof and the authorization, and returns the compute phase's
+/// gas used, gas limit, exit code, and whether the agent was registered.
+fn registration_gas(f: &mut Fixture, width: u8) -> (u64, u64, i32, bool) {
+    let keys: Vec<SigningKey> =
+        (0..width).map(|i| SigningKey::from_bytes(&[i.wrapping_add(1); 32])).collect();
+    let controllers: Vec<_> =
+        keys.iter().map(|key| (key.verifying_key().to_bytes(), 1, ALL_PURPOSES, true)).collect();
+    let policy = policy_of(u32::from(width), u32::from(width), &controllers);
+    let (result, address) = f.register_with(policy, [width; 32], |register| {
+        signature_entries(keys.iter().map(|key| signed(key, register)).collect())
+    });
+    match result.read_primary_description().compute_ph {
+        TrComputePhase::Vm(vm) => {
+            (vm.gas_used.as_u64(), vm.gas_limit.as_u64(), vm.exit_code, f.registered(&address))
+        }
+        TrComputePhase::Skipped(skipped) => panic!("compute skipped: {:?}", skipped.reason),
+    }
+}

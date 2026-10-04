@@ -1,4 +1,30 @@
 ;; Simple wallet smart contract
+;;
+;; An owner key anyone can sign for (strong-ed25519-key.fc) would sign as root or
+;; add an approval with no secret behind it. Such a key fails with exit code 45.
+;; create_init_state, which builds the initial data, refuses an owner set that
+;; contains one. The init message does not walk the set: it runs before
+;; accept_message on the external gas credit, which a full owner set exceeds,
+;; and accepting first would let anyone replay a failing init at the wallet's
+;; expense. So a weak key that reaches storage through a hand-built StateInit is
+;; refused where it would act instead: before its signature is checked, as root
+;; and as co-signer. The other owners keep working.
+
+#include "strong-ed25519-key.fc";
+
+() require_strong_owner_key(int public_key) impure inline {
+  throw_if(45, weak_ed25519_key?(public_key));
+}
+
+() require_strong_owner_keys(cell owner_infos) impure inline_ref {
+  int i = -1;
+  do {
+    (i, slice owner_info, int found) = owner_infos.udict_get_next?(8, i);
+    if (found) {
+      require_strong_owner_key(owner_info.preload_uint(256));
+    }
+  } until (~ found);
+}
 
 _ unpack_state() inline_ref {
   var ds = begin_parse(get_data());
@@ -40,7 +66,9 @@ _ unpack_owner_info(slice cs) inline_ref {
 
     (slice public_key, var found?) = public_keys.udict_get?(8, i);
     throw_unless(37, found?);
-    throw_unless(38, check_signature(hash, signature, public_key.preload_uint(256)));
+    int key = public_key.preload_uint(256);
+    require_strong_owner_key(key);
+    throw_unless(38, check_signature(hash, signature, key));
 
     int mask = (1 << i);
     int old_cnt_bits = cnt_bits;
@@ -129,6 +157,7 @@ _ unpack_owner_info(slice cs) inline_ref {
   (slice owner_info, var found?) = owner_infos.udict_get?(8, root_i);
   throw_unless(31, found?);
   (int public_key, int flood) = unpack_owner_info(owner_info);
+  require_strong_owner_key(public_key);
   throw_unless(32, check_signature(root_hash, root_signature, public_key));
 
   cell signatures = in_msg~load_dict();
@@ -160,7 +189,9 @@ _ unpack_owner_info(slice cs) inline_ref {
 
   throw_if(41, ~ found? & (cnt < k) & (bound + ((60 * 60) << 32) > query_id));
 
-  set_gas_limit(100000);
+  ;; Each co-signature costs a weak-key check on top of its signature check;
+  ;; this allowance keeps a bundle of root plus 24 co-signers inside one message.
+  set_gas_limit(150000);
 
   ifnot (found?) {
     owner_infos~udict_set_builder(8, root_i, pack_owner_info(public_key, flood));
@@ -226,6 +257,7 @@ int processed?(int query_id) method_id {
 }
 
 cell create_init_state(int wallet_id, int n, int k, cell owners_info) method_id {
+  require_strong_owner_keys(owners_info);
   return pack_state(new_dict(), owners_info, 0, k, n, wallet_id);
 }
 
@@ -262,7 +294,9 @@ cell get_public_keys() method_id {
   cell public_keys = get_public_keys();
   (slice public_key, var found?) = public_keys.udict_get?(8, root_i);
   throw_unless(31, found?);
-  throw_unless(32, check_signature(root_hash, root_signature, public_key.preload_uint(256)));
+  int root_key = public_key.preload_uint(256);
+  require_strong_owner_key(root_key);
+  throw_unless(32, check_signature(root_hash, root_signature, root_key));
 
   int mask = 1 << root_i;
 

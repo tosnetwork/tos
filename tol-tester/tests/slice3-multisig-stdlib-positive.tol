@@ -139,6 +139,60 @@ fun test_record_approval_increments_count(): int {
     return 0;
 }
 
+// The twelve keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
+// as loadUint(256) reads them.
+fun weakKeys(): array<int> {
+    var t: array<int> = [];
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000080);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    return t;
+}
+
+@method_id(107)
+fun test_weak_signer_keys_refused(): int {
+    val weak = weakKeys();
+    var i = 0;
+    var rejected = 0;
+    while (i < 12) {
+        val key = weak.get(i);
+        // admission into the signer set
+        try { multisigAddSigner(createEmptyDict(), key); } catch (code) { assert(code == MULTISIG_FUNC_THROW_WEAK_SIGNER) throw 171; rejected += 1; }
+        // a stored set that never went through multisigAddSigner
+        var stored = createEmptyDict();
+        stored.uDictSetBuilder(MULTISIG_SIGNER_KEY_BITS, key, beginCell().storeInt(-1, 1));
+        assert(multisigHasSigner(stored, key)) throw 172;
+        try { multisigRequireSigner(stored, key); } catch (code) { assert(code == MULTISIG_FUNC_THROW_WEAK_SIGNER) throw 173; rejected += 1; }
+        // an approval that would count toward the threshold
+        var proposal = MultisigProposal {
+            queryId: 1,
+            validUntil: 100,
+            approvalCount: 1,
+            approvals: multisigAddApproval(createEmptyDict(), 0x11),
+            executed: false,
+            actions: null,
+        };
+        try { proposal.recordApproval(key); } catch (code) { assert(code == MULTISIG_FUNC_THROW_WEAK_SIGNER) throw 174; rejected += 1; }
+        assert(proposal.approvalCount == 1) throw 175;
+        i += 1;
+    }
+    assert(rejected == 36) throw 176;
+
+    val err = multisigErrorForFuncThrow(MULTISIG_FUNC_THROW_WEAK_SIGNER, 0, 99);
+    assert(err.errorClass == ErrorClass.Authorization) throw 177;
+    assert(err.errorCode == MULTISIG_STDLIB_ERROR_WEAK_SIGNER) throw 178;
+    return 7;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -146,4 +200,5 @@ fun test_record_approval_increments_count(): int {
 @testcase | 104 | | 4
 @testcase | 105 | | 5
 @testcase | 106 | | 2
+@testcase | 107 | | 7
  */

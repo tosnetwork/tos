@@ -36,3 +36,21 @@ pub fn weak_keys() -> Vec<[u8; 32]> {
     .map(|hex| key(hex))
     .collect()
 }
+
+/// A signature under `public_key` over `message` that needs no secret, if this
+/// message admits one: R is one of the eight torsion encodings and S is zero,
+/// which verifies whenever R happens to equal -[k]A for k = H(R || A || message).
+/// Only a torsion `public_key` makes that likely; vary the message until it
+/// does. Accepted by the same cofactorless check the sandbox VM runs, so a
+/// returned signature is one CHKSIGNU accepts.
+pub fn forge(public_key: &[u8; 32], message: &[u8]) -> Option<[u8; 64]> {
+    use ed25519_dalek::Verifier;
+    let key = ed25519_dalek::VerifyingKey::from_bytes(public_key).ok()?;
+    weak_keys().into_iter().take(8).find_map(|commitment| {
+        let mut signature = [0u8; 64];
+        signature[..32].copy_from_slice(&commitment);
+        key.verify(message, &ed25519_dalek::Signature::from_bytes(&signature))
+            .is_ok()
+            .then_some(signature)
+    })
+}

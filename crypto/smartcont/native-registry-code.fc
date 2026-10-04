@@ -46,6 +46,12 @@ const int err::bad_transition = 2210;
 const int err::immutable_version = 2211;
 const int err::timelock = 2212;
 const int err::duplicate_signature = 2213;
+;; A policy names a controller key anyone can sign for (strong-ed25519-key.fc).
+;; Such a key would add weight to every threshold and prove possession of
+;; nothing, so the whole policy is refused wherever it is validated.
+const int err::weak_key = 2214;
+
+#include "strong-ed25519-key.fc";
 
 ;; data = magic:uint32 schema:uint16 object_kind:uint8 object_id:uint256
 ;;        ^config has_state:Bool [^state]
@@ -232,6 +238,7 @@ int required_purpose(int kind) inline {
     throw_unless(err::bad_policy, (key_hash > previous_key) & (key_hash == public_key) & (public_key != 0) &
       (weight > 0) & (weight <= max::controller_weight) & (purposes != 0) & ((purposes & (~ purpose::known_mask)) == 0) &
       (~ duplicate_pub));
+    throw_if(err::weak_key, weak_ed25519_key?(public_key));
     throw_unless(err::bad_policy,
       (recovery != 0) == ((purposes & purpose::recovery) != 0));
     pub_seen~udict_set_builder(256, public_key, begin_cell().store_uint(1, 1));

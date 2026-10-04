@@ -11,8 +11,8 @@
     "source_commit": "9f8e93e8cceef62fcb688d0ca84014753a2176a4",
     "arguments": ["-W", "<output.boc>", "-A", "-P", "-o", "<temporary.fif>"]
   },
-  "code_hash": "tvm-cell-sha256:600f2fda83462bc86a1c32af930c35a4fc8f80f1d2966f5593ceba217a91ffa0",
-  "boc_sha256": "sha256:e9845e6d7acda368f1d5ba8e7d32aa0f21022d36816ca33ec31e1b21348a6fcc",
-  "boc_bytes": 3763,
+  "code_hash": "tvm-cell-sha256:77a886903a88f965de350c14dd5869fc448290c88c05f23775c52c3c91838193",
+  "boc_sha256": "sha256:b05c42f8169b1eb16f6acf02adb2b8eb1061d5922307edab39515b94712adda7",
+  "boc_bytes": 4009,
   "artifact_base64": "crypto/smartcont/tos-service-native-registry-v1.boc.base64"
 }
