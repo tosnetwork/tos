@@ -2,9 +2,9 @@
 """Require version-boundary regressions to detect early and late activation."""
 import argparse
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
