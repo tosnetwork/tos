@@ -1103,6 +1103,9 @@ void answer_error(HttpStatusCode code, std::string reason,
       case status_bad_gateway:
         reason = "Bad Gateway";
         break;
+      case status_service_unavailable:
+        reason = "Service Unavailable";
+        break;
       case status_gateway_timeout:
         reason = "Gateway Timeout";
         break;

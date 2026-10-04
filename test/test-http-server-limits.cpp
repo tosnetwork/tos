@@ -35,10 +35,12 @@
 #include <thread>
 #include <unistd.h>
 
+#include "http/http-client.h"
 #include "http/http-inbound-connection.h"
 #include "http/http-server.h"
 #include "http/http.h"
 #include "td/actor/actor.h"
+#include "td/utils/Time.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/tests.h"
 #include "validator-engine/json-rpc-http-policy.h"
@@ -890,4 +892,102 @@ TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
     ASSERT_TRUE(listener_is_up(port));
     ASSERT_TRUE(tcp_connects(other, port));
   });
+}
+
+namespace {
+
+// A backend that completes TCP handshakes (the kernel does, from the listen
+// backlog) and never answers.
+struct SilentBackend {
+  int fd = -1;
+  int port = 0;
+  SilentBackend() {
+    fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(fd >= 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    CHECK(::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
+    CHECK(::listen(fd, 64) == 0);
+    socklen_t len = sizeof(addr);
+    CHECK(::getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) == 0);
+    port = ntohs(addr.sin_port);
+  }
+  ~SilentBackend() {
+    ::close(fd);
+  }
+};
+
+std::unique_ptr<tos::http::HttpRequest> get_request() {
+  auto request = tos::http::HttpRequest::create("GET", "/", "HTTP/1.1").move_as_ok();
+  request->add_header({"Host", "backend"});
+  request->complete_parse_header().ensure();
+  return request;
+}
+
+class NoopClientCallback : public tos::http::HttpClient::Callback {
+ public:
+  void on_ready() override {
+  }
+  void on_stop_ready() override {
+  }
+};
+
+}  // namespace
+
+TEST(HttpMultiClient, connections_are_capped_and_a_silent_backend_releases_them_at_the_deadline) {
+  SilentBackend backend;
+  td::IPAddress addr;
+  addr.init_ipv4_port("127.0.0.1", backend.port).ensure();
+
+  td::actor::Scheduler scheduler({1});
+  td::actor::ActorOwn<tos::http::HttpClient> client;
+  std::vector<td::uint32> codes;
+  std::vector<double> answered_after;
+  auto start = td::Time::now();
+  auto send = [&](double deadline) {
+    auto request = get_request();
+    auto payload = request->create_empty_payload().move_as_ok();
+    td::actor::send_closure(
+        client, &tos::http::HttpClient::send_request, std::move(request), std::move(payload),
+        td::Timestamp::in(deadline),
+        [&](td::Result<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>>
+                R) {
+          codes.push_back(R.is_ok() ? R.ok().first->code() : 0);
+          answered_after.push_back(td::Time::now() - start);
+        });
+  };
+  scheduler.run_in_context([&] {
+    client = tos::http::HttpClient::create_multi("", addr, 2, 1, std::make_shared<NoopClientCallback>());
+    // Two take the connections; the third is refused at once.
+    send(0.5);
+    send(0.5);
+    send(0.5);
+  });
+  auto wait_for = [&](size_t n, double limit) {
+    auto until = td::Timestamp::in(limit);
+    while (codes.size() < n && !until.is_in_past()) {
+      scheduler.run(0.05);
+    }
+  };
+  wait_for(3, 10.0);
+  ASSERT_EQ(codes.size(), static_cast<size_t>(3));
+  ASSERT_EQ(codes[0], static_cast<td::uint32>(503));
+  ASSERT_TRUE(answered_after[0] < 0.4);
+  // The silent backend never answers: both expire at their deadline as 504.
+  ASSERT_EQ(codes[1], static_cast<td::uint32>(504));
+  ASSERT_EQ(codes[2], static_cast<td::uint32>(504));
+  // Their connections are released, so a new request gets one again.
+  scheduler.run(0.2);
+  scheduler.run_in_context([&] { send(0.3); });
+  wait_for(4, 10.0);
+  ASSERT_EQ(codes.size(), static_cast<size_t>(4));
+  ASSERT_EQ(codes[3], static_cast<td::uint32>(504));
+
+  scheduler.run_in_context([&] {
+    client.reset();
+    td::actor::SchedulerContext::get().stop();
+  });
+  while (scheduler.run(1)) {
+  }
 }

@@ -79,6 +79,9 @@ void HttpMultiClientImpl::send_request(
     }
   }
 
+  if (open_connections_ >= max_connections_) {
+    return answer_error(HttpStatusCode::status_service_unavailable, "", std::move(promise));
+  }
   auto fd = td::SocketFd::open(addr_);
   if (fd.is_error()) {
     return answer_error(HttpStatusCode::status_bad_gateway, "", std::move(promise));
@@ -92,12 +95,15 @@ void HttpMultiClientImpl::send_request(
     void on_ready() override {
     }
 
+    // Called once, when the connection actor is torn down.
     void on_stop_ready() override {
+      td::actor::send_closure(id_, &HttpMultiClientImpl::connection_closed);
     }
 
    private:
     td::actor::ActorId<HttpMultiClientImpl> id_;
   };
+  open_connections_++;
   auto conn =
       td::actor::create_actor<HttpOutboundConnection>(td::actor::ActorOptions().with_name("outconn").with_poll(),
                                                       fd.move_as_ok(), std::make_shared<Cb>(actor_id(this)))
@@ -105,6 +111,14 @@ void HttpMultiClientImpl::send_request(
   request->set_keep_alive(false);
   td::actor::send_closure(conn, &HttpOutboundConnection::send_query, std::move(request), std::move(payload), timeout,
                           std::move(promise));
+}
+
+void HttpMultiClientImpl::connection_closed() {
+  if (open_connections_ == 0) {
+    LOG(ERROR) << "HTTP multi client: a connection closed that was never counted";
+    return;
+  }
+  open_connections_--;
 }
 
 td::actor::ActorOwn<HttpClient> HttpClient::create(std::string domain, td::IPAddress addr,

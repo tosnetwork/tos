@@ -59,6 +59,11 @@
 #endif
 
 class RldpHttpProxy;
+
+// A forwarded request and its response, end to end, must finish within this;
+// a backend that stops answering then releases its connection.
+constexpr double kHttpForwardTimeout = 60.0;
+
 class HttpRemote : public td::actor::Actor {
  public:
   struct Query {
@@ -112,7 +117,7 @@ class HttpRemote : public td::actor::Actor {
             }
           });
       td::actor::send_closure(client_, &tos::http::HttpClient::send_request, std::move(request), std::move(payload),
-                              td::Timestamp::never(), std::move(P));
+                              td::Timestamp::in(kHttpForwardTimeout), std::move(P));
     } else {
       tos::http::answer_error(tos::http::HttpStatusCode::status_bad_request, "", std::move(promise));
     }

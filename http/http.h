@@ -38,6 +38,7 @@ enum HttpStatusCode : td::uint32 {
   status_method_not_allowed = 405,
   status_internal_server_error = 500,
   status_bad_gateway = 502,
+  status_service_unavailable = 503,
   status_gateway_timeout = 504
 };
 
