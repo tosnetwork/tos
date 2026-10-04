@@ -930,6 +930,15 @@ target_include_directories(test-adnl-ext-input-budget PRIVATE ${CMAKE_CURRENT_SO
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-adnl-ext-input-budget PRIVATE adnl dht keyring keys tl_api tdutils tdactor)
 
+# Measurement tool, not a gate: apply completion when the wallet index reads a
+# block back from the database, against the same apply with no index.
+add_executable(test-apply-block-readback-latency test/validator/apply-block-readback-latency.cpp
+  validator-engine/wallet-index.cpp validator-engine/wallet-index-writer.cpp)
+target_include_directories(test-apply-block-readback-latency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-apply-block-readback-latency PRIVATE validator-disk validator-common validator-db
+                      tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
