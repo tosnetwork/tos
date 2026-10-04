@@ -19,6 +19,14 @@
 # node's own configuration and keys (config.json, keyring/, tos-global.config)
 # and an empty lost+found. A snapshot is never merged into existing chain data.
 #
+# Prerequisite: this script must be the database's only writer for the whole
+# import. Stop the validator and any other importer, and let no other
+# container write the database until the script exits. The database is checked
+# again immediately before installation, which detects a write that happened
+# while the archive was staged; it does not make the installation atomic
+# against a writer that is still running, and it does not recover from a crash
+# part-way through the installation.
+#
 # Environment (all set by the operator):
 #   SNAPSHOT_IMPORT            "1" or "true" to import. Import is off by default.
 #   DUMP_URL                   https:// (or file://) location of the .tar.lz archive.
@@ -75,8 +83,9 @@ is_reserved() {
 # Refuse unless the database holds nothing but NEW_DB_ENTRIES, each of the
 # expected kind. Runs before the download and again immediately before the
 # install, so content that appears while the archive is staged is not merged.
+# The optional argument is appended to the refusal for unexpected content.
 require_new_database() {
-  local entry name
+  local context="${1:-}" entry name
   while IFS= read -r -d '' entry; do
     name="${entry##*/}"
     case "$name" in
@@ -93,7 +102,7 @@ require_new_database() {
           fail "database entry lost+found is not an empty directory; import only into a new database"
         ;;
       *)
-        fail "the database directory is not new: it contains $name; a snapshot is imported only into a database holding nothing but ${NEW_DB_ENTRIES[*]}"
+        fail "the database directory is not new: it contains $name; a snapshot is imported only into a database holding nothing but ${NEW_DB_ENTRIES[*]}$context"
         ;;
     esac
   done < <(find "$DB_DIR" -mindepth 1 -maxdepth 1 -print0)
@@ -170,6 +179,7 @@ archive="$work/snapshot.tar.lz"
 extract="$work/extract"
 mkdir "$extract"
 
+log "the import requires exclusive write access to the database: stop the validator and any other importer, and let no other container write it until the import ends"
 log "downloading $DUMP_URL"
 curl --fail --silent --show-error --location --proto '=https,file' --proto-redir '=https' \
   --retry 10 --retry-delay 30 --output "$archive" "$DUMP_URL" ||
@@ -237,7 +247,7 @@ linked="$(find "$extract" -type f -links +1 -print -quit)"
 
 # ---- Install: move verified entries into place, then write the marker.
 
-require_new_database
+require_new_database "; it appeared while the snapshot was staged, so something else is writing this database. The import requires exclusive write access to the database: stop the validator and any other importer, and let no other container write it until the import ends"
 for entry in "${entries[@]}"; do
   mv -T -- "$entry" "$DB_DIR/${entry##*/}" || fail "cannot move ${entry##*/} into the database"
 done

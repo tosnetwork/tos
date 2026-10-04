@@ -132,6 +132,15 @@ a digest meant for one network from being used on a node configured for
 another. It does not authenticate the global config; the node trusts that
 config as configured.
 
+**Prerequisite: the import must be the database's only writer.** Stop the
+validator and any other importer before the import, and make sure no other
+container mounts the database volume read-write until it ends; in Kubernetes,
+run one replica per volume. The script checks the database again immediately
+before installing, which detects a write that happened while the archive was
+staged and refuses. That check does not make the installation atomic against
+a writer that is still running, and nothing recovers an installation
+interrupted by a crash: start again from a new database.
+
 The import script (`docker/import-snapshot.sh`) then:
 
 - refuses to start when `DUMP_URL` is set without `SNAPSHOT_IMPORT=1`, or when

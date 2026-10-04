@@ -478,6 +478,15 @@ class ImportSnapshotTest(unittest.TestCase):
         self.assert_refused(
             result, "the database directory is not new: it contains appeared", before
         )
+        # The refusal names the prerequisite the operator broke.
+        self.assertIn("appeared while the snapshot was staged", result.stderr)
+        self.assertIn("requires exclusive write access to the database", result.stderr)
+
+    def test_import_states_the_exclusive_writer_prerequisite(self) -> None:
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("stop the validator and any other importer", result.stdout)
 
     # ---- markers
 
