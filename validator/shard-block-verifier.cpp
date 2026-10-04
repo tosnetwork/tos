@@ -102,7 +102,8 @@ void ShardBlockVerifier::alarm() {
     }
     for (const auto& key : subscriptions_.recovery().take_newly_unsupported()) {
       LOG(ERROR) << "Trusted shard block retainer " << key.first << " for " << key.second.to_str()
-                 << " never acknowledges a replay: it predates confirmation recovery and must be upgraded";
+                 << " has not acknowledged a replay: recovery support is not confirmed; a retainer "
+                    "that predates confirmation recovery must be upgraded";
     }
     send_subscribe_at_ = td::Timestamp::in(kShardBlockVerifierSubscribePeriod);
   }

@@ -158,8 +158,11 @@ class ShardBlockRetainerSubscriptions {
 // Recovery a dropped confirmation started, with no wait depending on it, is
 // given up after kMaxAttempts failed or unacknowledged attempts; a later wait
 // for that block starts it again. A subscription whose retainer answers
-// kMaxUnacknowledged times without acknowledging is reported as unsupported:
-// that retainer predates the resend flag and must be upgraded.
+// kMaxUnacknowledged times without acknowledging is reported as unsupported.
+// That establishes only that recovery support is not confirmed -- an old
+// retainer is the likely cause, and must be upgraded. Replaying the whole
+// shard every round is rate-limited but its cost grows with retained history
+// and subscriber count; it is not a measured CPU or bandwidth bound.
 template <class Key>
 class ShardBlockSubscriptionRecovery {
  public:
