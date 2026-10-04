@@ -282,7 +282,9 @@ CASES = [
         "state-limit-unchecked",
         "a state above the chain's limit is stored anyway",
         EXECUTOR,
-        "        if !is_special && !check_account_size_limits(limits, &mut acc_copy)? {",
+        "        if !is_special\n"
+        "            && !check_account_size_limits(limits, self.config().global_version(), &mut acc_copy)?\n"
+        "        {",
         "        if false {",
         STATE_LIMIT_TEST,
         ATOMICITY_SUITE,
