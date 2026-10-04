@@ -26,17 +26,22 @@
 // rather than drop it, whatever caused the removal. The test forces the
 // eviction that a remote peer cannot, and checks the query is answered.
 //
-// Packet delivery is suppressed throughout so the query cannot complete on
-// its own and every answer observed comes from the removal path.
+// Before any of that, a control with delivery on shows that one connection
+// carries several queries to their answers, so the silence later is the
+// suppressed network and not a stalled connection. Packet delivery is then
+// suppressed so the query cannot complete on its own and every answer
+// observed comes from the removal path.
+
+#include <cstdlib>
+#include <functional>
 
 #include "adnl/adnl-test-loopback-implementation.h"
 #include "adnl/adnl.h"
 #include "keyring/keyring.h"
 #include "rldp2/rldp.h"
+#include "td/utils/Time.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/signals.h"
-
-#include <cstdlib>
 
 namespace {
 
@@ -47,6 +52,19 @@ tos::adnl::AdnlNodeIdShort fabricated_peer(td::uint32 n) {
   bits.set_zero();
   bits.as_slice().copy_from(td::Slice{reinterpret_cast<const td::uint8 *>(&n), sizeof(n)});
   return tos::adnl::AdnlNodeIdShort{bits};
+}
+
+// Scheduler::run(timeout) is one pass over the actors that are ready now,
+// waiting at most `timeout` for some to become ready; it is not "run for
+// `timeout` seconds". An actor that yields is queued again and runs only in a
+// later pass -- and the RLDP2 connection actor yields after every send, so a
+// harness that calls run() once per phase lets each connection handle one
+// send and nothing more. Run passes until the deadline, or until `done`.
+void run_for(td::actor::Scheduler &scheduler, double seconds, const std::function<bool()> &done = {}) {
+  auto deadline = td::Timestamp::in(seconds);
+  while (!deadline.is_in_past() && !(done && done())) {
+    scheduler.run(0.001);
+  }
 }
 
 }  // namespace
@@ -93,7 +111,54 @@ int main() {
     td::actor::send_closure(rldp, &tos::rldp2::Rldp::add_id, dst);
     td::actor::send_closure(network_manager, &tos::adnl::TestLoopbackNetworkManager::add_node_id, src, true, true);
     td::actor::send_closure(network_manager, &tos::adnl::TestLoopbackNetworkManager::add_node_id, dst, true, true);
-    // Nothing is delivered, so the query below can never complete by itself.
+
+    class Answerer : public tos::adnl::Adnl::Callback {
+     public:
+      void receive_message(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice) override {
+      }
+      void receive_query(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice data,
+                         td::Promise<td::BufferSlice> promise) override {
+        promise.set_value(td::BufferSlice(PSLICE() << "answer to " << data.as_slice()));
+      }
+    };
+    td::actor::send_closure(adnl, &tos::adnl::Adnl::subscribe, dst, "ask", std::make_unique<Answerer>());
+  });
+
+  auto fail = [&](td::Slice what) {
+    LOG(ERROR) << "FAILED: " << what;
+    td::rmrf(db_root).ignore();
+    std::exit(1);
+  };
+
+  // The control: several queries in one burst over one connection, every one
+  // answered, with delivery on.
+  constexpr int kControlQueries = 8;
+  int control_answered = 0;
+  int control_wrong = 0;
+  scheduler.run_in_context([&] {
+    for (int i = 0; i < kControlQueries; i++) {
+      auto question = "ask" + std::to_string(i);
+      td::actor::send_closure(rldp, &tos::rldp2::Rldp::send_query_ex, src, dst, std::string("control"),
+                              td::PromiseCreator::lambda([&, question](td::Result<td::BufferSlice> R) {
+                                if (R.is_ok() && R.ok().as_slice() == td::Slice("answer to " + question)) {
+                                  ++control_answered;
+                                } else {
+                                  ++control_wrong;
+                                }
+                              }),
+                              td::Timestamp::in(30.0), td::BufferSlice(question), 1 << 20);
+    }
+  });
+  run_for(scheduler, 20.0, [&] { return control_answered + control_wrong == kControlQueries; });
+  LOG(ERROR) << "control: " << control_answered << " of " << kControlQueries << " queries answered, " << control_wrong
+             << " wrong or failed";
+  if (control_answered != kControlQueries || control_wrong != 0) {
+    fail("one connection did not carry a burst of queries to their answers");
+  }
+
+  // Nothing is delivered from here on, so the query below can never complete
+  // by itself.
+  scheduler.run_in_context([&] {
     td::actor::send_closure(network_manager, &tos::adnl::TestLoopbackNetworkManager::set_loss_probability, 1.0);
   });
 
@@ -109,7 +174,7 @@ int main() {
                             // eviction and not from the query's own timeout.
                             td::Timestamp::in(100000.0), td::BufferSlice("hello"), 1 << 20);
   });
-  scheduler.run(0.05);
+  run_for(scheduler, 0.05);
 
   // A flood of the shape a remote peer can produce: connections whose expiry
   // is one connection timeout from now, the same as an inbound message part
@@ -119,13 +184,7 @@ int main() {
       td::actor::send_closure(rldp, &tos::rldp2::Rldp::send_message, src, fabricated_peer(i), td::BufferSlice("x"));
     }
   });
-  scheduler.run(0.5);
-
-  auto fail = [&](td::Slice what) {
-    LOG(ERROR) << "FAILED: " << what;
-    td::rmrf(db_root).ignore();
-    std::exit(1);
-  };
+  run_for(scheduler, 0.5);
 
   bool connection_gone = false;
   bool stats_answered = false;
@@ -140,7 +199,7 @@ int main() {
                                          << " evicted, " << stats.pending_queries << " queries still pending";
                             }));
   });
-  scheduler.run(0.05);
+  run_for(scheduler, 0.05);
 
   if (!stats_answered) {
     fail("the node never answered the connection stats query");
@@ -168,7 +227,7 @@ int main() {
                               td::Timestamp::in(1000000.0), td::BufferSlice("x"));
     }
   });
-  scheduler.run(0.5);
+  run_for(scheduler, 0.5);
 
   size_t pending_after = 0;
   bool second_stats = false;
@@ -180,7 +239,7 @@ int main() {
                               second_stats = true;
                             }));
   });
-  scheduler.run(0.05);
+  run_for(scheduler, 0.05);
   if (!second_stats) {
     fail("the node never answered the second connection stats query");
   }
@@ -209,7 +268,7 @@ int main() {
                                 answered_stats = true;
                               }));
     });
-    scheduler.run(0.05);
+    run_for(scheduler, 0.05);
     if (!answered_stats) {
       fail(PSLICE() << "the node never answered the connection stats query " << what);
     }
@@ -240,7 +299,7 @@ int main() {
                               td::Timestamp::in(10000000.0), td::BufferSlice("x"), 1 << 20);
     }
   });
-  scheduler.run(1.0);
+  run_for(scheduler, 1.0);
   auto pending_on_one_peer = pending_now("after flooding one peer");
   LOG(ERROR) << "after flooding one peer: " << pending_on_one_peer << " pending, " << refused_by_peer_bound
              << " refused by the per-peer bound, " << refused_otherwise << " refused otherwise";
@@ -271,7 +330,7 @@ int main() {
       }
     }
   });
-  scheduler.run(1.0);
+  run_for(scheduler, 1.0);
 
   auto pending_at_cap = pending_now("after flooding many peers");
   LOG(ERROR) << "after flooding queries: " << pending_at_cap << " pending, " << refused << " refused";
