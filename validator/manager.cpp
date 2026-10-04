@@ -1033,6 +1033,16 @@ void ValidatorManagerImpl::add_cached_block_data(BlockIdExt block_id, td::Buffer
                             << kMaxCandidateDataSize << " bytes";
     return;
   }
+  if (stored == CandidateDataCache<BlockIdExt>::PutResult::Full) {
+    // Allocations still held by asynchronous work fill the cache's budget.
+    // Not caching is never a verdict on the block: every reader of these
+    // caches falls back to the normal path on a miss (download_block,
+    // download_block_proof_link, the candidate DB), and pending finality
+    // evidence waits within its own deadline for the data to arrive.
+    VLOG(VALIDATOR_DEBUG) << "not caching block data for " << block_id.to_str()
+                          << ": cached data still held by pending work fills the budget";
+    return;
+  }
   if (stored != CandidateDataCache<BlockIdExt>::PutResult::Stored) {
     return;
   }

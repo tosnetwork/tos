@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -25,7 +26,7 @@ struct ShardBlockConfirmationLimits {
   // register at most that much shard progress. A confirmation further ahead of
   // this node's masterchain view than 8 blocks for each of
   // kTolerableMasterchainLag masterchain blocks names a block this node cannot
-  // need before it has caught up. It is deferred, not counted: a verifier sends
+  // need before it has caught up. It is held, not counted: a verifier sends
   // each confirmation once, so a refused genuine one would otherwise be lost.
   static constexpr BlockSeqno kUnregisteredChainLimit = 8;
   static constexpr BlockSeqno kTolerableMasterchainLag = 16;
@@ -35,11 +36,27 @@ struct ShardBlockConfirmationLimits {
   std::size_t max_bytes = std::size_t{8} << 20;
   std::size_t max_entries_per_peer = 4096;
   std::size_t max_bytes_per_peer = std::size_t{2} << 20;
-  // Confirmations held back for being beyond the lookahead, per peer and in
-  // total. Each holds one block id; past these the newest is refused.
+  // Confirmations held for a later retry because they were beyond the
+  // lookahead or over a budget, per peer and in total. Each holds one block
+  // id. Past these the newest is dropped and its peer is asked to send its
+  // confirmations again (see kShardBlockVerifierResendFlag).
   std::size_t max_deferred_per_peer = 1024;
   std::size_t max_deferred = 4096;
 };
+
+// Subscription flag asking a shard block retainer to send every confirmation
+// it still holds for the shard again, as it does for a new subscriber. A
+// verifier sets it after it had to drop confirmations from that retainer.
+inline constexpr td::uint32 kShardBlockVerifierResendFlag = 1;
+// The least interval between two resends a retainer makes to one subscriber
+// on request; a new subscription is always answered.
+inline constexpr double kShardBlockRetainerMinResendInterval = 5.0;
+
+// Whether a retainer answers a subscription by sending every confirmation it
+// holds for the shard.
+inline bool shard_block_retainer_sends_retained(bool new_subscription, td::uint32 flags, bool resend_allowed) {
+  return new_subscription || ((flags & kShardBlockVerifierResendFlag) != 0 && resend_allowed);
+}
 
 // The blocks awaited or confirmed by trusted shard-block verifiers, and who
 // confirmed them. Owned by one actor; not thread-safe.
@@ -50,9 +67,13 @@ struct ShardBlockConfirmationLimits {
 // peer confirmation creates an entry only within the lookahead and within its
 // own and the global entry and byte budgets; the entry is charged to that peer
 // until it is pruned, which happens once the masterchain registers the block's
-// shard at or past it. A confirmation beyond the lookahead is held, within
-// bounded per-peer and global queues, and offered again as the masterchain
-// advances.
+// shard at or past it. A confirmation that cannot create its entry yet,
+// because it is beyond the lookahead or over a budget, is held within bounded
+// per-peer and global queues and offered again whenever that may have changed:
+// the masterchain advances, entries are released, the configuration changes,
+// or a local wait creates the entry. If the queues overflow, the dropped
+// confirmation's peer is recorded so the owner can ask it to send its
+// confirmations again.
 class ShardBlockConfirmations {
  public:
   using Peer = adnl::AdnlNodeIdShort;
@@ -61,15 +82,15 @@ class ShardBlockConfirmations {
   using RegisteredSeqno = std::function<std::optional<BlockSeqno>(const BlockIdExt &)>;
 
   enum class ConfirmResult {
-    Accepted,         // counted; the block still needs more confirmations
-    Confirmed,        // counted, and it completed the required confirmations
-    Duplicate,        // this peer already confirmed the block
-    UnknownSource,    // the peer is not trusted for the block's shard
-    NotTracked,       // the shard is not configured, or the block is outdated
-    Deferred,         // too far ahead of the registered shard top, or the shard is unknown; held for later
-    BeyondLookahead,  // as Deferred, but the deferral queue is full; dropped
-    PeerBudget,       // the peer's entry or byte budget is exhausted
-    GlobalBudget,     // the global entry or byte budget is exhausted
+    Accepted,       // counted; the block still needs more confirmations
+    Confirmed,      // counted, and it completed the required confirmations
+    Duplicate,      // this peer already confirmed the block
+    UnknownSource,  // the peer is not trusted for the block's shard
+    NotTracked,     // the shard is not configured, or the block is outdated
+    Deferred,       // too far ahead of the registered shard top, or the shard is unknown; held for retry
+    PeerBudget,     // the peer's entry or byte budget is exhausted; held for retry
+    GlobalBudget,   // the global entry or byte budget is exhausted; held for retry
+    Dropped,        // could not be held: the retry queues are full; the peer is asked to resend
   };
 
   ShardBlockConfirmations(RegisteredSeqno registered, ShardBlockConfirmationLimits limits = {})
@@ -138,11 +159,18 @@ class ShardBlockConfirmations {
     td::MultiPromise mp;
     auto ig = mp.init_guard();
     ig.add_promise(std::move(promise));
+    bool created = false;
     for (const BlockIdExt &block_id : blocks) {
+      bool existed = blocks_.contains(block_id);
       BlockInfo *info = get_or_create_local(block_id);
+      created = created || (info != nullptr && !existed);
       if (info != nullptr && !info->confirmed) {
         info->promises.push_back(ig.get_promise());
       }
+    }
+    if (created) {
+      // Held confirmations for these blocks count now that their entries exist.
+      retry_deferred();
     }
   }
 
@@ -163,8 +191,9 @@ class ShardBlockConfirmations {
         return ConfirmResult::UnknownSource;
       }
       auto admission = admit(src, block_id);
-      if (admission == ConfirmResult::BeyondLookahead) {
-        return defer(src, block_id);
+      if (admission == ConfirmResult::Deferred || admission == ConfirmResult::PeerBudget ||
+          admission == ConfirmResult::GlobalBudget) {
+        return hold(src, block_id, admission);
       }
       if (admission != ConfirmResult::Accepted) {
         return admission;
@@ -174,9 +203,8 @@ class ShardBlockConfirmations {
     return count_confirmation(*info, src);
   }
 
-  // Drops every entry the masterchain now registers, completing its waiters,
-  // then offers again the deferred confirmations the masterchain's progress
-  // brought within the lookahead.
+  // Drops every entry the masterchain now registers, completing its waiters
+  // and releasing its charge, then offers the held confirmations again.
   void prune_registered() {
     for (auto it = blocks_.begin(); it != blocks_.end();) {
       if (is_outdated(it->first)) {
@@ -206,6 +234,11 @@ class ShardBlockConfirmations {
   std::size_t peer_bytes(const Peer &peer) const {
     auto it = peers_.find(peer);
     return it == peers_.end() ? 0 : it->second.bytes;
+  }
+  // Peers whose confirmations were dropped since the last call, so the owner
+  // can ask them to send their confirmations again.
+  std::set<Peer> take_resend_requests() {
+    return std::exchange(resend_requests_, {});
   }
   std::size_t deferred() const {
     return deferred_total_;
@@ -289,13 +322,13 @@ class ShardBlockConfirmations {
     }
     auto top = registered_(block_id);
     if (!top) {
-      return ConfirmResult::BeyondLookahead;
+      return ConfirmResult::Deferred;
     }
     if (*top >= block_id.seqno()) {
       return ConfirmResult::NotTracked;
     }
     if (block_id.seqno() - *top > limits_.max_lookahead) {
-      return ConfirmResult::BeyondLookahead;
+      return ConfirmResult::Deferred;
     }
     std::size_t charge = entry_charge(config_->shards[static_cast<std::size_t>(shard_idx)].trusted_nodes.size());
     Usage peer;
@@ -366,28 +399,33 @@ class ShardBlockConfirmations {
     info.charge = 0;
   }
 
-  ConfirmResult defer(const Peer &src, const BlockIdExt &block_id) {
+  // Holds a confirmation that could not create its entry, for `reason`, or
+  // drops it and records its peer when the queues are full.
+  ConfirmResult hold(const Peer &src, const BlockIdExt &block_id, ConfirmResult reason) {
     auto &queue = deferred_[src];
     for (const auto &held : queue) {
       if (held == block_id) {
-        return ConfirmResult::Deferred;
+        return reason;
       }
     }
     if (queue.size() >= limits_.max_deferred_per_peer || deferred_total_ >= limits_.max_deferred) {
       if (queue.empty()) {
         deferred_.erase(src);
       }
-      return ConfirmResult::BeyondLookahead;
+      resend_requests_.insert(src);
+      return ConfirmResult::Dropped;
     }
     queue.push_back(block_id);
     ++deferred_total_;
-    return ConfirmResult::Deferred;
+    return reason;
   }
 
-  // Offers every deferred confirmation again: counted ones and ones no longer
-  // relevant leave the queue, ones still beyond the lookahead stay.
+  // Offers every held confirmation again, in arrival order. confirm() counts
+  // the ones that can now create or reach their entry, holds again the ones
+  // still refused for the lookahead or a budget, and discards the ones no
+  // longer relevant (outdated, untracked, untrusted).
   void retry_deferred() {
-    if (config_.is_null()) {
+    if (config_.is_null() || deferred_total_ == 0) {
       return;
     }
     auto held = std::move(deferred_);
@@ -427,6 +465,7 @@ class ShardBlockConfirmations {
   Usage total_;
   std::map<Peer, std::vector<BlockIdExt>> deferred_;
   std::size_t deferred_total_ = 0;
+  std::set<Peer> resend_requests_;
 };
 
 }  // namespace tos::validator

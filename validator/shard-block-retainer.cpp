@@ -16,6 +16,7 @@
 */
 #include "block/validator-session-members.h"
 #include "common/delay.h"
+#include "validator/shard-block-confirmations.h"
 
 #include "shard-block-retainer.hpp"
 
@@ -73,7 +74,7 @@ void ShardBlockRetainer::update_masterchain_state(td::Ref<MasterchainState> stat
     }
     LOG(INFO) << "Updating validator set: " << validator_adnl_ids_.size() << " adnl ids";
     for (auto it = subscribers_.begin(); it != subscribers_.end();) {
-      if (it->second.is_in_past()) {
+      if (it->second.ttl.is_in_past()) {
         LOG(INFO) << "Unsubscribed " << it->first.first << " for " << it->first.second.to_str() << " (expired)";
         it = subscribers_.erase(it);
         continue;
@@ -130,18 +131,22 @@ void ShardBlockRetainer::process_query(adnl::AdnlNodeIdShort src, td::BufferSlic
     promise.set_error(td::Status::Error(PSTRING() << "unauthorized src " << src));
     return;
   }
-  td::Timestamp& ttl = subscribers_[{src, shard}];
-  if (!ttl) {
+  Subscription& subscription = subscribers_[{src, shard}];
+  const bool new_subscription = !subscription.ttl;
+  const bool resend_allowed = !subscription.resend_allowed_at || subscription.resend_allowed_at.is_in_past();
+  if (shard_block_retainer_sends_retained(new_subscription, query->flags_, resend_allowed)) {
     std::vector<BlockIdExt> blocks;
     for (const BlockIdExt& block : confirmed_blocks_) {
       if (shard_intersects(block.shard_full(), shard)) {
         blocks.push_back(block);
       }
     }
-    LOG(INFO) << "New subscriber " << src << " for " << shard.to_str() << ", sending " << blocks.size() << " blocks";
+    LOG(INFO) << (new_subscription ? "New subscriber " : "Resend requested by ") << src << " for " << shard.to_str()
+              << ", sending " << blocks.size() << " blocks";
     send_confirmations(src, std::move(blocks));
+    subscription.resend_allowed_at = td::Timestamp::in(kShardBlockRetainerMinResendInterval);
   }
-  ttl = td::Timestamp::in(SUBSCRIPTION_TTL);
+  subscription.ttl = td::Timestamp::in(SUBSCRIPTION_TTL);
   promise.set_value(create_serialize_tl_object<tos_api::shardBlockVerifier_subscribed>(0));
 }
 
@@ -168,7 +173,7 @@ void ShardBlockRetainer::confirm_block(BlockIdExt block_id) {
   }
   size_t sent = 0;
   for (auto it = subscribers_.begin(); it != subscribers_.end();) {
-    if (it->second.is_in_past()) {
+    if (it->second.ttl.is_in_past()) {
       LOG(INFO) << "Unsubscribed " << it->first.first << " for " << it->first.second.to_str() << " (expired)";
       it = subscribers_.erase(it);
       continue;

@@ -23,23 +23,32 @@ struct CandidateDataCacheLimits {
   std::size_t max_entry_size;
 };
 
-// Least-recently-used block data keyed by block id, bounded both by entry count
-// and by the bytes of the allocations its entries keep alive.
+// Least-recently-used block data keyed by block id, bounded by entry count and
+// by the bytes of the allocations it created that are still alive.
 //
 // A stored payload is copied into an allocation of its own. A BufferSlice can
 // be a view into a larger buffer, such as the network message it arrived in,
 // or share a slab with unrelated small slices; retaining that view would keep
 // the whole backing buffer alive while the cache counted only the view. The
 // copy makes what an entry retains exactly its own allocation, which is what
-// the entry is charged. Slices handed out by get() are clones of that
-// allocation and share it; they do not hold a second payload.
+// the entry is charged.
 //
-// Owned by one actor; not thread-safe. Every removal (eviction, erase, clear,
-// destruction) releases the entry's charge.
+// get() hands out the cached slice, and callers clone it into asynchronous
+// work (signature verification, block processing) that can outlive the entry.
+// Such a clone shares the allocation, so evicting the entry would not free it.
+// An evicted entry whose allocation is still shared is therefore retired, not
+// released: it stays charged until every clone is gone, which sweep() notices.
+// When retired allocations alone leave no room, put() refuses the payload
+// (Full); a caller then finds no cached data and fetches the block the normal
+// way. The bound on bytes alive covers every holder of an allocation this
+// cache made, however long its asynchronous owner keeps it.
+//
+// Owned by one actor; not thread-safe, except that clones handed out may be
+// dropped on any thread.
 template <class Key>
 class CandidateDataCache {
  public:
-  enum class PutResult { Stored, AlreadyPresent, TooLarge };
+  enum class PutResult { Stored, AlreadyPresent, TooLarge, Full };
 
   explicit CandidateDataCache(CandidateDataCacheLimits limits) : limits_(limits) {
     CHECK(limits_.max_entries > 0);
@@ -57,9 +66,10 @@ class CandidateDataCache {
     return sizeof(td::BufferRaw) + payload;
   }
 
-  // Stores a compact copy of `data` unless the key is present or the payload
-  // exceeds the per-entry limit, then evicts least-recently-used entries until
-  // both bounds hold. An existing entry is left as it is.
+  // Stores a compact copy of `data` unless the key is present, the payload
+  // exceeds the per-entry limit, or allocations still held by earlier callers
+  // leave no room. Least-recently-used entries are evicted first until both
+  // bounds hold. An existing entry is left as it is.
   PutResult put(const Key &key, const td::BufferSlice &data) {
     if (entries_.contains(key)) {
       return PutResult::AlreadyPresent;
@@ -68,20 +78,26 @@ class CandidateDataCache {
       return PutResult::TooLarge;
     }
     std::size_t charge = charge_for(data.size());
+    sweep();
     // Evict before allocating, so the copy never coexists with entries that
     // the bound already excludes.
     while (!order_.empty() && (entries_.size() >= limits_.max_entries || bytes_ > limits_.max_bytes - charge)) {
       erase(order_.front());
     }
+    if (bytes_ > limits_.max_bytes - charge) {
+      return PutResult::Full;
+    }
     order_.push_back(key);
-    Entry entry{copy_exclusive(data.as_slice()), charge, std::prev(order_.end())};
+    Entry entry = make_entry(data.as_slice(), charge);
+    entry.position = std::prev(order_.end());
     entries_.emplace(key, std::move(entry));
     bytes_ += charge;
     return PutResult::Stored;
   }
 
   // The cached payload, or nullptr. With `touch`, the entry becomes the most
-  // recently used.
+  // recently used. A clone of it shares the cache's allocation and keeps it
+  // charged until the clone is dropped.
   const td::BufferSlice *get(const Key &key, bool touch = true) {
     auto it = entries_.find(key);
     if (it == entries_.end()) {
@@ -97,28 +113,47 @@ class CandidateDataCache {
     return entries_.contains(key);
   }
 
+  // Removes the entry. Its charge is released once no clone of it remains.
   void erase(const Key &key) {
     auto it = entries_.find(key);
     if (it == entries_.end()) {
       return;
     }
-    CHECK(bytes_ >= it->second.charge);
-    bytes_ -= it->second.charge;
     order_.erase(it->second.position);
+    retire(std::move(it->second));
     entries_.erase(it);
   }
 
   void clear() {
+    for (auto &[key, entry] : entries_) {
+      retire(std::move(entry));
+    }
     entries_.clear();
     order_.clear();
-    bytes_ = 0;
+  }
+
+  // Releases the charge of retired allocations no clone holds any more.
+  void sweep() {
+    for (auto it = retired_.begin(); it != retired_.end();) {
+      if (is_shared(*it)) {
+        ++it;
+        continue;
+      }
+      release(it->charge);
+      it = retired_.erase(it);
+    }
   }
 
   std::size_t size() const {
     return entries_.size();
   }
+  // Bytes of the allocations this cache made that may still be alive: cached
+  // entries and retired ones some caller still holds.
   std::size_t bytes() const {
     return bytes_;
+  }
+  std::size_t retired() const {
+    return retired_.size();
   }
   const CandidateDataCacheLimits &limits() const {
     return limits_;
@@ -130,22 +165,46 @@ class CandidateDataCache {
 
   struct Entry {
     td::BufferSlice data;
-    std::size_t charge;
+    // The allocation behind `data`, kept alive by `data` itself; used only to
+    // read how many slices share it.
+    const td::BufferRaw *raw = nullptr;
+    std::size_t charge = 0;
     typename std::list<Key>::iterator position;
   };
 
-  static td::BufferSlice copy_exclusive(td::Slice data) {
+  static bool is_shared(const Entry &entry) {
+    return entry.raw->ref_cnt_.load(std::memory_order_acquire) > 1;
+  }
+
+  void retire(Entry entry) {
+    if (is_shared(entry)) {
+      retired_.push_back(std::move(entry));
+      return;
+    }
+    release(entry.charge);
+  }
+
+  void release(std::size_t charge) {
+    CHECK(bytes_ >= charge);
+    bytes_ -= charge;
+  }
+
+  static Entry make_entry(td::Slice data, std::size_t charge) {
     auto writer = td::BufferAllocator::create_writer(data.size());
     writer->end_.fetch_add((data.size() + 7) & ~static_cast<std::size_t>(7), std::memory_order_relaxed);
     std::size_t begin = writer->begin_;
-    td::BufferSlice result(td::BufferAllocator::create_reader(writer), begin, begin + data.size());
-    result.as_slice().copy_from(data);
-    return result;
+    Entry entry;
+    entry.raw = writer.get();
+    entry.data = td::BufferSlice(td::BufferAllocator::create_reader(writer), begin, begin + data.size());
+    entry.data.as_slice().copy_from(data);
+    entry.charge = charge;
+    return entry;
   }
 
   CandidateDataCacheLimits limits_;
   std::map<Key, Entry> entries_;
   std::list<Key> order_;
+  std::list<Entry> retired_;
   std::size_t bytes_ = 0;
 };
 

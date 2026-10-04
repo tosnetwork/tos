@@ -57,15 +57,18 @@ void ShardBlockVerifier::tear_down() {
 void ShardBlockVerifier::update_masterchain_state(td::Ref<MasterchainState> state) {
   last_masterchain_state_ = std::move(state);
   confirmations_.prune_registered();
+  collect_resend_requests();
 }
 
 void ShardBlockVerifier::wait_shard_blocks(std::vector<BlockIdExt> blocks, td::Promise<td::Unit> promise) {
   confirmations_.wait(blocks, std::move(promise));
+  collect_resend_requests();
 }
 
 void ShardBlockVerifier::update_config(td::Ref<ShardBlockVerifierConfig> new_config) {
   config_ = new_config;
   confirmations_.set_config(std::move(new_config));
+  collect_resend_requests();
   all_trusted_nodes_.clear();
   for (auto& shard : config_->shards) {
     all_trusted_nodes_.insert(shard.trusted_nodes.begin(), shard.trusted_nodes.end());
@@ -74,10 +77,23 @@ void ShardBlockVerifier::update_config(td::Ref<ShardBlockVerifierConfig> new_con
   alarm_timestamp().relax(send_subscribe_at_ = td::Timestamp::now());
 }
 
+void ShardBlockVerifier::collect_resend_requests() {
+  auto requests = confirmations_.take_resend_requests();
+  for (const auto& node_id : requests) {
+    LOG(WARNING) << "Dropped confirmations from " << node_id
+                 << ": asking it to send its confirmations again with the next subscription";
+  }
+  resend_from_.insert(requests.begin(), requests.end());
+}
+
 void ShardBlockVerifier::alarm() {
   if (send_subscribe_at_ && send_subscribe_at_.is_in_past()) {
+    // A node whose confirmations were dropped is asked, with the regular
+    // subscription, to send every confirmation it still holds again.
+    auto resend_from = std::exchange(resend_from_, {});
     for (auto& shard_config : config_->shards) {
       for (auto& node_id : shard_config.trusted_nodes) {
+        td::uint32 flags = resend_from.contains(node_id) ? kShardBlockVerifierResendFlag : 0;
         td::Promise<td::BufferSlice> P = [shard = shard_config.shard_id, node_id](td::Result<td::BufferSlice> R) {
           if (R.is_error()) {
             LOG(WARNING) << "Subscribe to " << node_id << " for " << shard.to_str() << " : " << R.move_as_error();
@@ -86,7 +102,7 @@ void ShardBlockVerifier::alarm() {
         td::actor::send_closure(rldp_, &rldp2::Rldp::send_query, local_id_, node_id, "subscribe", std::move(P),
                                 td::Timestamp::in(3.0),
                                 create_serialize_tl_object<tos_api::shardBlockVerifier_subscribe>(
-                                    create_tl_shard_id(shard_config.shard_id), 0));
+                                    create_tl_shard_id(shard_config.shard_id), flags));
       }
     }
     send_subscribe_at_ = td::Timestamp::in(SEND_SUBSCRIBE_PERIOD);
@@ -125,25 +141,24 @@ void ShardBlockVerifier::process_message(adnl::AdnlNodeIdShort src, td::BufferSl
         break;
       case ConfirmResult::Deferred:
         VLOG(VALIDATOR_DEBUG) << "Confirm for " << block_id.to_str() << " from " << src
-                              << " : deferred, beyond the registered shard top lookahead";
+                              << " : held, beyond the registered shard top lookahead";
         break;
-      case ConfirmResult::BeyondLookahead:
-        LOG(WARNING) << "Confirm for " << block_id.to_str() << " from " << src
-                     << " : refused, beyond the registered shard top lookahead and the deferral bound ("
+      case ConfirmResult::PeerBudget:
+        LOG(INFO) << "Confirm for " << block_id.to_str() << " from " << src << " : held, peer budget exhausted ("
+                  << confirmations_.peer_entries(src) << " entries, " << confirmations_.peer_bytes(src) << " bytes)";
+        break;
+      case ConfirmResult::GlobalBudget:
+        LOG(INFO) << "Confirm for " << block_id.to_str() << " from " << src << " : held, global budget exhausted ("
+                  << confirmations_.peer_entries() << " entries, " << confirmations_.peer_bytes() << " bytes)";
+        break;
+      case ConfirmResult::Dropped:
+        LOG(WARNING) << "Confirm for " << block_id.to_str() << " from " << src << " : dropped, retry queues full ("
                      << confirmations_.deferred(src) << " held for this peer, " << confirmations_.deferred()
                      << " in total)";
         break;
-      case ConfirmResult::PeerBudget:
-        LOG(WARNING) << "Confirm for " << block_id.to_str() << " from " << src << " : refused, peer budget exhausted ("
-                     << confirmations_.peer_entries(src) << " entries, " << confirmations_.peer_bytes(src) << " bytes)";
-        break;
-      case ConfirmResult::GlobalBudget:
-        LOG(WARNING) << "Confirm for " << block_id.to_str() << " from " << src
-                     << " : refused, global budget exhausted (" << confirmations_.peer_entries() << " entries, "
-                     << confirmations_.peer_bytes() << " bytes)";
-        break;
     }
   }
+  collect_resend_requests();
 }
 
 std::optional<BlockSeqno> ShardBlockVerifier::registered_seqno(const BlockIdExt& block_id) const {

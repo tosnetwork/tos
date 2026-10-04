@@ -133,10 +133,15 @@ int main() {
     bounded.set_config(config({kA, kB}, 2));
     require(bounded.confirm(kA, block_at(1000000)) == Result::Deferred, "within the peer's deferral bound");
     require(bounded.confirm(kA, block_at(1000001)) == Result::Deferred, "at the peer's deferral bound");
-    require(bounded.confirm(kA, block_at(1000002)) == Result::BeyondLookahead, "past the peer's deferral bound");
+    require(bounded.take_resend_requests().empty(), "nothing was dropped yet");
+    require(bounded.confirm(kA, block_at(1000002)) == Result::Dropped, "past the peer's deferral bound");
     require(bounded.confirm(kB, block_at(1000003)) == Result::Deferred, "another peer has its own bound");
-    require(bounded.confirm(kB, block_at(1000004)) == Result::BeyondLookahead, "past the global deferral bound");
+    require(bounded.confirm(kB, block_at(1000004)) == Result::Dropped, "past the global deferral bound");
     require(bounded.size() == 0 && bounded.deferred() == 3, "nothing beyond the bounds was retained");
+    auto resend = bounded.take_resend_requests();
+    require(resend.size() == 2 && resend.contains(kA) && resend.contains(kB),
+            "every peer whose confirmation was dropped is asked to resend");
+    require(bounded.take_resend_requests().empty(), "a resend request is handed over once");
   }
 
   // An unknown shard top gives no lookahead reference: nothing is created.
@@ -169,11 +174,17 @@ int main() {
     require(store.confirm(kC, block_at(103, 0x20)) == Result::GlobalBudget, "past the global entry budget");
     require(store.peer_entries() == 6, "the global entry budget holds");
 
-    // Validated progress releases the budget.
+    require(store.deferred(kA) == 1 && store.deferred(kC) == 1, "confirmations refused for budget are held");
+
+    // Validated progress releases the budget, and the held confirmations are
+    // admitted without being sent again.
     mc.top = 102;
     store.prune_registered();
-    require(store.peer_entries(kA) == 2 && store.peer_entries(kB) == 0, "pruned entries release their charge");
-    require(store.confirm(kA, block_at(105, 0x10)) == Result::Accepted, "released budget is usable again");
+    require(store.contains(block_at(105, 0x10)) && store.contains(block_at(103, 0x20)),
+            "held confirmations create their entries once budget is released");
+    require(store.deferred() == 0, "admitted confirmations leave the queue");
+    require(store.peer_entries(kA) == 3 && store.peer_entries(kC) == 1 && store.peer_entries(kB) == 0,
+            "pruned entries released their charge and admitted ones are charged");
   }
 
   // Byte budget, per peer and global, with entry slots to spare.
@@ -205,12 +216,56 @@ int main() {
     ShardBlockConfirmations store(mc.view(), limits);
     store.set_config(config({kA, kB}, 1));
     require(store.confirm(kA, block_at(101)) == Result::Confirmed, "the budget is used up");
-    require(store.confirm(kB, block_at(102)) == Result::GlobalBudget, "the budget is exhausted");
     Waiter waiter;
-    store.wait({block_at(102)}, waiter.promise());
+    store.wait({block_at(103)}, waiter.promise());
     require(!waiter.done, "a local wait on an unconfirmed block waits despite exhausted budgets");
-    require(store.confirm(kB, block_at(102)) == Result::Confirmed, "a confirmation for an awaited block counts");
+    require(store.confirm(kB, block_at(103)) == Result::Confirmed, "a confirmation for an awaited block counts");
     require(waiter.done, "and completes the wait");
+  }
+
+  // A confirmation sent once and refused for capacity is not lost. The peer
+  // never sends it again; it still completes a local wait, both when the wait
+  // comes first and when capacity is released first.
+  {
+    Masterchain mc;
+    ShardBlockConfirmationLimits limits;
+    limits.max_entries_per_peer = 1;
+    limits.max_entries = 1;
+    ShardBlockConfirmations store(mc.view(), limits);
+    store.set_config(config({kA, kB}, 1));
+    require(store.confirm(kA, block_at(101)) == Result::Confirmed, "the budget is used up");
+    require(store.confirm(kB, block_at(102)) == Result::GlobalBudget, "a confirmation refused for capacity");
+    require(store.confirm(kB, block_at(103)) == Result::GlobalBudget, "another one");
+
+    // The wait comes first: it creates the entry, and the held confirmation
+    // completes it.
+    Waiter first;
+    store.wait({block_at(102)}, first.promise());
+    require(first.done, "a held confirmation completes a later local wait");
+
+    // Capacity is released first: the held confirmation creates its entry,
+    // and a later wait finds it confirmed.
+    mc.top = 101;
+    store.prune_registered();
+    require(store.is_confirmed(block_at(103)), "released capacity admits the held confirmation");
+    Waiter second;
+    store.wait({block_at(103)}, second.promise());
+    require(second.done, "a local wait after the release completes at once");
+    require(store.deferred() == 0, "nothing is left held");
+  }
+
+  // The retainer side of a resend request: a new subscription is always
+  // answered with every held confirmation, a flagged renewal only when the
+  // retainer's interval allows, and an unflagged renewal never.
+  {
+    using tos::validator::kShardBlockVerifierResendFlag;
+    using tos::validator::shard_block_retainer_sends_retained;
+    require(shard_block_retainer_sends_retained(true, 0, false), "a new subscription is answered");
+    require(shard_block_retainer_sends_retained(false, kShardBlockVerifierResendFlag, true),
+            "a flagged renewal is answered when allowed");
+    require(!shard_block_retainer_sends_retained(false, kShardBlockVerifierResendFlag, false),
+            "a flagged renewal within the interval is not");
+    require(!shard_block_retainer_sends_retained(false, 0, true), "an unflagged renewal is not");
   }
 
   // A configuration change keeps confirmations by nodes still trusted and

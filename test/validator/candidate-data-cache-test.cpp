@@ -117,6 +117,51 @@ int main() {
     require(cache.bytes() == charged && cache.get(1, false)->size() == 4000, "the first payload is kept");
   }
 
+  // Asynchronous holders: each stored candidate is cloned into work that has
+  // not completed (as pending finality verification clones the cached data),
+  // while distinct candidates keep arriving and evicting older entries. What
+  // stays allocated must stay within the byte budget the whole time; once the
+  // budget is held entirely by pending work, new candidates are not cached.
+  // When the work completes, its allocations are released and caching resumes.
+  {
+    const std::size_t entry = 100000;
+    const std::size_t budget = Cache::charge_for(entry) * 4;
+    Cache cache({.max_entries = 100, .max_bytes = budget, .max_entry_size = entry});
+    const std::size_t before = live();
+    std::vector<td::BufferSlice> pending;
+    std::size_t stored = 0;
+    std::size_t refused = 0;
+    for (int key = 0; key < 12; ++key) {
+      auto result = cache.put(key, buffer(entry, static_cast<char>('a' + key)));
+      if (result == Cache::PutResult::Stored) {
+        ++stored;
+        pending.push_back(cache.get(key)->clone());
+      } else {
+        require(result == Cache::PutResult::Full, "a payload that does not fit is refused as Full");
+        ++refused;
+      }
+      require(cache.bytes() <= budget, "the charge stays within the budget");
+      require(live() - before <= budget,
+              "memory kept alive by the cache and its pending holders stays within the budget"
+              " (alive " +
+                  std::to_string(live() - before) + ", budget " + std::to_string(budget) + ")");
+    }
+    require(stored == 4 && refused == 8, "pending holders of four candidates fill the budget");
+    require(cache.size() == 0 && cache.retired() == 4, "evicted entries still held are retired, not released");
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+      require(pending[i].size() == entry && pending[i].as_slice()[0] == static_cast<char>('a' + i),
+              "a pending holder still sees its candidate after eviction");
+    }
+    pending.clear();
+    require(cache.put(100, buffer(entry, 'z')) == Cache::PutResult::Stored,
+            "once pending work completes its allocations are released and caching resumes");
+    require(cache.retired() == 0 && cache.bytes() == Cache::charge_for(entry), "only the new entry is charged");
+    require(live() - before <= budget, "released allocations are gone");
+    cache.clear();
+    cache.sweep();
+    require(cache.bytes() == 0 && live() == before, "clearing an unshared cache releases everything");
+  }
+
   // Clearing and destruction release everything.
   {
     const std::size_t before = live();

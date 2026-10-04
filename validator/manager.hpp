@@ -246,8 +246,10 @@ class ValidatorManagerImpl : public ValidatorManager {
   // manager.cpp asserts the two agree.
   static constexpr std::size_t kMaxCandidateDataSize = std::size_t{4} << 20;
   // Block data received before the block is validated. Both caches are bounded
-  // by entry count and by the bytes they keep allocated: with 128 entries of up
-  // to kMaxCandidateDataSize each, a count bound alone would let them hold 1 GiB.
+  // by entry count and by the bytes of their allocations still alive,
+  // including clones held by pending finality verification and block
+  // processing after eviction: with 128 entries of up to kMaxCandidateDataSize
+  // each, a count bound alone would let them hold 1 GiB.
   static constexpr CandidateDataCacheLimits kCandidateDataCacheLimits{
       .max_entries = 128, .max_bytes = std::size_t{64} << 20, .max_entry_size = kMaxCandidateDataSize};
   CandidateDataCache<BlockIdExt> cached_block_data_{kCandidateDataCacheLimits};

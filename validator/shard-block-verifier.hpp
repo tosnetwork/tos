@@ -65,11 +65,14 @@ class ShardBlockVerifier : public td::actor::Actor {
   td::Timestamp send_subscribe_at_ = td::Timestamp::never();
 
   ShardBlockConfirmations confirmations_;
+  // Trusted nodes to ask, with the next subscription, to resend confirmations.
+  std::set<adnl::AdnlNodeIdShort> resend_from_;
 
   void update_config(td::Ref<ShardBlockVerifierConfig> new_config);
   void process_message(adnl::AdnlNodeIdShort src, td::BufferSlice data);
 
   std::optional<BlockSeqno> registered_seqno(const BlockIdExt& block_id) const;
+  void collect_resend_requests();
 
   static constexpr double SEND_SUBSCRIBE_PERIOD = 10.0;
 };

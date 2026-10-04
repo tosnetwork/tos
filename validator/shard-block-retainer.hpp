@@ -54,7 +54,12 @@ class ShardBlockRetainer : public td::actor::Actor {
 
   bool inited_ = false;
   std::set<adnl::AdnlNodeIdShort> validator_adnl_ids_;
-  std::map<std::pair<adnl::AdnlNodeIdShort, ShardIdFull>, td::Timestamp> subscribers_;
+  struct Subscription {
+    td::Timestamp ttl;
+    // When this subscriber may next have every confirmation sent again on request.
+    td::Timestamp resend_allowed_at;
+  };
+  std::map<std::pair<adnl::AdnlNodeIdShort, ShardIdFull>, Subscription> subscribers_;
   std::set<BlockIdExt> confirmed_blocks_;
 
   void process_query(adnl::AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
