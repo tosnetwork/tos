@@ -18,7 +18,6 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
-#include <malloc.h>
 #include <mutex>
 #include <netinet/in.h>
 #include <optional>
@@ -27,6 +26,9 @@
 #include <thread>
 #include <unistd.h>
 #include <unordered_set>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 #include "adnl/adnl-network-manager.h"
 #include "adnl/adnl-peer-table.h"
@@ -2506,7 +2508,20 @@ TEST(QuicTransportBudget, OutputAllocationFailureClosesTheConnection) {
   });
 }
 
+// Bytes the process heap has in use, where the C library reports it.
+static std::optional<size_t> heap_bytes_in_use() {
+#if defined(__GLIBC__)
+  return mallinfo2().uordblks;
+#else
+  return std::nullopt;
+#endif
+}
+
 TEST(QuicInboundBudget, MeasureIdleInboundStreamCost) {
+  if (!heap_bytes_in_use()) {
+    LOG(WARNING) << "QUIC_INBOUND_STREAM_MEASURE skipped: this C library reports no heap usage";
+    return;
+  }
   run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
     constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
     constexpr size_t kStreams = 256;
@@ -2520,13 +2535,13 @@ TEST(QuicInboundBudget, MeasureIdleInboundStreamCost) {
     co_await t.send_partial_stream(client, cid, 'w');
     co_await poll_until([&] { return budget->streams() == 1; }, 5.0, "warm-up stream admitted");
     co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
-    auto before = mallinfo2().uordblks;
+    auto before = heap_bytes_in_use().value_or(0);
     for (size_t i = 1; i < kStreams; i++) {
       co_await t.send_partial_stream(client, cid, 'm');
     }
     co_await poll_until([&] { return budget->streams() == kStreams; }, 10.0, "all streams admitted");
     co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
-    auto after = mallinfo2().uordblks;
+    auto after = heap_bytes_in_use().value_or(0);
     auto per_stream = after > before ? (after - before) / (kStreams - 1) : 0;
     LOG(WARNING) << "QUIC_INBOUND_STREAM_MEASURE streams=" << (kStreams - 1) << " heap_bytes=" << (after - before)
                  << " per_stream=" << per_stream << " (both endpoints in one process)";
