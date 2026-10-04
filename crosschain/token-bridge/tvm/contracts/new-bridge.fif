@@ -1,9 +1,14 @@
 #!/usr/bin/env fift -s
-"Asm.fif" include 
-"TosUtil.fif" include 
+"Asm.fif" include
+"TosUtil.fif" include
+
+// Includes the code that scripts/build-token-bridge.sh compiles for one network:
+// jetton-bridge.fif, jetton-minter.fif, jetton-wallet.fif, votes-collector.fif.
+// The storage below must match jetton-bridge.fc's load_data field for field;
+// token_bridge_sandbox runs this script and takes its output through a mint.
 
 <{ SETCP0 ACCEPT
-   "bridge_code2.fif" include PUSHREF SETCODE
+   "jetton-bridge.fif" include PUSHREF SETCODE
 }>c constant code
 
 "jetton-wallet.fif" include constant jetton_wallet_code
@@ -14,6 +19,8 @@
    jetton_minter_code ref,
    jetton_wallet_code ref,
    b{0} s,                 // paid_swaps: empty until a fee is paid
+   0 64 u,                 // next_mint_id
+   b{0} s,                 // pending_mints: empty until a vote starts a mint
 b> constant storage
 
 code storage null <b b{0011} s, 3 roll ref, rot ref, swap dict, b> constant StateInit

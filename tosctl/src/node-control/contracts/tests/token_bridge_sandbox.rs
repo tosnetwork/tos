@@ -135,6 +135,76 @@ fn codes() -> &'static Codes {
     })
 }
 
+/// A toolchain binary: the environment's override, else this checkout's build,
+/// else the shared checkout's, the order `tos_sandbox::compile_func` uses.
+fn tool(env: &str, name: &str) -> PathBuf {
+    if let Some(path) = std::env::var_os(env) {
+        return PathBuf::from(path);
+    }
+    let local = repo_root().join("build/crypto").join(name);
+    if local.exists() {
+        return local;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from).expect("HOME or a tool override");
+    home.join("tos/build/crypto").join(name)
+}
+
+/// The creation message `new-bridge.fif` writes, from code compiled the way
+/// `scripts/build-token-bridge.sh` compiles it and with the script read from
+/// the tree. A storage layout the script builds and the contract cannot load
+/// fails the first message that reaches the deployed bridge.
+fn new_bridge_script_message() -> Message {
+    let stage =
+        std::env::temp_dir().join(format!("tos-token-bridge-new-bridge-{}", std::process::id()));
+    std::fs::create_dir_all(&stage).expect("a staging directory");
+    for entry in std::fs::read_dir(contracts_dir()).expect("the bridge contracts") {
+        let path = entry.expect("a directory entry").path();
+        if path.extension().is_some_and(|ext| ext == "fc" || ext == "fif") {
+            std::fs::copy(&path, stage.join(path.file_name().expect("a file name")))
+                .expect("a staged source");
+        }
+    }
+    std::fs::copy(
+        repo_root().join("crosschain/token-bridge/tvm/params/ethereum.fc"),
+        stage.join("params.fc"),
+    )
+    .expect("the network parameters");
+    let run = |cmd: &mut std::process::Command, what: &str| {
+        let out = cmd.current_dir(&stage).output().unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert!(
+            out.status.success(),
+            "{what} failed:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    let func = tool("FUNC_PATH", "func");
+    for contract in ["jetton-bridge", "jetton-minter", "jetton-wallet", "votes-collector"] {
+        run(
+            std::process::Command::new(&func)
+                .arg("-PS")
+                .arg("-o")
+                .arg(format!("{contract}.fif"))
+                .arg(format!("{contract}.fc")),
+            &format!("func {contract}.fc"),
+        );
+    }
+    let includes = format!("{}:{}", repo_root().join("crypto/fift/lib").display(), stage.display());
+    run(
+        std::process::Command::new(tool("FIFT_PATH", "fift")).args([
+            "-I",
+            &includes,
+            "-s",
+            "new-bridge.fif",
+        ]),
+        "fift new-bridge.fif",
+    );
+    let boc = std::fs::read(stage.join("bridge-create.boc")).expect("the creation query");
+    let _ = std::fs::remove_dir_all(&stage);
+    let root = chain_block::read_single_root_boc(boc).expect("a creation query boc");
+    Message::construct_from_cell(root).expect("an external creation message")
+}
+
 /// A gas constant as the contracts declare it, so the measurement below is held
 /// against the number the fee budget is priced from rather than a copy of it.
 fn declared_gas(name: &str) -> u64 {
@@ -222,8 +292,21 @@ impl Default for Prices {
     }
 }
 
+/// How the bridge account comes to exist.
+enum Deployment {
+    /// A StateInit this suite builds itself, sent with an internal message.
+    Direct,
+    /// The external creation message `new-bridge.fif` writes, as an operator
+    /// would send it after funding the address.
+    Script,
+}
+
 impl Bridge {
     fn new() -> Self {
+        Self::deployed(Deployment::Direct)
+    }
+
+    fn deployed(how: Deployment) -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("a chain");
         bc.set_workchain(-1);
         let oracles = bc.treasury("token-bridge-oracles", 1_000 * TOS).expect("oracles");
@@ -232,19 +315,42 @@ impl Bridge {
         let user = bc.treasury("token-bridge-user", 1_000 * TOS).expect("user");
         let stranger = bc.treasury("token-bridge-stranger", 1_000 * TOS).expect("stranger");
 
-        let collector =
-            MsgAddressInt::with_params(0, UInt256::from([0x42; 32])).expect("collector");
-        let data = cell(|b| {
-            collector.write_to(b).unwrap();
-            b.checked_append_reference(codes().minter.clone()).unwrap();
-            b.checked_append_reference(codes().wallet.clone()).unwrap();
-            b.append_bit_zero().unwrap(); // paid_swaps
-            b.append_u64(0).unwrap(); // next_mint_id
-            b.append_bit_zero().unwrap(); // pending_mints
-        });
-        let init = StateInit::with_code_and_data(codes().bridge.clone(), data);
-        let bridge_hash = init.serialize().expect("a state init").repr_hash();
-        let bridge = MsgAddressInt::with_params(-1, bridge_hash).expect("the bridge address");
+        let (bridge, fund, deploy) = match how {
+            Deployment::Direct => {
+                let collector =
+                    MsgAddressInt::with_params(0, UInt256::from([0x42; 32])).expect("collector");
+                let data = cell(|b| {
+                    collector.write_to(b).unwrap();
+                    b.checked_append_reference(codes().minter.clone()).unwrap();
+                    b.checked_append_reference(codes().wallet.clone()).unwrap();
+                    b.append_bit_zero().unwrap(); // paid_swaps
+                    b.append_u64(0).unwrap(); // next_mint_id
+                    b.append_bit_zero().unwrap(); // pending_mints
+                });
+                let init = StateInit::with_code_and_data(codes().bridge.clone(), data);
+                let bridge_hash = init.serialize().expect("a state init").repr_hash();
+                let bridge =
+                    MsgAddressInt::with_params(-1, bridge_hash).expect("the bridge address");
+                let deploy = MessageBuilder::internal(deployer.address(), &bridge, 50 * TOS)
+                    .bounce(false)
+                    .state_init(init)
+                    .body(cell(|b| {
+                        b.append_u32(OP_EXCESSES).unwrap().append_u64(0).unwrap();
+                    }))
+                    .build();
+                (bridge, None, deploy)
+            }
+            Deployment::Script => {
+                let create = new_bridge_script_message();
+                let bridge = create.dst().expect("the creation message names the bridge");
+                assert!(create.state_init().is_some(), "the creation message carries a StateInit");
+                // The stub code ACCEPTs, so the address must hold funds first.
+                let fund = MessageBuilder::internal(deployer.address(), &bridge, 50 * TOS)
+                    .bounce(false)
+                    .build();
+                (bridge, Some(fund), create)
+            }
+        };
 
         let mut this = Self {
             bc,
@@ -263,15 +369,19 @@ impl Bridge {
         };
         this.configure(&bridge, Prices::default());
 
-        let deploy = MessageBuilder::internal(this.deployer.address(), &bridge, 50 * TOS)
-            .bounce(false)
-            .state_init(init)
-            .body(cell(|b| {
-                b.append_u32(OP_EXCESSES).unwrap().append_u64(0).unwrap();
-            }))
-            .build();
-        this.send(deploy);
-        assert!(this.bc.get_account(&bridge).and_then(|a| a.get_code()).is_some(), "deployed");
+        if let Some(fund) = fund {
+            // An uninitialised account has nothing to run; it only keeps the value.
+            this.send(fund);
+            assert!(this.bc.get_account(&bridge).is_some(), "the address is funded");
+        }
+        let tx = this.send(deploy);
+        assert!(!outcome(&tx).aborted, "the deployment is accepted");
+        let code = this.bc.get_account(&bridge).and_then(|a| a.get_code()).expect("deployed");
+        assert_eq!(
+            code.repr_hash(),
+            codes().bridge.repr_hash(),
+            "the bridge runs the code compiled from jetton-bridge.fc"
+        );
 
         let minter =
             this.get(&bridge, "get_minter_address", vec![StackItem::cell(wrapped_token_data())]);
@@ -1026,6 +1136,19 @@ fn a_burn_that_cannot_fund_its_report_is_refused_and_the_wallet_keeps_its_tokens
     refused_with(&refusal.1, ERR_BURN_UNDERFUNDED);
     assert_eq!((b.supply(), b.tokens(b.user.address())), (1_000, 1_000));
     assert_eq!(b.logs.iter().filter(|(_, t, _)| *t == LOG_BURN).count(), 0);
+}
+
+/// The deployment script's own output, taken through a whole mint: the vote
+/// loads and saves every storage field the script laid down, and the credit
+/// confirms against the minter and wallet code the script stored.
+#[test]
+fn a_bridge_deployed_by_its_script_completes_a_mint() {
+    let mut b = Bridge::deployed(Deployment::Script);
+    b.swap(1_000);
+    assert_eq!(b.supply(), 1_000, "the mint completed");
+    assert_eq!(b.tokens(b.user.address()), 1_000, "the user holds the minted tokens");
+    assert_eq!(b.pending_mint(0), NOTHING, "the confirmed mint left the pending set");
+    assert_eq!(b.in_flight(), 0);
 }
 
 #[test]

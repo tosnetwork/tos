@@ -126,9 +126,12 @@ int try_send_credit(slice owner_address, cell jetton_wallet_code, int credit_id,
 }
 
 ;; A bounce cannot be forged, and its body is the first 256 bits of a message
-;; this minter sent, so its op and id are the minter's own. Nothing here throws
-;; or sends anything that can fail: a bounce cannot bounce in turn, so a failed
-;; transaction would lose the only record of what is owed.
+;; this minter sent, so its op and id are the minter's own. A bounce cannot
+;; bounce in turn, so a failed transaction here loses the only record of what
+;; is owed. Nothing below sends anything that can fail, and the only throw left
+;; is get_jetton_bridge_config's error::no_bridge_config when the ConfigParam is
+;; missing; removing or replacing it while a credit or burn is in flight is the
+;; operational hazard SECURITY.md describes.
 () on_bounce(slice in_msg_body) impure inline_ref {
     in_msg_body~skip_bits(32); ;; 0xFFFFFFFF
     int op = in_msg_body~load_uint(32);
