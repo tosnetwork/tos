@@ -44,7 +44,7 @@ pub use ledger::{
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
 /// pool.fc state 0: the stake is in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i64 = 0;
 
@@ -148,7 +148,93 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
         )
     },
     migrate_to_canonical_publication,
+    migrate_address_refresh_key,
 ];
+
+/// Columns of `indexer_address_refresh`, in declaration order. Every v11
+/// layout carries exactly these; only the key differs.
+const ADDRESS_REFRESH_COLUMNS: &[&str] = &[
+    "address",
+    "touch_count",
+    "last_block_seqno",
+    "last_gen_utime",
+    "mc_seqno",
+    "mc_root_hash",
+    "mc_file_hash",
+    "attempts",
+];
+
+/// v12 keys the refresh queue by `(address, mc_seqno)`.
+///
+/// Version 11 shipped with two layouts of `indexer_address_refresh`: first
+/// one row per address (`PRIMARY KEY(address)`), later one row per address
+/// and published height. Both recorded schema version 11, and
+/// `CREATE TABLE IF NOT EXISTS` leaves an existing table as it is, so a
+/// database from the first layout kept its single-column key and every
+/// publication upserting on the composite key was refused by SQLite.
+///
+/// A single-column-key table is rebuilt under the composite key with every
+/// queued row copied verbatim: the single-column key admits one row per
+/// address, so no two rows can collide under the wider key, and each row
+/// keeps its checkpoint and attempt count. A table already keyed by the pair
+/// only gains the scheduling index if it lacks it. Any other layout is
+/// refused rather than guessed at. Runs inside the caller's per-step
+/// transaction, so a failure leaves the original table and its rows intact.
+fn migrate_address_refresh_key(conn: &Connection) -> rusqlite::Result<()> {
+    let (columns, key) = address_refresh_layout(conn)?;
+    if columns != ADDRESS_REFRESH_COLUMNS {
+        return Err(migration_error(format!(
+            "indexer_address_refresh has unexpected columns {columns:?}"
+        )));
+    }
+    match key.as_slice() {
+        [address, mc_seqno] if address == "address" && mc_seqno == "mc_seqno" => {
+            return conn.execute_batch(ADDRESS_REFRESH_SCHEMA);
+        }
+        [address] if address == "address" => {}
+        _ => {
+            return Err(migration_error(format!(
+                "indexer_address_refresh has unexpected primary key {key:?}"
+            )));
+        }
+    }
+    let column_list = ADDRESS_REFRESH_COLUMNS.join(", ");
+    // An index moves with its renamed table and keeps its name, so it is
+    // dropped first; the replacement schema recreates it on the new table.
+    conn.execute_batch(&format!(
+        "DROP INDEX IF EXISTS idx_address_refresh_schedule;
+         ALTER TABLE indexer_address_refresh RENAME TO indexer_address_refresh_single_key;
+         {ADDRESS_REFRESH_SCHEMA}
+         INSERT INTO indexer_address_refresh ({column_list})
+             SELECT {column_list} FROM indexer_address_refresh_single_key;
+         DROP TABLE indexer_address_refresh_single_key;"
+    ))
+}
+
+/// Column names in declaration order and primary-key columns in key order.
+fn address_refresh_layout(conn: &Connection) -> rusqlite::Result<(Vec<String>, Vec<String>)> {
+    let mut statement = conn.prepare("PRAGMA table_info(indexer_address_refresh)")?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let columns = rows.iter().map(|(name, _)| name.clone()).collect();
+    let mut key: Vec<(i64, String)> = rows
+        .into_iter()
+        .filter(|(_, position)| *position > 0)
+        .map(|(name, position)| (position, name))
+        .collect();
+    key.sort();
+    Ok((columns, key.into_iter().map(|(_, name)| name).collect()))
+}
+
+/// A layout the migration does not recognise is reported as a corrupt schema,
+/// with the specific mismatch as its message.
+fn migration_error(message: String) -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+        Some(message),
+    )
+}
 
 /// v11 introduces a published watermark. Rows indexed by a v10 binary carry
 /// no record of which masterchain height was completely assembled when they
@@ -160,6 +246,7 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
 fn migrate_to_canonical_publication(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
     conn.execute_batch(TRAVERSAL_SCHEMA)?;
+    conn.execute_batch(ADDRESS_REFRESH_SCHEMA)?;
     for table in CANONICAL_PROGRESS_TABLES {
         conn.execute(&format!("DELETE FROM {table}"), [])?;
     }
@@ -372,8 +459,12 @@ const TRAVERSAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS canonical_shard_front
         last_block_seqno INTEGER NOT NULL,
         last_gen_utime INTEGER NOT NULL,
         PRIMARY KEY(batch_mc_seqno, address)
-    );
-    CREATE TABLE IF NOT EXISTS indexer_address_refresh (
+    );";
+
+/// v12: the refresh queue, one row per address and published height. Kept
+/// apart from [`TRAVERSAL_SCHEMA`] because [`migrate_address_refresh_key`]
+/// rebuilds an older table from this exact definition.
+const ADDRESS_REFRESH_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS indexer_address_refresh (
         address TEXT NOT NULL,
         touch_count INTEGER NOT NULL,
         last_block_seqno INTEGER NOT NULL,
@@ -617,6 +708,7 @@ impl IndexerStore {
         conn.execute_batch(DNS_HISTORY_SCHEMA)?;
         conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
         conn.execute_batch(TRAVERSAL_SCHEMA)?;
+        conn.execute_batch(ADDRESS_REFRESH_SCHEMA)?;
         conn.execute_batch(ledger::NOMINATOR_LEDGER_STATE_SCHEMA)?;
         Ok(())
     }
@@ -641,10 +733,11 @@ impl IndexerStore {
     /// pending [`MIGRATIONS`] to bring an older one forward. A version newer
     /// than this binary supports fails outright -- an older binary opening a
     /// database written by a future one is never safe to silently proceed
-    /// with. Each migration step updates the stored version immediately
-    /// after it succeeds, so a failure partway through a multi-step chain
-    /// leaves the database at the last version that was actually reached,
-    /// not silently marked as fully migrated.
+    /// with. Each migration step runs in its own transaction together with
+    /// the stored version update, so a failure partway through a multi-step
+    /// chain leaves the database exactly at the last version that was
+    /// actually reached -- neither silently marked as fully migrated nor
+    /// holding half of the failed step's changes.
     fn ensure_schema_version(conn: &Connection) -> anyhow::Result<()> {
         Self::ensure_schema_version_against(conn, CURRENT_SCHEMA_VERSION, MIGRATIONS)
     }
@@ -693,12 +786,19 @@ impl IndexerStore {
                      or pin the binary version that wrote it"
                 )
             })?;
-            migration(conn)?;
-            version += 1;
-            conn.execute(
+            let next = version.checked_add(1).ok_or_else(|| {
+                anyhow::anyhow!("indexer database schema version {version} cannot advance")
+            })?;
+            // One step and its version bump commit together; a failing step
+            // rolls back whatever it had already changed.
+            let tx = conn.unchecked_transaction()?;
+            migration(&tx)?;
+            tx.execute(
                 "UPDATE indexer_meta SET value = ?1 WHERE key = 'schema_version'",
-                params![version.to_string()],
+                params![next.to_string()],
             )?;
+            tx.commit()?;
+            version = next;
         }
         Ok(())
     }
@@ -2845,8 +2945,368 @@ mod nominator_ledger_tests {
         assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 0);
         assert!(store.explorer_block_root(-1, i64::MIN, 900).unwrap().is_none());
         drop(store);
-        // Reopening at v11 does not re-run the migration or revive the ledger.
+        // Reopening does not re-run the migration or revive the ledger.
         let store = IndexerStore::open(&path).unwrap();
         assert_eq!(store.nominator_ledger_state().unwrap().status, LedgerStatus::RebuildRequired);
+    }
+}
+
+/// Databases left behind by the two layouts that both recorded schema
+/// version 11, and their upgrade to the composite refresh key.
+#[cfg(test)]
+mod refresh_key_migration_tests {
+    use super::*;
+
+    /// The single-column-key definition a version-11 binary created before the
+    /// refresh queue held one row per published height.
+    const SINGLE_KEY_REFRESH_TABLE: &str = "CREATE TABLE indexer_address_refresh (
+        address TEXT PRIMARY KEY,
+        touch_count INTEGER NOT NULL,
+        last_block_seqno INTEGER NOT NULL,
+        last_gen_utime INTEGER NOT NULL,
+        mc_seqno INTEGER NOT NULL,
+        mc_root_hash TEXT NOT NULL,
+        mc_file_hash TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0
+    );";
+
+    /// The upsert publication runs against the refresh queue.
+    const COMPOSITE_UPSERT: &str = "INSERT INTO indexer_address_refresh
+            (address, touch_count, last_block_seqno, last_gen_utime,
+             mc_seqno, mc_root_hash, mc_file_hash, attempts)
+         VALUES ('0:probe', 1, 1, 1, 1, 'r', 'f', 0)
+         ON CONFLICT(address, mc_seqno) DO UPDATE SET attempts = 0";
+
+    #[derive(Clone, Copy, Debug)]
+    enum V11Layout {
+        /// `PRIMARY KEY(address)`, no scheduling index.
+        SingleKey,
+        /// `PRIMARY KEY(address, mc_seqno)`, written before the scheduling
+        /// index existed.
+        CompositeWithoutIndex,
+        /// `PRIMARY KEY(address, mc_seqno)` with the scheduling index.
+        CompositeWithIndex,
+    }
+
+    /// One queued refresh row: address, height, attempts, touch count.
+    type Queued = (String, u32, u32, u32);
+
+    fn anchor(seqno: u32) -> MasterchainCheckpoint {
+        MasterchainCheckpoint {
+            seqno,
+            root_hash: format!("{seqno:064x}"),
+            file_hash: format!("{:064x}", u64::from(seqno) + 1_000),
+        }
+    }
+
+    /// Writes a version-11 database with one published height (5) and queued
+    /// refresh work. Every other table's definition is the same in both v11
+    /// layouts, so the current schema stands in for it.
+    fn write_v11_database(path: &Path, layout: V11Layout) -> Vec<Queued> {
+        let conn = Connection::open(path).unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+        let queued: Vec<Queued> = match layout {
+            V11Layout::SingleKey => {
+                conn.execute_batch("DROP TABLE indexer_address_refresh;").unwrap();
+                conn.execute_batch(SINGLE_KEY_REFRESH_TABLE).unwrap();
+                vec![("0:aa".into(), 5, 2, 3), ("0:bb".into(), 4, 0, 1)]
+            }
+            V11Layout::CompositeWithoutIndex => {
+                conn.execute_batch("DROP INDEX idx_address_refresh_schedule;").unwrap();
+                vec![("0:aa".into(), 4, 1, 1), ("0:aa".into(), 5, 0, 2), ("0:bb".into(), 4, 0, 1)]
+            }
+            V11Layout::CompositeWithIndex => {
+                vec![("0:aa".into(), 4, 1, 1), ("0:aa".into(), 5, 0, 2), ("0:bb".into(), 4, 0, 1)]
+            }
+        };
+        let published = anchor(5);
+        conn.execute(
+            "INSERT INTO indexer_canonical_state
+                (id, published_mc_seqno, published_mc_root_hash, published_mc_file_hash)
+             VALUES (1, ?1, ?2, ?3)",
+            params![published.seqno, published.root_hash, published.file_hash],
+        )
+        .unwrap();
+        for (address, mc_seqno, attempts, touches) in &queued {
+            let checkpoint = anchor(*mc_seqno);
+            conn.execute(
+                "INSERT INTO indexer_address_refresh
+                    (address, touch_count, last_block_seqno, last_gen_utime,
+                     mc_seqno, mc_root_hash, mc_file_hash, attempts)
+                 VALUES (?1, ?2, ?3, 7, ?3, ?4, ?5, ?6)",
+                params![
+                    address,
+                    touches,
+                    mc_seqno,
+                    checkpoint.root_hash,
+                    checkpoint.file_hash,
+                    attempts
+                ],
+            )
+            .unwrap();
+        }
+        conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '11')", [])
+            .unwrap();
+        queued
+    }
+
+    fn raw_queue(conn: &Connection) -> Vec<Queued> {
+        let mut statement = conn
+            .prepare(
+                "SELECT address, mc_seqno, attempts, touch_count FROM indexer_address_refresh
+                 ORDER BY address, mc_seqno",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn stored_version(conn: &Connection) -> String {
+        conn.query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    }
+
+    fn schedule_index_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_address_refresh_schedule'
+               AND tbl_name = 'indexer_address_refresh'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn sorted(mut rows: Vec<Queued>) -> Vec<Queued> {
+        rows.sort();
+        rows
+    }
+
+    /// Publishes height `seqno` with one touch per address.
+    fn publish(store: &IndexerStore, seqno: u32, touched: &[&str]) -> anyhow::Result<()> {
+        let checkpoint = anchor(seqno);
+        store.begin_batch(&checkpoint)?;
+        let touches: Vec<AddressTouch> = touched
+            .iter()
+            .map(|address| AddressTouch {
+                address: (*address).to_string(),
+                count: 1,
+                block_seqno: seqno,
+                gen_utime: seqno,
+            })
+            .collect();
+        let block = ExplorerBlockRecord {
+            workchain: -1,
+            shard: i64::MIN,
+            seqno,
+            root_hash: checkpoint.root_hash.clone(),
+            file_hash: checkpoint.file_hash.clone(),
+            gen_utime: seqno,
+            tx_count: 0,
+            indexed_at: 1,
+            observed_mc_seqno: seqno,
+        };
+        store.commit_scanned_block(seqno, &ScannedTarget::Master, &block, &[], &touches)?;
+        store.seed_batch_heads(seqno, &[])?;
+        store.publish_batch(i64::MIN, &checkpoint)
+    }
+
+    /// The fixture really carries the defect: on the single-column key the
+    /// publication's upsert is refused, so the upgrade tests below exercise a
+    /// table that would freeze the indexer if left unmigrated.
+    #[test]
+    fn the_single_key_layout_refuses_the_publication_upsert() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v11-single-key.sqlite");
+        write_v11_database(&path, V11Layout::SingleKey);
+        let conn = Connection::open(&path).unwrap();
+        let error = conn.execute(COMPOSITE_UPSERT, []).unwrap_err();
+        assert!(error.to_string().contains("ON CONFLICT clause does not match"), "{error}");
+    }
+
+    fn upgrade_publish_and_restart(layout: V11Layout) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v11.sqlite");
+        let queued = write_v11_database(&path, layout);
+
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        {
+            let conn = store.lock().unwrap();
+            assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string(), "{layout:?}");
+            let (columns, key) = address_refresh_layout(&conn).unwrap();
+            assert_eq!(columns, ADDRESS_REFRESH_COLUMNS, "{layout:?}");
+            assert_eq!(key, ["address", "mc_seqno"], "{layout:?}");
+            assert_eq!(schedule_index_count(&conn), 1, "{layout:?}");
+            assert_eq!(raw_queue(&conn), sorted(queued.clone()), "queued work kept: {layout:?}");
+            let leftovers: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE name = 'indexer_address_refresh_single_key'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(leftovers, 0, "{layout:?}");
+        }
+        // The scheduler reads through the index, so the queue must be readable.
+        let heads = store.address_refresh_queue(16).unwrap();
+        assert!(heads.iter().any(|head| head.address == "0:aa"), "{layout:?}");
+        assert!(heads.iter().any(|head| head.address == "0:bb"), "{layout:?}");
+
+        publish(&store, 6, &["0:aa", "0:cc"]).unwrap();
+        assert_eq!(store.published_mc_seqno().unwrap(), 6, "{layout:?}");
+        let latest = store.latest_address_refresh("0:aa").unwrap().unwrap();
+        assert_eq!(latest.checkpoint, anchor(6), "{layout:?}");
+        let mut expected = queued.clone();
+        expected.push(("0:aa".into(), 6, 0, 1));
+        expected.push(("0:cc".into(), 6, 0, 1));
+        {
+            let conn = store.lock().unwrap();
+            assert_eq!(raw_queue(&conn), sorted(expected.clone()), "{layout:?}");
+        }
+        drop(store);
+
+        // A restart neither re-runs the rebuild nor loses the queue, and
+        // publication keeps working.
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        {
+            let conn = store.lock().unwrap();
+            assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string(), "{layout:?}");
+            assert_eq!(raw_queue(&conn), sorted(expected.clone()), "{layout:?}");
+            assert_eq!(schedule_index_count(&conn), 1, "{layout:?}");
+        }
+        publish(&store, 7, &["0:bb"]).unwrap();
+        assert_eq!(store.published_mc_seqno().unwrap(), 7, "{layout:?}");
+        expected.push(("0:bb".into(), 7, 0, 1));
+        let conn = store.lock().unwrap();
+        assert_eq!(raw_queue(&conn), sorted(expected), "{layout:?}");
+    }
+
+    #[test]
+    fn a_single_key_v11_database_is_migrated_and_keeps_publishing() {
+        upgrade_publish_and_restart(V11Layout::SingleKey);
+    }
+
+    #[test]
+    fn a_composite_key_v11_database_without_the_index_is_migrated() {
+        upgrade_publish_and_restart(V11Layout::CompositeWithoutIndex);
+    }
+
+    #[test]
+    fn a_composite_key_v11_database_with_the_index_is_migrated() {
+        upgrade_publish_and_restart(V11Layout::CompositeWithIndex);
+    }
+
+    /// Opening re-creates the scheduling index before migrating, so that path
+    /// alone cannot show the migration builds it. Run the migration step on
+    /// the raw file and check it leaves the key and the index in place itself.
+    #[test]
+    fn the_migration_step_itself_builds_the_key_and_the_scheduling_index() {
+        for layout in [V11Layout::SingleKey, V11Layout::CompositeWithoutIndex] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("v11.sqlite");
+            let queued = write_v11_database(&path, layout);
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(schedule_index_count(&conn), 0, "{layout:?}");
+            IndexerStore::ensure_schema_version(&conn).unwrap();
+            assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string(), "{layout:?}");
+            let (_, key) = address_refresh_layout(&conn).unwrap();
+            assert_eq!(key, ["address", "mc_seqno"], "{layout:?}");
+            assert_eq!(schedule_index_count(&conn), 1, "{layout:?}");
+            assert_eq!(raw_queue(&conn), sorted(queued), "{layout:?}");
+        }
+    }
+
+    /// A step that fails after the table was already rebuilt must leave the
+    /// original table, its rows and the stored version as they were.
+    #[test]
+    fn a_failed_refresh_key_migration_rolls_back_completely() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v11-single-key.sqlite");
+        let queued = write_v11_database(&path, V11Layout::SingleKey);
+        let conn = Connection::open(&path).unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+
+        let mut migrations = MIGRATIONS[..MIGRATIONS.len() - 1].to_vec();
+        migrations.push(|conn| {
+            migrate_address_refresh_key(conn)?;
+            let (_, key) = address_refresh_layout(conn)?;
+            assert_eq!(key, ["address", "mc_seqno"], "the rebuild ran before the failure");
+            Err(rusqlite::Error::SqliteSingleThreadedMode)
+        });
+        let result =
+            IndexerStore::ensure_schema_version_against(&conn, CURRENT_SCHEMA_VERSION, &migrations);
+        assert!(result.is_err());
+
+        assert_eq!(stored_version(&conn), "11");
+        let (_, key) = address_refresh_layout(&conn).unwrap();
+        assert_eq!(key, ["address"], "the single-column key is restored");
+        assert_eq!(raw_queue(&conn), sorted(queued.clone()));
+        let leftovers: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE name = 'indexer_address_refresh_single_key'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftovers, 0);
+        drop(conn);
+
+        // The untouched database still upgrades normally afterwards.
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        let conn = store.lock().unwrap();
+        assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string());
+        assert_eq!(raw_queue(&conn), sorted(queued));
+    }
+
+    /// A refresh table in neither v11 layout is refused, not rebuilt.
+    #[test]
+    fn an_unrecognised_refresh_layout_is_refused_without_change() {
+        for (definition, reason) in [
+            (
+                "CREATE TABLE indexer_address_refresh (
+                    address TEXT NOT NULL, touch_count INTEGER NOT NULL,
+                    last_block_seqno INTEGER NOT NULL, last_gen_utime INTEGER NOT NULL,
+                    mc_seqno INTEGER PRIMARY KEY, mc_root_hash TEXT NOT NULL,
+                    mc_file_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);",
+                "unexpected primary key",
+            ),
+            (
+                "CREATE TABLE indexer_address_refresh (
+                    address TEXT PRIMARY KEY, touch_count INTEGER NOT NULL,
+                    last_block_seqno INTEGER NOT NULL, last_gen_utime INTEGER NOT NULL,
+                    mc_seqno INTEGER NOT NULL, mc_root_hash TEXT NOT NULL,
+                    mc_file_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                    note TEXT);",
+                "unexpected columns",
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("v11-unknown.sqlite");
+            write_v11_database(&path, V11Layout::SingleKey);
+            {
+                let conn = Connection::open(&path).unwrap();
+                conn.execute_batch("DROP TABLE indexer_address_refresh;").unwrap();
+                conn.execute_batch(definition).unwrap();
+            }
+            let error = IndexerStore::open_for_tests(&path).err().unwrap();
+            assert!(error.to_string().contains(reason), "{error}");
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(stored_version(&conn), "11", "{reason}");
+            let sql: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name = 'indexer_address_refresh'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(sql, definition.trim_end_matches(';'), "{reason}");
+        }
     }
 }
