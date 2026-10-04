@@ -9,6 +9,7 @@ on:
       - 'sdk/js/packages/wallets/**'
       - 'sdk/js/packages/client/src/client/TosClient.ts'
       - 'test/auth-extensions/**'
+      - 'test/weak-ed25519/**'
       - 'scripts/update-auth-contract-code.py'
       - '.github/workflows/auth-extension-validation.yml'
     types: [opened, reopened, synchronize, ready_for_review]
@@ -45,6 +46,7 @@ jobs:
           python3 test/auth-extensions/test_auth.py
           python3 test/auth-extensions/mutations.py
           python3 test/auth-extensions/test_sdk_wallet_vectors.py
+          python3 test/weak-ed25519/test_native_aliases.py
           git diff --exit-code
       # The SDK half of the wallet vectors: the committed messages the native
       # test above executes must still be exactly what the SDK produces.

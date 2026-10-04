@@ -7,13 +7,22 @@
 ;; accept_message on the external gas credit, which a full owner set exceeds,
 ;; and accepting first would let anyone replay a failing init at the wallet's
 ;; expense. So a weak key that reaches storage through a hand-built StateInit is
-;; refused where it would act instead: before its signature is checked, as root
-;; and as co-signer. The other owners keep working.
+;; refused where it would act instead, before it counts: as co-signer before its
+;; signature is checked, and as root right after acceptance. The root check
+;; cannot run earlier: the code before accept_message already runs close to the
+;; external gas credit, and even the inline prefilter pushes some valid queries
+;; over it. The cost is that anyone can make such a wallet pay for a refused
+;; forged root query. A hand-built wallet with a weak owner is misconfigured,
+;; not an operational wallet: create_init_state refuses to build one.
 
 #include "strong-ed25519-key.fc";
 
+;; The inline prefilter clears almost every real key; only the rare key it cannot
+;; clear pays for the full check.
 () require_strong_owner_key(int public_key) impure inline {
-  throw_if(45, weak_ed25519_key?(public_key));
+  if (ed25519_key_may_be_weak?(public_key)) {
+    throw_if(45, weak_ed25519_key?(public_key));
+  }
 }
 
 () require_strong_owner_keys(cell owner_infos) impure inline_ref {
@@ -157,7 +166,6 @@ _ unpack_owner_info(slice cs) inline_ref {
   (slice owner_info, var found?) = owner_infos.udict_get?(8, root_i);
   throw_unless(31, found?);
   (int public_key, int flood) = unpack_owner_info(owner_info);
-  require_strong_owner_key(public_key);
   throw_unless(32, check_signature(root_hash, root_signature, public_key));
 
   cell signatures = in_msg~load_dict();
@@ -192,6 +200,9 @@ _ unpack_owner_info(slice cs) inline_ref {
   ;; Each co-signature costs a weak-key check on top of its signature check;
   ;; this allowance keeps a bundle of root plus 24 co-signers inside one message.
   set_gas_limit(150000);
+  ;; A weak root signs nothing (see the header). Refused here, after acceptance,
+  ;; and before anything it signed is recorded or counted.
+  require_strong_owner_key(public_key);
 
   ifnot (found?) {
     owner_infos~udict_set_builder(8, root_i, pack_owner_info(public_key, flood));

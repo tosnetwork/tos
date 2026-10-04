@@ -276,9 +276,11 @@ cell pack_agent_state(
   throw_if(err::controller_epoch_exhausted, controller_epoch == max_controller_epoch);
 }
 
-;; Canonical encodings of the complete Ed25519 8-torsion subgroup. CHKSIGNU
-;; separately rejects non-canonical and off-curve encodings while validating
-;; every external action; this denylist closes the remaining small-order-key
+;; Every encoding of an Ed25519 8-torsion point the verifiers accept: the
+;; eight canonical encodings, the identity and the order-2 point with the sign
+;; bit set (x = 0, so these are non-canonical aliases whose y is in range), and
+;; every y >= 2^255-19. Anyone can forge a signature under such a key. The same
+;; set as strong-ed25519-key.fc; this denylist closes the small-order-key
 ;; forgery class without changing the frozen owner rotation wire format.
 () require_strong_controller_key(int public_key) impure inline {
   ;; Ed25519 encodes y little-endian in 255 bits and x's sign in the high bit
@@ -305,6 +307,10 @@ cell pack_agent_state(
     0x0000000000000000000000000000000000000000000000000000000000000000);
   throw_if(err::weak_controller, public_key ==
     0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+  throw_if(err::weak_controller, public_key ==
+    0x0100000000000000000000000000000000000000000000000000000000000080);
+  throw_if(err::weak_controller, public_key ==
+    0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
 }
 
 ;; Bug fix: this must be called as `in_msg_body~load_maybe_hash()`, not

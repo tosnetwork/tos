@@ -519,6 +519,10 @@ fn owner_rotation_rejects_small_order_and_noncanonical_controller_keys() {
     for encoded in [
         "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        // The identity and the order-2 point with the sign bit set: x = 0, so
+        // these are non-canonical aliases whose y is in range.
+        "0100000000000000000000000000000000000000000000000000000000000080",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     ] {
         let key: [u8; 32] = hex::decode(encoded).expect("hex").try_into().expect("key");
         let mut body = BuilderData::new();
@@ -674,6 +678,7 @@ fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
     let result = fixture.send_external(funded).expect("funded resend");
     result.expect_success().expect_out_msgs(1);
     let gas_used = compute_gas_used(&result);
+    eprintln!("deploy send gas: {gas_used} of {AGENT_ACCOUNT_MAX_ACTION_GAS}");
     assert!(
         gas_used * 3 <= AGENT_ACCOUNT_MAX_ACTION_GAS * 2,
         "reserved compute budget must keep at least 1.5x margin over real usage ({gas_used} gas)"

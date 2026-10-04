@@ -1,10 +1,15 @@
 //! Ed25519 public keys an attestor or settlement authority must not be given.
 //!
-//! The eight canonical encodings of the 8-torsion subgroup -- anyone can forge
-//! a signature that verifies under them -- and encodings whose y is at least
-//! 2^255 - 19, with and without x's sign bit, which name a point under a
-//! second, non-canonical spelling. Bytes are in the order a contract loads
-//! them with `load_uint(256)`.
+//! Anyone can forge a signature that verifies under a key in the 8-torsion
+//! subgroup. The list holds, in this order:
+//! - the eight canonical encodings of that subgroup (indices 0-7);
+//! - four encodings whose y is at least 2^255 - 19, with and without x's sign
+//!   bit, which name a point under a second, non-canonical spelling (8-11);
+//! - the identity and the order-2 point with the sign bit set (12-13). Both
+//!   have x = 0, so the sign bit names no other point: these are non-canonical
+//!   aliases of indices 0 and 4 whose y is in range, and verifiers accept them.
+//!
+//! Bytes are in the order a contract loads them with `load_uint(256)`.
 
 #![allow(dead_code)]
 
@@ -31,6 +36,9 @@ pub fn weak_keys() -> Vec<[u8; 32]> {
         "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        // The identity and the order-2 point (x = 0) with the sign bit set.
+        "0100000000000000000000000000000000000000000000000000000000000080",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     ]
     .iter()
     .map(|hex| key(hex))
@@ -53,4 +61,11 @@ pub fn forge(public_key: &[u8; 32], message: &[u8]) -> Option<[u8; 64]> {
             .is_ok()
             .then_some(signature)
     })
+}
+
+/// The identity and the order-2 point spelled with the sign bit set: in range,
+/// so a y-range check misses them, and accepted by the verifiers.
+pub fn sign_bit_aliases() -> [[u8; 32]; 2] {
+    let keys = weak_keys();
+    [keys[12], keys[13]]
 }

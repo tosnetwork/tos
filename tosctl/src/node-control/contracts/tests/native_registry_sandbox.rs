@@ -1864,6 +1864,55 @@ fn a_stored_weak_key_does_not_count_toward_a_threshold() {
     assert_eq!(f.state().hash(0), before, "a forged weak signature completed a threshold");
 }
 
+/// The identity and the order-2 point spelled with the sign bit set pass a y
+/// range check. Each is refused at admission even with a forged possession
+/// proof, and a stored policy naming one does not let its forged signature
+/// complete a threshold.
+#[test]
+fn sign_bit_aliases_neither_install_nor_count() {
+    let strong = SigningKey::from_bytes(&[0xc7; 32]);
+    for alias in weak_ed25519::sign_bit_aliases() {
+        let alias_policy = |threshold| {
+            policy_of(
+                threshold,
+                1,
+                &[
+                    (strong.verifying_key().to_bytes(), 1, ALL_PURPOSES, true),
+                    (alias, 1, ALL_PURPOSES, true),
+                ],
+            )
+        };
+
+        let mut f = Fixture::new();
+        let before = f.state().hash(0);
+        let (update, forged) = forge_for(&alias, |nonce| {
+            let mut payload = BuilderData::new();
+            payload.checked_append_reference(alias_policy(1)).unwrap();
+            f.build_action(UPDATE_AGENT_POLICY, 1, 2, nonce, payload.into_cell().unwrap())
+        });
+        f.send(submit_body(
+            update.clone(),
+            signature_set(&f.old_key, &update),
+            signature_entries(vec![signed(&strong, &update), (alias, forged)]),
+        ))
+        .expect_aborted()
+        .expect_exit_code(ERR_WEAK_KEY);
+        assert_eq!(f.state().hash(0), before, "a forged possession proof installed an alias");
+
+        f.install_policy(alias_policy(2));
+        let before = f.state().hash(0);
+        let (counted, forged) = forge_for(&alias, |nonce| f.delegate_action(2, nonce));
+        f.send(submit_body(
+            counted.clone(),
+            signature_entries(vec![signed(&strong, &counted), (alias, forged)]),
+            empty_signatures(),
+        ))
+        .expect_aborted()
+        .expect_exit_code(ERR_WEAK_KEY);
+        assert_eq!(f.state().hash(0), before, "an alias's forged signature completed a threshold");
+    }
+}
+
 /// Gas for the widest policy that registers in one transaction, every
 /// controller signing both the possession proof and the authorization.
 #[test]
@@ -1872,7 +1921,7 @@ fn widest_policy_registration_gas() {
     // registration runs, so the widest policy that fits one transaction's gas
     // limit is narrower than the 64 the contract declares. Pin the widest that
     // currently fits so a cost increase that narrows it further fails here.
-    const WIDEST_REGISTRABLE: u8 = 27;
+    const WIDEST_REGISTRABLE: u8 = 28;
     let mut f = Fixture::new();
     let (gas, limit, exit, registered) = registration_gas(&mut f, WIDEST_REGISTRABLE);
     eprintln!("width {WIDEST_REGISTRABLE}: gas {gas} of {limit}, exit {exit}");

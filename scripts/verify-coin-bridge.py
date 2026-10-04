@@ -29,6 +29,7 @@ REQUIRED_SOURCES = [
     "tvm/tests/migrate.js",
     "tvm/tests/change-fee-floor.js",
     "tvm/tests/tos2eth-zero-destination.js",
+    "tvm/tests/weak-owner-key.js",
     "evm/contracts/Bridge.sol",
     "evm/contracts/WrappedTOS.sol",
     "evm/contracts/SignatureChecker.sol",
@@ -56,6 +57,17 @@ def require_text(path: Path, needles: list[str]) -> None:
     missing = [needle for needle in needles if needle not in text]
     if missing:
         raise AssertionError(f"{path.relative_to(REPO_ROOT)} missing invariants: {missing}")
+
+
+def require_helper_copy(directory: Path) -> None:
+    """The weak-key list must stay byte-identical to the one the chain's own contracts use."""
+    canonical = (REPO_ROOT / "crypto/smartcont/strong-ed25519-key.fc").read_bytes()
+    copy = directory / "strong-ed25519-key.fc"
+    if not copy.is_file() or copy.read_bytes() != canonical:
+        raise AssertionError(
+            f"{copy.relative_to(REPO_ROOT)} must be a byte-identical copy of "
+            "crypto/smartcont/strong-ed25519-key.fc"
+        )
 
 
 def verify_required_sources() -> None:
@@ -130,7 +142,15 @@ def verify_tvm_sources() -> None:
             "int query_global_id = in_msg~load_int(32);",
             "throw_unless(44, query_global_id == get_global_id());",
             "throw_unless(36, slice_hash(msg) == slice_hash(in_msg));",
+            # An owner key anyone can sign for authorizes nothing: refused when
+            # the initial data is built and before every stored key's signature.
+            '#include "strong-ed25519-key.fc";',
+            "  require_strong_owner_keys(owners_info);",
+            "  require_strong_owner_key(public_key);",
+            "    require_strong_owner_key(key);",
+            "  require_strong_owner_key(root_key);",
         ])
+        require_helper_copy(c)
         require_text(c / "votes-collector.fc", ["get_bridge_config"])
         require_text(c / "stdlib.fc", ['"STTOMIS"', '"LDTOMIS"'])
 

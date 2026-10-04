@@ -3,6 +3,32 @@
 ;; The network's own 32-bit signed identity, from its global configuration.
 int get_global_id() asm "GLOBALID";
 
+;; An owner key anyone can sign for (strong-ed25519-key.fc, a byte-identical
+;; copy of crypto/smartcont/strong-ed25519-key.fc) would sign as root or add an
+;; approval with no secret behind it. Such a key fails with exit code 45:
+;; create_init_state refuses an owner set that contains one, and a weak key
+;; that reaches storage through a hand-built StateInit is refused before its
+;; signature is checked, as root and as co-signer.
+#include "strong-ed25519-key.fc";
+
+;; The inline prefilter clears almost every real key; only the rare key it cannot
+;; clear pays for the full check.
+() require_strong_owner_key(int public_key) impure inline {
+  if (ed25519_key_may_be_weak?(public_key)) {
+    throw_if(45, weak_ed25519_key?(public_key));
+  }
+}
+
+() require_strong_owner_keys(cell owner_infos) impure inline_ref {
+  int i = -1;
+  do {
+    (i, slice owner_info, int found) = owner_infos.udict_get_next?(8, i);
+    if (found) {
+      require_strong_owner_key(owner_info.preload_uint(256));
+    }
+  } until (~ found);
+}
+
 _ unpack_state() inline_ref {
   var ds = begin_parse(get_data());
   var res = (ds~load_uint(32), ds~load_uint(8), ds~load_uint(8), ds~load_uint(64), ds~load_dict(), ds~load_dict(), ds~load_uint(32));
@@ -44,7 +70,9 @@ _ unpack_owner_info(slice cs) inline_ref {
 
     (slice public_key, var found?) = public_keys.udict_get?(8, i);
     throw_unless(37, found?);
-    throw_unless(38, check_signature(hash, signature, public_key.preload_uint(256)));
+    int key = public_key.preload_uint(256);
+    require_strong_owner_key(key);
+    throw_unless(38, check_signature(hash, signature, key));
 
     int mask = (1 << i);
     int old_cnt_bits = cnt_bits;
@@ -148,6 +176,7 @@ _ unpack_owner_info(slice cs) inline_ref {
   (slice owner_info, var found?) = owner_infos.udict_get?(8, root_i);
   throw_unless(31, found?);
   (int public_key, int flood) = unpack_owner_info(owner_info);
+  require_strong_owner_key(public_key);
   throw_unless(32, check_signature(root_hash, root_signature, public_key));
 
   cell signatures = in_msg~load_dict();
@@ -261,6 +290,7 @@ int processed?(int query_id) method_id {
 }
 
 cell create_init_state(int wallet_id, int n, int k, cell owners_info, int lock_until) method_id {
+  require_strong_owner_keys(owners_info);
   return pack_state(new_dict(), owners_info, 0, k, n, wallet_id, lock_until);
 }
 
@@ -297,7 +327,9 @@ cell get_public_keys() method_id {
   cell public_keys = get_public_keys();
   (slice public_key, var found?) = public_keys.udict_get?(8, root_i);
   throw_unless(31, found?);
-  throw_unless(32, check_signature(root_hash, root_signature, public_key.preload_uint(256)));
+  int root_key = public_key.preload_uint(256);
+  require_strong_owner_key(root_key);
+  throw_unless(32, check_signature(root_hash, root_signature, root_key));
 
   int mask = 1 << root_i;
 

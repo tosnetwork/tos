@@ -260,7 +260,10 @@ class AuthenticationTests(unittest.TestCase):
                 self.assertIsNone(s.maybe(), 'strict mode removes old extensions')
 
     def test_hybrid_activation_rejects_weak_classical_keys(self):
-        for key in [0, 1 << 248]:
+        # Zero, the identity, and the identity and the order-2 point with the
+        # sign bit set: x = 0 aliases whose y is in range.
+        for key in [0, 1 << 248, (1 << 248) | 0x80,
+                    0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]:
             for a in self.accounts(mode=2, pubkey=key):
                 a.configure(3, expected=1720 if a.agent else 1808)
                 self.assertEqual(a.auth()[:3], (2, 1, 0))

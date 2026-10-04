@@ -175,6 +175,8 @@ int cell_level(cell c) asm "CLEVEL";
   throw_unless(err::malformed, (wc == -1) | (wc == 0));
 }
 
+;; Refuses every Ed25519 key anyone can sign for: the set strong-ed25519-key.fc
+;; documents (torsion points in every accepted spelling, and y >= 2^255-19).
 () require_strong_ed25519_key(int public_key) impure inline {
   int y_last = (public_key & 255) & 127;
   int y_middle = (public_key >> 8) & ((1 << 240) - 1);
@@ -196,6 +198,10 @@ int cell_level(cell c) asm "CLEVEL";
   throw_if(err::bad_key, public_key == 0);
   throw_if(err::bad_key, public_key ==
     0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+  throw_if(err::bad_key, public_key ==
+    0x0100000000000000000000000000000000000000000000000000000000000080);
+  throw_if(err::bad_key, public_key ==
+    0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
 }
 
 int checked_add(int a, int b) impure inline {

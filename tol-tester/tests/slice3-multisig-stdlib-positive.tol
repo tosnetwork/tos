@@ -139,7 +139,7 @@ fun test_record_approval_increments_count(): int {
     return 0;
 }
 
-// The twelve keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
+// The fourteen keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
 // as loadUint(256) reads them.
 fun weakKeys(): array<int> {
     var t: array<int> = [];
@@ -155,6 +155,8 @@ fun weakKeys(): array<int> {
     t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
     t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
     t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000080);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
     return t;
 }
 
@@ -163,7 +165,7 @@ fun test_weak_signer_keys_refused(): int {
     val weak = weakKeys();
     var i = 0;
     var rejected = 0;
-    while (i < 12) {
+    while (i < 14) {
         val key = weak.get(i);
         // admission into the signer set
         try { multisigAddSigner(createEmptyDict(), key); } catch (code) { assert(code == MULTISIG_FUNC_THROW_WEAK_SIGNER) throw 171; rejected += 1; }
@@ -185,7 +187,7 @@ fun test_weak_signer_keys_refused(): int {
         assert(proposal.approvalCount == 1) throw 175;
         i += 1;
     }
-    assert(rejected == 36) throw 176;
+    assert(rejected == 42) throw 176;
 
     val err = multisigErrorForFuncThrow(MULTISIG_FUNC_THROW_WEAK_SIGNER, 0, 99);
     assert(err.errorClass == ErrorClass.Authorization) throw 177;

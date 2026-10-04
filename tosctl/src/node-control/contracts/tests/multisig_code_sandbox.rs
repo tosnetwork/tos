@@ -7,8 +7,9 @@
 
 //! The k-of-n external-message multisig (crypto/smartcont/multisig-code.fc) as real
 //! transactions: owner keys anyone can sign for are refused when the initial data is
-//! built, and a weak key that reaches storage anyway -- through a hand-built StateInit --
-//! neither signs as root nor counts as a co-signer.
+//! built, and a weak key that reaches storage anyway -- through a hand-built StateInit,
+//! which makes a misconfigured wallet rather than an operational one -- neither signs as
+//! root nor counts as a co-signer.
 
 use chain_block::{
     BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
@@ -245,40 +246,46 @@ fn create_init_state_refuses_every_weak_owner_key() {
     }
 }
 
-/// A weak key stored by a hand-built StateInit cannot open a query as root: the
-/// external is refused before acceptance, even with a signature that verifies.
+/// A weak key stored by a hand-built StateInit cannot open a query as root. The root is
+/// checked right after acceptance (before it, the external gas credit has no room), so a
+/// forged root signature is accepted, refused with exit 45, and rolled back: nothing is
+/// recorded. A key the verifier cannot be fooled under fails its signature check first.
 #[test]
 fn a_stored_weak_owner_cannot_sign_as_root() {
+    let mut forged_count = 0;
     for (i, weak) in weak_ed25519::weak_keys().into_iter().enumerate() {
         let keys = strong_keys(2);
         let mut owners = public(&keys);
         owners.push(weak);
         let mut wallet = Wallet::deploy(&owners, 2, keys);
-        let query_id = wallet.query_id(i as u64);
-        let signed = signed_root(2, None, query_id);
-        let error = wallet.refused(query([0u8; 64], &signed));
-        assert!(error.contains(&format!("exit code: {ERR_WEAK_OWNER}")), "key {i}: {error}");
-    }
-
-    // With a signature forged for it, the same root still opens nothing.
-    let keys = strong_keys(2);
-    let weak = forgeable_weak_key();
-    let mut owners = public(&keys);
-    owners.push(weak);
-    let mut wallet = Wallet::deploy(&owners, 2, keys);
-    let (query_id, signed, forged) = (1..=64)
-        .find_map(|offset| {
+        let forgery = (1..=64).find_map(|offset| {
             let query_id = wallet.query_id(offset);
             let signed = signed_root(2, None, query_id);
             weak_ed25519::forge(&weak, signed.hash(0).as_slice())
                 .map(|forged| (query_id, signed, forged))
-        })
-        .expect("a forgeable query id");
-    let error = wallet.refused(query(forged, &signed));
-    assert!(error.contains(&format!("exit code: {ERR_WEAK_OWNER}")), "{error}");
-    assert_eq!(wallet.query_state(query_id), (0, 0), "the query must stay unknown");
+        });
+        match forgery {
+            Some((query_id, signed, forged)) => {
+                forged_count += 1;
+                let result = wallet.send(query(forged, &signed)).expect("accepted for the check");
+                assert_eq!(exit_code(&result), ERR_WEAK_OWNER, "key {i}: forged root counted");
+                assert_eq!(wallet.query_state(query_id), (0, 0), "key {i}: a query was recorded");
+            }
+            None => {
+                let signed = signed_root(2, None, wallet.query_id(100));
+                let error = wallet.refused(query([0u8; 64], &signed));
+                assert!(error.contains("exit code: 32"), "key {i}: {error}");
+            }
+        }
+    }
+    // Every torsion encoding and both sign-bit aliases decode, so all ten are forgeable.
+    assert!(forged_count >= 10, "only {forged_count} weak keys were forgeable");
 
-    // A strong root opens a query on the same wallet: the refusal is the weak key's.
+    // A strong root opens a query on such a wallet: the refusal is the weak key's.
+    let keys = strong_keys(2);
+    let mut owners = public(&keys);
+    owners.push(forgeable_weak_key());
+    let mut wallet = Wallet::deploy(&owners, 2, keys);
     let query_id = wallet.query_id(100);
     let signed = signed_root(0, None, query_id);
     let root_signature = sign(&wallet.keys[0], &signed);
@@ -373,4 +380,55 @@ fn root_and_twenty_four_co_signers_fit_the_allowance() {
     assert_eq!(exit_code(&result), 0);
     assert!(gas < ALLOWANCE);
     assert_eq!(wallet.processed(query_id), -1, "25 of 25 executed");
+}
+
+/// The identity and the order-2 point spelled with the sign bit set pass a y range check.
+/// Stored as owners, neither opens a query with a forged root signature nor completes one
+/// with a forged co-signature, while the two real owners still reach k.
+#[test]
+fn sign_bit_alias_owners_neither_sign_nor_count() {
+    let keys = strong_keys(2);
+    let aliases = weak_ed25519::sign_bit_aliases();
+    let mut owners = public(&keys);
+    owners.extend(aliases);
+    let mut wallet = Wallet::deploy(&owners, 2, keys);
+    let mut offset = 1u64;
+    let mut fresh_query = |wallet: &Wallet| {
+        offset += 1;
+        wallet.query_id(offset)
+    };
+    for (index, alias) in [(2u8, aliases[0]), (3u8, aliases[1])] {
+        let (query_id, signed, forged) = std::iter::repeat_with(|| fresh_query(&wallet))
+            .take(64)
+            .find_map(|query_id| {
+                let signed = signed_root(index, None, query_id);
+                weak_ed25519::forge(&alias, signed.hash(0).as_slice())
+                    .map(|forged| (query_id, signed, forged))
+            })
+            .expect("a forgeable query id");
+        let result = wallet.send(query(forged, &signed)).expect("accepted for the check");
+        assert_eq!(exit_code(&result), ERR_WEAK_OWNER, "alias {index} signed as root");
+        assert_eq!(wallet.query_state(query_id), (0, 0), "alias {index} opened a query");
+
+        let (query_id, forged) = std::iter::repeat_with(|| fresh_query(&wallet))
+            .take(64)
+            .find_map(|query_id| {
+                weak_ed25519::forge(&alias, query_body(query_id).hash(0).as_slice())
+                    .map(|forged| (query_id, forged))
+            })
+            .expect("a forgeable query id");
+        let signed = signed_root(0, co_signatures(&[(index, forged)]), query_id);
+        let root_signature = sign(&wallet.keys[0], &signed);
+        let result = wallet.send(query(root_signature, &signed)).expect("accepted for the root");
+        assert_eq!(exit_code(&result), ERR_WEAK_OWNER, "alias {index} co-signed");
+        assert_eq!(wallet.query_state(query_id), (0, 1), "alias {index} counted toward k");
+    }
+
+    let query_id = fresh_query(&wallet);
+    let co = co_signatures(&[(1, sign(&wallet.keys[1], &query_body(query_id)))]);
+    let signed = signed_root(0, co, query_id);
+    let root_signature = sign(&wallet.keys[0], &signed);
+    let result = wallet.send(query(root_signature, &signed)).expect("strong pair");
+    assert_eq!(exit_code(&result), 0);
+    assert_eq!(wallet.processed(query_id), -1, "two real owners reach k");
 }

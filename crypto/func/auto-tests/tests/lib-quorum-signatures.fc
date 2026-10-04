@@ -225,7 +225,7 @@ int test_expiry() method_id(109) {
   return 9;
 }
 
-;; The twelve keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs, as
+;; The fourteen keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs, as
 ;; load_uint(256) reads them.
 tuple weak_keys() {
   tuple t = empty_tuple();
@@ -241,6 +241,8 @@ tuple weak_keys() {
   t~tpush(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
   t~tpush(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
   t~tpush(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+  t~tpush(0x0100000000000000000000000000000000000000000000000000000000000080);
+  t~tpush(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
   return t;
 }
 
@@ -253,7 +255,7 @@ int test_weak_verifiers_refused_at_admission() method_id(110) {
   tuple weak = weak_keys();
   int i = 0;
   int rejected = 0;
-  while (i < 12) {
+  while (i < 14) {
     int key = weak.at(i);
     try { quorum::add_verifier(new_dict(), key); } catch (_, code) { expect_throw(code, quorum::error::weak_verifier, 191); rejected += 1; }
     ;; a prebuilt set that never went through add_verifier
@@ -262,7 +264,7 @@ int test_weak_verifiers_refused_at_admission() method_id(110) {
     try { quorum::with_verifiers(quorum::config(set123(), 2), prebuilt); } catch (_, code) { expect_throw(code, quorum::error::weak_verifier, 193); rejected += 1; }
     i += 1;
   }
-  throw_unless(194, rejected == 36);
+  throw_unless(194, rejected == 42);
   return 10;
 }
 
@@ -286,6 +288,31 @@ int test_stored_weak_verifier_does_not_count() method_id(111) {
   return 11;
 }
 
+;; The identity and the order-2 point spelled with the sign bit set: x = 0, so these are
+;; non-canonical aliases whose y is in range. R = identity, S = 0 is a signature of HASH
+;; under the first (for every message) and of HASH + 1 under the second (k is even there).
+const int ID_ALIAS = 0x0100000000000000000000000000000000000000000000000000000000000080;
+const int O2_ALIAS = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+slice forged_identity() asm "x{01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000} PUSHSLICE";
+
+int test_sign_bit_aliases_do_not_count() method_id(112) {
+  ;; The forged vectors are real: CHKSIGNU accepts both with no secret behind them.
+  throw_unless(211, check_signature(HASH, forged_identity(), ID_ALIAS));
+  throw_unless(212, check_signature(HASH + 1, forged_identity(), O2_ALIAS));
+  int rejected = 0;
+  ;; A stored 2-of-2 that K1 alone cannot meet, completed by the identity alias.
+  cell with_id = new_dict().udict_set_builder(quorum::key_bits, K1, begin_cell())
+    .udict_set_builder(quorum::key_bits, ID_ALIAS, begin_cell());
+  try { quorum::require_quorum([with_id, 2, 2], HASH, with_sig(with_sig(new_dict(), K1, sig1()), ID_ALIAS, forged_identity())); }
+  catch (_, code) { expect_throw(code, quorum::error::weak_verifier, 213); rejected += 1; }
+  ;; A stored 1-of-1 whose only verifier is the order-2 alias.
+  cell with_o2 = new_dict().udict_set_builder(quorum::key_bits, O2_ALIAS, begin_cell());
+  try { quorum::require_quorum([with_o2, 1, 1], HASH + 1, with_sig(new_dict(), O2_ALIAS, forged_identity())); }
+  catch (_, code) { expect_throw(code, quorum::error::weak_verifier, 214); rejected += 1; }
+  throw_unless(215, rejected == 2);
+  return 12;
+}
+
 {-
 TESTCASE | 101 | | 1
 TESTCASE | 102 | | 2
@@ -298,4 +325,5 @@ TESTCASE | 108 | | 8
 TESTCASE | 109 | | 9
 TESTCASE | 110 | | 10
 TESTCASE | 111 | | 11
+TESTCASE | 112 | | 12
 -}

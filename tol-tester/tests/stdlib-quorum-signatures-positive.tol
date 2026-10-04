@@ -216,7 +216,7 @@ fun test_expiry(): int {
     return 9;
 }
 
-// The twelve keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
+// The fourteen keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
 // as loadUint(256) reads them.
 fun weakKeys(): array<int> {
     var t: array<int> = [];
@@ -232,6 +232,8 @@ fun weakKeys(): array<int> {
     t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
     t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
     t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000080);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
     return t;
 }
 
@@ -253,7 +255,7 @@ fun test_weak_verifiers_refused_at_admission(): int {
     val weak = weakKeys();
     var i = 0;
     var rejected = 0;
-    while (i < 12) {
+    while (i < 14) {
         val key = weak.get(i);
         try { quorumAddVerifier(createEmptyDict(), key); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 191); rejected += 1; }
         // a prebuilt set that never went through quorumAddVerifier
@@ -262,7 +264,7 @@ fun test_weak_verifiers_refused_at_admission(): int {
         try { quorumConfigNew(set123(), 2).withVerifiers(prebuilt); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 193); rejected += 1; }
         i += 1;
     }
-    assert(rejected == 36) throw 194;
+    assert(rejected == 42) throw 194;
     return 10;
 }
 
@@ -285,6 +287,31 @@ fun test_stored_weak_verifier_does_not_count(): int {
     return 11;
 }
 
+// The identity and the order-2 point spelled with the sign bit set: x = 0, so
+// these are non-canonical aliases whose y is in range. R = identity, S = 0 is a
+// signature of HASH under the first (for every message) and of HASH + 1 under
+// the second (k is even there).
+const ID_ALIAS = 0x0100000000000000000000000000000000000000000000000000000000000080
+const O2_ALIAS = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+fun forgedIdentity(): slice { return "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".hexToSlice(); }
+
+@method_id(112)
+fun test_sign_bit_aliases_do_not_count(): int {
+    // The forged vectors are real: CHKSIGNU accepts both with no secret behind them.
+    assert(isSignatureValid(HASH, forgedIdentity(), ID_ALIAS)) throw 211;
+    assert(isSignatureValid(HASH + 1, forgedIdentity(), O2_ALIAS)) throw 212;
+    var rejected = 0;
+    // A stored 2-of-2 that K1 alone cannot meet, completed by the identity alias.
+    val withId = QuorumConfig { verifiers: withVerifier(withVerifier(createEmptyDict(), K1), ID_ALIAS), verifierCount: 2, quorum: 2 };
+    try { withId.requireQuorum(HASH, withSig(withSig(createEmptyDict(), K1, sig1()), ID_ALIAS, forgedIdentity())); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 213); rejected += 1; }
+    // A stored 1-of-1 whose only verifier is the order-2 alias.
+    val withO2 = QuorumConfig { verifiers: withVerifier(createEmptyDict(), O2_ALIAS), verifierCount: 1, quorum: 1 };
+    try { withO2.requireQuorum(HASH + 1, withSig(createEmptyDict(), O2_ALIAS, forgedIdentity())); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 214); rejected += 1; }
+    assert(rejected == 2) throw 215;
+    return 12;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -297,4 +324,5 @@ fun test_stored_weak_verifier_does_not_count(): int {
 @testcase | 109 | | 9
 @testcase | 110 | | 10
 @testcase | 111 | | 11
+@testcase | 112 | | 12
  */
