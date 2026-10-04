@@ -11,7 +11,10 @@
 //! accept -> result -> settle flow, the cancel and timeout flows, and the
 //! unauthorized/illegal-transition rejections.
 
-use chain_block::{BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, StateInit};
+use chain_block::{
+    BuilderData, Cell, Coins, CurrencyCollection, IBitstring, MsgAddressInt, Serializable,
+    StateInit,
+};
 use contracts::{TaskEscrowContract, TaskEscrowInit};
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
@@ -140,6 +143,15 @@ impl Fixture {
             .get_account(addr)
             .and_then(|acc| acc.balance().and_then(|cc| cc.coins.as_u64()))
             .unwrap_or(0)
+    }
+
+    /// Lowers the escrow's balance in place, as storage rent does over time
+    /// after the budget was checked at claim/accept. The contract cannot be
+    /// driven below its budget any other way before settlement.
+    fn drain_escrow_to(&mut self, balance: u64) {
+        let mut account = self.bc.get_account(&self.escrow).expect("escrow account").clone();
+        account.set_balance(CurrencyCollection::with_coins(balance));
+        self.bc.set_account(self.escrow.clone(), account);
     }
 
     fn has_attestor(&self) -> bool {
@@ -562,11 +574,14 @@ fn unauthorized_and_out_of_order_messages_are_rejected() {
 
 #[test]
 fn settlement_rejects_payout_above_actual_contract_balance() {
-    let mut f = Fixture::new(5 * TOS, 2 * TOS);
+    // Accept requires the budget to be held, so the balance only falls short
+    // of it afterwards, as storage rent would make it.
+    let mut f = Fixture::new(5 * TOS, 5 * TOS + TOS / 5);
     let agent_addr = f.agent.address().clone();
     f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
     f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
         .expect_success();
+    f.drain_escrow_to(2 * TOS);
     let creator_addr = f.creator.address().clone();
     f.send_from(&creator_addr, TaskEscrowContract::settle(3, 4 * TOS).unwrap())
         .expect_aborted()
@@ -576,20 +591,22 @@ fn settlement_rejects_payout_above_actual_contract_balance() {
 
 #[test]
 fn settlement_rejects_payout_one_nanoton_above_the_exact_available_balance() {
-    // Budget (5 TOS) intentionally exceeds funding (2 TOS), so the actual
-    // contract balance -- not the budget -- is the binding constraint here.
+    // The balance (drained to 2 TOS after accept, as storage rent would) is
+    // below the 5 TOS budget, so the actual contract balance -- not the
+    // budget -- is the binding constraint here.
     // `send_from` always attaches TOS/10 as the message's own value, which
     // is credited to the contract's balance before `get_balance()` runs
     // inside the transaction, so the balance settle actually checks against
     // is the pre-message balance plus that credit. This tightens
     // `settlement_rejects_payout_above_actual_contract_balance` (which uses
     // a payout far above the balance) down to the exact off-by-one boundary.
-    let mut f = Fixture::new(5 * TOS, 2 * TOS);
+    let mut f = Fixture::new(5 * TOS, 5 * TOS + TOS / 5);
     let agent_addr = f.agent.address().clone();
     let creator_addr = f.creator.address().clone();
     f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
     f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
         .expect_success();
+    f.drain_escrow_to(2 * TOS);
     let available_at_settle = f.balance(&f.escrow.clone()) + TOS / 10;
     f.send_from(&creator_addr, TaskEscrowContract::settle(3, available_at_settle + 1).unwrap())
         .expect_aborted()
@@ -1067,4 +1084,58 @@ fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_ta
         )
         .expect_success();
     assert_eq!(task_b.status(), STATUS_SETTLED);
+}
+
+const ERR_BUDGET_NOT_ESCROWED: i32 = 133;
+
+#[test]
+fn claim_and_accept_refuse_a_budget_the_escrow_does_not_hold() {
+    // Underfunded: the agent must be refused before doing any work.
+    let mut open = Fixture::open(5 * TOS, 2 * TOS);
+    let agent_addr = open.agent.address().clone();
+    open.send_from(&agent_addr, TaskEscrowContract::claim(1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_BUDGET_NOT_ESCROWED);
+    assert_eq!(open.status(), STATUS_OPEN);
+    // The value the agent attaches is its own and does not fund the budget.
+    open.send_from_with_value(&agent_addr, TaskEscrowContract::claim(2).unwrap(), 10 * TOS)
+        .expect_aborted()
+        .expect_exit_code(ERR_BUDGET_NOT_ESCROWED);
+    assert_eq!(open.status(), STATUS_OPEN);
+
+    let mut assigned = Fixture::new(5 * TOS, 2 * TOS);
+    let agent_addr = assigned.agent.address().clone();
+    assigned
+        .send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_BUDGET_NOT_ESCROWED);
+    assert_eq!(assigned.status(), STATUS_OPEN);
+
+    // Control: the same tasks fully funded are taken.
+    let mut funded_open = Fixture::open(5 * TOS, 5 * TOS + TOS / 5);
+    let agent_addr = funded_open.agent.address().clone();
+    funded_open.send_from(&agent_addr, TaskEscrowContract::claim(1).unwrap()).expect_success();
+    assert_eq!(funded_open.status(), STATUS_ACCEPTED);
+    let mut funded = Fixture::new(5 * TOS, 5 * TOS + TOS / 5);
+    let agent_addr = funded.agent.address().clone();
+    funded.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    assert_eq!(funded.status(), STATUS_ACCEPTED);
+}
+
+#[test]
+fn a_dispute_with_the_reserved_zero_commitment_is_refused() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    let creator_addr = f.creator.address().clone();
+    f.send_from(&creator_addr, TaskEscrowContract::dispute(3, [0; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(127);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+    // Control: a non-zero commitment opens the dispute.
+    f.send_from(&creator_addr, TaskEscrowContract::dispute(4, [0xCC; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.status(), STATUS_DISPUTED);
 }

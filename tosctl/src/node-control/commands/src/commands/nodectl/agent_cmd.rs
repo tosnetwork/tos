@@ -376,7 +376,7 @@ pub struct AgentTaskCreateCmd {
     #[arg(
         long,
         conflicts_with = "amount_nanotos",
-        help = "Funding amount in TOS; defaults to 0.2"
+        help = "Funding amount in TOS; must exceed the budget; defaults to the budget plus 0.2"
     )]
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact funding amount in nanoTOS")]
@@ -2509,9 +2509,13 @@ async fn verify_task_deploy_quorum_network(
 
 impl AgentTaskCreateCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let amount_nanotos =
-            resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.2))?;
         let budget_nanotos = resolve_nanotos("budget", self.budget, self.budget_nanotos, None)?;
+        let explicit_amount = if self.amount.is_some() || self.amount_nanotos.is_some() {
+            Some(resolve_nanotos("amount", self.amount, self.amount_nanotos, None)?)
+        } else {
+            None
+        };
+        let amount_nanotos = task_escrow_funding_nanotos(budget_nanotos, explicit_amount)?;
         let path = Path::new(config_path);
         let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let agent_account = self
@@ -11279,6 +11283,26 @@ pub(crate) fn parse_optional_signature(
     Ok(Some(signature))
 }
 
+/// Reserve added to the budget when no funding amount is given: the escrow pays
+/// its deployment and storage out of the excess over the budget.
+const TASK_ESCROW_FUNDING_RESERVE_NANOTOS: u64 = 200_000_000;
+
+/// The value a new Task Escrow is funded with. The contract refuses claim and
+/// accept until it holds the full budget, so funding at or below the budget
+/// would create a task no agent can take.
+fn task_escrow_funding_nanotos(budget: u64, explicit_amount: Option<u64>) -> anyhow::Result<u64> {
+    match explicit_amount {
+        Some(amount) if amount <= budget => anyhow::bail!(
+            "funding amount {amount} nanoTOS must exceed the budget {budget} nanoTOS: the escrow must hold \
+             the whole budget before an agent can take the task, and pays its own fees from the excess"
+        ),
+        Some(amount) => Ok(amount),
+        None => budget.checked_add(TASK_ESCROW_FUNDING_RESERVE_NANOTOS).ok_or_else(|| {
+            anyhow::anyhow!("budget {budget} nanoTOS plus the funding reserve overflows")
+        }),
+    }
+}
+
 fn resolve_nanotos(
     name: &str,
     value_tos: Option<f64>,
@@ -11496,7 +11520,7 @@ mod tests {
         relay_network_domain_digest, resolve_nanotos, resolve_payout_nanotos,
         rpc_failure_diagnostic, rpc_locator_identity_digest, select_exact_finalized_output,
         sponsorship_rpc_not_found, sponsorship_rpc_temporarily_unavailable,
-        task_deploy_valid_until, task_deployment_workchain,
+        task_deploy_valid_until, task_deployment_workchain, task_escrow_funding_nanotos,
         validate_agent_account_task_create_funding, validate_controller_task_action,
         validate_destination_credit_semantics, validate_exact_sponsorship_top_up_boc,
         validate_release_profile_rpc_locator, validate_sponsorship_custody_evidence_context,
@@ -11540,6 +11564,21 @@ mod tests {
     struct TaskActionParser {
         #[command(subcommand)]
         action: AgentTaskAction,
+    }
+
+    #[test]
+    fn task_escrow_funding_must_exceed_the_budget() {
+        // Default: the budget plus the fee reserve.
+        assert_eq!(task_escrow_funding_nanotos(5_000_000_000, None).unwrap(), 5_200_000_000);
+        // An explicit amount at or below the budget creates a task no agent
+        // can take: the contract refuses claim/accept until it holds the budget.
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(200_000_000)).is_err());
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_000)).is_err());
+        assert_eq!(
+            task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_001)).unwrap(),
+            5_000_000_001
+        );
+        assert!(task_escrow_funding_nanotos(u64::MAX, None).is_err());
     }
 
     #[test]
