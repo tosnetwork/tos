@@ -50,8 +50,8 @@ Below is the list of supported arguments and their default values:
 | GLOBAL_CONFIG_URL | TOS global configuration file. Mainnet - https://tos.network/global-config.json, Testnet - https://tos.network/testnet-global.config.json                                                         |     no     | https://tos.network/global-config.json |
 | SNAPSHOT_IMPORT   | Set to 1 to import a database snapshot into a new node. Import is off unless set; see [Database snapshots](#database-snapshots).                                                  |     no     |                                                         |
 | DUMP_URL          | https:// URL of the snapshot archive (.tar.lz). Requires SNAPSHOT_IMPORT, DUMP_SHA256 and DUMP_ZEROSTATE_ROOT_HASH; the container refuses to start otherwise.                       |     no     |                                                         |
-| DUMP_SHA256       | SHA-256 of the snapshot archive, from a source you trust. A checksum downloaded from the same place as the archive does not authenticate it.                                      |     no     |                                                         |
-| DUMP_ZEROSTATE_ROOT_HASH | `validator.zero_state.root_hash` of the network the snapshot belongs to; must match the node's global config.                                                               |     no     |                                                         |
+| DUMP_SHA256       | SHA-256 of the snapshot archive. It is the only thing that authenticates the archive, and only if you obtained it independently of the snapshot download. A checksum downloaded from the same place as the archive does not authenticate it. |     no     |                                                         |
+| DUMP_ZEROSTATE_ROOT_HASH | `validator.zero_state.root_hash` of the network the snapshot belongs to; must match the node's global config. This is a consistency check, not authentication of either value. |     no     |                                                         |
 | SNAPSHOT_STAGING_DIR | Directory, outside the database directory, where the archive is downloaded and unpacked before it is moved into place.                                                         |     no     |             /var/tos-work/snapshot-staging              |
 | VALIDATOR_PORT    | UDP port that must be available from the outside. Used for communication with other nodes.                                                                                                |     no     |                          30001                          |
 | CONSOLE_PORT      | This TCP port is used to access validator's console. Not necessarily to be opened for external access.                                                                                    |     no     |                          30002                          |
@@ -120,20 +120,40 @@ names its content:
 -v /data/snapshot-staging:/var/tos-work/snapshot-staging \
 ```
 
-Take `DUMP_SHA256` from a source you trust independently of the snapshot
-server; HTTPS only proves which server answered, and a checksum served next to
-the archive proves nothing more. The import script
-(`docker/import-snapshot.sh`) then:
+`DUMP_SHA256` is the trust anchor. It authenticates the archive only if you
+obtained it independently of the snapshot download, for example from a
+release announcement you verified, rather than from the server, page or
+mirror that serves the archive. HTTPS only proves which server answered, and a
+checksum served next to the archive proves nothing more.
+
+`DUMP_ZEROSTATE_ROOT_HASH` must equal the zero state in the node's global
+config. That is a consistency check between two of your own settings: it stops
+a digest meant for one network from being used on a node configured for
+another. It does not authenticate the global config; the node trusts that
+config as configured.
+
+The import script (`docker/import-snapshot.sh`) then:
 
 - refuses to start when `DUMP_URL` is set without `SNAPSHOT_IMPORT=1`, or when
   the digest or the network binding is missing or does not match;
+- imports only into a new database: before downloading, and again immediately
+  before installing, the database directory may hold nothing but the node's
+  `config.json`, `keyring/` and `tos-global.config`, plus an empty
+  `lost+found`. Any other content, even with names the snapshot does not use,
+  is refused;
 - downloads into `SNAPSHOT_STAGING_DIR`, which must be outside the database
   directory (mount it on the same filesystem as the database so the final step
   is a rename), and checks the SHA-256 before anything is unpacked;
 - accepts only regular files and directories with relative names, never `..`,
-  and never the node's own `config.json` or `keyring`;
-- refuses to overwrite anything already in the database, moves the verified
-  entries into place, and only then writes the `.snapshot-imported` marker.
+  and never a top-level name the database already reserves (`config.json`,
+  `keyring`, `tos-global.config`, `lost+found`, the import markers), however
+  the name is spelled (`././keyring`, `.//keyring` and `keyring/` are all
+  `keyring`);
+- checks the unpacked tree itself again before installing it: its real
+  top-level names, and nothing but regular, singly linked files and
+  directories anywhere in it;
+- moves the verified entries into place, and only then writes the
+  `.snapshot-imported` marker.
 
 Any refusal stops the container before the node starts, and leaves the database
 as it was. A database imported by an earlier image without verification (it

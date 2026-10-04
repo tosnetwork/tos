@@ -30,7 +30,26 @@ OTHER_ZEROSTATE = "XplPz01CXAps5qeSWUtxcyBfdAo5zVb1N979KLSKD24="
 
 PLZIP_STUB = """#!/bin/sh
 # Test stand-in for plzip: "-d -c FILE" writes FILE unchanged.
+#
+# The import decompresses twice: once to list, once to unpack. Two optional
+# hooks act on the second call only, to model what the listing cannot see:
+#   PLZIP_STUB_SECOND  write this file instead, so the unpacked tree differs
+#                      from the listing that was checked;
+#   PLZIP_STUB_TOUCH   create this path first, as if something wrote into the
+#                      database while the archive was staged.
 for last; do :; done
+if [ -n "${PLZIP_STUB_STATE:-}" ]; then
+  if [ -e "$PLZIP_STUB_STATE" ]; then
+    if [ -n "${PLZIP_STUB_TOUCH:-}" ]; then
+      printf 'appeared during staging' >"$PLZIP_STUB_TOUCH"
+    fi
+    if [ -n "${PLZIP_STUB_SECOND:-}" ]; then
+      exec cat -- "$PLZIP_STUB_SECOND"
+    fi
+  else
+    : >"$PLZIP_STUB_STATE"
+  fi
+fi
 exec cat -- "$last"
 """
 
@@ -95,6 +114,7 @@ class ImportSnapshotTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="import-snapshot-")
         root = Path(self._tmp.name)
         self.root = root
+        self.extra_env: dict[str, str] = {}
         self.db = root / "volume" / "db"
         self.staging = root / "volume" / "staging"
         self.served = root / "served"
@@ -125,6 +145,7 @@ class ImportSnapshotTest(unittest.TestCase):
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
             "TOS_DB_DIR": str(self.db),
             "SNAPSHOT_STAGING_DIR": str(self.staging),
+            **self.extra_env,
         }
         env.update(env_overrides)
         return subprocess.run(
@@ -204,7 +225,9 @@ class ImportSnapshotTest(unittest.TestCase):
         result = self.run_import(
             **self.enabled(url, digest, DUMP_ZEROSTATE_ROOT_HASH=OTHER_ZEROSTATE)
         )
-        self.assert_refused(result, "but the node is configured for", before)
+        self.assert_refused(result, f"does not match zero state {ZEROSTATE}", before)
+        # The message must not present the comparison as authentication.
+        self.assertIn("authenticates neither", result.stderr)
 
     def test_opt_in_without_url_is_refused(self) -> None:
         before = tree(self.db)
@@ -299,18 +322,162 @@ class ImportSnapshotTest(unittest.TestCase):
 
     def test_node_config_member_is_refused(self) -> None:
         self.assert_member_refused(
-            [*GOOD_MEMBERS, ("config.json", "file", b"{}")], "node's own config.json"
+            [*GOOD_MEMBERS, ("config.json", "file", b"{}")],
+            "archive member overwrites the node's own config.json",
         )
 
     def test_keyring_member_is_refused(self) -> None:
         self.assert_member_refused(
-            [*GOOD_MEMBERS, ("./keyring/server", "file", b"k")], "node's own keyring"
+            [*GOOD_MEMBERS, ("./keyring/server", "file", b"k")],
+            "archive member overwrites the node's own keyring",
         )
 
-    def test_existing_database_entry_is_not_overwritten(self) -> None:
+    # ---- repeated '.' components and other spellings of a reserved name.
+    # The reserved destination is removed first, so only the member policy
+    # stands between the archive and the node's identity: no collision with an
+    # existing entry can be what refuses these.
+
+    def assert_spelling_refused(self, member: str, kind: str, reserved: str) -> None:
+        # The global config moves out of the database so that the database
+        # starts out empty.
+        outside = self.root / "tos-global.config"
+        (self.db / "tos-global.config").rename(outside)
+        self.extra_env["TOS_GLOBAL_CONFIG"] = str(outside)
+        (self.db / "config.json").unlink()
+        for path in sorted((self.db / "keyring").iterdir()):
+            path.unlink()
+        (self.db / "keyring").rmdir()
+        self.assertEqual(sorted(p.name for p in self.db.iterdir()), [])
+        payload: bytes | str = b"x" if kind == "file" else b""
+        self.assert_member_refused(
+            [*GOOD_MEMBERS, (member, kind, payload)],
+            f"archive member overwrites the node's own {reserved}: ",
+        )
+
+    def test_repeated_dot_keyring_is_refused(self) -> None:
+        self.assert_spelling_refused("././keyring/server", "file", "keyring")
+
+    def test_many_dots_keyring_is_refused(self) -> None:
+        self.assert_spelling_refused("./././././keyring/server", "file", "keyring")
+
+    def test_doubled_slash_keyring_is_refused(self) -> None:
+        self.assert_spelling_refused(".//keyring/server", "file", "keyring")
+
+    def test_dot_slash_dot_keyring_is_refused(self) -> None:
+        self.assert_spelling_refused("././/./keyring", "dir", "keyring")
+
+    def test_trailing_slash_keyring_dir_is_refused(self) -> None:
+        self.assert_spelling_refused("keyring/", "dir", "keyring")
+
+    def test_repeated_dot_config_is_refused(self) -> None:
+        self.assert_spelling_refused("././config.json", "file", "config.json")
+
+    def test_repeated_dot_global_config_is_refused(self) -> None:
+        self.assert_spelling_refused(".//./tos-global.config", "file", "tos-global.config")
+
+    def test_repeated_dot_marker_is_refused(self) -> None:
+        self.assert_spelling_refused("././.snapshot-imported", "file", ".snapshot-imported")
+
+    def test_parent_then_reserved_is_refused(self) -> None:
+        self.assert_member_refused(
+            [*GOOD_MEMBERS, ("celldb/../keyring/server", "file", b"k")], "escapes its directory"
+        )
+
+    def test_dot_root_entries_are_accepted(self) -> None:
+        url, digest = self.serve(
+            tar_bytes([("./.", "dir", b""), (".//", "dir", b""), *GOOD_MEMBERS])
+        )
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.db / "celldb" / "CURRENT").read_bytes(), b"MANIFEST-000001\n")
+
+    # ---- the unpacked tree is checked independently of the listing
+
+    def assert_unpacked_refused(
+        self, unpacked: list[tuple[str, str, bytes | str]], reason: str
+    ) -> None:
+        (self.db / "keyring" / "server").unlink()
+        (self.db / "keyring").rmdir()
+        second = self.served / "second.tar"
+        second.write_bytes(tar_bytes(unpacked))
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        before = tree(self.db)
+        result = self.run_import(
+            **self.enabled(url, digest),
+            PLZIP_STUB_STATE=str(self.root / "plzip-called"),
+            PLZIP_STUB_SECOND=str(second),
+        )
+        self.assert_refused(result, reason, before)
+
+    def test_unpacked_reserved_name_is_refused(self) -> None:
+        self.assert_unpacked_refused(
+            [*GOOD_MEMBERS, ("keyring/server", "file", b"k")],
+            "unpacked archive carries the node's own keyring",
+        )
+
+    def test_unpacked_symlink_is_refused(self) -> None:
+        self.assert_unpacked_refused(
+            [*GOOD_MEMBERS, ("celldb/link", "symlink", "/etc")],
+            "unpacked archive contains something that is neither a regular file nor a directory: "
+            "celldb/link",
+        )
+
+    def test_unpacked_hardlink_is_refused(self) -> None:
+        self.assert_unpacked_refused(
+            [*GOOD_MEMBERS, ("celldb/hard", "hardlink", "celldb/CURRENT")],
+            "unpacked archive contains a hard-linked file",
+        )
+
+    # ---- the destination must be a new database
+
+    def test_existing_chain_data_is_refused_before_download(self) -> None:
+        # The URL cannot be fetched: refusing with this message proves the
+        # destination was checked before any network access.
         (self.db / "celldb").mkdir()
         (self.db / "celldb" / "CURRENT").write_bytes(b"existing")
-        self.assert_member_refused(GOOD_MEMBERS, "database already contains celldb")
+        before = tree(self.db)
+        missing = (self.served / "absent.tar.lz").as_uri()
+        result = self.run_import(**self.enabled(missing, "0" * 64))
+        self.assert_refused(result, "the database directory is not new: it contains celldb", before)
+
+    def test_unrelated_existing_content_is_refused(self) -> None:
+        # Nothing in the snapshot collides with it; the database is still not new.
+        (self.db / "files").mkdir()
+        (self.db / "files" / "packages.db").write_bytes(b"older chain data")
+        (self.db / "notes.txt").write_bytes(b"operator notes")
+        self.assert_member_refused(GOOD_MEMBERS, "the database directory is not new: it contains")
+
+    def test_keyring_that_is_not_a_directory_is_refused(self) -> None:
+        (self.db / "keyring" / "server").unlink()
+        (self.db / "keyring").rmdir()
+        (self.db / "keyring").symlink_to(self.root)
+        self.assert_member_refused(GOOD_MEMBERS, "database entry keyring is not a directory")
+
+    def test_config_that_is_not_a_regular_file_is_refused(self) -> None:
+        (self.db / "config.json").unlink()
+        (self.db / "config.json").symlink_to(self.root / "elsewhere.json")
+        self.assert_member_refused(GOOD_MEMBERS, "database entry config.json is not a regular file")
+
+    def test_non_empty_lost_and_found_is_refused(self) -> None:
+        (self.db / "lost+found").mkdir()
+        (self.db / "lost+found" / "#12").write_bytes(b"recovered")
+        self.assert_member_refused(
+            GOOD_MEMBERS, "database entry lost+found is not an empty directory"
+        )
+
+    def test_content_appearing_during_staging_is_refused(self) -> None:
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        intruder = self.db / "appeared"
+        before = tree(self.db)
+        result = self.run_import(
+            **self.enabled(url, digest),
+            PLZIP_STUB_STATE=str(self.root / "plzip-called"),
+            PLZIP_STUB_TOUCH=str(intruder),
+        )
+        before["appeared"] = ("file", b"appeared during staging")
+        self.assert_refused(
+            result, "the database directory is not new: it contains appeared", before
+        )
 
     # ---- markers
 
@@ -328,6 +495,14 @@ class ImportSnapshotTest(unittest.TestCase):
         self.assertEqual(tree(self.db), before)
 
     # ---- success
+
+    def test_empty_lost_and_found_is_accepted(self) -> None:
+        (self.db / "lost+found").mkdir()
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.db / ".snapshot-imported").read_text(), digest)
+        self.assertEqual(list((self.db / "lost+found").iterdir()), [])
 
     def test_verified_snapshot_is_installed_and_marked(self) -> None:
         url, digest = self.serve(tar_bytes(GOOD_MEMBERS))

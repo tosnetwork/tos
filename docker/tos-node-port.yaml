@@ -29,8 +29,8 @@ spec:
           value: "<PUBLIC_IP>"
         - name: GLOBAL_CONFIG_URL
           value: "https://tos.network/global-config.json"
-        # Snapshot import is opt-in and needs the archive's SHA-256 from a source
-        # you trust, never one downloaded next to the archive (docker/README.md).
+        # Snapshot import is opt-in. Its only trust anchor is the archive's SHA-256,
+        # obtained independently of the snapshot download (docker/README.md).
         # To import one, uncomment all four entries and fill them in.
         # - name: SNAPSHOT_IMPORT
         #   value: "1"

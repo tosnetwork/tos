@@ -5,9 +5,19 @@
 # itself, so its content must be authenticated by something the operator
 # controls. TLS on the download only says which server answered; a checksum
 # fetched from the same place as the archive says nothing more. The archive is
-# therefore accepted only when its SHA-256 equals a digest the operator put in
-# the node's own configuration, and only for the network that configuration
-# names.
+# therefore accepted only when its SHA-256 equals DUMP_SHA256, a digest the
+# operator puts in the node's own configuration. That digest is the only trust
+# anchor here, and it authenticates the archive only if the operator obtained
+# it independently of the snapshot download.
+#
+# DUMP_ZEROSTATE_ROOT_HASH must equal the zero state in the node's global
+# config. That is a consistency check between two operator settings: it stops
+# a digest meant for one network being used on a node configured for another.
+# It does not authenticate the global config, which is trusted as configured.
+#
+# The database must be new: before anything is installed it may hold only the
+# node's own configuration and keys (config.json, keyring/, tos-global.config)
+# and an empty lost+found. A snapshot is never merged into existing chain data.
 #
 # Environment (all set by the operator):
 #   SNAPSHOT_IMPORT            "1" or "true" to import. Import is off by default.
@@ -15,8 +25,7 @@
 #   DUMP_SHA256                SHA-256 of the archive file, 64 hex characters.
 #   DUMP_ZEROSTATE_ROOT_HASH   validator.zero_state.root_hash of the network the
 #                              snapshot belongs to; must equal the node's global
-#                              config, so a digest published for one network
-#                              cannot seed a node of another.
+#                              config (a consistency check, not authentication).
 #   SNAPSHOT_STAGING_DIR       where the archive is downloaded and unpacked;
 #                              must be outside the database directory. Put it on
 #                              the database volume's filesystem so the final
@@ -27,7 +36,8 @@
 # Exit status: 0 when the snapshot was imported or had already been imported,
 # or when import is not requested; non-zero on any refusal or failure. Nothing
 # is written into the database directory until the archive has been verified,
-# listed and unpacked in staging, and the success marker is written last.
+# listed, unpacked and checked in staging, and the success marker is written
+# last.
 
 set -euo pipefail
 
@@ -37,9 +47,13 @@ STAGING_DIR="${SNAPSHOT_STAGING_DIR:-/var/tos-work/snapshot-staging}"
 MARKER="$DB_DIR/.snapshot-imported"
 LEGACY_MARKER="$DB_DIR/dump_downloaded"
 
-# Top-level names an archive may not carry: the node's own identity and
-# configuration, and this script's bookkeeping.
-RESERVED_TOP_LEVEL=(config.json keyring tos-global.config .snapshot-imported dump_downloaded)
+# What a new database may already hold before the import: the node's own
+# identity and configuration written by validator-engine and init.sh, and the
+# lost+found a freshly formatted volume carries at its root.
+NEW_DB_ENTRIES=(config.json keyring tos-global.config lost+found)
+# Top-level names an archive may not carry: everything a new database may
+# already hold, and this script's bookkeeping.
+RESERVED_TOP_LEVEL=("${NEW_DB_ENTRIES[@]}" .snapshot-imported .snapshot-imported.tmp dump_downloaded)
 
 fail() {
   echo "[snapshot] refused: $*" >&2
@@ -48,6 +62,41 @@ fail() {
 
 log() {
   echo "[snapshot] $*"
+}
+
+is_reserved() {
+  local candidate="$1" reserved
+  for reserved in "${RESERVED_TOP_LEVEL[@]}"; do
+    [ "$candidate" != "$reserved" ] || return 0
+  done
+  return 1
+}
+
+# Refuse unless the database holds nothing but NEW_DB_ENTRIES, each of the
+# expected kind. Runs before the download and again immediately before the
+# install, so content that appears while the archive is staged is not merged.
+require_new_database() {
+  local entry name
+  while IFS= read -r -d '' entry; do
+    name="${entry##*/}"
+    case "$name" in
+      config.json | tos-global.config)
+        [ -f "$entry" ] && [ ! -L "$entry" ] ||
+          fail "database entry $name is not a regular file; import only into a new database"
+        ;;
+      keyring)
+        [ -d "$entry" ] && [ ! -L "$entry" ] ||
+          fail "database entry keyring is not a directory; import only into a new database"
+        ;;
+      lost+found)
+        [ -d "$entry" ] && [ ! -L "$entry" ] && [ -z "$(ls -A -- "$entry" 2>/dev/null || echo unreadable)" ] ||
+          fail "database entry lost+found is not an empty directory; import only into a new database"
+        ;;
+      *)
+        fail "the database directory is not new: it contains $name; a snapshot is imported only into a database holding nothing but ${NEW_DB_ENTRIES[*]}"
+        ;;
+    esac
+  done < <(find "$DB_DIR" -mindepth 1 -maxdepth 1 -print0)
 }
 
 import_requested() {
@@ -83,7 +132,7 @@ expected_zerostate="${DUMP_ZEROSTATE_ROOT_HASH:-}"
 configured_zerostate="$(jq -er '.validator.zero_state.root_hash' "$GLOBAL_CONFIG")" ||
   fail "cannot read validator.zero_state.root_hash from $GLOBAL_CONFIG"
 [ "$configured_zerostate" = "$expected_zerostate" ] ||
-  fail "snapshot is for zero state $expected_zerostate but the node is configured for $configured_zerostate"
+  fail "DUMP_ZEROSTATE_ROOT_HASH $expected_zerostate does not match zero state $configured_zerostate in $GLOBAL_CONFIG (a consistency check between operator settings; it authenticates neither)"
 
 [ -d "$DB_DIR" ] || fail "database directory $DB_DIR is missing"
 db_real="$(realpath -e "$DB_DIR")"
@@ -106,6 +155,7 @@ fi
 if [ -e "$LEGACY_MARKER" ]; then
   fail "the database holds an earlier unverified snapshot import ($LEGACY_MARKER); start from an empty database to import a verified one"
 fi
+require_new_database
 
 # ---- Staging: download, verify, list, unpack. The database is not touched.
 
@@ -127,11 +177,14 @@ curl --fail --silent --show-error --location --proto '=https,file' --proto-redir
 
 actual="$(sha256sum "$archive" | cut -d' ' -f1)"
 [ "$actual" = "$digest" ] || fail "archive SHA-256 $actual does not match DUMP_SHA256 $digest"
-log "archive matches DUMP_SHA256"
+log "archive matches the operator-supplied DUMP_SHA256; this authenticates it only if that digest was obtained independently of the download"
 
 # Member policy, checked on the listing before anything is unpacked: only
 # regular files and directories, relative names without '..', and no
-# reserved top-level name.
+# reserved top-level name. Every component is normalized the way tar resolves
+# it on extraction ('' and '.' vanish), so './././keyring' and './/keyring'
+# are both 'keyring'. This check keeps hostile members out of staging; the
+# check of the unpacked tree below is the one the install relies on.
 listing="$work/listing"
 plzip -d -c "$archive" | tar --list --verbose --numeric-owner --quoting-style=escape --file - >"$listing" ||
   fail "archive cannot be decompressed and listed"
@@ -148,32 +201,45 @@ while IFS= read -r line; do
     /*) fail "archive member has an absolute name: $name" ;;
   esac
   IFS='/' read -r -a parts <<<"$name"
+  top=""
   for part in "${parts[@]}"; do
-    [ "$part" != ".." ] || fail "archive member escapes its directory: $name"
+    case "$part" in
+      .) continue ;;
+      ..) fail "archive member escapes its directory: $name" ;;
+    esac
+    # An empty component (from '//' or a trailing '/') never becomes the top.
+    [ -n "$top" ] || top="$part"
   done
-  top="${name#./}"
-  top="${top%%/*}"
-  for reserved in "${RESERVED_TOP_LEVEL[@]}"; do
-    [ "$top" != "$reserved" ] || fail "archive member overwrites the node's own $reserved: $name"
-  done
+  if [ -n "$top" ] && is_reserved "$top"; then
+    fail "archive member overwrites the node's own $top: $name"
+  fi
 done <"$listing"
 
 plzip -d -c "$archive" | tar --extract --file - --directory "$extract" \
   --no-same-owner --no-same-permissions --no-overwrite-dir ||
   fail "archive cannot be unpacked"
 
+# The unpacked tree is what gets installed, so it is checked again directly,
+# independently of how the listing above was parsed: real top-level names, and
+# nothing but regular, singly linked files and directories anywhere.
 mapfile -d '' entries < <(find "$extract" -mindepth 1 -maxdepth 1 -print0)
 [ "${#entries[@]}" -gt 0 ] || fail "archive unpacked to nothing"
 for entry in "${entries[@]}"; do
   name="${entry##*/}"
-  [ ! -e "$DB_DIR/$name" ] && [ ! -L "$DB_DIR/$name" ] ||
-    fail "database already contains $name; refusing to overwrite it"
+  if is_reserved "$name"; then
+    fail "unpacked archive carries the node's own $name"
+  fi
 done
+odd="$(find "$extract" -mindepth 1 ! -type f ! -type d -print -quit)"
+[ -z "$odd" ] || fail "unpacked archive contains something that is neither a regular file nor a directory: ${odd#"$extract"/}"
+linked="$(find "$extract" -type f -links +1 -print -quit)"
+[ -z "$linked" ] || fail "unpacked archive contains a hard-linked file: ${linked#"$extract"/}"
 
 # ---- Install: move verified entries into place, then write the marker.
 
+require_new_database
 for entry in "${entries[@]}"; do
-  mv -- "$entry" "$DB_DIR/${entry##*/}" || fail "cannot move ${entry##*/} into the database"
+  mv -T -- "$entry" "$DB_DIR/${entry##*/}" || fail "cannot move ${entry##*/} into the database"
 done
 printf '%s' "$digest" >"$MARKER.tmp"
 mv -f -- "$MARKER.tmp" "$MARKER"
