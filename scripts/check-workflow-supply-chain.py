@@ -15,6 +15,11 @@ Workflows (.github/workflows/*.yml):
   PR_WRITE                a pull_request workflow holding a write permission
   UNAUTHENTICATED_INPUT   a privileged or release-input workflow runs a
                           downloaded installer or trusts a key fetched at build time
+  RELEASE_TAG_UNCHECKED   a job creates, uploads to or publishes a release
+                          (gh release create/upload/edit) without running
+                          `release-artifacts.py check-tag` immediately before
+                          that command, or without running it again after the
+                          job's last such command
 
 Deployment manifests (docker/*.yaml) and their README:
   IMAGE_NOT_DIGEST        an image not referenced by @sha256 digest
@@ -50,6 +55,10 @@ UNAUTHENTICATED_INPUT_RES = (
         "pipes a download into a shell",
     ),
 )
+# Commands that create, fill or publish a release. Deleting a release or an
+# asset is the remedy after a failed check, not a publication.
+RELEASE_MUTATION_RE = re.compile(r"\bgh\s+release\s+(?:create|upload|edit)\b")
+TAG_CHECK_RE = re.compile(r"\brelease-artifacts\.py\s+check-tag\b")
 IMAGE_RE = re.compile(r"^\s*(?:-\s+)?image:\s*['\"]?([^'\"\s#]+)")
 DIGEST_IMAGE_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 SNAPSHOT_KEYS = ("SNAPSHOT_IMPORT", "DUMP_SHA256", "DUMP_ZEROSTATE_ROOT_HASH")
@@ -111,6 +120,36 @@ def permission_grants(lines: list[str], index: int, inline: str) -> list[str]:
 
 def has_write(grants: list[str]) -> bool:
     return any(grant == "write-all" or grant.endswith(": write") for grant in grants)
+
+
+def release_tag_findings(lines: list[str], job: str, start: int, end: int) -> list[tuple[int, str]]:
+    """Each release mutation needs a tag check since the previous one, and the
+    last mutation needs a check after it, so the tag cannot move unnoticed
+    between collection and any publication step."""
+    problems: list[tuple[int, str]] = []
+    checked_since_mutation = False
+    last_mutation: int | None = None
+    for index in range(start, end):
+        line = lines[index]
+        if line.lstrip().startswith("#"):
+            continue
+        if RELEASE_MUTATION_RE.search(line):
+            if not checked_since_mutation:
+                problems.append(
+                    (
+                        index,
+                        f"job {job} runs {line.strip()!r} without a check-tag immediately before it",
+                    )
+                )
+            checked_since_mutation = False
+            last_mutation = index
+        if TAG_CHECK_RE.search(line):
+            checked_since_mutation = True
+    if last_mutation is not None and not checked_since_mutation:
+        problems.append(
+            (last_mutation, f"job {job} does not run check-tag after its last release command")
+        )
+    return problems
 
 
 def check_workflow(path: Path, relative: str, release_inputs: set[str]) -> list[Finding]:
@@ -180,6 +219,8 @@ def check_workflow(path: Path, relative: str, release_inputs: set[str]) -> list[
         jobs_end = block_end(lines, jobs_index, 0)
         for job_index, job, _ in child_keys(lines, jobs_index + 1, jobs_end):
             job_end = block_end(lines, job_index, indent_of(lines[job_index]))
+            for index, message in release_tag_findings(lines, job, job_index + 1, job_end):
+                add("RELEASE_TAG_UNCHECKED", index, message)
             permissions = [
                 entry
                 for entry in child_keys(lines, job_index + 1, job_end)
@@ -330,6 +371,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: docker://alpine@sha256:{"a" * 64}
+      - run: |
+          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" # before create
+          gh release create "$T" --verify-tag --draft
+          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" # before publish
+          gh release edit "$T" --draft=false
+          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" || gh release delete "$T" --yes
 """
 GOOD_MANIFEST = f"""spec:
   containers:
@@ -380,6 +427,19 @@ BAD_WORKFLOWS = {
     "UNAUTHENTICATED_INPUT  ": GOOD_WORKFLOW.replace(
         "sudo scripts/install-llvm-toolchain.sh 21",
         "wget -qO- https://example.invalid/key | sudo apt-key add -",
+    ),
+    "RELEASE_TAG_UNCHECKED": GOOD_WORKFLOW.replace(
+        'check-tag --set full --tag "$T" # before create', "--version # before create"
+    ),
+    "RELEASE_TAG_UNCHECKED ": GOOD_WORKFLOW.replace(
+        'check-tag --set full --tag "$T" # before publish', "--version # before publish"
+    ),
+    "RELEASE_TAG_UNCHECKED  ": GOOD_WORKFLOW.replace(
+        'check-tag --set full --tag "$T" || gh release delete', "--version || gh release delete"
+    ),
+    "RELEASE_TAG_UNCHECKED   ": GOOD_WORKFLOW.replace(
+        '          gh release edit "$T" --draft=false\n',
+        '          gh release edit "$T" --draft=false\n          gh release upload "$T" late.bin\n',
     ),
 }
 BAD_MANIFESTS = {

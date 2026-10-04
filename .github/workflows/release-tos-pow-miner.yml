@@ -177,7 +177,26 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
     steps:
+      - name: Check out the release guard from the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: guard
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/release-artifacts.py
+            scripts/release-artifacts.json
+          sparse-checkout-cone-mode: false
+
+      # The build jobs checked out the same ref, so this is the commit the
+      # archives were built from, peeled from the tag even when it is annotated.
+      - name: Record the commit the archives were built from
+        run: echo "TAG_SHA=$(git -C guard rev-parse 'HEAD^{commit}')" >> "$GITHUB_ENV"
+
       - name: Receive the archives built in this run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -185,16 +204,28 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # The tag is re-resolved on GitHub before the release is created and
+      # before the archives are uploaded, and once more afterwards, so archives
+      # built from one commit are not left under a tag that names another.
       - name: Verify and upload
         working-directory: dist
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           for sum in *.sha256; do
             sha256sum --check --strict "$sum"
           done
+          python3 ../guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
+            --tag "$TAG" --tag-sha "$TAG_SHA"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes ""
+          python3 ../guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
+            --tag "$TAG" --tag-sha "$TAG_SHA"
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber ./*
+          if ! python3 ../guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
+            --tag "$TAG" --tag-sha "$TAG_SHA"; then
+            echo "::error::tag $TAG moved while pow-miner archives were uploaded; removing them from the release" >&2
+            for file in ./*; do
+              gh release delete-asset "$TAG" "${file#./}" --repo "$GITHUB_REPOSITORY" --yes
+            done
+            exit 1
+          fi

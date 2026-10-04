@@ -8,6 +8,7 @@ something failed.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -331,6 +332,197 @@ class StageTest(unittest.TestCase):
         self.assertIn("release-provenance.json is missing", str(caught.exception))
 
 
+TAG = "v2026.10"
+TAG_OBJECT = "c" * 40
+INNER_TAG_OBJECT = "d" * 40
+TAG_CONFIG = {
+    **CONFIG,
+    "release_sets": {
+        "full": {**CONFIG["release_sets"]["full"], "tag_prefix": "v"},
+        "tol": {"assets": [], "tag_prefix": "tol-v"},
+    },
+}
+
+
+class FakeTagApi:
+    """GitHub's git database as the publishing job sees it.
+
+    `refs` maps a tag name to the object its ref points at, and `tags` maps an
+    annotated tag object's SHA to the object it points at. Tests move a tag by
+    changing `refs` between calls, exactly as a push to the remote would.
+    """
+
+    def __init__(
+        self, refs: dict[str, dict[str, str]], tags: dict[str, dict[str, str]] | None = None
+    ):
+        self.refs = refs
+        self.tags = tags or {}
+        self.requests: list[str] = []
+
+    def get_json(self, path: str) -> Any:
+        self.requests.append(path)
+        ref_prefix = f"repos/{REPO}/git/ref/tags/"
+        tag_prefix = f"repos/{REPO}/git/tags/"
+        if path.startswith(ref_prefix):
+            name = path.removeprefix(ref_prefix)
+            if name not in self.refs:
+                raise ReleaseError(f"GitHub API request {path} failed: HTTP 404: Not Found")
+            return {"ref": f"refs/tags/{name}", "object": self.refs[name]}
+        if path.startswith(tag_prefix):
+            return {"object": self.tags[path.removeprefix(tag_prefix)]}
+        raise AssertionError(path)
+
+    def download(self, path: str, destination: Path) -> None:
+        raise AssertionError(path)
+
+
+def commit(sha: str) -> dict[str, str]:
+    return {"type": "commit", "sha": sha}
+
+
+def tag_object(sha: str) -> dict[str, str]:
+    return {"type": "tag", "sha": sha}
+
+
+class CheckTagTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="release-check-tag-")
+        self.provenance = Path(self._tmp.name) / "release-provenance.json"
+        self.write_provenance()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def write_provenance(self, **overrides: str) -> None:
+        record = {"repository": REPO, "tag": TAG, "tag_commit": TAG_SHA, "artifacts": []}
+        record.update(overrides)
+        self.provenance.write_text(json.dumps(record))
+
+    def check(self, api: FakeTagApi, *, tag: str = TAG, release_set: str = "full") -> str:
+        return release_artifacts.check_tag(
+            api,
+            TAG_CONFIG,
+            repo=REPO,
+            release_set=release_set,
+            tag=tag,
+            tag_sha=TAG_SHA,
+            provenance=self.provenance,
+        )
+
+    def assert_refused(self, api: FakeTagApi, reason: str, **kwargs: Any) -> None:
+        with self.assertRaises(ReleaseError) as caught:
+            self.check(api, **kwargs)
+        self.assertIn(reason, str(caught.exception))
+
+    def test_lightweight_tag_on_the_built_commit_passes(self) -> None:
+        api = FakeTagApi({TAG: commit(TAG_SHA)})
+        self.assertEqual(self.check(api), TAG_SHA)
+        self.assertEqual(api.requests, [f"repos/{REPO}/git/ref/tags/{TAG}"])
+
+    def test_annotated_tag_is_peeled_to_its_commit(self) -> None:
+        api = FakeTagApi({TAG: tag_object(TAG_OBJECT)}, {TAG_OBJECT: commit(TAG_SHA)})
+        self.assertEqual(self.check(api), TAG_SHA)
+
+    def test_tag_of_a_tag_is_peeled_to_its_commit(self) -> None:
+        api = FakeTagApi(
+            {TAG: tag_object(TAG_OBJECT)},
+            {TAG_OBJECT: tag_object(INNER_TAG_OBJECT), INNER_TAG_OBJECT: commit(TAG_SHA)},
+        )
+        self.assertEqual(self.check(api), TAG_SHA)
+
+    def test_tag_moved_after_collection_is_refused(self) -> None:
+        # The negative control: the tag named the built commit when the
+        # assets were collected and checked, then moved before publication.
+        api = FakeTagApi({TAG: commit(TAG_SHA)})
+        self.assertEqual(self.check(api), TAG_SHA)
+        api.refs[TAG] = commit(OTHER_SHA)
+        self.assert_refused(api, f"tag {TAG} now names commit {OTHER_SHA}, not {TAG_SHA}")
+
+    def test_annotated_tag_moved_to_another_commit_is_refused(self) -> None:
+        api = FakeTagApi({TAG: tag_object(TAG_OBJECT)}, {TAG_OBJECT: commit(OTHER_SHA)})
+        self.assert_refused(api, f"now names commit {OTHER_SHA}")
+
+    def test_deleted_tag_is_refused(self) -> None:
+        self.assert_refused(FakeTagApi({}), "HTTP 404")
+
+    def test_ref_for_another_name_is_refused(self) -> None:
+        api = FakeTagApi({TAG: commit(TAG_SHA)})
+        api.get_json = lambda path: {"ref": f"refs/tags/{TAG}-rc1", "object": commit(TAG_SHA)}  # type: ignore[method-assign]
+        self.assert_refused(api, f"no tag ref refs/tags/{TAG}")
+
+    def test_tag_naming_a_tree_is_refused(self) -> None:
+        api = FakeTagApi({TAG: {"type": "tree", "sha": TAG_SHA}})
+        self.assert_refused(api, "names a tree, not a commit")
+
+    def test_abbreviated_object_is_refused(self) -> None:
+        api = FakeTagApi({TAG: commit(TAG_SHA[:12])})
+        self.assert_refused(api, "full 40-character")
+
+    def test_looping_annotated_tags_are_refused(self) -> None:
+        api = FakeTagApi({TAG: tag_object(TAG_OBJECT)}, {TAG_OBJECT: tag_object(TAG_OBJECT)})
+        self.assert_refused(api, "nested more than")
+
+    def test_tag_outside_the_release_namespace_is_refused(self) -> None:
+        api = FakeTagApi({"release-1": commit(TAG_SHA)})
+        self.assert_refused(api, "is not a full release tag", tag="release-1")
+        self.assertEqual(api.requests, [])
+
+    def test_tol_set_requires_its_own_prefix(self) -> None:
+        api = FakeTagApi({TAG: commit(TAG_SHA)})
+        self.write_provenance()
+        self.assert_refused(api, "must be tol-v<version>", release_set="tol")
+
+    def test_bare_prefix_is_refused(self) -> None:
+        self.assert_refused(
+            FakeTagApi({"v": commit(TAG_SHA)}), "is not a full release tag", tag="v"
+        )
+
+    def test_provenance_for_another_commit_is_refused(self) -> None:
+        self.write_provenance(tag_commit=OTHER_SHA)
+        self.assert_refused(FakeTagApi({TAG: commit(TAG_SHA)}), "records tag_commit")
+
+    def test_provenance_for_another_tag_is_refused(self) -> None:
+        self.write_provenance(tag="v2026.09")
+        self.assert_refused(FakeTagApi({TAG: commit(TAG_SHA)}), "records tag 'v2026.09'")
+
+    def test_provenance_for_another_repository_is_refused(self) -> None:
+        self.write_provenance(repository="someone/fork")
+        self.assert_refused(FakeTagApi({TAG: commit(TAG_SHA)}), "records repository")
+
+    def test_command_line_refuses_a_moved_tag(self) -> None:
+        # The workflow calls the command line, so the refusal is checked there:
+        # exit status 1 and the reason on stderr.
+        api = FakeTagApi({TAG: commit(OTHER_SHA)})
+        config = Path(self._tmp.name) / "config.json"
+        config.write_text(json.dumps(TAG_CONFIG))
+        original = release_artifacts.GhApi
+        release_artifacts.GhApi = lambda: api
+        stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr):
+                status = release_artifacts.main(
+                    [
+                        "--config",
+                        str(config),
+                        "check-tag",
+                        "--repo",
+                        REPO,
+                        "--set",
+                        "full",
+                        "--tag",
+                        TAG,
+                        "--tag-sha",
+                        TAG_SHA,
+                        "--provenance",
+                        str(self.provenance),
+                    ]
+                )
+        finally:
+            release_artifacts.GhApi = original
+        self.assertEqual(status, 1)
+        self.assertIn("RELEASE_ARTIFACTS_REFUSED: tag v2026.10 now names commit", stderr.getvalue())
+
+
 class RepositoryConfigTest(unittest.TestCase):
     """The committed configuration names workflows that exist and build on tags."""
 
@@ -348,6 +540,24 @@ class RepositoryConfigTest(unittest.TestCase):
         for release_set in config["release_sets"].values():
             for item in [*release_set["assets"], *release_set.get("bundles", [])]:
                 self.assertIn(item["artifact"], collected)
+
+    def test_release_workflows_check_tags_in_their_own_namespace(self) -> None:
+        # Each release workflow passes --set for the namespace its tags live
+        # in; the tag ruleset documented in doc/tos-release-policy.md covers
+        # exactly these prefixes.
+        config = json.loads((HERE / "release-artifacts.json").read_text())
+        workflows = HERE.parent / ".github" / "workflows"
+        expected = {
+            "create-release.yml": "full",
+            "create-tol-release.yml": "tol",
+            "release-tos-pow-miner.yml": "full",
+        }
+        prefixes = {name: spec["tag_prefix"] for name, spec in config["release_sets"].items()}
+        self.assertEqual(prefixes, {"full": "v", "tol": "tol-v"})
+        for workflow, release_set in expected.items():
+            text = (workflows / workflow).read_text()
+            self.assertIn("release-artifacts.py check-tag", text, workflow)
+            self.assertNotIn("--set ", text.replace(f"--set {release_set} ", ""), workflow)
 
 
 if __name__ == "__main__":

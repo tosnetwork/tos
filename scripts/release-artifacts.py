@@ -9,9 +9,18 @@ fallback. Each artifact is then bound to that run by its id, its run id and
 head_sha, and the SHA-256 digest GitHub recorded at upload time, which the
 downloaded zip must match before anything is unpacked.
 
-  collect  select runs, download and verify artifacts, write provenance
-  stage    copy the configured assets under their release names, build the
-           bundles, and write SHA256SUMS over everything staged
+  collect    select runs, download and verify artifacts, write provenance
+  stage      copy the configured assets under their release names, build the
+             bundles, and write SHA256SUMS over everything staged
+  check-tag  re-resolve the release tag on GitHub, peel it to a commit, and
+             refuse unless that commit is still the one the assets were built
+             from (and, with --provenance, the one the staged provenance names)
+
+A tag is a mutable pointer unless the repository's tag ruleset forbids moving
+it. The publishing job therefore runs check-tag immediately before each step
+that creates, fills or publishes the release, and once more after publishing,
+so assets built from one commit are not left published under a tag that names
+another.
 
 The GitHub API is reached through the gh CLI, using GH_TOKEN from the
 environment. Nothing here publishes: a separate job with write permission
@@ -38,6 +47,10 @@ DIGEST_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
 # release never reviewed; only runs of the commit itself qualify.
 TRUSTED_EVENTS = frozenset({"push", "workflow_dispatch"})
 ASSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+TAG_NAME_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
+# Annotated tags may point at other tag objects; real release tags have one
+# level. The bound only stops a malformed chain from looping.
+MAX_TAG_NESTING = 8
 
 
 class ReleaseError(Exception):
@@ -223,6 +236,64 @@ def collect(
     return provenance
 
 
+def resolve_remote_tag(api: Api, *, repo: str, tag: str) -> str:
+    """The commit the tag names on GitHub right now, peeling annotated tags."""
+    ref = api.get_json(f"repos/{repo}/git/ref/tags/{tag}")
+    if not isinstance(ref, dict) or ref.get("ref") != f"refs/tags/{tag}":
+        raise ReleaseError(f"GitHub has no tag ref refs/tags/{tag}")
+    target = ref.get("object") or {}
+    for _ in range(MAX_TAG_NESTING):
+        kind, sha = target.get("type"), str(target.get("sha") or "")
+        require_sha(sha, f"object named by tag {tag}")
+        if kind == "commit":
+            return sha
+        if kind != "tag":
+            raise ReleaseError(f"tag {tag} names a {kind}, not a commit")
+        target = (api.get_json(f"repos/{repo}/git/tags/{sha}") or {}).get("object") or {}
+    raise ReleaseError(f"tag {tag} is nested more than {MAX_TAG_NESTING} annotated tags deep")
+
+
+def check_tag(
+    api: Api,
+    config: dict[str, Any],
+    *,
+    repo: str,
+    release_set: str,
+    tag: str,
+    tag_sha: str,
+    provenance: Path | None,
+) -> str:
+    """Refuse unless the tag, as GitHub resolves it now, names tag_sha."""
+    require_sha(tag_sha, "tag commit")
+    spec = config["release_sets"].get(release_set)
+    if spec is None:
+        raise ReleaseError(f"unknown release set {release_set!r}")
+    prefix = spec.get("tag_prefix")
+    if not isinstance(prefix, str) or not prefix:
+        raise ReleaseError(f"release set {release_set} declares no tag_prefix")
+    # Only names under the configured prefix are covered by the tag ruleset
+    # that forbids moving or deleting a release tag.
+    if not TAG_NAME_RE.fullmatch(tag) or not tag.startswith(prefix) or tag == prefix:
+        raise ReleaseError(
+            f"{tag!r} is not a {release_set} release tag; it must be {prefix}<version> "
+            f"using only letters, digits, '.', '_' and '-'"
+        )
+    if provenance is not None:
+        recorded = json.loads(provenance.read_text())
+        for key, expected in (("repository", repo), ("tag", tag), ("tag_commit", tag_sha)):
+            if recorded.get(key) != expected:
+                raise ReleaseError(
+                    f"{provenance.name} records {key} {recorded.get(key)!r}, expected {expected!r}"
+                )
+    current = resolve_remote_tag(api, repo=repo, tag=tag)
+    if current != tag_sha:
+        raise ReleaseError(
+            f"tag {tag} now names commit {current}, not {tag_sha} that the assets were "
+            f"built from; the tag moved after the assets were collected"
+        )
+    return current
+
+
 def checked_asset_name(name: str) -> str:
     if not ASSET_NAME_RE.fullmatch(name):
         raise ReleaseError(f"asset name {name!r} is not a plain file name")
@@ -297,6 +368,12 @@ def main(argv: list[str] | None = None) -> int:
     stage_parser.add_argument("--set", dest="release_set", required=True)
     stage_parser.add_argument("--artifacts", type=Path, required=True)
     stage_parser.add_argument("--out", type=Path, required=True)
+    check_parser = commands.add_parser("check-tag")
+    check_parser.add_argument("--repo", required=True)
+    check_parser.add_argument("--set", dest="release_set", required=True)
+    check_parser.add_argument("--tag", required=True)
+    check_parser.add_argument("--tag-sha", required=True)
+    check_parser.add_argument("--provenance", type=Path)
     args = parser.parse_args(argv)
     config = json.loads(args.config.read_text())
     try:
@@ -308,6 +385,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"{record['artifact_name']}: run {record['run_id']} {record['artifact_digest']}"
                 )
+        elif args.command == "check-tag":
+            commit = check_tag(
+                GhApi(),
+                config,
+                repo=args.repo,
+                release_set=args.release_set,
+                tag=args.tag,
+                tag_sha=args.tag_sha,
+                provenance=args.provenance,
+            )
+            print(f"tag {args.tag} still names {commit}")
         else:
             for name in stage(
                 config, release_set=args.release_set, artifacts=args.artifacts, out=args.out

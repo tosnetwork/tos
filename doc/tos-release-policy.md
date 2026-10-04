@@ -335,6 +335,61 @@ For the next 12 months, TOS should bias toward:
 
 The first year should optimize for trust and predictability, not release aggressiveness.
 
+## Publishing Release Binaries
+
+Release binaries are published only under the tag of the commit they were
+built from. `.github/workflows/create-release.yml` (tags `v<version>`) and
+`.github/workflows/create-tol-release.yml` (tags `tol-v<version>`) collect
+artifacts from build runs whose `head_sha` is the tag commit, then publish in
+this order:
+
+1. re-resolve the tag on GitHub, peel it to a commit, and compare it with the
+   commit the assets were built from (`scripts/release-artifacts.py
+   check-tag`); create a **draft** release;
+2. check the tag again; upload the assets to the draft;
+3. check the tag again; publish the draft;
+4. check the tag again; if it moved, delete the release and fail.
+
+`.github/workflows/release-tos-pow-miner.yml` checks the tag the same way
+before creating the release, before uploading, and after uploading, and
+removes its archives if the tag moved. `scripts/check-workflow-supply-chain.py`
+(rule `RELEASE_TAG_UNCHECKED`) fails any workflow job that runs
+`gh release create`, `upload` or `edit` without a `check-tag` immediately
+before it and another after the job's last such command.
+
+These checks detect a moved tag; they cannot prevent one. A tag moved in the
+seconds between step 3 and publication is caught by step 4, but the release
+was public meanwhile; a tag moved after step 4 is not noticed by the workflow
+at all. Closing both gaps needs two repository settings, which only an
+administrator can apply:
+
+**Tag rulesets** (Settings, Rules, Rulesets, New ruleset, New tag ruleset).
+Two rulesets are needed because a bypass list applies to every rule in its
+ruleset.
+
+| Setting | Ruleset "release tags are immutable" | Ruleset "who may create release tags" |
+|---|---|---|
+| Enforcement status | Active | Active |
+| Target tags, include by pattern | `v*` and `tol-v*` | `v*` and `tol-v*` |
+| Bypass list | empty (no one, including administrators) | the release maintainers (a team or the Repository admin role) |
+| Restrict creations | off | **on** |
+| Restrict updates | **on** | off |
+| Restrict deletions | **on** | off |
+| Block force pushes | **on** | off |
+
+With these in place a release tag can be created once, by a release
+maintainer, and never moved or deleted afterwards.
+
+**Release immutability** (Settings, General, Releases, "Enable release
+immutability"). A published release's assets and tag then cannot be changed.
+The workflows already publish through a draft, which stays editable until the
+final check before publication has passed.
+
+An administrator can confirm the rulesets with
+`gh api repos/<owner>/<repo>/rulesets` and inspect each with
+`gh api repos/<owner>/<repo>/rulesets/<id>`. Until both settings are applied,
+the workflow checks above are the only protection.
+
 ## Final Rule
 
 TOS should make it easy for ecosystem participants to know:

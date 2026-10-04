@@ -377,9 +377,11 @@
           ],
           "name": "smartcont_lib.zip"
         }
-      ]
+      ],
+      "tag_prefix": "v"
     },
     "tol": {
+      "tag_prefix": "tol-v",
       "assets": [
         {
           "artifact": "tos-x86-64-windows",
