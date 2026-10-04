@@ -1765,6 +1765,8 @@ add_test(NAME quic-admission-full-table COMMAND test-quic-sender
   -p 45000 -d tmp-dir-test-quic-admission-table -f AFullSourceTableAdmitsAgainOnceEntriesRefill)
 add_test(NAME quic-inbound-budget COMMAND test-quic-sender
   -p 47000 -d tmp-dir-test-quic-inbound-budget -f QuicInboundBudget)
+add_test(NAME quic-transport-budget COMMAND test-quic-sender
+  -p 49000 -d tmp-dir-test-quic-transport-budget -f QuicTransportBudget)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
@@ -1772,6 +1774,7 @@ set_tests_properties(
   quic-admission-global-limit
   quic-admission-full-table
   quic-inbound-budget
+  quic-transport-budget
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
   PROPERTIES LABELS "network-safety")

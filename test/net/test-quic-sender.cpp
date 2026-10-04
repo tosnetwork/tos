@@ -88,6 +88,43 @@ tos::quic::QuicServer::Options quic_test_options() {
   return options;
 }
 
+// A query handler that answers nothing until the test releases it: a
+// downstream consumer deliberately paused.
+struct HeldQueries {
+  std::mutex mutex;
+  std::vector<std::pair<td::BufferSlice, td::Promise<td::BufferSlice>>> held;
+  size_t count() {
+    std::lock_guard lock(mutex);
+    return held.size();
+  }
+  void release_all() {
+    std::vector<std::pair<td::BufferSlice, td::Promise<td::BufferSlice>>> taken;
+    {
+      std::lock_guard lock(mutex);
+      taken.swap(held);
+    }
+    for (auto& [data, promise] : taken) {
+      promise.set_value(std::move(data));
+    }
+  }
+};
+
+class HoldingCallback : public tos::adnl::Adnl::Callback {
+ public:
+  explicit HoldingCallback(std::shared_ptr<HeldQueries> held) : held_(std::move(held)) {
+  }
+  void receive_message(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice) override {
+  }
+  void receive_query(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice data,
+                     td::Promise<td::BufferSlice> promise) override {
+    std::lock_guard lock(held_->mutex);
+    held_->held.emplace_back(std::move(data), std::move(promise));
+  }
+
+ private:
+  std::shared_ptr<HeldQueries> held_;
+};
+
 class EchoCallback : public tos::adnl::Adnl::Callback {
  public:
   std::shared_ptr<std::vector<td::BufferSlice>> received_messages;
@@ -2130,6 +2167,163 @@ TEST(QuicInboundBudget, BufferedBytesAreBoundedAcrossConnections) {
 
 // What one open, idle inbound stream holds on a live server, for the default
 // stream budget. Printed; bounded loosely so a large regression fails.
+// A client endpoint that, once `armed` is set, drops every datagram it sends
+// smaller than `kSmallDatagram`: acknowledgements, and a stream's first byte
+// sent on its own, together with every retransmission of it. Larger datagrams
+// carrying the rest of the stream still arrive, so the receiver's transport
+// holds them out of order with the first byte missing.
+constexpr size_t kSmallDatagram = 200;
+// Small enough to leave in a single datagram, so that no retransmission of the
+// withheld first byte can ride along with it.
+constexpr size_t kWithheldTail = 1000;
+
+tos::quic::QuicServer::Options withholding_client_options(std::shared_ptr<std::atomic<bool>> armed) {
+  auto options = quic_test_options();
+  options.enable_gso = false;
+  options.drop_outgoing_datagram = [armed](td::Slice datagram) {
+    return armed->load() && datagram.size() < kSmallDatagram;
+  };
+  return options;
+}
+
+// Opens a stream, withholds its first byte, and sends `size` more bytes.
+td::actor::Task<tos::quic::QuicStreamID> send_with_first_byte_withheld(RawQuicTestRunner& t, RawQuicEndpoint& client,
+                                                                       tos::quic::QuicConnectionId cid,
+                                                                       std::atomic<bool>& armed, size_t size) {
+  auto sid = co_await t.open_stream_with_retry(client, cid);
+  armed = true;
+  td::BufferSlice first(1);
+  first.as_slice()[0] = 'f';
+  auto sent =
+      co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(first), false)
+          .wrap();
+  LOG_CHECK(sent.is_ok()) << sent.error();
+  co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+  td::BufferSlice rest(size);
+  rest.as_slice().fill('r');
+  sent = co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(rest), false)
+             .wrap();
+  LOG_CHECK(sent.is_ok()) << sent.error();
+  co_return sid;
+}
+
+// Data the transport holds out of order, below the stream callback, is charged
+// to the transport budget even though no byte of it has been delivered.
+TEST(QuicTransportBudget, OutOfOrderDataIsCharged) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    auto transport = std::make_shared<tos::quic::QuicTransportMemoryBudget>(64 << 20);
+    auto streams = std::make_shared<tos::quic::QuicInboundStreamBudget>(100, 1 << 20);
+    auto options = quic_test_options();
+    options.transport_budget = transport;
+    options.inbound_stream_budget = streams;
+    auto receiver = co_await t.create_sender_node("transport-ooo", next_port(), options);
+
+    auto armed = std::make_shared<std::atomic<bool>>(false);
+    auto client = co_await t.create_endpoint(withholding_client_options(armed));
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    auto idle = transport->used();
+    LOG(WARNING) << "QUIC_TRANSPORT_MEASURE idle_connection_bytes=" << idle << " handshake_peak=" << transport->peak();
+    ASSERT_TRUE(idle > 0);
+
+    co_await send_with_first_byte_withheld(t, client, cid, *armed, kWithheldTail);
+    co_await poll_until([&] { return transport->used() >= idle + kWithheldTail; }, 5.0,
+                        "out-of-order data charged to the transport budget");
+    // Nothing reached the stream callback: the first byte is still missing.
+    ASSERT_EQ(0u, streams->streams());
+    ASSERT_EQ(0u, streams->bytes());
+    LOG(WARNING) << "QUIC_TRANSPORT_MEASURE out_of_order_bytes=" << (transport->used() - idle);
+    co_return td::Unit{};
+  });
+}
+
+// The transport budget bounds what out-of-order data can hold: the connection
+// whose reassembly does not fit is closed, everything it held is given back,
+// and a new connection can use the freed capacity.
+TEST(QuicTransportBudget, OutOfOrderDataPastTheBudgetClosesTheConnection) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    auto transport = std::make_shared<tos::quic::QuicTransportMemoryBudget>(4 << 20);
+    auto options = quic_test_options();
+    options.transport_budget = transport;
+    auto receiver = co_await t.create_sender_node("transport-bound", next_port(), options);
+
+    auto armed = std::make_shared<std::atomic<bool>>(false);
+    auto client = co_await t.create_endpoint(withholding_client_options(armed));
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    auto idle = transport->used();
+    ASSERT_TRUE(idle > 0);
+    // Fill the budget so that the established connection keeps room for its
+    // ordinary traffic but not for reassembly, which the transport allocates
+    // in 8 KiB chunks.
+    auto filler = transport->limit() - idle - 4096;
+    ASSERT_TRUE(transport->try_reserve(filler));
+    co_await send_with_first_byte_withheld(t, client, cid, *armed, kWithheldTail);
+    // The receiver closes the connection and frees all of it.
+    co_await poll_until([&] { return transport->used() == filler; }, 5.0, "refused connection gave back its memory");
+    ASSERT_TRUE(transport->peak() <= transport->limit());
+    ASSERT_TRUE(transport->release(filler));
+
+    // A new connection fits in what was freed.
+    auto second = co_await t.create_endpoint(quic_test_options());
+    co_await t.connect_raw_to(second, receiver.port + kQuicPortOffset);
+    co_await poll_until([&] { return transport->used() > 0; }, 5.0, "new connection admitted after the close");
+    co_return td::Unit{};
+  });
+}
+
+// A completed request's bytes stay charged until its handler has consumed it,
+// not only until it leaves the stream: requests a paused handler holds count
+// against the budget, and the next one that does not fit is refused.
+TEST(QuicInboundBudget, PayloadsStayChargedUntilConsumed) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kPayload = 400;
+    auto streams = std::make_shared<tos::quic::QuicInboundStreamBudget>(100, 1000);
+    auto options = quic_test_options();
+    options.inbound_stream_budget = streams;
+    auto receiver = co_await t.create_sender_node("budget-consumer", next_port(), options);
+    auto held = std::make_shared<HeldQueries>();
+    td::actor::send_closure(receiver.adnl, &tos::adnl::Adnl::subscribe, receiver.id, "H",
+                            std::make_unique<HoldingCallback>(held));
+
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    auto query = [&]() -> td::actor::Task<tos::quic::QuicStreamID> {
+      std::string body = "H" + std::string(kPayload - 1, 'q');
+      auto wire =
+          tos::serialize_tl_object(tos::create_tl_object<tos::tos_api::quic_query>(td::BufferSlice(body)), true);
+      auto sid = co_await t.open_stream_with_retry(client, cid);
+      auto sent =
+          co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(wire), true)
+              .wrap();
+      LOG_CHECK(sent.is_ok()) << sent.error();
+      co_return sid;
+    };
+
+    co_await query();
+    co_await poll_until([&] { return held->count() == 1; }, 5.0, "first query reached the paused handler");
+    auto one = streams->bytes();
+    ASSERT_TRUE(one >= kPayload);
+    co_await query();
+    co_await poll_until([&] { return held->count() == 2; }, 5.0, "second query reached the paused handler");
+    ASSERT_EQ(2 * one, streams->bytes());
+
+    // Both payloads are with the handler, still charged; a third does not fit.
+    auto refused = co_await query();
+    co_await t.wait_for_stream_close(client, refused);
+    ASSERT_EQ(2u, held->count());
+    ASSERT_EQ(2 * one, streams->bytes());
+
+    // The handler answers: the charges end.
+    held->release_all();
+    co_await poll_until([&] { return streams->bytes() == 0; }, 5.0, "answered queries released their bytes");
+    co_return td::Unit{};
+  });
+}
+
 TEST(QuicInboundBudget, MeasureIdleInboundStreamCost) {
   run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
     constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET

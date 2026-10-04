@@ -17,6 +17,7 @@ names = (
     "quic-admission-global-limit",
     "quic-admission-full-table",
     "quic-inbound-budget",
+    "quic-transport-budget",
 )
 ports = []
 roots = []

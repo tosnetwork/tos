@@ -2,6 +2,7 @@
 
 #include <array>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -93,6 +94,13 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     // given the same budget, consumed by the sender's inbound stream callback.
     // Unset means the process-wide default; there is no unlimited setting.
     std::shared_ptr<QuicInboundStreamBudget> inbound_stream_budget;
+    // Heap every connection's transport may allocate, shared by every server
+    // given the same budget. Unset means the process-wide default; there is no
+    // unlimited setting.
+    std::shared_ptr<QuicTransportMemoryBudget> transport_budget;
+    // Test hook: a datagram for which this returns true is not sent. Unset in
+    // production.
+    std::function<bool(td::Slice datagram)> drop_outgoing_datagram;
   };
   class Callback {
    public:

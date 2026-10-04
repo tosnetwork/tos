@@ -61,10 +61,11 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       LOG(INFO) << "got data for closed stream, ignore cid=" << cid << " sid=" << sid;
       return td::Status::Error("stream failed");
     }
-    // An inbound stream's bytes are reserved before they are buffered. A
-    // stream that cannot reserve them fails, which resets it and gives back
-    // what it held.
-    if (state.is_inbound() && !state.try_reserve_bytes(data.size())) {
+    // A stream's bytes are reserved before they are buffered: a peer's request
+    // against its stream slot, an answer to our own query against the same
+    // byte budget. A stream that cannot reserve them fails, which resets it and
+    // gives back what it held.
+    if (!state.try_reserve_bytes(data.size())) {
       auto status =
           td::Status::Error(PSLICE() << "inbound stream budget exhausted: " << inbound_budget_->bytes()
                                      << " bytes buffered across " << inbound_budget_->streams() << " streams");
@@ -100,10 +101,11 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     }
     auto complete_data = state.extract();
     auto memory_token = state.take_memory_token();
-    // The bytes leave the stream buffer with the completed query.
-    state.release_buffered_bytes();
+    // The payload carries its charge with it, through the sender's mailbox
+    // and on until it is consumed.
+    auto charge = state.take_byte_charge();
     td::actor::send_closure(sender_, &QuicSender::on_stream_complete, cid, sid, std::move(complete_data),
-                            std::move(memory_token));
+                            std::move(memory_token), std::move(charge));
     return td::Status::OK();
   }
 
@@ -121,7 +123,13 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     if (R.is_error()) {
       return;
     }
-    apply_stream_options(*std::get<0>(R.ok()), options);
+    auto &state = *std::get<0>(R.ok());
+    if (std::get<1>(R.ok())) {
+      // A stream opened for our own query: its answer's bytes are charged to
+      // the same budget, its count is bounded by the queries that opened it.
+      state.hold_reservation(QuicInboundStreamReservation::bytes_only(inbound_budget_));
+    }
+    apply_stream_options(state, options);
   }
 
   void loop(td::Timestamp now, StreamShutdownList &shutdown) override {
@@ -210,8 +218,8 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     bool try_reserve_bytes(size_t bytes) {
       return reservation_.try_reserve_bytes(bytes);
     }
-    void release_buffered_bytes() {
-      reservation_.release_bytes();
+    QuicInboundByteCharge take_byte_charge() {
+      return reservation_.take_bytes();
     }
     // A failed stream delivers nothing more, so what it buffered is dropped.
     void drop_buffer() {
@@ -374,7 +382,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     state.mark_failed();
     state.drop_buffer();
     td::actor::send_closure(sender_, &QuicSender::on_stream_complete, state.cid, state.sid, std::move(error),
-                            td::MemoryTrackerToken{});
+                            td::MemoryTrackerToken{}, QuicInboundByteCharge{});
   }
 };
 
@@ -838,9 +846,8 @@ void QuicSender::on_connected(td::actor::ActorId<QuicServer> server, QuicConnect
   finish_connection_init(connection, td::Unit{});
 }
 
-void QuicSender::on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id,
-                                    td::Result<td::BufferSlice> r_data,
-                                    td::MemoryTrackerToken memory_token) {
+void QuicSender::on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id, td::Result<td::BufferSlice> r_data,
+                                    td::MemoryTrackerToken memory_token, QuicInboundByteCharge charge) {
   (void)memory_token;
   auto it = by_cid_.find(cid);
   if (it == by_cid_.end()) {
@@ -878,7 +885,7 @@ void QuicSender::on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id
     auto req_R = fetch_tl_object<tos_api::quic_Request>(data.clone(), true);
     if (req_R.is_ok()) {
       auto request = req_R.move_as_ok();
-      tos_api::downcast_call(*request, [&](auto &query) { on_request(connection, stream_id, query); });
+      tos_api::downcast_call(*request, [&](auto &query) { on_request(connection, stream_id, query, charge); });
       return;
     }
   } else {
@@ -929,13 +936,16 @@ void QuicSender::on_closed(QuicConnectionId cid) {
   finish_connection_init(connection, std::move(status));
 }
 
-void QuicSender::on_request(std::shared_ptr<Connection> connection, QuicStreamID stream_id,
-                            tos_api::quic_query &query) {
-  on_inbound_query(connection, stream_id, std::move(query.data_)).start_immediate().detach();
+void QuicSender::on_request(std::shared_ptr<Connection> connection, QuicStreamID stream_id, tos_api::quic_query &query,
+                            QuicInboundByteCharge &charge) {
+  on_inbound_query(connection, stream_id, std::move(query.data_), std::move(charge)).start_immediate().detach();
 }
 
 void QuicSender::on_request(std::shared_ptr<Connection> connection, QuicStreamID stream_id,
-                            tos_api::quic_message &message) {
+                            tos_api::quic_message &message, QuicInboundByteCharge &charge) {
+  // A message is consumed once the peer table has it; the charge ends with
+  // this call.
+  (void)charge;
   td::actor::send_closure(adnl_, &adnl::AdnlPeerTable::deliver, connection->path.second, connection->path.first,
                           std::move(message.data_));
   // TODO: use unidirectional stream, so there will be no need to process result
@@ -944,9 +954,12 @@ void QuicSender::on_request(std::shared_ptr<Connection> connection, QuicStreamID
 }
 
 td::actor::Task<> QuicSender::on_inbound_query(std::shared_ptr<Connection> connection, QuicStreamID stream_id,
-                                               td::BufferSlice query) {
+                                               td::BufferSlice query, QuicInboundByteCharge charge) {
+  // The query's bytes stay charged until its handler has answered, so queries
+  // a slow or stalled handler holds count against the budget.
   auto answer = co_await td::actor::ask(adnl_, &adnl::AdnlPeerTable::deliver_query, connection->path.second,
                                         connection->path.first, std::move(query));
+  charge.reset();
   td::BufferSlice wire_data = create_serialize_tl_object<tos_api::quic_answer>(std::move(answer));
   td::actor::send_closure(connection->server, &QuicServer::send_stream, connection->cid, stream_id,
                           std::move(wire_data), true);

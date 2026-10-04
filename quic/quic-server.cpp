@@ -256,6 +256,7 @@ void QuicServer::flood_on_inbound_connection_closed(const std::string &flood_add
 QuicConnectionOptions QuicServer::build_connection_options() const {
   QuicConnectionOptions conn_options;
   conn_options.cc_algo = options_.cc_algo;
+  conn_options.transport_budget = options_.transport_budget;
   if (options_.max_streams_bidi.has_value()) {
     conn_options.max_streams_bidi = *options_.max_streams_bidi;
   }
@@ -825,7 +826,12 @@ bool QuicServer::flush_pending() {
     return false;  // blocked, will retry on wakeup
   }
 
-  // All sent - re-queue connections for more data
+  // All sent - re-queue connections for more data. The batch no longer needs
+  // its connections; holding them would keep a closed connection, and all
+  // the transport memory charged to it, alive until the slot is reused.
+  for (size_t i = 0; i < pending_batch_count_; i++) {
+    egress_batch_owners_[i].reset();
+  }
   pending_batch_count_ = 0;
   pending_batch_sent_ = 0;
   return true;
@@ -858,6 +864,9 @@ bool QuicServer::produce_next_egress(size_t batch_index) {
       continue;  // no data, connection stays out of queue
     }
     on_connection_updated(*conn);
+    if (options_.drop_outgoing_datagram && options_.drop_outgoing_datagram(batch.storage)) {
+      continue;
+    }
 
     egress_batch_owners_[batch_index] = conn;
     return true;

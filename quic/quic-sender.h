@@ -123,15 +123,20 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
 
   void on_connected(td::actor::ActorId<QuicServer> server, QuicConnectionId cid, adnl::AdnlNodeIdShort local_id,
                     adnl::AdnlNodeIdShort peer_id, bool is_outbound);
+  // `charge` holds the payload's bytes against the inbound stream budget until
+  // the payload has been consumed: an inbound query's until its handler
+  // answers, anything else until it has been handed on.
   void on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id, td::Result<td::BufferSlice> data,
-                          td::MemoryTrackerToken memory_token);
+                          td::MemoryTrackerToken memory_token, QuicInboundByteCharge charge);
   void on_stream_closed(QuicConnectionId cid, QuicStreamID stream_id);
   void on_closed(QuicConnectionId cid);
 
-  void on_request(std::shared_ptr<Connection> connection, QuicStreamID stream_id, tos_api::quic_query& query);
-  void on_request(std::shared_ptr<Connection> connection, QuicStreamID stream_id, tos_api::quic_message& message);
+  void on_request(std::shared_ptr<Connection> connection, QuicStreamID stream_id, tos_api::quic_query& query,
+                  QuicInboundByteCharge& charge);
+  void on_request(std::shared_ptr<Connection> connection, QuicStreamID stream_id, tos_api::quic_message& message,
+                  QuicInboundByteCharge& charge);
   td::actor::Task<> on_inbound_query(std::shared_ptr<Connection> connection, QuicStreamID stream_id,
-                                     td::BufferSlice query);
+                                     td::BufferSlice query, QuicInboundByteCharge charge);
   void on_answer(Connection& connection, QuicStreamID stream_id, tos_api::quic_answer& answer);
 
   static td::Result<td::IPAddress> get_ip_address(const adnl::AdnlNode& node);
