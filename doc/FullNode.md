@@ -82,15 +82,18 @@ from `getAccountJettons` and `getAccountNfts` carry an `index_state`; read
 `"complete": false` as "this list may be missing entries", not as the whole
 truth.
 
-- **Stopping the node marks the index for a rebuild.** Only an exit that
+- **Stopping the node marks the index as incomplete.** Only an exit that
   happens after block application has stopped records the indexing run as
   finished. `systemctl stop` (SIGTERM), a crash, an out-of-memory kill and a
   scheduled shutdown do not. The next start then reports `"needs_rebuild":
-  true` and `"complete": false` until the index is rebuilt, because a block
-  applied just before the stop may never have reached the index. There is no
-  in-place rebuild command: stop the node, delete `<db root>/wc0-index` and
-  start it again. A fresh index fills forward from new blocks and does not
-  replay history.
+  true` and `"complete": false` from then on, because a block applied just
+  before the stop may never have reached the index.
+- **There is no rebuild, only a reset.** Nothing recovers the entries such an
+  index may be missing. Deleting `<db root>/wc0-index` while the node is
+  stopped resets it to a fresh, forward-only index: the warning goes away,
+  but the new index holds only blocks applied after the reset. Entries for
+  earlier blocks, including any the old index was missing, are not recovered,
+  because the index never replays history.
 - **An index that cannot be opened is reported, not hidden.** If the index
   database fails to open (for example a lock held by another process, a disk
   fault, or a schema it cannot migrate), the node runs without indexing, logs
