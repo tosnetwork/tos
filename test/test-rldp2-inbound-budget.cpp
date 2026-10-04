@@ -251,14 +251,108 @@ TEST(Rldp2InboundBudget, FinishedPartsKeepOnlyTheirBytes) {
     ASSERT_TRUE(part != nullptr);
     ASSERT_TRUE(!refused);
     ASSERT_EQ(1u, budget->active_decoders());
-    ASSERT_EQ(part_size + cost, budget->reserved_bytes());
+    // The last part also holds the buffer the two are assembled into.
+    ASSERT_EQ(part_size + cost + 2 * part_size, budget->reserved_bytes());
     finish(inbound, 1, *second_encoder);
     ASSERT_EQ(0u, budget->active_decoders());
-    ASSERT_EQ(2 * part_size, budget->reserved_bytes());
+    ASSERT_EQ(2 * part_size + 2 * part_size, budget->reserved_bytes());
     auto whole = inbound.try_finish();
     ASSERT_TRUE(bool(whole));
     ASSERT_TRUE(whole.value().as_slice() == data.as_slice());
   }
+  ASSERT_EQ(0u, budget->active_decoders());
+  ASSERT_EQ(0u, budget->reserved_bytes());
+}
+
+// The buffer a transfer of several parts is assembled into is reserved before
+// the last part's decoder is created. When the decoded parts fit but the
+// assembly does not, the last part is refused and nothing is allocated; once
+// capacity frees, the same part opens and the transfer completes.
+TEST(Rldp2InboundBudget, AssemblyIsReservedBeforeTheLastPartOpens) {
+  const size_t part_size = 7680;
+  auto budget = std::make_shared<RldpInboundBudget>(10, 64 << 20);
+  auto data = payload(2 * part_size);
+  auto first_encoder = td::fec::RaptorQEncoder::create(td::BufferSlice(data.as_slice().substr(0, part_size)), 768);
+  auto second_encoder =
+      td::fec::RaptorQEncoder::create(td::BufferSlice(data.as_slice().substr(part_size, part_size)), 768);
+  first_encoder->prepare_more_symbols();
+  second_encoder->prepare_more_symbols();
+  fec::FecType first_type{first_encoder->get_parameters()};
+  fec::FecType second_type{second_encoder->get_parameters()};
+  auto cost = rldp_decoder_reservation_bytes(part_size, 768, first_type.symbols_count()).value();
+  auto decode = [](InboundTransfer::Part &part, td::fec::Encoder &encoder) {
+    for (td::uint32 i = 0; !part.decoder->may_try_decode(); i++) {
+      part.decoder->add_symbol(encoder.gen_symbol(i)).ensure();
+    }
+    return part.decoder->try_decode(false).move_as_ok().data;
+  };
+
+  InboundTransfer inbound(2 * part_size, budget);
+  auto first = inbound.get_part(0, first_type).move_as_ok();
+  CHECK(first != nullptr);
+  inbound.finish_part(0, decode(*first, *first_encoder));
+  ASSERT_EQ(part_size, budget->reserved_bytes());
+
+  // Leave room for the last part's decoder and its decoded bytes, but not for
+  // the assembly buffer on top.
+  auto room = cost + 2 * part_size - 1;
+  auto held = RldpInboundReservation::acquire(budget, 0, budget->max_bytes() - part_size - room);
+  ASSERT_TRUE(held.has_value());
+  bool refused = false;
+  auto second = inbound.get_part(1, second_type, &refused).move_as_ok();
+  ASSERT_TRUE(second == nullptr);
+  ASSERT_TRUE(refused);
+  ASSERT_EQ(0u, budget->active_decoders());
+  ASSERT_TRUE(!inbound.try_finish());
+
+  held.reset();
+  second = inbound.get_part(1, second_type, &refused).move_as_ok();
+  ASSERT_TRUE(second != nullptr);
+  inbound.finish_part(1, decode(*second, *second_encoder));
+  auto whole = inbound.try_finish();
+  ASSERT_TRUE(bool(whole));
+  ASSERT_TRUE(whole.value().as_slice() == data.as_slice());
+}
+
+// Runs a sender and a receiver against each other, delivering every datagram
+// both ways, until the receiver completes the transfer or `rounds` pass.
+bool run_loopback(RldpConnection &sender, Sink &sender_sink, RldpConnection &receiver, Sink &receiver_sink,
+                  size_t rounds) {
+  for (size_t round = 0; round < rounds && receiver_sink.completed.empty(); round++) {
+    sender.run(sender_sink);
+    auto to_receiver = std::move(sender_sink.outbox);
+    sender_sink.outbox.clear();
+    for (auto &datagram : to_receiver) {
+      receiver.receive_raw(std::move(datagram));
+    }
+    receiver.run(receiver_sink);
+    auto to_sender = std::move(receiver_sink.outbox);
+    receiver_sink.outbox.clear();
+    for (auto &datagram : to_sender) {
+      sender.receive_raw(std::move(datagram));
+    }
+    if (to_receiver.empty() && to_sender.empty()) {
+      // Nothing moved: let the pacer and the acknowledgement timers run.
+      td::Time::jump_in_future(td::Time::now() + 0.01);
+    }
+  }
+  return !receiver_sink.completed.empty();
+}
+
+// A transfer of two parts, through real connections, completes under the
+// budget and leaves nothing reserved.
+TEST(Rldp2InboundBudget, TransferOfSeveralPartsCompletesAndReturnsEverything) {
+  const size_t size = 2000000 + 100000;
+  auto budget = std::make_shared<RldpInboundBudget>(10, 64 << 20);
+  RldpConnection sender;
+  auto receiver = receiver_with(budget);
+  Sink sender_sink;
+  Sink receiver_sink;
+  auto id = transfer(40);
+  receiver->set_receive_limits(id, td::Timestamp::in(600.0), size);
+  sender.send(id, payload(size), td::Timestamp::in(600.0));
+  ASSERT_TRUE(run_loopback(sender, sender_sink, *receiver, receiver_sink, 200000));
+  ASSERT_EQ(0u, receiver->inbound_transfer_count());
   ASSERT_EQ(0u, budget->active_decoders());
   ASSERT_EQ(0u, budget->reserved_bytes());
 }

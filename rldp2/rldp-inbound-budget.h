@@ -29,15 +29,19 @@ namespace tos::rldp2 {
 // is created, and given back when the transfer finishes, expires, or its
 // connection goes away.
 //
-// Costs below were measured by counting heap bytes around a RaptorQ decoder
-// driven as RLDP2 drives it (symbols added one at a time, a decode attempted
-// as soon as one may succeed), for parts of 64 B, 7680 B, 100 kB and 2 MB fed
-// either source symbols or repair symbols only:
+// Costs below were measured by test-rldp2-decoder-heap
+// (test/rldp2-decoder-heap-measure.cpp), which counts heap bytes around a
+// RaptorQ decoder driven as RLDP2 drives it (symbols added one at a time, a
+// decode attempted as soon as one may succeed), for parts of 64 B, 7680 B,
+// 100 kB and 2 MB fed either source symbols or repair symbols only, and fails
+// if a measurement exceeds the charges below:
 //
 //   - each retained symbol costs its 768 bytes plus about 130 bytes of
-//     bookkeeping (2,339,904 bytes for 2604 symbols of a 2 MB part);
-//   - a decode from repair symbols, which runs the solver, peaked at 99,864 /
-//     107,056 / 677,304 / 11,452,984 bytes above the symbols already held for
+//     bookkeeping (2,339,936 bytes for 2604 symbols of a 2 MB part); the most a
+//     2 MB part's decoder can hold, 2K+10 symbols with no decode attempted,
+//     measured 4,585,144 bytes;
+//   - a decode from repair symbols, which runs the solver, peaked at 98,208 /
+//     106,616 / 677,304 / 11,452,984 bytes above the symbols already held for
 //     the four sizes, each within `rldp_solver_working_bytes` below; a decode
 //     from source symbols alone peaked at a third of that or less.
 //

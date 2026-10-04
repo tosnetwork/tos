@@ -43,10 +43,17 @@ struct InboundTransfer {
     // Working memory a decode attempt of this part may take, reserved around
     // each attempt.
     size_t solver_bytes;
+    // For the last part of a transfer of several parts, the bytes of the
+    // buffer the parts are assembled into, reserved with this part's decoder
+    // and kept after it finishes until the transfer ends.
+    size_t assembly_bytes;
   };
 
   // Every part's decoder is reserved from `budget` before it is created; a
-  // part the budget cannot hold is not created.
+  // part the budget cannot hold is not created. The last part of a transfer of
+  // several parts also reserves the buffer they are assembled into, so the
+  // assembly never allocates outside the budget, and a refusal leaves nothing
+  // to retry but the part itself, which the peer retransmits.
   InboundTransfer(size_t total_size, std::shared_ptr<RldpInboundBudget> budget)
       : total_size_(total_size), budget_(std::move(budget)) {
   }

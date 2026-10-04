@@ -1064,6 +1064,10 @@ add_executable(test-rldp2-inbound-transfer-bound test/test-td-main.cpp test/test
 target_include_directories(test-rldp2-inbound-transfer-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-rldp2-inbound-transfer-bound PRIVATE rldp2 adnl tdutils)
 
+add_executable(test-rldp2-decoder-heap test/rldp2-decoder-heap-measure.cpp)
+target_include_directories(test-rldp2-decoder-heap PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-rldp2-decoder-heap PRIVATE tdfec tdutils)
+
 add_executable(test-rldp2-inbound-budget test/test-td-main.cpp test/test-rldp2-inbound-budget.cpp)
 target_include_directories(test-rldp2-inbound-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-rldp2-inbound-budget PRIVATE rldp2 adnl fec tdfec tdutils)
@@ -1693,6 +1697,7 @@ tos_test(test-health-source-policy)
 tos_test(test-health-pq-signer)
 tos_test(test-rldp2-inbound-transfer-bound)
 tos_test(test-rldp2-inbound-budget)
+tos_test(test-rldp2-decoder-heap)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)

@@ -59,9 +59,17 @@ td::Result<InboundTransfer::Part *> InboundTransfer::get_part(td::uint32 part_i,
     if (!cost || !solver_bytes) {
       return td::Status::Error(ErrorCode::protoviolation, "part decoder size overflows");
     }
+    // The last part of a transfer of several parts also needs the buffer the
+    // parts are copied into while all of them are still held.
+    bool assembles = part_i > 0 && fec_type.size() == total_size() - offset;
+    size_t assembly_bytes = assembles ? total_size() : 0;
+    auto charge = detail::checked_add(cost.value(), assembly_bytes);
+    if (!charge) {
+      return td::Status::Error(ErrorCode::protoviolation, "part decoder size overflows");
+    }
     // Reserved before the decoder exists, so the budget bounds what is
     // allocated rather than what was already allocated.
-    auto reservation = RldpInboundReservation::acquire(budget_, 1, cost.value());
+    auto reservation = RldpInboundReservation::acquire(budget_, 1, charge.value());
     if (!reservation) {
       if (refused_by_budget) {
         *refused_by_budget = true;
@@ -72,7 +80,7 @@ td::Result<InboundTransfer::Part *> InboundTransfer::get_part(td::uint32 part_i,
 
     TRY_RESULT(decoder, fec_type.create_decoder());
     auto it = parts_.emplace(part_i, Part{std::move(decoder), RldpReceiver(RldpSender::Config()), offset,
-                                          std::move(reservation.value()), solver_bytes.value()});
+                                          std::move(reservation.value()), solver_bytes.value(), assembly_bytes});
     data_parts_.emplace_back();
     next_part_++;
     return &it.first->second;
@@ -86,7 +94,9 @@ void InboundTransfer::finish_part(td::uint32 part_i, td::BufferSlice data) {
   CHECK(part_i < data_parts_.size());
   // The decoder goes away; its decoded bytes stay until the transfer ends.
   auto &reservation = it->second.reservation;
-  reservation.shrink_to(0, data.size());
+  // Never more than was reserved, which was representable.
+  auto keep = detail::checked_add(data.size(), it->second.assembly_bytes);
+  reservation.shrink_to(0, keep ? keep.value() : reservation.bytes());
   finished_reservations_.push_back(std::move(reservation));
   data_parts_[part_i] = std::move(data);
   parts_.erase(it);
@@ -97,6 +107,7 @@ td::optional<td::BufferSlice> InboundTransfer::try_finish() {
     if (data_parts_.size() == 1) {
       return data_parts_[0].clone();
     }
+    // Reserved with the last part's decoder: see get_part().
     td::BufferSlice data(total_size_);
     td::MutableSlice s = data.as_slice();
     for (const auto &part : data_parts_) {
