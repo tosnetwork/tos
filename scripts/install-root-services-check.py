@@ -16,8 +16,9 @@
                   entries and other loader tokens are refused). The loader takes
                   a shared library's $ORIGIN from the path it was loaded by, which
                   may be any alias, so a library's search path may only descend
-                  from $ORIGIN; only an executable, whose $ORIGIN is its real
-                  path, may climb with "..". A .pth file may not be a symlink,
+                  from $ORIGIN; only an executable (ET_EXEC, or ET_DYN marked
+                  DF_1_PIE: what glibc will not dlopen), whose $ORIGIN is its
+                  real path, may climb with "..". A .pth file may not be a symlink,
                   and a .pth line that
                   executes code is refused unless it is one of the reviewed lines
                   below and the module it imports is in the same directory. Every
@@ -192,12 +193,24 @@ def elf_problems(path, root):
     )
     if dynamic.returncode != 0:
         return [f"{path}: readelf failed: {dynamic.stderr.strip()[:200]}"]
-    headers = subprocess.run(
-        ["readelf", "-l", "-W", str(path)], capture_output=True, text=True, check=False
+    header = subprocess.run(
+        ["readelf", "-h", "-W", str(path)], capture_output=True, text=True, check=False
     )
-    if headers.returncode != 0:
-        return [f"{path}: readelf failed: {headers.stderr.strip()[:200]}"]
-    executable = "Requesting program interpreter" in headers.stdout
+    if header.returncode != 0:
+        return [f"{path}: readelf failed: {header.stderr.strip()[:200]}"]
+    # Only what glibc refuses to dlopen counts as an executable: ET_EXEC, or
+    # ET_DYN marked DF_1_PIE. A shared object with a program interpreter (libc
+    # itself has one) is still loadable as a library, through any alias.
+    elf_type = next(
+        (
+            line.split(":", 1)[1].split()[0]
+            for line in header.stdout.splitlines()
+            if line.strip().startswith("Type:")
+        ),
+        "",
+    )
+    pie = any("(FLAGS_1)" in line and "PIE" in line.split() for line in dynamic.stdout.splitlines())
+    executable = elf_type == "EXEC" or (elf_type == "DYN" and pie)
     for line in dynamic.stdout.splitlines():
         if "(RPATH)" in line or "(RUNPATH)" in line:
             value = line.split("[", 1)[1].rsplit("]", 1)[0]

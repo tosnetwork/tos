@@ -380,3 +380,38 @@ def test_a_pth_file_may_not_be_a_symlink(tmp_path):
     result = check_snapshot(tmp_path / "snapshot")
     assert result.returncode == 1
     assert "hook.pth: a .pth file must not be a symlink" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+def test_a_loadable_library_with_a_program_interpreter_is_still_a_library(tmp_path):
+    # A non-PIE shared object may carry PT_INTERP and still be dlopen'ed, so it
+    # gets no executable exception: the shallow-alias escape stays refused.
+    dest = tmp_path / "snapshot"
+    (dest / "deep/a").mkdir(parents=True)
+    source = write(
+        tmp_path / "interp.c",
+        'const char interp[] __attribute__((section(".interp"))) = "/lib64/ld-linux-x86-64.so.2";\n'
+        "int native(void) { return 0; }\n",
+    )
+    library = dest / "deep/a/library.so"
+    subprocess.run(
+        [
+            "gcc",
+            "-shared",
+            "-fPIC",
+            "-o",
+            str(library),
+            str(source),
+            "-Wl,-rpath,$ORIGIN/../../plugins",
+        ],
+        check=True,
+    )
+    headers = subprocess.run(
+        ["readelf", "-l", "-h", "-d", str(library)], capture_output=True, text=True
+    )
+    assert "Requesting program interpreter" in headers.stdout, "fixture must carry PT_INTERP"
+    assert "DYN" in headers.stdout and "PIE" not in headers.stdout
+    (dest / "alias.so").symlink_to("deep/a/library.so")
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "climbs from $ORIGIN" in result.stderr
