@@ -2,7 +2,10 @@
     TOS wc=0 in-process wallet index — implementation.
     See wallet-index.h and https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-wc0-wallet-index.md.
 */
-#include "wallet-index.h"
+#include <algorithm>
+#include <cstring>
+#include <limits>
+#include <set>
 
 #include "td/db/RocksDb.h"
 #include "td/utils/filesystem.h"
@@ -10,7 +13,7 @@
 #include "td/utils/port/path.h"
 #include "vm/boc.h"
 
-#include <cstring>
+#include "wallet-index.h"
 
 namespace tos_wallet_index {
 
@@ -22,11 +25,14 @@ constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
 constexpr uint8_t kEventAgeTag = 0x14;      // 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel(1)
+constexpr uint8_t kTokenBacklogTag = 0x15;  // 0x15 + seq_be(8) -> kind(1) + address(32)
 // Meta namespace, sorts before every data tag. 0x00 0x01 -> schema version
 // (u32_be); 0x00 0x02 -> event-retention watermark (u32_be, max gen_utime seen).
 constexpr uint8_t kMetaTag = 0x00;
 constexpr uint8_t kMetaSchemaSub = 0x01;
 constexpr uint8_t kMetaWatermarkSub = 0x02;
+// 0x00 0x03 -> next token-backlog sequence number (u64_be); absent means 0.
+constexpr uint8_t kMetaTokenBacklogSeqSub = 0x03;
 
 // (kMaxEventsPerAccount / kMaxEventTrimPerPass are declared in the header
 // so tests can reference the exact bound.)
@@ -52,6 +58,8 @@ constexpr size_t kMetaKeyLen = 2;
 constexpr size_t kSingleHashKeyLen = 1 + 32;
 constexpr size_t kIncompleteBlockKeyLen = 1 + 4 + 8 + 4 + 32 + 32;
 constexpr size_t kIncompleteBlockValueLen = 1;
+constexpr size_t kTokenBacklogKeyLen = 1 + 8;
+constexpr size_t kTokenBacklogValueLen = 1 + 32;
 
 void put_u32_be(char* out, uint32_t v) {
   for (int i = 3; i >= 0; --i) {
@@ -686,6 +694,145 @@ td::Status WalletIndexDb::for_each_incomplete_block(std::function<td::Status(con
   });
 }
 
+// --- deferred token candidates ---
+
+namespace {
+
+struct BacklogEntry {
+  std::string key;
+  TokenCandidate candidate;
+};
+
+td::Result<TokenCandidate> parse_token_backlog_value(td::Slice value) {
+  if (value.size() != kTokenBacklogValueLen) {
+    return td::Status::Error("wc0-index: malformed token backlog entry");
+  }
+  auto kind = static_cast<uint8_t>(value[0]);
+  if (kind != static_cast<uint8_t>(TokenKind::Jetton) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
+    return td::Status::Error("wc0-index: unknown token kind in backlog entry");
+  }
+  TokenCandidate candidate{static_cast<TokenKind>(kind), HashKey{}};
+  std::memcpy(candidate.address.data(), value.data() + 1, 32);
+  return candidate;
+}
+
+}  // namespace
+
+td::Status WalletIndexDb::for_each_deferred_token_candidate(size_t limit,
+                                                            std::function<td::Status(const TokenCandidate&)> cb) {
+  const char begin[1] = {static_cast<char>(kTokenBacklogTag)};
+  const char end[1] = {static_cast<char>(kTokenBacklogTag + 1)};
+  size_t seen = 0;
+  bool limit_reached = false;
+  auto status =
+      db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice key, td::Slice value) -> td::Status {
+        if (seen >= limit) {
+          limit_reached = true;
+          return td::Status::Error("wc0-index: limit reached");
+        }
+        ++seen;
+        if (key.size() != kTokenBacklogKeyLen) {
+          return td::Status::Error("wc0-index: malformed token backlog key");
+        }
+        TRY_RESULT(candidate, parse_token_backlog_value(value));
+        return cb(candidate);
+      });
+  return limit_reached ? td::Status::OK() : std::move(status);
+}
+
+td::Result<std::vector<TokenCandidate>> WalletIndexDb::schedule_token_candidates(
+    const std::vector<TokenCandidate>& block_candidates, const std::function<bool(const HashKey&)>& in_shard) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: token scheduling needs an open batch");
+  }
+  if (tokens_scheduled_in_batch_) {
+    // The sequence counter is read from committed state; a second call would
+    // reuse the sequence numbers the first one wrote into the batch.
+    return td::Status::Error("wc0-index: token candidates already scheduled in this batch");
+  }
+
+  // Oldest in-shard backlog entries, within a bounded scan. A malformed entry
+  // is an error, not something to skip: skipping would hide it forever.
+  std::vector<BacklogEntry> backlog;
+  const char begin[1] = {static_cast<char>(kTokenBacklogTag)};
+  const char end[1] = {static_cast<char>(kTokenBacklogTag + 1)};
+  size_t scanned = 0;
+  bool stopped = false;
+  auto scan_status =
+      db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice key, td::Slice value) -> td::Status {
+        if (scanned >= kTokenBacklogScanPerBlock || backlog.size() >= kMaxTokenCandidatesPerBlock) {
+          stopped = true;
+          return td::Status::Error("wc0-index: backlog scan bound reached");
+        }
+        ++scanned;
+        if (key.size() != kTokenBacklogKeyLen) {
+          return td::Status::Error("wc0-index: malformed token backlog key");
+        }
+        TRY_RESULT(candidate, parse_token_backlog_value(value));
+        if (in_shard(candidate.address)) {
+          backlog.push_back(BacklogEntry{key.str(), candidate});
+        }
+        return td::Status::OK();
+      });
+  if (!stopped) {
+    TRY_STATUS(std::move(scan_status));
+  }
+
+  // Split the bound: the backlog first gets up to its reserved share, the
+  // block's own candidates take what is left, and any capacity the block does
+  // not use goes back to the backlog.
+  size_t from_backlog = std::min(backlog.size(), kTokenBacklogDrainPerBlock);
+  size_t from_block = std::min(block_candidates.size(), kMaxTokenCandidatesPerBlock - from_backlog);
+  size_t spare = kMaxTokenCandidatesPerBlock - from_backlog - from_block;
+  from_backlog += std::min(backlog.size() - from_backlog, spare);
+
+  std::vector<TokenCandidate> chosen;
+  std::set<TokenCandidate> seen;
+  for (size_t i = 0; i < from_backlog; ++i) {
+    TRY_STATUS(db_->erase(td::Slice{backlog[i].key}));
+    if (seen.insert(backlog[i].candidate).second) {
+      chosen.push_back(backlog[i].candidate);
+    }
+  }
+  for (size_t i = 0; i < from_block; ++i) {
+    if (seen.insert(block_candidates[i]).second) {
+      chosen.push_back(block_candidates[i]);
+    }
+  }
+
+  if (from_block < block_candidates.size()) {
+    char seq_key[kMetaKeyLen];
+    make_meta_key(kMetaTokenBacklogSeqSub, seq_key);
+    std::string seq_value;
+    TRY_RESULT(seq_status, db_->get(td::Slice{seq_key, kMetaKeyLen}, seq_value));
+    uint64_t next_seq = 0;
+    if (seq_status == td::KeyValue::GetStatus::Ok) {
+      if (seq_value.size() != 8) {
+        return td::Status::Error("wc0-index: malformed token backlog sequence");
+      }
+      next_seq = get_u64_be(seq_value.data());
+    }
+    for (size_t i = from_block; i < block_candidates.size(); ++i) {
+      if (next_seq == std::numeric_limits<uint64_t>::max()) {
+        return td::Status::Error("wc0-index: token backlog sequence exhausted");
+      }
+      char key[kTokenBacklogKeyLen];
+      key[0] = static_cast<char>(kTokenBacklogTag);
+      put_u64_be(key + 1, next_seq);
+      char value[kTokenBacklogValueLen];
+      value[0] = static_cast<char>(block_candidates[i].kind);
+      std::memcpy(value + 1, block_candidates[i].address.data(), 32);
+      TRY_STATUS(db_->set(td::Slice{key, kTokenBacklogKeyLen}, td::Slice{value, kTokenBacklogValueLen}));
+      ++next_seq;
+    }
+    char v[8];
+    put_u64_be(v, next_seq);
+    TRY_STATUS(db_->set(td::Slice{seq_key, kMetaKeyLen}, td::Slice{v, sizeof(v)}));
+  }
+  tokens_scheduled_in_batch_ = true;
+  return chosen;
+}
+
 // --- per-block batched writes ---
 
 td::Status WalletIndexDb::begin_batch() {
@@ -695,6 +842,7 @@ td::Status WalletIndexDb::begin_batch() {
   auto s = db_->begin_write_batch();
   if (s.is_error()) return s;
   batch_open_ = true;
+  tokens_scheduled_in_batch_ = false;
   return td::Status::OK();
 }
 
@@ -703,6 +851,7 @@ td::Status WalletIndexDb::commit_batch() {
     return td::Status::Error("wc0-index: no batch open");
   }
   batch_open_ = false;
+  tokens_scheduled_in_batch_ = false;
   // commit_write_batch() issues the write with WriteOptions.sync=true, which
   // (combined with manual_wal_flush=true) already syncs the WAL for this
   // write — an additional flush() here would be a redundant, much more
@@ -715,6 +864,7 @@ void WalletIndexDb::abort_batch() {
     return;
   }
   batch_open_ = false;
+  tokens_scheduled_in_batch_ = false;
   db_->abort_write_batch().ignore();
 }
 

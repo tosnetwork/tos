@@ -44,9 +44,6 @@ constexpr unsigned long long kNftOwnershipAssigned = 0x05138d91ULL;        // TE
 // TEP-62 op handled by the NFT item itself.
 constexpr unsigned long long kNftTransfer = 0x5fcc3d14ULL;
 
-// Bound the TVM verification work a single block can demand.
-constexpr size_t kMaxTokenCandidatesPerBlock = 1024;
-
 // Read the 32-bit op-code from a message body. cell_unpack_message returns the raw
 // body field `(Either X ^X)` with the selector bit NOT consumed, so resolve it here:
 // selector 0 = inline body, 1 = body in a ref.
@@ -464,8 +461,7 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
     // transaction in that account block.
     td::Bits256 previous_owner;
     auto previous_owner_r = db->get_nft_owner(account, previous_owner);
-    if (previous_owner_r.is_ok() && previous_owner_r.ok() &&
-        jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
+    if (previous_owner_r.is_ok() && previous_owner_r.ok()) {
       nfts.insert(account);
     }
     size_t events_added = 0;
@@ -506,16 +502,12 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       // trusting message shape or contract code hashes.
       if (trans.orig_status != block::gen::AccountStatus::acc_state_active &&
           trans.end_status == block::gen::AccountStatus::acc_state_active) {
-        if (jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
-          jettons.insert(account);
-        }
-        if (jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
-          nfts.insert(account);
-        }
+        jettons.insert(account);
+        nfts.insert(account);
       }
-      if (jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
-        collect_token_candidates(account, trans.r1.in_msg->prefetch_ref(), jettons, nfts);
-      }
+      // Collected without a bound: schedule_token_candidates bounds the
+      // verification work and defers the excess instead of dropping it.
+      collect_token_candidates(account, trans.r1.in_msg->prefetch_ref(), jettons, nfts);
       return true;
     });
     // Trim this account once, after all its events for the block are in -- not
@@ -585,45 +577,58 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
   try {
     ok = index_block_walk(db, block_root, jetton_candidates, nft_candidates, end_lt, gen_utime, age_rows_added,
                           write_error);
-    if (ok && !(jetton_candidates.empty() && nft_candidates.empty())) {
-      if (jetton_candidates.size() + nft_candidates.size() >= kMaxTokenCandidatesPerBlock) {
-        LOG(WARNING) << "wc0-index: token candidate cap (" << kMaxTokenCandidatesPerBlock
-                     << ") hit in block seqno=" << seqno << "; some token updates were skipped";
+    // Runs even when this block nominated nothing: deferred candidates from
+    // earlier blocks drain here.
+    tos::ShardIdFull shard{block_id.id.workchain, block_id.id.shard};
+    StateAccounts state{std::move(state_root), shard};
+    if (ok && state.ok()) {
+      std::vector<TokenCandidate> block_candidates;
+      block_candidates.reserve(jetton_candidates.size() + nft_candidates.size());
+      for (const auto& wallet : jetton_candidates) {
+        block_candidates.push_back(TokenCandidate{TokenKind::Jetton, wallet});
       }
-      StateAccounts state{std::move(state_root), tos::ShardIdFull{block_id.id.workchain, block_id.id.shard}};
-      if (state.ok()) {
+      for (const auto& item : nft_candidates) {
+        block_candidates.push_back(TokenCandidate{TokenKind::Nft, item});
+      }
+      auto scheduled_r = db->schedule_token_candidates(block_candidates, [shard](const td::Bits256& address) {
+        return wallet_index_state_contains(shard, address);
+      });
+      if (scheduled_r.is_error()) {
+        // Fail closed: committing without the schedule would drop the block's
+        // candidates. Keep the marker so a later pass retries the block.
+        LOG(WARNING) << "wc0-index: token scheduling failed for block seqno=" << seqno << ": "
+                     << scheduled_r.error().message();
+        write_error = true;
+      } else {
+        auto scheduled = scheduled_r.move_as_ok();
+        if (scheduled.size() < block_candidates.size()) {
+          LOG(INFO) << "wc0-index: block seqno=" << seqno << " deferred " << block_candidates.size() - scheduled.size()
+                    << " token candidates to the backlog";
+        }
         WalletIndexVerificationBudget verification_budget;
-        size_t remaining_candidates = jetton_candidates.size() + nft_candidates.size();
+        size_t remaining_candidates = scheduled.size();
         // Each candidate is verified independently; one hostile contract must not
         // be able to abort the rest of the block's token indexing.
-        for (const auto& wallet : jetton_candidates) {
+        for (const auto& candidate : scheduled) {
           verification_budget.begin_candidate(remaining_candidates--);
           try {
-            index_jetton_candidate(db, state, wallet, end_lt, verification_budget);
+            if (candidate.kind == TokenKind::Jetton) {
+              index_jetton_candidate(db, state, candidate.address, end_lt, verification_budget);
+            } else {
+              index_nft_candidate(db, state, candidate.address, end_lt, verification_budget);
+            }
           } catch (vm::VmError&) {
           } catch (vm::VmVirtError&) {
           } catch (const std::exception& err) {
-            LOG(WARNING) << "wc0-index: jetton candidate failed: " << err.what();
+            LOG(WARNING) << "wc0-index: token candidate failed: " << err.what();
           } catch (...) {
-            LOG(WARNING) << "wc0-index: jetton candidate failed with unknown error";
+            LOG(WARNING) << "wc0-index: token candidate failed with unknown error";
           }
         }
-        for (const auto& item : nft_candidates) {
-          verification_budget.begin_candidate(remaining_candidates--);
-          try {
-            index_nft_candidate(db, state, item, end_lt, verification_budget);
-          } catch (vm::VmError&) {
-          } catch (vm::VmVirtError&) {
-          } catch (const std::exception& err) {
-            LOG(WARNING) << "wc0-index: NFT candidate failed: " << err.what();
-          } catch (...) {
-            LOG(WARNING) << "wc0-index: NFT candidate failed with unknown error";
-          }
-        }
-      } else {
-        LOG(WARNING) << "wc0-index: no usable post-apply state for block seqno=" << seqno
-                     << "; token updates skipped (events still indexed)";
       }
+    } else if (ok && !(jetton_candidates.empty() && nft_candidates.empty())) {
+      LOG(WARNING) << "wc0-index: no usable post-apply state for block seqno=" << seqno
+                   << "; token updates skipped (events still indexed)";
     }
   } catch (vm::VmError& err) {
     LOG(WARNING) << "wc0-index: VmError while indexing block seqno=" << seqno << ": " << err.get_msg();

@@ -18,10 +18,11 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "td/utils/Status.h"
-#include "td/utils/buffer.h"
 #include "td/utils/bits.h"
+#include "td/utils/buffer.h"
 #include "tos/tos-types.h"
 #include "vm/cells.h"
 
@@ -63,7 +64,34 @@ constexpr size_t kEventPruneDrainPerBlock = 256;
 // version 0.
 constexpr uint32_t kWalletIndexSchemaVersion = 1;
 
+// Bound the TVM verification work a single block can demand: token candidates
+// verified per block, the block's own and deferred ones together. Candidates
+// past the bound are deferred to a durable backlog, never dropped.
+constexpr size_t kMaxTokenCandidatesPerBlock = 1024;
+// Share of that bound reserved for the backlog while it is non-empty, so the
+// backlog drains even when every block brings a full load of its own.
+constexpr size_t kTokenBacklogDrainPerBlock = kMaxTokenCandidatesPerBlock / 2;
+// Backlog entries examined per block when looking for ones in the block's
+// shard; entries of other shards are left for their own shard's blocks.
+constexpr size_t kTokenBacklogScanPerBlock = 4 * kMaxTokenCandidatesPerBlock;
+
 using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
+
+enum class TokenKind : uint8_t { Jetton = 0, Nft = 1 };
+
+struct TokenCandidate {
+  TokenKind kind;
+  HashKey address;
+  bool operator<(const TokenCandidate& other) const {
+    if (kind != other.kind) {
+      return kind < other.kind;
+    }
+    return address < other.address;
+  }
+  bool operator==(const TokenCandidate& other) const {
+    return kind == other.kind && address == other.address;
+  }
+};
 
 class WalletIndexDb {
  public:
@@ -148,6 +176,21 @@ class WalletIndexDb {
   // the writer wants: the pre-block owner.
   td::Result<bool> get_nft_owner(const HashKey& nft, HashKey& owner);
 
+  // --- Deferred token candidates: 0x15 + seq_be(8) -> kind(1) + address(32) ---
+  // Choose the token candidates this block verifies, at most
+  // kMaxTokenCandidatesPerBlock of them, oldest backlog first. While the
+  // backlog holds entries in this block's shard (`in_shard`), at least
+  // kTokenBacklogDrainPerBlock of the bound goes to them; the block's own
+  // candidates fill the rest, and those that do not fit join the back of the
+  // backlog. Chosen backlog entries are erased. All writes join the open
+  // batch, so an aborted block leaves the backlog as it was. Requires an open
+  // batch and may run once per batch: the backlog sequence counter is read
+  // from committed state.
+  td::Result<std::vector<TokenCandidate>> schedule_token_candidates(
+      const std::vector<TokenCandidate>& block_candidates, const std::function<bool(const HashKey&)>& in_shard);
+  // Walk at most `limit` deferred candidates, oldest first (committed state).
+  td::Status for_each_deferred_token_candidate(size_t limit, std::function<td::Status(const TokenCandidate&)> cb);
+
   // --- Crash-recovery marker: 0x1E + workchain_be(4) + shard_be(8) + seqno_be(4)
   //     + root_hash(32) + file_hash(32) -> sentinel(1) ---
   // Keyed off the full BlockIdExt (workchain+shard+seqno+both hashes), not
@@ -208,6 +251,7 @@ class WalletIndexDb {
   std::unique_ptr<td::RocksDb> db_;
   std::mutex write_mutex_;
   bool batch_open_ = false;
+  bool tokens_scheduled_in_batch_ = false;
 };
 
 // Module-scope singleton. Returns nullptr until the

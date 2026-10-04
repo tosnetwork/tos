@@ -641,3 +641,162 @@ TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWatermarkReadError) {
 
   td::rmrf(path).ignore();
 }
+
+namespace {
+
+td::Bits256 token_address(uint32_t n, uint8_t top = 0) {
+  td::Bits256 address = td::Bits256::zero();
+  address.data()[0] = top;
+  address.data()[28] = static_cast<unsigned char>(n >> 24);
+  address.data()[29] = static_cast<unsigned char>(n >> 16);
+  address.data()[30] = static_cast<unsigned char>(n >> 8);
+  address.data()[31] = static_cast<unsigned char>(n);
+  return address;
+}
+
+std::vector<tos_wallet_index::TokenCandidate> token_candidates(uint32_t first, uint32_t count) {
+  std::vector<tos_wallet_index::TokenCandidate> out;
+  for (uint32_t i = first; i < first + count; ++i) {
+    auto kind = i % 2 == 0 ? tos_wallet_index::TokenKind::Jetton : tos_wallet_index::TokenKind::Nft;
+    out.push_back(tos_wallet_index::TokenCandidate{kind, token_address(i)});
+  }
+  return out;
+}
+
+bool any_shard(const td::Bits256 &) {
+  return true;
+}
+
+// One block's scheduling pass, committed.
+std::vector<tos_wallet_index::TokenCandidate> schedule_block(
+    tos_wallet_index::WalletIndexDb &db, const std::vector<tos_wallet_index::TokenCandidate> &block_candidates,
+    const std::function<bool(const td::Bits256 &)> &in_shard = any_shard) {
+  db.begin_batch().ensure();
+  auto chosen = db.schedule_token_candidates(block_candidates, in_shard).move_as_ok();
+  db.commit_batch().ensure();
+  return chosen;
+}
+
+size_t backlog_size(tos_wallet_index::WalletIndexDb &db) {
+  size_t n = 0;
+  db.for_each_deferred_token_candidate(1u << 20, [&](const tos_wallet_index::TokenCandidate &) -> td::Status {
+      ++n;
+      return td::Status::OK();
+    }).ensure();
+  return n;
+}
+
+}  // namespace
+
+TEST(WalletIndex, TokenCandidatesPastTheBoundAreDeferredNotDropped) {
+  using tos_wallet_index::kMaxTokenCandidatesPerBlock;
+  auto path = std::string("test-wallet-index-db-token-backlog");
+  auto db = open_fresh_db(path);
+  auto block = token_candidates(0, 3000);
+
+  auto first = schedule_block(*db, block);
+  ASSERT_EQ(first.size(), kMaxTokenCandidatesPerBlock);
+  ASSERT_EQ(backlog_size(*db), block.size() - kMaxTokenCandidatesPerBlock);
+
+  // The backlog is durable: a restart picks up where the last block stopped.
+  db.reset();
+  auto reopened = tos_wallet_index::WalletIndexDb::open(path);
+  reopened.ensure();
+  db = reopened.move_as_ok();
+  ASSERT_EQ(backlog_size(*db), block.size() - kMaxTokenCandidatesPerBlock);
+
+  std::set<tos_wallet_index::TokenCandidate> verified(first.begin(), first.end());
+  size_t verifications = first.size();
+  for (int i = 0; i < 2; ++i) {
+    auto chosen = schedule_block(*db, {});
+    ASSERT_TRUE(chosen.size() <= kMaxTokenCandidatesPerBlock);
+    verifications += chosen.size();
+    verified.insert(chosen.begin(), chosen.end());
+  }
+  // Every candidate verified exactly once, the last one included.
+  ASSERT_EQ(verifications, block.size());
+  ASSERT_EQ(verified.size(), block.size());
+  ASSERT_TRUE(verified.count(block.back()) == 1);
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, TokenBacklogDrainsUnderSustainedFullLoad) {
+  using tos_wallet_index::kMaxTokenCandidatesPerBlock;
+  using tos_wallet_index::kTokenBacklogDrainPerBlock;
+  auto path = std::string("test-wallet-index-db-token-backlog-load");
+  auto db = open_fresh_db(path);
+
+  // Every block nominates more than the bound on its own. The first block's
+  // deferred candidates must still be verified within a bounded number of blocks.
+  const uint32_t per_block = 2000;
+  auto first_block = token_candidates(0, per_block);
+  std::set<tos_wallet_index::TokenCandidate> pending_from_first(first_block.begin(), first_block.end());
+  for (auto &c : schedule_block(*db, first_block)) {
+    pending_from_first.erase(c);
+  }
+  ASSERT_EQ(pending_from_first.size(), per_block - kMaxTokenCandidatesPerBlock);
+  for (uint32_t b = 1; b < 6; ++b) {
+    auto block = token_candidates(b * per_block, per_block);
+    std::set<tos_wallet_index::TokenCandidate> own_candidates(block.begin(), block.end());
+    auto chosen = schedule_block(*db, block);
+    ASSERT_EQ(chosen.size(), kMaxTokenCandidatesPerBlock);
+    size_t own = 0;
+    for (auto &c : chosen) {
+      pending_from_first.erase(c);
+      own += own_candidates.count(c);
+    }
+    // While a backlog exists, the block's own load cannot take its reserved share.
+    ASSERT_TRUE(own <= kMaxTokenCandidatesPerBlock - kTokenBacklogDrainPerBlock);
+  }
+  // 976 deferred, drained at >= 512 per block, oldest first: gone after two blocks.
+  ASSERT_TRUE(pending_from_first.empty());
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, TokenBacklogOnlyDrainsTheBlocksShard) {
+  auto path = std::string("test-wallet-index-db-token-backlog-shard");
+  auto db = open_fresh_db(path);
+  std::vector<tos_wallet_index::TokenCandidate> block;
+  auto low = token_candidates(0, tos_wallet_index::kMaxTokenCandidatesPerBlock);
+  block.insert(block.end(), low.begin(), low.end());
+  for (uint32_t i = 0; i < 10; ++i) {
+    block.push_back(tos_wallet_index::TokenCandidate{tos_wallet_index::TokenKind::Jetton, token_address(i, 0x80)});
+  }
+  ASSERT_EQ(schedule_block(*db, block).size(), tos_wallet_index::kMaxTokenCandidatesPerBlock);
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(10));
+
+  auto low_half = [](const td::Bits256 &address) { return address.data()[0] < 0x80; };
+  auto high_half = [](const td::Bits256 &address) { return address.data()[0] >= 0x80; };
+  // A block of the other shard cannot verify these against its own state.
+  ASSERT_TRUE(schedule_block(*db, {}, low_half).empty());
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(10));
+  ASSERT_EQ(schedule_block(*db, {}, high_half).size(), static_cast<size_t>(10));
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, AbortedBlockLeavesTokenBacklogUnchanged) {
+  auto path = std::string("test-wallet-index-db-token-backlog-abort");
+  auto db = open_fresh_db(path);
+  auto block = token_candidates(0, tos_wallet_index::kMaxTokenCandidatesPerBlock + 5);
+
+  // Scheduling outside a batch would write past the block's atomicity.
+  ASSERT_TRUE(db->schedule_token_candidates(block, any_shard).is_error());
+
+  db->begin_batch().ensure();
+  ASSERT_TRUE(db->schedule_token_candidates(block, any_shard).is_ok());
+  // A second pass in one batch would reuse the sequence numbers just written.
+  ASSERT_TRUE(db->schedule_token_candidates(block, any_shard).is_error());
+  db->abort_batch();
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(0));
+
+  ASSERT_EQ(schedule_block(*db, block).size(), tos_wallet_index::kMaxTokenCandidatesPerBlock);
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(5));
+  // Drained entries are erased only when the draining block commits.
+  db->begin_batch().ensure();
+  ASSERT_EQ(db->schedule_token_candidates({}, any_shard).move_as_ok().size(), static_cast<size_t>(5));
+  db->abort_batch();
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(5));
+  td::rmrf(path).ignore();
+}
