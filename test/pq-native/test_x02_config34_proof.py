@@ -15,6 +15,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import x02_config34_proof as proof
 from pytosiq_core.boc.cell import Cell
@@ -351,6 +352,39 @@ class BoundedInputs(unittest.TestCase):
         bundle = make_bundle(self.base, block=False, forged_header=3)
         with self.assertRaisesRegex(proof.ProofRefused, "differs from the proven full block ID"):
             proof.verify_bundle(bundle, self.base, [], ELECTION, RPCS)
+
+    def test_the_verdict_names_its_unauthenticated_trust_root(self):
+        # Only the verdict mapping is under test: the retained fixtures prove Config30,
+        # not Config34, so the proof and decoding steps are stood in for.
+        stand_ins = {
+            "proven_config_param": lambda *args: SimpleNamespace(hash=None),
+            "decode_validator_set": lambda cell: {"cell_hash": "00", "validators": []},
+            "compare_frozen_rows": lambda *args: None,
+        }
+
+        class Cell:
+            hash = None
+
+            @staticmethod
+            def one_from_boc(raw):
+                return Cell
+
+        saved = {name: getattr(proof, name) for name in [*stand_ins, "_pytosiq"]}
+        try:
+            for name, value in stand_ins.items():
+                setattr(proof, name, value)
+            proof._pytosiq = lambda: (Cell, None, None, None)
+            for block, bound_by in [(True, "block BOC"), (False, "four nodes' headers")]:
+                base = self.base / bound_by.replace(" ", "-").replace("'", "")
+                result = proof.verify_bundle(
+                    make_bundle(base, block=block), base, [], ELECTION, RPCS
+                )
+                self.assertEqual(result["file_hash_bound_by"], bound_by)
+                self.assertIn("no validator signature", result["block_id_trust_root"])
+                self.assertEqual(result["block_id_trust_root"], proof.TRUST_ROOT[bound_by])
+        finally:
+            for name, value in saved.items():
+                setattr(proof, name, value)
 
     def test_a_config30_only_bundle_is_not_config34(self):
         with self.assertRaisesRegex(proof.ProofRefused, "ConfigParam34 is not proven"):

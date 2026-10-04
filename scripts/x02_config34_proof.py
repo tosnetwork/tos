@@ -11,6 +11,15 @@ then decoded field by field (validator_id, algorithm_id, key_id, public key, ADN
 every key_id is re-derived from its public key, and the set must equal the four rows
 frozen before the first fault and belong to the election being checked.
 
+The proof starts at the full block ID, and nothing here authenticates that ID: it is
+what the frozen local nodes reported, matched by a retained block BOC or by four
+nodes' headers. No validator signature and no proof chain from the zerostate is
+checked, so a verdict shows the bundle is consistent with that ID, not that the ID is
+a finalized block of the network. On the Stage A network the operator runs every node
+and holds every validator key, so checking signatures would add no assurance against
+whoever produced the bundle; independence would have to come from outside it. The
+verdict states this trust root so it is not read as more.
+
 Runs under the pinned Stage A interpreter with the repository's pytosiq_core;
 the stdlib-only coordinator calls it as a separate process and reads its verdict.
 """
@@ -38,6 +47,12 @@ BOC_MAX_BYTES = {
     "param": 64 << 10,
 }
 VERDICT = "X02_CONFIG34_SAME_BLOCK_PROOF_OK"
+TRUST_ROOT = {
+    "block BOC": "full block ID as captured from the frozen node, matched by its block BOC;"
+    " no validator signature or proof chain from the zerostate is checked",
+    "four nodes' headers": "full block ID as reported by the four frozen local nodes;"
+    " no validator signature or proof chain from the zerostate is checked",
+}
 
 
 class ProofRefused(ValueError):
@@ -375,11 +390,13 @@ def verify_bundle(
     )
     decoded = decode_validator_set(proven)
     compare_frozen_rows(decoded, frozen_rows, election_id)
+    bound_by = "block BOC" if "block" in raw else "four nodes' headers"
     return {
         "verdict": VERDICT,
         "election_id": election_id,
         "block_id": bundle["block_id"],
-        "file_hash_bound_by": "block BOC" if "block" in raw else "four nodes' headers",
+        "block_id_trust_root": TRUST_ROOT[bound_by],
+        "file_hash_bound_by": bound_by,
         "config34_cell_hash": decoded["cell_hash"],
         "validators": decoded["validators"],
     }
