@@ -145,12 +145,16 @@ pub struct NominatorPoolSnapshot {
 /// masterchain block.
 ///
 /// Both reads go through [`ChainProvider::run_get_method_at`], which binds
-/// the request to `checkpoint.seqno` and rejects a response whose block
-/// identity (workchain, seqno, root hash, file hash) differs from
-/// `checkpoint`. The two halves of the snapshot are therefore provably from
-/// one state: if either read resolves to another block, the whole
-/// observation fails rather than mixing two states or falling back to the
-/// latest one. Parsing reuses the wrapper's own decoders.
+/// the request to `checkpoint.seqno` and rejects a response whose reported
+/// block identity (workchain, seqno, root hash, file hash) differs from
+/// `checkpoint`. If either read reports another block, the whole observation
+/// fails rather than mixing two states or falling back to the latest one.
+///
+/// The block identity arrives in the same RPC response as the stack and no
+/// state proof is checked, so this guards against an endpoint that moves
+/// between blocks, not against one that lies: the snapshot is only as
+/// trustworthy as the configured endpoint. Parsing reuses the wrapper's own
+/// decoders.
 pub async fn read_nominator_pool_snapshot_at(
     chain: &dyn ChainProvider,
     address: &MsgAddressInt,

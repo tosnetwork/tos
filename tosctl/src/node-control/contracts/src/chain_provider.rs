@@ -144,6 +144,9 @@ pub trait ChainProvider: Send + Sync {
 
     /// Execute against one exact masterchain checkpoint. Implementations that
     /// cannot pin state must fail rather than silently substitute latest state.
+    /// The block identity checked against the checkpoint is the one the
+    /// endpoint reports, not one proven from state: a dishonest endpoint can
+    /// return any stack under the expected identity.
     async fn run_get_method_at(
         &self,
         _address: String,
