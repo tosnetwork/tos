@@ -1674,3 +1674,32 @@ TEST(WalletIndexQueue, WaitingForRecordsGivesUpWhenRecordingKeepsFailing) {
   queue.push(1, 1);
   ASSERT_TRUE(!queue.wait_recorded(std::chrono::milliseconds(200)));
 }
+
+TEST(WalletIndex, AFirstAbsentVerdictStillOutranksAnOlderOwnedOne) {
+  auto path = std::string("test-wallet-index-db-nft-first-absent");
+  auto db = open_fresh_db(path);
+  auto item = token_address(5, 0x40);
+  auto old_owner = token_address(6, 0x40);
+  vm::CellBuilder cb;
+  cb.store_long(1, 8);
+  using Verdict = tos_wallet_index::WalletIndexDb::NftVerdict;
+  // Nothing indexed yet; block B (lt 500) finds the item unowned. Block A
+  // (lt 400), whose recovery failed earlier, is indexed afterwards.
+  db->begin_batch().ensure();
+  db->apply_nft_verdict(item, Verdict{false, td::Bits256::zero(), {}}, 500).ensure();
+  db->commit_batch().ensure();
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  db->begin_batch().ensure();
+  db->apply_nft_verdict(item, Verdict{true, old_owner, cb.finalize()}, 400).ensure();
+  db->commit_batch().ensure();
+  td::Bits256 owner;
+  ASSERT_TRUE(!db->get_nft_owner(item, owner).move_as_ok());
+  size_t listed = 0;
+  db->for_each_nft(old_owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+      ++listed;
+      return td::Status::OK();
+    }).ensure();
+  ASSERT_EQ(listed, static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}

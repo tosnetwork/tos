@@ -686,10 +686,9 @@ td::Status WalletIndexDb::apply_nft_verdict(const HashKey& item, const NftVerdic
     if (had_owner) {
       TRY_STATUS(erase_nft(record.value().owner, item));
     }
-    if (had_owner || record) {
-      return put_nft_record(*db_, item, false, HashKey::zero(), end_lt);
-    }
-    return td::Status::OK();
+    // Kept even when nothing was recorded before: an older block indexed
+    // later (recovered at a later start, or fetched late) must find this.
+    return put_nft_record(*db_, item, false, HashKey::zero(), end_lt);
   }
   if (had_owner && record.value().owner != verdict.owner) {
     TRY_STATUS(erase_nft(record.value().owner, item));
