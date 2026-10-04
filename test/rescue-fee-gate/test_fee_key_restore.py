@@ -3,11 +3,13 @@
 The wallet master and the public fee_tree_id (read back from chain state) are the only inputs
 of the restored signer. Its key must equal the one the vault holds, and its signature, made by
 an implementation independent of the native verifier, must be admitted under the time-slot
-rule. Environment: as test_fee_gate.py (HASH_SIGS_DEMO is not used).
+rule. Environment: as test_slot_vault.py, plus LMS_TOOL (tools/lms_tool.c, RFC 8554
+Appendix A key generation from SEED and I, checked against RFC 8554 Test Case 2 by fee_key.py).
 """
 
 # ruff: noqa: E402
 import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -24,21 +26,35 @@ TREE = bytes([0x5C]) * 32
 
 
 class Derived:
-    """Adapter giving a derived key the shape the slot-vault helpers expect."""
+    """A fee key derived from the master: H20/W4, built and signed by the LMS tool."""
+
+    workdir = None
+    count = 0
 
     def __init__(self, master, tree=TREE, account_index=0):
         seed, ident = fee_key.derive_fee_seed(master, NETWORK_TAG, slot.GLOBAL_ID, account_index, 0, tree)
-        self.key = fee_key.LmsKey(seed, ident)
-        self.public = self.key.hss_public
+        # Each instance builds its own tree: a restored device shares nothing with the lost one.
+        Derived.count += 1
+        self.dir = Path(self.workdir) / f"device{Derived.count}"
+        self.dir.mkdir()
+        self.args = [seed.hex(), ident.hex(), "20", str(self.dir / "tree")]
+        out = subprocess.run([os.environ["LMS_TOOL"], "keygen", *self.args], check=True,
+                             capture_output=True, text=True).stdout
+        self.public = bytes.fromhex(out.strip())
 
     def sign_at(self, leaf, message):
-        return self.key.sign(leaf, message, os.urandom(32))
+        path = self.dir / f"msg{leaf}"
+        path.write_bytes(message)
+        subprocess.run([os.environ["LMS_TOOL"], "sign", *self.args, str(leaf), str(path),
+                        os.urandom(32).hex(), str(path) + ".sig"], check=True, capture_output=True)
+        return Path(str(path) + ".sig").read_bytes()
 
 
 class FeeKeyRestoreTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         slot.SlotVaultTests.setUpClass()
+        Derived.workdir = slot.SlotVaultTests.tmp.name
         cls.phone = Derived(MASTER)
 
     @classmethod

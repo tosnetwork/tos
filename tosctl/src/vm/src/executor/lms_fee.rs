@@ -1,6 +1,6 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
-//! PROTOTYPE. Verification of one-level HSS (RFC 8554) signatures with SHA-256 and n = m = 32,
-//! for the rescue fee gate (PQCHECKSIG_SUITE suite 4). Written independently of the C++ VM's
+//! Verification of one-level HSS (RFC 8554) signatures for the rescue fee gate
+//! (PQCHECKSIG_SUITE suite 4); exactly one profile, LMS_SHA256_M32_H20 / LMOTS_SHA256_N32_W4. Written independently of the C++ VM's
 //! verifier; the cross-VM parity scenarios must agree byte for byte on results and gas.
 
 use chain_block::sha256_digest_slices;
@@ -12,7 +12,7 @@ const D_LEAF: [u8; 2] = [0x82, 0x82];
 const D_INTR: [u8; 2] = [0x83, 0x83];
 
 pub(super) const PUBLIC_KEY_BYTES: usize = 4 + 4 + 4 + 16 + 32;
-pub(super) const MAX_SIGNATURE_BYTES: usize = 4 + 4 + (4 + 32 + 265 * 32) + 4 + 20 * 32;
+pub(super) const MAX_SIGNATURE_BYTES: usize = 4 + 4 + (4 + 32 + 67 * 32) + 4 + 20 * 32; // 2,832
 pub(super) const MAX_MESSAGE_BYTES: usize = 8192;
 
 #[derive(Clone, Copy)]
@@ -23,23 +23,17 @@ struct Ots {
     max_steps: u32,
 }
 
-/// RFC 8554 Table 1 (n = 32); max_steps is the checksum-aware maximum of chain steps.
+/// The single admitted fee profile: LMOTS_SHA256_N32_W4 (RFC 8554 Table 1, type 3) under
+/// LMS_SHA256_M32_H20 (Table 2, type 8). max_steps is the checksum-aware maximum of chain steps.
 fn ots_params(code: u32) -> Option<Ots> {
     match code {
-        1 => Some(Ots { w: 1, p: 265, ls: 7, max_steps: 264 }),
-        2 => Some(Ots { w: 2, p: 133, ls: 6, max_steps: 396 }),
         3 => Some(Ots { w: 4, p: 67, ls: 4, max_steps: 990 }),
-        4 => Some(Ots { w: 8, p: 34, ls: 0, max_steps: 8415 }),
         _ => None,
     }
 }
 
-/// LMS heights 5, 10, 15 and 20 (RFC 8554 Table 2 types 5-8); H25 is not admitted.
 fn lms_height(code: u32) -> Option<u32> {
     match code {
-        5 => Some(5),
-        6 => Some(10),
-        7 => Some(15),
         8 => Some(20),
         _ => None,
     }

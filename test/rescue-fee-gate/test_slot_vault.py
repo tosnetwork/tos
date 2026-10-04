@@ -5,7 +5,10 @@ reusing a leaf. Real transactions in the native emulator.
 Signer rule under test: sign only with leaf = current slot; a device that cannot rule out an
 earlier signature in the current slot (a restored one) waits for the next slot boundary.
 
-Environment: as test_fee_gate.py. LMS_TALL=1 also measures H20 (slow key generation).
+Environment: FUNC_PATH, FIFT_PATH, EMULATOR_PATH (native build), LMS_TOOL (tools/lms_tool.c,
+H20/W4 test keys) and HASH_SIGS_DEMO (the `demo` binary of cisco/hash-sigs, an independent
+implementation, for keys of other profiles). The chain runs at
+the genesis global version 18. LMS_PROFILES=15/4,10/1 probes other profiles (they are refused).
 """
 
 # ruff: noqa: E402
@@ -40,11 +43,10 @@ START_SLOT = 5
 EPOCH0 = NOW - START_SLOT * SLOT - 10  # NOW lies 10 s into slot 5
 MAX_VALUE = 2_000_000_000
 RESCUE_SUBMIT = 0x53554231  # "SUB1"
-# Smallest balance above the value that the uncached solvency check admitted, bisected at
-# commit 59f960ec6 under the emulator's fee configuration. It is the vault's fee budget plus
-# what the transaction deducts before the compute phase (inbound import and storage).
-UNCACHED_EDGE_OVERHEAD = 294_350_821
-# The budget the vault computes after ACCEPT under that configuration.
+GLOBAL_VERSION = 18  # genesis (crypto/smartcont/gen-zerostate.fif)
+# The fee budget the vault computes after ACCEPT under the emulator's fee configuration: compute
+# for the gas bound, capped forwarding both ways and the storage floor. It does not depend on
+# the message, so it is pinned; the solvency edge test re-derives it from the vault itself.
 BUDGET = 270_051_821
 RESULTS = []
 
@@ -65,7 +67,47 @@ def at_slot(slot, offset=10):
 
 
 class Device:
-    """One holder of the fee key, as the reference implementation's demo tool keeps it."""
+    """One holder of an H20/W4 fee key built by LMS_TOOL from a random SEED and I.
+
+    A restored device holds the same SEED and I, rebuilds the tree itself and starts with no
+    record of used leaves; it refuses to sign a leaf below its own last one, like a real signer.
+    """
+
+    def __init__(self, workdir, name, seed, ident):
+        self.workdir, self.name, self.leaf = Path(workdir), name, 0
+        self.seed, self.ident = seed, ident
+        tree_dir = self.workdir / f"{name}.d"
+        tree_dir.mkdir()
+        self.args = [seed.hex(), ident.hex(), "20", str(tree_dir / "tree")]
+        out = subprocess.run([os.environ["LMS_TOOL"], "keygen", *self.args], check=True,
+                             capture_output=True, text=True).stdout
+        self.public = bytes.fromhex(out.strip())
+        assert len(self.public) == 60
+
+    @classmethod
+    def generate(cls, workdir, name, params="20/4"):
+        assert params == "20/4", "LMS_TOOL builds the fee profile only; use DemoDevice"
+        return cls(workdir, name, os.urandom(32), os.urandom(16))
+
+    def restore(self, name):
+        return Device(self.workdir, name, self.seed, self.ident)
+
+    def sign_at(self, leaf, message):
+        if leaf < self.leaf:
+            raise ValueError("leaf already passed")
+        path = self.workdir / f"{self.name}_m{leaf}_{message.hex()[:8]}"
+        path.write_bytes(message)
+        signature_path = path.with_name(path.name + ".sig")
+        subprocess.run([os.environ["LMS_TOOL"], "sign", *self.args, str(leaf), str(path),
+                        os.urandom(32).hex(), str(signature_path)], check=True, capture_output=True)
+        signature = signature_path.read_bytes()
+        assert int.from_bytes(signature[4:8], "big") == leaf
+        self.leaf = leaf + 1
+        return signature
+
+
+class DemoDevice:
+    """A key of any profile from the reference implementation's demo tool (random seed)."""
 
     def __init__(self, workdir, name):
         self.dir, self.name = Path(workdir), name
@@ -86,7 +128,7 @@ class Device:
 
     def restore(self, name):
         """A second device holding the key exactly as freshly derived: leaf counter at 0."""
-        clone = Device(self.dir, name)
+        clone = DemoDevice(self.dir, name)
         for suffix in (".pub", ".aux"):
             shutil.copy(self.dir / f"{self.name}{suffix}", self.dir / f"{name}{suffix}")
         shutil.copy(self.dir / f"{self.name}.prv.seed", self.dir / f"{name}.prv")
@@ -156,7 +198,7 @@ class SlotVaultTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         source = os.environ.get("VAULT_SOURCE", "rescue-fee-vault-slot.fc")
         cls.code = compile_contract(source, Path(cls.tmp.name) / "vault.boc")
-        cls.emulator = Emulator(global_version=19)
+        cls.emulator = Emulator(global_version=GLOBAL_VERSION)
         cls.count = 0
 
     @classmethod
@@ -170,9 +212,12 @@ class SlotVaultTests(unittest.TestCase):
     def clock(self, t):
         self.emulator.lib.transaction_emulator_set_unixtime(self.emulator.ptr, t)
 
-    def device(self, params="10/4"):
+    def device(self, params="20/4"):
         SlotVaultTests.count += 1
-        d = Device.generate(self.tmp.name, f"k{self.count}_{params.replace('/', '_')}", params)
+        name = f"k{self.count}_{params.replace('/', '_')}"
+        if params == "20/4":
+            return Device.generate(self.tmp.name, name)
+        d = DemoDevice.generate(self.tmp.name, name, params)
         d.keep_seed()
         return d
 
@@ -214,10 +259,7 @@ class SlotVaultTests(unittest.TestCase):
         self.assertEqual(result.get("vm_exit_code"), exit_code, name)
 
     def test_current_slot_admitted_within_credit_and_paid_to_pinned_target(self):
-        profiles = ["10/4", "15/4", "15/2"]
-        if os.environ.get("LMS_TALL") == "1":
-            profiles.append("20/2")
-        profiles = os.environ.get("LMS_PROFILES", ",".join(profiles)).split(",")
+        profiles = os.environ.get("LMS_PROFILES", "20/4").split(",")
         for params in profiles:
             with self.subTest(params=params):
                 key = self.device(params)
@@ -267,9 +309,10 @@ class SlotVaultTests(unittest.TestCase):
         self.assertEqual(s.coins(), MAX_VALUE)
         _, left = account_data(from_boc(edge["shard_account"]))
         self.assert_refused(self.solvency_case(high - 1), 2008, "one nanoton short")
-        # With the cached budget equal to the fresh one, the edge must be exactly where the
-        # uncached check put it.
-        self.assertEqual(high - MAX_VALUE, UNCACHED_EDGE_OVERHEAD)
+        # The edge also contains what the transaction deducts before the compute phase (import
+        # and storage), which depends on the message size; only the budget itself is fixed by the
+        # fee configuration. (At H10/W4 the edge equalled the uncached check's exactly: 0fa04224d.)
+        self.assertGreater(high - MAX_VALUE, BUDGET)
         self.state(edge)
         self.assertEqual(self.last_budget, BUDGET, "budget recomputed after ACCEPT")
         RESULTS.append(("solvency edge", 60, high - MAX_VALUE, left))
@@ -308,7 +351,42 @@ class SlotVaultTests(unittest.TestCase):
         sent = outgoing(from_boc(result["transaction"]))
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0].refs[-1].hash, payload.hash)
-        RESULTS.append(("10/4 + 7,856 B SLH payload", 60, gas, result["details"]["gas"]))
+        RESULTS.append(("20/4 + 7,856 B SLH payload", 60, gas, result["details"]["gas"]))
+
+    def test_only_the_fee_profile_is_admitted(self):
+        # Suite 4 admits LMS_SHA256_M32_H20 / LMOTS_SHA256_N32_W4 only; a valid signature under
+        # any other profile fails as malformed input (cell underflow) before ACCEPT.
+        for params in ("10/4", "15/4", "20/2"):
+            with self.subTest(params=params):
+                key = self.device(params)
+                i = intent(START_SLOT)
+                result = self.submit(self.vault(key), body(i, key.sign_at(START_SLOT, i.hash)))
+                self.assertFalse(result["success"])
+                self.assertEqual(result.get("vm_exit_code"), 9)
+
+    def test_external_credit_binds(self):
+        # Negative control for the credit fit: the same valid H20/W4 payment through a vault that
+        # spends a few hundred more gas before ACCEPT runs out of the external credit.
+        source = ROOT / "crypto/smartcont/rescue-fee-vault-slot.fc"
+        text = source.read_text()
+        anchor = "  accept_message();\n"
+        self.assertEqual(text.count(anchor), 1)
+        pad = "  int pad = 0;\n  repeat (40) { pad += now(); }\n  throw_if(1, pad == 0);\n"
+        variant = source.with_name("rescue-fee-vault-slot-padded.fc")
+        variant.write_text(text.replace(anchor, pad + anchor))
+        try:
+            padded = compile_contract(variant.name, Path(self.tmp.name) / "padded.boc")
+        finally:
+            variant.unlink()
+        key = self.device()
+        i = intent(START_SLOT)
+        signature = key.sign_at(START_SLOT, i.hash)
+        data, _ = account_data(self.vault(key))
+        result = self.submit(active_account(VAULT, padded, data), body(i, signature))
+        self.assertFalse(result["success"], "the padded vault must exceed the credit")
+        self.assertIn("not accepted", result.get("error", ""))
+        # Control: the unpadded vault admits the same message.
+        self.assertTrue(self.admitted(self.submit(self.vault(key), body(i, signature))))
 
     def test_slot_window(self):
         key = self.device()

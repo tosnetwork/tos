@@ -148,6 +148,10 @@ int exec_pq_suite(VmState* st) {
       return 0;
     }
     case pq_suite_falcon512: {
+      // Falcon is not active before its own opcode is: the generic path must not open it early.
+      if (st->get_global_version() < pq_falcon512_min_version) {
+        throw VmError{Excno::range_chk, "PQ suite not active at this version"};
+      }
       st->consume_gas_chk(pq_falcon512_base_gas);
       // Falcon has no context parameter; only the empty context is accepted.
       read_pq_bytes(st, context_cell, 0, pq_falcon512_byte_gas);

@@ -1,7 +1,7 @@
 """Each guard in a vault must be load-bearing: remove it and that vault's test must fail on an
-assertion. Baseline must pass first. Same environment as test_fee_gate.py.
+assertion. Baseline must pass first. Environment as test_slot_vault.py and test_rescue_e2e.py.
 
-Usage: mutations.py [counter|slot]   (default: both)
+Usage: mutations.py [slot|module|account]   (default: all)
 """
 
 import os
@@ -23,19 +23,6 @@ DIGEST = (
 )
 
 VAULTS = {
-    "counter": (
-        "rescue-fee-vault.fc",
-        "test_fee_gate.py",
-        {
-            "drop signature check": SIGNATURE,
-            "drop stale-leaf check": STALE,
-            "drop digest binding": DIGEST,
-            "drop expiry check": (
-                "  throw_unless(fee::expired, (valid_until > now()) & (valid_until <= now() + fee::max_ttl));\n",
-                "",
-            ),
-        },
-    ),
     "slot": (
         "rescue-fee-vault-slot.fc",
         "test_slot_vault.py",

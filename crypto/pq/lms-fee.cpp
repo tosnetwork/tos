@@ -15,36 +15,20 @@ struct OtsParams {
   unsigned w, p, ls, max_steps;  // max_steps: checksum-aware maximum of chain steps
 };
 
-// RFC 8554 Table 1 (n = 32). Maximum chain steps from the rescue notes' lmots_bounds.py.
+// The single admitted fee profile: LMOTS_SHA256_N32_W4 (RFC 8554 Table 1, type 3; maximum
+// chain steps from the rescue notes' lmots_bounds.py) under LMS_SHA256_M32_H20 (Table 2, type 8).
 std::optional<OtsParams> ots_params(std::uint32_t type) {
-  switch (type) {
-    case 1:
-      return OtsParams{1, 265, 7, 264};
-    case 2:
-      return OtsParams{2, 133, 6, 396};
-    case 3:
-      return OtsParams{4, 67, 4, 990};
-    case 4:
-      return OtsParams{8, 34, 0, 8415};
-    default:
-      return std::nullopt;
+  if (type == 3) {
+    return OtsParams{4, 67, 4, 990};
   }
+  return std::nullopt;
 }
 
-// LMS heights 5, 10, 15 and 20 (RFC 8554 Table 2 types 5-8); H25 is not admitted.
 std::optional<unsigned> lms_height(std::uint32_t type) {
-  switch (type) {
-    case 5:
-      return 5u;
-    case 6:
-      return 10u;
-    case 7:
-      return 15u;
-    case 8:
-      return 20u;
-    default:
-      return std::nullopt;
+  if (type == 8) {
+    return 20u;
   }
+  return std::nullopt;
 }
 
 std::uint32_t be32(const unsigned char* p) {

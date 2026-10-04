@@ -6,7 +6,7 @@ where each operand is a BOC in hex, "int:N" for an integer, or "skip" (not pushe
 pushed bottom to top in that order (message first, suite last); the program is F93102.
 `expect` is V (valid), I (invalid), or E<code> (exception), checked against the C++ result.
 
-All inputs are PUBLIC TEST DATA. Needs SLH_TOOL, MLDSA_TOOL and HASH_SIGS_DEMO.
+All inputs are PUBLIC TEST DATA. Needs SLH_TOOL, MLDSA_TOOL, LMS_TOOL and HASH_SIGS_DEMO.
 Usage: suite_scenarios.py <out.tsv>
 """
 
@@ -26,7 +26,8 @@ from cells import Cell
 
 CTX_AUTH = b"TOS-AUTH-SLH-DSA-SHA2-128S-v1"
 CTX_ML = b"TOS-AUTH-V2-ML-DSA-44-v1"
-VERSION = 19
+VERSION = 18  # genesis
+FALCON_VERSION = 19  # suite 2 keeps F93101's gate
 BUDGET = 1_000_000
 
 
@@ -85,9 +86,10 @@ def main(out):
     falcon = json.loads((ROOT / "test/pq-falcon512/vectors.json").read_text())["vectors"]
     fv = next(v for v in falcon if v["expected"] == "V" and v["message"])
     fmsg, fsig, fpk = (bytes.fromhex(fv[k]) for k in ("message", "signature", "public_key"))
-    add("s2-valid", "V", "int:2", fmsg, b"", fsig, fpk)
-    add("s2-bitflip", "I", "int:2", fmsg, b"", flip(fsig, 100), fpk)
-    add("s2-nonempty-context", "E9", "int:2", fmsg, b"x", fsig, fpk)
+    add("s2-valid", "V", "int:2", fmsg, b"", fsig, fpk, version=FALCON_VERSION)
+    add("s2-bitflip", "I", "int:2", fmsg, b"", flip(fsig, 100), fpk, version=FALCON_VERSION)
+    add("s2-nonempty-context", "E9", "int:2", fmsg, b"x", fsig, fpk, version=FALCON_VERSION)
+    add("s2-not-active-at-genesis", "E5", "int:2", fmsg, b"", fsig, fpk)
 
     # Suite 3: SLH-DSA-SHA2-128s.
     pk_hex, sk_hex = run(os.environ["SLH_TOOL"], "keygen", "22" * 48).split()
@@ -100,28 +102,29 @@ def main(out):
     add("s3-short-signature", "E9", "int:3", msg, CTX_AUTH, ssig[:-1], spk)
     add("s3-out-of-gas-base", "E-14", "int:3", msg, CTX_AUTH, ssig, spk, budget=749_000)
 
-    # Suite 4: one-level HSS fee profiles.
+    # Suite 4: the fee profile H20/W4, from a key derived like a wallet's.
     seed, ident = fee_key.derive_fee_seed(bytes(32), bytes(32), 42, 0, 0, bytes(32))
-    key = fee_key.LmsKey(seed, ident)
-    lsig = key.sign(3, msg, bytes(32))
-    lpk = key.hss_public
-    add("s4-h10w4-valid", "V", "int:4", msg, b"", lsig, lpk)
-    add("s4-h10w4-bitflip", "I", "int:4", msg, b"", flip(lsig, 300), lpk)
-    add("s4-h10w4-other-message", "I", "int:4", bytes(32), b"", lsig, lpk)
+    largs = [seed.hex(), ident.hex(), "20", tmp / "fee.tree"]
+    lpk = bytes.fromhex(run(os.environ["LMS_TOOL"], "keygen", *largs).strip())
+    run(os.environ["LMS_TOOL"], "sign", *largs, 3, tmp / "m", "00" * 32, tmp / "fee.sig")
+    lsig = (tmp / "fee.sig").read_bytes()
+    add("s4-h20w4-valid", "V", "int:4", msg, b"", lsig, lpk)
+    add("s4-h20w4-bitflip", "I", "int:4", msg, b"", flip(lsig, 300), lpk)
+    add("s4-h20w4-other-message", "I", "int:4", bytes(32), b"", lsig, lpk)
     add("s4-nonempty-context", "E9", "int:4", msg, b"x", lsig, lpk)
     add("s4-trailing-byte", "E9", "int:4", msg, b"", lsig + b"\0", lpk)
     add("s4-nspk-1", "I", "int:4", msg, b"", b"\0\0\0\1" + lsig[4:], lpk)
-    add("s4-q-out-of-range", "I", "int:4", msg, b"", lsig[:4] + (1024).to_bytes(4, "big") + lsig[8:], lpk)
+    add("s4-q-out-of-range", "I", "int:4", msg, b"", lsig[:4] + (1 << 20).to_bytes(4, "big") + lsig[8:], lpk)
     add("s4-unsupported-lms-type", "E9", "int:4", msg, b"", lsig, lpk[:4] + (9).to_bytes(4, "big") + lpk[8:])
     add("s4-l2-key", "E9", "int:4", msg, b"", lsig, (2).to_bytes(4, "big") + lpk[4:])
     add("s4-out-of-gas-before-signature", "E-14", "int:4", msg, b"", lsig, lpk, budget=3_000)
-    for params in ("5/8", "15/2", "20/4", "10/1"):
+    for params, expect in (("20/4", "V"), ("5/8", "E9"), ("10/4", "E9"), ("15/2", "E9"), ("20/2", "E9")):
         name = "k" + params.replace("/", "_")
         run(os.environ["HASH_SIGS_DEMO"], "genkey", tmp / name, params)
         (tmp / "m4").write_bytes(msg)
         subprocess.run([os.environ["HASH_SIGS_DEMO"], "sign", name, "m4"], cwd=tmp, check=True,
                        capture_output=True)
-        add(f"s4-h{params.replace('/', 'w')}-valid", "V", "int:4", msg, b"",
+        add(f"s4-h{params.replace('/', 'w')}-random-key", expect, "int:4", msg, b"",
             (tmp / "m4.sig").read_bytes(), (tmp / f"{name}.pub").read_bytes())
 
     # Dispatcher.
@@ -132,7 +135,7 @@ def main(out):
     add("suite-is-a-cell", "E7", Cell().boc().hex(), msg, CTX_ML, msig, mpk)
     add("key-is-an-int", "E7", "int:1", msg, CTX_ML, msig, "int:7")
     add("stack-underflow", "E2", "int:1", None, CTX_ML, msig, mpk)
-    add("version-18", "E6", "int:1", msg, CTX_ML, msig, mpk, version=18)
+    add("version-17", "E6", "int:1", msg, CTX_ML, msig, mpk, version=17)
 
     Path(out).write_text("\n".join("\t".join(r) for r in rows) + "\n")
     print(f"{len(rows)} scenarios")

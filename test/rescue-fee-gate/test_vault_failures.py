@@ -10,7 +10,7 @@ again. Each case runs a variant of the time-slot vault in the native emulator:
 - an outgoing message larger than the configured message size limit, with ignore-errors;
 - a bounce of the payment back to the vault.
 
-Environment: as test_fee_gate.py.
+Environment: as test_slot_vault.py.
 """
 
 # ruff: noqa: E402
@@ -51,8 +51,8 @@ class VaultFailureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        cls.emulator = Emulator(global_version=19)
-        cls.small = Emulator(global_version=19, max_msg_cells=40)
+        cls.emulator = Emulator(global_version=slot.GLOBAL_VERSION)
+        cls.small = Emulator(global_version=slot.GLOBAL_VERSION, max_msg_cells=40)
         cls.codes = {}
         variants = {
             "base": [],

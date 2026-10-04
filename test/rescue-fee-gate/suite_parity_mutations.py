@@ -24,6 +24,12 @@ MUTATIONS = {
         "        tmp = if node & 1 == 0 {",
     ),
     "Falcon suite accepts a non-empty context": (PQ, "            read_bytes(engine, context, 0)?;", "            read_bytes(engine, context, 1)?;"),
+    "suite enabled only from version 19": (PQ, "const SUITE_MIN_VERSION: u32 = 18;", "const SUITE_MIN_VERSION: u32 = 19;"),
+    "Falcon opened at genesis through the generic opcode": (
+        PQ,
+        "const FALCON512_MIN_VERSION: u32 = 19;",
+        "const FALCON512_MIN_VERSION: u32 = 18;",
+    ),
     "SLH base gas 750,000 -> 749,999": (
         PQ,
         "const SLH_BASE_GAS: i64 = 750_000;",

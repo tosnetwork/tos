@@ -3,7 +3,7 @@
 fee vault (LMS, external) -> dual-root module (SLH-DSA or ML-DSA, internal) -> V5R2 account.
 Every hop is a separate transaction fed with the previous one's actual outgoing message.
 
-Environment: as test_fee_gate.py, plus SLH_TOOL and MLDSA_TOOL (test-only signers built from the
+Environment: as test_slot_vault.py, plus SLH_TOOL and MLDSA_TOOL (test-only signers built from the
 pinned slhdsa-c and the vendored mldsa-native). OPENSSL (an OpenSSL 3.5+ command) adds an
 independent SLH-DSA signer, so suite 3 is not only checked against its own backend.
 """

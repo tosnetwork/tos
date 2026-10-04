@@ -206,9 +206,9 @@ extern "C" {
     ) -> i32;
 }
 
-// PROTOTYPE generic instruction F93102 (version 19 in this prototype; the R0a proposal moves
-// it to a new version gate): message context signature public_key suite -> bool. Order of pops,
-// charges and errors follows the C++ VM exactly; the parity scenarios check that.
+// Generic instruction F93102, enabled at the genesis version 18: message context signature
+// public_key suite -> bool. Order of pops, charges and errors follows the C++ VM exactly; the
+// parity scenarios check that. Suite 2 keeps F93101's own version gate.
 const SUITE_MLDSA44: i32 = 1;
 const SUITE_FALCON512: i32 = 2;
 const SUITE_SLHDSA128S: i32 = 3;
@@ -229,8 +229,11 @@ fn push_outcome(engine: &mut Engine, valid: Option<bool>, name: &str) -> Status 
     }
 }
 
+const SUITE_MIN_VERSION: u32 = 18;
+const FALCON512_MIN_VERSION: u32 = 19;
+
 pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
-    if engine.block_version() < 19 {
+    if engine.block_version() < SUITE_MIN_VERSION {
         if engine.block_version() >= 4 {
             engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
         } else {
@@ -280,6 +283,10 @@ pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
             }
         }
         SUITE_FALCON512 => {
+            // Falcon is not active before its own opcode is: the generic path must not open it early.
+            if engine.block_version() < FALCON512_MIN_VERSION {
+                fail!(ExceptionCode::RangeCheckError, "PQ suite not active at this version");
+            }
             engine.try_use_gas(20_000)?;
             // Falcon has no context parameter; only the empty context is accepted.
             read_bytes(engine, context, 0)?;

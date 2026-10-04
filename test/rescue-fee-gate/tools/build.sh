@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the test-only signers used by test_rescue_e2e.py from the vendored backends.
-# Usage: build.sh <output-directory>; then export SLH_TOOL and MLDSA_TOOL to the binaries.
+# Usage: build.sh <output-directory>; then export SLH_TOOL, MLDSA_TOOL and LMS_TOOL to the binaries.
 # They sign PUBLIC TEST DATA only (deterministic, no secret hygiene).
 set -eu
 out=${1:?output directory}
@@ -18,4 +18,5 @@ cat > "$out/mldtest-config.h" <<'EOF'
 EOF
 cc -O2 -w -I"$out" -I"$mld" -DMLD_CONFIG_FILE='"mldtest-config.h"' -o "$out/mldsa_tool" \
   "$here/mldsa_tool.c" "$mld/mldsa_native.c"
-echo "built $out/slh_tool $out/mldsa_tool"
+cc -O2 -o "$out/lms_tool" "$here/lms_tool.c" -lcrypto -lpthread
+echo "built $out/slh_tool $out/mldsa_tool $out/lms_tool"

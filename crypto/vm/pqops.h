@@ -11,11 +11,12 @@ inline constexpr unsigned pq_falcon512_opcode = 0xf93101;
 inline constexpr int pq_falcon512_min_version = 19;
 inline constexpr long long pq_falcon512_base_gas = 20000;
 inline constexpr long long pq_falcon512_byte_gas = 1;
-// PROTOTYPE generic instruction: message context signature public_key suite -> bool.
-// Suite 1 = ML-DSA-44 and suite 2 = Falcon-512 padded behave as F93100/F93101; suite 4 is the
-// rescue fee gate's one-level HSS/LMS verifier. Opcode, version and tariff are not allocated.
+// Generic instruction: message context signature public_key suite -> bool.
+// Suite 1 = ML-DSA-44 and suite 2 = Falcon-512 padded behave as F93100/F93101 (suite 2 keeps
+// F93101's version gate); suite 3 is the SLH-DSA rescue root; suite 4 is the rescue fee gate's
+// one-level HSS/LMS verifier. Enabled at the genesis version; tariffs are prototype values.
 inline constexpr unsigned pq_suite_opcode = 0xf93102;
-inline constexpr int pq_suite_min_version = 19;
+inline constexpr int pq_suite_min_version = 18;
 inline constexpr int pq_suite_mldsa44 = 1;
 inline constexpr int pq_suite_falcon512 = 2;
 inline constexpr int pq_suite_slhdsa128s = 3;

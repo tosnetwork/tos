@@ -6,18 +6,22 @@ rebuild the exact LMS tree whose public key the wallet and vault already hold.
 - RFC 8554 Appendix A turns (SEED, I) into the LM-OTS private keys; the tree is built per
   RFC 8554 sections 4 and 5.
 
-Checked against RFC 8554 Appendix F Test Case 2, whose top-level tree is the fee profile
-(LMS_SHA256_M32_H10, LMOTS_SHA256_N32_W4) and was generated with Appendix A.
+The Python key generation is checked against RFC 8554 Appendix F Test Case 2 (top-level tree
+LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4, generated with Appendix A); so is LMS_TOOL
+(tools/lms_tool.c), which builds the adopted H20/W4 fee trees that Python is too slow for.
 
 PUBLIC TEST CODE: no side-channel care, no durable signer state.
-Usage: fee_key.py [--check]  (validates fee-kdf-vectors.json beside this script)
+Usage: LMS_TOOL=... fee_key.py [--check]  (validates fee-kdf-vectors.json beside this script)
 """
 
 import hashlib
 import hmac
 import json
+import os
 import struct
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 PROFILE_SALT = b"TOS-WALLET-DUALROOT-KDF-v1"
@@ -150,7 +154,6 @@ def vectors():
     for account_index, key_generation, tree_byte in ((0, 0, 0xA5), (0, 0, 0xA6), (1, 1, 0xA5)):
         fee_tree_id = bytes([tree_byte]) * 32
         seed, ident = derive_fee_seed(master, network_tag, -239, account_index, key_generation, fee_tree_id)
-        key = LmsKey(seed, ident)
         out.append(
             {
                 "account_index": account_index,
@@ -159,7 +162,7 @@ def vectors():
                 "info_hex": fee_info(network_tag, -239, account_index, key_generation, fee_tree_id).hex(),
                 "SEED_hex": seed.hex(),
                 "I_hex": ident.hex(),
-                "hss_public_key_hex": key.hss_public.hex(),
+                "hss_public_key_hex": tool_public_key(seed, ident, 20).hex(),
             }
         )
     return {
@@ -167,10 +170,20 @@ def vectors():
         "kdf": "HKDF-SHA256, salt TOS-WALLET-DUALROOT-KDF-v1, output SEED[32] || I[16]",
         "label": FEE_LABEL,
         "info_encoding": "0x01 || uint8(len(label)) || ASCII(label) || network_tag[32] || int32be(global_id) || uint32be(account_index) || uint32be(key_generation) || fee_tree_id[32]",
-        "keygen": "RFC 8554 Appendix A; LMS_SHA256_M32_H10 / LMOTS_SHA256_N32_W4; one-level HSS public key",
+        "keygen": "RFC 8554 Appendix A; LMS_SHA256_M32_H20 / LMOTS_SHA256_N32_W4; one-level HSS public key",
         "inputs": {"master_hex": master.hex(), "network_tag_hex": network_tag.hex(), "global_id": -239},
         "vectors": out,
     }
+
+
+def tool_public_key(seed, ident, height):
+    tool = os.environ.get("LMS_TOOL")
+    if not tool:
+        raise SystemExit("LMS_TOOL is required (build with tools/build.sh)")
+    with tempfile.TemporaryDirectory() as tmp:
+        out = subprocess.run([tool, "keygen", seed.hex(), ident.hex(), str(height), str(Path(tmp) / "tree")],
+                             check=True, capture_output=True, text=True).stdout
+    return bytes.fromhex(out.strip())
 
 
 def check_rfc():
@@ -178,6 +191,9 @@ def check_rfc():
     key = LmsKey(bytes.fromhex(tc["seed"]), bytes.fromhex(tc["I"]))
     if key.nodes[1].hex() != tc["K"]:
         raise AssertionError("RFC 8554 Test Case 2 top-level root mismatch")
+    tool = tool_public_key(bytes.fromhex(tc["seed"]), bytes.fromhex(tc["I"]), 10)
+    if tool[-32:].hex() != tc["K"] or tool != key.hss_public:
+        raise AssertionError("LMS_TOOL disagrees with RFC 8554 Test Case 2")
     # The instrument must be able to disagree.
     wrong = bytearray.fromhex(tc["seed"])
     wrong[0] ^= 1
@@ -192,7 +208,7 @@ def main():
     if "--check" in sys.argv[1:]:
         if json.loads(path.read_text()) != generated:
             raise AssertionError("fee-kdf-vectors.json differs from generated vectors")
-        print("OK: RFC 8554 Test Case 2 top-level root and committed fee-key vectors")
+        print("OK: RFC 8554 Test Case 2 (Python and LMS_TOOL) and committed H20/W4 fee-key vectors")
     else:
         print(json.dumps(generated, indent=2))
 
