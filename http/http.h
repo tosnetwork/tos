@@ -385,6 +385,17 @@ class HttpResponse {
   void set_keep_alive(bool value) {
     keep_alive_ = value;
   }
+  // The server closes the connection once this response is written, and stops
+  // reading whatever request body is still arriving. keep_alive() alone does
+  // not do this: many handlers build responses with keep_alive=false and still
+  // expect the connection to be reused. Used for answers given before the body
+  // is read, so a refused client cannot keep the server buffering its body.
+  void set_close_after_write() {
+    close_after_write_ = true;
+  }
+  bool close_after_write() const {
+    return close_after_write_;
+  }
 
   void store_http(td::ChainBufferWriter &output);
   tl_object_ptr<tos_api::http_response> store_tl();
@@ -422,6 +433,7 @@ class HttpResponse {
 
   std::vector<HttpHeader> options_;
   bool is_tunnel_ = false;
+  bool close_after_write_ = false;
 };
 
 void answer_error(HttpStatusCode code, std::string reason,

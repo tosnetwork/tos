@@ -299,10 +299,8 @@ void JsonRpcServer::listen(td::IPAddress addr) {
       break;
   }
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
-  http::HttpServer::Limits limits;
-  limits.max_connections = opts_.max_connections;
-  limits.request_header_timeout = opts_.request_header_timeout;
-  limits.request_body_timeout = opts_.request_body_timeout;
+  auto limits = json_rpc::listener_limits(opts_.max_connections, opts_.request_header_timeout,
+                                          opts_.request_body_timeout, opts_.response_timeout);
   http_ = td::actor::create_actor<http::HttpServer>(
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback), limits);
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
@@ -1621,24 +1619,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_text_response(int status_code,
 }
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_unauthorized(const std::string& cors_origin) {
-  std::string body =
-      "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":null,"
-      "\"error\":\"Unauthorized: invalid or missing API key\",\"code\":-32000}";
-
-  auto response = http::HttpResponse::create("HTTP/1.1", 401, "Unauthorized",
-                                             false, false).move_as_ok();
-  response->add_header({"Content-Type", "application/json"});
-  if (!cors_origin.empty()) {
-    response->add_header({"Access-Control-Allow-Origin", cors_origin});
-  }
-  response->add_header({"Transfer-Encoding", "Chunked"});
-  response->complete_parse_header();
-
-  auto payload = response->create_empty_payload().move_as_ok();
-  payload->add_chunk(td::BufferSlice(body));
-  payload->complete_parse();
-
-  return {std::move(response), std::move(payload)};
+  return json_rpc::unauthorized_response(cors_origin);
 }
 
 // Const member overloads: same builders, origin taken from the server's

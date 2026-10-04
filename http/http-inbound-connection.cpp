@@ -153,6 +153,9 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
       close_after_write_ = true;
     }
   }
+  if (response->close_after_write()) {
+    close_after_write_ = true;
+  }
   response->store_http(buffered_fd_.output_buffer());
 
   metrics_.responses_total->label(response->code())->add(1);

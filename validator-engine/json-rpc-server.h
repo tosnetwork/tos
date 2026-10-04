@@ -19,21 +19,22 @@
 #pragma once
 
 #include <cstddef>
+#include <list>
+#include <mutex>
 #include <optional>
+#include <set>
+#include <unordered_map>
 
+#include "block/block.h"
 #include "http/http-server.h"
-#include "json-rpc-rate-gate.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Time.h"
 #include "validator/validator.h"
-#include "block/block.h"
 
-#include <list>
-#include <mutex>
-#include <set>
-#include <unordered_map>
+#include "json-rpc-http-policy.h"
+#include "json-rpc-rate-gate.h"
 
 namespace tos {
 
@@ -196,6 +197,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     std::size_t max_connections = 1024;    // simultaneously open HTTP connections (0 = unlimited)
     double request_header_timeout = 30.0;  // seconds to deliver request headers (0 = no deadline)
     double request_body_timeout = 120.0;   // seconds to deliver a declared request body
+    // Seconds to finish writing a response (0 = no deadline). See
+    // json-rpc-http-policy.h for why the listener needs one.
+    double response_timeout = json_rpc::kDefaultResponseTimeout;
     std::string api_key;             // empty = no auth required
     td::int32 cache_ttl = 0;        // seconds, 0 = disabled
     std::size_t cache_max_entries = 1024;
