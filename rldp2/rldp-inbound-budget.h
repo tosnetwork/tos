@@ -10,10 +10,13 @@
 */
 #pragma once
 
-#include <atomic>
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 #include "td/utils/logging.h"
@@ -45,12 +48,15 @@ namespace tos::rldp2 {
 //     the four sizes, each within `rldp_solver_working_bytes` below; a decode
 //     from source symbols alone peaked at a third of that or less.
 //
-// An unsolicited transfer (at most one 7680-byte part) is therefore charged
-// about 38 KiB while it is open: 16384 decoders fill about 600 MiB, so the
-// byte budget, not the count, is what binds first at that size. A maximal 2 MB
+// An unsolicited transfer (at most one 7680-byte part at the default MTU) is
+// therefore charged about 38 KiB while it is open: 8192 decoders, the
+// unsolicited half, fill about 300 MiB, so the byte budget, not the count, is
+// what binds first at that size. A maximal 2 MB
 // part is charged about 6.4 MiB, so 512 MiB still holds some eighty large
-// answer parts at once. 512 MiB keeps RLDP2 reassembly inside the 4 GB
-// testnet minimum host alongside the other network budgets.
+// answer parts at once. 512 MiB is sized to leave room for the rest of the
+// node on the 4 GB testnet minimum host; it bounds the reassembly state
+// charged here, not the process's total memory. Half of it is reserved for
+// answers to the node's own requests: see RldpInboundLimits below.
 inline constexpr std::size_t rldp_max_active_decoders = 16384;
 inline constexpr std::size_t rldp_max_inbound_bytes = std::size_t{512} << 20;
 
@@ -127,10 +133,92 @@ inline std::optional<std::size_t> rldp_solver_working_bytes(std::size_t symbol_s
   return detail::checked_add(*matrices, rldp_solver_fixed_bytes);
 }
 
+// Whether an inbound transfer answers a request this node made.
+//
+// A transfer is solicited only when its connection holds an outstanding local
+// request for exactly that transfer id: the id the node chose and expects the
+// answer under, on the connection to the peer the request went to, and no
+// larger than the answer size the request declared. Nothing the peer sends can
+// make a transfer solicited; every other transfer is unsolicited.
+enum class RldpInboundKind { solicited, unsolicited };
+
+// The authenticated ADNL identity of the peer a transfer comes from: the 32
+// bytes of its short id.
+using RldpPeerIdentity = std::array<unsigned char, 32>;
+
+// How the process-wide budget is divided.
+//
+// Half of the decoder slots and half of the bytes are a reserve only solicited
+// transfers may use, so answers to the node's own requests keep progressing
+// however many unsolicited transfers peers open. Solicited transfers may also
+// use the other half; unsolicited transfers never use the reserve.
+//
+// Within the unsolicited half, one peer identity may hold at most an eighth of
+// the decoder slots and an eighth of the bytes, so filling the unsolicited half
+// takes at least eight identities, and one identity always leaves seven eighths
+// of it to everyone else. An eighth of the production budget is 1024 decoders
+// and 32 MiB: above what an honest peer uses on one local id, which is at most
+// RldpConnection::MAX_INBOUND_TRANSFERS (256) default-size transfers of about
+// 38 KiB each (about 9.5 MiB), and enough for a peer whose MTU was raised to
+// send a maximal 2 MB part (about 6.4 MiB) together with its decode attempt
+// (about 11.6 MiB).
+//
+// The share does bind a peer given a raised MTU that sends multi-part
+// unsolicited transfers: with every part in flight, one transfer above about
+// 4 MB, or several smaller ones at once, needs more than 32 MiB. Parts beyond
+// the share are dropped like lost datagrams and must be retransmitted, which
+// slows such a transfer and can make it outlast the ten-second lifetime of an
+// unsolicited transfer. Answers to the node's own requests are not affected.
+//
+// None of this is a Sybil-resistant availability guarantee. ADNL identities
+// cost nothing to generate, so eight or more of them still fill the unsolicited
+// half between them and starve every other peer's unsolicited transfers. What
+// the division guarantees is only that they cannot take the reserve, and that
+// a single identity cannot take more than its share. These are budgets for
+// RLDP2 reassembly state, charged against measured decoder costs; they are not
+// a bound on the total memory of the process.
+struct RldpInboundLimits {
+  std::size_t max_decoders{0};
+  std::size_t max_bytes{0};
+  // The most unsolicited transfers may hold together.
+  std::size_t unsolicited_decoders{0};
+  std::size_t unsolicited_bytes{0};
+  // The most one peer identity's unsolicited transfers may hold together.
+  std::size_t per_identity_decoders{0};
+  std::size_t per_identity_bytes{0};
+  // The most peer identities tracked at once. An identity is tracked only
+  // while it holds something; the production cap is the unsolicited decoder
+  // count, so the ledger cannot outgrow what the unsolicited half could hold.
+  std::size_t max_identities{0};
+
+  static constexpr std::size_t identity_share_divisor = 8;
+
+  // The production division of `max_decoders` and `max_bytes`.
+  static RldpInboundLimits split(std::size_t max_decoders, std::size_t max_bytes) {
+    RldpInboundLimits limits;
+    limits.max_decoders = max_decoders;
+    limits.max_bytes = max_bytes;
+    // Rounded down, so the reserve is never less than half.
+    limits.unsolicited_decoders = max_decoders / 2;
+    limits.unsolicited_bytes = max_bytes / 2;
+    limits.per_identity_decoders = limits.unsolicited_decoders / identity_share_divisor;
+    limits.per_identity_bytes = limits.unsolicited_bytes / identity_share_divisor;
+    limits.max_identities = limits.unsolicited_decoders;
+    return limits;
+  }
+};
+
 class RldpInboundBudget {
  public:
+  // The production division of `max_decoders` and `max_bytes`.
   RldpInboundBudget(std::size_t max_decoders, std::size_t max_bytes)
-      : max_decoders_(max_decoders), max_bytes_(max_bytes) {
+      : RldpInboundBudget(RldpInboundLimits::split(max_decoders, max_bytes)) {
+  }
+
+  // An explicit division. A share larger than what contains it is reduced to
+  // it, so the unsolicited half never exceeds the total and one identity never
+  // exceeds the unsolicited half.
+  explicit RldpInboundBudget(RldpInboundLimits limits) : limits_(normalized(limits)) {
   }
 
   // The budget every connection shares unless given another.
@@ -139,82 +227,197 @@ class RldpInboundBudget {
     return budget;
   }
 
-  // Take `decoders` decoder slots and `bytes` bytes, both or neither.
-  bool try_acquire(std::size_t decoders, std::size_t bytes) {
-    if (!try_add(decoders_, max_decoders_, decoders)) {
+  // Take `decoders` decoder slots and `bytes` bytes for a transfer of `kind`
+  // from `peer`: all of it or none.
+  //
+  // `headroom` more bytes must also fit under every limit that applies, but
+  // are not taken. A decoder is reserved with its decode attempt's working
+  // memory as headroom. Without it a share could fill with decoders none of
+  // which ever has room to decode, and a single large transfer would stall on
+  // itself; with it, the room the most recently reserved decoder needs was
+  // free when it was reserved, and every part that finishes gives back more
+  // than it keeps.
+  bool try_acquire(RldpInboundKind kind, const RldpPeerIdentity &peer, std::size_t decoders, std::size_t bytes,
+                   std::size_t headroom = 0) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto total_decoders = within(decoders_, decoders, limits_.max_decoders);
+    auto total_bytes = take(bytes_, bytes, headroom, limits_.max_bytes);
+    if (!total_decoders || !total_bytes) {
       return false;
     }
-    if (!try_add(bytes_, max_bytes_, bytes)) {
-      sub(decoders_, decoders);
+    if (kind == RldpInboundKind::solicited) {
+      decoders_ = *total_decoders;
+      bytes_ = *total_bytes;
+      return true;
+    }
+    // Unsolicited: never into the reserve.
+    auto pool_decoders = within(unsolicited_decoders_, decoders, limits_.unsolicited_decoders);
+    auto pool_bytes = take(unsolicited_bytes_, bytes, headroom, limits_.unsolicited_bytes);
+    if (!pool_decoders || !pool_bytes) {
       return false;
     }
+    if (decoders == 0 && bytes == 0) {
+      return true;
+    }
+    // And never more than this identity's share of it.
+    auto it = identities_.find(peer);
+    if (it == identities_.end() && identities_.size() >= limits_.max_identities) {
+      return false;
+    }
+    auto held = it == identities_.end() ? Usage{} : it->second;
+    auto identity_decoders = within(held.decoders, decoders, limits_.per_identity_decoders);
+    auto identity_bytes = take(held.bytes, bytes, headroom, limits_.per_identity_bytes);
+    if (!identity_decoders || !identity_bytes) {
+      return false;
+    }
+    identities_[peer] = Usage{*identity_decoders, *identity_bytes};
+    unsolicited_decoders_ = *pool_decoders;
+    unsolicited_bytes_ = *pool_bytes;
+    decoders_ = *total_decoders;
+    bytes_ = *total_bytes;
     return true;
   }
 
-  // Give back what was acquired. False if more is given back than is held,
-  // which is an accounting error; that counter is then left unchanged.
-  bool release(std::size_t decoders, std::size_t bytes) {
-    bool decoders_ok = sub(decoders_, decoders);
-    bool bytes_ok = sub(bytes_, bytes);
-    return decoders_ok && bytes_ok;
+  // Give back what was acquired with the same kind and peer. False, with
+  // nothing changed, if more is given back than is held, which is an
+  // accounting error.
+  bool release(RldpInboundKind kind, const RldpPeerIdentity &peer, std::size_t decoders, std::size_t bytes) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (decoders > decoders_ || bytes > bytes_) {
+      return false;
+    }
+    if (kind == RldpInboundKind::unsolicited && (decoders != 0 || bytes != 0)) {
+      auto it = identities_.find(peer);
+      if (it == identities_.end() || decoders > it->second.decoders || bytes > it->second.bytes ||
+          decoders > unsolicited_decoders_ || bytes > unsolicited_bytes_) {
+        return false;
+      }
+      it->second.decoders -= decoders;
+      it->second.bytes -= bytes;
+      if (it->second.decoders == 0 && it->second.bytes == 0) {
+        identities_.erase(it);
+      }
+      unsolicited_decoders_ -= decoders;
+      unsolicited_bytes_ -= bytes;
+    }
+    decoders_ -= decoders;
+    bytes_ -= bytes;
+    return true;
   }
 
   std::size_t active_decoders() const {
-    return decoders_.load();
+    std::lock_guard<std::mutex> guard(mutex_);
+    return decoders_;
   }
   std::size_t reserved_bytes() const {
-    return bytes_.load();
+    std::lock_guard<std::mutex> guard(mutex_);
+    return bytes_;
+  }
+  // What unsolicited transfers hold together.
+  std::size_t unsolicited_decoders() const {
+    std::lock_guard<std::mutex> guard(mutex_);
+    return unsolicited_decoders_;
+  }
+  std::size_t unsolicited_bytes() const {
+    std::lock_guard<std::mutex> guard(mutex_);
+    return unsolicited_bytes_;
+  }
+  // What one identity's unsolicited transfers hold.
+  std::size_t identity_decoders(const RldpPeerIdentity &peer) const {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto it = identities_.find(peer);
+    return it == identities_.end() ? 0 : it->second.decoders;
+  }
+  std::size_t identity_bytes(const RldpPeerIdentity &peer) const {
+    std::lock_guard<std::mutex> guard(mutex_);
+    auto it = identities_.find(peer);
+    return it == identities_.end() ? 0 : it->second.bytes;
+  }
+  // Identities currently holding unsolicited reservations.
+  std::size_t tracked_identities() const {
+    std::lock_guard<std::mutex> guard(mutex_);
+    return identities_.size();
   }
   std::size_t max_decoders() const {
-    return max_decoders_;
+    return limits_.max_decoders;
   }
   std::size_t max_bytes() const {
-    return max_bytes_;
+    return limits_.max_bytes;
+  }
+  const RldpInboundLimits &limits() const {
+    return limits_;
   }
 
  private:
-  static bool try_add(std::atomic<std::size_t> &counter, std::size_t limit, std::size_t amount) {
-    auto used = counter.load();
-    do {
-      if (used > limit || amount > limit - used) {
-        return false;
-      }
-    } while (!counter.compare_exchange_weak(used, used + amount));
-    return true;
-  }
-  static bool sub(std::atomic<std::size_t> &counter, std::size_t amount) {
-    auto used = counter.load();
-    do {
-      if (amount > used) {
-        return false;
-      }
-    } while (!counter.compare_exchange_weak(used, used - amount));
-    return true;
+  struct Usage {
+    std::size_t decoders{0};
+    std::size_t bytes{0};
+  };
+
+  static RldpInboundLimits normalized(RldpInboundLimits limits) {
+    limits.unsolicited_decoders = std::min(limits.unsolicited_decoders, limits.max_decoders);
+    limits.unsolicited_bytes = std::min(limits.unsolicited_bytes, limits.max_bytes);
+    limits.per_identity_decoders = std::min(limits.per_identity_decoders, limits.unsolicited_decoders);
+    limits.per_identity_bytes = std::min(limits.per_identity_bytes, limits.unsolicited_bytes);
+    return limits;
   }
 
-  const std::size_t max_decoders_;
-  const std::size_t max_bytes_;
-  std::atomic<std::size_t> decoders_{0};
-  std::atomic<std::size_t> bytes_{0};
+  // `used + amount`, if that is representable and at most `limit`.
+  static std::optional<std::size_t> within(std::size_t used, std::size_t amount, std::size_t limit) {
+    auto sum = detail::checked_add(used, amount);
+    if (!sum || *sum > limit) {
+      return std::nullopt;
+    }
+    return sum;
+  }
+
+  // `used + amount`, if `used + amount + headroom` is representable and at
+  // most `limit`.
+  static std::optional<std::size_t> take(std::size_t used, std::size_t amount, std::size_t headroom,
+                                         std::size_t limit) {
+    auto needed = detail::checked_add(amount, headroom);
+    if (!needed || !within(used, *needed, limit)) {
+      return std::nullopt;
+    }
+    return detail::checked_add(used, amount);
+  }
+
+  const RldpInboundLimits limits_;
+  // Every connection actor shares the budget, and one reservation moves
+  // several counters together, so they change under one lock.
+  mutable std::mutex mutex_;
+  std::size_t decoders_{0};
+  std::size_t bytes_{0};
+  std::size_t unsolicited_decoders_{0};
+  std::size_t unsolicited_bytes_{0};
+  std::map<RldpPeerIdentity, Usage> identities_;
 };
 
 // Decoder slots and bytes held from a budget, given back when destroyed.
 class RldpInboundReservation {
  public:
   RldpInboundReservation() = default;
-  static std::optional<RldpInboundReservation> acquire(std::shared_ptr<RldpInboundBudget> budget, std::size_t decoders,
-                                                       std::size_t bytes) {
-    if (!budget || !budget->try_acquire(decoders, bytes)) {
+  // See RldpInboundBudget::try_acquire for `headroom`.
+  static std::optional<RldpInboundReservation> acquire(std::shared_ptr<RldpInboundBudget> budget, RldpInboundKind kind,
+                                                       const RldpPeerIdentity &peer, std::size_t decoders,
+                                                       std::size_t bytes, std::size_t headroom = 0) {
+    if (!budget || !budget->try_acquire(kind, peer, decoders, bytes, headroom)) {
       return std::nullopt;
     }
     RldpInboundReservation reservation;
     reservation.budget_ = std::move(budget);
+    reservation.kind_ = kind;
+    reservation.peer_ = peer;
     reservation.decoders_ = decoders;
     reservation.bytes_ = bytes;
     return reservation;
   }
   RldpInboundReservation(RldpInboundReservation &&other) noexcept
-      : budget_(std::move(other.budget_)), decoders_(other.decoders_), bytes_(other.bytes_) {
+      : budget_(std::move(other.budget_))
+      , kind_(other.kind_)
+      , peer_(other.peer_)
+      , decoders_(other.decoders_)
+      , bytes_(other.bytes_) {
     other.decoders_ = 0;
     other.bytes_ = 0;
   }
@@ -222,6 +425,8 @@ class RldpInboundReservation {
     if (this != &other) {
       reset();
       budget_ = std::move(other.budget_);
+      kind_ = other.kind_;
+      peer_ = other.peer_;
       decoders_ = other.decoders_;
       bytes_ = other.bytes_;
       other.decoders_ = 0;
@@ -243,8 +448,9 @@ class RldpInboundReservation {
     }
     auto give_decoders = decoders < decoders_ ? decoders_ - decoders : 0;
     auto give_bytes = bytes < bytes_ ? bytes_ - bytes : 0;
-    if (!budget_->release(give_decoders, give_bytes)) {
+    if (!budget_->release(kind_, peer_, give_decoders, give_bytes)) {
       LOG(ERROR) << "RLDP2 inbound budget: released more than was reserved";
+      return;
     }
     decoders_ -= give_decoders;
     bytes_ -= give_bytes;
@@ -260,7 +466,7 @@ class RldpInboundReservation {
  private:
   void reset() {
     if (budget_) {
-      if (!budget_->release(decoders_, bytes_)) {
+      if (!budget_->release(kind_, peer_, decoders_, bytes_)) {
         LOG(ERROR) << "RLDP2 inbound budget: released more than was reserved";
       }
       budget_.reset();
@@ -270,6 +476,8 @@ class RldpInboundReservation {
   }
 
   std::shared_ptr<RldpInboundBudget> budget_;
+  RldpInboundKind kind_{RldpInboundKind::unsolicited};
+  RldpPeerIdentity peer_{};
   std::size_t decoders_{0};
   std::size_t bytes_{0};
 };

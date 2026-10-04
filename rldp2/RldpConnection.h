@@ -55,11 +55,27 @@ class ConnectionCallback {
 
 class RldpConnection {
  public:
-  RldpConnection();
+  // `peer` is the authenticated ADNL identity of the peer on the other end.
+  // Unsolicited transfers on this connection are charged to that identity's
+  // share of the inbound budget, so there is no default: a connection that
+  // forgot its peer would charge every peer to one shared identity.
+  explicit RldpConnection(const RldpPeerIdentity &peer);
   RldpConnection(RldpConnection &&other) = delete;
   RldpConnection &operator=(RldpConnection &&other) = delete;
   void send(TransferId tranfer_id, td::BufferSlice data, td::Timestamp timeout = td::Timestamp::never());
-  void set_receive_limits(TransferId transfer_id, td::Timestamp timeout, td::uint64 max_size);
+  // Register an outstanding local request: the node expects the peer to
+  // answer it with a transfer under `transfer_id`, of at most `max_size`
+  // bytes, before `timeout`. Only a transfer matching such a request is
+  // solicited and may draw on the reserve of the inbound budget; the request
+  // ends when that transfer completes or the timeout passes.
+  //
+  // Refused, returning false, if a request under this id is already
+  // outstanding, or if MAX_OUTSTANDING_REQUESTS already are; in the second
+  // case the request is reported as failed through the callback, so whoever
+  // waits on it is answered. A transfer the peer opened under this id before
+  // the request existed was unsolicited; it is dropped, and the peer's
+  // retransmission is then reassembled as the answer.
+  bool set_receive_limits(TransferId transfer_id, td::Timestamp timeout, td::uint64 max_size);
 
   void receive_raw(td::BufferSlice packet);
 
@@ -97,6 +113,13 @@ class RldpConnection {
   // so this is bounded for the same reason as the inbound side.
   static constexpr size_t MAX_OUTBOUND_TRANSFERS = 256;
 
+  // Local requests awaiting an answer on this connection. Each one entitles
+  // the peer to a solicited transfer, which may draw on the reserve of the
+  // inbound budget, so the reserve is only as safe as their number is
+  // bounded. Rldp bounds the requests it makes per connection and in total;
+  // this holds the connection to the same bound whoever drives it.
+  static constexpr size_t MAX_OUTSTANDING_REQUESTS = 256;
+
   static constexpr td::uint64 DEFAULT_MTU = 7680;
 
   // Inbound transfers currently open, for tests and diagnostics.
@@ -114,9 +137,16 @@ class RldpConnection {
     return outbound_transfers_.size();
   }
 
+  // Local requests still awaiting an answer.
+  size_t outstanding_request_count() const {
+    return outstanding_requests_;
+  }
+
  private:
   td::uint64 default_mtu_ = DEFAULT_MTU;
   std::shared_ptr<RldpInboundBudget> inbound_budget_ = RldpInboundBudget::process_default();
+  RldpPeerIdentity peer_identity_;
+  size_t outstanding_requests_{0};
 
   std::map<TransferId, OutboundTransfer> outbound_transfers_;
   td::uint32 in_flight_count_{0};
@@ -127,6 +157,9 @@ class RldpConnection {
     TransferId transfer_id;
     td::uint64 max_size;
     bool is_inbound;
+    // An inbound limit registered for a local request, as opposed to one the
+    // connection set itself to bound the lifetime of an unsolicited transfer.
+    bool solicited{false};
     bool operator<(const Limit &other) const {
       return transfer_id == other.transfer_id ? is_inbound < other.is_inbound : transfer_id < other.transfer_id;
     }
@@ -144,6 +177,8 @@ class RldpConnection {
   void add_limit(td::Timestamp timeout, Limit limit);
   td::Timestamp next_limit_expires_at();
   void drop_limits(TransferId id, bool is_inbound);
+  // Erase a limit from the set, ending the local request it stands for.
+  void forget_limit(Limit limit);
   void on_inbound_completed(TransferId transfer_id, td::Timestamp now);
   td::Timestamp loop_limits(td::Timestamp now);
 

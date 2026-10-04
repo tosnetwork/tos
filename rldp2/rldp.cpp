@@ -17,6 +17,8 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <cstring>
+
 #include "auto/tl/tos_api.h"
 #include "auto/tl/tos_api.hpp"
 #include "fec/fec.h"
@@ -28,6 +30,10 @@
 namespace tos {
 
 namespace rldp2 {
+
+// The connection would refuse a request beyond its own bound, after the query
+// was already sent; refusing here first keeps that from happening.
+static_assert(Rldp::MAX_PENDING_QUERIES_PER_CONNECTION <= RldpConnection::MAX_OUTSTANDING_REQUESTS);
 
 namespace detail {
 
@@ -46,18 +52,34 @@ struct RldpIn::Connection {
   td::Timestamp remove_at;
 };
 
+namespace {
+// The identity a connection charges its peer's unsolicited transfers to: the
+// peer's short id, which ADNL authenticated.
+RldpPeerIdentity peer_identity_of(adnl::AdnlNodeIdShort peer) {
+  RldpPeerIdentity identity;
+  auto id = peer.bits256_value();
+  static_assert(sizeof(identity) == 256 / 8);
+  std::memcpy(identity.data(), id.data(), identity.size());
+  return identity;
+}
+}  // namespace
+
 class RldpConnectionActor : public td::actor::Actor, private ConnectionCallback {
  public:
   RldpConnectionActor(td::actor::ActorId<RldpIn> rldp, adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                       td::actor::ActorId<adnl::Adnl> adnl)
-      : rldp_(std::move(rldp)), src_(src), dst_(dst), adnl_(std::move(adnl)) {};
+      : rldp_(std::move(rldp)), src_(src), dst_(dst), adnl_(std::move(adnl)), connection_(peer_identity_of(dst)) {
+  }
 
   void send(TransferId transfer_id, td::BufferSlice query, td::Timestamp timeout = td::Timestamp::never()) {
     connection_.send(transfer_id, std::move(query), timeout);
     yield();
   }
   void set_receive_limits(TransferId transfer_id, td::Timestamp timeout, td::uint64 max_size) {
-    connection_.set_receive_limits(transfer_id, timeout, max_size);
+    if (!connection_.set_receive_limits(transfer_id, timeout, max_size)) {
+      // A refusal may have a failure to report to the request's caller.
+      yield();
+    }
   }
   void receive_raw(td::BufferSlice data) {
     connection_.receive_raw(std::move(data));
@@ -220,6 +242,13 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
     // decide how many of these the node holds. Failing now lets the caller
     // retry or give up; remembering it would not.
     promise.set_error(td::Status::Error("too many RLDP queries are already awaiting an answer"));
+    return;
+  }
+  // Each query lets this peer answer with a solicited transfer, which may use
+  // the reserve of the inbound budget; one peer may not hold more than this.
+  auto on_connection = queries_.find({src, dst});
+  if (on_connection != queries_.end() && on_connection->second.size() >= MAX_PENDING_QUERIES_PER_CONNECTION) {
+    promise.set_error(td::Status::Error("too many RLDP queries are already awaiting an answer from this peer"));
     return;
   }
   auto connection = get_or_create_connection(src, dst, false, timeout);

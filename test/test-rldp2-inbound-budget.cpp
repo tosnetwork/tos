@@ -16,9 +16,18 @@
 // attempt for the solver's working memory, and given back when the transfer
 // finishes, expires or its connection goes away. These tests drive real
 // connections with real FEC datagrams against small injected budgets.
+//
+// Half of the budget is a reserve for transfers answering the node's own
+// requests, and one peer identity may hold only a share of the other half.
+// The tests for that division run a saturating identity beside an unrelated
+// one, and check that a peer cannot reach the reserve by any claim of its own.
+// They do not show, and the division does not give, availability against many
+// identities: generating identities costs nothing.
 
+#include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "fec/fec.h"
@@ -41,6 +50,8 @@ class Sink : public ConnectionCallback {
   void receive(TransferId transfer_id, td::Result<td::BufferSlice> r_data) override {
     if (r_data.is_ok()) {
       completed.push_back(transfer_id);
+    } else {
+      failed.push_back(transfer_id);
     }
   }
   void on_sent(TransferId, td::Result<td::Unit>) override {
@@ -48,7 +59,34 @@ class Sink : public ConnectionCallback {
 
   std::vector<td::BufferSlice> outbox;
   std::vector<TransferId> completed;
+  std::vector<TransferId> failed;
 };
+
+RldpPeerIdentity identity(td::uint32 n) {
+  RldpPeerIdentity id{};
+  std::memcpy(id.data(), &n, sizeof(n));
+  return id;
+}
+
+// A budget whose unsolicited half and per-identity share are the whole of it,
+// for the tests of the overall bound.
+std::shared_ptr<RldpInboundBudget> undivided(size_t decoders, size_t bytes) {
+  RldpInboundLimits limits;
+  limits.max_decoders = decoders;
+  limits.max_bytes = bytes;
+  limits.unsolicited_decoders = decoders;
+  limits.unsolicited_bytes = bytes;
+  limits.per_identity_decoders = decoders;
+  limits.per_identity_bytes = bytes;
+  limits.max_identities = decoders;
+  return std::make_shared<RldpInboundBudget>(limits);
+}
+
+// Capacity taken outside any transfer, from the solicited side so that it
+// counts against the total only.
+std::optional<RldpInboundReservation> hold(std::shared_ptr<RldpInboundBudget> budget, size_t decoders, size_t bytes) {
+  return RldpInboundReservation::acquire(std::move(budget), RldpInboundKind::solicited, identity(0), decoders, bytes);
+}
 
 TransferId transfer(td::uint32 n) {
   TransferId id;
@@ -65,7 +103,7 @@ td::BufferSlice payload(size_t size) {
 
 // The datagrams a fresh sender produces for one transfer in its first runs.
 std::vector<td::BufferSlice> datagrams_for(TransferId id, size_t size) {
-  RldpConnection sender;
+  RldpConnection sender{identity(0)};
   Sink sink;
   sender.send(id, payload(size), td::Timestamp::in(60.0));
   for (int i = 0; i < 64 && sink.outbox.empty(); i++) {
@@ -74,8 +112,9 @@ std::vector<td::BufferSlice> datagrams_for(TransferId id, size_t size) {
   return std::move(sink.outbox);
 }
 
-std::unique_ptr<RldpConnection> receiver_with(std::shared_ptr<RldpInboundBudget> budget) {
-  auto receiver = std::make_unique<RldpConnection>();
+std::unique_ptr<RldpConnection> receiver_with(std::shared_ptr<RldpInboundBudget> budget,
+                                              RldpPeerIdentity peer = identity(0)) {
+  auto receiver = std::make_unique<RldpConnection>(peer);
   receiver->set_inbound_budget(std::move(budget));
   return receiver;
 }
@@ -99,10 +138,19 @@ void deliver_whole_transfer(RldpConnection &receiver, Sink &sink, TransferId id)
   }
 }
 
+size_t open_part_symbols() {
+  return (RldpConnection::DEFAULT_MTU + 767) / 768;
+}
+
 size_t open_part_cost() {
   // An unsolicited transfer is one part of at most DEFAULT_MTU bytes.
-  auto symbols = (RldpConnection::DEFAULT_MTU + 767) / 768;
-  return rldp_decoder_reservation_bytes(RldpConnection::DEFAULT_MTU, 768, symbols).value();
+  return rldp_decoder_reservation_bytes(RldpConnection::DEFAULT_MTU, 768, open_part_symbols()).value();
+}
+
+// The working memory of one decode attempt of such a part, which must still
+// fit when its decoder is reserved.
+size_t open_part_solver() {
+  return rldp_solver_working_bytes(768, open_part_symbols()).value();
 }
 
 TEST(Rldp2InboundBudget, CostsMatchTheDocumentedMeasurements) {
@@ -118,10 +166,22 @@ TEST(Rldp2InboundBudget, CostsMatchTheDocumentedMeasurements) {
   ASSERT_TRUE(budget->max_decoders() < RldpConnection::MAX_INBOUND_TRANSFERS * 4096);
   ASSERT_TRUE(budget->max_bytes() >= rldp_decoder_reservation_bytes(2000000, 768, 2605).value() +
                                          rldp_solver_working_bytes(768, 2605).value());
+  // Half is reserved for solicited transfers, and one identity's share is an
+  // eighth of the rest -- still room for a full connection of default-size
+  // transfers, and for a maximal part with its decode attempt.
+  auto &limits = budget->limits();
+  ASSERT_EQ(rldp_max_active_decoders / 2, limits.unsolicited_decoders);
+  ASSERT_EQ(rldp_max_inbound_bytes / 2, limits.unsolicited_bytes);
+  ASSERT_EQ(limits.unsolicited_decoders / 8, limits.per_identity_decoders);
+  ASSERT_EQ(limits.unsolicited_bytes / 8, limits.per_identity_bytes);
+  ASSERT_TRUE(limits.per_identity_decoders >= RldpConnection::MAX_INBOUND_TRANSFERS);
+  ASSERT_TRUE(limits.per_identity_bytes >= RldpConnection::MAX_INBOUND_TRANSFERS * open_part_cost());
+  ASSERT_TRUE(limits.per_identity_bytes >= rldp_decoder_reservation_bytes(2000000, 768, 2605).value() +
+                                               rldp_solver_working_bytes(768, 2605).value());
 }
 
 TEST(Rldp2InboundBudget, DecodersAreBoundedAcrossConnections) {
-  auto budget = std::make_shared<RldpInboundBudget>(2, 64 << 20);
+  auto budget = undivided(2, 64 << 20);
   auto first = receiver_with(budget);
   auto second = receiver_with(budget);
   auto third = receiver_with(budget);
@@ -154,8 +214,9 @@ TEST(Rldp2InboundBudget, DecodersAreBoundedAcrossConnections) {
 }
 
 TEST(Rldp2InboundBudget, BytesAreBoundedAcrossConnections) {
-  // Room for two open decoders' bytes but not three; the count is no limit.
-  auto budget = std::make_shared<RldpInboundBudget>(1000, 2 * open_part_cost() + 1000);
+  // Room for two open decoders' bytes and a decode attempt, but not three
+  // decoders and an attempt; the count is no limit.
+  auto budget = undivided(1000, 2 * open_part_cost() + open_part_solver() + 1000);
   auto first = receiver_with(budget);
   auto second = receiver_with(budget);
   Sink sink;
@@ -173,7 +234,7 @@ TEST(Rldp2InboundBudget, BytesAreBoundedAcrossConnections) {
 }
 
 TEST(Rldp2InboundBudget, ExpiredTransfersGiveBackTheirReservation) {
-  auto budget = std::make_shared<RldpInboundBudget>(10, 64 << 20);
+  auto budget = undivided(10, 64 << 20);
   auto receiver = receiver_with(budget);
   Sink sink;
   open_transfer(*receiver, sink, transfer(20));
@@ -184,24 +245,97 @@ TEST(Rldp2InboundBudget, ExpiredTransfersGiveBackTheirReservation) {
   ASSERT_EQ(0u, receiver->inbound_transfer_count());
   ASSERT_EQ(0u, budget->active_decoders());
   ASSERT_EQ(0u, budget->reserved_bytes());
+  ASSERT_EQ(0u, budget->unsolicited_decoders());
+  ASSERT_EQ(0u, budget->tracked_identities());
 }
 
 TEST(Rldp2InboundBudget, DecodingWaitsForSolverMemory) {
-  auto budget = std::make_shared<RldpInboundBudget>(10, 64 << 20);
+  auto budget = undivided(10, 64 << 20);
   auto receiver = receiver_with(budget);
   Sink sink;
-  // Leave room for the decoder but not for a decode attempt.
-  auto symbols = static_cast<size_t>(1);
-  auto decoder_cost = rldp_decoder_reservation_bytes(64, 768, symbols).value();
-  auto solver_cost = rldp_solver_working_bytes(768, symbols).value();
-  auto held = RldpInboundReservation::acquire(budget, 0, budget->max_bytes() - decoder_cost - solver_cost + 1);
+  auto id = transfer(30);
+  auto parts = datagrams_for(id, RldpConnection::DEFAULT_MTU);
+  ASSERT_TRUE(parts.size() > open_part_symbols() + 1);
+  // The decoder is reserved while its decode attempt still fits...
+  receiver->receive_raw(parts[0].clone());
+  receiver->run(sink);
+  ASSERT_EQ(1u, budget->active_decoders());
+  // ...and something else then takes that room.
+  auto held = hold(budget, 0, budget->max_bytes() - budget->reserved_bytes() - open_part_solver() + 1);
   ASSERT_TRUE(held.has_value());
-  deliver_whole_transfer(*receiver, sink, transfer(30));
+  for (size_t i = 1; i + 1 < parts.size(); i++) {
+    receiver->receive_raw(parts[i].clone());
+    receiver->run(sink);
+  }
+  // Enough symbols to decode, but no room to: the symbols are kept.
   ASSERT_TRUE(sink.completed.empty());
   ASSERT_EQ(1u, receiver->inbound_transfer_count());
-  ASSERT_EQ(1u, budget->active_decoders());
   ASSERT_TRUE(budget->reserved_bytes() <= budget->max_bytes());
+  // Once there is room, the next symbol decodes.
   held.reset();
+  receiver->receive_raw(parts.back().clone());
+  receiver->run(sink);
+  ASSERT_EQ(1u, sink.completed.size());
+  ASSERT_EQ(0u, budget->active_decoders());
+}
+
+// A decoder is reserved only while its decode attempt would still fit, so a
+// share cannot fill with decoders none of which has room to decode. Without
+// that, these three transfers would hold the share between them and never
+// complete.
+TEST(Rldp2InboundBudget, AShareFullOfDecodersStillDecodes) {
+  RldpInboundLimits limits = RldpInboundLimits::split(64, 64 << 20);
+  limits.per_identity_bytes = 2 * open_part_cost() + open_part_solver();
+  auto budget = std::make_shared<RldpInboundBudget>(limits);
+  auto receiver = receiver_with(budget, identity(1));
+  Sink sink;
+  std::vector<std::vector<td::BufferSlice>> transfers;
+  for (td::uint32 i = 0; i < 3; i++) {
+    transfers.push_back(datagrams_for(transfer(40 + i), RldpConnection::DEFAULT_MTU));
+    receiver->receive_raw(transfers.back()[0].clone());
+    receiver->run(sink);
+  }
+  ASSERT_EQ(2u, receiver->inbound_transfer_count());
+  for (auto &datagrams : transfers) {
+    for (auto &datagram : datagrams) {
+      receiver->receive_raw(datagram.clone());
+      receiver->run(sink);
+    }
+  }
+  ASSERT_EQ(3u, sink.completed.size());
+  ASSERT_EQ(0u, budget->identity_bytes(identity(1)));
+}
+
+// A decode attempt of an unsolicited transfer is charged to its identity's
+// share like the decoder itself, so one identity cannot use decode attempts to
+// reach past its share.
+TEST(Rldp2InboundBudget, DecodeAttemptsCountAgainstTheIdentityShare) {
+  auto budget = std::make_shared<RldpInboundBudget>(64, 64 << 20);
+  auto peer = identity(1);
+  auto receiver = receiver_with(budget, peer);
+  Sink sink;
+  auto id = transfer(31);
+  auto parts = datagrams_for(id, RldpConnection::DEFAULT_MTU);
+  ASSERT_TRUE(parts.size() > open_part_symbols() + 1);
+  receiver->receive_raw(parts[0].clone());
+  receiver->run(sink);
+  ASSERT_EQ(open_part_cost(), budget->identity_bytes(peer));
+  // The same identity's other unsolicited use takes the room its decode
+  // attempt needs; the total and the unsolicited half still have plenty.
+  auto share = budget->limits().per_identity_bytes;
+  auto held = RldpInboundReservation::acquire(budget, RldpInboundKind::unsolicited, peer, 0,
+                                              share - open_part_cost() - open_part_solver() + 1);
+  ASSERT_TRUE(held.has_value());
+  for (size_t i = 1; i + 1 < parts.size(); i++) {
+    receiver->receive_raw(parts[i].clone());
+    receiver->run(sink);
+  }
+  ASSERT_TRUE(sink.completed.empty());
+  held.reset();
+  receiver->receive_raw(parts.back().clone());
+  receiver->run(sink);
+  ASSERT_EQ(1u, sink.completed.size());
+  ASSERT_EQ(0u, budget->identity_bytes(peer));
 }
 
 // Finished parts keep only their decoded bytes charged; the transfer going
@@ -209,7 +343,7 @@ TEST(Rldp2InboundBudget, DecodingWaitsForSolverMemory) {
 // transfer of several parts can be finished part by part.
 TEST(Rldp2InboundBudget, FinishedPartsKeepOnlyTheirBytes) {
   const size_t part_size = 7680;
-  auto budget = std::make_shared<RldpInboundBudget>(1, 64 << 20);
+  auto budget = undivided(1, 64 << 20);
   auto data = payload(2 * part_size);
   auto encode = [&](size_t index) {
     return td::fec::RaptorQEncoder::create(td::BufferSlice(data.as_slice().substr(index * part_size, part_size)), 768);
@@ -231,7 +365,7 @@ TEST(Rldp2InboundBudget, FinishedPartsKeepOnlyTheirBytes) {
     inbound.finish_part(index, part->decoder->try_decode(false).move_as_ok().data);
   };
   {
-    InboundTransfer inbound(2 * part_size, budget);
+    InboundTransfer inbound(2 * part_size, budget, RldpInboundKind::unsolicited, identity(1));
     finish(inbound, 0, *first_encoder);
     ASSERT_EQ(0u, budget->active_decoders());
     ASSERT_EQ(part_size, budget->reserved_bytes());
@@ -239,7 +373,7 @@ TEST(Rldp2InboundBudget, FinishedPartsKeepOnlyTheirBytes) {
     // The second part waits for room when the budget has none.
     bool refused = false;
     {
-      auto held = RldpInboundReservation::acquire(budget, 1, 0);
+      auto held = hold(budget, 1, 0);
       ASSERT_TRUE(held.has_value());
       auto part = inbound.get_part(1, second_type, &refused).move_as_ok();
       ASSERT_TRUE(part == nullptr);
@@ -270,7 +404,7 @@ TEST(Rldp2InboundBudget, FinishedPartsKeepOnlyTheirBytes) {
 // capacity frees, the same part opens and the transfer completes.
 TEST(Rldp2InboundBudget, AssemblyIsReservedBeforeTheLastPartOpens) {
   const size_t part_size = 7680;
-  auto budget = std::make_shared<RldpInboundBudget>(10, 64 << 20);
+  auto budget = undivided(10, 64 << 20);
   auto data = payload(2 * part_size);
   auto first_encoder = td::fec::RaptorQEncoder::create(td::BufferSlice(data.as_slice().substr(0, part_size)), 768);
   auto second_encoder =
@@ -287,16 +421,17 @@ TEST(Rldp2InboundBudget, AssemblyIsReservedBeforeTheLastPartOpens) {
     return part.decoder->try_decode(false).move_as_ok().data;
   };
 
-  InboundTransfer inbound(2 * part_size, budget);
+  InboundTransfer inbound(2 * part_size, budget, RldpInboundKind::unsolicited, identity(1));
   auto first = inbound.get_part(0, first_type).move_as_ok();
   CHECK(first != nullptr);
   inbound.finish_part(0, decode(*first, *first_encoder));
   ASSERT_EQ(part_size, budget->reserved_bytes());
 
-  // Leave room for the last part's decoder and its decoded bytes, but not for
-  // the assembly buffer on top.
-  auto room = cost + 2 * part_size - 1;
-  auto held = RldpInboundReservation::acquire(budget, 0, budget->max_bytes() - part_size - room);
+  // Leave room for the last part's decoder, its decoded bytes and its decode
+  // attempt, but not for the assembly buffer on top.
+  auto solver = rldp_solver_working_bytes(768, second_type.symbols_count()).value();
+  auto room = cost + 2 * part_size + solver - 1;
+  auto held = hold(budget, 0, budget->max_bytes() - part_size - room);
   ASSERT_TRUE(held.has_value());
   bool refused = false;
   auto second = inbound.get_part(1, second_type, &refused).move_as_ok();
@@ -343,8 +478,8 @@ bool run_loopback(RldpConnection &sender, Sink &sender_sink, RldpConnection &rec
 // budget and leaves nothing reserved.
 TEST(Rldp2InboundBudget, TransferOfSeveralPartsCompletesAndReturnsEverything) {
   const size_t size = 2000000 + 100000;
-  auto budget = std::make_shared<RldpInboundBudget>(10, 64 << 20);
-  RldpConnection sender;
+  auto budget = undivided(10, 64 << 20);
+  RldpConnection sender{identity(0)};
   auto receiver = receiver_with(budget);
   Sink sender_sink;
   Sink receiver_sink;
@@ -355,6 +490,325 @@ TEST(Rldp2InboundBudget, TransferOfSeveralPartsCompletesAndReturnsEverything) {
   ASSERT_EQ(0u, receiver->inbound_transfer_count());
   ASSERT_EQ(0u, budget->active_decoders());
   ASSERT_EQ(0u, budget->reserved_bytes());
+}
+
+// The division of the budget, on the budget alone. Each check is reached with
+// the others holding room, so each refusal below has exactly one cause.
+TEST(Rldp2InboundBudget, UnsolicitedIsHeldToItsHalfAndEachIdentityToItsShare) {
+  // 64 decoders and 64 MiB: the unsolicited half is 32 decoders and 32 MiB,
+  // and one identity's share is 4 decoders and 4 MiB.
+  const size_t mib = size_t{1} << 20;
+  RldpInboundBudget budget(64, 64 * mib);
+  auto unsolicited = RldpInboundKind::unsolicited;
+  auto solicited = RldpInboundKind::solicited;
+  ASSERT_EQ(32u, budget.limits().unsolicited_decoders);
+  ASSERT_EQ(4u, budget.limits().per_identity_decoders);
+  ASSERT_EQ(4 * mib, budget.limits().per_identity_bytes);
+
+  // One identity's decoder share.
+  for (int i = 0; i < 4; i++) {
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(1), 1, 1));
+  }
+  ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(1), 1, 1));
+  // Another identity is not affected by it.
+  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(2), 1, 1));
+  ASSERT_TRUE(budget.release(unsolicited, identity(2), 1, 1));
+
+  // One identity's byte share.
+  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(3), 1, 4 * mib));
+  ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(3), 0, 1));
+  ASSERT_TRUE(budget.release(unsolicited, identity(3), 1, 4 * mib));
+
+  // The unsolicited half's decoders: eight identities at their share fill it,
+  // and a ninth is refused although the total and its own share have room.
+  for (td::uint32 peer = 10; peer < 17; peer++) {
+    for (int i = 0; i < 4; i++) {
+      ASSERT_TRUE(budget.try_acquire(unsolicited, identity(peer), 1, 1));
+    }
+  }
+  ASSERT_EQ(32u, budget.unsolicited_decoders());
+  ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(17), 1, 1));
+  // The reserve is still there for solicited transfers, all of it.
+  ASSERT_TRUE(budget.try_acquire(solicited, identity(17), 32, 1));
+  ASSERT_TRUE(!budget.try_acquire(solicited, identity(17), 1, 1));
+  ASSERT_TRUE(budget.release(solicited, identity(17), 32, 1));
+  for (td::uint32 peer = 10; peer < 17; peer++) {
+    ASSERT_TRUE(budget.release(unsolicited, identity(peer), 4, 4));
+  }
+  ASSERT_TRUE(budget.release(unsolicited, identity(1), 4, 4));
+
+  // The unsolicited half's bytes: eight identities at their byte share fill
+  // it, and a ninth is refused although decoders and its share have room.
+  for (td::uint32 peer = 20; peer < 28; peer++) {
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(peer), 1, 4 * mib));
+  }
+  ASSERT_EQ(32 * mib, budget.unsolicited_bytes());
+  ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(28), 0, 1));
+  ASSERT_TRUE(budget.try_acquire(solicited, identity(28), 0, 32 * mib));
+  ASSERT_TRUE(budget.release(solicited, identity(28), 0, 32 * mib));
+  for (td::uint32 peer = 20; peer < 28; peer++) {
+    ASSERT_TRUE(budget.release(unsolicited, identity(peer), 1, 4 * mib));
+  }
+
+  // Solicited transfers may use the whole budget, not only the reserve, and
+  // then nothing else fits.
+  ASSERT_TRUE(budget.try_acquire(solicited, identity(1), 64, 64 * mib));
+  ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(2), 1, 1));
+  ASSERT_TRUE(budget.release(solicited, identity(1), 64, 64 * mib));
+
+  // Giving back what an identity does not hold is refused and changes nothing.
+  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(1), 1, 1));
+  ASSERT_TRUE(!budget.release(unsolicited, identity(2), 1, 1));
+  ASSERT_TRUE(!budget.release(unsolicited, identity(1), 2, 1));
+  ASSERT_EQ(1u, budget.identity_decoders(identity(1)));
+  ASSERT_TRUE(budget.release(unsolicited, identity(1), 1, 1));
+
+  ASSERT_EQ(0u, budget.active_decoders());
+  ASSERT_EQ(0u, budget.reserved_bytes());
+  ASSERT_EQ(0u, budget.unsolicited_decoders());
+  ASSERT_EQ(0u, budget.unsolicited_bytes());
+  ASSERT_EQ(0u, budget.tracked_identities());
+}
+
+// Headroom must fit under each limit that applies, and is not taken.
+TEST(Rldp2InboundBudget, HeadroomMustFitButIsNotTaken) {
+  const size_t mib = size_t{1} << 20;
+  auto unsolicited = RldpInboundKind::unsolicited;
+  auto solicited = RldpInboundKind::solicited;
+  {
+    // The identity's share: 4 MiB.
+    RldpInboundBudget budget(64, 64 * mib);
+    ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(1), 1, 2 * mib, 2 * mib + 1));
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(1), 1, 2 * mib, 2 * mib));
+    ASSERT_EQ(2 * mib, budget.identity_bytes(identity(1)));
+    ASSERT_EQ(2 * mib, budget.reserved_bytes());
+  }
+  {
+    // The unsolicited half: 32 MiB, of which 30 MiB are held by others.
+    RldpInboundBudget budget(64, 64 * mib);
+    for (td::uint32 peer = 10; peer < 17; peer++) {
+      ASSERT_TRUE(budget.try_acquire(unsolicited, identity(peer), 1, 4 * mib));
+    }
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(17), 1, 2 * mib));
+    ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(18), 1, mib, mib + 1));
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(18), 1, mib, mib));
+    ASSERT_EQ(31 * mib, budget.unsolicited_bytes());
+  }
+  {
+    // The total: 64 MiB, of which 60 MiB are held.
+    RldpInboundBudget budget(64, 64 * mib);
+    ASSERT_TRUE(budget.try_acquire(solicited, identity(1), 0, 60 * mib));
+    ASSERT_TRUE(!budget.try_acquire(solicited, identity(1), 1, mib, 3 * mib + 1));
+    ASSERT_TRUE(budget.try_acquire(solicited, identity(1), 1, mib, 3 * mib));
+    ASSERT_EQ(61 * mib, budget.reserved_bytes());
+  }
+}
+
+// The ledger of identities is bounded, and an identity leaves it once it
+// holds nothing.
+TEST(Rldp2InboundBudget, IdentityLedgerIsBounded) {
+  RldpInboundLimits limits = RldpInboundLimits::split(64, 64 << 20);
+  limits.max_identities = 2;
+  RldpInboundBudget budget(limits);
+  auto unsolicited = RldpInboundKind::unsolicited;
+  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(1), 1, 1));
+  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(2), 1, 1));
+  ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(3), 1, 1));
+  ASSERT_EQ(2u, budget.tracked_identities());
+  // A known identity can still grow within its share.
+  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(1), 1, 1));
+  ASSERT_TRUE(budget.release(unsolicited, identity(2), 1, 1));
+  ASSERT_EQ(1u, budget.tracked_identities());
+  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(3), 1, 1));
+  ASSERT_TRUE(budget.release(unsolicited, identity(1), 2, 2));
+  ASSERT_TRUE(budget.release(unsolicited, identity(3), 1, 1));
+  ASSERT_EQ(0u, budget.tracked_identities());
+}
+
+// An identity opening as many unsolicited transfers as it can is stopped at
+// its share, across every connection it holds, while an unrelated identity's
+// transfers still open and complete. Closing the saturating connections gives
+// everything back, and the identity can reconnect and use its share again.
+TEST(Rldp2InboundBudget, SaturatingIdentityLeavesOthersProgressing) {
+  // A per-identity share of 4 decoders.
+  auto budget = std::make_shared<RldpInboundBudget>(64, 64 << 20);
+  ASSERT_EQ(4u, budget->limits().per_identity_decoders);
+  auto flooder = identity(1);
+  auto flooder_first = receiver_with(budget, flooder);
+  auto flooder_second = receiver_with(budget, flooder);
+  auto honest = receiver_with(budget, identity(2));
+  Sink sink;
+
+  for (td::uint32 i = 0; i < 3; i++) {
+    open_transfer(*flooder_first, sink, transfer(100 + i));
+  }
+  // The same identity on a second connection, as through another local id,
+  // shares the one share.
+  for (td::uint32 i = 0; i < 3; i++) {
+    open_transfer(*flooder_second, sink, transfer(200 + i));
+  }
+  ASSERT_EQ(3u, flooder_first->inbound_transfer_count());
+  ASSERT_EQ(1u, flooder_second->inbound_transfer_count());
+  ASSERT_EQ(4u, budget->identity_decoders(flooder));
+  ASSERT_EQ(4 * open_part_cost(), budget->identity_bytes(flooder));
+
+  // The unrelated identity both opens a transfer and completes one.
+  open_transfer(*honest, sink, transfer(300));
+  ASSERT_EQ(1u, honest->inbound_transfer_count());
+  deliver_whole_transfer(*honest, sink, transfer(301));
+  ASSERT_EQ(1u, sink.completed.size());
+  ASSERT_TRUE(sink.completed[0] == transfer(301));
+
+  // Release: closing the flooder's connections returns its usage to zero and
+  // it leaves the ledger; the honest identity's transfer is untouched.
+  flooder_first.reset();
+  flooder_second.reset();
+  ASSERT_EQ(0u, budget->identity_decoders(flooder));
+  ASSERT_EQ(0u, budget->identity_bytes(flooder));
+  ASSERT_EQ(1u, budget->tracked_identities());
+  ASSERT_EQ(1u, budget->active_decoders());
+
+  // Reconnect: the same identity gets its whole share back, and no more.
+  auto flooder_again = receiver_with(budget, flooder);
+  for (td::uint32 i = 0; i < 6; i++) {
+    open_transfer(*flooder_again, sink, transfer(400 + i));
+  }
+  ASSERT_EQ(4u, flooder_again->inbound_transfer_count());
+  flooder_again.reset();
+  honest.reset();
+  ASSERT_EQ(0u, budget->active_decoders());
+  ASSERT_EQ(0u, budget->reserved_bytes());
+  ASSERT_EQ(0u, budget->tracked_identities());
+}
+
+// Has `identities` identities try to open `each` unsolicited transfers.
+// Returns the connections, which hold whatever they opened.
+std::vector<std::unique_ptr<RldpConnection>> fill_unsolicited(std::shared_ptr<RldpInboundBudget> budget, Sink &sink,
+                                                              td::uint32 identities, td::uint32 each) {
+  std::vector<std::unique_ptr<RldpConnection>> peers;
+  for (td::uint32 i = 0; i < identities; i++) {
+    peers.push_back(receiver_with(budget, identity(1000 + i)));
+    for (td::uint32 j = 0; j < each; j++) {
+      open_transfer(*peers.back(), sink, transfer(1000 + i * each + j));
+    }
+  }
+  return peers;
+}
+
+// However many identities open unsolicited transfers, an answer to a local
+// request completes.
+TEST(Rldp2InboundBudget, SolicitedAnswerCompletesWhenUnsolicitedHalfIsFull) {
+  // 64 decoders: 32 unsolicited, at most 4 per identity; 32 reserved.
+  auto budget = std::make_shared<RldpInboundBudget>(64, 64 << 20);
+  Sink sink;
+  // Each identity at its share, and twice as many identities as the
+  // unsolicited half admits: together they would take every decoder.
+  auto peers = fill_unsolicited(budget, sink, 16, 4);
+  ASSERT_EQ(32u, budget->unsolicited_decoders());
+  ASSERT_EQ(32u, budget->active_decoders());
+
+  auto requester = receiver_with(budget, identity(1));
+  auto answer = transfer(500);
+  ASSERT_TRUE(requester->set_receive_limits(answer, td::Timestamp::in(60.0), 64));
+  ASSERT_EQ(1u, requester->outstanding_request_count());
+  deliver_whole_transfer(*requester, sink, answer);
+  ASSERT_EQ(1u, sink.completed.size());
+  ASSERT_TRUE(sink.completed[0] == answer);
+  // The request ended with its answer.
+  ASSERT_EQ(0u, requester->outstanding_request_count());
+  ASSERT_EQ(32u, budget->active_decoders());
+}
+
+// A peer cannot reach the reserve by sending under an id no local request
+// expects, by answering a request made to another peer, or by answering a
+// request with more than it asked for.
+TEST(Rldp2InboundBudget, PeerCannotClaimTheReserve) {
+  auto budget = std::make_shared<RldpInboundBudget>(64, 64 << 20);
+  Sink sink;
+  auto peers = fill_unsolicited(budget, sink, 8, 4);
+  ASSERT_EQ(32u, budget->unsolicited_decoders());
+
+  auto requested_peer = receiver_with(budget, identity(1));
+  auto other_peer = receiver_with(budget, identity(2));
+  auto answer = transfer(600);
+  ASSERT_TRUE(requested_peer->set_receive_limits(answer, td::Timestamp::in(60.0), 64));
+
+  // An id no local request expects.
+  deliver_whole_transfer(*requested_peer, sink, transfer(601));
+  // The expected id, from a peer the request did not go to.
+  deliver_whole_transfer(*other_peer, sink, answer);
+  // The expected id from the expected peer, but larger than was asked for.
+  for (auto &part : datagrams_for(answer, 1000)) {
+    requested_peer->receive_raw(part.clone());
+    requested_peer->run(sink);
+  }
+  ASSERT_TRUE(sink.completed.empty());
+  ASSERT_EQ(0u, requested_peer->inbound_transfer_count());
+  ASSERT_EQ(0u, other_peer->inbound_transfer_count());
+  ASSERT_EQ(32u, budget->active_decoders());
+
+  // The request is still outstanding, and its real answer completes.
+  ASSERT_EQ(1u, requested_peer->outstanding_request_count());
+  deliver_whole_transfer(*requested_peer, sink, answer);
+  ASSERT_EQ(1u, sink.completed.size());
+  ASSERT_TRUE(sink.completed[0] == answer);
+}
+
+// A transfer the peer opened under an id before a local request expected it
+// was unsolicited; the request does not adopt it. It is dropped, and its
+// identity's usage with it, and the answer is reassembled under the request.
+TEST(Rldp2InboundBudget, RequestDoesNotAdoptATransferThePeerOpenedFirst) {
+  auto budget = std::make_shared<RldpInboundBudget>(64, 64 << 20);
+  auto peer = identity(1);
+  auto receiver = receiver_with(budget, peer);
+  Sink sink;
+  auto id = transfer(700);
+  open_transfer(*receiver, sink, id);
+  ASSERT_EQ(1u, budget->identity_decoders(peer));
+  ASSERT_TRUE(receiver->set_receive_limits(id, td::Timestamp::in(60.0), RldpConnection::DEFAULT_MTU));
+  ASSERT_EQ(0u, receiver->inbound_transfer_count());
+  ASSERT_EQ(0u, budget->identity_decoders(peer));
+  ASSERT_EQ(0u, budget->active_decoders());
+  open_transfer(*receiver, sink, id);
+  ASSERT_EQ(1u, budget->active_decoders());
+  ASSERT_EQ(0u, budget->unsolicited_decoders());
+}
+
+// Local requests outstanding on one connection are bounded; one beyond the
+// bound is reported as failed rather than left waiting. Requests end when
+// answered or expired.
+TEST(Rldp2InboundBudget, OutstandingRequestsAreBounded) {
+  auto budget = std::make_shared<RldpInboundBudget>(64, 64 << 20);
+  auto receiver = receiver_with(budget, identity(1));
+  Sink sink;
+  for (td::uint32 i = 0; i < RldpConnection::MAX_OUTSTANDING_REQUESTS; i++) {
+    ASSERT_TRUE(receiver->set_receive_limits(transfer(10000 + i), td::Timestamp::in(30.0), 64));
+  }
+  ASSERT_EQ(RldpConnection::MAX_OUTSTANDING_REQUESTS, receiver->outstanding_request_count());
+  auto refused = transfer(20000);
+  ASSERT_TRUE(!receiver->set_receive_limits(refused, td::Timestamp::in(30.0), 64));
+  receiver->run(sink);
+  ASSERT_EQ(1u, sink.failed.size());
+  ASSERT_TRUE(sink.failed[0] == refused);
+  ASSERT_EQ(RldpConnection::MAX_OUTSTANDING_REQUESTS, receiver->outstanding_request_count());
+
+  // A second request under an outstanding id is refused without failing the
+  // first.
+  ASSERT_TRUE(!receiver->set_receive_limits(transfer(10000), td::Timestamp::in(30.0), 64));
+  receiver->run(sink);
+  ASSERT_EQ(1u, sink.failed.size());
+
+  // An answer ends its request and makes room for another.
+  deliver_whole_transfer(*receiver, sink, transfer(10000));
+  ASSERT_EQ(1u, sink.completed.size());
+  ASSERT_EQ(RldpConnection::MAX_OUTSTANDING_REQUESTS - 1, receiver->outstanding_request_count());
+  ASSERT_TRUE(receiver->set_receive_limits(refused, td::Timestamp::in(30.0), 64));
+
+  // Expiry ends the rest.
+  td::Time::jump_in_future(td::Time::now() + 31.0);
+  receiver->run(sink);
+  ASSERT_EQ(0u, receiver->outstanding_request_count());
+  ASSERT_EQ(0u, budget->active_decoders());
 }
 
 }  // namespace

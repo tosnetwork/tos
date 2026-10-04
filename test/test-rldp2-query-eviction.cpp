@@ -198,37 +198,82 @@ int main() {
     fail(PSLICE() << "the removed query's record was left behind: " << pending_after << " still pending");
   }
 
-  // A peer that accepts requests and never answers them decides how many
-  // queries the node is holding, unless the total is capped. Nothing here is
-  // ever answered, so every one of these stays outstanding.
-  size_t refused = 0;
+  auto pending_now = [&](td::Slice what) {
+    size_t pending = 0;
+    bool answered_stats = false;
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(rldp, &tos::rldp2::Rldp::get_connection_stats,
+                              td::PromiseCreator::lambda([&](td::Result<tos::rldp2::Rldp::ConnectionStats> R) {
+                                R.ensure();
+                                pending = R.ok().pending_queries;
+                                answered_stats = true;
+                              }));
+    });
+    scheduler.run(0.05);
+    if (!answered_stats) {
+      fail(PSLICE() << "the node never answered the connection stats query " << what);
+    }
+    return pending;
+  };
+
+  // Every query entitles its peer to an answer that may use the part of the
+  // inbound budget reserved for answers, so one peer may not hold more than
+  // its bound of them. Nothing here is ever answered, so every admitted query
+  // stays outstanding. The deadline is later than anything above, so no
+  // connection carrying these is evicted while they are counted.
+  const size_t per_connection = tos::rldp2::Rldp::MAX_PENDING_QUERIES_PER_CONNECTION;
+  size_t refused_by_peer_bound = 0;
+  size_t refused_otherwise = 0;
   scheduler.run_in_context([&] {
-    for (size_t i = 0; i < tos::rldp2::Rldp::MAX_PENDING_QUERIES + 64; i++) {
+    for (size_t i = 0; i < per_connection + 16; i++) {
       td::actor::send_closure(rldp, &tos::rldp2::Rldp::send_query_ex, src, dst, std::string("q"),
-                              td::PromiseCreator::lambda([&refused](td::Result<td::BufferSlice> R) {
-                                if (R.is_error()) {
-                                  ++refused;
+                              td::PromiseCreator::lambda([&](td::Result<td::BufferSlice> R) {
+                                if (R.is_ok()) {
+                                  return;
+                                }
+                                if (R.error().message().str().find("from this peer") != std::string::npos) {
+                                  ++refused_by_peer_bound;
+                                } else {
+                                  ++refused_otherwise;
                                 }
                               }),
-                              td::Timestamp::in(100000.0), td::BufferSlice("x"), 1 << 20);
+                              td::Timestamp::in(10000000.0), td::BufferSlice("x"), 1 << 20);
+    }
+  });
+  scheduler.run(1.0);
+  auto pending_on_one_peer = pending_now("after flooding one peer");
+  LOG(ERROR) << "after flooding one peer: " << pending_on_one_peer << " pending, " << refused_by_peer_bound
+             << " refused by the per-peer bound, " << refused_otherwise << " refused otherwise";
+  if (pending_on_one_peer != per_connection) {
+    fail(PSLICE() << "one peer holds " << pending_on_one_peer << " queries, not its bound of " << per_connection);
+  }
+  // Refused before sending, by the bound itself, not left to fail later.
+  if (refused_by_peer_bound != 16 || refused_otherwise != 0) {
+    fail("queries past the per-peer bound were not refused by it");
+  }
+
+  // A peer that accepts requests and never answers them decides how many
+  // queries the node is holding, unless the total is capped. Spread over
+  // enough peers that the per-peer bound does not stop them first.
+  size_t refused = 0;
+  const td::uint32 peers = static_cast<td::uint32>(tos::rldp2::Rldp::MAX_PENDING_QUERIES / per_connection + 8);
+  scheduler.run_in_context([&] {
+    for (td::uint32 peer = 1; peer <= peers; peer++) {
+      for (size_t i = 0; i < per_connection; i++) {
+        td::actor::send_closure(rldp, &tos::rldp2::Rldp::send_query_ex, src,
+                                fabricated_peer(3 * kPeersToPresent + peer), std::string("q"),
+                                td::PromiseCreator::lambda([&refused](td::Result<td::BufferSlice> R) {
+                                  if (R.is_error()) {
+                                    ++refused;
+                                  }
+                                }),
+                                td::Timestamp::in(10000000.0), td::BufferSlice("x"), 1 << 20);
+      }
     }
   });
   scheduler.run(1.0);
 
-  size_t pending_at_cap = 0;
-  bool third_stats = false;
-  scheduler.run_in_context([&] {
-    td::actor::send_closure(rldp, &tos::rldp2::Rldp::get_connection_stats,
-                            td::PromiseCreator::lambda([&](td::Result<tos::rldp2::Rldp::ConnectionStats> R) {
-                              R.ensure();
-                              pending_at_cap = R.ok().pending_queries;
-                              third_stats = true;
-                            }));
-  });
-  scheduler.run(0.05);
-  if (!third_stats) {
-    fail("the node never answered the third connection stats query");
-  }
+  auto pending_at_cap = pending_now("after flooding many peers");
   LOG(ERROR) << "after flooding queries: " << pending_at_cap << " pending, " << refused << " refused";
 
   if (pending_at_cap > tos::rldp2::Rldp::MAX_PENDING_QUERIES) {

@@ -68,8 +68,9 @@ td::Result<InboundTransfer::Part *> InboundTransfer::get_part(td::uint32 part_i,
       return td::Status::Error(ErrorCode::protoviolation, "part decoder size overflows");
     }
     // Reserved before the decoder exists, so the budget bounds what is
-    // allocated rather than what was already allocated.
-    auto reservation = RldpInboundReservation::acquire(budget_, 1, charge.value());
+    // allocated rather than what was already allocated; and only if its decode
+    // attempt would still fit, so open decoders cannot crowd out every decode.
+    auto reservation = RldpInboundReservation::acquire(budget_, kind_, peer_, 1, charge.value(), solver_bytes.value());
     if (!reservation) {
       if (refused_by_budget) {
         *refused_by_budget = true;

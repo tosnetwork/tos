@@ -22,6 +22,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "fec/fec.h"
@@ -54,8 +55,13 @@ struct InboundTransfer {
   // several parts also reserves the buffer they are assembled into, so the
   // assembly never allocates outside the budget, and a refusal leaves nothing
   // to retry but the part itself, which the peer retransmits.
-  InboundTransfer(size_t total_size, std::shared_ptr<RldpInboundBudget> budget)
-      : total_size_(total_size), budget_(std::move(budget)) {
+  //
+  // `kind` and `peer` say which part of the budget the transfer draws on: an
+  // unsolicited transfer is charged to its peer identity's share of the
+  // unsolicited half and never touches the reserve kept for solicited ones.
+  InboundTransfer(size_t total_size, std::shared_ptr<RldpInboundBudget> budget, RldpInboundKind kind,
+                  const RldpPeerIdentity &peer)
+      : total_size_(total_size), budget_(std::move(budget)), kind_(kind), peer_(peer) {
   }
 
   size_t total_size() const;
@@ -68,6 +74,15 @@ struct InboundTransfer {
   void finish_part(td::uint32 part_i, td::BufferSlice data);
   td::optional<td::BufferSlice> try_finish();
 
+  // Reserve the working memory of one decode attempt, from the same part of
+  // the budget as the transfer itself. Nothing if the budget cannot hold it.
+  std::optional<RldpInboundReservation> reserve_solver(size_t bytes) const {
+    return RldpInboundReservation::acquire(budget_, kind_, peer_, 0, bytes);
+  }
+  RldpInboundKind kind() const {
+    return kind_;
+  }
+
  private:
   std::map<td::uint32, Part> parts_;
   td::uint32 next_part_{0};
@@ -75,6 +90,8 @@ struct InboundTransfer {
   size_t total_size_;
   std::vector<td::BufferSlice> data_parts_;
   std::shared_ptr<RldpInboundBudget> budget_;
+  RldpInboundKind kind_;
+  RldpPeerIdentity peer_;
   // Bytes still held by finished parts, kept charged until the transfer ends.
   std::vector<RldpInboundReservation> finished_reservations_;
 };
