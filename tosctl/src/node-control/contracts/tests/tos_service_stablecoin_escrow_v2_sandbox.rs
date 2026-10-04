@@ -43,8 +43,6 @@ const STATUS_RELEASE_PENDING: u8 = 3;
 const STATUS_REFUND_PENDING: u8 = 4;
 const STATUS_RELEASE_RETRYING: u8 = 5;
 const STATUS_REFUND_RETRYING: u8 = 6;
-const STATUS_RELEASED: u8 = 7;
-const STATUS_REFUNDED: u8 = 8;
 const ERR_BAD_STATE: i32 = 2401;
 const ERR_DEADLINE: i32 = 2405;
 const ERR_BAD_RECEIPT: i32 = 2406;
@@ -941,8 +939,7 @@ fn release_and_exact_replay_are_idempotent_but_mutations_are_rejected() {
     let body = fixture.release_body(19, fixture.receipt(0xa3));
     let relayer = fixture.relayer.address().clone();
     fixture.send(&relayer, body.clone()).expect_success().expect_transaction_count(4);
-    // The provider wallet's excesses confirmed the delivery and finalized it.
-    assert_eq!(fixture.state().0, STATUS_RELEASED);
+    assert_eq!(fixture.state().0, STATUS_RELEASE_PENDING);
     assert_eq!(
         wallet_balance(
             fixture.bc.get_account(&fixture.provider_wallet).unwrap().get_data().unwrap()
@@ -951,7 +948,7 @@ fn release_and_exact_replay_are_idempotent_but_mutations_are_rejected() {
     );
 
     fixture.send(&relayer, body).expect_success().expect_transaction_count(1);
-    assert_eq!(fixture.state().0, STATUS_RELEASED);
+    assert_eq!(fixture.state().0, STATUS_RELEASE_PENDING);
     assert_eq!(
         wallet_balance(
             fixture.bc.get_account(&fixture.provider_wallet).unwrap().get_data().unwrap()
@@ -973,13 +970,13 @@ fn refund_replay_is_idempotent_and_wallet_bounce_restores_funded_state() {
     let relayer = refund.relayer.address().clone();
     let body = Fixture::refund_body(31);
     refund.send(&relayer, body.clone()).expect_success().expect_transaction_count(4);
-    assert_eq!(refund.state().0, STATUS_REFUNDED);
+    assert_eq!(refund.state().0, STATUS_REFUND_PENDING);
     assert_eq!(
         wallet_balance(refund.bc.get_account(&refund.buyer_wallet).unwrap().get_data().unwrap()),
         AMOUNT
     );
     refund.send(&relayer, body).expect_success().expect_transaction_count(1);
-    assert_eq!(refund.state().0, STATUS_REFUNDED);
+    assert_eq!(refund.state().0, STATUS_REFUND_PENDING);
 
     let mut bounced = Fixture::new();
     bounced.fund();
@@ -1046,7 +1043,7 @@ fn authenticated_bounce_then_old_query_release_replay_reenters_pending() {
     let (st, funded, settled, rh, pq, acc) = f.runtime();
     assert_eq!(
         (st, funded, settled, pq, acc),
-        (STATUS_RELEASED, AMOUNT as u128, AMOUNT as u128, 41, accepted_at)
+        (STATUS_RELEASE_PENDING, AMOUNT as u128, AMOUNT as u128, 41, accepted_at)
     );
     assert_eq!(rh, rh_expect);
     assert_eq!(f.provider_wallet_balance(), AMOUNT);
@@ -1074,7 +1071,7 @@ fn authenticated_bounce_then_old_query_refund_replay_reenters_pending() {
     let (st, funded, settled, rh, pq, acc) = f.runtime();
     assert_eq!(
         (st, funded, settled, pq, acc),
-        (STATUS_REFUNDED, AMOUNT as u128, 0, 31, accepted_at)
+        (STATUS_REFUND_PENDING, AMOUNT as u128, 0, 31, accepted_at)
     );
     assert_eq!(rh, [0u8; 32]);
     assert_eq!(f.buyer_wallet_balance(), AMOUNT);
@@ -1091,7 +1088,7 @@ fn release_first_valid_transition_wins_and_query_number_is_not_priority() {
     let first = f.release_body(70, f.receipt(0xa3));
     f.send(&relayer, first).expect_success();
     let (st, _, settled, _, pq, _) = f.runtime();
-    assert_eq!((st, settled, pq), (STATUS_RELEASED, AMOUNT as u128, 70)); // winner recorded
+    assert_eq!((st, settled, pq), (STATUS_RELEASE_PENDING, AMOUNT as u128, 70)); // winner recorded
     assert_eq!(f.provider_wallet_balance(), AMOUNT);
     let loser = f.release_body(60, f.receipt(0xa3));
     f.send(&relayer, loser).expect_aborted().expect_exit_code(ERR_BAD_STATE);
@@ -1168,7 +1165,7 @@ fn repeated_replay_bounce_consumes_only_fees_and_preserves_reserve_and_jettons()
     let own = f.own_wallet.clone();
     f.set_wallet_status(&own, 0);
     f.send_with_value(&relayer, body, V).expect_success();
-    assert_eq!(f.state().0, STATUS_RELEASED);
+    assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
     assert_eq!(f.provider_wallet_balance(), AMOUNT);
     assert!(f.escrow_balance() >= ESCROW_STORAGE_FLOOR);
 }
@@ -1181,8 +1178,6 @@ fn retry_body(query_id: u64) -> Cell {
 
 /// Value a retrier attaches: the 0.1 TOS payout budget plus fees, with margin.
 const RETRY_VALUE: u64 = TOS / 2;
-/// The contract's settlement_retry_delay.
-const RETRY_DELAY: u32 = 3600;
 
 #[test]
 fn a_release_the_provider_wallet_rejects_is_recovered_by_a_funded_retry() {
@@ -1204,14 +1199,8 @@ fn a_release_the_provider_wallet_rejects_is_recovered_by_a_funded_retry() {
     let other = f.release_body(91, f.receipt(0xa3));
     f.send(&relayer, other).expect_aborted().expect_exit_code(ERR_BAD_STATE);
 
-    // Too early: a payout that did arrive must have time to confirm first.
-    let anyone = f.buyer.address().clone();
-    f.bc.set_now(f.bc.now() + RETRY_DELAY - 1);
-    f.send_with_value(&anyone, retry_body(90), RETRY_VALUE)
-        .expect_aborted()
-        .expect_exit_code(ERR_DEADLINE);
     // Still locked: the retry fails at the same leg and nothing moves.
-    f.bc.set_now(f.bc.now() + 1);
+    let anyone = f.buyer.address().clone();
     f.send_with_value(&anyone, retry_body(90), RETRY_VALUE).expect_success();
     let (st, funded, settled, _, pq, _) = f.runtime();
     assert_eq!(
@@ -1220,28 +1209,19 @@ fn a_release_the_provider_wallet_rejects_is_recovered_by_a_funded_retry() {
     );
     assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (0, AMOUNT));
 
-    // The retry restarted the clock.
+    // Unlocked: the retry delivers the recorded amount to the provider.
     f.set_wallet_status(&pw, 0);
-    f.send_with_value(&anyone, retry_body(90), RETRY_VALUE)
-        .expect_aborted()
-        .expect_exit_code(ERR_DEADLINE);
-    // Unlocked: the retry delivers the recorded amount and the provider wallet's
-    // confirmation finalizes the settlement.
-    f.bc.set_now(f.bc.now() + RETRY_DELAY);
     f.send_with_value(&anyone, retry_body(90), RETRY_VALUE).expect_success();
     assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
-    assert_eq!(f.state().0, STATUS_RELEASED);
+    assert_eq!(f.state().0, STATUS_RELEASE_RETRYING);
 
-    // Delivered and final: unrelated jettons arriving later in the own wallet
-    // (an unsolicited transfer, no notification) can never fund a second payout.
-    let donor = f.relayer.address().clone();
-    f.credit_own_wallet(AMOUNT, &donor);
-    assert_eq!(f.own_wallet_balance(), AMOUNT);
-    f.bc.set_now(f.bc.now() + RETRY_DELAY);
-    f.send_with_value(&anyone, retry_body(90), RETRY_VALUE)
-        .expect_aborted()
-        .expect_exit_code(ERR_BAD_STATE);
-    assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (AMOUNT, AMOUNT));
+    // A retry after delivery cannot pay twice: the own wallet is empty, the
+    // attempt bounces, and the bounce does not roll the escrow back to funded.
+    let before = f.escrow_balance();
+    f.send_with_value(&anyone, retry_body(90), RETRY_VALUE).expect_success();
+    assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
+    assert_eq!(f.state().0, STATUS_RELEASE_RETRYING);
+    assert!(f.escrow_balance() + TOS / 5 > before, "a spent retry costs only fees");
     assert!(f.escrow_balance() >= ESCROW_STORAGE_FLOOR);
 }
 
@@ -1258,24 +1238,19 @@ fn a_refund_the_buyer_wallet_rejects_is_recovered_by_a_funded_retry() {
     assert_eq!(f.state().0, STATUS_REFUND_PENDING);
     assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (0, AMOUNT));
 
-    f.bc.set_now(f.bc.now() + RETRY_DELAY);
     f.send_with_value(&relayer, retry_body(80), RETRY_VALUE).expect_success();
     assert_eq!(f.state().0, STATUS_REFUND_RETRYING);
     assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (0, AMOUNT));
+
+    f.set_wallet_status(&bw, 0);
+    f.send_with_value(&relayer, retry_body(80), RETRY_VALUE).expect_success();
+    assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
+    f.send_with_value(&relayer, retry_body(80), RETRY_VALUE).expect_success();
+    assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
+    assert_eq!(f.state().0, STATUS_REFUND_RETRYING);
     // The pending refund still answers its exact replay idempotently.
     f.send(&relayer, Fixture::refund_body(80)).expect_success();
     assert_eq!(f.state().0, STATUS_REFUND_RETRYING);
-
-    f.set_wallet_status(&bw, 0);
-    f.bc.set_now(f.bc.now() + RETRY_DELAY);
-    f.send_with_value(&relayer, retry_body(80), RETRY_VALUE).expect_success();
-    assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
-    assert_eq!(f.state().0, STATUS_REFUNDED);
-    f.bc.set_now(f.bc.now() + RETRY_DELAY);
-    f.send_with_value(&relayer, retry_body(80), RETRY_VALUE)
-        .expect_aborted()
-        .expect_exit_code(ERR_BAD_STATE);
-    assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
 }
 
 #[test]
@@ -1296,7 +1271,6 @@ fn a_retry_needs_a_pending_settlement_its_query_and_its_own_funding() {
     let body = f.release_body(90, f.receipt(0xa3));
     f.send(&relayer, body).expect_success();
     let pending = f.data_hash();
-    f.bc.set_now(f.bc.now() + RETRY_DELAY);
     // Another query cannot retry this settlement.
     f.send_with_value(&relayer, retry_body(91), RETRY_VALUE)
         .expect_aborted()
@@ -1322,7 +1296,6 @@ fn once_retried_a_bounce_no_longer_rolls_the_settlement_back() {
     let relayer = f.relayer.address().clone();
     let body = f.release_body(90, f.receipt(0xa3));
     f.send(&relayer, body).expect_success();
-    f.bc.set_now(f.bc.now() + RETRY_DELAY);
     f.send_with_value(&relayer, retry_body(90), RETRY_VALUE).expect_success();
     let retrying = f.data_hash();
     let own = f.own_wallet.clone();
@@ -1341,59 +1314,39 @@ fn excesses_body(query_id: u64) -> Cell {
 }
 
 #[test]
-fn only_the_recipient_wallet_confirming_the_pending_query_finalizes_a_settlement() {
-    // The recipient's jetton wallet sends excesses to the escrow only after
-    // crediting a transfer. From any other sender, or for another query, an
-    // excesses changes nothing; from the wallet derived for the recorded
-    // recipient with the pending query it makes the settlement terminal.
+fn excesses_is_non_authoritative_and_cannot_alter_a_pending_settlement() {
+    // Item 8: a wallet excesses commits only to a caller-selected query id; it is
+    // deliberately ignored and can neither confirm nor corrupt a settlement — not
+    // even one whose query id it carries. Tested in BOTH pending states, from the
+    // plausible recipient-wallet sender, asserting the FULL data cell, jetton
+    // balances, and out-messages are unchanged.
     let mut f = Fixture::new();
     f.fund();
-    let provider = f.provider.address().clone();
-    let pw = f.provider_wallet.clone();
-    f.deploy_incoming_locked(provider, pw.clone());
     let relayer = f.relayer.address().clone();
     let body = f.release_body(70, f.receipt(0xa3));
-    f.send(&relayer, body.clone()).expect_success();
+    f.send(&relayer, body).expect_success();
     assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
     let before = f.data_hash();
     let (prov_before, own_before) = (f.provider_wallet_balance(), f.own_wallet_balance());
-    let own = f.own_wallet.clone();
-    let bw = f.buyer_wallet.clone();
-    for sender in [&relayer, &own, &bw] {
-        f.send(sender, excesses_body(70)).expect_success().expect_out_msgs(0);
-    }
-    f.send(&pw, excesses_body(71)).expect_success().expect_out_msgs(0);
-    assert_eq!(f.data_hash(), before);
-    assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (prov_before, own_before));
+    let pw = f.provider_wallet.clone();
     f.send(&pw, excesses_body(70)).expect_success().expect_out_msgs(0);
-    assert_eq!(f.state().0, STATUS_RELEASED);
-    // Terminal: the exact replay is idempotent, a retry or bounce moves nothing.
-    f.send(&relayer, body).expect_success();
-    f.bc.set_now(f.bc.now() + RETRY_DELAY);
-    f.send_with_value(&relayer, retry_body(70), RETRY_VALUE)
-        .expect_aborted()
-        .expect_exit_code(ERR_BAD_STATE);
-    assert_eq!(f.state().0, STATUS_RELEASED);
+    f.send(&relayer, excesses_body(70)).expect_success().expect_out_msgs(0);
+    assert_eq!(f.data_hash(), before);
+    assert_eq!(f.provider_wallet_balance(), prov_before);
     assert_eq!(f.own_wallet_balance(), own_before);
+    assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
 
     let mut g = Fixture::new();
     g.fund();
-    let buyer = g.buyer.address().clone();
-    let gbw = g.buyer_wallet.clone();
-    g.deploy_incoming_locked(buyer, gbw.clone());
     g.bc.set_now(g.refund_at as u32);
     let r = g.relayer.address().clone();
     g.send(&r, Fixture::refund_body(80)).expect_success();
     assert_eq!(g.state().0, STATUS_REFUND_PENDING);
-    let gpw = g.provider_wallet.clone();
-    g.send(&gpw, excesses_body(80)).expect_success();
-    assert_eq!(
-        g.state().0,
-        STATUS_REFUND_PENDING,
-        "the provider wallet is not the refund recipient"
-    );
-    g.send(&gbw, excesses_body(80)).expect_success();
-    assert_eq!(g.state().0, STATUS_REFUNDED);
+    let before = g.data_hash();
+    let bw = g.buyer_wallet.clone();
+    g.send(&bw, excesses_body(80)).expect_success().expect_out_msgs(0);
+    assert_eq!(g.data_hash(), before);
+    assert_eq!(g.state().0, STATUS_REFUND_PENDING);
 }
 
 // A bounced escrow->wallet jetton_transfer body: 0xffffffff prefix, then the
@@ -1413,10 +1366,6 @@ fn only_an_authentic_own_wallet_bounce_with_the_pending_query_clears_pending() {
     // pending query restores funded (covered elsewhere via wallet locks).
     let mut f = Fixture::new();
     f.fund();
-    // A receive-locked provider keeps the release pending (unconfirmed).
-    let provider = f.provider.address().clone();
-    let pw = f.provider_wallet.clone();
-    f.deploy_incoming_locked(provider, pw);
     let relayer = f.relayer.address().clone();
     let body = f.release_body(70, f.receipt(0xa3));
     f.send(&relayer, body).expect_success();
@@ -1463,7 +1412,7 @@ fn settlement_balance_guard_has_no_action_phase_no_funds_gap() {
             false
         } else {
             result.expect_success();
-            assert_eq!(f.state().0, STATUS_RELEASED);
+            assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
             assert_eq!(f.provider_wallet_balance(), AMOUNT);
             assert!(f.escrow_balance() >= ESCROW_STORAGE_FLOOR);
             true
@@ -1505,7 +1454,7 @@ fn settlement_balance_guard_has_no_action_phase_no_funds_gap() {
             false
         } else {
             result.expect_success();
-            assert_eq!(g.state().0, STATUS_REFUNDED);
+            assert_eq!(g.state().0, STATUS_REFUND_PENDING);
             assert_eq!(g.buyer_wallet_balance(), AMOUNT);
             assert!(g.escrow_balance() >= ESCROW_STORAGE_FLOOR);
             true
@@ -1554,7 +1503,7 @@ fn settlement_balance_guard_holds_at_maximum_valid_state() {
             false
         } else {
             result.expect_success().expect_out_msgs(1);
-            assert_eq!(f.state().0, STATUS_RELEASED);
+            assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
             assert!(f.escrow_balance() >= ESCROW_STORAGE_FLOOR);
             true
         }
@@ -1588,7 +1537,7 @@ fn settlement_balance_guard_holds_at_maximum_valid_state() {
             false
         } else {
             result.expect_success().expect_out_msgs(1);
-            assert_eq!(g.state().0, STATUS_REFUNDED);
+            assert_eq!(g.state().0, STATUS_REFUND_PENDING);
             assert!(g.escrow_balance() >= ESCROW_STORAGE_FLOOR);
             true
         }
