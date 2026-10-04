@@ -439,3 +439,70 @@ fn each_guard_is_load_bearing() {
     resolver.send(rotate).expect("new-key guard removed").expect_success();
     assert!(resolver.owner_is(&weak));
 }
+
+/// An operation list the owner signs but the contract cannot execute: a reserved
+/// operation code (exit 45) or a name shorter than one character (exit 38).
+fn malformed_ops() -> Vec<(Cell, i32)> {
+    vec![
+        (
+            cell(|o| {
+                o.append_bits(5, 6).unwrap();
+            }),
+            45,
+        ),
+        (
+            cell(|o| {
+                o.append_bits(22, 6).unwrap();
+                o.append_bit_zero().unwrap();
+                o.append_bits(1, 6).unwrap();
+                o.append_u8(0).unwrap();
+            }),
+            38,
+        ),
+    ]
+}
+
+fn exit_code(result: &SendResult) -> i32 {
+    match result.read_primary_description().compute_ph {
+        chain_block::TrComputePhase::Vm(vm) => vm.exit_code,
+        chain_block::TrComputePhase::Skipped(skipped) => {
+            panic!("compute skipped: {:?}", skipped.reason)
+        }
+    }
+}
+
+/// A captured owner-signed message whose operations fail charges the resolver once.
+/// Its query id is spent before the operations run, so every resubmission is refused
+/// as a replay (exit 32) before acceptance: no transaction, no fee, no state change.
+/// A later valid operation still goes through.
+#[test]
+fn a_malformed_owner_message_is_charged_only_once() {
+    let code = compile(&source());
+    let owner = SigningKey::from_bytes(&[0x24; 32]);
+    let mut resolver = Resolver::deploy(code, &owner.verifying_key().to_bytes());
+    for (ops, expected) in malformed_ops() {
+        let message = resolver.signed(&owner, &ops);
+        let before = resolver.balance();
+        let first = resolver.send(message.clone()).expect("the owner's message is accepted");
+        assert_eq!(exit_code(&first), expected, "the operation itself fails");
+        let balance = resolver.balance();
+        let data = resolver.data_hash();
+        assert!(balance < before, "the first submission is paid for by the resolver");
+        for attempt in 0..3 {
+            let error = match resolver.send(message.clone()) {
+                Ok(result) => panic!(
+                    "replay {attempt} of a failed message was accepted again (exit {})",
+                    exit_code(&result)
+                ),
+                Err(error) => error,
+            };
+            assert!(error.contains("exit code: 32"), "replay {attempt}: {error}");
+        }
+        assert_eq!(resolver.balance(), balance, "a replay cost the resolver");
+        assert_eq!(resolver.data_hash(), data, "a replay changed state");
+    }
+    let data = resolver.data_hash();
+    let valid = resolver.signed(&owner, &tset(table(9)));
+    resolver.send(valid).expect("a valid operation").expect_success();
+    assert_ne!(resolver.data_hash(), data, "the valid operation took effect");
+}

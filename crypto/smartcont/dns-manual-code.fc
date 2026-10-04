@@ -250,13 +250,6 @@ cell process_ops(cell root, slice ops) inline_ref {
   }
   accept_message(); ;; message is signed by owner, sanity not guaranteed yet
 
-  if (op == 51) {
-    in_msg~skip_bits(6);
-    public_key = in_msg~load_uint(256);
-  } else {
-    root = process_ops(root, in_msg);
-  }
-
   bound -= (64 << 32);   ;; clean up records expired more than 64 seconds ago
   old_queries~udict_set_builder(64, query_id, begin_cell());
   var queries = old_queries;
@@ -271,6 +264,20 @@ cell process_ops(cell root, slice ops) inline_ref {
       last_cleaned = i;
     }
   } until (~ f);
+
+  ;; Spend the query id before running the operations: an operation that
+  ;; fails rolls back to this commit, so the accepted message stays recorded
+  ;; and a resubmission is refused as a replay before acceptance instead of
+  ;; charging the contract again.
+  store_data(contract_id, last_cleaned, public_key, root, old_queries);
+  commit();
+
+  if (op == 51) {
+    in_msg~skip_bits(6);
+    public_key = in_msg~load_uint(256);
+  } else {
+    root = process_ops(root, in_msg);
+  }
 
   store_data(contract_id, last_cleaned, public_key, root, old_queries);
 }
