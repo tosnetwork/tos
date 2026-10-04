@@ -1393,7 +1393,9 @@ void ValidatorEngine::schedule_shutdown(double at) {
           // Mark every queued block for recovery before the process ends.
           // The hook stays installed: block-apply actors may still read it,
           // and from here on it marks each block itself before returning.
-          if (!tos_wallet_index::flush_wc0_index_for_exit()) {
+          // Blocks can still be applied until the process exits, so the run
+          // is not recorded as finished.
+          if (!tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::MayStillApply)) {
             LOG(ERROR) << "wc0-index: indexing did not finish cleanly before shutdown; "
                        << "the next start reports that the index needs a rebuild";
           }
@@ -7117,8 +7119,9 @@ int main(int argc, char *argv[]) {
 
   // Stop the indexing worker while the index it writes to still exists;
   // blocks it did not reach stay marked for the next start.
+  // The scheduler has stopped, so no block-apply actor runs any more.
   tos::validator::g_wc0_block_index_hook = nullptr;
-  if (!tos_wallet_index::flush_wc0_index_for_exit()) {
+  if (!tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::Quiesced)) {
     LOG(ERROR) << "wc0-index: indexing did not finish cleanly; the next start reports that the index needs a rebuild";
   }
   tos_wallet_index::stop_wc0_index_worker();

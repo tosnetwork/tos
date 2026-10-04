@@ -301,8 +301,8 @@ void ApplyBlock::applied_set() {
   // a block whose apply is durable has always been handed to the index first,
   // which is what lets the index's exit flush account for every applied block.
   // When the block data was already in the database before this apply (block_
-  // is null), it is fetched first; a fetch failure only degrades RPC for this
-  // block.
+  // is null), it is fetched first; if that fails the block id alone is handed
+  // over, so the block is still recorded as needing indexing.
   if (g_wc0_block_index_hook && handle_->id().id.workchain == 0 && handle_->id().seqno() > 0) {
     auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
     if (block_.not_null()) {
@@ -320,11 +320,17 @@ void ApplyBlock::applied_set() {
 }
 
 void ApplyBlock::indexed_stored_block(td::Result<td::Ref<BlockData>> R) {
-  if (R.is_ok() && R.ok().not_null() && g_wc0_block_index_hook) {
-    auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
-    auto id = handle_->id();
-    call_index_hook(manager_, id, [&] { g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id); });
+  // A failed read still reaches the index, as the block id alone, so the block
+  // is recorded as needing indexing before its apply is made durable.
+  td::Result<td::Ref<vm::Cell>> block_root = td::Status::Error("block data not found");
+  if (R.is_error()) {
+    block_root = R.move_as_error();
+  } else if (R.ok().not_null()) {
+    block_root = R.ok()->root_cell();
   }
+  auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
+  auto id = handle_->id();
+  call_index_hook(manager_, id, [&] { hand_stored_block_to_index(block_root, state_root, id); });
   flush_applied();
 }
 

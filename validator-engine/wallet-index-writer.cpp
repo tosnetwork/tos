@@ -582,6 +582,8 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
 
 void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
   auto* db = wallet_index_db();
+  // A block handed over without its data (it could not be read back) keeps
+  // the recovery mark the queue gave it, so startup recovery retries it.
   if (db == nullptr || block_root.is_null()) {
     return;
   }
@@ -738,6 +740,13 @@ td::Status mark_blocks(WalletIndexDb& db, const std::vector<tos::BlockIdExt>& bl
   return db.mark_blocks_incomplete(block_ids);
 }
 
+td::Status record_needs_rebuild(WalletIndexDb& db) {
+  if (g_marking_fault.load()) {
+    return td::Status::Error("injected marking fault");
+  }
+  return db.mark_needs_rebuild();
+}
+
 // Durably mark queued blocks before any of them is indexed: a block the worker
 // never reaches (dropped, or the node stopped first) stays marked, startup
 // recovery re-indexes it, and RPC reports the index unfinished until then.
@@ -760,10 +769,10 @@ bool mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
 bool persist_index_degraded() {
   LOG(ERROR) << "wc0-index: a block may have gone unindexed with no mark to recover it; the index needs a rebuild";
   auto* db = wallet_index_db();
-  if (db == nullptr || g_marking_fault.load()) {
+  if (db == nullptr) {
     return false;
   }
-  auto status = db->mark_needs_rebuild();
+  auto status = record_needs_rebuild(*db);
   if (status.is_error()) {
     LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild, will retry: " << status.message();
     return false;
@@ -835,7 +844,7 @@ void resume_wc0_index_worker() {
   }
 }
 
-bool flush_wc0_index_for_exit(std::chrono::milliseconds limit) {
+bool flush_wc0_index_for_exit(Wc0IndexProducers producers, std::chrono::milliseconds limit) {
   std::lock_guard<std::mutex> guard(g_index_queue_mutex);
   if (!g_index_queue) {
     return true;
@@ -850,6 +859,11 @@ bool flush_wc0_index_for_exit(std::chrono::milliseconds limit) {
   }
   if (g_index_queue->degraded()) {
     LOG(ERROR) << "wc0-index: this run lost track of a block; the run stays recorded as unfinished";
+    return false;
+  }
+  if (producers != Wc0IndexProducers::Quiesced) {
+    LOG(WARNING) << "wc0-index: blocks may still be applied during this exit; the run stays recorded as "
+                 << "unfinished and the next start reports that the index needs a rebuild";
     return false;
   }
   auto* db = wallet_index_db();
@@ -897,7 +911,9 @@ void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> sta
     if (marked.is_error()) {
       LOG(ERROR) << "wc0-index: block " << block_id.id.to_str()
                  << " applied during shutdown could not be marked: " << marked.message();
-      auto latched = db->mark_needs_rebuild();
+      // If this fails too, the run marker the flush left in place still makes
+      // the next start report that the index needs a rebuild.
+      auto latched = record_needs_rebuild(*db);
       if (latched.is_error()) {
         LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild: " << latched.message();
       }

@@ -96,13 +96,21 @@ constexpr size_t kWc0IndexQueueCapacity = 256;
 // block is indexed after a newer.
 bool start_wc0_index_worker(bool paused);
 void resume_wc0_index_worker();
+// Whether block application can still call the hook when the index is
+// flushed for exit.
+enum class Wc0IndexProducers { MayStillApply, Quiesced };
+
 // Before an exit: stop indexing and wait (up to `limit`) until every queued
 // block is marked for recovery. From then on the hook marks each block it is
-// given before returning, so no block can be applied unmarked. If every block
-// was marked in time, nothing was lost and no mark failed, the run is recorded
-// as finished cleanly, and true is returned; otherwise the run stays recorded
-// as active and the next start reports that the index needs a rebuild.
-bool flush_wc0_index_for_exit(std::chrono::milliseconds limit = std::chrono::milliseconds(2000));
+// given itself before returning.
+// The run is recorded as finished cleanly only when `producers` is Quiesced
+// (no block can be applied any more), every queued block was marked in time,
+// nothing was lost, and the record itself was written; true is returned then.
+// Otherwise the run stays recorded as active and the next start reports that
+// the index needs a rebuild: while blocks can still be applied, one could fail
+// both its mark and the rebuild record and be applied with no durable trace.
+bool flush_wc0_index_for_exit(Wc0IndexProducers producers,
+                              std::chrono::milliseconds limit = std::chrono::milliseconds(2000));
 // Stop it: the block in hand is finished, queued ones stay marked. Call
 // before the index database is closed.
 void stop_wc0_index_worker();

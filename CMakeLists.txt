@@ -658,7 +658,7 @@ add_executable(test-rocksdb test/test-rocksdb.cpp)
 target_link_libraries(test-rocksdb PRIVATE memprof tddb tdutils)
 
 add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cpp validator-engine/wallet-index.cpp
-  validator-engine/wallet-index-writer.cpp)
+  validator-engine/wallet-index-writer.cpp validator/wc0-block-hook.cpp)
 target_link_libraries(test-wallet-index PRIVATE smc-envelope tos_crypto tddb memprof tdutils)
 
 add_executable(test-tddb test/test-td-main.cpp ${TDDB_TEST_SOURCE})

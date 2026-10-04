@@ -2,8 +2,9 @@
 
 #include <functional>
 
-#include "vm/cells.h"
+#include "td/utils/Status.h"
 #include "tos/tos-types.h"
+#include "vm/cells.h"
 
 namespace tos {
 namespace validator {
@@ -22,6 +23,14 @@ namespace validator {
 // hand) — the callee must then degrade to state-independent indexing only.
 // Best-effort: the callee must not throw into the consensus path.
 extern std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, BlockIdExt)> g_wc0_block_index_hook;
+
+// Hands an applied block whose data had to be read back from the database to
+// the hook. When the read failed, the block id is still handed over, with a
+// null block root: the indexer then records that the block needs indexing,
+// and its recovery retries it, instead of the block being applied with no
+// trace in the index. Does nothing when no hook is installed.
+void hand_stored_block_to_index(const td::Result<td::Ref<vm::Cell>> &block_root, td::Ref<vm::Cell> state_root,
+                                const BlockIdExt &id);
 
 }  // namespace validator
 }  // namespace tos
