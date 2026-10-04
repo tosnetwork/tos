@@ -15,7 +15,8 @@
 
 namespace tos_wallet_index {
 
-// Work handed off by a caller that must not wait for it.
+// Work handed off by a caller that must not wait for it. push() takes a lock
+// briefly and never does I/O.
 //
 // Every pushed id is first recorded, in batches, by `record` on a recorder
 // thread: for the wallet index that is the durable "not yet indexed" mark that
@@ -28,21 +29,25 @@ namespace tos_wallet_index {
 // dropped, and its id still waits to be recorded, so the gap is known. Ids
 // are small, so more of them, `record_capacity`, may wait. An id that cannot be
 // recorded at all (the id list is full, or recording still fails at shutdown)
-// is a gap nobody can find later: the queue then latches `degraded()` and
-// calls `on_degraded` once, so the owner can say the work is incomplete.
+// is a gap nobody can find later: the queue then latches `degraded()`, and the
+// recorder thread calls `persist_degraded` until it succeeds, so the owner can
+// say durably that the work is incomplete.
 //
-// Items not processed by destruction stay recorded and unprocessed.
+// The worker can be held (start paused, pause()) and released (resume());
+// pushes are still recorded meanwhile. Items not processed by destruction stay
+// recorded and unprocessed.
 template <class Id, class Item>
 class BoundedWorkQueue {
  public:
   BoundedWorkQueue(size_t capacity, std::function<bool(const std::vector<Id> &)> record,
-                   std::function<void(Item &)> process, std::function<void()> on_degraded = nullptr,
-                   size_t record_capacity = 0)
+                   std::function<void(Item &)> process, std::function<bool()> persist_degraded = nullptr,
+                   size_t record_capacity = 0, bool start_paused = false)
       : capacity_(capacity)
       , record_capacity_(record_capacity != 0 ? record_capacity : 16 * capacity)
       , record_(std::move(record))
       , process_(std::move(process))
-      , on_degraded_(std::move(on_degraded)) {
+      , persist_degraded_(std::move(persist_degraded))
+      , paused_(start_paused) {
     recorder_ = std::thread([this] { run_recorder(); });
     worker_ = std::thread([this] { run_worker(); });
   }
@@ -63,14 +68,13 @@ class BoundedWorkQueue {
   // Returns at once. False when the item was dropped.
   bool push(Id id, Item item) {
     bool kept = false;
-    bool newly_degraded = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       auto seq = next_seq_++;
       if (to_record_.size() < record_capacity_) {
         to_record_.emplace_back(seq, std::move(id));
       } else {
-        newly_degraded = latch_degraded();
+        latch_degraded();
       }
       if (items_.size() < capacity_) {
         items_.emplace_back(seq, std::move(item));
@@ -80,10 +84,27 @@ class BoundedWorkQueue {
       }
     }
     wake_.notify_all();
-    if (newly_degraded) {
-      notify_degraded();
-    }
     return kept;
+  }
+
+  void pause() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    paused_ = true;
+  }
+
+  void resume() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      paused_ = false;
+    }
+    wake_.notify_all();
+  }
+
+  // Wait, at most `limit`, until every id pushed so far is recorded and any
+  // degraded state is persisted. True when that happened in time.
+  bool wait_recorded(std::chrono::milliseconds limit) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return wake_.wait_for(lock, limit, [this] { return to_record_.empty() && !degraded_unpersisted_; });
   }
 
   size_t dropped() const {
@@ -97,30 +118,19 @@ class BoundedWorkQueue {
 
  private:
   static constexpr auto kFirstRetryPause = std::chrono::milliseconds(50);
-  static constexpr auto kLongestRetryPause = std::chrono::seconds(5);
+  static constexpr auto kLongestRetryPause = std::chrono::milliseconds(5000);
 
-  // Returns true the first time.
-  bool latch_degraded() {
-    if (degraded_) {
-      return false;
-    }
-    degraded_ = true;
-    return true;
-  }
-
-  void notify_degraded() {
-    if (!on_degraded_) {
-      return;
-    }
-    try {
-      on_degraded_();
-    } catch (...) {
+  void latch_degraded() {
+    if (!degraded_) {
+      degraded_ = true;
+      degraded_unpersisted_ = persist_degraded_ != nullptr;
     }
   }
 
-  bool call_record(const std::vector<Id> &batch) {
+  template <class F>
+  static bool call_safely(F &&f) {
     try {
-      return record_(batch);
+      return f();
     } catch (...) {
       return false;
     }
@@ -128,43 +138,55 @@ class BoundedWorkQueue {
 
   void run_recorder() {
     std::unique_lock<std::mutex> lock(mutex_);
-    auto pause = std::chrono::duration_cast<std::chrono::milliseconds>(kFirstRetryPause);
+    auto pause = kFirstRetryPause;
     while (true) {
-      wake_.wait(lock, [this] { return stopping_ || !to_record_.empty(); });
-      if (to_record_.empty()) {
-        return;  // stopping, nothing left to record
-      }
-      // The ids stay queued until recorded, so a failure loses nothing and a
-      // later push can still join the retry.
-      std::vector<Id> batch;
-      batch.reserve(to_record_.size());
-      for (auto &entry : to_record_) {
-        batch.push_back(entry.second);
-      }
-      auto count = to_record_.size();
-      auto last_seq = to_record_.back().first;
-      lock.unlock();
-      bool recorded = call_record(batch);
-      lock.lock();
-      if (recorded) {
-        to_record_.erase(to_record_.begin(), to_record_.begin() + static_cast<std::ptrdiff_t>(count));
-        recorded_through_ = last_seq + 1;
-        pause = std::chrono::duration_cast<std::chrono::milliseconds>(kFirstRetryPause);
-        wake_.notify_all();
-        continue;
-      }
-      if (stopping_) {
-        // Last chance gone: these ids are lost to recovery.
-        to_record_.clear();
-        bool newly = latch_degraded();
-        lock.unlock();
-        if (newly) {
-          notify_degraded();
+      wake_.wait(lock, [this] { return stopping_ || !to_record_.empty() || degraded_unpersisted_; });
+      bool failed = false;
+      if (!to_record_.empty()) {
+        // The ids stay queued until recorded, so a failure loses nothing and
+        // later pushes join the retry.
+        std::vector<Id> batch;
+        batch.reserve(to_record_.size());
+        for (auto &entry : to_record_) {
+          batch.push_back(entry.second);
         }
+        auto count = to_record_.size();
+        auto last_seq = to_record_.back().first;
+        lock.unlock();
+        bool recorded = call_safely([&] { return record_(batch); });
+        lock.lock();
+        if (recorded) {
+          to_record_.erase(to_record_.begin(), to_record_.begin() + static_cast<std::ptrdiff_t>(count));
+          recorded_through_ = last_seq + 1;
+        } else {
+          failed = true;
+          if (stopping_) {
+            // Last chance gone: these ids are lost to recovery.
+            to_record_.clear();
+            latch_degraded();
+          }
+        }
+      }
+      if (degraded_unpersisted_) {
+        lock.unlock();
+        bool persisted = call_safely([&] { return persist_degraded_(); });
+        lock.lock();
+        if (persisted) {
+          degraded_unpersisted_ = false;
+        } else {
+          failed = true;
+        }
+      }
+      wake_.notify_all();
+      if (stopping_ && (to_record_.empty() || failed) && (!degraded_unpersisted_ || failed)) {
         return;
       }
-      wake_.wait_for(lock, pause, [this] { return stopping_; });
-      pause = std::min(pause * 2, std::chrono::duration_cast<std::chrono::milliseconds>(kLongestRetryPause));
+      if (failed) {
+        wake_.wait_for(lock, pause, [this] { return stopping_; });
+        pause = std::min(pause * 2, kLongestRetryPause);
+      } else {
+        pause = kFirstRetryPause;
+      }
     }
   }
 
@@ -174,7 +196,9 @@ class BoundedWorkQueue {
       // An item whose id was never queued for recording (the id list was
       // full) is past recorded_through_ once a later id is recorded; the gap
       // is already latched as degraded.
-      wake_.wait(lock, [this] { return stopping_ || (!items_.empty() && items_.front().first < recorded_through_); });
+      wake_.wait(lock, [this] {
+        return stopping_ || (!paused_ && !items_.empty() && items_.front().first < recorded_through_);
+      });
       if (stopping_) {
         return;
       }
@@ -193,7 +217,7 @@ class BoundedWorkQueue {
   const size_t record_capacity_;
   std::function<bool(const std::vector<Id> &)> record_;
   std::function<void(Item &)> process_;
-  std::function<void()> on_degraded_;
+  std::function<bool()> persist_degraded_;
   mutable std::mutex mutex_;
   std::condition_variable wake_;
   std::deque<std::pair<uint64_t, Id>> to_record_;
@@ -202,6 +226,8 @@ class BoundedWorkQueue {
   uint64_t recorded_through_ = 0;  // every seq below this is recorded, or latched as lost
   size_t dropped_ = 0;
   bool degraded_ = false;
+  bool degraded_unpersisted_ = false;
+  bool paused_ = false;
   bool stopping_ = false;
   std::thread recorder_;
   std::thread worker_;

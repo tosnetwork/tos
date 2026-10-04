@@ -81,8 +81,15 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
 constexpr size_t kWc0IndexQueueCapacity = 256;
 
 // Start the indexing worker. Call once, before installing
-// enqueue_wc0_index_block as the block-apply hook.
-void start_wc0_index_worker();
+// enqueue_wc0_index_block as the block-apply hook. A paused worker records
+// queued blocks but indexes none until resumed: startup recovery re-indexes
+// blocks from earlier runs first, so no older block is indexed after a newer.
+void start_wc0_index_worker(bool paused);
+void resume_wc0_index_worker();
+// Before an abrupt exit: stop indexing and wait (up to 2 s) until every queued
+// block is marked for recovery. A block applied after this returns is not
+// marked. True when everything was marked in time.
+bool flush_wc0_index_for_exit();
 // Stop it: the block in hand is finished, queued ones stay marked. Call
 // before the index database is closed.
 void stop_wc0_index_worker();

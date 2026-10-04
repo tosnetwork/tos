@@ -739,21 +739,20 @@ bool mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
   return true;
 }
 
-std::atomic<bool> g_index_degraded{false};
-
-// The queue lost track of a block. Say so durably if possible, and in memory
-// regardless, so RPC stops reporting the index complete.
-void index_degraded() {
-  g_index_degraded = true;
+// The queue lost track of a block: record durably that the index needs a
+// rebuild. Runs on the recorder thread, which retries until it succeeds.
+bool persist_index_degraded() {
   LOG(ERROR) << "wc0-index: a block may have gone unindexed with no mark to recover it; the index needs a rebuild";
   auto* db = wallet_index_db();
   if (db == nullptr) {
-    return;
+    return false;
   }
   auto status = db->mark_needs_rebuild();
   if (status.is_error()) {
-    LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild: " << status.message();
+    LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild, will retry: " << status.message();
+    return false;
   }
+  return true;
 }
 
 void index_queued_block(BlockToIndex& block) {
@@ -766,13 +765,29 @@ void index_queued_block(BlockToIndex& block) {
 
 }  // namespace
 
-void start_wc0_index_worker() {
+void start_wc0_index_worker(bool paused) {
   std::lock_guard<std::mutex> guard(g_index_queue_mutex);
   if (g_index_queue) {
     return;
   }
   g_index_queue = std::make_unique<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>>(
-      kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block, index_degraded);
+      kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block, persist_index_degraded, 0, paused);
+}
+
+void resume_wc0_index_worker() {
+  std::lock_guard<std::mutex> guard(g_index_queue_mutex);
+  if (g_index_queue) {
+    g_index_queue->resume();
+  }
+}
+
+bool flush_wc0_index_for_exit() {
+  std::lock_guard<std::mutex> guard(g_index_queue_mutex);
+  if (!g_index_queue) {
+    return true;
+  }
+  g_index_queue->pause();
+  return g_index_queue->wait_recorded(std::chrono::milliseconds(2000));
 }
 
 void stop_wc0_index_worker() {
@@ -786,7 +801,8 @@ void stop_wc0_index_worker() {
 }
 
 bool wc0_index_degraded() {
-  return g_index_degraded.load();
+  std::lock_guard<std::mutex> guard(g_index_queue_mutex);
+  return g_index_queue && g_index_queue->degraded();
 }
 
 void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {

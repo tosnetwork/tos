@@ -1389,9 +1389,11 @@ void ValidatorEngine::schedule_shutdown(double at) {
     tos::delay_action(
         []() {
           LOG(WARNING) << "Shutting down as scheduled";
-          // Stop indexing first: queued blocks keep their recovery marks.
-          tos::validator::g_wc0_block_index_hook = nullptr;
-          tos_wallet_index::stop_wc0_index_worker();
+          // Mark every queued block for recovery before the process ends.
+          // The hook stays installed: block-apply actors may still read it.
+          if (!tos_wallet_index::flush_wc0_index_for_exit()) {
+            LOG(ERROR) << "wc0-index: queued blocks not all marked for recovery before shutdown";
+          }
           std::_Exit(0);
         },
         ts);
@@ -2367,7 +2369,10 @@ void ValidatorEngine::start_validator() {
   // application never waits on the index.
   if (json_rpc_addr_) {
     tos_wallet_index::open_wallet_index_db(db_root_);
-    tos_wallet_index::start_wc0_index_worker();
+    // Take the blocks earlier runs left unindexed before any block of this run
+    // can be marked; index them before the worker starts on this run's blocks.
+    collect_wc0_recovery_markers();
+    tos_wallet_index::start_wc0_index_worker(true);
     tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
   }
 
@@ -2460,12 +2465,12 @@ void ValidatorEngine::finish_start_validator() {
   started_validator();
 }
 
-void ValidatorEngine::recover_wc0_index() {
+void ValidatorEngine::collect_wc0_recovery_markers() {
+  wc0_recovery_markers_.clear();
   auto *db = tos_wallet_index::wallet_index_db();
   if (!db) {
     return;
   }
-  wc0_recovery_markers_.clear();
   auto scan_status = db->for_each_incomplete_block([this](const tos::BlockIdExt &id) -> td::Status {
     wc0_recovery_markers_.push_back(id);
     return td::Status::OK();
@@ -2473,7 +2478,11 @@ void ValidatorEngine::recover_wc0_index() {
   if (scan_status.is_error()) {
     LOG(ERROR) << "wc0-index: recovery: failed to scan incomplete-block markers: " << scan_status.message();
   }
+}
+
+void ValidatorEngine::recover_wc0_index() {
   if (wc0_recovery_markers_.empty()) {
+    tos_wallet_index::resume_wc0_index_worker();
     return;
   }
   LOG(WARNING) << "wc0-index: recovering " << wc0_recovery_markers_.size()
@@ -2495,6 +2504,8 @@ void ValidatorEngine::recover_wc0_index_step() {
   if (wc0_recovery_index_ >= wc0_recovery_markers_.size()) {
     wc0_recovery_markers_.clear();
     wc0_recovery_markers_.shrink_to_fit();
+    // Every older block has had its turn; this run's blocks may go now.
+    tos_wallet_index::resume_wc0_index_worker();
     return;
   }
   auto block_id = wc0_recovery_markers_[wc0_recovery_index_++];

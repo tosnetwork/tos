@@ -533,6 +533,7 @@ class ValidatorEngine : public td::actor::Actor {
   // one at a time via recover_wc0_index_step() re-sending itself a message
   // through the actor scheduler (not a self-capturing closure) — avoids both
   // a reference cycle and unbounded concurrent lookups.
+  void collect_wc0_recovery_markers();
   void recover_wc0_index();
   void recover_wc0_index_step();
   std::vector<tos::BlockIdExt> wc0_recovery_markers_;
