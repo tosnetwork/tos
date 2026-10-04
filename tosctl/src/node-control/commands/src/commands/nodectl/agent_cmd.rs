@@ -1843,6 +1843,7 @@ fn validate_controller_task_action(
             if context.now < task.dispute_deadline {
                 anyhow::bail!("Task Escrow dispute deadline has not passed");
             }
+            validate_dispute_timeout_principal(task, context)?;
         }
         AgentTaskOperation::RotateAttestorKey | AgentTaskOperation::RevokeAttestor => {
             anyhow::bail!("this Task operation is not supported through Agent Account custody")
@@ -1858,7 +1859,12 @@ struct ControllerTaskActionContext<'a> {
     payout: Option<u64>,
     dispute_hash: Option<[u8; 32]>,
     attestation_signature: Option<&'a [u8; 64]>,
+    /// The escrow's balance as the contract sees it while handling this
+    /// message: what it held plus the value attached to the message.
     available_balance: u64,
+    /// The value attached to this message, already counted in
+    /// `available_balance`.
+    attached_value: u64,
 }
 
 fn require_task_status(
@@ -1886,6 +1892,35 @@ fn validate_controller_task_payout(
     }
     if payout > context.available_balance {
         anyhow::bail!("Task Escrow payout exceeds its available balance");
+    }
+    Ok(())
+}
+
+/// dispute_timeout refuses with exit 126 unless the escrow still holds the
+/// whole budget without the caller's attached value
+/// (`budget <= balance - msg_value`). The attached value pays the call's fees,
+/// so a larger one cannot make up a missing principal; only a separate
+/// transfer to the escrow can.
+fn validate_dispute_timeout_principal(
+    task: &TaskEscrowData,
+    context: &ControllerTaskActionContext<'_>,
+) -> anyhow::Result<()> {
+    let principal = context
+        .available_balance
+        .checked_sub(context.attached_value)
+        .context("Task Escrow balance is smaller than the value attached to this message")?;
+    if task.budget > principal {
+        let shortfall = task
+            .budget
+            .checked_sub(principal)
+            .context("Task Escrow principal shortfall underflowed")?;
+        anyhow::bail!(
+            "Task Escrow holds {principal} nanoTOS of its {} nanoTOS budget, so dispute-timeout \
+             would be refused (exit 126); top up the escrow first with a separate transfer of at \
+             least {shortfall} nanoTOS (attaching more value to this message does not count \
+             toward the principal)",
+            task.budget
+        );
     }
     Ok(())
 }
@@ -2161,7 +2196,9 @@ impl AgentTaskSendCmd {
             };
             let available_balance = if matches!(
                 self.operation,
-                AgentTaskOperation::Settle | AgentTaskOperation::Resolve
+                AgentTaskOperation::Settle
+                    | AgentTaskOperation::Resolve
+                    | AgentTaskOperation::DisputeTimeout
             ) {
                 provider
                     .balance(&destination)
@@ -2179,6 +2216,7 @@ impl AgentTaskSendCmd {
                 dispute_hash,
                 attestation_signature: attestation_signature.as_ref(),
                 available_balance,
+                attached_value: amount_nanotos,
             };
             validate_controller_task_action(
                 &self.operation,
@@ -12079,6 +12117,7 @@ mod tests {
             dispute_hash: Some([7; 32]),
             attestation_signature: None,
             available_balance: 1_000_000_000,
+            attached_value: 0,
         }
     }
 
@@ -14127,6 +14166,54 @@ mod tests {
             .to_string()
             .contains("available balance")
         );
+    }
+
+    #[test]
+    fn controller_dispute_timeout_requires_the_principal_without_the_attached_value() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let mut disputed = controller_task(7);
+        disputed.dispute_deadline = 100;
+        let mut context = controller_task_context(&task_address);
+        // The escrow held exactly its budget before this message.
+        context.attached_value = 50_000_000;
+        context.available_balance = disputed.budget + context.attached_value;
+        validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+
+        // One nanoTOS short of the budget is refused with the exact top-up.
+        context.available_balance = disputed.budget - 1 + context.attached_value;
+        let error = validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("top up the escrow first"), "{error}");
+        assert!(error.contains("at least 1 nanoTOS"), "{error}");
+
+        // Attaching more value does not count toward the principal.
+        context.attached_value = 5_000_000_000;
+        context.available_balance = disputed.budget - 1 + context.attached_value;
+        let error = validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("at least 1 nanoTOS"), "{error}");
     }
 
     #[test]
