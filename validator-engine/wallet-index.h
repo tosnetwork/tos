@@ -15,6 +15,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -23,6 +24,7 @@
 #include "td/utils/Status.h"
 #include "td/utils/bits.h"
 #include "td/utils/buffer.h"
+#include "tos/tos-shard.h"
 #include "tos/tos-types.h"
 #include "vm/cells.h"
 
@@ -66,14 +68,29 @@ constexpr uint32_t kWalletIndexSchemaVersion = 1;
 
 // Bound the TVM verification work a single block can demand: token candidates
 // verified per block, the block's own and deferred ones together. Candidates
-// past the bound are deferred to a durable backlog, never dropped.
+// past the bound are deferred to a durable backlog rather than dropped.
 constexpr size_t kMaxTokenCandidatesPerBlock = 1024;
 // Share of that bound reserved for the backlog while it is non-empty, so the
 // backlog drains even when every block brings a full load of its own.
 constexpr size_t kTokenBacklogDrainPerBlock = kMaxTokenCandidatesPerBlock / 2;
-// Backlog entries examined per block when looking for ones in the block's
-// shard; entries of other shards are left for their own shard's blocks.
-constexpr size_t kTokenBacklogScanPerBlock = 4 * kMaxTokenCandidatesPerBlock;
+// The backlog is split into 256 FIFO queues by the top byte of the address,
+// so a shard (of depth <= 8) reads only its own queues and entries of another
+// shard can never stand in front of its own. A shard drains its queues round
+// robin, taking at most an equal share from each per pass, so a queue that
+// keeps refilling cannot starve the others.
+constexpr size_t kTokenBacklogBuckets = 256;
+// Entries examined per queue per pass. Only matters for shards deeper than 8
+// levels, which share a queue with a sibling and skip its entries.
+constexpr size_t kTokenBacklogScanPerBucket = 4 * kMaxTokenCandidatesPerBlock;
+// Verification attempts a candidate gets. A candidate whose verification is
+// indeterminate (the node, not the contract, prevented an answer) goes back to
+// the end of its queue until it has used them all; then it is given up and
+// counted as lost.
+constexpr uint8_t kMaxTokenCandidateAttempts = 4;
+// Distinct candidates the backlog may hold. A candidate already in the backlog
+// is not added twice. Past this, new deferrals are refused and counted as lost,
+// which marks the token index incomplete until it is rebuilt.
+constexpr uint64_t kMaxTokenBacklogEntries = 1u << 20;
 
 using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
 
@@ -91,6 +108,19 @@ struct TokenCandidate {
   bool operator==(const TokenCandidate& other) const {
     return kind == other.kind && address == other.address;
   }
+};
+
+struct ScheduledTokenCandidate {
+  TokenCandidate candidate;
+  // Verification attempts already made before this one.
+  uint8_t attempts;
+};
+
+struct TokenBacklogStats {
+  uint64_t entries;
+  // Candidates given up after their last attempt, refused for capacity, or
+  // found malformed. Non-zero means the token index may be missing updates.
+  uint64_t lost;
 };
 
 class WalletIndexDb {
@@ -176,19 +206,32 @@ class WalletIndexDb {
   // the writer wants: the pre-block owner.
   td::Result<bool> get_nft_owner(const HashKey& nft, HashKey& owner);
 
-  // --- Deferred token candidates: 0x15 + seq_be(8) -> kind(1) + address(32) ---
-  // Choose the token candidates this block verifies, at most
-  // kMaxTokenCandidatesPerBlock of them, oldest backlog first. While the
-  // backlog holds entries in this block's shard (`in_shard`), at least
-  // kTokenBacklogDrainPerBlock of the bound goes to them; the block's own
-  // candidates fill the rest, and those that do not fit join the back of the
-  // backlog. Chosen backlog entries are erased. All writes join the open
-  // batch, so an aborted block leaves the backlog as it was. Requires an open
-  // batch and may run once per batch: the backlog sequence counter is read
-  // from committed state.
-  td::Result<std::vector<TokenCandidate>> schedule_token_candidates(
-      const std::vector<TokenCandidate>& block_candidates, const std::function<bool(const HashKey&)>& in_shard);
-  // Walk at most `limit` deferred candidates, oldest first (committed state).
+  // --- Deferred token candidates ---
+  //   0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1)
+  //   0x16 + kind(1) + address(32) -> sentinel(1)   (one entry per candidate)
+  // Choose the token candidates a block of wc=0 `shard` verifies: at most
+  // `capacity` (<= kMaxTokenCandidatesPerBlock) of them. While the shard's
+  // queues hold entries, up to kTokenBacklogDrainPerBlock of the capacity goes
+  // to them; the block's own candidates fill the rest, and those that do not
+  // fit are deferred. Pass capacity 0 to defer all of a block's candidates
+  // (no state to verify against). Chosen backlog entries are erased. Every
+  // write joins the open batch, so an aborted block leaves the backlog as it
+  // was. Requires an open batch and runs once per batch.
+  td::Result<std::vector<ScheduledTokenCandidate>> schedule_token_candidates(
+      const std::vector<TokenCandidate>& block_candidates, tos::ShardIdFull shard,
+      size_t capacity = kMaxTokenCandidatesPerBlock);
+  // Hand back a scheduled candidate whose verification was indeterminate: it
+  // rejoins the end of its queue, or is counted as lost after its last
+  // attempt. Joins the open batch; requires schedule_token_candidates first.
+  td::Status retry_token_candidate(const ScheduledTokenCandidate& scheduled);
+  // Backlog size and lost count, as committed.
+  td::Result<TokenBacklogStats> token_backlog_stats();
+  // Lower the backlog bound (never above kMaxTokenBacklogEntries) so tests can
+  // reach it without writing a million rows.
+  void set_token_backlog_limit(uint64_t limit) {
+    token_backlog_limit_ = limit < kMaxTokenBacklogEntries ? limit : kMaxTokenBacklogEntries;
+  }
+  // Walk at most `limit` deferred candidates (committed state), queue by queue.
   td::Status for_each_deferred_token_candidate(size_t limit, std::function<td::Status(const TokenCandidate&)> cb);
 
   // --- Crash-recovery marker: 0x1E + workchain_be(4) + shard_be(8) + seqno_be(4)
@@ -251,7 +294,26 @@ class WalletIndexDb {
   std::unique_ptr<td::RocksDb> db_;
   std::mutex write_mutex_;
   bool batch_open_ = false;
-  bool tokens_scheduled_in_batch_ = false;
+
+  // Token backlog bookkeeping for the open batch. Counters are loaded from
+  // committed state when scheduling starts and written back with every change;
+  // the overlay records index entries added (true) or erased (false) in the
+  // batch, which committed reads cannot see.
+  struct TokenBatchState {
+    bool scheduled = false;
+    uint64_t next_seq = 0;
+    uint64_t entries = 0;
+    uint64_t lost = 0;
+    std::map<std::string, bool> index_overlay;
+  };
+  TokenBatchState token_batch_;
+  uint64_t token_backlog_limit_ = kMaxTokenBacklogEntries;
+  td::Result<uint64_t> get_meta_u64(uint8_t sub);
+  td::Status put_meta_u64(uint8_t sub, uint64_t value);
+  td::Result<bool> token_index_has(const std::string& index_key);
+  td::Status token_enqueue(const TokenCandidate& candidate, uint8_t attempts);
+  td::Status token_note_lost(const TokenCandidate& candidate, td::Slice reason);
+  td::Status token_write_counters();
 };
 
 // Module-scope singleton. Returns nullptr until the

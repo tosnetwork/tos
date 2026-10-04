@@ -25,14 +25,20 @@ constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
 constexpr uint8_t kEventAgeTag = 0x14;      // 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel(1)
-constexpr uint8_t kTokenBacklogTag = 0x15;  // 0x15 + seq_be(8) -> kind(1) + address(32)
+constexpr uint8_t kTokenQueueTag = 0x15;    // 0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1)
+constexpr uint8_t kTokenIndexTag = 0x16;    // 0x16 + kind(1) + address(32) -> sentinel(1)
 // Meta namespace, sorts before every data tag. 0x00 0x01 -> schema version
 // (u32_be); 0x00 0x02 -> event-retention watermark (u32_be, max gen_utime seen).
 constexpr uint8_t kMetaTag = 0x00;
 constexpr uint8_t kMetaSchemaSub = 0x01;
 constexpr uint8_t kMetaWatermarkSub = 0x02;
-// 0x00 0x03 -> next token-backlog sequence number (u64_be); absent means 0.
-constexpr uint8_t kMetaTokenBacklogSeqSub = 0x03;
+// Token backlog bookkeeping (u64_be each; absent means 0): 0x00 0x03 -> next
+// queue sequence number, 0x00 0x04 -> entries, 0x00 0x05 -> candidates lost.
+// 0x00 0x06 + shard_be(8) -> the queue (bucket) that shard serves next.
+constexpr uint8_t kMetaTokenSeqSub = 0x03;
+constexpr uint8_t kMetaTokenEntriesSub = 0x04;
+constexpr uint8_t kMetaTokenLostSub = 0x05;
+constexpr uint8_t kMetaTokenCursorSub = 0x06;
 
 // (kMaxEventsPerAccount / kMaxEventTrimPerPass are declared in the header
 // so tests can reference the exact bound.)
@@ -58,8 +64,9 @@ constexpr size_t kMetaKeyLen = 2;
 constexpr size_t kSingleHashKeyLen = 1 + 32;
 constexpr size_t kIncompleteBlockKeyLen = 1 + 4 + 8 + 4 + 32 + 32;
 constexpr size_t kIncompleteBlockValueLen = 1;
-constexpr size_t kTokenBacklogKeyLen = 1 + 8;
-constexpr size_t kTokenBacklogValueLen = 1 + 32;
+constexpr size_t kTokenQueueKeyLen = 1 + 1 + 8;
+constexpr size_t kTokenQueueValueLen = 1 + 32 + 1;
+constexpr size_t kTokenIndexKeyLen = 1 + 1 + 32;
 
 void put_u32_be(char* out, uint32_t v) {
   for (int i = 3; i >= 0; --i) {
@@ -698,30 +705,326 @@ td::Status WalletIndexDb::for_each_incomplete_block(std::function<td::Status(con
 
 namespace {
 
-struct BacklogEntry {
+struct QueueEntry {
   std::string key;
-  TokenCandidate candidate;
+  ScheduledTokenCandidate scheduled;
 };
 
-td::Result<TokenCandidate> parse_token_backlog_value(td::Slice value) {
-  if (value.size() != kTokenBacklogValueLen) {
+std::string token_queue_bucket_prefix(size_t bucket) {
+  std::string prefix(2, '\0');
+  prefix[0] = static_cast<char>(kTokenQueueTag);
+  prefix[1] = static_cast<char>(bucket);
+  return prefix;
+}
+
+// Exclusive end of a queue's key range: the next queue's prefix, or the next
+// tag after the last queue.
+std::string token_queue_bucket_end(size_t bucket) {
+  if (bucket + 1 < kTokenBacklogBuckets) {
+    return token_queue_bucket_prefix(bucket + 1);
+  }
+  return std::string(1, static_cast<char>(kTokenQueueTag + 1));
+}
+
+size_t token_bucket(const HashKey& address) {
+  return address.data()[0];
+}
+
+std::string token_index_key(const TokenCandidate& candidate) {
+  std::string key(kTokenIndexKeyLen, '\0');
+  key[0] = static_cast<char>(kTokenIndexTag);
+  key[1] = static_cast<char>(candidate.kind);
+  std::memcpy(&key[2], candidate.address.data(), 32);
+  return key;
+}
+
+td::Result<ScheduledTokenCandidate> parse_token_queue_entry(td::Slice key, td::Slice value) {
+  if (key.size() != kTokenQueueKeyLen || value.size() != kTokenQueueValueLen) {
     return td::Status::Error("wc0-index: malformed token backlog entry");
   }
   auto kind = static_cast<uint8_t>(value[0]);
   if (kind != static_cast<uint8_t>(TokenKind::Jetton) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
     return td::Status::Error("wc0-index: unknown token kind in backlog entry");
   }
-  TokenCandidate candidate{static_cast<TokenKind>(kind), HashKey{}};
-  std::memcpy(candidate.address.data(), value.data() + 1, 32);
-  return candidate;
+  auto attempts = static_cast<uint8_t>(value[1 + 32]);
+  if (attempts >= kMaxTokenCandidateAttempts) {
+    return td::Status::Error("wc0-index: backlog entry has no attempts left");
+  }
+  ScheduledTokenCandidate scheduled{TokenCandidate{static_cast<TokenKind>(kind), HashKey{}}, attempts};
+  std::memcpy(scheduled.candidate.address.data(), value.data() + 1, 32);
+  if (static_cast<uint8_t>(key[1]) != token_bucket(scheduled.candidate.address)) {
+    return td::Status::Error("wc0-index: backlog entry is in the wrong queue");
+  }
+  return scheduled;
+}
+
+// The queues a wc=0 shard reads: the top bytes its address range spans.
+td::Result<std::pair<size_t, size_t>> token_shard_buckets(tos::ShardIdFull shard) {
+  if (shard.workchain != 0 || shard.shard == 0) {
+    return td::Status::Error("wc0-index: token scheduling needs a valid wc=0 shard");
+  }
+  uint64_t lowest = shard.shard & (~shard.shard + 1);
+  uint64_t first = shard.shard - lowest;
+  uint64_t last = shard.shard + (lowest - 1);
+  return std::make_pair(static_cast<size_t>(first >> 56), static_cast<size_t>(last >> 56));
+}
+
+bool token_shard_contains(tos::ShardIdFull shard, const HashKey& address) {
+  return tos::shard_contains(shard, tos::AccountIdPrefixFull{0, tos::extract_top64(address)});
+}
+
+std::string token_cursor_key(tos::ShardIdFull shard) {
+  std::string key(kMetaKeyLen + 8, '\0');
+  key[0] = static_cast<char>(kMetaTag);
+  key[1] = static_cast<char>(kMetaTokenCursorSub);
+  put_u64_be(&key[kMetaKeyLen], shard.shard);
+  return key;
 }
 
 }  // namespace
 
+td::Result<uint64_t> WalletIndexDb::get_meta_u64(uint8_t sub) {
+  char key[kMetaKeyLen];
+  make_meta_key(sub, key);
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{key, kMetaKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return static_cast<uint64_t>(0);
+  }
+  if (value.size() != 8) {
+    return td::Status::Error("wc0-index: malformed token backlog counter");
+  }
+  return get_u64_be(value.data());
+}
+
+td::Status WalletIndexDb::put_meta_u64(uint8_t sub, uint64_t value) {
+  char key[kMetaKeyLen];
+  make_meta_key(sub, key);
+  char v[8];
+  put_u64_be(v, value);
+  return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
+}
+
+td::Result<bool> WalletIndexDb::token_index_has(const std::string& index_key) {
+  auto it = token_batch_.index_overlay.find(index_key);
+  if (it != token_batch_.index_overlay.end()) {
+    return it->second;
+  }
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{index_key}, value));
+  return status == td::KeyValue::GetStatus::Ok;
+}
+
+td::Status WalletIndexDb::token_note_lost(const TokenCandidate& candidate, td::Slice reason) {
+  if (token_batch_.lost < std::numeric_limits<uint64_t>::max()) {
+    ++token_batch_.lost;
+  }
+  LOG(ERROR) << "wc0-index: token candidate " << candidate.address.to_hex() << " lost (" << reason
+             << "); the token index is incomplete until rebuilt, lost=" << token_batch_.lost;
+  return td::Status::OK();
+}
+
+td::Status WalletIndexDb::token_enqueue(const TokenCandidate& candidate, uint8_t attempts) {
+  auto index_key = token_index_key(candidate);
+  TRY_RESULT(present, token_index_has(index_key));
+  if (present) {
+    // Already waiting; it keeps its place in the queue.
+    return td::Status::OK();
+  }
+  if (token_batch_.entries >= token_backlog_limit_) {
+    return token_note_lost(candidate, "token backlog full");
+  }
+  if (token_batch_.next_seq == std::numeric_limits<uint64_t>::max()) {
+    return td::Status::Error("wc0-index: token backlog sequence exhausted");
+  }
+  char key[kTokenQueueKeyLen];
+  key[0] = static_cast<char>(kTokenQueueTag);
+  key[1] = static_cast<char>(token_bucket(candidate.address));
+  put_u64_be(key + 2, token_batch_.next_seq);
+  char value[kTokenQueueValueLen];
+  value[0] = static_cast<char>(candidate.kind);
+  std::memcpy(value + 1, candidate.address.data(), 32);
+  value[1 + 32] = static_cast<char>(attempts);
+  const char present_marker[1] = {1};
+  TRY_STATUS(db_->set(td::Slice{key, kTokenQueueKeyLen}, td::Slice{value, kTokenQueueValueLen}));
+  TRY_STATUS(db_->set(td::Slice{index_key}, td::Slice{present_marker, 1}));
+  token_batch_.index_overlay[index_key] = true;
+  ++token_batch_.next_seq;
+  ++token_batch_.entries;
+  return td::Status::OK();
+}
+
+td::Status WalletIndexDb::token_write_counters() {
+  TRY_STATUS(put_meta_u64(kMetaTokenSeqSub, token_batch_.next_seq));
+  TRY_STATUS(put_meta_u64(kMetaTokenEntriesSub, token_batch_.entries));
+  return put_meta_u64(kMetaTokenLostSub, token_batch_.lost);
+}
+
+td::Result<std::vector<ScheduledTokenCandidate>> WalletIndexDb::schedule_token_candidates(
+    const std::vector<TokenCandidate>& block_candidates, tos::ShardIdFull shard, size_t capacity) {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: token scheduling needs an open batch");
+  }
+  if (token_batch_.scheduled) {
+    // The counters are loaded from committed state; a second pass would start
+    // again from values the first one has already moved on from.
+    return td::Status::Error("wc0-index: token candidates already scheduled in this batch");
+  }
+  if (capacity > kMaxTokenCandidatesPerBlock) {
+    return td::Status::Error("wc0-index: token capacity exceeds the per-block bound");
+  }
+  TRY_RESULT(buckets, token_shard_buckets(shard));
+  TRY_RESULT(next_seq, get_meta_u64(kMetaTokenSeqSub));
+  TRY_RESULT(entries, get_meta_u64(kMetaTokenEntriesSub));
+  TRY_RESULT(lost, get_meta_u64(kMetaTokenLostSub));
+  token_batch_.next_seq = next_seq;
+  token_batch_.entries = entries;
+  token_batch_.lost = lost;
+
+  // Collect up to `capacity` of this shard's backlog, round robin over its
+  // queues from the cursor: first an equal share from each, then whatever is
+  // left from each in turn. Oldest first within a queue.
+  const size_t first_bucket = buckets.first;
+  const size_t bucket_count = buckets.second - buckets.first + 1;
+  auto cursor_key = token_cursor_key(shard);
+  size_t cursor = first_bucket;
+  {
+    std::string value;
+    TRY_RESULT(status, db_->get(td::Slice{cursor_key}, value));
+    if (status == td::KeyValue::GetStatus::Ok && value.size() == 1) {
+      size_t stored = static_cast<uint8_t>(value[0]);
+      if (stored >= first_bucket && stored <= buckets.second) {
+        cursor = stored;
+      }
+    }
+  }
+  std::vector<QueueEntry> backlog;
+  std::vector<size_t> backlog_bucket;
+  std::set<std::string> collected;
+  if (capacity > 0 && token_batch_.entries > 0) {
+    const size_t share = (capacity + bucket_count - 1) / bucket_count;
+    for (size_t quota : {share, capacity}) {
+      for (size_t i = 0; i < bucket_count && backlog.size() < capacity; ++i) {
+        size_t bucket = first_bucket + (cursor - first_bucket + i) % bucket_count;
+        size_t taken = 0;
+        size_t scanned = 0;
+        std::vector<std::string> malformed;
+        bool stopped = false;
+        auto begin = token_queue_bucket_prefix(bucket);
+        auto end = token_queue_bucket_end(bucket);
+        auto scan_status =
+            db_->for_each_in_range(td::Slice{begin}, td::Slice{end}, [&](td::Slice key, td::Slice value) -> td::Status {
+              if (taken >= quota || backlog.size() >= capacity || scanned >= kTokenBacklogScanPerBucket) {
+                stopped = true;
+                return td::Status::Error("wc0-index: queue pass complete");
+              }
+              ++scanned;
+              auto key_str = key.str();
+              if (collected.count(key_str) != 0) {
+                return td::Status::OK();
+              }
+              auto parsed = parse_token_queue_entry(key, value);
+              if (parsed.is_error()) {
+                malformed.push_back(std::move(key_str));
+                return td::Status::OK();
+              }
+              auto scheduled = parsed.move_as_ok();
+              if (!token_shard_contains(shard, scheduled.candidate.address)) {
+                return td::Status::OK();
+              }
+              collected.insert(key_str);
+              backlog.push_back(QueueEntry{std::move(key_str), scheduled});
+              backlog_bucket.push_back(bucket);
+              ++taken;
+              return td::Status::OK();
+            });
+        if (!stopped) {
+          TRY_STATUS(std::move(scan_status));
+        }
+        // A malformed entry cannot be verified or put right; dropping it, and
+        // saying so, keeps it from failing every later block of this shard.
+        for (auto& key : malformed) {
+          TRY_STATUS(db_->erase(td::Slice{key}));
+          collected.insert(key);
+          if (token_batch_.entries > 0) {
+            --token_batch_.entries;
+          }
+          if (token_batch_.lost < std::numeric_limits<uint64_t>::max()) {
+            ++token_batch_.lost;
+          }
+          LOG(ERROR) << "wc0-index: dropped a malformed token backlog entry; the token index is incomplete until "
+                        "rebuilt, lost="
+                     << token_batch_.lost;
+        }
+      }
+    }
+  }
+
+  // Split the capacity: the backlog first gets up to its reserved share, the
+  // block's own candidates take what is left, and capacity the block does not
+  // use goes back to the backlog.
+  size_t from_backlog = std::min(backlog.size(), std::min(kTokenBacklogDrainPerBlock, capacity));
+  size_t from_block = std::min(block_candidates.size(), capacity - from_backlog);
+  size_t spare = capacity - from_backlog - from_block;
+  from_backlog += std::min(backlog.size() - from_backlog, spare);
+
+  std::vector<ScheduledTokenCandidate> chosen;
+  std::set<TokenCandidate> seen;
+  for (size_t i = 0; i < from_backlog; ++i) {
+    const auto& entry = backlog[i];
+    auto index_key = token_index_key(entry.scheduled.candidate);
+    TRY_STATUS(db_->erase(td::Slice{entry.key}));
+    TRY_STATUS(db_->erase(td::Slice{index_key}));
+    token_batch_.index_overlay[index_key] = false;
+    if (token_batch_.entries > 0) {
+      --token_batch_.entries;
+    }
+    if (seen.insert(entry.scheduled.candidate).second) {
+      chosen.push_back(entry.scheduled);
+    }
+  }
+  if (from_backlog > 0) {
+    // Resume after the last queue served, so every queue gets its turn.
+    auto next = static_cast<char>(first_bucket + (backlog_bucket[from_backlog - 1] - first_bucket + 1) % bucket_count);
+    TRY_STATUS(db_->set(td::Slice{cursor_key}, td::Slice{&next, 1}));
+  }
+  for (size_t i = 0; i < from_block; ++i) {
+    if (seen.insert(block_candidates[i]).second) {
+      chosen.push_back(ScheduledTokenCandidate{block_candidates[i], 0});
+    }
+  }
+  for (size_t i = from_block; i < block_candidates.size(); ++i) {
+    if (seen.count(block_candidates[i]) == 0) {
+      TRY_STATUS(token_enqueue(block_candidates[i], 0));
+    }
+  }
+  TRY_STATUS(token_write_counters());
+  token_batch_.scheduled = true;
+  return chosen;
+}
+
+td::Status WalletIndexDb::retry_token_candidate(const ScheduledTokenCandidate& scheduled) {
+  if (!batch_open_ || !token_batch_.scheduled) {
+    return td::Status::Error("wc0-index: token retry needs a scheduled batch");
+  }
+  if (scheduled.attempts + 1 >= kMaxTokenCandidateAttempts) {
+    TRY_STATUS(token_note_lost(scheduled.candidate, "verification stayed indeterminate"));
+  } else {
+    TRY_STATUS(token_enqueue(scheduled.candidate, static_cast<uint8_t>(scheduled.attempts + 1)));
+  }
+  return token_write_counters();
+}
+
+td::Result<TokenBacklogStats> WalletIndexDb::token_backlog_stats() {
+  TRY_RESULT(entries, get_meta_u64(kMetaTokenEntriesSub));
+  TRY_RESULT(lost, get_meta_u64(kMetaTokenLostSub));
+  return TokenBacklogStats{entries, lost};
+}
+
 td::Status WalletIndexDb::for_each_deferred_token_candidate(size_t limit,
                                                             std::function<td::Status(const TokenCandidate&)> cb) {
-  const char begin[1] = {static_cast<char>(kTokenBacklogTag)};
-  const char end[1] = {static_cast<char>(kTokenBacklogTag + 1)};
+  const char begin[1] = {static_cast<char>(kTokenQueueTag)};
+  const char end[1] = {static_cast<char>(kTokenQueueTag + 1)};
   size_t seen = 0;
   bool limit_reached = false;
   auto status =
@@ -731,106 +1034,10 @@ td::Status WalletIndexDb::for_each_deferred_token_candidate(size_t limit,
           return td::Status::Error("wc0-index: limit reached");
         }
         ++seen;
-        if (key.size() != kTokenBacklogKeyLen) {
-          return td::Status::Error("wc0-index: malformed token backlog key");
-        }
-        TRY_RESULT(candidate, parse_token_backlog_value(value));
-        return cb(candidate);
+        TRY_RESULT(scheduled, parse_token_queue_entry(key, value));
+        return cb(scheduled.candidate);
       });
   return limit_reached ? td::Status::OK() : std::move(status);
-}
-
-td::Result<std::vector<TokenCandidate>> WalletIndexDb::schedule_token_candidates(
-    const std::vector<TokenCandidate>& block_candidates, const std::function<bool(const HashKey&)>& in_shard) {
-  if (!batch_open_) {
-    return td::Status::Error("wc0-index: token scheduling needs an open batch");
-  }
-  if (tokens_scheduled_in_batch_) {
-    // The sequence counter is read from committed state; a second call would
-    // reuse the sequence numbers the first one wrote into the batch.
-    return td::Status::Error("wc0-index: token candidates already scheduled in this batch");
-  }
-
-  // Oldest in-shard backlog entries, within a bounded scan. A malformed entry
-  // is an error, not something to skip: skipping would hide it forever.
-  std::vector<BacklogEntry> backlog;
-  const char begin[1] = {static_cast<char>(kTokenBacklogTag)};
-  const char end[1] = {static_cast<char>(kTokenBacklogTag + 1)};
-  size_t scanned = 0;
-  bool stopped = false;
-  auto scan_status =
-      db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice key, td::Slice value) -> td::Status {
-        if (scanned >= kTokenBacklogScanPerBlock || backlog.size() >= kMaxTokenCandidatesPerBlock) {
-          stopped = true;
-          return td::Status::Error("wc0-index: backlog scan bound reached");
-        }
-        ++scanned;
-        if (key.size() != kTokenBacklogKeyLen) {
-          return td::Status::Error("wc0-index: malformed token backlog key");
-        }
-        TRY_RESULT(candidate, parse_token_backlog_value(value));
-        if (in_shard(candidate.address)) {
-          backlog.push_back(BacklogEntry{key.str(), candidate});
-        }
-        return td::Status::OK();
-      });
-  if (!stopped) {
-    TRY_STATUS(std::move(scan_status));
-  }
-
-  // Split the bound: the backlog first gets up to its reserved share, the
-  // block's own candidates take what is left, and any capacity the block does
-  // not use goes back to the backlog.
-  size_t from_backlog = std::min(backlog.size(), kTokenBacklogDrainPerBlock);
-  size_t from_block = std::min(block_candidates.size(), kMaxTokenCandidatesPerBlock - from_backlog);
-  size_t spare = kMaxTokenCandidatesPerBlock - from_backlog - from_block;
-  from_backlog += std::min(backlog.size() - from_backlog, spare);
-
-  std::vector<TokenCandidate> chosen;
-  std::set<TokenCandidate> seen;
-  for (size_t i = 0; i < from_backlog; ++i) {
-    TRY_STATUS(db_->erase(td::Slice{backlog[i].key}));
-    if (seen.insert(backlog[i].candidate).second) {
-      chosen.push_back(backlog[i].candidate);
-    }
-  }
-  for (size_t i = 0; i < from_block; ++i) {
-    if (seen.insert(block_candidates[i]).second) {
-      chosen.push_back(block_candidates[i]);
-    }
-  }
-
-  if (from_block < block_candidates.size()) {
-    char seq_key[kMetaKeyLen];
-    make_meta_key(kMetaTokenBacklogSeqSub, seq_key);
-    std::string seq_value;
-    TRY_RESULT(seq_status, db_->get(td::Slice{seq_key, kMetaKeyLen}, seq_value));
-    uint64_t next_seq = 0;
-    if (seq_status == td::KeyValue::GetStatus::Ok) {
-      if (seq_value.size() != 8) {
-        return td::Status::Error("wc0-index: malformed token backlog sequence");
-      }
-      next_seq = get_u64_be(seq_value.data());
-    }
-    for (size_t i = from_block; i < block_candidates.size(); ++i) {
-      if (next_seq == std::numeric_limits<uint64_t>::max()) {
-        return td::Status::Error("wc0-index: token backlog sequence exhausted");
-      }
-      char key[kTokenBacklogKeyLen];
-      key[0] = static_cast<char>(kTokenBacklogTag);
-      put_u64_be(key + 1, next_seq);
-      char value[kTokenBacklogValueLen];
-      value[0] = static_cast<char>(block_candidates[i].kind);
-      std::memcpy(value + 1, block_candidates[i].address.data(), 32);
-      TRY_STATUS(db_->set(td::Slice{key, kTokenBacklogKeyLen}, td::Slice{value, kTokenBacklogValueLen}));
-      ++next_seq;
-    }
-    char v[8];
-    put_u64_be(v, next_seq);
-    TRY_STATUS(db_->set(td::Slice{seq_key, kMetaKeyLen}, td::Slice{v, sizeof(v)}));
-  }
-  tokens_scheduled_in_batch_ = true;
-  return chosen;
 }
 
 // --- per-block batched writes ---
@@ -842,7 +1049,7 @@ td::Status WalletIndexDb::begin_batch() {
   auto s = db_->begin_write_batch();
   if (s.is_error()) return s;
   batch_open_ = true;
-  tokens_scheduled_in_batch_ = false;
+  token_batch_ = TokenBatchState{};
   return td::Status::OK();
 }
 
@@ -851,7 +1058,7 @@ td::Status WalletIndexDb::commit_batch() {
     return td::Status::Error("wc0-index: no batch open");
   }
   batch_open_ = false;
-  tokens_scheduled_in_batch_ = false;
+  token_batch_ = TokenBatchState{};
   // commit_write_batch() issues the write with WriteOptions.sync=true, which
   // (combined with manual_wal_flush=true) already syncs the WAL for this
   // write — an additional flush() here would be a redundant, much more
@@ -864,7 +1071,7 @@ void WalletIndexDb::abort_batch() {
     return;
   }
   batch_open_ = false;
-  tokens_scheduled_in_batch_ = false;
+  token_batch_ = TokenBatchState{};
   db_->abort_write_batch().ignore();
 }
 

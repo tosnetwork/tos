@@ -192,16 +192,32 @@ bool is_addr_none(const td::Ref<vm::CellSlice>& csr) {
 // authority on which contract is (owner, master)'s wallet — a hostile contract
 // can claim any owner/master in get_wallet_data, but cannot make a master it
 // does not control resolve back to it.
-bool verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::Bits256& owner_out,
-                          td::Bits256& master_out, WalletIndexVerificationBudget& budget) {
+enum class JettonVerification { Verified, Rejected, Indeterminate };
+
+JettonVerification jetton_load_failure(StateAccounts::LoadResult load) {
+  return load == StateAccounts::LoadResult::Indeterminate ? JettonVerification::Indeterminate
+                                                          : JettonVerification::Rejected;
+}
+
+JettonVerification jetton_get_failure(WalletIndexGetMethodStatus status) {
+  return status == WalletIndexGetMethodStatus::Indeterminate ? JettonVerification::Indeterminate
+                                                             : JettonVerification::Rejected;
+}
+
+JettonVerification verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::Bits256& owner_out,
+                                        td::Bits256& master_out, WalletIndexVerificationBudget& budget) {
   tos::SmartContract::State wstate;
-  if (state.load(wallet, wstate) != StateAccounts::LoadResult::Active) {
-    return false;
+  auto wallet_load = state.load(wallet, wstate);
+  if (wallet_load != StateAccounts::LoadResult::Active) {
+    return jetton_load_failure(wallet_load);
   }
   auto result = run_get(wstate, wallet, "get_wallet_data", {}, budget);
   auto stack = std::move(result.stack);
-  if (result.status != WalletIndexGetMethodStatus::Success || stack->depth() < 4) {
-    return false;
+  if (result.status != WalletIndexGetMethodStatus::Success) {
+    return jetton_get_failure(result.status);
+  }
+  if (stack->depth() < 4) {
+    return JettonVerification::Rejected;
   }
   // get_wallet_data -> (int balance, slice owner, slice master, cell wallet_code)
   auto& s = stack.write();
@@ -210,24 +226,28 @@ bool verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::B
   auto owner_csr = s.pop_cellslice();
   td::Bits256 owner, master;
   if (!extract_wc0_address(std::move(owner_csr), owner) || !extract_wc0_address(std::move(master_csr), master)) {
-    return false;
+    return JettonVerification::Rejected;
   }
   tos::SmartContract::State mstate;
-  if (state.load(master, mstate) != StateAccounts::LoadResult::Active) {
-    return false;  // fail-closed: unverifiable claim is not indexed
+  auto master_load = state.load(master, mstate);
+  if (master_load != StateAccounts::LoadResult::Active) {
+    return jetton_load_failure(master_load);  // fail-closed: unverifiable claim is not indexed
   }
   auto resolved_result = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)}, budget);
   auto resolved_stack = std::move(resolved_result.stack);
-  if (resolved_result.status != WalletIndexGetMethodStatus::Success || resolved_stack->depth() < 1) {
-    return false;
+  if (resolved_result.status != WalletIndexGetMethodStatus::Success) {
+    return jetton_get_failure(resolved_result.status);
+  }
+  if (resolved_stack->depth() < 1) {
+    return JettonVerification::Rejected;
   }
   td::Bits256 resolved;
   if (!extract_wc0_address(resolved_stack.write().pop_cellslice(), resolved) || resolved != wallet) {
-    return false;
+    return JettonVerification::Rejected;
   }
   owner_out = owner;
   master_out = master;
-  return true;
+  return JettonVerification::Verified;
 }
 
 // Verify `item` via get_nft_data against the post-apply state. For collection
@@ -381,23 +401,30 @@ void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_m
   }
 }
 
-// Verify and index one jetton-wallet candidate (into the open batch).
-void index_jetton_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& wallet,
+// Verify and index one jetton-wallet candidate (into the open batch). Returns
+// false when the node could not reach a verdict, so the caller retries it.
+bool index_jetton_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& wallet,
                             unsigned long long end_lt, WalletIndexVerificationBudget& budget) {
   td::Bits256 owner, master;
-  if (!verify_jetton_wallet(state, wallet, owner, master, budget)) {
-    return;
+  auto verification = verify_jetton_wallet(state, wallet, owner, master, budget);
+  if (verification == JettonVerification::Indeterminate) {
+    return false;
+  }
+  if (verification == JettonVerification::Rejected) {
+    return true;
   }
   auto status = db->put_jetton(owner, master, make_jetton_value(wallet, end_lt));
   if (status.is_error()) {
     LOG(WARNING) << "wc0-index: put_jetton failed: " << status.message();
   }
+  return true;
 }
 
 // Verify and index one NFT-item candidate; erases the previous owner's entry
-// when ownership changed (no stale entries).
-void index_nft_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& item,
-                         unsigned long long end_lt, WalletIndexVerificationBudget& budget) {
+// when ownership changed (no stale entries). Returns false when the node could
+// not reach a verdict, so the caller retries it.
+bool index_nft_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& item, unsigned long long end_lt,
+                         WalletIndexVerificationBudget& budget) {
   td::Bits256 owner, collection;
   bool has_collection = false;
   td::Bits256 prev_owner;
@@ -407,7 +434,7 @@ void index_nft_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits
     if (prev_r.is_ok() && prev_r.ok()) {
       LOG(WARNING) << "wc0-index: NFT verification indeterminate; preserving previous ownership";
     }
-    return;
+    return false;
   }
   if (verification == NftVerification::Absent) {
     // A previously indexed NFT can become unowned, uninitialized, frozen, or
@@ -418,7 +445,7 @@ void index_nft_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits
       db->erase_nft(prev_owner, item).ignore();
       db->erase_nft_owner(item).ignore();
     }
-    return;
+    return true;
   }
   if (prev_r.is_ok() && prev_r.ok() && prev_owner != owner) {
     db->erase_nft(prev_owner, item).ignore();
@@ -428,6 +455,7 @@ void index_nft_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits
     LOG(WARNING) << "wc0-index: put_nft failed: " << status.message();
   }
   db->put_nft_owner(item, owner).ignore();
+  return true;
 }
 
 // Walk the block's account_blocks: write event entries (into the open batch) and
@@ -581,7 +609,7 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
     // earlier blocks drain here.
     tos::ShardIdFull shard{block_id.id.workchain, block_id.id.shard};
     StateAccounts state{std::move(state_root), shard};
-    if (ok && state.ok()) {
+    if (ok) {
       std::vector<TokenCandidate> block_candidates;
       block_candidates.reserve(jetton_candidates.size() + nft_candidates.size());
       for (const auto& wallet : jetton_candidates) {
@@ -590,9 +618,14 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
       for (const auto& item : nft_candidates) {
         block_candidates.push_back(TokenCandidate{TokenKind::Nft, item});
       }
-      auto scheduled_r = db->schedule_token_candidates(block_candidates, [shard](const td::Bits256& address) {
-        return wallet_index_state_contains(shard, address);
-      });
+      // Without a usable post-apply state nothing can be verified; every
+      // candidate of the block is deferred instead.
+      size_t capacity = state.ok() ? kMaxTokenCandidatesPerBlock : 0;
+      if (!state.ok() && !block_candidates.empty()) {
+        LOG(WARNING) << "wc0-index: no usable post-apply state for block seqno=" << seqno << "; deferring "
+                     << block_candidates.size() << " token candidates (events still indexed)";
+      }
+      auto scheduled_r = db->schedule_token_candidates(block_candidates, shard, capacity);
       if (scheduled_r.is_error()) {
         // Fail closed: committing without the schedule would drop the block's
         // candidates. Keep the marker so a later pass retries the block.
@@ -609,13 +642,17 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
         size_t remaining_candidates = scheduled.size();
         // Each candidate is verified independently; one hostile contract must not
         // be able to abort the rest of the block's token indexing.
-        for (const auto& candidate : scheduled) {
+        for (const auto& scheduled_candidate : scheduled) {
           verification_budget.begin_candidate(remaining_candidates--);
+          const auto& candidate = scheduled_candidate.candidate;
+          // An exception is the node failing to finish, not a verdict on the
+          // contract: retry it like an indeterminate result.
+          bool conclusive = false;
           try {
             if (candidate.kind == TokenKind::Jetton) {
-              index_jetton_candidate(db, state, candidate.address, end_lt, verification_budget);
+              conclusive = index_jetton_candidate(db, state, candidate.address, end_lt, verification_budget);
             } else {
-              index_nft_candidate(db, state, candidate.address, end_lt, verification_budget);
+              conclusive = index_nft_candidate(db, state, candidate.address, end_lt, verification_budget);
             }
           } catch (vm::VmError&) {
           } catch (vm::VmVirtError&) {
@@ -624,11 +661,16 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
           } catch (...) {
             LOG(WARNING) << "wc0-index: token candidate failed with unknown error";
           }
+          if (!conclusive) {
+            auto retry_status = db->retry_token_candidate(scheduled_candidate);
+            if (retry_status.is_error()) {
+              LOG(WARNING) << "wc0-index: token retry failed for block seqno=" << seqno << ": "
+                           << retry_status.message();
+              write_error = true;
+            }
+          }
         }
       }
-    } else if (ok && !(jetton_candidates.empty() && nft_candidates.empty())) {
-      LOG(WARNING) << "wc0-index: no usable post-apply state for block seqno=" << seqno
-                   << "; token updates skipped (events still indexed)";
     }
   } catch (vm::VmError& err) {
     LOG(WARNING) << "wc0-index: VmError while indexing block seqno=" << seqno << ": " << err.get_msg();
