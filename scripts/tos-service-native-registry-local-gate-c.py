@@ -23,7 +23,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 import nacl.signing  # noqa: E402
-from tos_service_test_identities import load_test_identity  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Builder,
@@ -35,6 +34,7 @@ from pytosiq_core import (  # noqa: E402
     StateInit,
     WalletMessage,
 )
+from tos_service_test_identities import load_test_identity  # noqa: E402
 
 MAGIC_DATA = 0x4E564431
 MAGIC_ACTION = 0x4E564131
@@ -419,7 +419,9 @@ def main() -> int:
     parser.add_argument("--network-id", default="tos-local-gate-c-20260814")
     parser.add_argument(
         "--test-identities",
-        default=str(REPO.parent / "tos-service-spec/test-vectors/tos-service-test-identities-v1.json"),
+        default=str(
+            REPO.parent / "tos-service-spec/test-vectors/tos-service-test-identities-v1.json"
+        ),
     )
     parser.add_argument("--evidence", required=True)
     args = parser.parse_args()
@@ -434,7 +436,9 @@ def main() -> int:
 
     code_bytes = base64.b64decode(
         b"".join(
-            (REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64").read_bytes().split()
+            (REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64")
+            .read_bytes()
+            .split()
         ),
         validate=True,
     )

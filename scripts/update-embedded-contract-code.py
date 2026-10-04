@@ -23,12 +23,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = {
-    "dispute": ("crypto/smartcont/dispute-code.fc", "DISPUTE_CODE_B64",
-                "tosctl/src/node-control/contracts/src/dispute.rs"),
-    "proof-attestation": ("crypto/smartcont/proof-attestation-code.fc", "PROOF_ATTESTATION_CODE_B64",
-                          "tosctl/src/node-control/contracts/src/proof_attestation.rs"),
-    "service-actor": ("crypto/smartcont/service-actor-code.fc", "SERVICE_ACTOR_CODE_B64",
-                      "tosctl/src/node-control/contracts/src/service_actor.rs"),
+    "dispute": (
+        "crypto/smartcont/dispute-code.fc",
+        "DISPUTE_CODE_B64",
+        "tosctl/src/node-control/contracts/src/dispute.rs",
+    ),
+    "proof-attestation": (
+        "crypto/smartcont/proof-attestation-code.fc",
+        "PROOF_ATTESTATION_CODE_B64",
+        "tosctl/src/node-control/contracts/src/proof_attestation.rs",
+    ),
+    "service-actor": (
+        "crypto/smartcont/service-actor-code.fc",
+        "SERVICE_ACTOR_CODE_B64",
+        "tosctl/src/node-control/contracts/src/service_actor.rs",
+    ),
 }
 
 
@@ -41,8 +50,20 @@ def tool(name: str) -> Path:
 
 def compile_boc(source: Path, work: Path) -> bytes:
     fif, boc = work / "code.fif", work / "code.boc"
-    subprocess.run([str(tool("func")), "-APS", str(ROOT / "crypto/smartcont/stdlib.fc"), str(source),
-                    "-W", str(boc), "-o", str(fif)], cwd=ROOT, check=True)
+    subprocess.run(
+        [
+            str(tool("func")),
+            "-APS",
+            str(ROOT / "crypto/smartcont/stdlib.fc"),
+            str(source),
+            "-W",
+            str(boc),
+            "-o",
+            str(fif),
+        ],
+        cwd=ROOT,
+        check=True,
+    )
     env = dict(os.environ, FIFTPATH=str(ROOT / "crypto/fift/lib"))
     subprocess.run([str(tool("fift")), str(fif)], cwd=ROOT, env=env, check=True)
     return boc.read_bytes()
@@ -54,13 +75,21 @@ def root_hash(boc: bytes, work: Path) -> str:
     script = work / "hash.fif"
     script.write_text(f'"{path}" file>B B>boc hashu . cr\n')
     env = dict(os.environ, FIFTPATH=str(ROOT / "crypto/fift/lib"))
-    out = subprocess.run([str(tool("fift")), str(script)], cwd=ROOT, env=env, check=True,
-                         capture_output=True, text=True)
+    out = subprocess.run(
+        [str(tool("fift")), str(script)],
+        cwd=ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     return out.stdout.strip()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--check", action="store_true")
     parser.add_argument("names", nargs="*", default=sorted(CONTRACTS))
     args = parser.parse_args()
@@ -86,7 +115,9 @@ def main() -> int:
             print(f"{name}: STALE ({constant} does not match {source})")
             continue
         encoded = base64.b64encode(generated).decode()
-        rust_path.write_text(pattern.sub(f'pub const {constant}: &str = "{encoded}";', text, count=1))
+        rust_path.write_text(
+            pattern.sub(f'pub const {constant}: &str = "{encoded}";', text, count=1)
+        )
         print(f"{name}: updated {constant}")
     return 1 if stale else 0
 
