@@ -19,6 +19,18 @@ inline constexpr std::size_t adnl_ext_max_frame_bytes = 4 + adnl_ext_max_packet_
 // queue without limit.
 inline constexpr std::size_t adnl_ext_max_pending_output_bytes = 2 * adnl_ext_max_frame_bytes;
 
+// Unread output all of one server's external connections may hold together.
+// The per-connection bound times the connection limit would be tens of GiB.
+inline constexpr std::size_t adnl_ext_max_server_pending_output_bytes = std::size_t{256} << 20;
+
+// Whether a frame of `frame_bytes` may join `pending_bytes` already queued on
+// a connection while the server's other connections hold `others_bytes`.
+inline bool adnl_ext_server_output_fits(std::size_t others_bytes, std::size_t pending_bytes, std::size_t frame_bytes,
+                                        std::size_t maximum_server_bytes = adnl_ext_max_server_pending_output_bytes) {
+  return others_bytes <= maximum_server_bytes && pending_bytes <= maximum_server_bytes - others_bytes &&
+         frame_bytes <= maximum_server_bytes - others_bytes - pending_bytes;
+}
+
 // Whether a frame of `frame_bytes` may join `pending_bytes` already queued.
 inline bool adnl_ext_output_fits(std::size_t pending_bytes, std::size_t frame_bytes,
                                  std::size_t maximum_pending_bytes = adnl_ext_max_pending_output_bytes) {

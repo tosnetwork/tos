@@ -379,7 +379,7 @@ void AdnlExtServerImpl::accepted(td::SocketFd fd) {
   td::actor::create_actor<AdnlInboundConnection>(
       td::actor::ActorOptions().with_name("inconn").with_poll(), std::move(fd), peer_table_, actor_id(this),
       AdnlNodeIdShort{identity.anonymous_id}, identity.peer_ip, query_limits_, failure_policy_,
-      std::make_unique<Callback>(actor_id(this), identity.peer_ip))
+      std::make_unique<Callback>(actor_id(this), identity.peer_ip), output_bytes_)
       .release();
 }
 

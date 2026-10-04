@@ -40,11 +40,18 @@ bool AdnlExtConnection::send(td::BufferSlice data) {
   }
   auto data_size = td::narrow_cast<td::uint32>(data.size() + adnl_ext_packet_framing_bytes);
   auto frame_bytes = data.size() + 4 + 32 + 32;
-  if (!adnl_ext_output_fits(buffered_fd_.ready_for_flush_write(), frame_bytes)) {
-    // The peer is not reading what it asked for. Queuing more would grow
-    // memory without bound, and dropping a frame would corrupt the stream.
-    LOG(INFO) << "ADNL external peer left " << buffered_fd_.ready_for_flush_write()
-              << " bytes unread; closing connection";
+  auto pending = buffered_fd_.ready_for_flush_write();
+  bool fits = adnl_ext_output_fits(pending, frame_bytes);
+  if (fits && server_output_bytes_) {
+    auto total = server_output_bytes_->load();
+    auto others = total > output_accounted_ ? total - output_accounted_ : 0;
+    fits = adnl_ext_server_output_fits(others, pending, frame_bytes);
+  }
+  if (!fits) {
+    // The peer is not reading what it asked for, or the server's connections
+    // together hold too much unread. Queuing more would grow memory without
+    // bound, and dropping a frame would corrupt the stream.
+    LOG(INFO) << "ADNL external peer left " << pending << " bytes unread; closing connection";
     output_overflowed_ = true;
     stop();
     return false;
@@ -68,12 +75,14 @@ bool AdnlExtConnection::send(td::BufferSlice data) {
   out_ctr_.encrypt(d.as_slice(), e.as_slice());
 
   buffered_fd_.output_buffer().append(std::move(e));
+  account_output();
   yield();
   return true;
 }
 
 td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_loop) {
-  if (stop_read_) {
+  // Once closing for unread output, take no further queries from the buffer.
+  if (stop_read_ || output_overflowed_) {
     exit_loop = true;
     return td::Status::OK();
   }
@@ -139,6 +148,7 @@ void AdnlExtConnection::loop() {
       TRY_STATUS(receive(input, exit_loop));
     }
     TRY_STATUS(buffered_fd_.flush_write());
+    account_output();
     if (td::can_close(buffered_fd_)) {
       stop();
     }

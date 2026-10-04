@@ -692,6 +692,19 @@ void unit_checks() {
           "a frame larger than the whole bound fits");
   require(!adnl::adnl_ext_output_fits(std::numeric_limits<size_t>::max(), 1), "pending size wrapped around");
   require(!adnl::adnl_ext_output_fits(1, std::numeric_limits<size_t>::max()), "frame size wrapped around");
+
+  // Server-wide bound: what all connections hold together.
+  const size_t server_max = adnl::adnl_ext_max_server_pending_output_bytes;
+  require(adnl::adnl_ext_server_output_fits(0, 0, max_frame), "a maximal reply does not fit an idle server");
+  require(adnl::adnl_ext_server_output_fits(server_max - max_frame - 10, 10, max_frame),
+          "a reply exactly filling the server bound was refused");
+  require(!adnl::adnl_ext_server_output_fits(server_max - max_frame - 10, 11, max_frame),
+          "server output bound not enforced");
+  require(!adnl::adnl_ext_server_output_fits(server_max + 1, 0, 1), "other connections over the bound not refused");
+  require(!adnl::adnl_ext_server_output_fits(std::numeric_limits<size_t>::max(), 1, 1), "server total wrapped around");
+  require(!adnl::adnl_ext_server_output_fits(1, std::numeric_limits<size_t>::max(), 1), "pending wrapped around");
+  require(adnl::adnl_ext_max_server_pending_output_bytes < 1024 * adnl::adnl_ext_max_pending_output_bytes,
+          "server bound is no tighter than the per-connection bound times the connection limit");
   std::printf("B64_CASE unit lite_encoder_bounded=true reply_limits=true server_limit_reason=true output_bound=true\n");
 }
 
