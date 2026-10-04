@@ -55,8 +55,9 @@ namespace tos::rldp2 {
 // part is charged about 6.4 MiB, so 512 MiB still holds some eighty large
 // answer parts at once. 512 MiB is sized to leave room for the rest of the
 // node on the 4 GB testnet minimum host; it bounds the reassembly state
-// charged here, not the process's total memory. Half of it is reserved for
-// answers to the node's own requests: see RldpInboundLimits below.
+// charged here, not the process's total memory. Half of it is kept from
+// unsolicited transfers for answers to the node's own requests: see
+// RldpInboundLimits below.
 inline constexpr std::size_t rldp_max_active_decoders = 16384;
 inline constexpr std::size_t rldp_max_inbound_bytes = std::size_t{512} << 20;
 
@@ -149,34 +150,43 @@ using RldpPeerIdentity = std::array<unsigned char, 32>;
 // How the process-wide budget is divided.
 //
 // Half of the decoder slots and half of the bytes are a reserve only solicited
-// transfers may use, so answers to the node's own requests keep progressing
-// however many unsolicited transfers peers open. Solicited transfers may also
-// use the other half; unsolicited transfers never use the reserve.
+// transfers may use. Solicited transfers may also use the other half;
+// unsolicited transfers never use the reserve, so no amount of unsolicited
+// traffic can take it. That is all the reserve guarantees: it is not divided
+// between the peers the node queries, so one queried peer answering every
+// outstanding request at its declared size, or many competing requests, can
+// exhaust it themselves. Isolating queried peers from each other would need
+// admission of requests by the bytes their answers may take; bounding the
+// number of outstanding requests, as Rldp and RldpConnection do, does not
+// provide it.
 //
 // Within the unsolicited half, one peer identity may hold at most an eighth of
-// the decoder slots and an eighth of the bytes, so filling the unsolicited half
-// takes at least eight identities, and one identity always leaves seven eighths
-// of it to everyone else. An eighth of the production budget is 1024 decoders
-// and 32 MiB: above what an honest peer uses on one local id, which is at most
-// RldpConnection::MAX_INBOUND_TRANSFERS (256) default-size transfers of about
-// 38 KiB each (about 9.5 MiB), and enough for a peer whose MTU was raised to
-// send a maximal 2 MB part (about 6.4 MiB) together with its decode attempt
-// (about 11.6 MiB).
+// the decoder slots and half of the bytes: 1024 decoders and 128 MiB of the
+// production budget.
 //
-// The share does bind a peer given a raised MTU that sends multi-part
-// unsolicited transfers: with every part in flight, one transfer above about
-// 4 MB, or several smaller ones at once, needs more than 32 MiB. Parts beyond
-// the share are dropped like lost datagrams and must be retransmitted, which
-// slows such a transfer and can make it outlast the ten-second lifetime of an
-// unsolicited transfer. Answers to the node's own requests are not affected.
+// The byte share is sized to the largest unsolicited transfer the node
+// accepts, not to an average peer. A peer whose MTU an overlay raised may send
+// a transfer of 16 MiB plus a small envelope; the sender keeps every part of
+// it in flight at once, and the receiver charges, all at once, a decoder for
+// each of its nine parts (about 53.5 MB for the eight full ones), the buffer
+// they are assembled into (16 MiB) and one decode attempt's working memory
+// (about 12.1 MB): about 81 MiB. A share of 32 MiB could not hold that even
+// after the earlier parts finished, so such a transfer was refused part by
+// part until it outlived the ten-second unsolicited lifetime. 128 MiB holds it
+// with room for smaller transfers from the same peer beside it. The share is
+// a fixed number, never derived from a size the peer advertises.
+//
+// The decoder share, 1024, is above what an honest peer uses on one local id:
+// RldpConnection::MAX_INBOUND_TRANSFERS (256).
 //
 // None of this is a Sybil-resistant availability guarantee. ADNL identities
-// cost nothing to generate, so eight or more of them still fill the unsolicited
-// half between them and starve every other peer's unsolicited transfers. What
-// the division guarantees is only that they cannot take the reserve, and that
-// a single identity cannot take more than its share. These are budgets for
-// RLDP2 reassembly state, charged against measured decoder costs; they are not
-// a bound on the total memory of the process.
+// cost nothing to generate: two of them at their byte share exhaust the bytes
+// of the unsolicited half, and eight at their decoder share exhaust its
+// decoders, starving every other peer's unsolicited transfers. What the
+// division guarantees is only that they cannot take the reserve, and that a
+// single identity cannot take more than its share. These are budgets for RLDP2
+// reassembly state, charged against measured decoder costs; they are not a
+// bound on the total memory of the process.
 struct RldpInboundLimits {
   std::size_t max_decoders{0};
   std::size_t max_bytes{0};
@@ -191,7 +201,8 @@ struct RldpInboundLimits {
   // count, so the ledger cannot outgrow what the unsolicited half could hold.
   std::size_t max_identities{0};
 
-  static constexpr std::size_t identity_share_divisor = 8;
+  static constexpr std::size_t identity_decoder_share_divisor = 8;
+  static constexpr std::size_t identity_byte_share_divisor = 2;
 
   // The production division of `max_decoders` and `max_bytes`.
   static RldpInboundLimits split(std::size_t max_decoders, std::size_t max_bytes) {
@@ -201,8 +212,8 @@ struct RldpInboundLimits {
     // Rounded down, so the reserve is never less than half.
     limits.unsolicited_decoders = max_decoders / 2;
     limits.unsolicited_bytes = max_bytes / 2;
-    limits.per_identity_decoders = limits.unsolicited_decoders / identity_share_divisor;
-    limits.per_identity_bytes = limits.unsolicited_bytes / identity_share_divisor;
+    limits.per_identity_decoders = limits.unsolicited_decoders / identity_decoder_share_divisor;
+    limits.per_identity_bytes = limits.unsolicited_bytes / identity_byte_share_divisor;
     limits.max_identities = limits.unsolicited_decoders;
     return limits;
   }

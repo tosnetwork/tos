@@ -128,8 +128,8 @@ bool RldpConnection::set_receive_limits(TransferId transfer_id, td::Timestamp ti
     return false;
   }
   // Each outstanding request lets the peer draw on the reserve, so their
-  // number is what bounds the reserve's use. A refused request is reported as
-  // failed, so the caller waiting on it is not left waiting.
+  // number is bounded. A refused request is reported as failed, so the caller
+  // waiting on it is not left waiting.
   if (outstanding_requests_ >= MAX_OUTSTANDING_REQUESTS) {
     VLOG(RLDP_INFO) << "Refuse local request: " << outstanding_requests_ << " are already outstanding";
     to_receive_.emplace_back(

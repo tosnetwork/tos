@@ -24,8 +24,10 @@
 // They do not show, and the division does not give, availability against many
 // identities: generating identities costs nothing.
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -50,6 +52,7 @@ class Sink : public ConnectionCallback {
   void receive(TransferId transfer_id, td::Result<td::BufferSlice> r_data) override {
     if (r_data.is_ok()) {
       completed.push_back(transfer_id);
+      payloads.emplace(transfer_id, r_data.move_as_ok());
     } else {
       failed.push_back(transfer_id);
     }
@@ -60,6 +63,7 @@ class Sink : public ConnectionCallback {
   std::vector<td::BufferSlice> outbox;
   std::vector<TransferId> completed;
   std::vector<TransferId> failed;
+  std::map<TransferId, td::BufferSlice> payloads;
 };
 
 RldpPeerIdentity identity(td::uint32 n) {
@@ -153,6 +157,30 @@ size_t open_part_solver() {
   return rldp_solver_working_bytes(768, open_part_symbols()).value();
 }
 
+// The largest unsolicited transfer a peer can be allowed: an overlay raises a
+// peer's MTU to its 16 MiB broadcast limit plus a small envelope (4096 bytes
+// is the larger of the two envelopes overlays add).
+size_t largest_unsolicited_transfer() {
+  return (size_t{16} << 20) + 4096;
+}
+
+// What the receiver charges for a transfer of `size` bytes with every part's
+// decoder open at once, the buffer the parts are assembled into, and the
+// largest part's decode attempt as headroom.
+size_t all_parts_open_charge(size_t size) {
+  size_t charge = 0;
+  size_t parts = 0;
+  size_t headroom = 0;
+  for (size_t offset = 0; offset < size; offset += OutboundTransfer::part_size()) {
+    auto part = std::min(OutboundTransfer::part_size(), size - offset);
+    auto symbols = (part + 767) / 768;
+    charge += rldp_decoder_reservation_bytes(part, 768, symbols).value();
+    headroom = std::max(headroom, rldp_solver_working_bytes(768, symbols).value());
+    parts++;
+  }
+  return charge + (parts > 1 ? size : 0) + headroom;
+}
+
 TEST(Rldp2InboundBudget, CostsMatchTheDocumentedMeasurements) {
   ASSERT_EQ(38656u, open_part_cost());
   ASSERT_EQ(6681216u, rldp_decoder_reservation_bytes(2000000, 768, 2605).value());
@@ -166,14 +194,20 @@ TEST(Rldp2InboundBudget, CostsMatchTheDocumentedMeasurements) {
   ASSERT_TRUE(budget->max_decoders() < RldpConnection::MAX_INBOUND_TRANSFERS * 4096);
   ASSERT_TRUE(budget->max_bytes() >= rldp_decoder_reservation_bytes(2000000, 768, 2605).value() +
                                          rldp_solver_working_bytes(768, 2605).value());
-  // Half is reserved for solicited transfers, and one identity's share is an
-  // eighth of the rest -- still room for a full connection of default-size
-  // transfers, and for a maximal part with its decode attempt.
+  // Half is kept for solicited transfers. One identity's share of the rest is
+  // an eighth of the decoders and half of the bytes: 1024 decoders and
+  // 128 MiB -- room for a full connection of default-size transfers, and for
+  // the largest unsolicited transfer the node accepts with every part open.
   auto &limits = budget->limits();
   ASSERT_EQ(rldp_max_active_decoders / 2, limits.unsolicited_decoders);
   ASSERT_EQ(rldp_max_inbound_bytes / 2, limits.unsolicited_bytes);
-  ASSERT_EQ(limits.unsolicited_decoders / 8, limits.per_identity_decoders);
-  ASSERT_EQ(limits.unsolicited_bytes / 8, limits.per_identity_bytes);
+  ASSERT_EQ(1024u, limits.per_identity_decoders);
+  ASSERT_EQ(size_t{128} << 20, limits.per_identity_bytes);
+  // The largest unsolicited transfer, 16 MiB plus an envelope, charged with
+  // every part open, its assembly buffer and one decode attempt: about 81 MiB,
+  // which leaves the share more than 40 MiB of margin.
+  ASSERT_EQ(84984576u, all_parts_open_charge(largest_unsolicited_transfer()));
+  ASSERT_TRUE(all_parts_open_charge(largest_unsolicited_transfer()) + (size_t{40} << 20) <= limits.per_identity_bytes);
   ASSERT_TRUE(limits.per_identity_decoders >= RldpConnection::MAX_INBOUND_TRANSFERS);
   ASSERT_TRUE(limits.per_identity_bytes >= RldpConnection::MAX_INBOUND_TRANSFERS * open_part_cost());
   ASSERT_TRUE(limits.per_identity_bytes >= rldp_decoder_reservation_bytes(2000000, 768, 2605).value() +
@@ -496,14 +530,14 @@ TEST(Rldp2InboundBudget, TransferOfSeveralPartsCompletesAndReturnsEverything) {
 // the others holding room, so each refusal below has exactly one cause.
 TEST(Rldp2InboundBudget, UnsolicitedIsHeldToItsHalfAndEachIdentityToItsShare) {
   // 64 decoders and 64 MiB: the unsolicited half is 32 decoders and 32 MiB,
-  // and one identity's share is 4 decoders and 4 MiB.
+  // and one identity's share is 4 decoders and 16 MiB.
   const size_t mib = size_t{1} << 20;
   RldpInboundBudget budget(64, 64 * mib);
   auto unsolicited = RldpInboundKind::unsolicited;
   auto solicited = RldpInboundKind::solicited;
   ASSERT_EQ(32u, budget.limits().unsolicited_decoders);
   ASSERT_EQ(4u, budget.limits().per_identity_decoders);
-  ASSERT_EQ(4 * mib, budget.limits().per_identity_bytes);
+  ASSERT_EQ(16 * mib, budget.limits().per_identity_bytes);
 
   // One identity's decoder share.
   for (int i = 0; i < 4; i++) {
@@ -515,9 +549,9 @@ TEST(Rldp2InboundBudget, UnsolicitedIsHeldToItsHalfAndEachIdentityToItsShare) {
   ASSERT_TRUE(budget.release(unsolicited, identity(2), 1, 1));
 
   // One identity's byte share.
-  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(3), 1, 4 * mib));
+  ASSERT_TRUE(budget.try_acquire(unsolicited, identity(3), 1, 16 * mib));
   ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(3), 0, 1));
-  ASSERT_TRUE(budget.release(unsolicited, identity(3), 1, 4 * mib));
+  ASSERT_TRUE(budget.release(unsolicited, identity(3), 1, 16 * mib));
 
   // The unsolicited half's decoders: eight identities at their share fill it,
   // and a ninth is refused although the total and its own share have room.
@@ -537,17 +571,17 @@ TEST(Rldp2InboundBudget, UnsolicitedIsHeldToItsHalfAndEachIdentityToItsShare) {
   }
   ASSERT_TRUE(budget.release(unsolicited, identity(1), 4, 4));
 
-  // The unsolicited half's bytes: eight identities at their byte share fill
-  // it, and a ninth is refused although decoders and its share have room.
-  for (td::uint32 peer = 20; peer < 28; peer++) {
-    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(peer), 1, 4 * mib));
+  // The unsolicited half's bytes: two identities at their byte share fill
+  // it, and a third is refused although decoders and its share have room.
+  for (td::uint32 peer = 20; peer < 22; peer++) {
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(peer), 1, 16 * mib));
   }
   ASSERT_EQ(32 * mib, budget.unsolicited_bytes());
-  ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(28), 0, 1));
-  ASSERT_TRUE(budget.try_acquire(solicited, identity(28), 0, 32 * mib));
-  ASSERT_TRUE(budget.release(solicited, identity(28), 0, 32 * mib));
-  for (td::uint32 peer = 20; peer < 28; peer++) {
-    ASSERT_TRUE(budget.release(unsolicited, identity(peer), 1, 4 * mib));
+  ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(22), 0, 1));
+  ASSERT_TRUE(budget.try_acquire(solicited, identity(22), 0, 32 * mib));
+  ASSERT_TRUE(budget.release(solicited, identity(22), 0, 32 * mib));
+  for (td::uint32 peer = 20; peer < 22; peer++) {
+    ASSERT_TRUE(budget.release(unsolicited, identity(peer), 1, 16 * mib));
   }
 
   // Solicited transfers may use the whole budget, not only the reserve, and
@@ -576,20 +610,18 @@ TEST(Rldp2InboundBudget, HeadroomMustFitButIsNotTaken) {
   auto unsolicited = RldpInboundKind::unsolicited;
   auto solicited = RldpInboundKind::solicited;
   {
-    // The identity's share: 4 MiB.
+    // The identity's share: 16 MiB.
     RldpInboundBudget budget(64, 64 * mib);
-    ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(1), 1, 2 * mib, 2 * mib + 1));
-    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(1), 1, 2 * mib, 2 * mib));
-    ASSERT_EQ(2 * mib, budget.identity_bytes(identity(1)));
-    ASSERT_EQ(2 * mib, budget.reserved_bytes());
+    ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(1), 1, 8 * mib, 8 * mib + 1));
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(1), 1, 8 * mib, 8 * mib));
+    ASSERT_EQ(8 * mib, budget.identity_bytes(identity(1)));
+    ASSERT_EQ(8 * mib, budget.reserved_bytes());
   }
   {
     // The unsolicited half: 32 MiB, of which 30 MiB are held by others.
     RldpInboundBudget budget(64, 64 * mib);
-    for (td::uint32 peer = 10; peer < 17; peer++) {
-      ASSERT_TRUE(budget.try_acquire(unsolicited, identity(peer), 1, 4 * mib));
-    }
-    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(17), 1, 2 * mib));
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(10), 1, 16 * mib));
+    ASSERT_TRUE(budget.try_acquire(unsolicited, identity(17), 1, 14 * mib));
     ASSERT_TRUE(!budget.try_acquire(unsolicited, identity(18), 1, mib, mib + 1));
     ASSERT_TRUE(budget.try_acquire(unsolicited, identity(18), 1, mib, mib));
     ASSERT_EQ(31 * mib, budget.unsolicited_bytes());
@@ -809,6 +841,131 @@ TEST(Rldp2InboundBudget, OutstandingRequestsAreBounded) {
   receiver->run(sink);
   ASSERT_EQ(0u, receiver->outstanding_request_count());
   ASSERT_EQ(0u, budget->active_decoders());
+}
+
+// One sender and one receiving connection, carried to each other in memory
+// with nothing lost.
+struct Link {
+  Link(std::shared_ptr<RldpInboundBudget> budget, RldpPeerIdentity peer, td::uint64 receiver_mtu)
+      : sender(identity(0)), receiver(receiver_with(std::move(budget), peer)) {
+    receiver->set_default_mtu(receiver_mtu);
+  }
+  // Moves one round of datagrams both ways. True if anything moved.
+  bool step() {
+    sender.run(sender_sink);
+    auto to_receiver = std::move(sender_sink.outbox);
+    sender_sink.outbox.clear();
+    for (auto &datagram : to_receiver) {
+      receiver->receive_raw(std::move(datagram));
+    }
+    receiver->run(receiver_sink);
+    auto to_sender = std::move(receiver_sink.outbox);
+    receiver_sink.outbox.clear();
+    for (auto &datagram : to_sender) {
+      sender.receive_raw(std::move(datagram));
+    }
+    return !to_receiver.empty() || !to_sender.empty();
+  }
+  size_t finished() const {
+    return receiver_sink.completed.size() + receiver_sink.failed.size();
+  }
+
+  RldpConnection sender;
+  Sink sender_sink;
+  std::unique_ptr<RldpConnection> receiver;
+  Sink receiver_sink;
+};
+
+struct UnsolicitedRun {
+  bool largest_completed{false};
+  bool everything_completed{false};
+  bool payloads_match{false};
+  size_t failed{0};
+  double seconds{0};
+};
+
+// The largest unsolicited transfer the node accepts, two smaller ones from
+// the same peer overlapping it, and an unrelated peer's transfer at the same
+// time, all through real connections against `budget`. Runs until every
+// transfer has finished one way or the other, or well past the unsolicited
+// lifetime.
+UnsolicitedRun run_largest_unsolicited(std::shared_ptr<RldpInboundBudget> budget) {
+  const size_t small = size_t{1} << 20;
+  Link raised(budget, identity(1), largest_unsolicited_transfer());
+  Link unrelated(budget, identity(2), small + 4096);
+  std::map<TransferId, td::BufferSlice> sent;
+  auto send = [&](Link &link, TransferId id, size_t size) {
+    auto data = payload(size);
+    sent.emplace(id, data.clone());
+    // The sender's own timeout is far beyond the receiver's lifetime, so only
+    // the receiver decides whether the transfer made it in time.
+    link.sender.send(id, std::move(data), td::Timestamp::in(600.0));
+  };
+  send(raised, transfer(900), largest_unsolicited_transfer());
+  send(raised, transfer(901), small);
+  send(raised, transfer(902), small);
+  send(unrelated, transfer(903), small);
+
+  UnsolicitedRun run;
+  auto start = td::Time::now();
+  while ((raised.finished() < 3 || unrelated.finished() < 1) && td::Time::now() - start < 15.0) {
+    bool moved = raised.step();
+    moved = unrelated.step() || moved;
+    if (!moved) {
+      td::Time::jump_in_future(td::Time::now() + 0.01);
+    }
+  }
+  run.seconds = td::Time::now() - start;
+  run.failed = raised.receiver_sink.failed.size() + unrelated.receiver_sink.failed.size();
+  run.largest_completed = raised.receiver_sink.payloads.count(transfer(900)) > 0;
+  run.everything_completed =
+      raised.receiver_sink.completed.size() == 3 && unrelated.receiver_sink.completed.size() == 1;
+  run.payloads_match = run.everything_completed;
+  for (auto *link : {&raised, &unrelated}) {
+    for (auto &[id, data] : link->receiver_sink.payloads) {
+      auto it = sent.find(id);
+      if (it == sent.end() || it->second.as_slice() != data.as_slice()) {
+        run.payloads_match = false;
+      }
+    }
+  }
+  return run;
+}
+
+// Production budgets carry the largest unsolicited transfer a peer can be
+// allowed, beside smaller ones from the same peer and an unrelated peer's,
+// within the unsolicited lifetime, and give back everything afterwards.
+TEST(Rldp2InboundBudget, LargestUnsolicitedTransferCompletesUnderProductionBudgets) {
+  auto budget = std::make_shared<RldpInboundBudget>(rldp_max_active_decoders, rldp_max_inbound_bytes);
+  ASSERT_EQ(size_t{128} << 20, budget->limits().per_identity_bytes);
+  auto run = run_largest_unsolicited(budget);
+  LOG(ERROR) << "production share: completed=" << run.everything_completed << " failed=" << run.failed << " in "
+             << run.seconds << "s";
+  ASSERT_EQ(0u, run.failed);
+  ASSERT_TRUE(run.everything_completed);
+  ASSERT_TRUE(run.payloads_match);
+  ASSERT_TRUE(run.seconds < 10.0);
+  ASSERT_EQ(0u, budget->active_decoders());
+  ASSERT_EQ(0u, budget->reserved_bytes());
+  ASSERT_EQ(0u, budget->unsolicited_decoders());
+  ASSERT_EQ(0u, budget->unsolicited_bytes());
+  ASSERT_EQ(0u, budget->tracked_identities());
+}
+
+// The control: the same run with the share of 32 MiB this replaced. The
+// largest transfer cannot be held and outlives its lifetime; if this ever
+// completes, the test above no longer shows anything about the share.
+TEST(Rldp2InboundBudget, LargestUnsolicitedTransferFailsAtTheOldShare) {
+  auto limits = RldpInboundLimits::split(rldp_max_active_decoders, rldp_max_inbound_bytes);
+  limits.per_identity_bytes = size_t{32} << 20;
+  auto budget = std::make_shared<RldpInboundBudget>(limits);
+  auto run = run_largest_unsolicited(budget);
+  LOG(ERROR) << "32 MiB share: largest completed=" << run.largest_completed << " failed=" << run.failed << " in "
+             << run.seconds << "s";
+  ASSERT_TRUE(!run.largest_completed);
+  ASSERT_TRUE(run.failed >= 1);
+  ASSERT_EQ(0u, budget->active_decoders());
+  ASSERT_EQ(0u, budget->reserved_bytes());
 }
 
 }  // namespace

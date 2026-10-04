@@ -245,7 +245,8 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
     return;
   }
   // Each query lets this peer answer with a solicited transfer, which may use
-  // the reserve of the inbound budget; one peer may not hold more than this.
+  // the reserve of the inbound budget; one peer may not hold more than this
+  // many.
   auto on_connection = queries_.find({src, dst});
   if (on_connection != queries_.end() && on_connection->second.size() >= MAX_PENDING_QUERIES_PER_CONNECTION) {
     promise.set_error(td::Status::Error("too many RLDP queries are already awaiting an answer from this peer"));

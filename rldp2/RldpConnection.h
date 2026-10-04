@@ -115,9 +115,11 @@ class RldpConnection {
 
   // Local requests awaiting an answer on this connection. Each one entitles
   // the peer to a solicited transfer, which may draw on the reserve of the
-  // inbound budget, so the reserve is only as safe as their number is
-  // bounded. Rldp bounds the requests it makes per connection and in total;
-  // this holds the connection to the same bound whoever drives it.
+  // inbound budget, so their number is bounded: Rldp bounds the requests it
+  // makes per connection and in total, and this holds the connection to the
+  // same bound whoever drives it. A count bounds how many answers a peer may
+  // send, not their bytes; it does not keep one queried peer from using the
+  // reserve up (see RldpInboundLimits).
   static constexpr size_t MAX_OUTSTANDING_REQUESTS = 256;
 
   static constexpr td::uint64 DEFAULT_MTU = 7680;
