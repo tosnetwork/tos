@@ -78,6 +78,9 @@ impl TaskEscrowContract {
     /// instead of only failing once the agent has already done the work.
     pub const MIN_REVIEW_PERIOD_SECS: u32 = 3_600;
 
+    /// How many values `get_task_data` returns in the supported release.
+    pub const TASK_DATA_FIELDS: usize = 19;
+
     /// The fallback split a task carries unless its creator chooses another.
     pub const DEFAULT_DISPUTE_FALLBACK_AGENT_BPS: u16 = 5_000;
     /// The contract's `bps_denominator`.
@@ -183,7 +186,19 @@ impl TaskEscrowContract {
     }
 
     /// Decode the result of `get_task_data`; transport and RPC concerns stay outside this module.
+    ///
+    /// An instance of an earlier release returns a shorter tuple, and reading
+    /// it with this layout would take its fields for others, so any other
+    /// width is refused as an unsupported version.
     pub fn decode_data(stack: &TvmStackParser) -> anyhow::Result<TaskEscrowData> {
+        if stack.stack.len() != Self::TASK_DATA_FIELDS {
+            anyhow::bail!(
+                "unsupported Task Escrow contract version: get_task_data returned {} values; \
+                 this tosctl supports the {}-value layout",
+                stack.stack.len(),
+                Self::TASK_DATA_FIELDS
+            );
+        }
         let mut creator_slice = stack.slice(0)?;
         let creator = MsgAddressInt::construct_from(&mut creator_slice)?;
         let mut agent_slice = stack.slice(1)?;

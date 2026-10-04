@@ -74,6 +74,21 @@ pub async fn network_global_id(rpc_client: &ClientJsonRpc) -> anyhow::Result<i32
     }
 }
 
+/// Refuses an instance deployed from a release other than the one this tosctl
+/// builds, before anything decodes its state or signs for it: an earlier
+/// release's getters and signing domains differ, so its state would be
+/// misread and a signature made here would not be one it accepts.
+pub async fn require_supported_contract(
+    rpc_client: &ClientJsonRpc,
+    address: &chain_block::MsgAddressInt,
+    contract: contracts::VersionedContract,
+) -> anyhow::Result<()> {
+    let info = rpc_client.get_address_information(address).await?;
+    contract
+        .require_supported_code_boc(info.code.as_deref())
+        .map_err(|e| anyhow::anyhow!("{address}: {e}"))
+}
+
 pub async fn check_chain_rpc_connection(rpc_client: &ClientJsonRpc) -> anyhow::Result<()> {
     rpc_client.get_config_param(1).await.map(|_| ())
 }

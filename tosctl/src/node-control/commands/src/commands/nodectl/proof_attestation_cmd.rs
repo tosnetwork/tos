@@ -366,6 +366,12 @@ impl ProofAttestationShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_attestation_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::ProofAttestation,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack =
             provider.get_method(address.to_string(), "get_proof_attestation_data", vec![]).await?;
@@ -441,6 +447,12 @@ impl ProofAttestationSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_attestation_address(&config, &self.address, &self.name)?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &destination,
+            contracts::VersionedContract::ProofAttestation,
+        )
+        .await?;
         let wallet_config =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =

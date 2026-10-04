@@ -2039,6 +2039,12 @@ impl AgentTaskSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &destination,
+            contracts::VersionedContract::TaskEscrow,
+        )
+        .await?;
         let amount_nanotos = match explicit_amount {
             Some(amount) => amount,
             None => {
@@ -2319,7 +2325,11 @@ impl AgentTaskShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_task_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
-        let balance = rpc_client.get_address_information(&address).await?.balance;
+        let info = rpc_client.get_address_information(&address).await?;
+        contracts::VersionedContract::TaskEscrow
+            .require_supported_code_boc(info.code.as_deref())
+            .map_err(|e| anyhow::anyhow!("{address}: {e}"))?;
+        let balance = info.balance;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_task_data", vec![]).await?;
         let data = TaskEscrowContract::decode_data(&stack)?;

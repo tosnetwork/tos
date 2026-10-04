@@ -27,6 +27,7 @@ pub mod capability_registry;
 pub mod chain_provider;
 pub mod config_contract;
 pub mod contract_codes;
+pub mod contract_version;
 pub mod dispute;
 pub mod dns;
 pub mod elector;
@@ -71,6 +72,7 @@ pub use chain_provider::{
 pub use config_contract::{
     ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposedParam,
 };
+pub use contract_version::VersionedContract;
 pub use dispute::{
     DISPUTE_STATUS_EVIDENCE_SUBMITTED, DISPUTE_STATUS_OPEN, DISPUTE_STATUS_RESOLVED,
     DisputeContract, DisputeData, DisputeInit, RULING_CLAIMANT, RULING_NONE, RULING_RESPONDENT,

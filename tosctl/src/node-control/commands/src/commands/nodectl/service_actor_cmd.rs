@@ -580,6 +580,12 @@ impl ServiceActorShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_service_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::ServiceActor,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_service_data", vec![]).await?;
         let data = ServiceActorContract::decode_data(&stack)?;
@@ -688,6 +694,12 @@ impl ServiceActorRequestShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_service_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::ServiceActor,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider
             .get_method(
@@ -766,6 +778,12 @@ impl ServiceActorRefundShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_service_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::ServiceActor,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider
             .get_method(
@@ -942,6 +960,12 @@ impl ServiceActorSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination_service = resolve_service_address(&config, &self.address, &self.name)?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &destination_service,
+            contracts::VersionedContract::ServiceActor,
+        )
+        .await?;
         let wallet_config =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =
