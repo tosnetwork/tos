@@ -730,30 +730,41 @@ impl IndexerStore {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    /// Published addresses awaiting a refresh, oldest checkpoint first.
+    /// Published addresses awaiting a refresh: for each address only its
+    /// lowest pending height, since later heights wait for it anyway.
+    ///
+    /// Rows that have never failed come first, oldest checkpoint first. Rows
+    /// that have failed get a fixed share of `limit`, fewest attempts first,
+    /// and any room the fresh rows leave. Rows that keep failing therefore
+    /// cannot fill the window and stop fresh work behind them, and they are
+    /// still retried every pass.
     pub fn address_refresh_queue(&self, limit: usize) -> anyhow::Result<Vec<AddressRefresh>> {
-        let limit = i64::try_from(limit)?;
+        let retry_share = limit.div_ceil(ADDRESS_REFRESH_RETRY_SHARE_DIVISOR);
+        let fresh_limit = limit.saturating_sub(retry_share);
         let conn = self.lock()?;
-        let mut statement = conn.prepare(
-            "SELECT address, touch_count, last_block_seqno, last_gen_utime,
-                    mc_seqno, mc_root_hash, mc_file_hash, attempts
-             FROM indexer_address_refresh ORDER BY mc_seqno, address LIMIT ?1",
-        )?;
-        let rows = statement.query_map(params![limit], |row| {
-            Ok(AddressRefresh {
-                address: row.get(0)?,
-                touch_count: row.get(1)?,
-                last_block_seqno: row.get(2)?,
-                last_gen_utime: row.get(3)?,
-                checkpoint: MasterchainCheckpoint {
-                    seqno: row.get(4)?,
-                    root_hash: row.get(5)?,
-                    file_hash: row.get(6)?,
-                },
-                attempts: row.get(7)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        let mut queue =
+            read_address_refresh_heads(&conn, "attempts = 0", "mc_seqno, address", fresh_limit)?;
+        let fresh_read = queue.len();
+        queue.extend(read_address_refresh_heads(
+            &conn,
+            "attempts > 0",
+            "attempts, mc_seqno, address",
+            limit.saturating_sub(fresh_read),
+        )?);
+        // Fresh rows the share held back fill whatever the retries left.
+        let room = limit.saturating_sub(queue.len());
+        if room > 0 && fresh_read == fresh_limit {
+            queue.extend(read_address_refresh_heads_after(&conn, fresh_read, room)?);
+        }
+        Ok(queue)
+    }
+
+    /// Removes every queued height of one address, for contract kinds whose
+    /// visit reads the latest state and so covers all of them at once.
+    pub fn complete_all_address_refresh(&self, address: &str) -> anyhow::Result<()> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM indexer_address_refresh WHERE address = ?1", params![address])?;
+        Ok(())
     }
 
     /// Removes the refresh row for one address at one published height. Rows
@@ -764,6 +775,88 @@ impl IndexerStore {
         conn.execute(
             "DELETE FROM indexer_address_refresh WHERE address = ?1 AND mc_seqno = ?2",
             params![refresh.address, refresh.checkpoint.seqno],
+        )?;
+        Ok(())
+    }
+}
+
+/// One in this many places of a refresh pass is held for rows that failed before.
+const ADDRESS_REFRESH_RETRY_SHARE_DIVISOR: usize = 8;
+
+const ADDRESS_REFRESH_HEAD: &str = "SELECT address, touch_count, last_block_seqno, last_gen_utime,
+        mc_seqno, mc_root_hash, mc_file_hash, attempts
+     FROM indexer_address_refresh AS r
+     WHERE mc_seqno = (SELECT MIN(mc_seqno) FROM indexer_address_refresh
+                       WHERE address = r.address)";
+
+fn read_address_refresh_heads(
+    conn: &Connection,
+    filter: &str,
+    order: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<AddressRefresh>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let limit = i64::try_from(limit)?;
+    let mut statement =
+        conn.prepare(&format!("{ADDRESS_REFRESH_HEAD} AND {filter} ORDER BY {order} LIMIT ?1"))?;
+    let rows = statement.query_map(params![limit], address_refresh_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Fresh head rows past the first `skip`, in the same order as the first read.
+fn read_address_refresh_heads_after(
+    conn: &Connection,
+    skip: usize,
+    limit: usize,
+) -> anyhow::Result<Vec<AddressRefresh>> {
+    let skip = i64::try_from(skip)?;
+    let limit = i64::try_from(limit)?;
+    let mut statement = conn.prepare(&format!(
+        "{ADDRESS_REFRESH_HEAD} AND attempts = 0 ORDER BY mc_seqno, address LIMIT ?1 OFFSET ?2"
+    ))?;
+    let rows = statement.query_map(params![limit, skip], address_refresh_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn address_refresh_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AddressRefresh> {
+    Ok(AddressRefresh {
+        address: row.get(0)?,
+        touch_count: row.get(1)?,
+        last_block_seqno: row.get(2)?,
+        last_gen_utime: row.get(3)?,
+        checkpoint: MasterchainCheckpoint {
+            seqno: row.get(4)?,
+            root_hash: row.get(5)?,
+            file_hash: row.get(6)?,
+        },
+        attempts: row.get(7)?,
+    })
+}
+
+impl IndexerStore {
+    /// Queues one refresh row directly, for tests of the queue and its drain.
+    #[cfg(test)]
+    pub(crate) fn queue_address_refresh_for_test(
+        &self,
+        address: &str,
+        mc_seqno: u32,
+        attempts: u32,
+    ) -> anyhow::Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO indexer_address_refresh
+                (address, touch_count, last_block_seqno, last_gen_utime,
+                 mc_seqno, mc_root_hash, mc_file_hash, attempts)
+             VALUES (?1, 1, ?2, 1, ?2, ?3, ?4, ?5)",
+            params![
+                address,
+                mc_seqno,
+                format!("{mc_seqno:064x}"),
+                format!("{:064x}", u64::from(mc_seqno) + 1_000),
+                attempts
+            ],
         )?;
         Ok(())
     }
@@ -1150,5 +1243,87 @@ mod tests {
             .commit_scanned_block(2, &ScannedTarget::Master, &colliding, &[], &[])
             .unwrap_err();
         assert!(error.to_string().contains("differs from the batch anchor"), "{error}");
+    }
+
+    fn queue_refresh(store: &IndexerStore, address: &str, mc_seqno: u32, attempts: u32) {
+        store.queue_address_refresh_for_test(address, mc_seqno, attempts).unwrap();
+    }
+
+    fn queued(store: &IndexerStore, limit: usize) -> Vec<(String, u32)> {
+        store
+            .address_refresh_queue(limit)
+            .unwrap()
+            .into_iter()
+            .map(|refresh| (refresh.address, refresh.checkpoint.seqno))
+            .collect()
+    }
+
+    #[test]
+    fn rows_that_keep_failing_cannot_hold_back_fresh_work() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        // A full window of rows that failed before, all at older heights.
+        for n in 0..4096 {
+            queue_refresh(&store, &format!("0:poison{n:05}"), 10 + n, 1);
+        }
+        queue_refresh(&store, "0:honest", 9_000, 0);
+        let queue = queued(&store, 4096);
+        assert_eq!(queue.len(), 4096);
+        assert!(queue.contains(&("0:honest".to_owned(), 9_000)), "fresh work is reached");
+    }
+
+    #[test]
+    fn one_failing_address_takes_one_place_however_many_heights_it_has() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        for height in 0..4096 {
+            queue_refresh(&store, "0:poison", 10 + height, 1);
+        }
+        queue_refresh(&store, "0:honest", 9_000, 0);
+        let queue = queued(&store, 4096);
+        assert_eq!(queue, vec![("0:honest".to_owned(), 9_000), ("0:poison".to_owned(), 10)]);
+    }
+
+    #[test]
+    fn rows_that_failed_keep_their_share_under_fresh_load() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        for n in 0..500 {
+            queue_refresh(&store, &format!("0:fresh{n:05}"), 100 + n, 0);
+        }
+        for n in 0..10 {
+            queue_refresh(&store, &format!("0:retry{n:05}"), 1 + n, 3);
+        }
+        let queue = queued(&store, 80);
+        assert_eq!(queue.len(), 80);
+        let retried = queue.iter().filter(|(address, _)| address.starts_with("0:retry")).count();
+        assert_eq!(retried, 10, "every failed row is retried within the share");
+    }
+
+    #[test]
+    fn fresh_rows_fill_room_the_retries_leave() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        for n in 0..200 {
+            queue_refresh(&store, &format!("0:fresh{n:05}"), 100 + n, 0);
+        }
+        queue_refresh(&store, "0:retry", 1, 1);
+        let queue = queued(&store, 100);
+        assert_eq!(queue.len(), 100);
+        assert_eq!(queue.iter().filter(|(address, _)| address == "0:retry").count(), 1);
+        // The fresh rows are the 99 oldest, with none read twice.
+        let fresh: Vec<_> =
+            queue.iter().filter(|(address, _)| address.starts_with("0:fresh")).collect();
+        assert_eq!(fresh.len(), 99);
+        let mut heights: Vec<u32> = fresh.iter().map(|(_, height)| *height).collect();
+        heights.sort_unstable();
+        heights.dedup();
+        assert_eq!(heights, (100..199).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn an_address_is_offered_at_its_lowest_height_only() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        queue_refresh(&store, "0:pool", 7, 0);
+        queue_refresh(&store, "0:pool", 5, 0);
+        assert_eq!(queued(&store, 10), vec![("0:pool".to_owned(), 5)]);
+        store.complete_all_address_refresh("0:pool").unwrap();
+        assert!(queued(&store, 10).is_empty());
     }
 }

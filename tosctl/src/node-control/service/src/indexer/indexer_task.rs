@@ -28,7 +28,7 @@
 //! these kinds is *always* re-decoded when it reappears in a later block,
 //! since that is exactly how a status change (accept/settle/rule/...)
 //! becomes visible.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -750,56 +750,45 @@ async fn drain_address_refresh(
     probe_budget: &ProbeBudget,
     limit: usize,
 ) -> anyhow::Result<()> {
+    // The queue holds each address's lowest pending height only, so a pool is
+    // folded in strictly in height order and an unreadable height keeps it
+    // (and the ledger) waiting rather than being skipped. Rows that keep
+    // failing are retried within a fixed share of the pass and cannot hold
+    // fresh work back.
     let queue = store.address_refresh_queue(limit)?;
-    // The queue is ordered by height. An address whose earlier observation is
-    // still owed is not observed at a later height in the same pass: a pool is
-    // folded in strictly in height order, and an unreadable height keeps it
-    // (and the ledger) waiting rather than being skipped.
-    let mut waiting: HashSet<String> = HashSet::new();
-    let mut latest: HashMap<String, u32> = HashMap::new();
-    for refresh in &queue {
-        let entry = latest.entry(refresh.address.clone()).or_insert(refresh.checkpoint.seqno);
-        *entry = (*entry).max(refresh.checkpoint.seqno);
-    }
     for refresh in queue {
-        if waiting.contains(&refresh.address) {
-            continue;
-        }
         let kind_before = store.kind_of(&refresh.address)?;
         let ledger_relevant = match kind_before.as_deref() {
             None | Some("unclassified") => true,
             Some(kind) => kind == NOMINATOR_POOL_KIND,
         };
-        // Other contract kinds read latest state, so only their last queued
-        // height needs a visit.
-        if !ledger_relevant
-            && latest.get(&refresh.address).is_some_and(|seqno| *seqno > refresh.checkpoint.seqno)
-        {
-            store.complete_address_refresh(&refresh)?;
+        // Other contract kinds read latest state: one visit covers every
+        // height queued for them.
+        if !ledger_relevant {
+            if let Err(e) =
+                visit_address(chain_provider, store, known, &refresh, probe_budget).await
+            {
+                tracing::warn!(
+                    target: "indexer",
+                    address = %refresh.address,
+                    error = %format!("{e:#}"),
+                    "failed to index account"
+                );
+            }
+            store.complete_all_address_refresh(&refresh.address)?;
             continue;
         }
         match visit_address(chain_provider, store, known, &refresh, probe_budget).await {
             Ok(()) => store.complete_address_refresh(&refresh)?,
             Err(e) => {
-                if ledger_relevant {
-                    tracing::warn!(
-                        target: "indexer",
-                        address = %refresh.address,
-                        mc_seqno = refresh.checkpoint.seqno,
-                        error = %format!("{e:#}"),
-                        "failed to index account; keeping it for another attempt"
-                    );
-                    store.defer_address_refresh(&refresh)?;
-                    waiting.insert(refresh.address.clone());
-                } else {
-                    tracing::warn!(
-                        target: "indexer",
-                        address = %refresh.address,
-                        error = %format!("{e:#}"),
-                        "failed to index account"
-                    );
-                    store.complete_address_refresh(&refresh)?;
-                }
+                tracing::warn!(
+                    target: "indexer",
+                    address = %refresh.address,
+                    mc_seqno = refresh.checkpoint.seqno,
+                    error = %format!("{e:#}"),
+                    "failed to index account; keeping it for another attempt"
+                );
+                store.defer_address_refresh(&refresh)?;
             }
         }
     }
@@ -2853,6 +2842,42 @@ mod tests {
     /// arbitrary.
     struct NotFoundLifecycleProvider {
         get_method_calls: StdMutex<usize>,
+    }
+
+    #[tokio::test]
+    async fn one_visit_clears_every_queued_height_of_a_latest_state_kind() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let address = "0:".to_owned() + &"ab".repeat(32);
+        store
+            .upsert(&IndexedRecord {
+                address: address.clone(),
+                kind: "dns_domain".to_owned(),
+                creator: None,
+                counterparty: None,
+                status: None,
+                deadline: None,
+                last_seqno: 1,
+                updated_at: time_format::now(),
+                dto_json: "{}".to_owned(),
+            })
+            .unwrap();
+        for height in [5, 6, 7] {
+            store.queue_address_refresh_for_test(&address, height, 0).unwrap();
+        }
+        let provider: Arc<dyn ChainProvider> =
+            Arc::new(NotFoundLifecycleProvider { get_method_calls: StdMutex::new(0) });
+        drain_address_refresh(
+            &provider,
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+            10,
+        )
+        .await
+        .unwrap();
+        // The kind reads latest state, so whether or not the visit succeeded,
+        // no older height is left to visit again.
+        assert!(store.address_refresh_queue(10).unwrap().is_empty());
     }
 
     #[async_trait::async_trait]
