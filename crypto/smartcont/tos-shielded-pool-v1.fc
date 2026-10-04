@@ -80,9 +80,12 @@ int op_reserve_topup() asm "1397248003 PUSHINT";    ;; 0x53485003
 ;;
 ;;   path             measured      bound   ceiling   Poseidon2 operations
 ;;   reserve top-up      2,480      2,480    10,000    0
-;;   deposit           155,679    176,694   230,000   14
-;;   recovery          167,272    186,991   240,000   15
-;;   withdrawal      1,171,516  1,205,003 1,510,000  142   -- the worst transact
+;;   deposit           156,380    177,395   230,000   14
+;;   recovery          167,408    187,127   240,000   15
+;;   withdrawal      1,172,676  1,206,163 1,510,000  142   -- the worst transact
+;;
+;; These figures are from 2026-10-04, with the recovery-leaf reservation in
+;; every handler.
 ;;
 ;; Derived and checked by `gas_ceiling_bound.rs` in the cross-check crate,
 ;; which re-measures every span from this source and fails if a ceiling is
@@ -140,7 +143,7 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
   cell output_data = body~load_ref();
   throw_unless(200, body.slice_empty?());
 
-  (int commitment_root, int commitment_next_index,
+  (int commitment_root, int commitment_next_index, int reserved_recovery_leaves,
    int nullifier_root, int nullifier_next_index,
    int last_anchor_epoch, int native_liability, int reserve_floor,
    cell frontier, cell anchors, cell config, cell vk) = state_parse(get_data());
@@ -157,6 +160,9 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
   ;; 4. and only now the ceiling, so the compute a bug can lose is independent
   ;; of the principal. Still no ACCEPT.
   set_gas_limit(deposit_gas_ceiling());
+
+  ;; One leaf, and not one of the leaves held back for recoveries in flight.
+  commitment_room_require(commitment_next_index, reserved_recovery_leaves, 1, 0);
 
   ;; 5, 6. the note the contract computes, from the amount it admitted.
   int data_hash = output_data_hash(output_data);
@@ -188,7 +194,7 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
   (frontier, commitment_root) = frontier_append(frontier, leaf_index, leaf);
 
   ;; 10, 11. one write, at the end. No COMMIT and no outbound action.
-  set_data(state_build(commitment_root, leaf_index + 1,
+  set_data(state_build(commitment_root, leaf_index + 1, reserved_recovery_leaves,
                        nullifier_root, nullifier_next_index,
                        last_anchor_epoch, new_liability, reserve_floor,
                        frontier, anchors, config, vk));
@@ -226,7 +232,7 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
   throw_unless(203, msg_value >= get_compute_fee(0, transact_gas_ceiling()));
   set_gas_limit(transact_gas_ceiling());
 
-  (int commitment_root, int commitment_next_index,
+  (int commitment_root, int commitment_next_index, int reserved_recovery_leaves,
    int nullifier_root, int nullifier_next_index,
    int last_anchor_epoch, int native_liability, int reserve_floor,
    cell frontier, cell anchors, cell config, cell vk) = state_parse(get_data());
@@ -238,6 +244,13 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
   if (public_amount_out > 0) {
     throw_unless(202, config_has_denomination(config, public_amount_out));
   }
+
+  ;; Three outputs, and for a withdrawal one more leaf held back for the
+  ;; recovery note its payout would need if it bounced. Checked before any of
+  ;; the expensive work, so a full tree refuses cheaply.
+  int new_reservations = public_amount_out > 0 ? 1 : 0;
+  commitment_room_require(commitment_next_index, reserved_recovery_leaves, 3,
+                          new_reservations);
 
   ;; 3, 4, 6, 7, 8. The eighteen, with the eight derived ones computed from the
   ;; bytes that arrived rather than read from the wire.
@@ -309,6 +322,9 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
       payout_new_liability(native_liability, public_amount_out, withdrawal_fee);
     raw_reserve(native_liability + reserve_floor, 0);
     send_raw_message(payout_message(recipient, public_amount_out, payout), 17);
+    ;; The payout may come back, and its recovery note needs a leaf that is
+    ;; still there when it does.
+    reserved_recovery_leaves = reserved_recovery_leaves + new_reservations;
   }
 
   ;; A transfer moves no value across the boundary, so its liability is
@@ -321,7 +337,7 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
 
 
   ;; 17. one write, at the end.
-  set_data(state_build(commitment_root, leaf_index + 3,
+  set_data(state_build(commitment_root, leaf_index + 3, reserved_recovery_leaves,
                        temp_nullifier_root, temp_nullifier_next,
                        last_anchor_epoch, native_liability, reserve_floor,
                        frontier, anchors, config, vk));
@@ -380,6 +396,16 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
   accept_message();
   set_gas_limit(bounce_gas_ceiling());
 
+  (int commitment_root, int commitment_next_index, int reserved_recovery_leaves,
+   int nullifier_root, int nullifier_next_index,
+   int last_anchor_epoch, int native_liability, int reserve_floor,
+   cell frontier, cell anchors, cell config, cell vk) = state_parse(get_data());
+
+  ;; This bounce is the one event the withdrawal's reservation was taken for,
+  ;; so it is consumed here, once, whether or not a note follows. The leaf it
+  ;; held is the one the append below uses; nothing else could have taken it.
+  reserved_recovery_leaves = recovery_reservation_consume(reserved_recovery_leaves);
+
   ;; 6, 7. The note is for what came back, less what putting it back costs.
   ;;
   ;; A bounce that returns nothing -- or less than the recovery is worth --
@@ -388,16 +414,18 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
   ;; pool had paid for. What is left stays in the balance as unencumbered
   ;; reserve, which is where the gas this transaction is about to spend comes
   ;; from.
+  ;;
+  ;; Nothing is minted, but the reservation is still spent: the bounce it was
+  ;; held for has arrived and will not arrive again.
   int charge = recovery_charge_at(bounce_gas_ceiling());
   if (msg_value <= charge) {
+    set_data(state_build(commitment_root, commitment_next_index, reserved_recovery_leaves,
+                         nullifier_root, nullifier_next_index,
+                         last_anchor_epoch, native_liability, reserve_floor,
+                         frontier, anchors, config, vk));
     return ();
   }
   int recovered_amount = msg_value - charge;
-
-  (int commitment_root, int commitment_next_index,
-   int nullifier_root, int nullifier_next_index,
-   int last_anchor_epoch, int native_liability, int reserve_floor,
-   cell frontier, cell anchors, cell config, cell vk) = state_parse(get_data());
 
   ;; 9. the pre-mutation root is preserved before the append, as on every other
   ;; path that moves the tree.
@@ -419,7 +447,7 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
   throw_unless(204,
     balance - get_compute_fee(0, bounce_gas_ceiling()) >= native_liability + reserve_floor);
 
-  set_data(state_build(commitment_root, leaf_index + 1,
+  set_data(state_build(commitment_root, leaf_index + 1, reserved_recovery_leaves,
                        nullifier_root, nullifier_next_index,
                        last_anchor_epoch, native_liability, reserve_floor,
                        frontier, anchors, config, vk));
@@ -464,32 +492,40 @@ int bounce_gas_ceiling() asm "240000 PUSHINT";
 ;; --- get methods -------------------------------------------------------------
 
 int commitment_root() method_id {
-  (int root, _, _, _, _, _, _, _, _, _, _) = state_parse(get_data());
+  (int root, _, _, _, _, _, _, _, _, _, _, _) = state_parse(get_data());
   return root;
 }
 
 int commitment_next_index() method_id {
-  (_, int next, _, _, _, _, _, _, _, _, _) = state_parse(get_data());
+  (_, int next, _, _, _, _, _, _, _, _, _, _) = state_parse(get_data());
   return next;
 }
 
 int native_liability() method_id {
-  (_, _, _, _, _, int liability, _, _, _, _, _) = state_parse(get_data());
+  (_, _, _, _, _, _, int liability, _, _, _, _, _) = state_parse(get_data());
   return liability;
 }
 
 int reserve_floor() method_id {
-  (_, _, _, _, _, _, int reserve, _, _, _, _) = state_parse(get_data());
+  (_, _, _, _, _, _, _, int reserve, _, _, _, _) = state_parse(get_data());
   return reserve;
 }
 
+;; Section 13. Commitment leaves held back for withdrawals whose payout could
+;; still bounce. A wallet reads it beside commitment_next_index to know how
+;; much of the tree is really left: 2^32 less both.
+int reserved_recovery_leaves() method_id {
+  (_, _, int reserved, _, _, _, _, _, _, _, _, _) = state_parse(get_data());
+  return reserved;
+}
+
 int nullifier_root() method_id {
-  (_, _, int root, _, _, _, _, _, _, _, _) = state_parse(get_data());
+  (_, _, _, int root, _, _, _, _, _, _, _, _) = state_parse(get_data());
   return root;
 }
 
 int nullifier_next_index() method_id {
-  (_, _, _, int next, _, _, _, _, _, _, _) = state_parse(get_data());
+  (_, _, _, _, int next, _, _, _, _, _, _, _) = state_parse(get_data());
   return next;
 }
 
@@ -505,7 +541,7 @@ int recovery_charge() method_id {
 }
 
 int backed() method_id {
-  (_, _, _, _, _, int liability, int reserve, _, _, _, _) = state_parse(get_data());
+  (_, _, _, _, _, _, int liability, int reserve, _, _, _, _) = state_parse(get_data());
   [int balance, _] = get_balance();
   return balance >= liability + reserve;
 }

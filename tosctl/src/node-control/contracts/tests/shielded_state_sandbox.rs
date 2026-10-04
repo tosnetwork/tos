@@ -141,16 +141,16 @@ const PROBE: &str = r#"
 cell p_genesis(int commit_root, int nullifier_root, int reserve, cell config, cell vk) method_id {
   return state_genesis(commit_root, nullifier_root, reserve, config, vk);
 }
-(int, int, int, int, int, int, int) p_scalars(cell state) method_id {
-  (int cr, int cn, int nr, int nn, int epoch, int liability, int reserve,
+(int, int, int, int, int, int, int, int) p_scalars(cell state) method_id {
+  (int cr, int cn, int rr, int nr, int nn, int epoch, int liability, int reserve,
    cell f, cell a, cell c, cell v) = state_parse(state);
-  return (cr, cn, nr, nn, epoch, liability, reserve);
+  return (cr, cn, rr, nr, nn, epoch, liability, reserve);
 }
 ;; Every slot of the frontier the state carries, summed. At genesis they are
 ;; all zero, and reading them at all is the assertion: `frontier_level_read`
 ;; refuses a store whose shape is not the one section 13.1 fixes.
 int p_frontier_sum(cell state) method_id {
-  (_, _, _, _, _, _, _, cell frontier, _, _, _) = state_parse(state);
+  (_, _, _, _, _, _, _, _, cell frontier, _, _, _) = state_parse(state);
   int total = 0;
   int level = 0;
   cell node = frontier;
@@ -169,9 +169,18 @@ int p_parse_exit(cell state) method_id {
   return 0;
 }
 cell p_rebuild(cell state) method_id {
-  (int cr, int cn, int nr, int nn, int epoch, int liability, int reserve,
+  (int cr, int cn, int rr, int nr, int nn, int epoch, int liability, int reserve,
    cell f, cell a, cell c, cell v) = state_parse(state);
-  return state_build(cr, cn, nr, nn, epoch, liability, reserve, f, a, c, v);
+  return state_build(cr, cn, rr, nr, nn, epoch, liability, reserve, f, a, c, v);
+}
+;; Section 13's room rule and its one consumer, called directly so that every
+;; edge of the inequality can be put to it without filling a tree.
+int p_room(int next, int reserved, int ordinary, int reservations) method_id {
+  commitment_room_require(next, reserved, ordinary, reservations);
+  return 0;
+}
+int p_consume(int reserved) method_id {
+  return recovery_reservation_consume(reserved);
 }
 int p_config(cell config) method_id {
   (_, _, _, int fee, int count, _) = config_parse(config);
@@ -277,14 +286,15 @@ fn genesis_is_the_state_section_13_2_describes() {
     let state = probe.genesis(&config, &vk, 5 * TOS).expect("genesis");
 
     let scalars = probe.scalars(&state).expect("parse");
-    assert_eq!(scalars.len(), 7);
+    assert_eq!(scalars.len(), 8);
     assert_eq!(scalars[0], dec(&field(0xaa)), "the commitment root is not the empty root given");
     assert_eq!(scalars[1], "0", "the commitment counter does not start at zero");
-    assert_eq!(scalars[2], dec(&field(0xbb)), "the nullifier root is not the genesis root given");
-    assert_eq!(scalars[3], "1", "the nullifier counter does not start at one");
-    assert_eq!(scalars[4], EPOCH_NONE.to_string(), "last_anchor_epoch is not the sentinel");
-    assert_eq!(scalars[5], "0", "liability does not start at zero");
-    assert_eq!(scalars[6], (5 * TOS).to_string(), "the reserve floor was not carried through");
+    assert_eq!(scalars[2], "0", "a genesis state reserves recovery leaves nobody asked for");
+    assert_eq!(scalars[3], dec(&field(0xbb)), "the nullifier root is not the genesis root given");
+    assert_eq!(scalars[4], "1", "the nullifier counter does not start at one");
+    assert_eq!(scalars[5], EPOCH_NONE.to_string(), "last_anchor_epoch is not the sentinel");
+    assert_eq!(scalars[6], "0", "liability does not start at zero");
+    assert_eq!(scalars[7], (5 * TOS).to_string(), "the reserve floor was not carried through");
 
     // Both rings are present and empty, and the frontier is twelve levels of
     // zeros -- which is a shape, not an absence, so it is read rather than
@@ -320,6 +330,7 @@ fn a_state_root_that_is_not_the_frozen_shape_is_refused() {
         builder.append_u16(version).unwrap();
         builder.append_raw(&field(0xaa), 256).unwrap();
         builder.append_u64(0).unwrap();
+        builder.append_u32(0).unwrap();
         builder.append_raw(&field(0xbb), 256).unwrap();
         builder.append_u64(1).unwrap();
         builder.append_u32(EPOCH_NONE).unwrap();
@@ -398,6 +409,7 @@ fn a_state_without_a_frontier_is_refused() {
         builder.append_u16(VERSION).unwrap();
         builder.append_raw(&field(0xaa), 256).unwrap();
         builder.append_u64(0).unwrap();
+        builder.append_u32(0).unwrap();
         builder.append_raw(&field(0xbb), 256).unwrap();
         builder.append_u64(1).unwrap();
         builder.append_u32(EPOCH_NONE).unwrap();
@@ -442,12 +454,13 @@ fn a_counter_above_the_sentinel_is_not_a_state() {
     let probe = Probe::deploy();
     let config = Config::sample().cell();
     let vk = vk_chain();
-    let build = |commitment: u64, nullifier: u64| -> Cell {
+    let build_reserving = |commitment: u64, reserved: u32, nullifier: u64| -> Cell {
         let mut builder = BuilderData::new();
         builder.append_u32(MAGIC).unwrap();
         builder.append_u16(VERSION).unwrap();
         builder.append_raw(&field(0xaa), 256).unwrap();
         builder.append_u64(commitment).unwrap();
+        builder.append_u32(reserved).unwrap();
         builder.append_raw(&field(0xbb), 256).unwrap();
         builder.append_u64(nullifier).unwrap();
         builder.append_u32(EPOCH_NONE).unwrap();
@@ -465,6 +478,8 @@ fn a_counter_above_the_sentinel_is_not_a_state() {
         builder.checked_append_reference(vk.clone()).unwrap();
         builder.into_cell().expect("a state root")
     };
+    let build =
+        |commitment: u64, nullifier: u64| -> Cell { build_reserving(commitment, 0, nullifier) };
 
     // The sentinel itself is representable; anything past it is not a state.
     assert_eq!(probe.exit("p_scalars", vec![StackItem::Cell(build(INDEX_SENTINEL, 1))]), 0);
@@ -477,6 +492,81 @@ fn a_counter_above_the_sentinel_is_not_a_state() {
         probe.exit("p_scalars", vec![StackItem::Cell(build(0, INDEX_SENTINEL + 1))]),
         182,
         "a nullifier counter past the sentinel was accepted"
+    );
+
+    // The leaves reserved for recoveries are leaves the tree still owes. Owing
+    // exactly what is left is a state; owing one more is not, because some
+    // authentic bounce would then have nowhere to go.
+    assert_eq!(
+        probe.exit("p_scalars", vec![StackItem::Cell(build_reserving(INDEX_SENTINEL - 2, 2, 1))]),
+        0,
+        "a state whose reservations exactly fill the tree was refused"
+    );
+    assert_eq!(
+        probe.exit("p_scalars", vec![StackItem::Cell(build_reserving(INDEX_SENTINEL - 2, 3, 1))]),
+        182,
+        "a state reserving more leaves than the tree has left was accepted"
+    );
+    // And the same rule on the way out: a rebuild of a state that is over
+    // would write it.
+    assert_eq!(
+        probe.exit("p_rebuild", vec![StackItem::Cell(build_reserving(INDEX_SENTINEL - 2, 2, 1))]),
+        0,
+        "a state whose reservations exactly fill the tree could not be written back"
+    );
+}
+
+/// Section 13's room rule, at every edge of
+/// `next + ordinary + reserved + new_reservations <= 2^32`.
+///
+/// Each term is moved by one past the edge on its own, so dropping any one of
+/// them from the inequality leaves a case below accepted that must not be.
+#[test]
+fn the_room_rule_counts_every_term() {
+    let probe = Probe::deploy();
+    let room = |next: u64, reserved: u64, ordinary: u64, reservations: u64| -> i32 {
+        probe.exit(
+            "p_room",
+            vec![
+                StackItem::int(next as i64),
+                StackItem::int(reserved as i64),
+                StackItem::int(ordinary as i64),
+                StackItem::int(reservations as i64),
+            ],
+        )
+    };
+    // Exactly full is allowed: the last leaf is a leaf.
+    assert_eq!(room(INDEX_SENTINEL - 6, 2, 3, 1), 0, "an operation that exactly fills the tree");
+    assert_eq!(room(INDEX_SENTINEL - 1, 0, 1, 0), 0, "a deposit into the last leaf");
+    // One past, through each term in turn.
+    assert_eq!(room(INDEX_SENTINEL - 5, 2, 3, 1), 190, "the leaf counter was not counted");
+    assert_eq!(room(INDEX_SENTINEL - 6, 3, 3, 1), 190, "the reserved leaves were not counted");
+    assert_eq!(room(INDEX_SENTINEL - 6, 2, 4, 1), 190, "the ordinary outputs were not counted");
+    assert_eq!(room(INDEX_SENTINEL - 6, 2, 3, 2), 190, "the new reservation was not counted");
+    // The exhausted tree refuses even the smallest append.
+    assert_eq!(room(INDEX_SENTINEL, 0, 1, 0), 190, "a deposit into an exhausted tree");
+}
+
+/// One reservation per recovery, and none conjured from an empty count.
+#[test]
+fn a_recovery_consumes_one_reservation_and_needs_one() {
+    let probe = Probe::deploy();
+    let stack = probe.call("p_consume", vec![StackItem::int(2)]).expect("a reservation to spend");
+    assert_eq!(
+        stack.last().expect("a result").as_integer().expect("integer").to_string(),
+        "1",
+        "a recovery did not consume exactly one reservation"
+    );
+    let stack = probe.call("p_consume", vec![StackItem::int(1)]).expect("the last reservation");
+    assert_eq!(
+        stack.last().expect("a result").as_integer().expect("integer").to_string(),
+        "0",
+        "the last reservation was not consumed to zero"
+    );
+    assert_eq!(
+        probe.exit("p_consume", vec![StackItem::int(0)]),
+        191,
+        "a recovery with no reservation left was allowed to proceed"
     );
 }
 

@@ -112,13 +112,10 @@ fn deploy_forger(bc: &mut Blockchain) -> MsgAddressInt {
 /// the pool ever reads this as a bounce it will mint.
 fn authentic_looking_envelope(claimant: &MsgAddressInt) -> (Cell, Fr) {
     let owner_commitment = Fr::from(0x5eed_1234u64);
-    let recovery_payload: Vec<u8> = (0..wire::OUTPUT_DATA_BYTES as u32)
-        .map(|index| (index as u8) ^ 0x3c)
-        .collect();
-    let template_hash = wire::recovery_template_hash(
-        owner_commitment,
-        wire::output_data_hash(&recovery_payload),
-    );
+    let recovery_payload: Vec<u8> =
+        (0..wire::OUTPUT_DATA_BYTES as u32).map(|index| (index as u8) ^ 0x3c).collect();
+    let template_hash =
+        wire::recovery_template_hash(owner_commitment, wire::output_data_hash(&recovery_payload));
     let recipient_hash = wire::public_recipient_hash(&account_of(claimant));
 
     // The digest is arbitrary: nothing on this path proves anything about it.
@@ -257,6 +254,11 @@ fn the_same_record_mints_when_the_bit_is_not_the_senders_to_set() {
     let mut pool = pool_with_a_deposit();
     let forger = deploy_forger(&mut pool.bc);
     let (envelope, _) = authentic_looking_envelope(&forger);
+    // The withdrawal this record would have come from was never sent through
+    // this pool, so the leaf it would have reserved is stood in for here.
+    // Without it the pool refuses the recovery for having no room held back,
+    // which is a different refusal from the one this test needs to rule out.
+    pool.set_reserved_recovery_leaves(1).expect("reserve the recovery leaf");
 
     let before = liability(&pool);
     let (exit, _) = pool
@@ -267,10 +269,7 @@ fn the_same_record_mints_when_the_bit_is_not_the_senders_to_set() {
         "the record the forger could not deliver would not have been accepted anyway (exit \
          {exit}), so the test above shows nothing about who may set the bounced bit"
     );
-    assert!(
-        liability(&pool) > before,
-        "the synthetic bounce was accepted but minted nothing"
-    );
+    assert!(liability(&pool) > before, "the synthetic bounce was accepted but minted nothing");
 }
 
 /// And a record naming somebody else is refused even then, which is the half
@@ -279,11 +278,9 @@ fn the_same_record_mints_when_the_bit_is_not_the_senders_to_set() {
 fn a_record_naming_another_address_is_refused_from_any_sender() {
     let mut pool = pool_with_a_deposit();
     let forger = deploy_forger(&mut pool.bc);
-    let elsewhere = MsgAddressInt::with_params(
-        0,
-        chain_block::SliceData::from_raw(vec![0x77u8; 32], 256),
-    )
-    .expect("another address");
+    let elsewhere =
+        MsgAddressInt::with_params(0, chain_block::SliceData::from_raw(vec![0x77u8; 32], 256))
+            .expect("another address");
     let (envelope, _) = authentic_looking_envelope(&elsewhere);
 
     let before = liability(&pool);

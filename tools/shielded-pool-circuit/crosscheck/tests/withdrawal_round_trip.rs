@@ -68,6 +68,12 @@ fn a_withdrawal_that_is_refused_comes_back_as_a_note() {
     assert_eq!(outcome.nullifier_next_index, "3", "two nullifiers should have been spent");
     // Two deposits, three outputs from the transact, one recovery note.
     assert_eq!(outcome.commitment_next_index, "6", "the recovery did not mint a note");
+    // The withdrawal held one leaf back for this note, and the bounce it was
+    // held for has spent it.
+    assert_eq!(
+        outcome.reserved_recovery_leaves, "0",
+        "the recovery left its withdrawal's reservation behind"
+    );
 
     let paid_out = u128::from(DENOMINATION) + u128::from(WITHDRAWAL_FEE);
     let recovered = outcome.pool_liability_after + paid_out - outcome.pool_liability_before;
@@ -161,6 +167,13 @@ fn a_withdrawal_that_is_taken_leaves_nothing_to_recover() {
     assert_eq!(
         outcome.commitment_next_index, "5",
         "a withdrawal that was taken minted a recovery note anyway"
+    );
+    // A payout that was taken sends nothing back, so nothing tells the pool
+    // it will never bounce. The leaf it reserved stays reserved: releasing it
+    // on an assumption is how a late bounce would find the tree full.
+    assert_eq!(
+        outcome.reserved_recovery_leaves, "1",
+        "a withdrawal whose payout was taken did not keep its recovery leaf reserved"
     );
 
     let paid_out = u128::from(DENOMINATION) + u128::from(WITHDRAWAL_FEE);

@@ -74,8 +74,9 @@ fn parameters() -> Parameters {
 }
 
 fn frozen() -> serde_json::Value {
-    let text = std::fs::read_to_string(root().join("artifacts/shielded-pool/genesis-manifest.json"))
-        .expect("the frozen manifest");
+    let text =
+        std::fs::read_to_string(root().join("artifacts/shielded-pool/genesis-manifest.json"))
+            .expect("the frozen manifest");
     serde_json::from_str(&text).expect("the manifest is JSON")
 }
 
@@ -262,13 +263,12 @@ fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
             // A deployment has to carry at least the reserve floor, or the
             // pool is unbacked from its first block and refuses everything.
             // Twenty TOS did until the floor was re-derived to fifty.
-            u64::try_from(shielded_pool_genesis::RESERVE_FLOOR).expect("the floor fits")
-                + 20 * TOS,
+            u64::try_from(shielded_pool_genesis::RESERVE_FLOOR).expect("the floor fits") + 20 * TOS,
         )
-            .bounce(false)
-            .state_init(si)
-            .body(Cell::default())
-            .build(),
+        .bounce(false)
+        .state_init(si)
+        .body(Cell::default())
+        .build(),
     )
     .expect("deploy")
     .expect_success();
@@ -284,6 +284,7 @@ fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
         shielded_pool_circuit_crosscheck::pool::dec(genesis.commitment_root)
     );
     assert_eq!(get("commitment_next_index"), "0");
+    assert_eq!(get("reserved_recovery_leaves"), "0");
     assert_eq!(
         get("nullifier_root"),
         shielded_pool_circuit_crosscheck::pool::dec(genesis.nullifier_root)

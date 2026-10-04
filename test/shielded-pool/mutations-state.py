@@ -36,6 +36,8 @@ CONFIG_TEST = 'the_config_is_revalidated_rather_than_trusted'
 VK_TEST = 'the_verifying_key_chain_is_the_frozen_shape'
 REFUSE_TEST = 'genesis_refuses_a_configuration_it_would_have_to_live_with'
 FRONTIER_TEST = 'a_state_without_a_frontier_is_refused'
+ROOM_TEST = 'the_room_rule_counts_every_term'
+CONSUME_TEST = 'a_recovery_consumes_one_reservation_and_needs_one'
 
 
 @dataclass
@@ -75,14 +77,44 @@ CASES = [
          '  throw_unless(180, s~load_uint(16) == state_version());',
          '  s~load_uint(16);', SHAPE_TEST),
     Case('state-trailing', 'trailing bits after the state fields are ignored', STATE,
-         '  throw_unless(181, s.slice_empty?());\n\n  throw_unless(182, commitment_next_index',
-         '  throw_unless(182, commitment_next_index', SHAPE_TEST),
+         '  throw_unless(181, s.slice_empty?());\n\n  ;; The reservations are leaves',
+         '  ;; The reservations are leaves', SHAPE_TEST),
     Case('state-refs', 'a state root may carry any number of references', STATE,
          '  throw_unless(181, s.slice_refs() == 4);',
          '  throw_unless(181, s.slice_refs() >= 3);', SHAPE_TEST),
     Case('index-sentinel', 'a counter past the exhausted sentinel is accepted', STATE,
-         '  throw_unless(182, commitment_next_index <= index_sentinel());\n  throw_unless(182, nullifier_next_index <= index_sentinel());\n\n  return (commitment_root',
+         '  throw_unless(182, commitment_next_index + reserved_recovery_leaves <= index_sentinel());\n  throw_unless(182, nullifier_next_index <= index_sentinel());\n\n  return (commitment_root',
          '  return (commitment_root', COUNTER_TEST),
+    # Section 13.1: the reserved recovery leaves are a debt against the tree,
+    # and a state that owes more leaves than it has left is not a state.
+    Case('reservation-debt', 'the parser bounds the counter but not what it owes', STATE,
+         '  throw_unless(182, commitment_next_index + reserved_recovery_leaves <= index_sentinel());\n  throw_unless(182, nullifier_next_index <= index_sentinel());\n\n  return (commitment_root',
+         '  throw_unless(182, commitment_next_index <= index_sentinel());\n  throw_unless(182, nullifier_next_index <= index_sentinel());\n\n  return (commitment_root',
+         COUNTER_TEST),
+
+    # Section 5: the room rule, one term at a time.
+    Case('room-next', 'the leaf counter is left out of the room rule', STATE,
+         '    next_index + ordinary_outputs + reserved + new_reservations <= index_sentinel());',
+         '    ordinary_outputs + reserved + new_reservations <= index_sentinel());', ROOM_TEST),
+    Case('room-ordinary', 'the operation\'s own outputs are left out of the room rule', STATE,
+         '    next_index + ordinary_outputs + reserved + new_reservations <= index_sentinel());',
+         '    next_index + reserved + new_reservations <= index_sentinel());', ROOM_TEST),
+    Case('room-reserved', 'the reserved recovery leaves are left out of the room rule', STATE,
+         '    next_index + ordinary_outputs + reserved + new_reservations <= index_sentinel());',
+         '    next_index + ordinary_outputs + new_reservations <= index_sentinel());', ROOM_TEST),
+    Case('room-new', 'a withdrawal\'s own reservation is left out of the room rule', STATE,
+         '    next_index + ordinary_outputs + reserved + new_reservations <= index_sentinel());',
+         '    next_index + ordinary_outputs + reserved <= index_sentinel());', ROOM_TEST),
+    Case('room-strict', 'the last leaf of the tree is never usable', STATE,
+         '    next_index + ordinary_outputs + reserved + new_reservations <= index_sentinel());',
+         '    next_index + ordinary_outputs + reserved + new_reservations < index_sentinel());',
+         ROOM_TEST),
+
+    # Section 15.4: one reservation per recovery.
+    Case('consume-guard', 'a recovery may run with no reservation left', STATE,
+         '  throw_unless(191, reserved > 0);\n', '', CONSUME_TEST),
+    Case('consume-decrement', 'a recovery consumes no reservation', STATE,
+         '  return reserved - 1;', '  return reserved;', CONSUME_TEST),
 
     # Section 13.1: the config store.
     Case('config-refs', 'a config store with no denominations is not refused here', STATE,
@@ -119,6 +151,8 @@ CASES = [
     # Section 13.2: genesis.
     Case('genesis-nullifier-index', 'the nullifier counter starts at zero', STATE,
          '    nullifier_genesis_root, 1,', '    nullifier_genesis_root, 0,', GENESIS_TEST),
+    Case('genesis-reserved', 'a genesis state reserves a recovery leaf', STATE,
+         '    commitment_empty_root, 0, 0,', '    commitment_empty_root, 0, 1,', GENESIS_TEST),
     Case('genesis-epoch', 'the epoch sentinel is not written at genesis', STATE,
          '    anchor_epoch_none(), 0, reserve_floor,', '    0, 0, reserve_floor,', GENESIS_TEST),
     Case('genesis-reserve', 'a zero reserve floor is accepted at genesis', STATE,

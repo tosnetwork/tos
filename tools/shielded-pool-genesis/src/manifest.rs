@@ -111,6 +111,7 @@ pub fn render(
         hex(&fr_be32(genesis.commitment_root))
     ));
     out.push_str("    \"commitment_next_index\": 0,\n");
+    out.push_str("    \"reserved_recovery_leaves\": 0,\n");
     out.push_str(&format!(
         "    \"nullifier_root\": \"{}\",\n",
         hex(&fr_be32(genesis.nullifier_root))

@@ -69,6 +69,14 @@ OOG_TRANSACT_TEST = 'a_transact_that_runs_out_of_gas_changes_nothing'
 ACTION_FAILURE_TEST = 'a_withdrawal_whose_payout_cannot_be_sent_changes_nothing'
 STATE_LIMIT_TEST = 'a_deposit_refused_by_the_state_limit_changes_nothing'
 MATURE_TRANSACT_TEST = 'a_withdrawal_and_its_bounce_in_a_pool_with_history'
+CAPACITY_SUITE = 'recovery_capacity'
+CAPACITY_TEST = 'bounces_still_in_flight_keep_their_leaves_to_the_end_of_the_tree'
+NO_ROOM_TEST = 'a_withdrawal_without_room_for_its_recovery_is_refused_before_it_pays'
+ROUND_TRIP_SUITE = 'withdrawal_round_trip'
+TAKEN_TEST = 'a_withdrawal_that_is_taken_leaves_nothing_to_recover'
+DUST_SUITE = 'bounce_dust_boundary'
+DUST_TEST = 'the_smallest_recoverable_bounce_is_measured_rather_than_assumed'
+STATE = ROOT / 'crypto/smartcont/shielded/state.fc'
 
 
 @dataclass
@@ -194,6 +202,34 @@ CASES = [
          '        if !is_special && !check_account_size_limits(limits, &mut acc_copy)? {',
          '        if false {',
          STATE_LIMIT_TEST, ATOMICITY_SUITE, CROSSCHECK),
+    # Section 5: the recovery-leaf reservation, end to end. Every one of
+    # these is aimed at real withdrawals whose real payouts bounce at the end
+    # of the tree; the state suite holds the same rules against the library.
+    Case('reservation-not-taken', 'an accepted withdrawal reserves no recovery leaf', POOL,
+         '    reserved_recovery_leaves = reserved_recovery_leaves + new_reservations;\n', '',
+         CAPACITY_TEST, CAPACITY_SUITE, CROSSCHECK),
+    Case('reservation-released-on-delivery', 'a payout that was taken releases its leaf', POOL,
+         '    reserved_recovery_leaves = reserved_recovery_leaves + new_reservations;\n', '',
+         TAKEN_TEST, ROUND_TRIP_SUITE, CROSSCHECK),
+    Case('withdrawal-room-without-reservation',
+         'a withdrawal\'s room check leaves out its own recovery leaf', POOL,
+         '  commitment_room_require(commitment_next_index, reserved_recovery_leaves, 3,\n                          new_reservations);',
+         '  commitment_room_require(commitment_next_index, reserved_recovery_leaves, 3,\n                          0);',
+         NO_ROOM_TEST, CAPACITY_SUITE, CROSSCHECK),
+    Case('deposit-room-without-reserved', 'a deposit may take a leaf held for a recovery', POOL,
+         '  commitment_room_require(commitment_next_index, reserved_recovery_leaves, 1, 0);',
+         '  commitment_room_require(commitment_next_index, 0, 1, 0);',
+         CAPACITY_TEST, CAPACITY_SUITE, CROSSCHECK),
+    Case('recovery-keeps-reservation', 'a recovery does not consume its reservation', POOL,
+         '  reserved_recovery_leaves = recovery_reservation_consume(reserved_recovery_leaves);\n',
+         '', CAPACITY_TEST, CAPACITY_SUITE, CROSSCHECK),
+    Case('recovery-without-reservation', 'a recovery runs with no reservation left', STATE,
+         '  throw_unless(191, reserved > 0);\n', '', CAPACITY_TEST, CAPACITY_SUITE, CROSSCHECK),
+    Case('dust-keeps-reservation', 'a bounce that mints nothing keeps its reservation', POOL,
+         '  if (msg_value <= charge) {\n    set_data(state_build(commitment_root, commitment_next_index, reserved_recovery_leaves,\n                         nullifier_root, nullifier_next_index,\n                         last_anchor_epoch, native_liability, reserve_floor,\n                         frontier, anchors, config, vk));\n    return ();',
+         '  if (msg_value <= charge) {\n    return ();',
+         DUST_TEST, DUST_SUITE, CROSSCHECK),
+
     # Section 12.1: the body, and what may be deposited.
     Case('body-refs', 'a deposit body with no payload is not refused here', POOL,
          '  throw_unless(200, body.slice_refs() == 1);',

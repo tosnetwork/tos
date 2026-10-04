@@ -292,6 +292,8 @@ pub fn build(parameters: Parameters) -> Result<Genesis> {
         .and_then(|b| b.append_u16(STATE_VERSION))
         .and_then(|b| b.append_raw(&fr_be32(commitment_root), 256))
         .and_then(|b| b.append_u64(0))
+        // No withdrawal has been accepted, so no recovery leaf is reserved.
+        .and_then(|b| b.append_u32(0))
         .and_then(|b| b.append_raw(&fr_be32(nullifier_root), 256))
         .and_then(|b| b.append_u64(1))
         .and_then(|b| b.append_u32(EPOCH_NONE))
