@@ -22,6 +22,7 @@
 #include "Ed25519.h"
 #include "quic-common.h"
 #include "quic-connection-rate-limiters.h"
+#include "quic-inbound-budget.h"
 
 namespace tos::quic {
 struct QuicConnectionOptions;
@@ -88,6 +89,10 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     // guard matters precisely for streams abandoned on a kept-alive connection.
     double inbound_stream_timeout = 60.0;
     bool stateless_retry = true;
+    // Peer-initiated streams and their buffered bytes, shared by every server
+    // given the same budget, consumed by the sender's inbound stream callback.
+    // Unset means the process-wide default; there is no unlimited setting.
+    std::shared_ptr<QuicInboundStreamBudget> inbound_stream_budget;
   };
   class Callback {
    public:

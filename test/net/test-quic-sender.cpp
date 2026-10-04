@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <iostream>
+#include <malloc.h>
 #include <mutex>
 #include <netinet/in.h>
 #include <optional>
@@ -713,6 +714,29 @@ class RawQuicTestRunner final : public td::actor::Actor {
             .wrap();
     LOG_CHECK(sent.is_ok()) << "send_stream(partial) failed for sid=" << sid << ": " << sent.error();
     co_return sid;
+  }
+
+  // Open a stream and send `size` bytes WITHOUT a FIN. Returns the stream id.
+  td::actor::Task<tos::quic::QuicStreamID> send_partial_stream_bytes(RawQuicEndpoint& endpoint,
+                                                                     tos::quic::QuicConnectionId cid, size_t size) {
+    auto sid = co_await open_stream_with_retry(endpoint, cid);
+    td::BufferSlice data(size);
+    data.as_slice().fill('b');
+    auto sent =
+        co_await td::actor::ask(endpoint.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(data), false)
+            .wrap();
+    LOG_CHECK(sent.is_ok()) << "send_stream(partial) failed for sid=" << sid << ": " << sent.error();
+    co_return sid;
+  }
+
+  // Send a FIN on a stream opened earlier, completing it.
+  td::actor::Task<td::Unit> finish_stream(RawQuicEndpoint& endpoint, tos::quic::QuicConnectionId cid,
+                                          tos::quic::QuicStreamID sid) {
+    auto sent =
+        co_await td::actor::ask(endpoint.server, &tos::quic::QuicServer::send_stream, cid, sid, td::BufferSlice{}, true)
+            .wrap();
+    LOG_CHECK(sent.is_ok()) << "send_stream(fin) failed for sid=" << sid << ": " << sent.error();
+    co_return td::Unit{};
   }
 
   td::actor::Task<std::pair<tos::quic::QuicConnectionId, tos::quic::QuicConnectionId>> connect(
@@ -2006,6 +2030,133 @@ TEST(QuicRateLimiter, CapacityOneDoesNotAllowExtraBurst) {
   jump_time_by(1.0);
   expect_take(true);
   expect_take(false);
+}
+
+// Polls `predicate` on the test actor until it holds or `timeout` passes.
+template <class Predicate>
+td::actor::Task<td::Unit> poll_until(Predicate&& predicate, double timeout, const char* what) {
+  auto deadline = td::Timestamp::in(timeout);
+  while (!predicate()) {
+    LOG_CHECK(!deadline.is_in_past()) << "timed out waiting: " << what;
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
+  }
+  co_return td::Unit{};
+}
+
+// Peer-initiated streams are admitted against a budget shared by every
+// connection before any state is created for them; a stream past it is reset,
+// the streams already open are untouched, and every slot comes back when its
+// stream goes away.
+TEST(QuicInboundBudget, StreamsAreBoundedAcrossConnections) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(2, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("budget-streams", next_port(), options);
+    auto inbound_streams = [&]() -> td::actor::Task<size_t> {
+      auto stats = co_await td::actor::ask(receiver.quic_sender, &tos::quic::QuicSender::collect_stats);
+      co_return stats.inbound_streams;
+    };
+
+    auto a = co_await t.create_endpoint(quic_test_options());
+    auto b = co_await t.create_endpoint(quic_test_options());
+    auto cid_a = co_await t.connect_raw_to(a, receiver.port + kQuicPortOffset);
+    auto cid_b = co_await t.connect_raw_to(b, receiver.port + kQuicPortOffset);
+
+    co_await t.send_partial_stream(a, cid_a, 'x');
+    co_await t.send_partial_stream(b, cid_b, 'y');
+    co_await poll_until([&] { return budget->streams() == 2; }, 5.0, "two streams admitted");
+    ASSERT_EQ(2u, co_await inbound_streams());
+
+    // Both connections are far below their own stream limits; the process is
+    // at its budget. The next stream is reset without state.
+    auto refused = co_await t.send_partial_stream(a, cid_a, 'z');
+    co_await t.wait_for_stream_close(a, refused);
+    ASSERT_EQ(2u, budget->streams());
+    ASSERT_TRUE(budget->streams() <= budget->max_streams());
+    ASSERT_EQ(2u, co_await inbound_streams());
+
+    // Reaping the abandoned streams gives back every slot and byte.
+    jump_time_by(5.0);
+    co_await poll_until([&] { return budget->streams() == 0 && budget->bytes() == 0; }, 3.0,
+                        "reaped streams returned their reservations");
+
+    // The recovered capacity admits a new stream.
+    co_await t.send_partial_stream(b, cid_b, 'w');
+    co_await poll_until([&] { return budget->streams() == 1; }, 5.0, "recovered slot admitted a stream");
+    co_return td::Unit{};
+  });
+}
+
+// Bytes an inbound stream buffers are reserved before they are buffered. The
+// stream whose chunk does not fit is reset and gives back what it held; a
+// completed stream gives back its bytes at once.
+TEST(QuicInboundBudget, BufferedBytesAreBoundedAcrossConnections) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kChunk = 400;         // under the 1024-byte default peer MTU
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(100, 2 * kChunk + 200);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("budget-bytes", next_port(), options);
+
+    auto a = co_await t.create_endpoint(quic_test_options());
+    auto b = co_await t.create_endpoint(quic_test_options());
+    auto cid_a = co_await t.connect_raw_to(a, receiver.port + kQuicPortOffset);
+    auto cid_b = co_await t.connect_raw_to(b, receiver.port + kQuicPortOffset);
+
+    auto first = co_await t.send_partial_stream_bytes(a, cid_a, kChunk);
+    co_await t.send_partial_stream_bytes(b, cid_b, kChunk);
+    co_await poll_until([&] { return budget->bytes() == 2 * kChunk; }, 5.0, "two chunks buffered");
+
+    auto refused = co_await t.send_partial_stream_bytes(a, cid_a, kChunk);
+    co_await t.wait_for_stream_close(a, refused);
+    ASSERT_EQ(2 * kChunk, budget->bytes());
+    co_await poll_until([&] { return budget->streams() == 2; }, 5.0, "refused stream returned its slot");
+
+    // Completing a stream hands its bytes on and releases them.
+    co_await t.finish_stream(a, cid_a, first);
+    co_await poll_until([&] { return budget->bytes() == kChunk; }, 5.0, "completed stream released its bytes");
+    ASSERT_TRUE(budget->bytes() <= budget->max_bytes());
+
+    jump_time_by(5.0);
+    co_await poll_until([&] { return budget->bytes() == 0; }, 3.0, "reaped stream released its bytes");
+    co_return td::Unit{};
+  });
+}
+
+// What one open, idle inbound stream holds on a live server, for the default
+// stream budget. Printed; bounded loosely so a large regression fails.
+TEST(QuicInboundBudget, MeasureIdleInboundStreamCost) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kStreams = 256;
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(kStreams, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("budget-measure", next_port(), options);
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    // Warm the connection with one stream so connection state is in the baseline.
+    co_await t.send_partial_stream(client, cid, 'w');
+    co_await poll_until([&] { return budget->streams() == 1; }, 5.0, "warm-up stream admitted");
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    auto before = mallinfo2().uordblks;
+    for (size_t i = 1; i < kStreams; i++) {
+      co_await t.send_partial_stream(client, cid, 'm');
+    }
+    co_await poll_until([&] { return budget->streams() == kStreams; }, 10.0, "all streams admitted");
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    auto after = mallinfo2().uordblks;
+    auto per_stream = after > before ? (after - before) / (kStreams - 1) : 0;
+    LOG(WARNING) << "QUIC_INBOUND_STREAM_MEASURE streams=" << (kStreams - 1) << " heap_bytes=" << (after - before)
+                 << " per_stream=" << per_stream << " (both endpoints in one process)";
+    ASSERT_TRUE(per_stream < (64u << 10));
+    co_return td::Unit{};
+  });
 }
 
 TEST(QuicInboundStreamTimeout, AbandonedInboundStreamIsReaped) {

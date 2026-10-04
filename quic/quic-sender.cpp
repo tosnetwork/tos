@@ -25,8 +25,11 @@ static td::Result<adnl::AdnlNodeIdShort> parse_peer_id(td::Slice peer_public_key
 
 class QuicSender::ServerCallback final : public QuicServer::Callback {
  public:
-  ServerCallback(td::actor::ActorId<QuicSender> sender, double inbound_stream_timeout)
-      : sender_(sender), inbound_stream_timeout_(inbound_stream_timeout) {
+  ServerCallback(td::actor::ActorId<QuicSender> sender, double inbound_stream_timeout,
+                 std::shared_ptr<QuicInboundStreamBudget> inbound_budget)
+      : sender_(sender)
+      , inbound_stream_timeout_(inbound_stream_timeout)
+      , inbound_budget_(inbound_budget ? std::move(inbound_budget) : QuicInboundStreamBudget::process_default()) {
   }
 
   td::Status on_connected(QuicConnectionId cid, td::SecureString local_public_key,
@@ -42,7 +45,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
   }
 
   td::Status on_stream(QuicConnectionId cid, QuicStreamID sid, td::BufferSlice data, bool is_end) override {
-    TRY_RESULT(r, get_or_create_stream(cid, sid));
+    TRY_RESULT(r, get_or_admit_stream(cid, sid));
     auto [state_ptr, inserted, local_id, peer_id] = r;
     auto &state = *state_ptr;
     if (inserted) {
@@ -57,6 +60,17 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     if (state.is_failed()) {
       LOG(INFO) << "got data for closed stream, ignore cid=" << cid << " sid=" << sid;
       return td::Status::Error("stream failed");
+    }
+    // An inbound stream's bytes are reserved before they are buffered. A
+    // stream that cannot reserve them fails, which resets it and gives back
+    // what it held.
+    if (state.is_inbound() && !state.try_reserve_bytes(data.size())) {
+      auto status =
+          td::Status::Error(PSLICE() << "inbound stream budget exhausted: " << inbound_budget_->bytes()
+                                     << " bytes buffered across " << inbound_budget_->streams() << " streams");
+      LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " peer_id=" << peer_id << " due to " << status;
+      fail_stream(state, status.clone());
+      return status;
     }
     state.append(std::move(data));
     auto status = state.check_limits();
@@ -86,6 +100,8 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     }
     auto complete_data = state.extract();
     auto memory_token = state.take_memory_token();
+    // The bytes leave the stream buffer with the completed query.
+    state.release_buffered_bytes();
     td::actor::send_closure(sender_, &QuicSender::on_stream_complete, cid, sid, std::move(complete_data),
                             std::move(memory_token));
     return td::Status::OK();
@@ -186,6 +202,24 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       return builder_.extract();
     }
 
+    // Peer-initiated streams hold a slot of the inbound budget for as long as
+    // they exist, and a reservation for every byte they buffer.
+    void hold_reservation(QuicInboundStreamReservation reservation) {
+      reservation_ = std::move(reservation);
+    }
+    bool try_reserve_bytes(size_t bytes) {
+      return reservation_.try_reserve_bytes(bytes);
+    }
+    void release_buffered_bytes() {
+      reservation_.release_bytes();
+    }
+    // A failed stream delivers nothing more, so what it buffered is dropped.
+    void drop_buffer() {
+      builder_ = td::BufferBuilder();
+      memory_token_ = td::MemoryTrackerToken{td::MemoryTrackerCategory::QuicInbound, 0};
+      reservation_.release_bytes();
+    }
+
     td::MemoryTrackerToken take_memory_token() {
       return std::move(memory_token_);
     }
@@ -230,6 +264,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
    private:
     td::BufferBuilder builder_;
     td::MemoryTrackerToken memory_token_{td::MemoryTrackerCategory::QuicInbound, 0};
+    QuicInboundStreamReservation reservation_;
     StreamOptions options_;
     bool failed_{false};
     bool is_inbound_{false};
@@ -237,6 +272,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
 
   td::actor::ActorId<QuicSender> sender_;
   double inbound_stream_timeout_ = 0.0;
+  std::shared_ptr<QuicInboundStreamBudget> inbound_budget_;
 
   struct Connection {
     adnl::AdnlNodeIdShort local_id;
@@ -255,6 +291,28 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     }
     auto it2 = it->second.streams.try_emplace(sid, StreamState{cid, sid});
     return std::make_tuple(&it2.first->second, it2.second, it->second.local_id, it->second.peer_id);
+  }
+
+  // Like get_or_create_stream, but a stream the peer opens is admitted against
+  // the inbound budget before any state is created for it.
+  td::Result<std::tuple<StreamState *, bool, adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>> get_or_admit_stream(
+      QuicConnectionId cid, QuicStreamID sid) {
+    auto it = connections_.find(cid);
+    if (it == connections_.end()) {
+      return td::Status::Error("unknown connection");
+    }
+    auto existing = it->second.streams.find(sid);
+    if (existing != it->second.streams.end()) {
+      return std::make_tuple(&existing->second, false, it->second.local_id, it->second.peer_id);
+    }
+    auto reservation = QuicInboundStreamReservation::acquire_stream(inbound_budget_);
+    if (!reservation) {
+      return td::Status::Error(PSLICE() << "inbound stream budget exhausted: " << inbound_budget_->streams()
+                                        << " streams open");
+    }
+    auto inserted = it->second.streams.try_emplace(sid, StreamState{cid, sid});
+    inserted.first->second.hold_reservation(std::move(reservation.value()));
+    return std::make_tuple(&inserted.first->second, true, it->second.local_id, it->second.peer_id);
   }
 
   void erase_stream(QuicConnectionId cid, QuicStreamID sid) {
@@ -314,6 +372,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       timeout_heap_.erase(&state);
     }
     state.mark_failed();
+    state.drop_buffer();
     td::actor::send_closure(sender_, &QuicSender::on_stream_complete, state.cid, state.sid, std::move(error),
                             td::MemoryTrackerToken{});
   }
@@ -623,7 +682,9 @@ td::actor::Task<> QuicSender::add_local_id_coro(adnl::AdnlNodeIdShort local_id) 
     auto identity = ServerIdentity{.local_id = local_id,
                                    .key = td::Ed25519::PrivateKey(local_keys_.at(local_id).as_octet_string())};
     auto owned = co_await QuicServer::create(
-        port, std::make_unique<ServerCallback>(actor_id(this), server_options_.inbound_stream_timeout),
+        port,
+        std::make_unique<ServerCallback>(actor_id(this), server_options_.inbound_stream_timeout,
+                                         server_options_.inbound_stream_budget),
         get_local_id_mtu(local_id), std::move(identity), "tos", "0.0.0.0", server_options_);
     server = owned.get();
     servers_by_port_[port] = std::move(owned);
