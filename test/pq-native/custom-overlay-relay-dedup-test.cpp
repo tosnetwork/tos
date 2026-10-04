@@ -271,6 +271,24 @@ int main() {
     require(h.blocks.size() == 1, "a duplicate already forwarded is not forwarded again");
   }
 
+  // The custom overlays go away while verification is pending: the verified
+  // broadcast is neither forwarded nor remembered, so once an overlay exists
+  // again the block is verified and forwarded.
+  {
+    Harness h(16);
+    auto id = block_id(42, genuine_hash);
+    h.relay.offer_block(broadcast(id, genuine_data, 0x01), false);
+    require(h.verifying.size() == 1, "the broadcast is sent for verification");
+    h.has_custom_overlays = false;
+    h.verification_succeeds();
+    require(h.blocks.empty(), "nothing is forwarded after the custom overlays went away");
+    h.has_custom_overlays = true;
+    h.relay.offer_block(broadcast(id, genuine_data, 0x01), false);
+    require(h.verifying.size() == 1, "a block verified with no overlay left was not remembered");
+    h.verification_succeeds();
+    require(h.blocks.size() == 1, "the block is forwarded once an overlay exists again");
+  }
+
   // Forwarding records are bounded: the oldest are forgotten.
   {
     Harness h(2);

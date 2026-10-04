@@ -90,8 +90,10 @@ class CustomOverlayRelay {
   }
 
   // Called by the owner once a broadcast passed to verify_block_signatures verified.
+  // The custom overlays may all have gone while verification was pending;
+  // then nothing is forwarded and nothing remembered.
   void block_signatures_verified(const BlockBroadcast &broadcast) {
-    if (data_is_block(broadcast.block_id, broadcast.data.as_slice())) {
+    if (has_targets() && data_is_block(broadcast.block_id, broadcast.data.as_slice())) {
       forward_block(broadcast);
     }
   }
