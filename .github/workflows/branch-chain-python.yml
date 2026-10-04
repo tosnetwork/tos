@@ -67,7 +67,8 @@ jobs:
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             test-n5-manager-db-fixture test-consensus \
-            test-notarize-after-transient-resolve test-state-resolver-teardown
+            test-notarize-after-transient-resolve test-state-resolver-teardown \
+            test-custom-overlay-relay-dedup
           ccache --show-stats
 
       # A virtualized key-block proof must retain every PQ finality context
@@ -80,6 +81,11 @@ jobs:
       # not substitute for downstream AcceptBlock integration evidence.
       - name: Check pending PQ finality proof queue
         run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
+
+      # Unverified or unbound broadcasts must never be remembered under a block
+      # id, or they would keep the genuine one from reaching custom overlays.
+      - name: Check custom overlay relay deduplication
+        run: ctest --test-dir build --output-on-failure -R '^test-custom-overlay-relay-dedup$'
 
       # C04 exercises the real Manager proof/apply path and cold RootDb
       # readback, including stale-context recovery and expiry controls.

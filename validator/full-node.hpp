@@ -33,6 +33,7 @@
 
 #include "full-node-custom-overlays.hpp"
 #include "full-node-fast-sync-overlays.hpp"
+#include "full-node-relay-dedup.h"
 #include "rate-limiter.h"
 #include "validator-transport-authority.h"
 
@@ -174,13 +175,14 @@ class FullNodeImpl : public FullNode {
     std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<FullNodeCustomOverlay>> actors_;  // our local id -> actor
   };
   std::map<std::string, CustomOverlayInfo> custom_overlays_;
-  td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_broadcasts_{10000};
-  td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_finality_{10000};
+  CustomOverlayRelayDedup custom_overlays_relay_{10000};
   td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_shard_block_desc_{10000};
 
   void update_private_overlays();
   void update_custom_overlay(CustomOverlayInfo& overlay);
+  // Forwards a block broadcast whose signatures verified (or that this node made).
   void send_block_broadcast_to_custom_overlays(const BlockBroadcast& broadcast);
+  void relay_verified_block_broadcast(BlockBroadcast broadcast);
   void send_block_finality_broadcast_to_custom_overlays(const BlockFinalityBroadcast& finality);
   void send_block_candidate_broadcast_to_custom_overlays(const BlockIdExt& block_id, CatchainSeqno cc_seqno,
                                                          td::uint32 validator_set_hash, const td::BufferSlice& data);

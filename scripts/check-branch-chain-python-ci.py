@@ -23,6 +23,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-consensus",
     "test-notarize-after-transient-resolve",
     "test-state-resolver-teardown",
+    "test-custom-overlay-relay-dedup",
 }
 
 RESTART_ORIGIN_TESTS = (
@@ -83,6 +84,11 @@ def main() -> int:
     require(
         re.search(rf"(?m)^\s*run: {re.escape(manager_ctest)}\s*$", text) is not None,
         "pending PQ finality manager actor behavior gate is absent",
+    )
+    relay_ctest = "ctest --test-dir build --output-on-failure -R '^test-custom-overlay-relay-dedup$'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(relay_ctest)}\s*$", text) is not None,
+        "custom overlay relay deduplication gate is absent",
     )
     real_state_ctest = "ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'"
     require(

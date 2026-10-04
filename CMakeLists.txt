@@ -813,6 +813,11 @@ target_include_directories(test-validator-transport-authority PRIVATE ${CMAKE_CU
 target_link_libraries(test-validator-transport-authority PRIVATE overlay tos_block tos_crypto keys tdutils tdactor adnl
                       tl_api dht)
 
+add_executable(test-custom-overlay-relay-dedup test/pq-native/custom-overlay-relay-dedup-test.cpp)
+target_include_directories(test-custom-overlay-relay-dedup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-custom-overlay-relay-dedup PRIVATE tos_block tos_crypto tl_api tl_lite_api tdutils)
+
 add_executable(test-pending-finality-cache test/pq-native/pending-finality-cache-test.cpp)
 target_include_directories(test-pending-finality-cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1396,6 +1401,7 @@ tos_test(test-pq-network-parser-resource)
 tos_test(test-pq-signature-persistence)
 tos_test(test-validator-transport-authority)
 tos_test(test-pending-finality-cache)
+tos_test(test-custom-overlay-relay-dedup)
 tos_test(test-c04-real-state-proof ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 # N01's short production AcceptBlock/#13/RootDb cut uses C04's exact PQ
 # seq0→seq1 fixture, but runs as a separate CTest from C04's 60-second
