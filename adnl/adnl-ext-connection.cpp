@@ -41,7 +41,7 @@ bool AdnlExtConnection::send(td::BufferSlice data) {
   auto data_size = td::narrow_cast<td::uint32>(data.size() + adnl_ext_packet_framing_bytes);
   auto frame_bytes = data.size() + 4 + 32 + 32;
   auto pending = buffered_fd_.ready_for_flush_write();
-  bool fits = adnl_ext_output_fits(pending, frame_bytes);
+  bool fits = adnl_ext_output_fits(pending, frame_bytes, pending_output_limit_);
   // Reserve the frame in the server's budget before it is queued, so
   // connections on other threads cannot pass the bound together.
   std::size_t reserved = 0;

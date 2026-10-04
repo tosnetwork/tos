@@ -28,7 +28,10 @@
 #include "td/net/TcpListener.h"
 #include "td/utils/BufferedFd.h"
 #include "td/utils/Random.h"
+#include "td/utils/Span.h"
 #include "td/utils/crypto.h"
+#include "td/utils/port/IoSlice.h"
+#include "td/utils/port/SocketFd.h"
 #include "tl-utils/tl-utils.hpp"
 
 #include "adnl-ext-limits.h"
@@ -36,6 +39,43 @@
 namespace tos {
 
 namespace adnl {
+
+// Where a connection's queued output goes instead of the socket. Lets a test
+// model a peer that reads slowly or not at all without depending on how much a
+// kernel socket buffer happens to absorb.
+class AdnlExtTransportWriter {
+ public:
+  virtual ~AdnlExtTransportWriter() = default;
+  // Bytes taken from the front of `slices`; 0 means the write would block.
+  virtual td::Result<std::size_t> writev(td::Span<td::IoSlice> slices) = 0;
+};
+
+// The connection's socket. Writes go to the socket unless a transport writer is
+// installed.
+class AdnlExtSocket : public td::SocketFd {
+ public:
+  AdnlExtSocket() = default;
+  explicit AdnlExtSocket(td::SocketFd fd) : td::SocketFd(std::move(fd)) {
+  }
+  void set_writer(std::shared_ptr<AdnlExtTransportWriter> writer) {
+    writer_ = std::move(writer);
+  }
+  td::Result<std::size_t> writev(td::Span<td::IoSlice> slices) TD_WARN_UNUSED_RESULT {
+    if (!writer_) {
+      return td::SocketFd::writev(slices);
+    }
+    TRY_RESULT(written, writer_->writev(slices));
+    if (written == 0) {
+      // What a socket does when a write would block: wait until the poller
+      // reports it writable again.
+      get_poll_info().clear_flags(td::PollFlags::Write());
+    }
+    return written;
+  }
+
+ private:
+  std::shared_ptr<AdnlExtTransportWriter> writer_;
+};
 
 class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
  public:
@@ -51,7 +91,7 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   }
 
   AdnlExtConnection(td::SocketFd fd, std::unique_ptr<Callback> callback, bool is_client)
-      : buffered_fd_(std::move(fd)), callback_(std::move(callback)), is_client_(is_client) {
+      : buffered_fd_(AdnlExtSocket(std::move(fd))), callback_(std::move(callback)), is_client_(is_client) {
   }
   bool send(td::BufferSlice data);
   void send_uninit(td::BufferSlice data);
@@ -97,11 +137,20 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   }
 
  protected:
-  td::BufferedFd<td::SocketFd> buffered_fd_;
+  td::BufferedFd<AdnlExtSocket> buffered_fd_;
   td::actor::ActorId<AdnlExtConnection> self_;
   std::unique_ptr<Callback> callback_;
   bool sent_ready_ = false;
   bool is_client_;
+
+  // Send output through `writer` instead of the socket.
+  void set_transport_writer(std::shared_ptr<AdnlExtTransportWriter> writer) {
+    buffered_fd_.set_writer(std::move(writer));
+  }
+  // Bound this connection's unread output at `bytes` instead of the default.
+  void set_pending_output_limit(std::size_t bytes) {
+    pending_output_limit_ = bytes;
+  }
 
   void notify() override {
     // NB: Interface will be changed
@@ -140,6 +189,7 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   bool inited_ = false;
   bool stop_read_ = false;
   bool output_overflowed_ = false;
+  std::size_t pending_output_limit_ = adnl_ext_max_pending_output_bytes;
   std::shared_ptr<AdnlExtOutputBudget> server_output_budget_;
   // Bytes of the server budget this connection holds: at least its unread
   // output. Grows only by reservation in send(); shrinks as output is written.
