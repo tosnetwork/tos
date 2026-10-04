@@ -1,15 +1,14 @@
-name: Release TOS pow-miner
+name: Build TOS pow-miner
 
-# Builds the TOS pow-miner binary for multiple platforms and
-# publishes the artifacts to the GitHub Release created by the tag push.
-# The build jobs run with a read-only token; only the publish job, which runs
-# no build code, can write to the release.
+# Builds the TOS pow-miner binary for each platform and keeps it as a workflow
+# artifact. This workflow never writes a release: create-release.yml is the
+# only publisher of v* releases, and it collects these artifacts from the run
+# whose head_sha is the release tag's commit, verifying each artifact's digest
+# (scripts/release-artifacts.json lists them).
 #
-# Trigger: push of any tag matching "v*" (e.g. v0.1.0, v1.2.3-rc1).
-# Each matrix leg produces:
-#   tos-pow-miner-{platform}-{tag}.tar.gz   (Linux / macOS)
-#   tos-pow-miner-{platform}-{tag}.zip      (Windows)
-# plus a SHA256SUMS file for verification.
+# Trigger: push of a v* release tag, or a manual run on that tag.
+# Each matrix leg uploads one artifact, named by its `artifact` key, holding
+# tos-pow-miner-{platform}.tar.gz.
 #
 # NOTE: The pow-miner C++ source lives at crypto/util/pow-miner-*.cpp
 # and must be present before this workflow can build the target.
@@ -18,13 +17,13 @@ name: Release TOS pow-miner
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  group: release-tos-pow-miner-${{ github.ref }}
+  group: build-tos-pow-miner-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -36,13 +35,13 @@ jobs:
         include:
           - platform: linux-x64
             os: ubuntu-22.04
-            archive_ext: tar.gz
+            artifact: tos-pow-miner-linux-x64
           - platform: macos-x64
             os: macos-15-intel
-            archive_ext: tar.gz
+            artifact: tos-pow-miner-macos-x64
           - platform: macos-arm64
             os: macos-14
-            archive_ext: tar.gz
+            artifact: tos-pow-miner-macos-arm64
 
     runs-on: ${{ matrix.os }}
     permissions:
@@ -130,15 +129,16 @@ jobs:
           cmake --build build --target pow-miner -j"$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)"
 
       # ------------------------------------------------------------------
-      # Package: strip + archive + SHA256SUMS
+      # Package: strip + archive. The release collector verifies the
+      # artifact digest GitHub records at upload, so no checksum file is kept.
       # ------------------------------------------------------------------
       - name: Package artifact
         shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          PLATFORM="${{ matrix.platform }}"
-          ARCHIVE="tos-pow-miner-${PLATFORM}-${TAG}.tar.gz"
+          ARCHIVE="tos-pow-miner-${PLATFORM}.tar.gz"
 
           # Find the built binary (cmake output location varies by generator)
           BIN=$(find build -name 'pow-miner' -type f | head -1)
@@ -157,75 +157,12 @@ jobs:
           # Archive
           tar -czf "$ARCHIVE" -C staging .
 
-          # SHA256
-          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
-
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
-      - name: Hand the archive to the publishing job
+      - name: Keep the archive for the release collector
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pow-miner-${{ matrix.platform }}
-          path: |
-            ${{ env.ARCHIVE }}
-            ${{ env.ARCHIVE }}.sha256
+          name: ${{ matrix.artifact }}
+          path: ${{ env.ARCHIVE }}
           if-no-files-found: error
-          retention-days: 3
-
-  publish:
-    needs: build
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.ref_name }}
-    steps:
-      - name: Check out the release guard from the tagged commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.sha }}
-          path: guard
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/release-artifacts.py
-            scripts/release-artifacts.json
-          sparse-checkout-cone-mode: false
-
-      # The build jobs checked out the same ref, so this is the commit the
-      # archives were built from, peeled from the tag even when it is annotated.
-      - name: Record the commit the archives were built from
-        run: echo "TAG_SHA=$(git -C guard rev-parse 'HEAD^{commit}')" >> "$GITHUB_ENV"
-
-      - name: Receive the archives built in this run
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: pow-miner-*
-          merge-multiple: true
-          path: dist
-
-      # The tag is re-resolved on GitHub before the release is created and
-      # before the archives are uploaded, and once more afterwards, so archives
-      # built from one commit are not left under a tag that names another.
-      - name: Verify and upload
-        working-directory: dist
-        run: |
-          set -euo pipefail
-          for sum in *.sha256; do
-            sha256sum --check --strict "$sum"
-          done
-          python3 ../guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
-            --tag "$TAG" --tag-sha "$TAG_SHA"
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes ""
-          python3 ../guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
-            --tag "$TAG" --tag-sha "$TAG_SHA"
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber ./*
-          if ! python3 ../guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
-            --tag "$TAG" --tag-sha "$TAG_SHA"; then
-            echo "::error::tag $TAG moved while pow-miner archives were uploaded; removing them from the release" >&2
-            for file in ./*; do
-              gh release delete-asset "$TAG" "${file#./}" --repo "$GITHUB_REPOSITORY" --yes
-            done
-            exit 1
-          fi
+          retention-days: 14

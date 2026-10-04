@@ -14,7 +14,10 @@ downloaded zip must match before anything is unpacked.
              bundles, and write SHA256SUMS over everything staged
   check-tag  re-resolve the release tag on GitHub, peel it to a commit, and
              refuse unless that commit is still the one the assets were built
-             from (and, with --provenance, the one the staged provenance names)
+             from (and, with --provenance, the one the staged provenance names);
+             then refuse unless the tag's releases are in --release-state: none
+             before the draft is created, draft (with --assets, carrying
+             exactly the staged files) before publication, published after
 
 A tag is a mutable pointer unless the repository's tag ruleset forbids moving
 it. The publishing job therefore runs check-tag immediately before each step
@@ -69,6 +72,18 @@ class GhApi:
         if result.returncode != 0:
             raise ReleaseError(f"GitHub API request {path} failed: {result.stderr.strip()}")
         return json.loads(result.stdout)
+
+    def get_all(self, path: str) -> list[Any]:
+        """Every item of a paginated list endpoint, across all pages."""
+        result = subprocess.run(
+            ["gh", "api", "--paginate", "--slurp", path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ReleaseError(f"GitHub API request {path} failed: {result.stderr.strip()}")
+        return [item for page in json.loads(result.stdout) for item in page]
 
     def download(self, path: str, destination: Path) -> None:
         with destination.open("wb") as handle:
@@ -190,13 +205,36 @@ def safe_extract(archive: Path, destination: Path) -> None:
         bundle.extractall(destination)
 
 
+def build_inputs(config: dict[str, Any], release_set: str) -> list[dict[str, str]]:
+    """The build_workflows entries whose artifacts the release set publishes."""
+    spec = config["release_sets"].get(release_set)
+    if spec is None:
+        raise ReleaseError(f"unknown release set {release_set!r}")
+    needed = {item["artifact"] for item in [*spec["assets"], *spec.get("bundles", [])]}
+    entries = [entry for entry in config["build_workflows"] if entry["artifact"] in needed]
+    missing = needed - {entry["artifact"] for entry in entries}
+    if missing:
+        raise ReleaseError(
+            f"release set {release_set} uses artifacts no build workflow produces: {sorted(missing)}"
+        )
+    return entries
+
+
 def collect(
-    api: Api, config: dict[str, Any], *, repo: str, tag: str, tag_sha: str, out: Path
+    api: Api,
+    config: dict[str, Any],
+    *,
+    repo: str,
+    release_set: str,
+    tag: str,
+    tag_sha: str,
+    out: Path,
 ) -> dict[str, Any]:
     require_sha(tag_sha, "tag commit")
+    entries = build_inputs(config, release_set)
     out.mkdir(parents=True, exist_ok=False)
     records = []
-    for entry in config["build_workflows"]:
+    for entry in entries:
         workflow, name = entry["workflow"], entry["artifact"]
         runs = api.get_json(
             f"repos/{repo}/actions/workflows/{workflow}/runs?head_sha={tag_sha}&status=success&per_page=100"
@@ -229,7 +267,13 @@ def collect(
                 "artifact_digest": artifact["digest"],
             }
         )
-    provenance = {"repository": repo, "tag": tag, "tag_commit": tag_sha, "artifacts": records}
+    provenance = {
+        "repository": repo,
+        "release_set": release_set,
+        "tag": tag,
+        "tag_commit": tag_sha,
+        "artifacts": records,
+    }
     (out / "release-provenance.json").write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n"
     )
@@ -253,6 +297,75 @@ def resolve_remote_tag(api: Api, *, repo: str, tag: str) -> str:
     raise ReleaseError(f"tag {tag} is nested more than {MAX_TAG_NESTING} annotated tags deep")
 
 
+RELEASE_STATES = ("none", "draft", "published")
+
+
+def staged_digests(assets_dir: Path) -> dict[str, tuple[int, str]]:
+    """name -> (size, sha256) for every file staged for upload."""
+    files = sorted(path for path in assets_dir.iterdir() if path.is_file())
+    if not files:
+        raise ReleaseError(f"no staged assets in {assets_dir}")
+    return {path.name: (path.stat().st_size, sha256_file(path)) for path in files}
+
+
+def check_release_state(
+    api: Api, *, repo: str, tag: str, state: str, assets_dir: Path | None
+) -> None:
+    """Refuse unless the releases for `tag` are exactly what this step expects.
+
+    none       no release for the tag exists, draft or published: each tag is
+               published once, and an existing release is never added to
+    draft      exactly one release for the tag, still a draft; with
+               assets_dir, it carries exactly the staged files, each with the
+               staged size and (where GitHub reports one) SHA-256 digest
+    published  exactly one release for the tag, published, likewise complete
+    """
+    if state not in RELEASE_STATES:
+        raise ReleaseError(f"release state {state!r} is not one of {list(RELEASE_STATES)}")
+    releases = [
+        release
+        for release in api.get_all(f"repos/{repo}/releases?per_page=100")
+        if release.get("tag_name") == tag
+    ]
+    if state == "none":
+        if releases:
+            kinds = ", ".join(
+                f"{'draft' if release.get('draft') else 'published'} release {release.get('id')}"
+                for release in releases
+            )
+            raise ReleaseError(
+                f"a release for {tag} already exists ({kinds}); a tag is published once, by "
+                f"create-release.yml, and an existing release is never added to"
+            )
+        return
+    if len(releases) != 1:
+        raise ReleaseError(f"expected exactly one {state} release for {tag}, found {len(releases)}")
+    (release,) = releases
+    is_draft = bool(release.get("draft"))
+    if is_draft != (state == "draft"):
+        actual = "a draft" if is_draft else "published"
+        raise ReleaseError(f"the release for {tag} is {actual}, expected {state}")
+    if assets_dir is None:
+        return
+    expected = staged_digests(assets_dir)
+    uploaded = {asset.get("name"): asset for asset in release.get("assets") or []}
+    if set(uploaded) != set(expected):
+        raise ReleaseError(
+            f"the release for {tag} carries assets {sorted(map(str, uploaded))}, "
+            f"expected exactly the staged {sorted(expected)}"
+        )
+    for name, (size, digest) in expected.items():
+        asset = uploaded[name]
+        if asset.get("state", "uploaded") != "uploaded" or asset.get("size") != size:
+            raise ReleaseError(
+                f"asset {name} is {asset.get('state')} with {asset.get('size')} bytes, "
+                f"expected uploaded with {size}"
+            )
+        recorded = asset.get("digest")
+        if recorded is not None and recorded != f"sha256:{digest}":
+            raise ReleaseError(f"asset {name} has digest {recorded}, expected sha256:{digest}")
+
+
 def check_tag(
     api: Api,
     config: dict[str, Any],
@@ -262,8 +375,11 @@ def check_tag(
     tag: str,
     tag_sha: str,
     provenance: Path | None,
+    release_state: str,
+    assets_dir: Path | None = None,
 ) -> str:
-    """Refuse unless the tag, as GitHub resolves it now, names tag_sha."""
+    """Refuse unless the tag, as GitHub resolves it now, names tag_sha, and the
+    tag's releases are in release_state."""
     require_sha(tag_sha, "tag commit")
     spec = config["release_sets"].get(release_set)
     if spec is None:
@@ -280,7 +396,12 @@ def check_tag(
         )
     if provenance is not None:
         recorded = json.loads(provenance.read_text())
-        for key, expected in (("repository", repo), ("tag", tag), ("tag_commit", tag_sha)):
+        for key, expected in (
+            ("repository", repo),
+            ("release_set", release_set),
+            ("tag", tag),
+            ("tag_commit", tag_sha),
+        ):
             if recorded.get(key) != expected:
                 raise ReleaseError(
                     f"{provenance.name} records {key} {recorded.get(key)!r}, expected {expected!r}"
@@ -291,6 +412,7 @@ def check_tag(
             f"tag {tag} now names commit {current}, not {tag_sha} that the assets were "
             f"built from; the tag moved after the assets were collected"
         )
+    check_release_state(api, repo=repo, tag=tag, state=release_state, assets_dir=assets_dir)
     return current
 
 
@@ -304,6 +426,11 @@ def stage(config: dict[str, Any], *, release_set: str, artifacts: Path, out: Pat
     provenance = artifacts / "release-provenance.json"
     if not provenance.is_file():
         raise ReleaseError("artifacts were not collected: release-provenance.json is missing")
+    collected_for = json.loads(provenance.read_text()).get("release_set")
+    if collected_for != release_set:
+        raise ReleaseError(
+            f"artifacts were collected for release set {collected_for!r}, not {release_set!r}"
+        )
     spec = config["release_sets"].get(release_set)
     if spec is None:
         raise ReleaseError(f"unknown release set {release_set!r}")
@@ -361,6 +488,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     collect_parser = commands.add_parser("collect")
     collect_parser.add_argument("--repo", required=True)
+    collect_parser.add_argument("--set", dest="release_set", required=True)
     collect_parser.add_argument("--tag", required=True)
     collect_parser.add_argument("--tag-sha", required=True)
     collect_parser.add_argument("--out", type=Path, required=True)
@@ -374,12 +502,20 @@ def main(argv: list[str] | None = None) -> int:
     check_parser.add_argument("--tag", required=True)
     check_parser.add_argument("--tag-sha", required=True)
     check_parser.add_argument("--provenance", type=Path)
+    check_parser.add_argument("--release-state", choices=RELEASE_STATES, required=True)
+    check_parser.add_argument("--assets", type=Path, dest="assets_dir")
     args = parser.parse_args(argv)
     config = json.loads(args.config.read_text())
     try:
         if args.command == "collect":
             provenance = collect(
-                GhApi(), config, repo=args.repo, tag=args.tag, tag_sha=args.tag_sha, out=args.out
+                GhApi(),
+                config,
+                repo=args.repo,
+                release_set=args.release_set,
+                tag=args.tag,
+                tag_sha=args.tag_sha,
+                out=args.out,
             )
             for record in provenance["artifacts"]:
                 print(
@@ -394,8 +530,10 @@ def main(argv: list[str] | None = None) -> int:
                 tag=args.tag,
                 tag_sha=args.tag_sha,
                 provenance=args.provenance,
+                release_state=args.release_state,
+                assets_dir=args.assets_dir,
             )
-            print(f"tag {args.tag} still names {commit}")
+            print(f"tag {args.tag} still names {commit}; its release is {args.release_state}")
         else:
             for name in stage(
                 config, release_set=args.release_set, artifacts=args.artifacts, out=args.out

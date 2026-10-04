@@ -11,6 +11,10 @@ name: Create release
 # the tag on GitHub and refuses, or withdraws the release, if it no longer
 # names the commit the assets were built from. Release tags must be v<version>,
 # the namespace the tag ruleset in doc/tos-release-policy.md protects.
+#
+# This workflow is the only writer of v* releases. Build workflows, the
+# pow-miner one included, upload workflow artifacts only; this workflow
+# collects them, puts every asset into one draft and publishes it once.
 
 on:
   workflow_dispatch:
@@ -22,7 +26,9 @@ on:
 permissions: {}
 
 concurrency:
-  group: create-release-${{ inputs.tag }}
+  # One publication per tag at a time, shared by both release workflows;
+  # a second run waits and is then refused by the none-state check.
+  group: publish-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +65,7 @@ jobs:
           TAG_SHA: ${{ steps.tag.outputs.sha }}
         run: |
           python3 scripts/release-artifacts.py collect \
-            --repo "$GITHUB_REPOSITORY" --tag "$TAG" --tag-sha "$TAG_SHA" --out artifacts
+            --repo "$GITHUB_REPOSITORY" --set full --tag "$TAG" --tag-sha "$TAG_SHA" --out artifacts
 
       - name: Stage release assets
         run: |
@@ -76,12 +82,18 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # The tag is re-resolved on GitHub before every step that creates, fills or
-  # publishes the release, and once more after publishing; a release whose
-  # tag moved is deleted again. The release is a draft, invisible to users,
-  # until the last check before publication has passed. The tag ruleset and
-  # release immutability in doc/tos-release-policy.md close the remaining
-  # window between that check and publication.
+  # The only job that writes a v* release. All assets go into one draft,
+  # and the draft is published once. Before each step that creates, fills or
+  # publishes it, check-tag re-resolves the tag on GitHub and confirms the
+  # tag's releases are what that step expects:
+  #   none       before the draft is created: an existing release, draft or
+  #              published, is refused and never added to;
+  #   draft      before the upload;
+  #   draft + the staged files, exactly, before publication;
+  #   published + the staged files, after publication; on failure the
+  #              release is deleted and the job fails.
+  # The tag ruleset and release immutability in doc/tos-release-policy.md
+  # close the window between the last check and publication.
   publish:
     needs: collect
     runs-on: ubuntu-24.04
@@ -118,34 +130,38 @@ jobs:
           present="$(find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort)"
           [ "$listed" = "$present" ] || { echo "staged files differ from SHA256SUMS" >&2; exit 1; }
 
-      - name: Check the tag still names the built commit, then create a draft
+      - name: Refuse an existing release, then create the draft
         run: |
           set -euo pipefail
           python3 guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
-            --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json
+            --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json \
+            --release-state none
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
             --title "TOS $TAG" --notes-file release/stage-notes.md
 
-      - name: Check the tag again, then upload the assets to the draft
+      - name: Check the tag and the draft, then upload every asset to it
         run: |
           set -euo pipefail
           python3 guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
-            --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json
+            --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json \
+            --release-state draft
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" release/stage/*
 
-      - name: Check the tag again, then publish the draft
+      - name: Check the tag and the complete draft, then publish it once
         run: |
           set -euo pipefail
           python3 guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
-            --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json
+            --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json \
+            --release-state draft --assets release/stage
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
 
-      - name: Check the published release's tag, and withdraw the release if it moved
+      - name: Check the published release, and withdraw it if the tag moved
         run: |
           set -euo pipefail
           if ! python3 guard/scripts/release-artifacts.py check-tag --repo "$GITHUB_REPOSITORY" --set full \
-            --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json; then
-            echo "::error::tag $TAG moved while its release was published; deleting the release" >&2
+            --tag "$TAG" --tag-sha "$TAG_SHA" --provenance release/stage/release-provenance.json \
+            --release-state published --assets release/stage; then
+            echo "::error::the published release for $TAG failed its final check; deleting the release" >&2
             gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
             exit 1
           fi

@@ -27,6 +27,18 @@
     {
       "artifact": "tos-android-toslib",
       "workflow": "build-tos-linux-android-toslib.yml"
+    },
+    {
+      "artifact": "tos-pow-miner-linux-x64",
+      "workflow": "build-tos-pow-miner.yml"
+    },
+    {
+      "artifact": "tos-pow-miner-macos-x64",
+      "workflow": "build-tos-pow-miner.yml"
+    },
+    {
+      "artifact": "tos-pow-miner-macos-arm64",
+      "workflow": "build-tos-pow-miner.yml"
     }
   ],
   "release_sets": {
@@ -366,6 +378,21 @@
           "artifact": "tos-android-toslib",
           "zip": true,
           "name": "tos-android-toslib.zip"
+        },
+        {
+          "artifact": "tos-pow-miner-linux-x64",
+          "path": "tos-pow-miner-linux-x64.tar.gz",
+          "name": "tos-pow-miner-linux-x64.tar.gz"
+        },
+        {
+          "artifact": "tos-pow-miner-macos-x64",
+          "path": "tos-pow-miner-macos-x64.tar.gz",
+          "name": "tos-pow-miner-macos-x64.tar.gz"
+        },
+        {
+          "artifact": "tos-pow-miner-macos-arm64",
+          "path": "tos-pow-miner-macos-arm64.tar.gz",
+          "name": "tos-pow-miner-macos-arm64.tar.gz"
         }
       ],
       "bundles": [

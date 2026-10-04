@@ -20,6 +20,26 @@ Workflows (.github/workflows/*.yml):
                           `release-artifacts.py check-tag` immediately before
                           that command, or without running it again after the
                           job's last such command
+  RELEASE_EXISTING_NOT_REFUSED
+                          gh release create is not preceded by a check-tag with
+                          --release-state none, so an existing release could be
+                          added to
+  RELEASE_INCOMPLETE_PUBLISH
+                          gh release edit (publication) is not preceded by a
+                          check-tag with --release-state draft --assets, or the
+                          final check-tag lacks --release-state published
+  RELEASE_NOT_DRAFT       the publisher creates a release that is not a draft,
+                          or publishes more than once
+  RELEASE_NOT_SERIALIZED  a publisher without a workflow concurrency group keyed
+                          on inputs.tag and cancel-in-progress: false
+  RELEASE_WRITER_NOT_DESIGNATED
+                          a workflow other than the designated publishers
+                          (create-release.yml, create-tol-release.yml) writes a
+                          release: gh release create/upload/edit/delete/
+                          delete-asset, a release-writing action, or a write
+                          method on a releases API path
+  RELEASE_CLOBBER         --clobber anywhere: an uploaded release asset is never
+                          replaced
 
 Deployment manifests (docker/*.yaml) and their README:
   IMAGE_NOT_DIGEST        an image not referenced by @sha256 digest
@@ -57,8 +77,22 @@ UNAUTHENTICATED_INPUT_RES = (
 )
 # Commands that create, fill or publish a release. Deleting a release or an
 # asset is the remedy after a failed check, not a publication.
-RELEASE_MUTATION_RE = re.compile(r"\bgh\s+release\s+(?:create|upload|edit)\b")
+RELEASE_MUTATION_RE = re.compile(r"\bgh\s+release\s+(create|upload|edit)\b")
 TAG_CHECK_RE = re.compile(r"\brelease-artifacts\.py\s+check-tag\b")
+# The only workflows that may write a release, and the only tag namespaces
+# they publish (v* and tol-v*); create-release.yml exclusively owns v*.
+DESIGNATED_PUBLISHERS = ("create-release.yml", "create-tol-release.yml")
+RELEASE_WRITE_RE = re.compile(r"\bgh\s+release\s+(?:create|upload|edit|delete|delete-asset)\b")
+RELEASE_ACTIONS = (
+    "softprops/action-gh-release",
+    "actions/create-release",
+    "actions/upload-release-asset",
+    "ncipollo/release-action",
+    "svenstaro/upload-release-action",
+)
+GH_API_RE = re.compile(r"\bgh\s+api\b")
+API_WRITE_METHOD_RE = re.compile(r"(?:-X|--method)[\s=]*['\"]?(?:POST|PATCH|PUT|DELETE)\b", re.I)
+CLOBBER_RE = re.compile(r"--clobber\b")
 IMAGE_RE = re.compile(r"^\s*(?:-\s+)?image:\s*['\"]?([^'\"\s#]+)")
 DIGEST_IMAGE_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 SNAPSHOT_KEYS = ("SNAPSHOT_IMPORT", "DUMP_SHA256", "DUMP_ZEROSTATE_ROOT_HASH")
@@ -122,32 +156,153 @@ def has_write(grants: list[str]) -> bool:
     return any(grant == "write-all" or grant.endswith(": write") for grant in grants)
 
 
-def release_tag_findings(lines: list[str], job: str, start: int, end: int) -> list[tuple[int, str]]:
-    """Each release mutation needs a tag check since the previous one, and the
-    last mutation needs a check after it, so the tag cannot move unnoticed
-    between collection and any publication step."""
-    problems: list[tuple[int, str]] = []
-    checked_since_mutation = False
-    last_mutation: int | None = None
-    for index in range(start, end):
+def logical_lines(lines: list[str], start: int, end: int) -> list[tuple[int, str]]:
+    """Non-comment lines in [start, end), with shell continuation lines joined
+    onto the line that starts the command."""
+    joined: list[tuple[int, str]] = []
+    index = start
+    while index < end:
         line = lines[index]
         if line.lstrip().startswith("#"):
+            index += 1
             continue
-        if RELEASE_MUTATION_RE.search(line):
-            if not checked_since_mutation:
+        first, text = index, line
+        while text.rstrip().endswith("\\") and index + 1 < end:
+            index += 1
+            text = text.rstrip()[:-1] + " " + lines[index].strip()
+        joined.append((first, text))
+        index += 1
+    return joined
+
+
+def release_tag_findings(
+    lines: list[str], job: str, start: int, end: int
+) -> list[tuple[str, int, str]]:
+    """Each release mutation needs a tag check since the previous one, and the
+    last mutation needs a check after it, so the tag cannot move unnoticed
+    between collection and any publication step. The check before creation
+    must refuse an existing release; the check before publication must find
+    the complete draft; the final check must find it published."""
+    problems: list[tuple[str, int, str]] = []
+    last_check: str | None = None
+    last_mutation: int | None = None
+    for index, line in logical_lines(lines, start, end):
+        mutation = RELEASE_MUTATION_RE.search(line)
+        if mutation:
+            command = mutation.group(1)
+            if last_check is None:
                 problems.append(
                     (
+                        "RELEASE_TAG_UNCHECKED",
                         index,
                         f"job {job} runs {line.strip()!r} without a check-tag immediately before it",
                     )
                 )
-            checked_since_mutation = False
+            elif command == "create" and "--release-state none" not in last_check:
+                problems.append(
+                    (
+                        "RELEASE_EXISTING_NOT_REFUSED",
+                        index,
+                        f"job {job} creates a release without first refusing an existing one "
+                        "(check-tag --release-state none)",
+                    )
+                )
+            elif command == "edit" and not (
+                "--release-state draft" in last_check and "--assets" in last_check
+            ):
+                problems.append(
+                    (
+                        "RELEASE_INCOMPLETE_PUBLISH",
+                        index,
+                        f"job {job} publishes without checking the complete draft "
+                        "(check-tag --release-state draft --assets)",
+                    )
+                )
+            last_check = None
             last_mutation = index
         if TAG_CHECK_RE.search(line):
-            checked_since_mutation = True
-    if last_mutation is not None and not checked_since_mutation:
+            last_check = line
+    if last_mutation is not None:
+        if last_check is None:
+            problems.append(
+                (
+                    "RELEASE_TAG_UNCHECKED",
+                    last_mutation,
+                    f"job {job} does not run check-tag after its last release command",
+                )
+            )
+        elif "--release-state published" not in last_check:
+            problems.append(
+                (
+                    "RELEASE_INCOMPLETE_PUBLISH",
+                    last_mutation,
+                    f"job {job}'s final check-tag does not confirm the published release "
+                    "(--release-state published)",
+                )
+            )
+    return problems
+
+
+def release_writer_findings(
+    path: Path, lines: list[str], top: dict[str, tuple[int, str]]
+) -> list[tuple[str, int, str]]:
+    problems: list[tuple[str, int, str]] = []
+    designated = path.name in DESIGNATED_PUBLISHERS
+    logical = logical_lines(lines, 0, len(lines))
+    for index, line in logical:
+        if CLOBBER_RE.search(line):
+            problems.append(("RELEASE_CLOBBER", index, "--clobber replaces an uploaded asset"))
+        if designated:
+            continue
+        uses = USES_RE.match(line)
+        writes = (
+            RELEASE_WRITE_RE.search(line)
+            or (uses and any(uses.group(1).startswith(action + "@") for action in RELEASE_ACTIONS))
+            or (GH_API_RE.search(line) and "releases" in line and API_WRITE_METHOD_RE.search(line))
+        )
+        if writes:
+            problems.append(
+                (
+                    "RELEASE_WRITER_NOT_DESIGNATED",
+                    index,
+                    f"only {' and '.join(DESIGNATED_PUBLISHERS)} may write a release: {line.strip()!r}",
+                )
+            )
+    if not designated:
+        return problems
+
+    creates = [(i, line) for i, line in logical if re.search(r"\bgh\s+release\s+create\b", line)]
+    publishes = [i for i, line in logical if re.search(r"\bgh\s+release\s+edit\b", line)]
+    for index, line in creates:
+        if "--draft" not in line:
+            problems.append(("RELEASE_NOT_DRAFT", index, "the release is not created as a draft"))
+    if len(creates) > 1 or len(publishes) > 1:
         problems.append(
-            (last_mutation, f"job {job} does not run check-tag after its last release command")
+            (
+                "RELEASE_NOT_DRAFT",
+                (publishes or [index for index, _ in creates])[-1],
+                f"{len(creates)} create and {len(publishes)} publish commands; a release is "
+                "created once and published once",
+            )
+        )
+
+    serialized = False
+    if "concurrency" in top:
+        index, inline = top["concurrency"]
+        settings = {
+            key: value.strip("'\"")
+            for _, key, value in child_keys(lines, index + 1, block_end(lines, index, 0))
+        }
+        serialized = "inputs.tag" in settings.get("group", "") and (
+            settings.get("cancel-in-progress") == "false"
+        )
+    if not serialized:
+        problems.append(
+            (
+                "RELEASE_NOT_SERIALIZED",
+                top.get("concurrency", (0, ""))[0],
+                "a publisher needs concurrency: group keyed on inputs.tag, cancel-in-progress: false",
+            )
         )
     return problems
 
@@ -219,8 +374,8 @@ def check_workflow(path: Path, relative: str, release_inputs: set[str]) -> list[
         jobs_end = block_end(lines, jobs_index, 0)
         for job_index, job, _ in child_keys(lines, jobs_index + 1, jobs_end):
             job_end = block_end(lines, job_index, indent_of(lines[job_index]))
-            for index, message in release_tag_findings(lines, job, job_index + 1, job_end):
-                add("RELEASE_TAG_UNCHECKED", index, message)
+            for code, index, message in release_tag_findings(lines, job, job_index + 1, job_end):
+                add(code, index, message)
             permissions = [
                 entry
                 for entry in child_keys(lines, job_index + 1, job_end)
@@ -238,6 +393,9 @@ def check_workflow(path: Path, relative: str, release_inputs: set[str]) -> list[
             f"no workflow permissions and jobs {job_without_permissions} declare none; the token would get "
             "the repository default",
         )
+
+    for code, index, message in release_writer_findings(path, lines, top):
+        add(code, index, message)
 
     privileged = False
     for index, grants in all_grants:
@@ -371,12 +529,37 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: docker://alpine@sha256:{"a" * 64}
+"""
+GOOD_RELEASE_WORKFLOW = """name: release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+permissions: {}
+concurrency:
+  group: publish-release-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
       - run: |
-          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" # before create
+          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" \\
+            --release-state none # before create
           gh release create "$T" --verify-tag --draft
-          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" # before publish
+          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" \\
+            --release-state draft # before upload
+          gh release upload "$T" stage/*
+          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" \\
+            --release-state draft --assets stage # before publish
           gh release edit "$T" --draft=false
-          python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" || gh release delete "$T" --yes
+          if ! python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" \\
+            --release-state published --assets stage; then
+            gh release delete "$T" --yes
+          fi
 """
 GOOD_MANIFEST = f"""spec:
   containers:
@@ -428,18 +611,68 @@ BAD_WORKFLOWS = {
         "sudo scripts/install-llvm-toolchain.sh 21",
         "wget -qO- https://example.invalid/key | sudo apt-key add -",
     ),
-    "RELEASE_TAG_UNCHECKED": GOOD_WORKFLOW.replace(
-        'check-tag --set full --tag "$T" # before create', "--version # before create"
+    "RELEASE_WRITER_NOT_DESIGNATED": GOOD_WORKFLOW.replace(
+        f"      - uses: docker://alpine@sha256:{'a' * 64}\n",
+        f"      - uses: docker://alpine@sha256:{'a' * 64}\n"
+        # Even with every tag check in place, this workflow may not write.
+        "      - run: |\n"
+        "          python3 g/release-artifacts.py check-tag --release-state draft\n"
+        '          gh release upload "$T" miner.tar.gz\n'
+        "          python3 g/release-artifacts.py check-tag --release-state published\n",
     ),
-    "RELEASE_TAG_UNCHECKED ": GOOD_WORKFLOW.replace(
-        'check-tag --set full --tag "$T" # before publish', "--version # before publish"
+    "RELEASE_WRITER_NOT_DESIGNATED ": GOOD_WORKFLOW.replace(
+        "      - uses: ./.github/actions/local", f"      - uses: softprops/action-gh-release@{SHA}"
     ),
-    "RELEASE_TAG_UNCHECKED  ": GOOD_WORKFLOW.replace(
-        'check-tag --set full --tag "$T" || gh release delete', "--version || gh release delete"
+    "RELEASE_WRITER_NOT_DESIGNATED  ": GOOD_WORKFLOW.replace(
+        f"      - uses: docker://alpine@sha256:{'a' * 64}\n",
+        f"      - uses: docker://alpine@sha256:{'a' * 64}\n"
+        '      - run: gh api -X POST "repos/$R/releases/1/assets?name=x"\n',
     ),
-    "RELEASE_TAG_UNCHECKED   ": GOOD_WORKFLOW.replace(
-        '          gh release edit "$T" --draft=false\n',
-        '          gh release edit "$T" --draft=false\n          gh release upload "$T" late.bin\n',
+    "RELEASE_WRITER_NOT_DESIGNATED   ": GOOD_WORKFLOW.replace(
+        f"      - uses: docker://alpine@sha256:{'a' * 64}\n",
+        f"      - uses: docker://alpine@sha256:{'a' * 64}\n"
+        '      - run: gh release delete-asset "$T" miner.tar.gz --yes\n',
+    ),
+}
+# Each flips one property of GOOD_RELEASE_WORKFLOW, written as the designated
+# publisher create-release.yml.
+BAD_RELEASE_WORKFLOWS = {
+    "RELEASE_TAG_UNCHECKED": GOOD_RELEASE_WORKFLOW.replace(
+        'check-tag --set full --tag "$T" \\\n            --release-state draft # before upload',
+        "--version # before upload",
+    ),
+    "RELEASE_TAG_UNCHECKED ": GOOD_RELEASE_WORKFLOW.replace(
+        '          if ! python3 guard/scripts/release-artifacts.py check-tag --set full --tag "$T" \\\n'
+        "            --release-state published --assets stage; then\n"
+        '            gh release delete "$T" --yes\n'
+        "          fi\n",
+        "",
+    ),
+    "RELEASE_EXISTING_NOT_REFUSED": GOOD_RELEASE_WORKFLOW.replace(
+        "--release-state none # before create", "--release-state draft # before create"
+    ),
+    "RELEASE_INCOMPLETE_PUBLISH": GOOD_RELEASE_WORKFLOW.replace(
+        "--release-state draft --assets stage # before publish",
+        "--release-state draft # before publish",
+    ),
+    "RELEASE_INCOMPLETE_PUBLISH ": GOOD_RELEASE_WORKFLOW.replace(
+        "--release-state published --assets stage; then", "--release-state draft; then"
+    ),
+    "RELEASE_NOT_DRAFT": GOOD_RELEASE_WORKFLOW.replace(
+        'gh release create "$T" --verify-tag --draft', 'gh release create "$T" --verify-tag'
+    ),
+    "RELEASE_CLOBBER": GOOD_RELEASE_WORKFLOW.replace(
+        'gh release upload "$T" stage/*', 'gh release upload "$T" --clobber stage/*'
+    ),
+    "RELEASE_NOT_SERIALIZED": GOOD_RELEASE_WORKFLOW.replace(
+        "  cancel-in-progress: false\n", "  cancel-in-progress: true\n"
+    ),
+    "RELEASE_NOT_SERIALIZED ": GOOD_RELEASE_WORKFLOW.replace(
+        "  group: publish-release-${{ inputs.tag }}\n", "  group: publish-release\n"
+    ),
+    "RELEASE_NOT_SERIALIZED  ": GOOD_RELEASE_WORKFLOW.replace(
+        "concurrency:\n  group: publish-release-${{ inputs.tag }}\n  cancel-in-progress: false\n",
+        "",
     ),
 }
 BAD_MANIFESTS = {
@@ -461,13 +694,19 @@ def self_test() -> int:
     failures: list[str] = []
 
     def run_case(
-        label: str, workflow: str, manifest: str, expected: set[str], readme: str = GOOD_README
+        label: str,
+        workflow: str,
+        manifest: str,
+        expected: set[str],
+        readme: str = GOOD_README,
+        release_workflow: str = GOOD_RELEASE_WORKFLOW,
     ) -> None:
         with tempfile.TemporaryDirectory(prefix="supply-chain-self-test-") as tmp:
             root = Path(tmp)
             (root / ".github" / "workflows").mkdir(parents=True)
             (root / "docker").mkdir()
             (root / ".github" / "workflows" / "sample.yml").write_text(workflow)
+            (root / ".github" / "workflows" / "create-release.yml").write_text(release_workflow)
             (root / "docker" / "node.yaml").write_text(manifest)
             (root / "docker" / "README.md").write_text(readme)
             codes = {finding.code for finding in check_tree(root)}
@@ -484,6 +723,22 @@ def self_test() -> int:
             else workflow.replace("  pull_request:\n", "")
         )
         run_case(f"bad workflow {label!r}", sample, GOOD_MANIFEST, {code})
+    for label, release_workflow in BAD_RELEASE_WORKFLOWS.items():
+        assert release_workflow != GOOD_RELEASE_WORKFLOW, label
+        run_case(
+            f"bad release workflow {label!r}",
+            good_without_pr_write,
+            GOOD_MANIFEST,
+            {label.strip()},
+            release_workflow=release_workflow,
+        )
+    # The publisher's own sample, written under any other name, is not designated.
+    run_case(
+        "release workflow under another name",
+        GOOD_RELEASE_WORKFLOW,
+        GOOD_MANIFEST,
+        {"RELEASE_WRITER_NOT_DESIGNATED"},
+    )
     for label, manifest in BAD_MANIFESTS.items():
         expected = {label, "IMAGE_NOT_DIGEST"} if label == "MUTABLE_IMAGE_TAG" else {label}
         run_case(f"bad manifest {label}", good_without_pr_write, manifest, expected)
@@ -500,7 +755,9 @@ def self_test() -> int:
         for failure in failures:
             print(f"SUPPLY_CHAIN_SELF_TEST_FAILURE: {failure}", file=sys.stderr)
         return 1
-    total = 1 + len(BAD_WORKFLOWS) + len(BAD_MANIFESTS) + len(BAD_READMES)
+    total = (
+        2 + len(BAD_WORKFLOWS) + len(BAD_RELEASE_WORKFLOWS) + len(BAD_MANIFESTS) + len(BAD_READMES)
+    )
     print(f"supply-chain checker self-test: {total} samples behaved")
     return 0
 
