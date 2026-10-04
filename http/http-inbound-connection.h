@@ -35,14 +35,15 @@ class HttpInboundConnection : public HttpConnection {
   HttpInboundConnection(td::SocketFd fd, std::shared_ptr<HttpServer::Callback> http_callback,
                         HttpServer::AllMetrics metrics, double request_header_timeout = 0,
                         double request_body_timeout = 0, bool reject_request_bodies = false, size_t io_buffer_bytes = 0,
-                        double response_timeout = 0)
+                        double response_timeout = 0, bool close_after_early_answer = false)
       : HttpConnection(std::move(fd), nullptr, false, io_buffer_bytes)
       , http_callback_(std::move(http_callback))
       , metrics_(std::move(metrics))
       , request_header_timeout_(request_header_timeout)
       , request_body_timeout_(request_body_timeout)
       , reject_request_bodies_(reject_request_bodies)
-      , response_timeout_(response_timeout) {
+      , response_timeout_(response_timeout)
+      , close_after_early_answer_(close_after_early_answer) {
     metrics_.connections->add(1);
     metrics_.connections_total->add(1);
     // Capture the TCP peer IP exactly once, at accept time. This is the
@@ -127,6 +128,12 @@ class HttpInboundConnection : public HttpConnection {
   void send_payload_refused();
   void send_server_error();
   void send_proxy_error(td::Status error);
+  // True when this listener closes after an answer given while the request
+  // body is still being read (see HttpServer::Limits::close_after_early_answer).
+  bool answering_before_body_read() const {
+    return close_after_early_answer_ && reading_payload_ && !tunnel_established_;
+  }
+  void send_bodiless_error(td::Slice status_line);
 
   void payload_written() override {
     writing_payload_ = nullptr;
@@ -226,6 +233,7 @@ class HttpInboundConnection : public HttpConnection {
   double request_body_timeout_ = 0;
   bool reject_request_bodies_ = false;
   double response_timeout_ = 0;
+  bool close_after_early_answer_ = false;
   bool response_pending_ = false;
   td::Timestamp response_deadline_;
   td::Timestamp request_header_deadline_;

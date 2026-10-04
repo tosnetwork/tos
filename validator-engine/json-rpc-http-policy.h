@@ -23,12 +23,17 @@
 // (see test/test-json-rpc-http-policy.cpp). JsonRpcServer uses these and only
 // these to configure its listener and to refuse unauthenticated requests.
 
+#include <cctype>
+#include <cerrno>
+#include <cmath>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "http/http-server.h"
 #include "http/http.h"
+#include "td/utils/Status.h"
 
 namespace tos::json_rpc {
 
@@ -42,6 +47,24 @@ namespace tos::json_rpc {
 // --json-rpc-response-timeout.
 inline constexpr double kDefaultResponseTimeout = 60.0;
 
+// Parses a timeout given on the command line. The whole argument must be a
+// finite, non-negative number: td::to_double turns anything it cannot read
+// into 0, and 0 means "no deadline", so a typo would silently remove the
+// limit instead of failing at startup.
+inline td::Result<double> parse_timeout_seconds(td::Slice text) {
+  std::string s = text.str();
+  if (s.empty() || std::isspace(static_cast<unsigned char>(s.front()))) {
+    return td::Status::Error("timeout must be a number of seconds >= 0");
+  }
+  errno = 0;
+  char* end = nullptr;
+  double value = std::strtod(s.c_str(), &end);
+  if (end != s.c_str() + s.size() || errno == ERANGE || !std::isfinite(value) || value < 0) {
+    return td::Status::Error("timeout must be a number of seconds >= 0");
+  }
+  return value;
+}
+
 inline http::HttpServer::Limits listener_limits(std::size_t max_connections, double request_header_timeout,
                                                 double request_body_timeout, double response_timeout) {
   http::HttpServer::Limits limits;
@@ -49,6 +72,10 @@ inline http::HttpServer::Limits listener_limits(std::size_t max_connections, dou
   limits.request_header_timeout = request_header_timeout;
   limits.request_body_timeout = request_body_timeout;
   limits.response_timeout = response_timeout;
+  // JSON-RPC answers several requests from their headers alone (the API key
+  // check, OPTIONS, health and REST paths, 404/405/415): none of them may keep
+  // the server reading the body that follows.
+  limits.close_after_early_answer = true;
   return limits;
 }
 

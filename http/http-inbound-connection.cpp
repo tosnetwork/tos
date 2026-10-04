@@ -51,35 +51,33 @@ void HttpInboundConnection::send_payload_refused() {
   loop();
 }
 
-void HttpInboundConnection::send_server_error() {
+// A handler error answers without a body. Like any answer, it closes the
+// connection when the listener closes after early answers and the request
+// body is still being read; otherwise the connection stays open.
+void HttpInboundConnection::send_bodiless_error(td::Slice status_line) {
   arm_response_deadline();
-  static const auto s =
-      "HTTP/1.1 502 Bad Gateway\r\n"
-      "Connection: keep-alive\r\n"
-      "Content-length: 0\r\n"
-      "\r\n";
-  buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
+  auto &out = buffered_fd_.output_buffer();
+  out.append(status_line);
+  if (answering_before_body_read()) {
+    out.append(td::Slice("Connection: close\r\n"));
+    close_after_write_ = true;
+  } else {
+    out.append(td::Slice("Connection: keep-alive\r\n"));
+  }
+  out.append(td::Slice("Content-length: 0\r\n\r\n"));
   loop();
 }
 
+void HttpInboundConnection::send_server_error() {
+  send_bodiless_error(td::Slice("HTTP/1.1 502 Bad Gateway\r\n"));
+}
+
 void HttpInboundConnection::send_proxy_error(td::Status error) {
-  arm_response_deadline();
   if (error.code() == ErrorCode::timeout) {
-    static const auto s =
-        "HTTP/1.1 504 Gateway Timeout\r\n"
-        "Connection: keep-alive\r\n"
-        "Content-length: 0\r\n"
-        "\r\n";
-    buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
+    send_bodiless_error(td::Slice("HTTP/1.1 504 Gateway Timeout\r\n"));
   } else {
-    static const auto s =
-        "HTTP/1.1 502 Bad Gateway\r\n"
-        "Connection: keep-alive\r\n"
-        "Content-length: 0\r\n"
-        "\r\n";
-    buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
+    send_bodiless_error(td::Slice("HTTP/1.1 502 Bad Gateway\r\n"));
   }
-  loop();
 }
 
 td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
@@ -154,10 +152,10 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
     }
   }
   // Answered while the request body is still arriving (an early refusal, a
-  // 404, a GET that declared a body): close once the answer is written rather
-  // than go on reading and buffering a body nobody will consume. A request
-  // whose body was already read keeps the connection for the next request.
-  if (reading_payload_ && !tunnel_established_) {
+  // 404, a GET that declared a body): on listeners that ask for it, close once
+  // the answer is written rather than go on reading and buffering the body. A
+  // request whose body was already read keeps the connection.
+  if (answering_before_body_read()) {
     close_after_write_ = true;
   }
   response->store_http(buffered_fd_.output_buffer());

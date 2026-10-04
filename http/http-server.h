@@ -73,6 +73,13 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
     // use a small input/output window and an independent response deadline.
     size_t io_buffer_bytes = 0;
     double response_timeout = 0;
+    // Close the connection once an answer is written if the request body was
+    // still being read when the handler answered (an early refusal, a 404, a
+    // handler error), instead of reading and buffering a body nobody will
+    // consume. Off by default: a proxy may legitimately forward an upstream
+    // answer while the client is still uploading and expect the upload to go
+    // on. Requests whose body was read keep the connection either way.
+    bool close_after_early_answer = false;
   };
 
   HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits);

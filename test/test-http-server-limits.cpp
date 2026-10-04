@@ -609,6 +609,16 @@ class RefuseFromHeadersCallback final : public tos::http::HttpServer::Callback {
   }
 };
 
+class ErrorFromHeadersCallback final : public tos::http::HttpServer::Callback {
+ public:
+  void receive_request(
+      std::unique_ptr<tos::http::HttpRequest>, std::shared_ptr<tos::http::HttpPayload>,
+      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise)
+      override {
+    promise.set_error(td::Status::Error("handler failed"));
+  }
+};
+
 const std::string kLargeDeclaredBody =
     "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4000000\r\n\r\n" + std::string(1000, 'x');
 }  // namespace
@@ -626,6 +636,41 @@ TEST(HttpServerLimits, an_answer_before_the_body_is_read_closes_after_the_respon
     ASSERT_TRUE(received.rfind("HTTP/1.1 200", 0) == 0);
     ASSERT_TRUE(received.size() >= 7 && received.compare(received.size() - 7, 7, "\r\n0\r\n\r\n") == 0);
   });
+}
+
+TEST(HttpServerLimits, without_the_option_an_early_answer_keeps_reading_the_body) {
+  // Control for the option: a listener that does not ask for it (a proxy
+  // forwarding an upstream answer during an upload) keeps the connection.
+  tos::http::HttpServer::Limits limits;
+  limits.max_connections = 0;
+  limits.request_header_timeout = 30;
+  limits.request_body_timeout = 30;
+  ASSERT_TRUE(!limits.close_after_early_answer);
+  with_server(limits, [](int port) {
+    Client early(port);
+    ASSERT_TRUE(early.connect_with_retries());
+    ASSERT_TRUE(early.send_all(kLargeDeclaredBody));
+    std::string received;
+    ASSERT_TRUE(!early.read_until_clean_eof(1500, received));
+    ASSERT_TRUE(received.rfind("HTTP/1.1 200", 0) == 0);
+  });
+}
+
+TEST(HttpServerLimits, a_handler_error_before_the_body_is_read_closes_after_the_response) {
+  auto limits = tos::json_rpc::listener_limits(0, 30, 30, 0);
+  with_server(
+      limits,
+      [](int port) {
+        Client failed(port);
+        ASSERT_TRUE(failed.connect_with_retries());
+        ASSERT_TRUE(failed.send_all(kLargeDeclaredBody));
+        std::string received;
+        ASSERT_TRUE(failed.read_until_clean_eof(3000, received));
+        ASSERT_TRUE(received.rfind("HTTP/1.1 502", 0) == 0);
+        ASSERT_TRUE(received.find("Connection: close\r\n") != std::string::npos);
+        ASSERT_TRUE(received.size() >= 4 && received.compare(received.size() - 4, 4, "\r\n\r\n") == 0);
+      },
+      std::make_shared<ErrorFromHeadersCallback>());
 }
 
 TEST(HttpServerLimits, an_answer_after_the_body_is_read_keeps_the_connection) {
@@ -660,6 +705,19 @@ TEST(JsonRpcHttpPolicy, a_refused_request_gets_the_whole_401_and_then_a_close) {
       std::make_shared<RefuseFromHeadersCallback>());
 }
 
+TEST(JsonRpcHttpPolicy, timeout_arguments_must_parse_completely) {
+  for (auto good : {"60", "0.5", "0", "120.25"}) {
+    auto r = tos::json_rpc::parse_timeout_seconds(td::Slice(good));
+    ASSERT_TRUE(r.is_ok());
+  }
+  ASSERT_EQ(tos::json_rpc::parse_timeout_seconds(td::Slice("60")).move_as_ok(), 60.0);
+  ASSERT_EQ(tos::json_rpc::parse_timeout_seconds(td::Slice("0")).move_as_ok(), 0.0);
+  // Each of these used to become 0 ("no deadline") or a negative number.
+  for (auto bad : {"", "-1", "abc", "60s", " 60", "inf", "nan", "1e400", "6O"}) {
+    ASSERT_TRUE(tos::json_rpc::parse_timeout_seconds(td::Slice(bad)).is_error());
+  }
+}
+
 TEST(JsonRpcHttpPolicy, listener_has_a_response_deadline) {
   // A client that stops reading must not hold its connection and queued reply
   // forever; the mechanism is tested above, this pins that JSON-RPC uses it.
@@ -669,4 +727,5 @@ TEST(JsonRpcHttpPolicy, listener_has_a_response_deadline) {
   ASSERT_EQ(limits.max_connections, static_cast<size_t>(1024));
   ASSERT_EQ(limits.request_header_timeout, 30.0);
   ASSERT_EQ(limits.request_body_timeout, 120.0);
+  ASSERT_TRUE(limits.close_after_early_answer);
 }
