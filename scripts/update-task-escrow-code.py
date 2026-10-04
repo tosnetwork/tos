@@ -16,7 +16,6 @@ import argparse
 import pathlib
 import re
 
-
 CPP_PATTERN = re.compile(r'with_tvm_code\("task-escrow", "(?P<boc>[A-Za-z0-9+/=]+)"\);')
 RUST_PATTERN = re.compile(r'pub const TASK_ESCROW_CODE_B64: &str = "[A-Za-z0-9+/=]+";')
 

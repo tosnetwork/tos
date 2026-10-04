@@ -149,8 +149,7 @@ def wait_native_balance(
         checkpoint = common_checkpoint(endpoints)
         try:
             balances = [
-                endpoint_native_balance(endpoint, address, checkpoint)
-                for endpoint in endpoints
+                endpoint_native_balance(endpoint, address, checkpoint) for endpoint in endpoints
             ]
             if all(balance >= minimum for balance in balances):
                 return checkpoint
@@ -158,9 +157,7 @@ def wait_native_balance(
         except Exception as error:
             last = error
         time.sleep(0.75)
-    raise RuntimeError(
-        f"native balance {minimum} did not reach all endpoints: {last}"
-    )
+    raise RuntimeError(f"native balance {minimum} did not reach all endpoints: {last}")
 
 
 def deterministic_tar(test_output: bytes) -> bytes:
@@ -207,18 +204,13 @@ def ensure_native_wallet_funded(
     top_up: int,
 ) -> int:
     checkpoint = common_checkpoint(endpoints)
-    balances = [
-        endpoint_native_balance(endpoint, target, checkpoint)
-        for endpoint in endpoints
-    ]
+    balances = [endpoint_native_balance(endpoint, target, checkpoint) for endpoint in endpoints]
     if all(balance >= minimum for balance in balances):
         return checkpoint
 
     payer_key = nacl.signing.SigningKey(gate.read_private(state_dir / "main-wallet.pk"))
     payer_file = gate.read_private(state_dir / "main-wallet.addr")
-    payer = Address(
-        (int.from_bytes(payer_file[32:36], "big", signed=True), payer_file[:32])
-    )
+    payer = Address((int.from_bytes(payer_file[32:36], "big", signed=True), payer_file[:32]))
     gate.send_wallet_message(config, payer_key, payer, target, top_up, Cell.empty())
     return wait_native_balance(endpoints, target, minimum)
 
@@ -238,9 +230,7 @@ def ensure_provider_wallet_funded(
     # tosctl owns the exact wallet StateInit and attaches it to the first signed
     # outbound message. The local chain only needs to pre-fund that deterministic
     # address; guessing a wallet contract here would create a different account.
-    ensure_native_wallet_funded(
-        config, state_dir, endpoints, provider, 5 * NANO, 10 * NANO
-    )
+    ensure_native_wallet_funded(config, state_dir, endpoints, provider, 5 * NANO, 10 * NANO)
     return provider
 
 
@@ -261,9 +251,7 @@ def main() -> int:
         "--test-identities",
         default=str(SPEC / "test-vectors/tos-service-test-identities-v1.json"),
     )
-    parser.add_argument(
-        "--lite-client", default=str(REPO / "build/lite-client/lite-client")
-    )
+    parser.add_argument("--lite-client", default=str(REPO / "build/lite-client/lite-client"))
     parser.add_argument(
         "--endpoint",
         action="append",
@@ -433,16 +421,12 @@ def main() -> int:
         capture_output=True,
     )
     if deployment.returncode:
-        raise RuntimeError(
-            "escrow deployment failed: " + deployment.stderr[-4096:]
-        )
+        raise RuntimeError("escrow deployment failed: " + deployment.stderr[-4096:])
 
     # The jetton transfer attaches native currency for escrow execution. Confirm
     # the buyer can afford it at a common finalized checkpoint before signing,
     # instead of discovering an insufficient balance after consuming its seqno.
-    ensure_native_wallet_funded(
-        config, state_dir, endpoints, buyer, 5 * NANO, 10 * NANO
-    )
+    ensure_native_wallet_funded(config, state_dir, endpoints, buyer, 5 * NANO, 10 * NANO)
 
     query_id = int(time.time_ns()) & ((1 << 64) - 1)
     funding_body = (
@@ -475,13 +459,9 @@ def main() -> int:
         quote_cell = Cell.one_from_boc(base64.b64decode(quote["expected"]["boc_base64"]))
         source_archive = deterministic_source_tar()
         source_digest = digest(source_archive)
-        execution_id = digest(
-            b"tos-service-real-provider-e2e-v1\0" + quote_cell.hash
-        )
+        execution_id = digest(b"tos-service-real-provider-e2e-v1\0" + quote_cell.hash)
         input_digest = digest(quote_cell.to_boc())
-        source_path = output / (
-            "sha256-" + source_digest.removeprefix("sha256:") + ".source.tar"
-        )
+        source_path = output / ("sha256-" + source_digest.removeprefix("sha256:") + ".source.tar")
         source_path.write_bytes(source_archive)
         task = {
             "schema": "tos.service.local-funded-task.v1",
@@ -637,9 +617,7 @@ def main() -> int:
     wallet_code = Cell.one_from_boc(
         base64.b64decode(
             "".join(
-                (REPO / "crypto/smartcont/test-usdt-wallet-code.boc.base64")
-                .read_text()
-                .split()
+                (REPO / "crypto/smartcont/test-usdt-wallet-code.boc.base64").read_text().split()
             )
         )
     )
@@ -659,9 +637,7 @@ def main() -> int:
 
     payer_key = nacl.signing.SigningKey(gate.read_private(state_dir / "main-wallet.pk"))
     payer_file = gate.read_private(state_dir / "main-wallet.addr")
-    payer = Address(
-        (int.from_bytes(payer_file[32:36], "big", signed=True), payer_file[:32])
-    )
+    payer = Address((int.from_bytes(payer_file[32:36], "big", signed=True), payer_file[:32]))
     gate.send_wallet_message(config, payer_key, payer, escrow, 2 * NANO, release_body)
     settled = wait_escrow(config, escrow, 2)
     if settled["settled_atomic"] != str(AMOUNT):

@@ -90,53 +90,71 @@ def verify_no_legacy_branding() -> None:
 
 def verify_tvm_sources() -> None:
     c = PROJECT / "tvm/contracts"
-    require_text(c / "config.fc", [
-        "config_param(CONFIG_PARAM_ID)",
-        "config_param(- CONFIG_PARAM_ID)",
-        "STATE_BURN_SUSPENDED",
-        "STATE_SWAPS_SUSPENDED",
-        "STATE_GOVERNANCE_SUSPENDED",
-    ])
-    require_text(c / "jetton-bridge.fc", [
-        "op::execute_voting::swap",
-        "throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee)",
-        "throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0)",
-        "calculate_minter_address(wrapped_token_data)",
-        "throw_unless(error::minter_not_sender",
-        "burn_log_message(destination_address, jetton_amount, token_address, from_address_hash)",
-        "emit_log_simple(LOG_SWAP_PAID",
-        # A mint stays recorded until its wallet confirms it, and a burn's log
-        # and answer are sent together or bounce back to the minter.
-        "pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_IN_FLIGHT",
-        "op::burn_recorded, burn_id",
-        "msg_value - gas_fee(BRIDGE_STEP_GAS, -1) - fee_of(log, -1)",
-    ])
-    require_text(c / "jetton-wallet.fc", [
-        "throw_unless(error::not_enough_funds, jetton_amount > 0)",
-        "throw_unless(error::burn_fee_not_matched, msg_value == bridge_burn_fee)",
-        "state_flags & STATE_BURN_SUSPENDED",
-        ".store_uint(destination_address, 160)",
-        ".store_body_header(op::mint_credited, query_id)",
-    ])
-    require_text(c / "jetton-minter.fc", [
-        "sender_wc == -1",
-        "sender_address_hash == bridge_address_hash",
-        "calculate_user_jetton_wallet_address",
-        "https://bridge.tos.network/token/",
-        "SEND_MODE_PAY_FEES_SEPARETELY + extra_mode",
-        "throw_unless(error::supply_bound, total_supply + in_flight + jetton_amount <= MAX_SUPPLY)",
-        "throw_unless(error::burn_underfunded, available >= burn_cost(",
-    ])
-    require_text(c / "multisig.fc", [
-        "recv_external",
-        "check_signature",
-        "cnt >= k",
-        "send_raw_message",
-        'int get_global_id() asm "GLOBALID";',
-        "int query_global_id = in_msg~load_int(32);",
-        "throw_unless(44, query_global_id == get_global_id());",
-    ])
-    require_text(c / "votes-collector.fc", ["udict_add?", "get_jetton_bridge_config", "STATE_COLLECTOR_SIGNATURE_REMOVAL_SUSPENDED"])
+    require_text(
+        c / "config.fc",
+        [
+            "config_param(CONFIG_PARAM_ID)",
+            "config_param(- CONFIG_PARAM_ID)",
+            "STATE_BURN_SUSPENDED",
+            "STATE_SWAPS_SUSPENDED",
+            "STATE_GOVERNANCE_SUSPENDED",
+        ],
+    )
+    require_text(
+        c / "jetton-bridge.fc",
+        [
+            "op::execute_voting::swap",
+            "throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee)",
+            "throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0)",
+            "calculate_minter_address(wrapped_token_data)",
+            "throw_unless(error::minter_not_sender",
+            "burn_log_message(destination_address, jetton_amount, token_address, from_address_hash)",
+            "emit_log_simple(LOG_SWAP_PAID",
+            # A mint stays recorded until its wallet confirms it, and a burn's log
+            # and answer are sent together or bounce back to the minter.
+            "pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_IN_FLIGHT",
+            "op::burn_recorded, burn_id",
+            "msg_value - gas_fee(BRIDGE_STEP_GAS, -1) - fee_of(log, -1)",
+        ],
+    )
+    require_text(
+        c / "jetton-wallet.fc",
+        [
+            "throw_unless(error::not_enough_funds, jetton_amount > 0)",
+            "throw_unless(error::burn_fee_not_matched, msg_value == bridge_burn_fee)",
+            "state_flags & STATE_BURN_SUSPENDED",
+            ".store_uint(destination_address, 160)",
+            ".store_body_header(op::mint_credited, query_id)",
+        ],
+    )
+    require_text(
+        c / "jetton-minter.fc",
+        [
+            "sender_wc == -1",
+            "sender_address_hash == bridge_address_hash",
+            "calculate_user_jetton_wallet_address",
+            "https://bridge.tos.network/token/",
+            "SEND_MODE_PAY_FEES_SEPARETELY + extra_mode",
+            "throw_unless(error::supply_bound, total_supply + in_flight + jetton_amount <= MAX_SUPPLY)",
+            "throw_unless(error::burn_underfunded, available >= burn_cost(",
+        ],
+    )
+    require_text(
+        c / "multisig.fc",
+        [
+            "recv_external",
+            "check_signature",
+            "cnt >= k",
+            "send_raw_message",
+            'int get_global_id() asm "GLOBALID";',
+            "int query_global_id = in_msg~load_int(32);",
+            "throw_unless(44, query_global_id == get_global_id());",
+        ],
+    )
+    require_text(
+        c / "votes-collector.fc",
+        ["udict_add?", "get_jetton_bridge_config", "STATE_COLLECTOR_SIGNATURE_REMOVAL_SUSPENDED"],
+    )
     require_text(c / "stdlib.fc", ['"STTOMIS"', '"LDTOMIS"'])
 
     expected_params = {
@@ -146,45 +164,64 @@ def verify_tvm_sources() -> None:
         "tron.fc": (83, 728126428),
     }
     for name, (param, chain_id) in expected_params.items():
-        require_text(PROJECT / "tvm/params" / name, [
-            f"const int CONFIG_PARAM_ID = {param};",
-            f"const int MY_CHAIN_ID = {chain_id};",
-            "const int WORKCHAIN = 0;",
-        ])
+        require_text(
+            PROJECT / "tvm/params" / name,
+            [
+                f"const int CONFIG_PARAM_ID = {param};",
+                f"const int MY_CHAIN_ID = {chain_id};",
+                "const int WORKCHAIN = 0;",
+            ],
+        )
 
 
 def verify_evm_sources() -> None:
     c = PROJECT / "evm/contracts"
-    require_text(c / "Bridge.sol", [
-        "contract Bridge is SignatureChecker, ReentrancyGuard",
-        "nonReentrant",
-        "safeTransferFrom",
-        "newBalance <= 2 ** 120 - 1",
-        "signatures.length >= (2 * oracleSet.length + 2) / 3",
-        "require(next_signer > last_signer",
-        "require(!finishedVotings[digest]",
-        "finishedVotings[_id] = true",
-        "require(newOracles[i] != address(0)",
-        "require(!isOracle[newOracles[i]]",
-        "oracleSetHash == uint256(keccak256(abi.encode(oracleSet)))",
-        'require(initiallyDisabledTokens[i] != address(0), "Zero token in disabled list")',
-        'require(nonce > lastLockStatusNonce, "Stale lock status nonce")',
-        'require(nonce > lastDisableTokenNonce[tokenAddress], "Stale disable token nonce")',
-    ])
-    require_text(c / "SignatureChecker.sol", [
-        "address(this)",
-        "block.chainid",
-        "data.token",
-        "data.tx.tx_hash",
-        "uint256(s) <= 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0",
-        "v == 27 || v == 28",
-    ])
+    require_text(
+        c / "Bridge.sol",
+        [
+            "contract Bridge is SignatureChecker, ReentrancyGuard",
+            "nonReentrant",
+            "safeTransferFrom",
+            "newBalance <= 2 ** 120 - 1",
+            "signatures.length >= (2 * oracleSet.length + 2) / 3",
+            "require(next_signer > last_signer",
+            "require(!finishedVotings[digest]",
+            "finishedVotings[_id] = true",
+            "require(newOracles[i] != address(0)",
+            "require(!isOracle[newOracles[i]]",
+            "oracleSetHash == uint256(keccak256(abi.encode(oracleSet)))",
+            'require(initiallyDisabledTokens[i] != address(0), "Zero token in disabled list")',
+            'require(nonce > lastLockStatusNonce, "Stale lock status nonce")',
+            'require(nonce > lastDisableTokenNonce[tokenAddress], "Stale disable token nonce")',
+        ],
+    )
+    require_text(
+        c / "SignatureChecker.sol",
+        [
+            "address(this)",
+            "block.chainid",
+            "data.token",
+            "data.tx.tx_hash",
+            "uint256(s) <= 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0",
+            "v == 27 || v == 28",
+        ],
+    )
     require_text(c / "TosUtils.sol", ["uint256 amount", "bytes32 tx_hash", "uint64 lt"])
 
 
 def run_model_tests() -> None:
     subprocess.run(
-        [sys.executable, "-m", "unittest", "discover", "-s", str(PROJECT / "tests"), "-p", "test_*.py", "-v"],
+        [
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            str(PROJECT / "tests"),
+            "-p",
+            "test_*.py",
+            "-v",
+        ],
         check=True,
     )
 
@@ -201,7 +238,9 @@ def main() -> int:
     if not args.skip_model:
         run_model_tests()
     print("token bridge source checks and protocol model passed")
-    print("note: these are source-text and model checks; behavior is proven by the EVM and TVM suites")
+    print(
+        "note: these are source-text and model checks; behavior is proven by the EVM and TVM suites"
+    )
     print("      (scripts/test-token-bridge-tvm.sh executes the compiled contracts)")
     return 0
 

@@ -9,75 +9,98 @@ constants are verified by their decoded bytes rather than rewritten.
 Build func/fift first and set FUNC_PATH/FIFT_PATH (or use build/crypto).
 --check verifies reproducibility without writing to the working tree.
 """
+
 import argparse
 import base64
 import os
-from pathlib import Path
 import re
 import sys
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'test/auth-extensions'))
+sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 from native import compile_contract  # noqa: E402
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--check', action='store_true')
+    parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    os.environ.setdefault('FUNC_PATH', str(ROOT / 'build/crypto/func'))
-    os.environ.setdefault('FIFT_PATH', str(ROOT / 'build/crypto/fift'))
+    os.environ.setdefault("FUNC_PATH", str(ROOT / "build/crypto/func"))
+    os.environ.setdefault("FIFT_PATH", str(ROOT / "build/crypto/fift"))
     with tempfile.TemporaryDirectory() as work:
         work = Path(work)
         outputs = {}
-        for name, source in [('agent', 'agent-account-code.fc'), ('wallet', 'wallet-v5-code.fc'),
-                             ('wallet3', 'wallet3-code.fc'), ('wallet4', 'wallet-v4-code.fc')]:
-            output = work / f'{name}.boc'
+        for name, source in [
+            ("agent", "agent-account-code.fc"),
+            ("wallet", "wallet-v5-code.fc"),
+            ("wallet3", "wallet3-code.fc"),
+            ("wallet4", "wallet-v4-code.fc"),
+        ]:
+            output = work / f"{name}.boc"
             code = compile_contract(source, output)
             outputs[name] = output.read_bytes()
-            print(f'{name}: code hash {code.hash.hex()}')
+            print(f"{name}: code hash {code.hash.hex()}")
         replacements = [
-            ('tosctl/src/node-control/contracts/src/agent_account.rs',
-             r'(pub const AGENT_ACCOUNT_CODE_B64: &str =\s*")[^"]*(";)',
-             base64.b64encode(outputs['agent']).decode()),
-            ('tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs',
-             r'(pub const V5R1_CODE_B64: &str =\s*")[^"]*(";)',
-             base64.b64encode(outputs['wallet']).decode()),
-            ('sdk/js/packages/wallets/src/codes.ts',
-             r'(export const WALLET_V5R1_CODE\s*=\s*")[^"]*(";)',
-             outputs['wallet'].hex()),
-            ('sdk/js/packages/wallets/src/codes.ts',
-             r'(export const WALLET_V3R2_CODE\s*=\s*")[^"]*(";)',
-             outputs['wallet3'].hex()),
-            ('sdk/js/packages/wallets/src/codes.ts',
-             r'(export const WALLET_V4R2_CODE\s*=\s*")[^"]*(";)',
-             outputs['wallet4'].hex()),
+            (
+                "tosctl/src/node-control/contracts/src/agent_account.rs",
+                r'(pub const AGENT_ACCOUNT_CODE_B64: &str =\s*")[^"]*(";)',
+                base64.b64encode(outputs["agent"]).decode(),
+            ),
+            (
+                "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs",
+                r'(pub const V5R1_CODE_B64: &str =\s*")[^"]*(";)',
+                base64.b64encode(outputs["wallet"]).decode(),
+            ),
+            (
+                "sdk/js/packages/wallets/src/codes.ts",
+                r'(export const WALLET_V5R1_CODE\s*=\s*")[^"]*(";)',
+                outputs["wallet"].hex(),
+            ),
+            (
+                "sdk/js/packages/wallets/src/codes.ts",
+                r'(export const WALLET_V3R2_CODE\s*=\s*")[^"]*(";)',
+                outputs["wallet3"].hex(),
+            ),
+            (
+                "sdk/js/packages/wallets/src/codes.ts",
+                r'(export const WALLET_V4R2_CODE\s*=\s*")[^"]*(";)',
+                outputs["wallet4"].hex(),
+            ),
         ]
         stale = []
-        rust = (ROOT / 'tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs').read_text()
-        for const, decode, name in [('V3R2_CODE', bytes.fromhex, 'wallet3'),
-                                    ('V4R2_CODE_B64', base64.b64decode, 'wallet4')]:
+        rust = (
+            ROOT / "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs"
+        ).read_text()
+        for const, decode, name in [
+            ("V3R2_CODE", bytes.fromhex, "wallet3"),
+            ("V4R2_CODE_B64", base64.b64decode, "wallet4"),
+        ]:
             match = re.search(rf'pub const {const}: &str = "(.*?)";', rust, re.S)
             if match is None:
-                raise SystemExit(f'wallet_contract.rs: {const} not found')
-            embedded = decode(re.sub(r'\\\s*\n\s*', '', match[1]))
+                raise SystemExit(f"wallet_contract.rs: {const} not found")
+            embedded = decode(re.sub(r"\\\s*\n\s*", "", match[1]))
             if embedded != outputs[name]:
-                raise SystemExit(f'wallet_contract.rs: {const} differs from {name} source; update it by hand')
+                raise SystemExit(
+                    f"wallet_contract.rs: {const} differs from {name} source; update it by hand"
+                )
         for relative, pattern, value in replacements:
             path = ROOT / relative
             text = path.read_text()
             updated, count = re.subn(pattern, lambda m: m[1] + value + m[2], text)
             if count != 1:
-                raise SystemExit(f'{relative}: expected exactly one embedding, got {count}')
+                raise SystemExit(f"{relative}: expected exactly one embedding, got {count}")
             if updated != text:
                 stale.append(relative)
                 if not args.check:
                     path.write_text(updated)
         if args.check and stale:
-            raise SystemExit('Stale authentication bytecode: ' + ', '.join(stale))
-        print('Authentication bytecode is current.' if args.check else 'Updated: ' + ', '.join(stale))
+            raise SystemExit("Stale authentication bytecode: " + ", ".join(stale))
+        print(
+            "Authentication bytecode is current." if args.check else "Updated: " + ", ".join(stale)
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
