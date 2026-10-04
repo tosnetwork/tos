@@ -274,12 +274,12 @@ class CollectTest(unittest.TestCase):
         self.assert_refused(FakeApi([run(42, head_sha=OTHER_SHA)], GOOD_ZIP), "no successful push")
 
 
-POW_WORKFLOW = "build-pow-miner.yml"
-POW_ARTIFACTS = ("tos-pow-miner-linux-x64", "tos-pow-miner-macos-arm64")
-POW_CONFIG = {
+EXTRA_WORKFLOW = "build-extra.yml"
+EXTRA_ARTIFACTS = ("tos-extra-linux-x64", "tos-extra-macos-arm64")
+EXTRA_CONFIG = {
     "build_workflows": [
         {"artifact": "tos-linux", "workflow": WORKFLOW},
-        *({"artifact": name, "workflow": POW_WORKFLOW} for name in POW_ARTIFACTS),
+        *({"artifact": name, "workflow": EXTRA_WORKFLOW} for name in EXTRA_ARTIFACTS),
     ],
     "release_sets": {
         "full": {
@@ -287,7 +287,7 @@ POW_CONFIG = {
                 {"artifact": "tos-linux", "path": "fift", "name": "fift-linux"},
                 *(
                     {"artifact": name, "path": f"{name}.tar.gz", "name": f"{name}.tar.gz"}
-                    for name in POW_ARTIFACTS
+                    for name in EXTRA_ARTIFACTS
                 ),
             ]
         },
@@ -333,25 +333,27 @@ class FakeMultiApi:
         destination.write_bytes(self.served[name])
 
 
-def pow_api(**runs: list[dict[str, Any]]) -> FakeMultiApi:
+def extra_api(**runs: list[dict[str, Any]]) -> FakeMultiApi:
     payloads = {"tos-linux": GOOD_ZIP}
-    for name in POW_ARTIFACTS:
+    for name in EXTRA_ARTIFACTS:
         payloads[name] = zip_bytes({f"{name}.tar.gz": f"archive {name}".encode()})
     return FakeMultiApi(
         {
             WORKFLOW: runs.get("linux", [run(41)]),
-            POW_WORKFLOW: runs.get("pow", [run(77, path=f".github/workflows/{POW_WORKFLOW}")]),
+            EXTRA_WORKFLOW: runs.get(
+                "extra", [run(77, path=f".github/workflows/{EXTRA_WORKFLOW}")]
+            ),
         },
         payloads,
     )
 
 
-class PowMinerCollectTest(unittest.TestCase):
-    """pow-miner archives reach the release only through the collector, bound
-    to their run and digest like every other build input."""
+class SecondWorkflowCollectTest(unittest.TestCase):
+    """Several artifacts from one run of a second build workflow are each
+    bound to that run and to their own digest."""
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory(prefix="release-pow-miner-")
+        self._tmp = tempfile.TemporaryDirectory(prefix="release-second-workflow-")
         self.root = Path(self._tmp.name)
 
     def tearDown(self) -> None:
@@ -360,7 +362,7 @@ class PowMinerCollectTest(unittest.TestCase):
     def collect(self, api: FakeMultiApi, release_set: str = "full") -> dict[str, Any]:
         return release_artifacts.collect(
             api,
-            POW_CONFIG,
+            EXTRA_CONFIG,
             repo=REPO,
             release_set=release_set,
             tag="v2026.10",
@@ -374,14 +376,14 @@ class PowMinerCollectTest(unittest.TestCase):
         self.assertIn(reason, str(caught.exception))
         self.assertFalse((self.root / "artifacts" / "release-provenance.json").exists())
 
-    def test_pow_miner_artifacts_are_collected_and_bound(self) -> None:
-        api = pow_api()
+    def test_second_workflow_artifacts_are_collected_and_bound(self) -> None:
+        api = extra_api()
         provenance = self.collect(api)
         records = {record["artifact_name"]: record for record in provenance["artifacts"]}
-        self.assertEqual(sorted(records), sorted(["tos-linux", *POW_ARTIFACTS]))
-        for name in POW_ARTIFACTS:
+        self.assertEqual(sorted(records), sorted(["tos-linux", *EXTRA_ARTIFACTS]))
+        for name in EXTRA_ARTIFACTS:
             record = records[name]
-            self.assertEqual(record["workflow"], POW_WORKFLOW)
+            self.assertEqual(record["workflow"], EXTRA_WORKFLOW)
             self.assertEqual(record["run_id"], 77)
             self.assertEqual(record["head_sha"], TAG_SHA)
             self.assertEqual(
@@ -394,45 +396,47 @@ class PowMinerCollectTest(unittest.TestCase):
             )
         out = self.root / "stage"
         names = release_artifacts.stage(
-            POW_CONFIG, release_set="full", artifacts=self.root / "artifacts", out=out
+            EXTRA_CONFIG, release_set="full", artifacts=self.root / "artifacts", out=out
         )
-        self.assertIn("tos-pow-miner-linux-x64.tar.gz", names)
-        self.assertIn("tos-pow-miner-linux-x64.tar.gz", (out / "SHA256SUMS").read_text())
+        self.assertIn("tos-extra-linux-x64.tar.gz", names)
+        self.assertIn("tos-extra-linux-x64.tar.gz", (out / "SHA256SUMS").read_text())
 
-    def test_pow_miner_digest_mismatch_is_refused(self) -> None:
-        api = pow_api()
-        api.served["tos-pow-miner-macos-arm64"] = zip_bytes({"x": b"tampered"})
-        self.assert_refused(api, "artifact tos-pow-miner-macos-arm64: downloaded sha256")
+    def test_second_workflow_digest_mismatch_is_refused(self) -> None:
+        api = extra_api()
+        api.served["tos-extra-macos-arm64"] = zip_bytes({"x": b"tampered"})
+        self.assert_refused(api, "artifact tos-extra-macos-arm64: downloaded sha256")
 
-    def test_pow_miner_run_of_another_commit_is_refused(self) -> None:
-        api = pow_api(pow=[run(78, head_sha=OTHER_SHA, path=f".github/workflows/{POW_WORKFLOW}")])
-        self.assert_refused(api, f"{POW_WORKFLOW}: no successful push")
+    def test_second_workflow_run_of_another_commit_is_refused(self) -> None:
+        api = extra_api(
+            extra=[run(78, head_sha=OTHER_SHA, path=f".github/workflows/{EXTRA_WORKFLOW}")]
+        )
+        self.assert_refused(api, f"{EXTRA_WORKFLOW}: no successful push")
 
-    def test_pow_miner_artifact_of_another_run_is_refused(self) -> None:
-        api = pow_api()
-        api.artifact_overrides["tos-pow-miner-linux-x64"] = {
+    def test_second_workflow_artifact_of_another_run_is_refused(self) -> None:
+        api = extra_api()
+        api.artifact_overrides["tos-extra-linux-x64"] = {
             "workflow_run": {"id": 76, "head_sha": TAG_SHA}
         }
-        self.assert_refused(api, "tos-pow-miner-linux-x64 is not bound to run 77")
+        self.assert_refused(api, "tos-extra-linux-x64 is not bound to run 77")
 
-    def test_pow_miner_run_claiming_another_workflow_is_refused(self) -> None:
-        api = pow_api(pow=[run(79)])  # a run of build-linux.yml, listed under pow-miner
-        self.assert_refused(api, f"not {POW_WORKFLOW}")
+    def test_second_workflow_run_claiming_another_workflow_is_refused(self) -> None:
+        api = extra_api(extra=[run(79)])  # a run of build-linux.yml, listed under the other
+        self.assert_refused(api, f"not {EXTRA_WORKFLOW}")
 
     def test_set_collects_only_the_inputs_it_publishes(self) -> None:
-        api = pow_api(pow=[])
+        api = extra_api(extra=[])
         provenance = self.collect(api, release_set="tol")
         self.assertEqual([r["artifact_name"] for r in provenance["artifacts"]], ["tos-linux"])
-        self.assertFalse(any(POW_WORKFLOW in request for request in api.requests))
+        self.assertFalse(any(EXTRA_WORKFLOW in request for request in api.requests))
 
     def test_set_using_an_unbuilt_artifact_is_refused(self) -> None:
-        config = json.loads(json.dumps(POW_CONFIG))
+        config = json.loads(json.dumps(EXTRA_CONFIG))
         config["release_sets"]["full"]["assets"].append(
             {"artifact": "tos-unbuilt", "path": "x", "name": "x"}
         )
         with self.assertRaises(ReleaseError) as caught:
             release_artifacts.collect(
-                pow_api(),
+                extra_api(),
                 config,
                 repo=REPO,
                 release_set="full",
@@ -444,10 +448,10 @@ class PowMinerCollectTest(unittest.TestCase):
         self.assertFalse((self.root / "artifacts").exists())
 
     def test_stage_for_another_set_is_refused(self) -> None:
-        self.collect(pow_api(pow=[]), release_set="tol")
+        self.collect(extra_api(extra=[]), release_set="tol")
         with self.assertRaises(ReleaseError) as caught:
             release_artifacts.stage(
-                POW_CONFIG,
+                EXTRA_CONFIG,
                 release_set="full",
                 artifacts=self.root / "artifacts",
                 out=self.root / "s",
@@ -546,6 +550,8 @@ class FakeTagApi:
         self.refs = refs
         self.tags = tags or {}
         self.releases: list[dict[str, Any]] = []
+        # Bytes GitHub would serve for each uploaded release asset, by id.
+        self.asset_bytes: dict[int, bytes] = {}
         self.requests: list[str] = []
 
     def get_json(self, path: str) -> Any:
@@ -567,8 +573,12 @@ class FakeTagApi:
             raise AssertionError(path)
         return self.releases
 
-    def download(self, path: str, destination: Path) -> None:
-        raise AssertionError(path)
+    def download(self, path: str, destination: Path, *, accept: str | None = None) -> None:
+        self.requests.append(path)
+        prefix = f"repos/{REPO}/releases/assets/"
+        if not path.startswith(prefix) or accept != "application/octet-stream":
+            raise AssertionError((path, accept))
+        destination.write_bytes(self.asset_bytes[int(path.removeprefix(prefix))])
 
 
 def commit(sha: str) -> dict[str, str]:
@@ -758,9 +768,13 @@ class ReleaseStateTest(CheckTagTest):
         (self.stage / "SHA256SUMS").write_bytes(b"sums")
         self.api = FakeTagApi({TAG: commit(TAG_SHA)})
 
-    def uploaded(self, name: str, **overrides: Any) -> dict[str, Any]:
+    def uploaded(self, name: str, content: bytes | None = None, **overrides: Any) -> dict[str, Any]:
+        """An uploaded asset whose served bytes are the staged file, or `content`."""
         payload = (self.stage / name).read_bytes()
+        asset_id = 100 + len(self.api.asset_bytes)
+        self.api.asset_bytes[asset_id] = payload if content is None else content
         asset = {
+            "id": asset_id,
             "name": name,
             "state": "uploaded",
             "size": len(payload),
@@ -791,6 +805,75 @@ class ReleaseStateTest(CheckTagTest):
     def test_complete_draft_passes_before_publication(self) -> None:
         self.api.releases = [release(7, draft=True, assets=self.complete())]
         self.check(self.api, release_state="draft", assets_dir=self.stage)
+        # Every asset's bytes were fetched, not just its metadata.
+        self.assertIn(f"repos/{REPO}/releases/assets/100", self.api.requests)
+        self.assertIn(f"repos/{REPO}/releases/assets/101", self.api.requests)
+
+    def test_absent_digest_with_same_size_wrong_bytes_is_refused(self) -> None:
+        # The negative control: GitHub reports no digest, the name and size
+        # match, and only the content differs.
+        wrong = b"FIFT"  # same length as the staged b"fift"
+        assets = [
+            self.uploaded("fift-linux", content=wrong, digest=None),
+            self.uploaded("SHA256SUMS"),
+        ]
+        self.api.releases = [release(7, draft=True, assets=assets)]
+        self.assert_refused(
+            self.api,
+            "asset fift-linux: downloaded bytes hash to sha256:"
+            + hashlib.sha256(wrong).hexdigest(),
+            release_state="draft",
+            assets_dir=self.stage,
+        )
+
+    def test_absent_digest_with_right_bytes_passes(self) -> None:
+        assets = [
+            self.uploaded("fift-linux", digest=None),
+            self.uploaded("SHA256SUMS", digest=None),
+        ]
+        self.api.releases = [release(7, draft=False, assets=assets)]
+        self.check(self.api, release_state="published", assets_dir=self.stage)
+
+    def test_matching_digest_with_wrong_bytes_is_refused(self) -> None:
+        # A digest field is a claim; the bytes are what is published.
+        assets = [self.uploaded("fift-linux", content=b"FIFT"), self.uploaded("SHA256SUMS")]
+        self.api.releases = [release(7, draft=True, assets=assets)]
+        self.assert_refused(
+            self.api,
+            "asset fift-linux: downloaded bytes",
+            release_state="draft",
+            assets_dir=self.stage,
+        )
+
+    def test_malformed_digest_is_refused(self) -> None:
+        assets = [self.uploaded("fift-linux", digest="md5:abc"), self.uploaded("SHA256SUMS")]
+        self.api.releases = [release(7, draft=True, assets=assets)]
+        self.assert_refused(
+            self.api,
+            "reports a malformed digest 'md5:abc'",
+            release_state="draft",
+            assets_dir=self.stage,
+        )
+
+    def test_asset_without_id_is_refused(self) -> None:
+        assets = [self.uploaded("fift-linux", digest=None, id=None), self.uploaded("SHA256SUMS")]
+        self.api.releases = [release(7, draft=True, assets=assets)]
+        self.assert_refused(
+            self.api,
+            "asset fift-linux has no usable id",
+            release_state="draft",
+            assets_dir=self.stage,
+        )
+
+    def test_asset_without_state_is_refused(self) -> None:
+        # An asset whose upload state GitHub does not report is not assumed finished.
+        unstated = self.uploaded("fift-linux")
+        del unstated["state"]
+        assets = [unstated, self.uploaded("SHA256SUMS")]
+        self.api.releases = [release(7, draft=True, assets=assets)]
+        self.assert_refused(
+            self.api, "asset fift-linux is None", release_state="draft", assets_dir=self.stage
+        )
 
     def test_draft_missing_an_asset_is_refused(self) -> None:
         self.api.releases = [release(7, draft=True, assets=[self.uploaded("fift-linux")])]
@@ -802,7 +885,7 @@ class ReleaseStateTest(CheckTagTest):
         )
 
     def test_draft_with_an_extra_asset_is_refused(self) -> None:
-        extra = {"name": "extra", "state": "uploaded", "size": 1}
+        extra = {"id": 99, "name": "extra", "state": "uploaded", "size": 1}
         self.api.releases = [release(7, draft=True, assets=[*self.complete(), extra])]
         self.assert_refused(
             self.api, "carries assets", release_state="draft", assets_dir=self.stage
@@ -859,14 +942,6 @@ class ReleaseStateTest(CheckTagTest):
 
 class RepositoryConfigTest(unittest.TestCase):
     """The committed configuration names workflows that exist and build on tags."""
-
-    def test_full_release_publishes_the_pow_miner_archives(self) -> None:
-        config = json.loads((HERE / "release-artifacts.json").read_text())
-        inputs = {entry["artifact"]: entry["workflow"] for entry in config["build_workflows"]}
-        names = {asset["name"] for asset in config["release_sets"]["full"]["assets"]}
-        for platform in ("linux-x64", "macos-x64", "macos-arm64"):
-            self.assertEqual(inputs[f"tos-pow-miner-{platform}"], "build-tos-pow-miner.yml")
-            self.assertIn(f"tos-pow-miner-{platform}.tar.gz", names)
 
     def test_every_build_workflow_exists_and_builds_release_tags(self) -> None:
         config = json.loads((HERE / "release-artifacts.json").read_text())

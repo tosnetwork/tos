@@ -12,9 +12,9 @@ name: Create release
 # names the commit the assets were built from. Release tags must be v<version>,
 # the namespace the tag ruleset in doc/tos-release-policy.md protects.
 #
-# This workflow is the only writer of v* releases. Build workflows, the
-# pow-miner one included, upload workflow artifacts only; this workflow
-# collects them, puts every asset into one draft and publishes it once.
+# This workflow is the only writer of v* releases. Build workflows upload
+# workflow artifacts only; this workflow collects them, puts every asset into
+# one draft and publishes it once.
 
 on:
   workflow_dispatch:

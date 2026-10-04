@@ -164,9 +164,16 @@ The import script (`docker/import-snapshot.sh`) then:
 - moves the verified entries into place, and only then writes the
   `.snapshot-imported` marker.
 
-Any refusal stops the container before the node starts, and leaves the database
-as it was. A database imported by an earlier image without verification (it
-carries a `dump_downloaded` marker) is refused; start from an empty database.
+Any refusal or failure stops the container before the node starts. A refusal
+during validation, which covers everything up to and including the final
+check of the database immediately before installation, leaves the database as
+it was. A failure during installation itself (moving the checked entries into
+place) can leave it partially installed and without the `.snapshot-imported`
+marker; the next start then refuses it as not new. Delete the database
+directory's contents except `config.json`, `keyring/` and `tos-global.config`,
+or start from a new database, before trying again. A database imported by an
+earlier image without verification (it carries a `dump_downloaded` marker) is
+refused; start from an empty database.
 
 ### Verify if TOS node is operating correctly
 After executing above command check the log files:

@@ -617,7 +617,7 @@ BAD_WORKFLOWS = {
         # Even with every tag check in place, this workflow may not write.
         "      - run: |\n"
         "          python3 g/release-artifacts.py check-tag --release-state draft\n"
-        '          gh release upload "$T" miner.tar.gz\n'
+        '          gh release upload "$T" tool.tar.gz\n'
         "          python3 g/release-artifacts.py check-tag --release-state published\n",
     ),
     "RELEASE_WRITER_NOT_DESIGNATED ": GOOD_WORKFLOW.replace(
@@ -631,7 +631,7 @@ BAD_WORKFLOWS = {
     "RELEASE_WRITER_NOT_DESIGNATED   ": GOOD_WORKFLOW.replace(
         f"      - uses: docker://alpine@sha256:{'a' * 64}\n",
         f"      - uses: docker://alpine@sha256:{'a' * 64}\n"
-        '      - run: gh release delete-asset "$T" miner.tar.gz --yes\n',
+        '      - run: gh release delete-asset "$T" tool.tar.gz --yes\n',
     ),
 }
 # Each flips one property of GOOD_RELEASE_WORKFLOW, written as the designated

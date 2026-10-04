@@ -39,6 +39,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -63,7 +64,9 @@ class ReleaseError(Exception):
 class Api(Protocol):
     def get_json(self, path: str) -> Any: ...
 
-    def download(self, path: str, destination: Path) -> None: ...
+    def get_all(self, path: str) -> list[Any]: ...
+
+    def download(self, path: str, destination: Path, *, accept: str | None = None) -> None: ...
 
 
 class GhApi:
@@ -85,10 +88,11 @@ class GhApi:
             raise ReleaseError(f"GitHub API request {path} failed: {result.stderr.strip()}")
         return [item for page in json.loads(result.stdout) for item in page]
 
-    def download(self, path: str, destination: Path) -> None:
+    def download(self, path: str, destination: Path, *, accept: str | None = None) -> None:
+        headers = ["-H", f"Accept: {accept}"] if accept else []
         with destination.open("wb") as handle:
             result = subprocess.run(
-                ["gh", "api", path], stdout=handle, stderr=subprocess.PIPE, check=False
+                ["gh", "api", *headers, path], stdout=handle, stderr=subprocess.PIPE, check=False
             )
         if result.returncode != 0:
             raise ReleaseError(
@@ -316,8 +320,10 @@ def check_release_state(
     none       no release for the tag exists, draft or published: each tag is
                published once, and an existing release is never added to
     draft      exactly one release for the tag, still a draft; with
-               assets_dir, it carries exactly the staged files, each with the
-               staged size and (where GitHub reports one) SHA-256 digest
+               assets_dir, it carries exactly the staged files: each asset is
+               downloaded by its id and its bytes must hash to the staged
+               SHA-256, and a digest GitHub reports must be well formed and
+               agree. Name and size alone never stand in for the content.
     published  exactly one release for the tag, published, likewise complete
     """
     if state not in RELEASE_STATES:
@@ -354,16 +360,49 @@ def check_release_state(
             f"the release for {tag} carries assets {sorted(map(str, uploaded))}, "
             f"expected exactly the staged {sorted(expected)}"
         )
-    for name, (size, digest) in expected.items():
-        asset = uploaded[name]
-        if asset.get("state", "uploaded") != "uploaded" or asset.get("size") != size:
-            raise ReleaseError(
-                f"asset {name} is {asset.get('state')} with {asset.get('size')} bytes, "
-                f"expected uploaded with {size}"
+    with tempfile.TemporaryDirectory(prefix="release-asset-") as scratch:
+        for name, (size, digest) in expected.items():
+            verify_uploaded_asset(
+                api,
+                repo=repo,
+                asset=uploaded[name],
+                size=size,
+                digest=digest,
+                scratch=Path(scratch),
             )
-        recorded = asset.get("digest")
-        if recorded is not None and recorded != f"sha256:{digest}":
+
+
+def verify_uploaded_asset(
+    api: Api, *, repo: str, asset: dict[str, Any], size: int, digest: str, scratch: Path
+) -> None:
+    """Refuse unless the uploaded asset's own bytes hash to the staged digest."""
+    name = asset.get("name")
+    if asset.get("state") != "uploaded" or asset.get("size") != size:
+        raise ReleaseError(
+            f"asset {name} is {asset.get('state')} with {asset.get('size')} bytes, "
+            f"expected uploaded with {size}"
+        )
+    recorded = asset.get("digest")
+    if recorded is not None:
+        if not DIGEST_RE.fullmatch(str(recorded)):
+            raise ReleaseError(f"asset {name} reports a malformed digest {recorded!r}")
+        if recorded != f"sha256:{digest}":
             raise ReleaseError(f"asset {name} has digest {recorded}, expected sha256:{digest}")
+    asset_id = asset.get("id")
+    if not isinstance(asset_id, int) or isinstance(asset_id, bool) or asset_id <= 0:
+        raise ReleaseError(
+            f"asset {name} has no usable id ({asset_id!r}); its bytes cannot be checked"
+        )
+    copy = scratch / f"asset-{asset_id}"
+    api.download(
+        f"repos/{repo}/releases/assets/{asset_id}", copy, accept="application/octet-stream"
+    )
+    actual = sha256_file(copy)
+    copy.unlink()
+    if actual != digest:
+        raise ReleaseError(
+            f"asset {name}: downloaded bytes hash to sha256:{actual}, expected sha256:{digest}"
+        )
 
 
 def check_tag(

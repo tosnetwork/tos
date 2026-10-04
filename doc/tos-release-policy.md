@@ -348,9 +348,8 @@ built from, and only by one workflow per tag namespace:
 Each publisher refuses a tag outside its namespace. Releases published before
 these namespaces were introduced keep their names.
 
-No other workflow writes a release. Build workflows, including
-`build-tos-pow-miner.yml`, only upload workflow artifacts with read-only
-tokens; the publisher collects them. `scripts/check-workflow-supply-chain.py`
+No other workflow writes a release. Build workflows only upload workflow
+artifacts with read-only tokens; the publisher collects them. `scripts/check-workflow-supply-chain.py`
 enforces this: `RELEASE_WRITER_NOT_DESIGNATED` fails any other workflow that
 runs `gh release create`, `upload`, `edit`, `delete` or `delete-asset`, uses a
 release-writing action, or sends a write request to a releases API path, and
@@ -366,10 +365,11 @@ release-writing action, or sends a write request to a releases API path, and
 3. Run the publisher (Actions, "Create release" or "Create tol release",
    "Run workflow") with the tag.
 
-The `full` set includes the pow-miner archives, so a `v*` release needs a
-successful `build-tos-pow-miner.yml` run on the tag. That workflow builds the
-`pow-miner` CMake target; while the target does not exist in the tree, the
-workflow fails and the publisher refuses every `v*` release, by design.
+A new binary joins a release set only once a real build target exists and
+its build workflow has succeeded on a tag: then add the workflow's artifact
+to `build_workflows` and the files to the set's `assets` in
+`scripts/release-artifacts.json`. A build input that cannot succeed would make
+the publisher refuse every release of that set.
 
 The publisher then:
 
@@ -385,7 +385,9 @@ The publisher then:
 3. checks the tag again and that exactly one draft exists, then **uploads
    every asset to that draft** in one command (`--release-state draft`);
 4. checks the tag again and that the draft carries **exactly** the staged
-   files, with the staged sizes and digests, then **publishes it once**
+   files: each uploaded asset is downloaded by its id and its bytes must hash
+   to the staged SHA-256 (a digest GitHub reports must also be well formed and
+   agree; name and size alone are never accepted), then **publishes it once**
    (`--release-state draft --assets`);
 5. checks the tag again and that the release is published and complete
    (`--release-state published --assets`); on failure it deletes the release
@@ -441,8 +443,8 @@ command output as the closure record. Steps 1 to 6 should succeed; steps 7
 to 11 should be refused with the stated reason.
 
 1. As a release maintainer, push `v0.0.0-smoke.1` on a reviewed commit of
-   `main`. Wait for every build workflow in `scripts/release-artifacts.json`,
-   including `build-tos-pow-miner.yml`, to succeed on the tag.
+   `main`. Wait for every build workflow the `full` set uses in
+   `scripts/release-artifacts.json` to succeed on the tag.
 2. Run "Create release" with the tag. In the publish job, confirm the first
    check prints `its release is none` and that `gh release create ... --draft`
    created a draft (`gh release view v0.0.0-smoke.1` reports it as a draft
