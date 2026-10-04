@@ -675,8 +675,8 @@ the key implies, and the transact's exit code.
 Every key in `ceremony_acceptance.rs` is built from a seed in that file, so
 until the `ceremony-gate` example existed there was no way to point the gate at
 an actual ceremony's output -- the tests never read a ceremony directory. That
-example is the missing step; `parameters_with_verifying_key` and the genesis
-binary's `--verifying-key` are the one after it. See **And then the 1,248 bytes
+example is the missing step; the genesis binary's `--ceremony`, which audits
+the directory and takes the key from the audit, is the one after it. See **And then the 1,248 bytes
 become a deployment** above.
 
 Five tests establish that the gate judges rather than nods:
@@ -743,20 +743,37 @@ cargo run --release --manifest-path \
 
 # what would it deploy as? the key is part of the genesis state, so it fixes
 # the state hash, so it fixes the address
-cargo run --manifest-path tools/shielded-pool-genesis/Cargo.toml --bin genesis -- \
+cargo run --release --manifest-path tools/shielded-pool-genesis/Cargo.toml --bin genesis -- \
     . out/manifest.json <profile commit> <profile blob> \
-    --verifying-key vk.bin --ceremony-transcript <transcript digest phase2-verify printed>
+    --ceremony /path/to/ceremony \
+    --verifying-key vk.bin --ceremony-transcript <the announced transcript digest>
 ```
 
-The generator never falls back to the development key: without a key, the
-ceremony's transcript digest and the profile's source commit and blob it
-refuses, and it refuses the development key itself. A development genesis must
-be asked for with `--development`; its manifest then carries
-`"key": {"class": "development"}`, which `manifest::require_production`
-refuses.
+The generator never falls back to the development key, and never takes a
+key on its word. `--ceremony` names the ceremony directory: the generator
+rebuilds the starting key from the committed slice, runs the same audit
+`phase2-verify` runs (the ceremony crate's `audit::audit`), refuses a ceremony
+no beacon has closed, and takes the verifying key out of that audit.
+`--verifying-key` and `--ceremony-transcript` are optional cross-checks and
+must match what the audit found byte for byte, so a different key cannot be
+presented under a real ceremony's transcript. The profile's source commit and
+blob are required as git object ids.
 
-Until `--verifying-key` existed there was no supported route from a ceremony's
-output to a genesis state: the only way was hand-editing the development
+The manifest's `key` section then records the audited ceremony -- protocol,
+`"status": "finished"`, step count, transcript, beacon digest, phase-1
+transcript and slice digest, starting-key digest, constraint and instance
+counts, final proving-key digest and verifying-key digest. Before writing,
+the generator puts the manifest through `manifest::require_production`, which
+reads it as typed JSON (unknown or misplaced fields and duplicate keys are
+refused) and holds every field against the plan the audit produced: the
+verifying key, the state hash, the ceremony section and the provenance. A
+development genesis must be asked for with `--development`; its manifest
+carries `"key": {"class": "development"}`, which that gate refuses, as it
+refuses any manifest naming the development verifying key whatever its class
+says.
+
+Until the generator took a ceremony's key there was no supported route from a
+ceremony's output to a genesis state: the only way was hand-editing the development
 fixture, which is exactly the sort of step that gets done once, wrongly, under
 time pressure. Everything except the key still comes from
 `development_parameters`, so there is no second copy of the profile, the

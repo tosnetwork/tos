@@ -101,8 +101,12 @@ jobs:
       # formula blocks rustdoc compiles as Rust. Nobody saw it because the
       # comment explaining why not to look was believed instead of checked.
       #
-      # All three finish in about three seconds together, so there is no
-      # argument from cost for leaving them out.
+      # The circuit and wallet suites finish in seconds. The genesis suite's
+      # `ceremony_binding.rs` rebuilds the ceremony's starting key from the
+      # committed phase-1 slice once and audits a real ceremony with it:
+      # about ninety seconds on sixteen threads, a few minutes on a hosted
+      # runner. That is the cost of a production gate tested against a real
+      # audited ceremony rather than a fixture that agrees with itself.
       - name: The crates the cross-check does not reach
         env:
           TOS_ROOT: ${{ github.workspace }}

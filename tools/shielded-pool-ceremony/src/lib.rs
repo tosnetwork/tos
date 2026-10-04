@@ -77,6 +77,7 @@
 //! produces: the `h` query is 32,767 long and so is the transform's, because
 //! they are the same object.
 
+pub mod audit;
 pub mod committed;
 pub mod contribution;
 pub mod crosscheck;

@@ -1838,7 +1838,10 @@ dependencies = [
  "ark-ff",
  "chain_block",
  "hex",
+ "serde",
+ "serde_json",
  "sha2",
+ "shielded-pool-ceremony",
  "shielded-pool-circuit",
 ]
 
