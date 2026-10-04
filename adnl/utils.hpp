@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <algorithm>
+
 #include "common/checksum.h"
 #include "common/errorcode.h"
 #include "common/status.h"
@@ -70,6 +72,12 @@ class RateLimiter {
 
   bool is_full() const {
     return ready_at_ < td::Timestamp::now().at() - emission_interval_;
+  }
+
+  // Whether take() would succeed now, without taking.
+  bool can_take() const {
+    const auto now = td::Timestamp::now().at();
+    return std::max(ready_at_, now - emission_interval_) <= now;
   }
 
   double period() const {

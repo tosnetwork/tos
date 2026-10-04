@@ -229,11 +229,7 @@ td::Status QuicServer::ensure_flood_allowed(const std::string &flood_addr) {
   if (auto it = flood_map_.find(flood_addr); it != flood_map_.end() && it->second >= *options_.flood_control) {
     return td::Status::Error("flood control overflow");
   }
-  TRY_STATUS(conn_rate_limiters_.take_new_connection(flood_addr));
-  if (!global_conn_rate_limiter_.take()) {
-    return td::Status::Error("global new connection rate limit exceeded");
-  }
-  return td::Status::OK();
+  return conn_rate_limiters_.take_new_connection(flood_addr, global_conn_rate_limiter_);
 }
 
 void QuicServer::flood_on_inbound_connection_created(const std::string &flood_addr) {
