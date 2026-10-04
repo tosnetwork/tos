@@ -14,7 +14,9 @@
 //!
 //! - a protected file: a regular file (not a symlink) owned by the effective
 //!   user and not readable or writable by group or others;
-//! - an inherited file descriptor, typically a pipe set up by the caller;
+//! - an inherited file descriptor: a pipe or socket set up by the caller, or
+//!   a regular file meeting the same protection rule, read through a
+//!   duplicate so the caller's descriptor is left open;
 //! - a non-echoing prompt on the controlling terminal.
 //!
 //! Environment variables are deliberately not offered: they are inherited by
@@ -180,13 +182,21 @@ fn read_fd(fd: i32) -> Result<Zeroizing<Vec<u8>>, SecretInputError> {
             reason: "must be standard input (0) or an inherited descriptor of 3 or more".into(),
         });
     }
-    // Reopening through /dev/fd reaches only descriptors this process holds,
-    // needs no unsafe ownership transfer, and leaves the original descriptor
-    // (which may belong to the runtime if the number is wrong) untouched.
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .open(format!("/dev/fd/{fd}"))
-        .map_err(|error| SecretInputError::BadFd { fd, reason: error.kind().to_string() })?;
+    // Read through a duplicate of the inherited descriptor rather than by
+    // reopening /dev/fd/N: reopening fails for sockets on Linux. The duplicate
+    // is owned here and closed on drop; the original stays open, untouched.
+    // SAFETY: dup has no memory-safety preconditions; an invalid descriptor
+    // makes it fail with EBADF, which is reported below.
+    let duplicate = unsafe { libc::dup(fd) };
+    if duplicate < 0 {
+        return Err(SecretInputError::BadFd {
+            fd,
+            reason: std::io::Error::last_os_error().kind().to_string(),
+        });
+    }
+    // SAFETY: `duplicate` is a freshly created descriptor that nothing else
+    // owns, so the File takes sole ownership and closes it exactly once.
+    let file = unsafe { <File as std::os::fd::FromRawFd>::from_raw_fd(duplicate) };
     let metadata = file
         .metadata()
         .map_err(|error| SecretInputError::BadFd { fd, reason: error.kind().to_string() })?;
@@ -333,14 +343,89 @@ mod tests {
         );
     }
 
+    const REFUSAL_CHILD_ENV: &str = "SECRET_INPUT_FD_REFUSAL_CHILD";
+
+    /// Runs inside a child process whose standard output and error are an
+    /// idle socket. Refusing descriptors 1 and 2 must not read them at all;
+    /// a read would block on the socket, which no data ever reaches.
+    #[test]
+    #[ignore = "runs only as the child of standard_output_and_error_descriptors_are_refused"]
+    fn fd_refusal_child() {
+        let Some(marker) = std::env::var_os(REFUSAL_CHILD_ENV) else {
+            return;
+        };
+        let mut refused = 0;
+        for fd in [1, 2, -1] {
+            match read_secret(&SecretSource::Fd(fd)) {
+                Err(SecretInputError::BadFd { reason, .. })
+                    if reason.contains("must be standard input (0)") =>
+                {
+                    refused += 1
+                }
+                other => std::process::exit(if other.is_ok() { 3 } else { 4 }),
+            }
+        }
+        // Proves to the parent that the checks above ran, so a child that
+        // matched no test or checked nothing cannot pass.
+        std::fs::write(marker, format!("refused {refused}")).expect("write marker");
+    }
+
     #[test]
     fn standard_output_and_error_descriptors_are_refused() {
-        for fd in [1, 2, -1] {
-            assert!(matches!(
-                read_secret(&SecretSource::Fd(fd)),
-                Err(SecretInputError::BadFd { .. })
-            ));
-        }
+        use std::os::unix::net::UnixStream;
+        use std::time::{Duration, Instant};
+
+        // The child's descriptors 1 and 2 are a connected socket that stays
+        // open and silent, so any read of them blocks; the deadline turns
+        // such a read into a failure instead of a hang.
+        let marker_dir = tempfile::tempdir().expect("tempdir");
+        let marker = marker_dir.path().join("checked");
+        let (child_end, parent_end) = UnixStream::pair().expect("socketpair");
+        let stderr_end = child_end.try_clone().expect("clone");
+        let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "secret_input::tests::fd_refusal_child",
+                "--ignored",
+                "--test-threads=1",
+            ])
+            .env(REFUSAL_CHILD_ENV, &marker)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::from(std::os::fd::OwnedFd::from(child_end)))
+            .stderr(std::process::Stdio::from(std::os::fd::OwnedFd::from(stderr_end)))
+            .spawn()
+            .expect("spawn child");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("wait") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("reading descriptor 1 or 2 blocked: they were not refused before use");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        drop(parent_end);
+        assert!(status.success(), "child refused incorrectly: {status}");
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("child ran the refusal checks"),
+            "refused 3"
+        );
+    }
+
+    #[test]
+    fn inherited_socket_descriptor_is_read() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+        let (mut writer, reader) = UnixStream::pair().expect("socketpair");
+        writer.write_all(SECRET.as_bytes()).expect("write");
+        writer.shutdown(std::net::Shutdown::Write).expect("shutdown");
+        let data = read_secret(&SecretSource::Fd(reader.as_raw_fd())).expect("read socket");
+        assert_eq!(&data[..], SECRET.as_bytes());
+        // The caller's descriptor stays open and usable after the read.
+        assert!(reader.peer_addr().is_ok());
     }
 
     #[test]

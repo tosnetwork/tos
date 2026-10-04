@@ -622,7 +622,7 @@ Import an existing private key into the vault.
 |------|------------|-------------|
 | `--name <NAME>` | `-n` | Key name (unique identifier in the vault) |
 | `--private-key-file <PATH>` | | Read the base64 private key from a file you own with mode `0600` |
-| `--private-key-fd <N>` | | Read the base64 private key from an inherited descriptor (`0` for standard input, or `3` and above) |
+| `--private-key-fd <N>` | | Read the base64 private key from an inherited descriptor (`0` for standard input, or `3` and above): a pipe, a socket, or a regular file you own with mode `0600` |
 | `--algorithm <ALG>` | `-a` | Algorithm (default: `ed25519`) |
 | `--extractable` | `-e` | Mark key as extractable |
 

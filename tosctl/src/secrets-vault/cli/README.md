@@ -163,7 +163,7 @@ Import an existing secret.
 |----------------------|----------|------------------------------------------|
 | `--secret-id <ID>`   | Yes      | Unique identifier for the secret         |
 | `--data-file <PATH>` | No       | Read the hex secret from a file you own with mode `0600` |
-| `--data-fd <N>`      | No       | Read the hex secret from an inherited descriptor (`0` for standard input, or `3` and above) |
+| `--data-fd <N>`      | No       | Read the hex secret from an inherited descriptor (`0` for standard input, or `3` and above): a pipe, a socket, or a regular file you own with mode `0600` |
 | `--algorithm <ALG>`  | No       | Algorithm type (default: `None`)         |
 | `--extractable`      | No       | Allow secret to be exported              |
 | `--overwrite`        | No       | Replace an existing secret with the same ID |
