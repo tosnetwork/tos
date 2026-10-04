@@ -388,7 +388,7 @@ impl ChainProvider for FakeChain {
 }
 
 pub(super) fn limits(max_batches: u32, max_shard_work: usize) -> ScanLimits {
-    ScanLimits { max_batches, max_shard_work, max_refresh: MAX_ADDRESS_REFRESH_PER_DRAIN }
+    ScanLimits { max_batches, max_shard_work, refresh: RefreshBudget::production() }
 }
 
 pub(super) async fn run_tick(
@@ -1283,4 +1283,41 @@ async fn a_transient_read_failure_delays_but_skips_no_height() {
     let first_two = reads.iter().position(|seqno| *seqno == 2).expect("height 2 observed");
     assert!(reads[..first_two].contains(&1), "height 1 observed before height 2: {reads:?}");
     assert!(!reads[first_two..].contains(&1), "no height observed out of order: {reads:?}");
+}
+
+#[tokio::test]
+async fn a_pool_backlog_drains_while_the_pool_is_touched_every_block() {
+    let chain = FakeChain::new();
+    // Thirty heights are owed while the node cannot serve the first one.
+    chain.with(|s| s.oldest_servable_seqno = 2);
+    for seqno in 1..=30 {
+        pool_height(&chain, seqno, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    }
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(10, 100), 30, 5).await;
+    let owed = |store: &IndexerStore| store.queued_heights_for_test(&pool_address()).unwrap().len();
+    assert_eq!(owed(&store), 30);
+    // The state is servable again, and every new block touches the pool.
+    chain.with(|s| s.oldest_servable_seqno = 0);
+    let mut backlog = Vec::new();
+    for seqno in 31..=34 {
+        pool_height(&chain, seqno, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+        run_tick(&chain, &store, &limits(1, 100)).await.unwrap();
+        backlog.push(owed(&store));
+    }
+    assert_eq!(store.published_mc_seqno().unwrap(), 34);
+    assert_eq!(backlog, vec![0, 0, 0, 0], "the backlog is gone within one block");
+    let response = api(&store, ALICE_KEY);
+    assert_eq!(response.0, 200, "{}", response.1);
+    assert_eq!(response.1["result"][0]["coverage_gap_count"], 0);
+    // Every height observed exactly once, in order: no read succeeded during
+    // the outage, and none was skipped after it.
+    let reads: Vec<u32> = chain.with(|s| {
+        s.pinned_reads
+            .iter()
+            .filter(|(method, _)| method == "list_nominators")
+            .map(|(_, seqno)| *seqno)
+            .collect()
+    });
+    assert_eq!(reads, (1..=34).collect::<Vec<u32>>());
 }

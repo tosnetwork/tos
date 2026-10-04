@@ -761,6 +761,19 @@ impl IndexerStore {
         Ok(queue)
     }
 
+    /// The lowest queued height of one address, if any: the next height a
+    /// drain of that address must observe.
+    pub fn next_address_refresh(&self, address: &str) -> anyhow::Result<Option<AddressRefresh>> {
+        let conn = self.lock()?;
+        let mut statement = conn.prepare(
+            "SELECT address, touch_count, last_block_seqno, last_gen_utime,
+                    mc_seqno, mc_root_hash, mc_file_hash, attempts
+             FROM indexer_address_refresh WHERE address = ?1
+             ORDER BY mc_seqno ASC LIMIT 1",
+        )?;
+        Ok(statement.query_row(params![address], address_refresh_row).optional()?)
+    }
+
     /// The highest queued height of one address, if any.
     pub fn latest_address_refresh(&self, address: &str) -> anyhow::Result<Option<AddressRefresh>> {
         let conn = self.lock()?;
@@ -883,6 +896,19 @@ impl IndexerStore {
             ],
         )?;
         Ok(())
+    }
+
+    /// Every queued height of one address with its attempts, lowest first,
+    /// for tests of the drain.
+    #[cfg(test)]
+    pub(crate) fn queued_heights_for_test(&self, address: &str) -> anyhow::Result<Vec<(u32, u32)>> {
+        let conn = self.lock()?;
+        let mut statement = conn.prepare(
+            "SELECT mc_seqno, attempts FROM indexer_address_refresh WHERE address = ?1
+             ORDER BY mc_seqno",
+        )?;
+        let rows = statement.query_map(params![address], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     /// Keeps a refresh row for another attempt.
