@@ -126,6 +126,9 @@ class HttpPayload {
   void set_error() {
     error_ = true;
   }
+  // The payload will not be completed: mark it failed and tell its consumers,
+  // once, as completion would, so they see is_error() instead of waiting.
+  void fail();
   PayloadType payload_type() const {
     return type_;
   }

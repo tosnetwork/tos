@@ -50,6 +50,7 @@
 #include "td/utils/port/signals.h"
 #include "toslib/toslib/ToslibClient.h"
 #include "toslib/toslib/ToslibClientWrapper.h"
+#include "validator-engine/json-rpc-http-policy.h"
 
 #include "DNSResolver.h"
 #include "git.h"
@@ -60,9 +61,10 @@
 
 class RldpHttpProxy;
 
-// A forwarded request and its response, end to end, must finish within this;
-// a backend that stops answering then releases its connection.
-constexpr double kHttpForwardTimeout = 60.0;
+// Default total time a forwarded request and its whole response may take
+// (--forward-timeout). It is a total, not an idle limit: a response still
+// streaming when it passes is cut off, and its body fails.
+constexpr double kDefaultHttpForwardTimeout = 60.0;
 
 class HttpRemote : public td::actor::Actor {
  public:
@@ -72,7 +74,7 @@ class HttpRemote : public td::actor::Actor {
     td::Timestamp timeout;
     td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise;
   };
-  HttpRemote(td::IPAddress addr) : addr_(addr) {
+  HttpRemote(td::IPAddress addr, double forward_timeout) : addr_(addr), forward_timeout_(forward_timeout) {
   }
   void start_up() override {
     class Cb : public tos::http::HttpClient::Callback {
@@ -117,7 +119,7 @@ class HttpRemote : public td::actor::Actor {
             }
           });
       td::actor::send_closure(client_, &tos::http::HttpClient::send_request, std::move(request), std::move(payload),
-                              td::Timestamp::in(kHttpForwardTimeout), std::move(P));
+                              td::Timestamp::in(forward_timeout_), std::move(P));
     } else {
       tos::http::answer_error(tos::http::HttpStatusCode::status_bad_request, "", std::move(promise));
     }
@@ -125,6 +127,7 @@ class HttpRemote : public td::actor::Actor {
 
  private:
   td::IPAddress addr_;
+  double forward_timeout_;
   bool ready_ = true;
   td::actor::ActorOwn<tos::http::HttpClient> client_;
 };
@@ -312,10 +315,16 @@ class HttpRldpPayloadSender : public td::actor::Actor {
     if (from_timer) {
       active_timer_ = false;
     }
-    if (!cur_query_promise_) {
+    if (payload_->is_error()) {
+      // The body failed (for example the backend missed its deadline): end
+      // the transfer now rather than when this sender's own timer fires.
+      if (cur_query_promise_) {
+        cur_query_promise_.set_error(td::Status::Error("http payload failed"));
+      }
+      stop();
       return;
     }
-    if (payload_->is_error()) {
+    if (!cur_query_promise_) {
       return;
     }
     if (payload_->parse_completed() || payload_->ready_bytes() >= tos::http::HttpRequest::low_watermark()) {
@@ -809,6 +818,10 @@ class RldpHttpProxy : public td::actor::Actor {
     listen_address_ = address;
   }
 
+  void set_forward_timeout(double seconds) {
+    forward_timeout_ = seconds;
+  }
+
   void set_global_config(std::string path) {
     global_config_ = std::move(path);
   }
@@ -1216,7 +1229,7 @@ class RldpHttpProxy : public td::actor::Actor {
     }
 
     if (server.http_remote_.empty()) {
-      server.http_remote_ = td::actor::create_actor<HttpRemote>("remote", server.remote_addr_);
+      server.http_remote_ = td::actor::create_actor<HttpRemote>("remote", server.remote_addr_, forward_timeout_);
     }
 
     auto payload = request->create_empty_payload();
@@ -1343,6 +1356,7 @@ class RldpHttpProxy : public td::actor::Actor {
   };
 
   td::IPAddress listen_address_;
+  double forward_timeout_ = kDefaultHttpForwardTimeout;
   td::IPAddress addr_;
   std::string global_config_;
 
@@ -1633,6 +1647,17 @@ int main(int argc, char *argv[]) {
                        [&](td::Slice arg) -> td::Status {
                          TRY_RESULT(port, td::to_integer_safe<td::uint16>(arg));
                          td::actor::send_closure(x, &RldpHttpProxy::set_client_port, port);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('\0', "forward-timeout",
+                       "seconds a request forwarded to a local HTTP server may take in total, response "
+                       "included (default 60); a response still streaming then is cut off",
+                       [&](td::Slice arg) -> td::Status {
+                         TRY_RESULT(seconds, tos::json_rpc::parse_timeout_seconds(arg));
+                         if (seconds <= 0) {
+                           return td::Status::Error("forward timeout must be positive");
+                         }
+                         td::actor::send_closure(x, &RldpHttpProxy::set_forward_timeout, seconds);
                          return td::Status::OK();
                        });
   p.add_option('C', "global-config", "global TOS configuration file",

@@ -53,6 +53,10 @@ Example pattern:
 - `-L`: local hostname mapping
 - `-R`: remote hostname mapping
 - `-P`: whether to proxy all HTTP traffic
+- `--forward-timeout`: total seconds a request forwarded to a local HTTP
+  server may take, response included (default 60). It is a total, not an idle
+  limit: a response still streaming when it passes is cut off. Concurrent
+  forwards are capped (1000 per remote); more are answered 503.
 
 `-p 8080` used to listen on every interface; it now listens on `127.0.0.1`
 only. A proxy that other hosts should reach must name the address, for

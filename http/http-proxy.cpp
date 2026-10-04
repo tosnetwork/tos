@@ -43,6 +43,10 @@
 
 class HttpProxy;
 
+// Concurrent requests to one host each take their own connection, and at
+// most this many are open per host; more are answered 503.
+constexpr td::uint32 kMaxConnectionsPerHost = 64;
+
 class HttpRemote : public td::actor::Actor {
  public:
   struct Query {
@@ -68,10 +72,8 @@ class HttpRemote : public td::actor::Actor {
      private:
       td::actor::ActorId<HttpRemote> id_;
     };
-    // Concurrent requests to one host each take a connection; the cap is now
-    // enforced, so it is set to a finite number that real browsing needs.
-    client_ =
-        tos::http::HttpClient::create_multi(domain_, td::IPAddress(), 64, 1, std::make_shared<Cb>(actor_id(this)));
+    client_ = tos::http::HttpClient::create_multi(domain_, td::IPAddress(), kMaxConnectionsPerHost, 1,
+                                                  std::make_shared<Cb>(actor_id(this)));
     fail_at_ = td::Timestamp::in(10.0);
     close_at_ = td::Timestamp::in(60.0);
     // Arm the alarm. Without this the timeout logic in alarm() -- the only

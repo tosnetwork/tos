@@ -72,15 +72,14 @@ void HttpClientImpl::send_request(
 void HttpMultiClientImpl::send_request(
     std::unique_ptr<HttpRequest> request, std::shared_ptr<HttpPayload> payload, td::Timestamp timeout,
     td::Promise<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> promise) {
+  if (open_connections_ >= max_connections_) {
+    return answer_error(HttpStatusCode::status_service_unavailable, "", std::move(promise));
+  }
   if (domain_.size() > 0) {
     auto S = addr_.init_host_port(domain_);
     if (S.is_error()) {
       return answer_error(HttpStatusCode::status_bad_gateway, "", std::move(promise));
     }
-  }
-
-  if (open_connections_ >= max_connections_) {
-    return answer_error(HttpStatusCode::status_service_unavailable, "", std::move(promise));
   }
   auto fd = td::SocketFd::open(addr_);
   if (fd.is_error()) {

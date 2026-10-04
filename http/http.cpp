@@ -627,6 +627,23 @@ void HttpPayload::run_callbacks() {
   run_callbacks(std::move(callbacks), completed, ready_bytes);
 }
 
+void HttpPayload::fail() {
+  std::vector<Callback *> callbacks;
+  {
+    const std::lock_guard<std::mutex> lock{mutex_};
+    error_ = true;
+    if (callbacks_completed_notified_) {
+      return;
+    }
+    callbacks_completed_notified_ = true;
+    callbacks.reserve(callbacks_.size());
+    for (auto &cb : callbacks_) {
+      callbacks.push_back(cb.get());
+    }
+  }
+  run_callbacks(std::move(callbacks), true, 0);
+}
+
 void HttpPayload::run_callbacks(std::vector<Callback *> callbacks, bool completed, size_t ready_bytes) {
   for (auto *cb : callbacks) {
     if (completed) {

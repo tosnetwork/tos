@@ -991,3 +991,145 @@ TEST(HttpMultiClient, connections_are_capped_and_a_silent_backend_releases_them_
   while (scheduler.run(1)) {
   }
 }
+
+namespace {
+
+// A backend that answers each request with headers and the first bytes of a
+// longer body, then stops sending while keeping the connection open.
+class StallingBackend {
+ public:
+  StallingBackend() {
+    listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(listen_fd_ >= 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    CHECK(::bind(listen_fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
+    CHECK(::listen(listen_fd_, 16) == 0);
+    socklen_t len = sizeof(addr);
+    CHECK(::getsockname(listen_fd_, reinterpret_cast<sockaddr *>(&addr), &len) == 0);
+    port_ = ntohs(addr.sin_port);
+    thread_ = std::thread([this] { serve(); });
+  }
+  ~StallingBackend() {
+    stop_ = true;
+    thread_.join();
+    for (int fd : accepted_) {
+      ::close(fd);
+    }
+    ::close(listen_fd_);
+  }
+  int port() const {
+    return port_;
+  }
+
+ private:
+  void serve() {
+    while (!stop_) {
+      pollfd p{listen_fd_, POLLIN, 0};
+      if (::poll(&p, 1, 50) <= 0) {
+        continue;
+      }
+      int fd = ::accept(listen_fd_, nullptr, nullptr);
+      if (fd < 0) {
+        continue;
+      }
+      accepted_.push_back(fd);
+      std::string request;
+      char buf[1024];
+      while (request.find("\r\n\r\n") == std::string::npos) {
+        auto n = ::recv(fd, buf, sizeof(buf), 0);
+        if (n <= 0) {
+          break;
+        }
+        request.append(buf, static_cast<size_t>(n));
+      }
+      std::string head = "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n0123456789";
+      ::send(fd, head.data(), head.size(), MSG_NOSIGNAL);
+    }
+  }
+
+  int listen_fd_ = -1;
+  int port_ = 0;
+  std::atomic<bool> stop_{false};
+  std::vector<int> accepted_;
+  std::thread thread_;
+};
+
+class CompletionCounter : public tos::http::HttpPayload::Callback {
+ public:
+  explicit CompletionCounter(std::atomic<int> &completed) : completed_(completed) {
+  }
+  void run(size_t) override {
+  }
+  void completed() override {
+    completed_++;
+  }
+
+ private:
+  std::atomic<int> &completed_;
+};
+
+}  // namespace
+
+TEST(HttpMultiClient, a_body_still_arriving_at_the_deadline_fails_and_frees_its_connection) {
+  StallingBackend backend;
+  td::IPAddress addr;
+  addr.init_ipv4_port("127.0.0.1", backend.port()).ensure();
+
+  td::actor::Scheduler scheduler({1});
+  td::actor::ActorOwn<tos::http::HttpClient> client;
+  std::vector<td::uint32> codes;
+  std::vector<std::shared_ptr<tos::http::HttpPayload>> bodies;
+  std::atomic<int> completed{0};
+  auto send = [&] {
+    auto request = get_request();
+    auto payload = request->create_empty_payload().move_as_ok();
+    td::actor::send_closure(
+        client, &tos::http::HttpClient::send_request, std::move(request), std::move(payload), td::Timestamp::in(0.5),
+        [&](td::Result<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>>
+                R) {
+          if (R.is_error()) {
+            codes.push_back(0);
+            return;
+          }
+          auto answer = R.move_as_ok();
+          codes.push_back(answer.first->code());
+          answer.second->add_callback(std::make_unique<CompletionCounter>(completed));
+          bodies.push_back(std::move(answer.second));
+        });
+  };
+  auto run_until = [&](std::function<bool()> done, double limit) {
+    auto until = td::Timestamp::in(limit);
+    while (!done() && !until.is_in_past()) {
+      scheduler.run(0.05);
+    }
+  };
+  scheduler.run_in_context([&] {
+    client = tos::http::HttpClient::create_multi("", addr, 1, 1, std::make_shared<NoopClientCallback>());
+    send();
+  });
+  // The headers arrive in time, so the response itself is a 200.
+  run_until([&] { return codes.size() == 1; }, 5.0);
+  ASSERT_EQ(codes.size(), static_cast<size_t>(1));
+  ASSERT_EQ(codes[0], static_cast<td::uint32>(200));
+  ASSERT_TRUE(!bodies[0]->parse_completed());
+  // At the deadline the body fails and its consumer is told once.
+  run_until([&] { return completed.load() == 1; }, 5.0);
+  ASSERT_EQ(completed.load(), 1);
+  ASSERT_TRUE(bodies[0]->is_error());
+  ASSERT_TRUE(!bodies[0]->parse_completed());
+  // The connection was released: with a cap of one, a new request gets it.
+  scheduler.run(0.2);
+  scheduler.run_in_context([&] { send(); });
+  run_until([&] { return codes.size() == 2; }, 5.0);
+  ASSERT_EQ(codes.size(), static_cast<size_t>(2));
+  ASSERT_EQ(codes[1], static_cast<td::uint32>(200));
+
+  scheduler.run_in_context([&] {
+    client.reset();
+    td::actor::SchedulerContext::get().stop();
+  });
+  while (scheduler.run(1)) {
+  }
+}
