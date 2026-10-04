@@ -72,6 +72,33 @@ Plan separately for:
 
 Use dedicated storage paths and monitor disk growth continuously.
 
+## Wallet Index
+
+A node started with `--json-rpc-address` keeps a basechain wallet index under
+`<db root>/wc0-index` for the account-index JSON-RPC methods
+(`getAccountJettons`, `getAccountNfts`, `getAccountEvents`,
+`getAccountEvent`). The index is built in the background, so the token lists
+from `getAccountJettons` and `getAccountNfts` carry an `index_state`; read
+`"complete": false` as "this list may be missing entries", not as the whole
+truth.
+
+- **Stopping the node marks the index for a rebuild.** Only an exit that
+  happens after block application has stopped records the indexing run as
+  finished. `systemctl stop` (SIGTERM), a crash, an out-of-memory kill and a
+  scheduled shutdown do not. The next start then reports `"needs_rebuild":
+  true` and `"complete": false` until the index is rebuilt, because a block
+  applied just before the stop may never have reached the index. There is no
+  in-place rebuild command: stop the node, delete `<db root>/wc0-index` and
+  start it again. A fresh index fills forward from new blocks and does not
+  replay history.
+- **An index that cannot be opened is reported, not hidden.** If the index
+  database fails to open (for example a lock held by another process, a disk
+  fault, or a schema it cannot migrate), the node runs without indexing, logs
+  the reason once at startup, and these methods answer with error -32603
+  "wallet index unavailable on this node: ...". A node started without
+  `--json-rpc-address` keeps no index, and these methods answer -32601
+  "wallet index disabled on this node".
+
 ## Operational Checks
 
 Use the console and lite client to confirm:
