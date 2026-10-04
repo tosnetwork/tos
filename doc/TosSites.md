@@ -46,12 +46,19 @@ Example pattern:
 
 - `-C`: global config
 - `-D`: local DB root
-- `-p`: local HTTP listen port
-- `-a`: ADNL listen address
+- `-p`: HTTP listen address: `<port>` listens on `127.0.0.1` only;
+  `<ipv4>:<port>` or `[<ipv6>]:<port>` listens on that address
+- `-a`: ADNL address to advertise; its UDP port is bound on all interfaces
 - `-A`: explicit server ADNL address
 - `-L`: local hostname mapping
 - `-R`: remote hostname mapping
 - `-P`: whether to proxy all HTTP traffic
+
+`-p 8080` used to listen on every interface; it now listens on `127.0.0.1`
+only. A proxy that other hosts should reach must name the address, for
+example `-p 0.0.0.0:8080`, which opens the proxy to every host that can
+reach that port. This does not change ADNL: the UDP ports given by `-a` and
+`-c` are still bound on all interfaces.
 
 ## DNS Integration
 

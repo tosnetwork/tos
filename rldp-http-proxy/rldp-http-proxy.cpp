@@ -1611,18 +1611,20 @@ int main(int argc, char *argv[]) {
                          td::actor::send_closure(x, &RldpHttpProxy::set_listen_address, address);
                          return td::Status::OK();
                        });
-  p.add_checked_option('a', "address", "local <ip>:<port> to use for adnl queries", [&](td::Slice arg) -> td::Status {
-    td::IPAddress addr;
-    TRY_STATUS(addr.init_host_port(arg.str()));
-    td::actor::send_closure(x, &RldpHttpProxy::set_addr, addr);
-    return td::Status::OK();
-  });
+  p.add_checked_option('a', "address",
+                       "<ip>:<port> to advertise for adnl queries; the UDP port is bound on all interfaces",
+                       [&](td::Slice arg) -> td::Status {
+                         td::IPAddress addr;
+                         TRY_STATUS(addr.init_host_port(arg.str()));
+                         td::actor::send_closure(x, &RldpHttpProxy::set_addr, addr);
+                         return td::Status::OK();
+                       });
   p.add_checked_option('A', "adnl", "server ADNL addr", [&](td::Slice arg) -> td::Status {
     TRY_RESULT(adnl, tos::adnl::AdnlNodeIdShort::parse(arg));
     td::actor::send_closure(x, &RldpHttpProxy::add_adnl_addr, adnl);
     return td::Status::OK();
   });
-  p.add_checked_option('c', "client-port", "local <port> to use for client adnl queries",
+  p.add_checked_option('c', "client-port", "UDP <port> for client adnl queries, bound on all interfaces",
                        [&](td::Slice arg) -> td::Status {
                          TRY_RESULT(port, td::to_integer_safe<td::uint16>(arg));
                          td::actor::send_closure(x, &RldpHttpProxy::set_client_port, port);

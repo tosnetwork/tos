@@ -78,18 +78,42 @@ void HttpServer::accepted(td::SocketFd fd) {
 }
 
 td::Result<td::IPAddress> HttpServer::parse_listen_address(td::Slice arg) {
-  td::IPAddress addr;
-  if (arg.find(':') == td::Slice::npos) {
-    TRY_RESULT(port, td::to_integer_safe<td::uint16>(arg));
-    if (port == 0) {
-      return td::Status::Error("listening port must not be 0");
+  // Split host and port here rather than in IPAddress::init_host_port, which
+  // resolves host names and service names and reads IPv6 ports leniently.
+  td::Slice host;
+  td::Slice port_text = arg;
+  bool has_host = false;
+  bool ipv6 = false;
+  if (!arg.empty() && arg[0] == '[') {
+    auto close = arg.find(']');
+    if (close == td::Slice::npos || close + 1 >= arg.size() || arg[close + 1] != ':') {
+      return td::Status::Error("expected [<ipv6>]:<port>");
     }
-    TRY_STATUS(addr.init_ipv4_port("127.0.0.1", port));
-    return addr;
+    host = arg.substr(1, close - 1);
+    port_text = arg.substr(close + 2);
+    has_host = true;
+    ipv6 = true;
+  } else {
+    auto colon = arg.rfind(':');
+    if (colon != td::Slice::npos) {
+      host = arg.substr(0, colon);
+      port_text = arg.substr(colon + 1);
+      has_host = true;
+      if (host.find(':') != td::Slice::npos) {
+        return td::Status::Error("an IPv6 address is written [<ipv6>]:<port>");
+      }
+    }
   }
-  TRY_STATUS(addr.init_host_port(arg.str()));
-  if (addr.get_port() == 0) {
-    return td::Status::Error("listening port must not be 0");
+  // The whole port text must be the number: no sign, spaces or leading zeros.
+  // Port 0 is refused by init_ipv4_port/init_ipv6_port.
+  TRY_RESULT(port, td::to_integer_safe<td::uint16>(port_text));
+  td::IPAddress addr;
+  if (!has_host) {
+    TRY_STATUS(addr.init_ipv4_port("127.0.0.1", port));
+  } else if (ipv6) {
+    TRY_STATUS(addr.init_ipv6_port(host.str(), port));
+  } else {
+    TRY_STATUS(addr.init_ipv4_port(host.str(), port));
   }
   return addr;
 }

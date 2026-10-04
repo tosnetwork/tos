@@ -109,9 +109,10 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
     return td::actor::create_actor<HttpServer>("httpserver", address, std::move(callback), limits);
   }
 
-  // The address a listener given as "<port>" or "<ip>:<port>" binds. A bare
-  // port binds loopback only: a listener other hosts can reach has to be
-  // asked for by address. Port 0 is refused.
+  // The address a listener given as "<port>", "<ipv4>:<port>" or
+  // "[<ipv6>]:<port>" binds. A bare port binds loopback only: a listener other
+  // hosts can reach has to be asked for by address. Addresses are numeric
+  // (no name lookup); the port is 1..65535 written as plain digits.
   static td::Result<td::IPAddress> parse_listen_address(td::Slice arg);
 
   struct AllMetrics {

@@ -840,18 +840,42 @@ TEST(HttpListenAddress, a_bare_port_means_loopback_and_an_address_must_be_explic
   auto any = HttpServer::parse_listen_address("0.0.0.0:8080").move_as_ok();
   ASSERT_EQ(any.get_ip_str().str(), std::string("0.0.0.0"));
   ASSERT_EQ(any.get_port(), 8080);
-  for (std::string bad : {"", "0", "70000", "80a", "0.0.0.0:0", "0.0.0.0:", "not-an-ip:80"}) {
+  auto v6 = HttpServer::parse_listen_address("[::1]:8080").move_as_ok();
+  ASSERT_TRUE(v6.is_ipv6());
+  ASSERT_EQ(v6.get_port(), 8080);
+  for (std::string bad : {"",
+                          "0",
+                          "70000",
+                          "80a",
+                          " 8080",
+                          "8080 ",
+                          "+8080",
+                          "08080",
+                          "0.0.0.0:0",
+                          "0.0.0.0:",
+                          "0.0.0.0: 8080",
+                          "0.0.0.0:8080 ",
+                          " 0.0.0.0:8080",
+                          "not-an-ip:80",
+                          "localhost:8080",
+                          "127.0.0.1:http",
+                          "[::1]:0",
+                          "[::1]:",
+                          "[::1]:abc",
+                          "[::1]:8080junk",
+                          "[::1]: 8080",
+                          "[::1]8080",
+                          "::1:8080",
+                          "[::1"}) {
     ASSERT_TRUE(HttpServer::parse_listen_address(bad).is_error());
   }
 }
 
 TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
   auto other = non_loopback_ipv4();
-  if (other.empty()) {
-    // Without a second address the refusal below would prove nothing.
-    LOG(ERROR) << "HttpListenAddress: no non-loopback IPv4 address on this host; exposure not checked";
-    return;
-  }
+  // Without a second address the refusal below would prove nothing, so the
+  // test fails rather than passing unchecked.
+  ASSERT_TRUE(!other.empty());
   int port = find_free_port();
   auto bare = tos::http::HttpServer::parse_listen_address(std::to_string(port)).move_as_ok();
   with_server_at(bare, [&] {
