@@ -571,6 +571,7 @@ class ValidatorEngine : public td::actor::Actor {
   void set_json_rpc_cors_origin(std::string origin);
   void set_json_rpc_readyz_threshold(td::int32 threshold);
   void set_json_rpc_request_timeout(double seconds);
+  void set_json_rpc_response_timeout(double seconds);
   void set_json_rpc_api_key(std::string key);
   void set_json_rpc_cache_ttl(td::int32 seconds);
   // M-01 hardening: opt-in honour of X-Forwarded-For / X-Real-IP

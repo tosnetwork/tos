@@ -134,6 +134,56 @@ class Client {
     }
   }
 
+  // Reads everything until the server closes cleanly. Unlike wait_for_eof, a
+  // reset or a timeout is a failure, so a pass shows the client received the
+  // whole answer and then an orderly close.
+  bool read_until_clean_eof(int timeout_ms, std::string &out) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (true) {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
+        return false;
+      }
+      int remaining = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+      pollfd pfd{fd_, POLLIN, 0};
+      if (::poll(&pfd, 1, remaining) <= 0) {
+        return false;
+      }
+      char buf[1024];
+      auto n = ::recv(fd_, buf, sizeof(buf), 0);
+      if (n == 0) {
+        return true;
+      }
+      if (n < 0) {
+        return false;
+      }
+      out.append(buf, static_cast<size_t>(n));
+    }
+  }
+
+  // Reads one chunked response through its terminating zero chunk.
+  bool read_chunked_response(int timeout_ms, std::string &out) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (out.find("\r\n0\r\n\r\n") == std::string::npos) {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
+        return false;
+      }
+      int remaining = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+      pollfd pfd{fd_, POLLIN, 0};
+      if (::poll(&pfd, 1, remaining) <= 0) {
+        return false;
+      }
+      char buf[1024];
+      auto n = ::recv(fd_, buf, sizeof(buf), 0);
+      if (n <= 0) {
+        return false;
+      }
+      out.append(buf, static_cast<size_t>(n));
+    }
+    return true;
+  }
+
   // Sends a complete request and waits for a "200 OK" status line.
   bool request_ok(int timeout_ms) {
     if (!send_all("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")) {
@@ -543,10 +593,11 @@ TEST(HttpServerLimits, eight_slow_replies_expire_and_the_listener_recovers_its_s
       std::make_shared<LargeResponseCallback>(&observation, 4 * 1024 * 1024));
 }
 
-// The JSON-RPC listener answers a request with a missing or wrong API key from
-// its headers alone. That answer must end the connection, or a refused client
-// keeps the server reading and buffering a declared body of up to the payload
-// limit for the whole body window.
+// A handler that answers from the request headers (the JSON-RPC API key check,
+// a 404, a refused method) must not leave the server reading and buffering a
+// declared body of up to the payload limit for the whole body window: the
+// connection closes once the answer is written. A request whose body has been
+// read keeps the connection for reuse.
 namespace {
 class RefuseFromHeadersCallback final : public tos::http::HttpServer::Callback {
  public:
@@ -562,9 +613,37 @@ const std::string kLargeDeclaredBody =
     "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4000000\r\n\r\n" + std::string(1000, 'x');
 }  // namespace
 
-TEST(JsonRpcHttpPolicy, refused_request_closes_without_reading_its_body) {
+TEST(HttpServerLimits, an_answer_before_the_body_is_read_closes_after_the_response) {
   // Long header and body windows: any close inside the waits below comes from
-  // the refusal, not from a deadline.
+  // the early answer, not from a deadline.
+  auto limits = tos::json_rpc::listener_limits(0, 30, 30, 0);
+  with_server(limits, [](int port) {
+    Client early(port);
+    ASSERT_TRUE(early.connect_with_retries());
+    ASSERT_TRUE(early.send_all(kLargeDeclaredBody));
+    std::string received;
+    ASSERT_TRUE(early.read_until_clean_eof(3000, received));
+    ASSERT_TRUE(received.rfind("HTTP/1.1 200", 0) == 0);
+    ASSERT_TRUE(received.size() >= 7 && received.compare(received.size() - 7, 7, "\r\n0\r\n\r\n") == 0);
+  });
+}
+
+TEST(HttpServerLimits, an_answer_after_the_body_is_read_keeps_the_connection) {
+  // Control for the test above: a request whose body has been read leaves the
+  // connection open for the next request.
+  auto limits = tos::json_rpc::listener_limits(0, 30, 30, 0);
+  with_server(limits, [](int port) {
+    Client reused(port);
+    ASSERT_TRUE(reused.connect_with_retries());
+    ASSERT_TRUE(reused.send_all("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello"));
+    std::string first;
+    ASSERT_TRUE(reused.read_chunked_response(3000, first));
+    ASSERT_TRUE(first.rfind("HTTP/1.1 200", 0) == 0);
+    ASSERT_TRUE(reused.request_ok(3000));
+  });
+}
+
+TEST(JsonRpcHttpPolicy, a_refused_request_gets_the_whole_401_and_then_a_close) {
   auto limits = tos::json_rpc::listener_limits(0, 30, 30, 0);
   with_server(
       limits,
@@ -572,17 +651,13 @@ TEST(JsonRpcHttpPolicy, refused_request_closes_without_reading_its_body) {
         Client refused(port);
         ASSERT_TRUE(refused.connect_with_retries());
         ASSERT_TRUE(refused.send_all(kLargeDeclaredBody));
-        ASSERT_TRUE(refused.wait_for_eof(3000));
+        std::string received;
+        ASSERT_TRUE(refused.read_until_clean_eof(3000, received));
+        ASSERT_TRUE(received.rfind("HTTP/1.1 401", 0) == 0);
+        ASSERT_TRUE(received.find("invalid or missing API key") != std::string::npos);
+        ASSERT_TRUE(received.size() >= 7 && received.compare(received.size() - 7, 7, "\r\n0\r\n\r\n") == 0);
       },
       std::make_shared<RefuseFromHeadersCallback>());
-  // Control: an answer that does not ask for the close leaves the connection
-  // reading the declared body, so the close above is the refusal's doing.
-  with_server(limits, [](int port) {
-    Client answered(port);
-    ASSERT_TRUE(answered.connect_with_retries());
-    ASSERT_TRUE(answered.send_all(kLargeDeclaredBody));
-    ASSERT_TRUE(!answered.wait_for_eof(1500));
-  });
 }
 
 TEST(JsonRpcHttpPolicy, listener_has_a_response_deadline) {

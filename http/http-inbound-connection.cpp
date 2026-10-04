@@ -153,7 +153,11 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
       close_after_write_ = true;
     }
   }
-  if (response->close_after_write()) {
+  // Answered while the request body is still arriving (an early refusal, a
+  // 404, a GET that declared a body): close once the answer is written rather
+  // than go on reading and buffering a body nobody will consume. A request
+  // whose body was already read keeps the connection for the next request.
+  if (reading_payload_ && !tunnel_established_) {
     close_after_write_ = true;
   }
   response->store_http(buffered_fd_.output_buffer());

@@ -5894,6 +5894,10 @@ void ValidatorEngine::set_json_rpc_request_timeout(double seconds) {
   json_rpc_opts_.request_timeout = seconds;
 }
 
+void ValidatorEngine::set_json_rpc_response_timeout(double seconds) {
+  json_rpc_opts_.response_timeout = seconds;
+}
+
 void ValidatorEngine::set_json_rpc_api_key(std::string key) {
   json_rpc_opts_.api_key = std::move(key);
 }
@@ -6633,6 +6637,18 @@ int main(int argc, char *argv[]) {
     acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_request_timeout, v); });
     return td::Status::OK();
   });
+  p.add_checked_option(
+      '\0', "json-rpc-response-timeout",
+      "total seconds to write a JSON-RPC response to the client before the connection is closed "
+      "(default: 60, 0 = no deadline)",
+      [&](td::Slice arg) {
+        auto v = td::to_double(arg);
+        if (v < 0) {
+          return td::Status::Error("timeout must be >= 0");
+        }
+        acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_response_timeout, v); });
+        return td::Status::OK();
+      });
   p.add_checked_option('\0', "json-rpc-api-key", "require API key for JSON-RPC access", [&](td::Slice arg) {
     std::string key{arg.data(), arg.size()};
     acts.push_back([&x, key] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_api_key, key); });

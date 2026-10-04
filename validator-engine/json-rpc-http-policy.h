@@ -32,9 +32,14 @@
 
 namespace tos::json_rpc {
 
-// Seconds a response may take to be written before the connection is dropped.
-// Without it a client that stops reading holds its connection, and every byte
-// queued for it, for as long as it likes.
+// Total seconds, from the answer, for a response to be handed to the socket;
+// past it the connection is dropped even if the client is still reading
+// slowly. Without it a client that stops reading holds its connection, and
+// every byte queued for it, for as long as it likes. It is a total deadline on
+// purpose: an idle timeout renewed by each written byte would let a client
+// that reads one byte at a time hold the connection indefinitely. Operators
+// serving very large replies to slow clients raise it with
+// --json-rpc-response-timeout.
 inline constexpr double kDefaultResponseTimeout = 60.0;
 
 inline http::HttpServer::Limits listener_limits(std::size_t max_connections, double request_header_timeout,
@@ -48,9 +53,10 @@ inline http::HttpServer::Limits listener_limits(std::size_t max_connections, dou
 }
 
 // The answer to a request whose API key is missing or wrong. It is given from
-// the request headers, before the body is read, and it closes the connection
-// once written, so a refused client cannot make the server go on reading and
-// buffering a body of up to the payload limit.
+// the request headers, before the body is read; the connection closes once it
+// is written, as after any answer given while a body is still arriving
+// (HttpInboundConnection::send_answer), so a refused client cannot make the
+// server wait for the rest of a body of up to the payload limit.
 inline std::pair<std::unique_ptr<http::HttpResponse>, std::shared_ptr<http::HttpPayload>> unauthorized_response(
     const std::string& cors_origin) {
   std::string body =
@@ -64,7 +70,6 @@ inline std::pair<std::unique_ptr<http::HttpResponse>, std::shared_ptr<http::Http
   }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
-  response->set_close_after_write();
 
   auto payload = response->create_empty_payload().move_as_ok();
   payload->add_chunk(td::BufferSlice(body));
