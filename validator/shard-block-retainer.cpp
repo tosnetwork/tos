@@ -132,8 +132,10 @@ void ShardBlockRetainer::process_query(adnl::AdnlNodeIdShort src, td::BufferSlic
     return;
   }
   Subscription& subscription = subscribers_[{src, shard}];
-  const bool new_subscription = !subscription.ttl;
+  const bool new_subscription =
+      shard_block_retainer_is_new_subscription(static_cast<bool>(subscription.ttl), subscription.ttl.is_in_past());
   const bool resend_allowed = !subscription.resend_allowed_at || subscription.resend_allowed_at.is_in_past();
+  td::uint32 reply_flags = 0;
   if (shard_block_retainer_sends_retained(new_subscription, query->flags_, resend_allowed)) {
     std::vector<BlockIdExt> blocks;
     for (const BlockIdExt& block : confirmed_blocks_) {
@@ -145,9 +147,10 @@ void ShardBlockRetainer::process_query(adnl::AdnlNodeIdShort src, td::BufferSlic
               << ", sending " << blocks.size() << " blocks";
     send_confirmations(src, std::move(blocks));
     subscription.resend_allowed_at = td::Timestamp::in(kShardBlockRetainerMinResendInterval);
+    reply_flags |= kShardBlockRetainerReplayedFlag;
   }
-  subscription.ttl = td::Timestamp::in(SUBSCRIPTION_TTL);
-  promise.set_value(create_serialize_tl_object<tos_api::shardBlockVerifier_subscribed>(0));
+  subscription.ttl = td::Timestamp::in(kShardBlockRetainerSubscriptionTtl);
+  promise.set_value(create_serialize_tl_object<tos_api::shardBlockVerifier_subscribed>(reply_flags));
 }
 
 void ShardBlockRetainer::send_confirmations(adnl::AdnlNodeIdShort dst, std::vector<BlockIdExt> blocks) {

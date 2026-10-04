@@ -72,7 +72,6 @@ class ShardBlockRetainer : public td::actor::Actor {
 
   bool is_block_outdated(const BlockIdExt& block_id) const;
 
-  static constexpr double SUBSCRIPTION_TTL = 60.0;
   static constexpr size_t MAX_BLOCKS_PER_MESSAGE = 8;
 };
 

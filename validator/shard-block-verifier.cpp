@@ -68,46 +68,77 @@ void ShardBlockVerifier::wait_shard_blocks(std::vector<BlockIdExt> blocks, td::P
 void ShardBlockVerifier::update_config(td::Ref<ShardBlockVerifierConfig> new_config) {
   config_ = new_config;
   confirmations_.set_config(std::move(new_config));
-  collect_resend_requests();
   all_trusted_nodes_.clear();
+  std::set<SubscriptionKey> configured;
   for (auto& shard : config_->shards) {
     all_trusted_nodes_.insert(shard.trusted_nodes.begin(), shard.trusted_nodes.end());
+    for (auto& node_id : shard.trusted_nodes) {
+      configured.insert({node_id, shard.shard_id});
+    }
   }
+  recovery_.retain_if([&](const SubscriptionKey& key) { return configured.contains(key); });
+  collect_resend_requests();
 
   alarm_timestamp().relax(send_subscribe_at_ = td::Timestamp::now());
 }
 
 void ShardBlockVerifier::collect_resend_requests() {
   auto requests = confirmations_.take_resend_requests();
-  for (const auto& node_id : requests) {
-    LOG(WARNING) << "Dropped confirmations from " << node_id
-                 << ": asking it to send its confirmations again with the next subscription";
+  if (requests.empty() || config_.is_null()) {
+    return;
   }
-  resend_from_.insert(requests.begin(), requests.end());
+  for (const auto& node_id : requests) {
+    LOG(WARNING) << "Dropped confirmations from " << node_id << ": recovering them through its subscriptions";
+    for (auto& shard_config : config_->shards) {
+      for (auto& trusted : shard_config.trusted_nodes) {
+        if (trusted == node_id) {
+          recovery_.request({node_id, shard_config.shard_id});
+        }
+      }
+    }
+  }
 }
 
 void ShardBlockVerifier::alarm() {
   if (send_subscribe_at_ && send_subscribe_at_.is_in_past()) {
-    // A node whose confirmations were dropped is asked, with the regular
-    // subscription, to send every confirmation it still holds again.
-    auto resend_from = std::exchange(resend_from_, {});
+    const double now = td::Time::now();
     for (auto& shard_config : config_->shards) {
       for (auto& node_id : shard_config.trusted_nodes) {
-        td::uint32 flags = resend_from.contains(node_id) ? kShardBlockVerifierResendFlag : 0;
-        td::Promise<td::BufferSlice> P = [shard = shard_config.shard_id, node_id](td::Result<td::BufferSlice> R) {
-          if (R.is_error()) {
-            LOG(WARNING) << "Subscribe to " << node_id << " for " << shard.to_str() << " : " << R.move_as_error();
-          }
+        SubscriptionKey key{node_id, shard_config.shard_id};
+        // A subscription recovering dropped confirmations asks for a resend,
+        // or is let lapse so that the next one is new to the retainer.
+        auto flags = recovery_.subscription(key, now);
+        if (!flags) {
+          continue;
+        }
+        td::Promise<td::BufferSlice> P = [SelfId = actor_id(this), key](td::Result<td::BufferSlice> R) {
+          td::actor::send_closure(SelfId, &ShardBlockVerifier::subscription_answered, key, std::move(R));
         };
         td::actor::send_closure(rldp_, &rldp2::Rldp::send_query, local_id_, node_id, "subscribe", std::move(P),
                                 td::Timestamp::in(3.0),
                                 create_serialize_tl_object<tos_api::shardBlockVerifier_subscribe>(
-                                    create_tl_shard_id(shard_config.shard_id), flags));
+                                    create_tl_shard_id(shard_config.shard_id), *flags));
       }
     }
-    send_subscribe_at_ = td::Timestamp::in(SEND_SUBSCRIBE_PERIOD);
+    send_subscribe_at_ = td::Timestamp::in(kShardBlockVerifierSubscribePeriod);
   }
   alarm_timestamp().relax(send_subscribe_at_);
+}
+
+void ShardBlockVerifier::subscription_answered(SubscriptionKey key, td::Result<td::BufferSlice> R) {
+  const double now = td::Time::now();
+  if (R.is_error()) {
+    LOG(WARNING) << "Subscribe to " << key.first << " for " << key.second.to_str() << " : " << R.move_as_error();
+    recovery_.on_failure(key, now);
+    return;
+  }
+  auto r_reply = fetch_tl_object<tos_api::shardBlockVerifier_subscribed>(R.move_as_ok(), true);
+  if (r_reply.is_error()) {
+    LOG(WARNING) << "Subscribe to " << key.first << " for " << key.second.to_str() << " : " << r_reply.move_as_error();
+    recovery_.on_failure(key, now);
+    return;
+  }
+  recovery_.on_reply(key, static_cast<td::uint32>(r_reply.ok()->flags_), now);
 }
 
 void ShardBlockVerifier::process_message(adnl::AdnlNodeIdShort src, td::BufferSlice data) {
