@@ -93,14 +93,14 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     // Peer-initiated streams and their buffered bytes, shared by every server
     // given the same budget, consumed by the sender's inbound stream callback.
     // Unset means the process-wide default; there is no unlimited setting.
-    std::shared_ptr<QuicInboundStreamBudget> inbound_stream_budget;
+    std::shared_ptr<QuicInboundStreamBudget> inbound_stream_budget = nullptr;
     // Heap every connection's transport may allocate, shared by every server
     // given the same budget. Unset means the process-wide default; there is no
     // unlimited setting.
-    std::shared_ptr<QuicTransportMemoryBudget> transport_budget;
+    std::shared_ptr<QuicTransportMemoryBudget> transport_budget = nullptr;
     // Test hook: a datagram for which this returns true is not sent. Unset in
     // production.
-    std::function<bool(td::Slice datagram)> drop_outgoing_datagram;
+    std::function<bool(td::Slice datagram)> drop_outgoing_datagram = nullptr;
   };
   class Callback {
    public:
