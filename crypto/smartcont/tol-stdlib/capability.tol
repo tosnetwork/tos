@@ -5,6 +5,8 @@
 // reusable-public-bearer-token model from https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-capability-policy.md.
 tol 1.3
 
+import "@stdlib/strong-ed25519-key"
+
 const SLICE6_CAPABILITY_THROW_INVALID_BUDGET = 0x1401
 const SLICE6_CAPABILITY_THROW_INVALID_GRANT = 0x1402
 const SLICE6_CAPABILITY_THROW_EXPIRED = 0x1403
@@ -25,6 +27,7 @@ const SLICE6_CAPABILITY_THROW_SIGNATURE_REQUIRED = 0x1411
 const SLICE6_CAPABILITY_THROW_REPLAY_DOMAIN_MISMATCH = 0x1412
 const SLICE6_CAPABILITY_THROW_DELEGATION_DEPTH_EXCEEDED = 0x1413
 const SLICE6_CAPABILITY_THROW_ARGUMENT_BOUND = 0x1414
+const SLICE6_CAPABILITY_THROW_WEAK_GRANTEE_KEY = 0x1415
 
 const SLICE6_CAPABILITY_VERSION: uint8 = 1
 const SLICE6_CAPABILITY_CONSTRAINTS_TAG: uint16 = 0xc601
@@ -172,6 +175,14 @@ fun Slice6CapabilityConstraintsV1.constraintsHash(self): uint256 {
     return self.toCell().hash();
 }
 
+/// A grantee key anyone can sign for (`@stdlib/strong-ed25519-key`) would
+/// let anyone exercise the grant. Refused when a grant is built, and treated
+/// as an invalid signature before any signature is checked against it, since
+/// a grant loaded from storage never went through the builder.
+fun slice6CapabilityGranteeKeyIsWeak(granteePubkey: uint256): bool {
+    return ed25519KeyMayBeWeak(granteePubkey as int) && ed25519IsWeakKey(granteePubkey as int);
+}
+
 fun slice6CapabilityGrant(
     issuer: address,
     target: address,
@@ -189,6 +200,9 @@ fun slice6CapabilityGrant(
     }
     if (grantee == null && granteePubkey == null) {
         throw SLICE6_CAPABILITY_THROW_INVALID_GRANT;
+    }
+    if (granteePubkey != null && slice6CapabilityGranteeKeyIsWeak(granteePubkey!)) {
+        throw SLICE6_CAPABILITY_THROW_WEAK_GRANTEE_KEY;
     }
     val parties = Slice6CapabilityGrantParties {
         issuer,
@@ -282,6 +296,9 @@ fun Slice6CapabilityGrantV1.signatureBoundValid(
 ): bool {
     val proof = self.proofValue();
     if (proof.granteePubkey == null) {
+        return false;
+    }
+    if (slice6CapabilityGranteeKeyIsWeak(proof.granteePubkey!)) {
         return false;
     }
     try {

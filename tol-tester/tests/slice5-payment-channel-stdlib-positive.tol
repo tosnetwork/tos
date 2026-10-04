@@ -149,6 +149,177 @@ fun test_challenge_window_not_extended_on_resubmit(): int {
     return state.challengeExpiresAt as int;
 }
 
+// Real Ed25519 vectors, from private keys of 32 bytes 0x11 (A) and 0x22 (B):
+// SIG_*_1 sign the state (seqno 1, 700/300, validUntil 200) of the channel
+// between A and B with PC_SALT, whose hash is H1; SIG_A_2 signs the same
+// state of the channel between A and the identity alias, hash H2.
+const PC_STRONG_A: uint256 = 0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737
+const PC_STRONG_B: uint256 = 0xa09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0
+const PC_H1 = 0x6ed54cc8addf4b68aa9e894db92fa381b8f244167826ba3c75858a1b6f62dfd4
+const PC_H2 = 0xcaef7ae95e5e6130274e2fc9d2a2e7dc6e69660538e18e25fdbc07818c17ffa4
+
+fun pcSigA1(): cell { return beginCell().storeSlice("443936A703E2C06E78E9C82B856AA536EE38A2A0760595EFBF2787B7D42E837F3F69281913AA1B2880EE109D73F056E85008DC7E055760FCC9611B05145F1E0D".hexToSlice()).endCell(); }
+fun pcSigB1(): cell { return beginCell().storeSlice("696883D7487FE4C8A63A6D91232F48DC9331DAF0796E9D29965E34107A12DC1EFAE42039C61F8E048786C37D321AC501F27F4DD704F77B6325B93DD6B3663405".hexToSlice()).endCell(); }
+fun pcSigA2(): cell { return beginCell().storeSlice("F2C93A4AD305C64A60FC1E770E9DF8ECBDFDFCB3FED8F81594119355E1CA0A57955B0B3A7ACD4FD30007DD4A43EE24258FDB419C822F0514B69943A5FDF3EA05".hexToSlice()).endCell(); }
+
+// The order-2 point, and the identity and the order-2 point with the sign bit set.
+const PC_ORDER2: uint256 = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+const PC_ID_ALIAS: uint256 = 0x0100000000000000000000000000000000000000000000000000000000000080
+const PC_O2_ALIAS: uint256 = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+// The fourteen keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
+// as loadUint(256) reads them: the eight torsion encodings, y >= 2^255 - 19 with
+// either sign bit, and the two sign-bit aliases.
+fun pcWeakKeys(): array<int> {
+    var t: array<int> = [];
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000080);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000080);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    return t;
+}
+
+/// A signature of `hash` under the weak `key` that the verifier accepts and
+/// that needs no secret: R one of the eight torsion encodings, S = 0. It
+/// verifies when R happens to equal -[k]A, k = H(R || A || hash): always under
+/// the identity, for about half of all hashes under the order-2 point, less
+/// often under the others. Null when no R works for this hash.
+fun pcTryForge(hash: int, key: int): cell? {
+    val torsion = pcWeakKeys();
+    var i = 0;
+    while (i < 8) {
+        // R as the 32 bytes loadUint(256) reads back as this encoding, then S = 0.
+        val forged = beginCell().storeUint(torsion.get(i), 256).storeUint(0, 256).endCell();
+        if (isSignatureValid(hash, forged.beginParse(), key)) {
+            return forged;
+        }
+        i += 1;
+    }
+    return null;
+}
+
+/// A config as a contract would load it from storage, never checked by
+/// slice5PaymentConfig.
+fun pcStoredConfig(partyA: uint256, partyB: uint256): Slice5PaymentChannelConfig {
+    return Slice5PaymentChannelConfig {
+        partyA,
+        partyB,
+        channelId: slice5PaymentChannelId(partyA, partyB, PC_SALT),
+        totalBalance: 1000,
+        challengeWindow: 30,
+    };
+}
+
+fun pcStateFor(config: Slice5PaymentChannelConfig, validUntil: uint32 = 200): Slice5PaymentSignedState {
+    return Slice5PaymentSignedState {
+        channelId: config.channelId,
+        seqno: 1,
+        balanceA: 700,
+        balanceB: 300,
+        validUntil,
+    };
+}
+
+@method_id(511)
+fun test_strong_vectors_are_real(): int {
+    // Guards the fixtures: if these stop verifying, the cases below fail for
+    // the wrong reason.
+    val strong = slice5PaymentConfig(PC_STRONG_A, PC_STRONG_B, PC_SALT, 1000, 30);
+    assert(pcStateFor(strong).hashToSign() == PC_H1) throw 5111;
+    assert(isSignatureValid(PC_H1, pcSigA1().beginParse(), PC_STRONG_A)) throw 5112;
+    assert(isSignatureValid(PC_H1, pcSigB1().beginParse(), PC_STRONG_B)) throw 5113;
+    assert(pcStateFor(pcStoredConfig(PC_STRONG_A, PC_ID_ALIAS)).hashToSign() == PC_H2) throw 5114;
+    assert(isSignatureValid(PC_H2, pcSigA2().beginParse(), PC_STRONG_A)) throw 5115;
+    assert(!isSignatureValid(PC_H1 + 1, pcSigA1().beginParse(), PC_STRONG_A)) throw 5116;
+    return 1;
+}
+
+@method_id(512)
+fun test_strong_parties_close(): int {
+    val config = slice5PaymentConfig(PC_STRONG_A, PC_STRONG_B, PC_SALT, 1000, 30);
+    assert(pcStateFor(config).signaturesAreValid(config, pcSigA1(), pcSigB1())) throw 5121;
+    var state = pcState();
+    val paidB = state.cooperativeClose(config, pcStateFor(config), pcSigA1(), pcSigB1(), 20);
+    assert(state.closed && state.cooperativeClosed) throw 5122;
+    return paidB as int;
+}
+
+@method_id(513)
+fun test_weak_party_keys_refused_by_the_builder(): int {
+    val weak = pcWeakKeys();
+    var refused = 0;
+    var i = 0;
+    while (i < 14) {
+        val key = weak.get(i) as uint256;
+        try { slice5PaymentConfig(key, PC_STRONG_B, PC_SALT, 1000, 30); } catch (code) { assert(code == SLICE5_PAYMENT_THROW_WEAK_PARTY_KEY) throw 5131; refused += 1; }
+        try { slice5PaymentConfig(PC_STRONG_A, key, PC_SALT, 1000, 30); } catch (code) { assert(code == SLICE5_PAYMENT_THROW_WEAK_PARTY_KEY) throw 5132; refused += 1; }
+        i += 1;
+    }
+    return refused;
+}
+
+/// Both parties weak, every forged signature accepted by the verifier: the
+/// boolean check answers false and every close path refuses with the weak-key
+/// code, leaving the channel open. Returns the number of refusals.
+fun pcRefuseForgedPair(partyA: uint256, partyB: uint256): int {
+    val config = pcStoredConfig(partyA, partyB);
+    // The first state, by validUntil, both weak keys can be forged for.
+    var validUntil: uint32 = 200;
+    var forgedA = pcTryForge(pcStateFor(config, validUntil).hashToSign() as int, partyA as int);
+    var forgedB = pcTryForge(pcStateFor(config, validUntil).hashToSign() as int, partyB as int);
+    while (forgedA == null || forgedB == null) {
+        validUntil += 1;
+        assert(validUntil < 264) throw 5199;
+        forgedA = pcTryForge(pcStateFor(config, validUntil).hashToSign() as int, partyA as int);
+        forgedB = pcTryForge(pcStateFor(config, validUntil).hashToSign() as int, partyB as int);
+    }
+    val signed = pcStateFor(config, validUntil);
+    assert(!signed.signaturesAreValid(config, forgedA!, forgedB!)) throw 5141;
+    var refused = 0;
+    var state = pcState();
+    try { state.cooperativeClose(config, signed, forgedA!, forgedB!, 20); } catch (code) { assert(code == SLICE5_PAYMENT_THROW_WEAK_PARTY_KEY) throw 5142; refused += 1; }
+    try { state.challengeClose(config, signed, forgedA!, forgedB!, 20); } catch (code) { assert(code == SLICE5_PAYMENT_THROW_WEAK_PARTY_KEY) throw 5143; refused += 1; }
+    try { signed.requireSignatures(config, forgedA!, forgedB!); } catch (code) { assert(code == SLICE5_PAYMENT_THROW_WEAK_PARTY_KEY) throw 5144; refused += 1; }
+    assert(!state.closed && !state.closing && state.latestSeqno == 0) throw 5145;
+    return refused;
+}
+
+@method_id(514)
+fun test_forged_weak_parties_refused_at_use(): int {
+    // The two sign-bit aliases, and the canonical order-2 point beside each. (The
+    // verifier itself refuses the canonical identity, so nothing forges for it.)
+    return pcRefuseForgedPair(PC_ID_ALIAS, PC_O2_ALIAS) + pcRefuseForgedPair(PC_ORDER2, PC_ID_ALIAS)
+        + pcRefuseForgedPair(PC_O2_ALIAS, PC_ORDER2);
+}
+
+@method_id(515)
+fun test_one_weak_party_refused_beside_a_real_signature(): int {
+    // A's signature is real; B is the identity alias with a forged signature.
+    val config = pcStoredConfig(PC_STRONG_A, PC_ID_ALIAS);
+    val signed = pcStateFor(config);
+    val forgedB = pcTryForge(PC_H2, PC_ID_ALIAS as int)!;
+    assert(isSignatureValid(PC_H2, pcSigA2().beginParse(), PC_STRONG_A)) throw 5151;
+    assert(!signed.signaturesAreValid(config, pcSigA2(), forgedB)) throw 5152;
+    var state = pcState();
+    try {
+        state.cooperativeClose(config, signed, pcSigA2(), forgedB, 20);
+    } catch (code) {
+        assert(!state.closed) throw 5153;
+        return code;
+    }
+    return 0;
+}
+
 /**
 @testcase | 501 | | 3585
 @testcase | 502 | | 3586
@@ -160,4 +331,9 @@ fun test_challenge_window_not_extended_on_resubmit(): int {
 @testcase | 508 | | 3591
 @testcase | 509 | | 1
 @testcase | 510 | | 50
+@testcase | 511 | | 1
+@testcase | 512 | | 300
+@testcase | 513 | | 28
+@testcase | 514 | | 9
+@testcase | 515 | | 3592
  */
