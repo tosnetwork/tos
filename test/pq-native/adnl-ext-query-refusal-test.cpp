@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <netinet/in.h>
@@ -678,7 +679,20 @@ void unit_checks() {
           "server-wide in-flight cap not reported as such");
   server.release("192.0.2.1");
   require(server.inflight() == 0, "server in-flight counter did not return to zero");
-  std::printf("B64_CASE unit lite_encoder_bounded=true reply_limits=true server_limit_reason=true\n");
+
+  // Output bound: the frame of the largest legal payload, and two of them, fit;
+  // one byte more queued than that does not, and no input wraps around.
+  const size_t max_payload = adnl::adnl_ext_max_packet_bytes - adnl::adnl_ext_packet_framing_bytes;
+  const size_t max_frame = max_payload + 4 + 32 + 32;
+  require(max_frame == adnl::adnl_ext_max_frame_bytes, "largest legal frame differs from the declared frame bound");
+  require(adnl::adnl_ext_output_fits(0, max_frame), "a maximal reply does not fit an empty queue");
+  require(adnl::adnl_ext_output_fits(max_frame, max_frame), "a maximal reply cannot queue behind one in flight");
+  require(!adnl::adnl_ext_output_fits(max_frame + 1, max_frame), "output bound not enforced");
+  require(!adnl::adnl_ext_output_fits(0, adnl::adnl_ext_max_pending_output_bytes + 1),
+          "a frame larger than the whole bound fits");
+  require(!adnl::adnl_ext_output_fits(std::numeric_limits<size_t>::max(), 1), "pending size wrapped around");
+  require(!adnl::adnl_ext_output_fits(1, std::numeric_limits<size_t>::max()), "frame size wrapped around");
+  std::printf("B64_CASE unit lite_encoder_bounded=true reply_limits=true server_limit_reason=true output_bound=true\n");
 }
 
 }  // namespace

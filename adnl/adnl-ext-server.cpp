@@ -74,6 +74,10 @@ td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
 }
 
 bool AdnlInboundConnection::send_failure_answer(td::Bits256 query_id, const ExtQueryFailure &failure) {
+  if (output_overflowed()) {
+    // Already closing; do not spend the shared failure-reply allowance.
+    return false;
+  }
   auto encoder = failure_policy_->encoder();
   if (!encoder) {
     return false;
@@ -153,7 +157,7 @@ void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::
   auto answer = create_tl_object<tos_api::adnl_message_answer>(query_id, result.move_as_ok());
   bool enqueued = send(serialize_tl_object(answer, true));
   LOG(DEBUG) << "ADNL_EXT_QUERY server_answer_enqueue id=" << query_id.to_hex() << " enqueued=" << enqueued;
-  if (enqueued) {
+  if (enqueued || output_overflowed()) {
     return;
   }
   // The result could not be framed (typically larger than an external packet may

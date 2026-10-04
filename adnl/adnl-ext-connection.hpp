@@ -68,6 +68,10 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   void resume_read() {
     stop_read_ = false;
   }
+  // Set once send() closed the connection because the peer left too much unread.
+  bool output_overflowed() const {
+    return output_overflowed_;
+  }
   bool check_ready() const {
     return received_bytes_ && inited_ && authorized() && !td::can_close(buffered_fd_);
   }
@@ -122,6 +126,7 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   td::AesCtrState out_ctr_;
   bool inited_ = false;
   bool stop_read_ = false;
+  bool output_overflowed_ = false;
   bool read_len_ = false;
   td::uint32 len_;
   td::uint32 received_bytes_ = 0;

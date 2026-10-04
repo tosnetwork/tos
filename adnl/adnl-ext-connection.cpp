@@ -30,14 +30,27 @@ void AdnlExtConnection::send_uninit(td::BufferSlice data) {
 
 bool AdnlExtConnection::send(td::BufferSlice data) {
   LOG(DEBUG) << "sending packet of size " << data.size();
+  if (output_overflowed_) {
+    return false;
+  }
   auto size_status = check_adnl_ext_payload_size(data.size());
   if (size_status.is_error()) {
     LOG(WARNING) << size_status;
     return false;
   }
   auto data_size = td::narrow_cast<td::uint32>(data.size() + adnl_ext_packet_framing_bytes);
+  auto frame_bytes = data.size() + 4 + 32 + 32;
+  if (!adnl_ext_output_fits(buffered_fd_.ready_for_flush_write(), frame_bytes)) {
+    // The peer is not reading what it asked for. Queuing more would grow
+    // memory without bound, and dropping a frame would corrupt the stream.
+    LOG(INFO) << "ADNL external peer left " << buffered_fd_.ready_for_flush_write()
+              << " bytes unread; closing connection";
+    output_overflowed_ = true;
+    stop();
+    return false;
+  }
 
-  td::BufferSlice d{data.size() + 4 + 32 + 32};
+  td::BufferSlice d{frame_bytes};
   auto S = d.as_slice();
 
   S.copy_from(td::Slice(reinterpret_cast<const td::uint8 *>(&data_size), 4));
