@@ -17,7 +17,7 @@
   "module_storage": "global_id:int32 profile_version:uint16=1 public_key:^canonical897",
   "submit_tag_hex": "46414c31",
   "candidate_opcode_hex": "f93101",
-  "candidate_min_global_version": 19,
+  "candidate_min_global_version": 16,
   "candidate_base_gas": 20000,
   "byte_gas": 1,
   "cell_codec": "ordinary, level zero, 127-byte canonical chain",

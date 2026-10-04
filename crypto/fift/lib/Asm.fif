@@ -1448,7 +1448,7 @@ x{F93100} @Defop PQCHECKSIG_MLDSA44
 x{F93101} @Defop PQCHECKSIG_FALCON512_PADDED
 
 // Poseidon2 over the BLS12-381 scalar field, t=8. Available from global
-// version 17; see crypto/poseidon2/PROVENANCE.md for the frozen parameters.
+// version 16; see crypto/poseidon2/PROVENANCE.md for the frozen parameters.
 x{F93200} @Defop POSEIDON2_PERM8
 x{F93201} @Defop POSEIDON2_HASH7
 x{F93202} @Defop POSEIDON2_PATH7

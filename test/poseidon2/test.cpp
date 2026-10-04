@@ -73,7 +73,7 @@ struct Run {
 // Runs one instruction over a prepared stack. Anything already on the stack is
 // free, so the gas reported is the instruction's own price plus the fixed
 // overhead of running a one-instruction continuation.
-Run run(unsigned opcode, const std::vector<td::RefInt256>& inputs, int version = 17, long long budget = 1000000,
+Run run(unsigned opcode, const std::vector<td::RefInt256>& inputs, int version = 16, long long budget = 1000000,
         td::Ref<vm::Cell> extra = {}) {
   td::Ref<vm::Stack> stack{true};
   for (const auto& value : inputs) {
@@ -254,7 +254,7 @@ void check_vectors() {
 void check_version_gate() {
   namespace kat = vm::poseidon2::kat;
   const auto inputs = state_inputs(kat::perm8[0].input);
-  for (int version = 0; version <= 16; ++version) {
+  for (int version = 0; version < 16; ++version) {
     for (unsigned opcode : {vm::poseidon2_perm8_opcode, vm::poseidon2_hash7_opcode}) {
       const auto result = run(opcode, inputs, version);
       require(result.exit == 6, "opcode " + hex(reinterpret_cast<const unsigned char*>(&opcode), 3) +
@@ -262,9 +262,15 @@ void check_version_gate() {
     }
   }
   for (unsigned opcode : {vm::poseidon2_perm8_opcode, vm::poseidon2_hash7_opcode}) {
-    require(run(opcode, inputs, 17).exit == 0, "an opcode was refused at version 17");
+    require(run(opcode, inputs, 16).exit == 0, "an opcode was refused at version 16");
   }
-  // The earlier instruction must not have been dragged forward with it. At 16 it
+  for (int version = 0; version < 16; ++version) {
+    require(run(vm::poseidon2_path7_opcode, {}, version).exit == 6,
+            "PATH7 was accepted before version 16");
+  }
+  require(run(vm::poseidon2_path7_opcode, {}, 16).exit == 2,
+          "PATH7 must reach operand validation at version 16");
+  // The ML-DSA instruction shares the same activation boundary. At 16 it
   // is reachable, so it fails on its own arguments rather than on the version.
   const auto mldsa = run(vm::pq_mldsa44_opcode, {}, 16);
   require(mldsa.exit == 2, "ML-DSA no longer runs at version 16 (exit " + std::to_string(mldsa.exit) + ")");
@@ -318,7 +324,7 @@ void check_fail_closed() {
   auto short_inputs = state_inputs(kat::perm8[0].input);
   short_inputs.pop_back();
   for (unsigned opcode : {vm::poseidon2_perm8_opcode, vm::poseidon2_hash7_opcode}) {
-    require(run(opcode, short_inputs, 17, 1000000, vm::CellBuilder().finalize()).exit == 7,
+    require(run(opcode, short_inputs, 16, 1000000, vm::CellBuilder().finalize()).exit == 7,
             "a cell operand was not a type error");
   }
 }
@@ -334,9 +340,9 @@ void check_gas() {
     require(baseline.exit == 0, "gas baseline did not run");
     require(baseline.gas == expected,
             "gas is " + std::to_string(baseline.gas) + ", expected " + std::to_string(expected));
-    const auto exact = run(opcode, inputs, 17, baseline.gas);
+    const auto exact = run(opcode, inputs, 16, baseline.gas);
     require(exact.exit == 0, "the exact budget was not enough");
-    const auto starved = run(opcode, inputs, 17, baseline.gas - 1);
+    const auto starved = run(opcode, inputs, 16, baseline.gas - 1);
     require(starved.exit == -14, "one gas short did not run out of gas");
     // A refused input is still charged: probing must not be free.
     auto bad = inputs;
@@ -472,7 +478,7 @@ void check_path7() {
   stack.write().push_cell(build_path(levels));
   stack.write().push_int(td::make_refint(static_cast<long long>(kIndex)));
   stack.write().push_int(td::make_refint(kDepth));
-  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 18, std::move(stack),
+  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 16, std::move(stack),
                     vm::GasLimits{1000000, 1000000}};
   const int exit = ~state.run();
   require(exit == 0, "POSEIDON2_PATH7 did not run: exit " + std::to_string(exit));
@@ -527,7 +533,7 @@ long long path7_gas(int depth) {
   stack.write().push_cell(build_path(levels));
   stack.write().push_int(td::make_refint(0));
   stack.write().push_int(td::make_refint(depth));
-  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 18, std::move(stack),
+  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 16, std::move(stack),
                     vm::GasLimits{10000000, 10000000}};
   const int exit = ~state.run();
   require(exit == 0, "POSEIDON2_PATH7 did not run at depth " + std::to_string(depth));
@@ -562,7 +568,7 @@ Path7Run path7_run(int depth, td::RefInt256 index) {
   stack.write().push_cell(build_path(levels));
   stack.write().push_int(std::move(index));
   stack.write().push_int(td::make_refint(depth));
-  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 18, std::move(stack),
+  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 16, std::move(stack),
                     vm::GasLimits{10000000, 10000000}};
   const int exit = ~state.run();
   return Path7Run{exit, state.gas_consumed()};

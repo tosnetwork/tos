@@ -25,7 +25,7 @@ These come from `doc/tvm-mldsa44.md` and the C++ executor.
 
 - **Version.** `PQCHECKSIG_MLDSA44` exists from global version 16 only, so both
   deliverables run only on a chain whose ConfigParam 8 names 16 or later. The canonical
-  genesis now sets version 18 (`doc/validator-genesis-bootstrap.md`); a network
+  genesis now sets version 16 (`doc/validator-genesis-bootstrap.md`); a network
   configured below 16 cannot run them.
 - **Operand sizes.**
   - signature: exactly 2420 bytes;

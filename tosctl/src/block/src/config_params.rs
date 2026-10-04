@@ -437,7 +437,7 @@ pub enum GlobalCapabilities {
     CapResolveMerkleCell      = 0x0000_0200_0000,
 }
 
-pub const SUPPORTED_VERSION: u32 = 19;
+pub const SUPPORTED_VERSION: u32 = 16;
 pub const LT_ALIGN: u64 = 1_000_000;
 
 impl ConfigParams {

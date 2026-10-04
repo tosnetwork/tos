@@ -755,7 +755,7 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     spec.loader.exec_module(decoder)
     decode_validator_set = decoder.decode_validator_set
 
-    assert _config(state, 8, ConfigParam8).version == 18
+    assert _config(state, 8, ConfigParam8).version == 16
     validator_set = decode_validator_set(state.custom.config.config[34].copy().to_cell())
     assert validator_set["total"] == EXPECTED_VALIDATOR_COUNT
     for actual, (controller, adnl, public, key_id) in zip(validator_set["validators"], keys):
@@ -933,10 +933,10 @@ def test_canonical_pq_genesis_rejects_classical_manifest(tmp_path):
     assert "exactly four 1376-byte records" in short.stderr + short.stdout
 
 
-@pytest.mark.parametrize("version", [14, 16, 17])
+@pytest.mark.parametrize("version", [0, 14, 15])
 def test_pq_genesis_rejects_legacy_vm_version(tmp_path, version):
     pq = PqInitialValidator(bytes([1]) * 32, bytes([2]) * 32, bytes([3]) * 1312, bytes([4]) * 32)
-    with pytest.raises(ValueError, match="PQ genesis requires global version 18"):
+    with pytest.raises(ValueError, match="PQ genesis requires global version 16"):
         create_zerostate(
             Install(BUILD_DIR, REPO), tmp_path, NetworkConfig(global_version=version), [], [pq]
         )

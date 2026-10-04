@@ -2,7 +2,7 @@
 
 Global versioning is controlled by `ConfigParam 8`, defined in [block.tlb](../crypto/block/block.tlb).
 
-This source tree advertises `SUPPORTED_VERSION = 19` in
+This source tree advertises `SUPPORTED_VERSION = 16` in
 [`global-version.h`](../common/global-version.h). That is a binary capability;
 the active version of a network is its on-chain ConfigParam 8.
 
@@ -347,7 +347,14 @@ Not yet activated on any TOS network, same as version 14 above.
   `max_total_msg_cells`, configured in `ConfigParam 43`). Older v1/v2 `ConfigParam 43` records
   fall back to these same defaults.
 
-## Version 16
+## Version 16: unified development baseline
+
+ML-DSA-44, Falcon-512 padded, all three Poseidon2 instructions and the
+frozen-account recovery fix are enabled together at version 16. Earlier
+development allocations 17, 18 and 19 are consolidated before public launch.
+This changes execution under version 16: existing development-chain history
+requires the original binary, or a fresh genesis for the consolidated baseline.
+No running network is migrated by this source change.
 
 Activation on a particular network must be checked against its ConfigParam 8.
 
@@ -364,13 +371,7 @@ Activation on a particular network must be checked against its ConfigParam 8.
   applies that test to every account status. Uninitialized accounts are unaffected.
   See `crypto/block/transaction.cpp`, the `global_version < 16` branch.
 
-These two are the whole of the difference between 15 and 16. That was established by
-searching for the version compared against 16 in any form, not only `>= 16`: the first
-attempt looked for `>= 16` and `> 15`, found nothing outside the opcode table, and
-missed the transaction change because it is spelled `< 16`. Every other threshold in
-the transaction engine is `>= 15` or lower and is satisfied at both versions.
-
-## Version 17
+### Poseidon2 permutation and hash
 
 Activation on a particular network must be checked against its ConfigParam 8.
 
@@ -386,10 +387,9 @@ Activation on a particular network must be checked against its ConfigParam 8.
   with the domain constant in lane 0, returning lane 0 of the result. There is
   no capacity element and no padding convention beyond that sentence.
 
-Both cost 3,500 gas, frozen on 2026-09-20 by measuring the permutation against
-instructions whose price was already fixed, and are rejected as invalid (exit 6)
-at versions 0-16. `PQCHECKSIG_MLDSA44` keeps its own minimum of
-16 and is unaffected: the ceiling moves, the older gate does not.
+Both cost 2,800 gas in the current frozen tariff, and are rejected as invalid (exit 6)
+at versions 0-15. `PQCHECKSIG_MLDSA44` keeps its own minimum of
+16; all five new instructions share the same development baseline.
 
 The parameters are frozen against a pinned upstream commit and are not loaded at
 runtime. Both VMs rebuild the same manifest byte stream from their own vendored
@@ -400,10 +400,9 @@ Adding a permutation to the instruction set is a genesis-time decision in
 practice: doing it after a network starts is a hard fork, and the contracts that
 need it cannot be priced without it.
 
-### Transaction changes
-None. Version 17 adds instructions and changes nothing in the transaction engine.
+Poseidon2 adds no separate transaction-engine change.
 
-## Version 18
+### Poseidon2 Merkle path
 
 Activation on a particular network must be checked against its ConfigParam 8.
 
@@ -435,19 +434,29 @@ Activation on a particular network must be checked against its ConfigParam 8.
   - gas is charged per level as the level is read, so an oversized path is
     paid for on the way in.
 
-  It costs 500 gas plus 3,700 a level: one permutation at the frozen 3,500 plus
-  the two cell loads a level needs. **Neither figure is measured.** The 3,500
-  is; the rest is an assembly of prices. Before this reaches a network it wants
-  what `POSEIDON2_PERM8` got -- measured against instructions that already have
-  a price, on target hardware, quoted as a bracket.
+  It costs 500 base gas plus 3,000 per level, with ordinary cell-load charges.
+  The current tariff is pinned in both VM implementations; target-hardware
+  qualification remains part of release validation.
 
-Rejected as invalid (exit 6) at versions 0-17. `POSEIDON2_PERM8` and
-`POSEIDON2_HASH7` keep their minimum of 17 and `PQCHECKSIG_MLDSA44` its 16: the
-ceiling moves, the older gates do not.
+Rejected as invalid (exit 6) at versions 0-15. `POSEIDON2_PERM8` and
+`POSEIDON2_HASH7` keep their minimum of 16 and `PQCHECKSIG_MLDSA44` its 16.
 
-### Transaction changes
-None. Version 18 adds one instruction and changes nothing in the transaction
-engine.
+PATH7 adds no separate transaction-engine change.
+
+### Original Falcon wallet authorization
+
+`PQCHECKSIG_FALCON512_PADDED` has candidate codepage-0 allocation `F93101` and
+minimum global version 16. It consumes message/signature/public-key Cells,
+uses the fixed original Falcon-512 padded profile and returns a TVM boolean.
+The development proposal charges 20,000 base gas plus one gas per decoded byte
+and ordinary instruction/cell loads. Historical versions reject the opcode.
+See [the frozen profile](falcon512-profile-v1.json) and
+[implementation and remaining gates](wallet-falcon-fndsa.md).
+
+The binary capability ceiling is 16. This change does not alter a network's
+ConfigParam 8 or canonical genesis. The candidate allocation, version and gas
+must receive protocol approval before activation; profile acceptance bytes
+cannot later be reinterpreted as formal FN-DSA.
 
 ## Capability flags versus version bumps
 
@@ -484,12 +493,12 @@ cannot prevent this in either direction: a node whose configuration is ahead of 
 and raising it activates nothing. The safe sequence:
 
 1. Ship a node binary whose `SUPPORTED_VERSION` covers the target -- the ceiling this binary is
-   capable of executing, currently 18 -- while `ConfigParam 8` on every live network stays at
+   capable of executing, currently 16 -- while `ConfigParam 8` on every live network stays at
    its current active version.
 2. Get every validator upgraded to such a binary before touching `ConfigParam 8`. This is the
    step that actually protects the network, because nothing downstream will refuse on its own.
-3. Raise `ConfigParam 8` one version at a time, observing stability at each, and never past a
-   version some validator does not implement.
+3. Activate the unified version 16 only after all validators implement the same
+   baseline. There are no intermediate development versions 17, 18 or 19 to activate.
 4. Mainnet activation happens last, after the target version has proven stable on a public
    testnet.
 
@@ -498,18 +507,3 @@ this sequence -- evidence bound to one release, explicit owner approvals, and a 
 every validator acknowledges the binary it runs -- and emits an unsigned `ConfigParam 8` payload.
 A validated proposal is not an activation. The proposal checker and its tests
 are under [`tools/pq/`](../tools/pq/) and [`test/pq-readiness/`](../test/pq-readiness/).
-
-## Version 19 candidate: original Falcon wallet authorization
-
-`PQCHECKSIG_FALCON512_PADDED` has candidate codepage-0 allocation `F93101` and
-minimum global version 19. It consumes message/signature/public-key Cells,
-uses the fixed original Falcon-512 padded profile and returns a TVM boolean.
-The development proposal charges 20,000 base gas plus one gas per decoded byte
-and ordinary instruction/cell loads. Historical versions reject the opcode.
-See [the frozen profile](falcon512-profile-v1.json) and
-[implementation and remaining gates](wallet-falcon-fndsa.md).
-
-The binary capability ceiling is 19. This change does not alter a network's
-ConfigParam 8 or canonical genesis. The candidate allocation, version and gas
-must receive protocol approval before activation; profile acceptance bytes
-cannot later be reinterpreted as formal FN-DSA.

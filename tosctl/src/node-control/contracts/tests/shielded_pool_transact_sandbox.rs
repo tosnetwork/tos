@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 mod shielded_pool_library;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 const DEPTH: usize = 12;
 const ARITY: u64 = 7;
 const CAPACITY: u64 = 1 << 32;
@@ -662,7 +662,7 @@ impl Pool {
     fn deploy_with_gas_limit(nullifier_root: Field, limit: Option<u64>) -> Self {
         let mut bc = match limit {
             None => Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-                .expect("blockchain at version 17"),
+                .expect("blockchain at version 16"),
             Some(limit) => {
                 let base =
                     tos_executor::BlockchainConfig::default_with_global_version(ACTIVE_VERSION)

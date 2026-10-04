@@ -80,10 +80,9 @@ from tostester.network import FullNode, Network, StartOptions  # noqa: E402
 
 TOS = 1_000_000_000
 
-# Global version 18 is where POSEIDON2_PATH7 lives, and 17 is where the
-# permutation and the seven-input hash do.  A chain below 18 cannot run this
-# contract at all: the instructions are not merely absent, they are refused.
-GLOBAL_VERSION = 18
+# The unified development version 16 enables all three Poseidon2 instructions.
+# Earlier versions refuse them, so this contract requires the version-16 baseline.
+GLOBAL_VERSION = 16
 
 # Nothing on top of what section 14.1's funding rule demands.
 #

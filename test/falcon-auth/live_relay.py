@@ -95,7 +95,7 @@ def main():
     }
     transport = LiteClientTransport(args.lite_client, args.lite_config, attempts=45)
     network, version = transport.global_id(), transport.global_version()
-    if version < 19:
+    if version < 16:
         raise ValueError("test chain has not activated the candidate Falcon opcode")
     payer, _ = funded_payer(transport, args.control, codes["wallet-func"], network, tos=120)
     backend = Backend(args.library)

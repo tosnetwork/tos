@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(out.join("data.boc"), write_boc(&genesis.state)?)?;
     let manifest = serde_json::json!({
         "scope": "local-development", "development_verifying_key": true,
-        "address": format!("0:{address}"), "global_version": 18,
+        "address": format!("0:{address}"), "global_version": 16,
         "reserve_floor_nanotos": reserve.to_string(),
         "code_hash": code.hash(0).to_hex_string(),
         "initial_data_hash": genesis.state.hash(0).to_hex_string(),

@@ -150,7 +150,7 @@ CASES = [
          expect_red={'vm': ['anything_that_is_not_already_a_field_element_is_refused']},
          expect_green=['cpp']),
     Case('rust/version-gate', 'the version gate removed, Rust',
-         [(RS_OPS, replace('pub(super) const MIN_VERSION: u32 = 17;',
+         [(RS_OPS, replace('pub(super) const MIN_VERSION: u32 = 16;',
                            'pub(super) const MIN_VERSION: u32 = 0;'))],
          expect_red={'vm': ['neither_instruction_exists_before_its_version']},
          expect_green=['cpp']),

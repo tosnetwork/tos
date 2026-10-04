@@ -43,7 +43,7 @@ existing Elector process.
 
 | Parameter | Canonical default | Purpose |
 | --- | --- | --- |
-| ConfigParam 8 version | 18 | Current VM/PQ and shielded-pool execution profile |
+| ConfigParam 8 version | 16 | Current VM/PQ and shielded-pool execution profile |
 | ConfigParam 19 global ID | 1 | Mainnet signature replay domain; local development uses 3 |
 | ConfigParam 34 descriptor | `validator_pq_addr#b3` | PQ-only bootstrap consensus identities |
 | PQ algorithm ID | 1 (ML-DSA-44) | 1,312-byte consensus public keys |
@@ -110,7 +110,7 @@ The canonical input is `validator-pq<suffix>.pub`. The old 128-byte
 `validator-keys.pub` and `scripts/gen-validator-keys.fif` output are classical
 test fixtures and are **not** accepted for canonical genesis. The generic test
 harness can still construct explicit classical regression fixtures; it defaults
-to VM version 18 and refuses PQ fixtures below the supported launch profile.
+to VM version 16 and refuses PQ fixtures below the supported launch profile.
 
 ## Generate and inspect the zerostate
 
@@ -200,9 +200,9 @@ recovery. Observing only ConfigParam 34 or `funds_created` is insufficient.
 ## Regression verification
 
 The native `create-state` tests generate real zerostate BOCs with public keys
-from `tos-pq-consensus-key`, then decode version 18, PQ identities and the exact
+from `tos-pq-consensus-key`, then decode version 16, PQ identities and the exact
 controller admission hash. They also reject legacy manifests, duplicate IDs,
-wrong timestamps and pre-18 PQ test profiles:
+wrong timestamps and pre-16 PQ test profiles:
 
 ```bash
 uv run pytest -q test/tostester/tests/tostester/test_zerostate_supply.py \

@@ -8,10 +8,9 @@ class OpcodeTable;
 inline constexpr unsigned poseidon2_perm8_opcode = 0xf93200;
 inline constexpr unsigned poseidon2_hash7_opcode = 0xf93201;
 inline constexpr unsigned poseidon2_path7_opcode = 0xf93202;
-inline constexpr int poseidon2_min_version = 17;
-// PATH7 is newer than the two above. A node built for 17 implements them and
-// not it, so it carries its own floor rather than sharing theirs.
-inline constexpr int poseidon2_path7_min_version = 18;
+inline constexpr int poseidon2_min_version = 16;
+// All Poseidon2 instructions belong to the unified development version 16.
+inline constexpr int poseidon2_path7_min_version = 16;
 
 // The deepest path the instruction will walk. A level is two 768-bit cells,
 // so 64 levels is 128 cells -- far past any plausible tree and far inside the

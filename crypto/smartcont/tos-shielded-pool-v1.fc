@@ -27,11 +27,8 @@
 ;;   204 the end state would not be backed
 ;;   205 the anchor kind/id/root is not one this pool preserved
 ;;
-;; Requires the shielded library, and a VM at global version 18. The library's
-;; own modules mostly say 17, which was true of them when they were written and
-;; still is: notes.fc and auth.fc need nothing past POSEIDON2_HASH7. imt.fc
-;; does -- it folds a nullifier path with POSEIDON2_PATH7 -- so the whole is
-;; 18 even though most of its parts are not.
+;; Requires the shielded library and the unified global version 16 baseline,
+;; including POSEIDON2_HASH7 and POSEIDON2_PATH7.
 
 int op_deposit() asm "1397248001 PUSHINT";          ;; 0x53485001
 int op_transact() asm "1397248002 PUSHINT";         ;; 0x53485002
@@ -114,7 +111,7 @@ int op_reserve_topup() asm "1397248003 PUSHINT";    ;; 0x53485003
 ;;     cost is a sum of twelve independent per-digit terms and digit zero is
 ;;     the dearest of the seven at every level.
 ;;
-;; The withdrawal figure fell by 342,976 at global version 18, when the two
+;; The withdrawal figure fell by 342,976 when the two
 ;; nullifier inserts stopped walking their paths in FunC and started calling
 ;; POSEIDON2_PATH7, by a further 99,950 when the Poseidon2 tariff came down
 ;; from 3,500 to 2,800, and by 120,859 when the frontier changed container.

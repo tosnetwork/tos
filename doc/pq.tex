@@ -71,13 +71,13 @@ external applications become post-quantum merely by connecting to TOS.
 
 \section{Post-quantum consensus from genesis}
 \subsection{Canonical version parameters}
-The canonical zerostate generator selects global protocol version 18 in
+The canonical zerostate generator selects global protocol version 16 in
 ConfigParam 8, and creates four equally weighted post-quantum genesis
 validator descriptors. These use \code{validator\_pq\_addr\#b3} and algorithm
 identifier 1 for ML-DSA-44. ConfigParam 47 binds controller admission to the
 approved controller code. The Simplex transport configuration selects its
 v2 QUIC profile; that transport version is distinct from global protocol
-version 18.
+version 16.
 
 The public bootstrap manifest is \code{validator-pq.pub}. It binds each
 validator's controller identity, ADNL identity, and consensus public key.
@@ -102,7 +102,7 @@ interchangeable. Operators must provision, protect, and recover the correct
 key for each role.
 
 TVM exposes \code{PQCHECKSIG\_MLDSA44} for contract verification. Its minimum
-global version is 16; the canonical genesis profile is version 18. An
+global version is 16; the canonical genesis profile is version 16. An
 instruction's introduction version is not the complete version requirement
 of a contract using additional instructions.
 

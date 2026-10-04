@@ -26,7 +26,7 @@ use tos_sandbox::{compile_func, Blockchain, MessageBuilder};
 use tos_vm::stack::StackItem;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 
 fn root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -98,7 +98,7 @@ struct Probe {
 impl Probe {
     fn deploy() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         bc.set_workchain(0);
         let payer = bc.treasury("genesis_probe", 1_000 * TOS).expect("treasury");
         let library = library_dir();
@@ -247,7 +247,7 @@ fn the_generated_state_is_the_state_the_frozen_manifest_names() {
 fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
     let genesis = build(parameters()).expect("build the genesis state");
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     bc.set_workchain(0);
     let payer = bc.treasury("deployer", 1_000 * TOS).expect("treasury");
     let code = compile_func(&shielded_pool_circuit_crosscheck::pool::pool_sources())

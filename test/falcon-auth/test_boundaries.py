@@ -91,7 +91,7 @@ class Boundaries(unittest.TestCase):
             envelope.uint(0, envelope_bits)
         envelope = envelope.ref(req).maybe(None)
         _, signature = SIGNER.sign(signing_message(address, commitment(req)), CONTEXT, 0)
-        emulator = Emulator(19)
+        emulator = Emulator(16)
         try:
             result = emulator.send(
                 shard,
