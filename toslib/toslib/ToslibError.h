@@ -67,6 +67,9 @@ struct ToslibError {
   static td::Status InvalidPublicKey() {
     return td::Status::Error(400, "INVALID_PUBLIC_KEY");
   }
+  static td::Status ForgeablePublicKey() {
+    return td::Status::Error(400, "FORGEABLE_PUBLIC_KEY: anyone can sign for this key");
+  }
   static td::Status InvalidAccountAddress() {
     return td::Status::Error(400, "INVALID_ACCOUNT_ADDRESS");
   }
