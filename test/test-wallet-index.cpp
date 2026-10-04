@@ -32,16 +32,17 @@
 // different shards, and a legacy-format marker left on disk by an older
 // binary must not crash the new scanner or be silently treated as a valid
 // entry.
+#include <cstring>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "../validator-engine/wallet-index-writer.h"
+#include "../validator-engine/wallet-index.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
-
-#include "../validator-engine/wallet-index.h"
-#include "../validator-engine/wallet-index-writer.h"
-
-#include <set>
-#include <string>
-#include <vector>
 
 namespace {
 
@@ -921,5 +922,214 @@ TEST(WalletIndex, AbortedBlockLeavesTokenBacklogUnchanged) {
   db->begin_batch().ensure();
   ASSERT_TRUE(db->schedule_token_candidates({}, tos::ShardIdFull{-1, tos::shardIdAll}).is_error());
   db->abort_batch();
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, CandidatesOfAnotherShardWaitForThatShard) {
+  auto path = std::string("test-wallet-index-db-token-foreign");
+  auto db = open_fresh_db(path);
+  auto left = tos::shard_child(kWholeBasechain, true);
+  auto right = tos::shard_child(kWholeBasechain, false);
+  auto own = token_candidates(0, 3, 0x00);
+  auto foreign = token_candidates(0, 2, 0x80);
+  std::vector<TokenCandidate> block = own;
+  block.insert(block.end(), foreign.begin(), foreign.end());
+  // The left shard's state cannot verify the right shard's accounts.
+  ASSERT_EQ(candidates_of(schedule_block(*db, block, left)), std::set<TokenCandidate>(own.begin(), own.end()));
+  ASSERT_EQ(backlog_size(*db), foreign.size());
+  ASSERT_EQ(candidates_of(schedule_block(*db, {}, right)), std::set<TokenCandidate>(foreign.begin(), foreign.end()));
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, ASiblingsLongRunCannotHideThisShardsEntry) {
+  using tos_wallet_index::kTokenBacklogScanPerBucket;
+  auto path = std::string("test-wallet-index-db-token-deep-run");
+  auto db = open_fresh_db(path);
+  const tos::ShardIdFull low{0, 1ULL << 54};
+  const tos::ShardIdFull high{0, (1ULL << 55) | (1ULL << 54)};
+  // More of the low sibling's entries than one block examines, then one of the high sibling's.
+  auto low_run = token_candidates(0, static_cast<uint32_t>(kTokenBacklogScanPerBucket + 1000), 0x00);
+  ASSERT_TRUE(schedule_block(*db, low_run, kWholeBasechain, 0).empty());
+  auto high_address = token_address(7, 0x00);
+  high_address.data()[1] = 0x80;
+  TokenCandidate high_candidate{TokenKind::Nft, high_address};
+  ASSERT_TRUE(schedule_block(*db, {high_candidate}, kWholeBasechain, 0).empty());
+  ASSERT_TRUE(tos::shard_contains(high, tos::AccountIdPrefixFull{0, tos::extract_top64(high_address)}));
+  ASSERT_TRUE(tos::shard_contains(low, tos::AccountIdPrefixFull{0, tos::extract_top64(low_run[0].address)}));
+
+  // Only the high sibling's blocks run. Each examines a bounded run and resumes after it.
+  ASSERT_TRUE(schedule_block(*db, {}, high).empty());
+  auto second = candidates_of(schedule_block(*db, {}, high));
+  ASSERT_EQ(second.count(high_candidate), static_cast<size_t>(1));
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, ProcessingRetriesCountsAndStopsOnAWriteFailure) {
+  using tos_wallet_index::TokenVerifyOutcome;
+  auto path = std::string("test-wallet-index-db-token-process");
+  auto db = open_fresh_db(path);
+  auto block = token_candidates(0, 4);
+  db->begin_batch().ensure();
+  auto chosen = db->schedule_token_candidates(block, kWholeBasechain).move_as_ok();
+  ASSERT_EQ(chosen.size(), static_cast<size_t>(4));
+  std::vector<size_t> remaining_seen;
+  auto status = db->process_token_candidates(chosen, [&](const ScheduledTokenCandidate &s, size_t remaining) {
+    remaining_seen.push_back(remaining);
+    if (s.candidate == block[0]) {
+      return TokenVerifyOutcome::Done;
+    }
+    if (s.candidate == block[1]) {
+      return TokenVerifyOutcome::Retry;
+    }
+    if (s.candidate == block[2]) {
+      return TokenVerifyOutcome::Unverifiable;
+    }
+    throw std::runtime_error("verifier gave up");
+  });
+  ASSERT_TRUE(status.is_ok());
+  db->commit_batch().ensure();
+  ASSERT_TRUE(remaining_seen == (std::vector<size_t>{4, 3, 2, 1}));
+  // Retry and the exception wait again; Unverifiable is counted.
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(2));
+  ASSERT_EQ(backlog_stats(*db).unverifiable, static_cast<uint64_t>(1));
+
+  db->begin_batch().ensure();
+  auto again = db->schedule_token_candidates({}, kWholeBasechain).move_as_ok();
+  ASSERT_EQ(again.size(), static_cast<size_t>(2));
+  auto failed = db->process_token_candidates(
+      again, [](const ScheduledTokenCandidate &, size_t) { return TokenVerifyOutcome::WriteFailed; });
+  ASSERT_TRUE(failed.is_error());
+  db->abort_batch();
+  // The aborted block took nothing out of the backlog.
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(2));
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, TokenIndexStateSaysWhenItIsIncomplete) {
+  using tos_wallet_index::format_token_index_state;
+  ASSERT_EQ(format_token_index_state({0, 0, 0}),
+            std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0}"));
+  ASSERT_EQ(format_token_index_state({3, 0, 0}),
+            std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0}"));
+  ASSERT_EQ(format_token_index_state({0, 1, 0}),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0}"));
+  ASSERT_EQ(format_token_index_state({0, 0, 2}),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2}"));
+}
+
+namespace {
+
+std::string raw_queue_key(uint8_t bucket, uint64_t seq) {
+  std::string key(10, '\0');
+  key[0] = 0x15;
+  key[1] = static_cast<char>(bucket);
+  for (int i = 7; i >= 0; --i) {
+    key[2 + i] = static_cast<char>(seq & 0xff);
+    seq >>= 8;
+  }
+  return key;
+}
+
+std::string raw_index_key(const TokenCandidate &c) {
+  std::string key(34, '\0');
+  key[0] = 0x16;
+  key[1] = static_cast<char>(c.kind);
+  std::memcpy(&key[2], c.address.data(), 32);
+  return key;
+}
+
+std::string raw_u64(uint64_t v) {
+  std::string out(8, '\0');
+  for (int i = 7; i >= 0; --i) {
+    out[i] = static_cast<char>(v & 0xff);
+    v >>= 8;
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST(WalletIndex, ARenominatedCandidateKeepsItsAttemptsAndItsSlot) {
+  auto path = std::string("test-wallet-index-db-token-claim");
+  auto db = open_fresh_db(path);
+  // 1100 older entries, more than one block collects, then the target with
+  // two attempts used, written directly at the back of the same queue.
+  ASSERT_TRUE(schedule_block(*db, token_candidates(0, 1100), kWholeBasechain, 0).empty());
+  db.reset();
+  auto target = token_candidates(5000, 1)[0];
+  {
+    auto raw = td::RocksDb::open(path).move_as_ok();
+    std::string value(34, '\0');
+    value[0] = static_cast<char>(target.kind);
+    std::memcpy(&value[1], target.address.data(), 32);
+    value[33] = 2;
+    auto queue = raw_queue_key(0, 1100);
+    raw.set(queue, value).ensure();
+    raw.set(raw_index_key(target), queue.substr(1)).ensure();
+    raw.set(std::string("\x00\x04", 2), raw_u64(1101)).ensure();
+    raw.set(std::string("\x00\x03", 2), raw_u64(1101)).ensure();
+  }
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+
+  // A block nominates it and verifies it directly, beyond what the backlog
+  // share reached: it carries its attempts, and its backlog entry goes with it.
+  auto chosen = schedule_block(*db, {target});
+  bool found = false;
+  for (auto &s : chosen) {
+    if (s.candidate == target) {
+      found = true;
+      ASSERT_EQ(s.attempts, static_cast<uint8_t>(2));
+    }
+  }
+  ASSERT_TRUE(found);
+  ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(1100 - (chosen.size() - 1)));
+  bool still_waiting = false;
+  db->for_each_deferred_token_candidate(1u << 20, [&](const TokenCandidate &c) -> td::Status {
+      still_waiting = still_waiting || c == target;
+      return td::Status::OK();
+    }).ensure();
+  ASSERT_TRUE(!still_waiting);
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, MalformedBacklogEntriesAreDroppedCountedAndDoNotBlockTheirCandidate) {
+  auto path = std::string("test-wallet-index-db-token-corrupt");
+  auto db = open_fresh_db(path);
+  db.reset();
+  auto readable = token_candidates(0, 1)[0];    // value intact but attempts out of range
+  auto unreadable = token_candidates(1, 1)[0];  // value truncated: its candidate cannot be read back
+  {
+    auto raw = td::RocksDb::open(path).move_as_ok();
+    std::string value(34, '\0');
+    value[0] = static_cast<char>(readable.kind);
+    std::memcpy(&value[1], readable.address.data(), 32);
+    value[33] = static_cast<char>(0xff);
+    auto readable_queue = raw_queue_key(0, 0);
+    raw.set(readable_queue, value).ensure();
+    raw.set(raw_index_key(readable), readable_queue.substr(1)).ensure();
+    auto unreadable_queue = raw_queue_key(0, 1);
+    raw.set(unreadable_queue, std::string(5, '\x01')).ensure();
+    raw.set(raw_index_key(unreadable), unreadable_queue.substr(1)).ensure();
+    raw.set(std::string("\x00\x04", 2), raw_u64(2)).ensure();
+    raw.set(std::string("\x00\x03", 2), raw_u64(2)).ensure();
+  }
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+
+  // The next block of the shard drops both instead of failing on them.
+  ASSERT_TRUE(schedule_block(*db, {}).empty());
+  ASSERT_EQ(backlog_stats(*db).lost, static_cast<uint64_t>(2));
+  ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(0));
+  // The entry that still named its candidate took that candidate's index row with it.
+  db.reset();
+  {
+    auto raw = td::RocksDb::open(path).move_as_ok();
+    std::string value;
+    ASSERT_TRUE(raw.get(raw_index_key(readable), value).move_as_ok() == td::KeyValue::GetStatus::NotFound);
+  }
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  // Both candidates can wait again: neither leftover index entry refuses them.
+  ASSERT_TRUE(schedule_block(*db, {readable, unreadable}, kWholeBasechain, 0).empty());
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(2));
+  ASSERT_EQ(candidates_of(schedule_block(*db, {})), (std::set<TokenCandidate>{readable, unreadable}));
   td::rmrf(path).ignore();
 }

@@ -239,6 +239,14 @@ td::Result<AccountEventId> parse_event_id(td::Slice value) {
 
 }  // namespace
 
+// Token lists come from candidates verified as blocks apply; some may still
+// be waiting, and some may have been given up. Say so alongside the list, so
+// an empty or short answer is not read as the whole truth.
+static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIndexDb *db) {
+  TRY_RESULT(stats, db->token_backlog_stats());
+  return tos_wallet_index::format_token_index_state(stats);
+}
+
 void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string req_id,
                                              td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
@@ -257,8 +265,13 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
     promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
     return;
   }
+  auto index_state_r = token_index_state_json(db);
+  if (index_state_r.is_error()) {
+    promise.set_value(make_json_error(-32603, index_state_r.error().message().str(), req_id));
+    return;
+  }
   td::StringBuilder sb;
-  sb << "{\"@type\":\"wallet.accountJettons\",\"jettons\":[";
+  sb << "{\"@type\":\"wallet.accountJettons\",\"index_state\":" << index_state_r.ok() << ",\"jettons\":[";
   bool first = true;
   if (is_indexed_workchain(addr)) {
     // Entries are state-verified by the writer (master-acknowledged wallets only);
@@ -422,8 +435,13 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
     promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
     return;
   }
+  auto index_state_r = token_index_state_json(db);
+  if (index_state_r.is_error()) {
+    promise.set_value(make_json_error(-32603, index_state_r.error().message().str(), req_id));
+    return;
+  }
   td::StringBuilder sb;
-  sb << "{\"@type\":\"wallet.accountNfts\",\"nfts\":[";
+  sb << "{\"@type\":\"wallet.accountNfts\",\"index_state\":" << index_state_r.ok() << ",\"nfts\":[";
   bool first = true;
   if (is_indexed_workchain(addr)) {
     auto status =
