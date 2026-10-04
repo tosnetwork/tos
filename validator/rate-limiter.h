@@ -8,6 +8,7 @@
 #include <set>
 
 #include "td/utils/RateLimiterWindow.h"
+#include "td/utils/Status.h"
 #include "td/utils/Time.h"
 
 namespace tos::validator::fullnode {
@@ -156,9 +157,20 @@ class UsageWindow {
 //
 //  * every source may hold at most a quarter (rounded up) of each window it
 //    touches, so one peer cannot exhaust a window that other peers share;
-//  * half of each window is reserved and divided equally among the shards that
-//    are currently registered, so traffic arriving through one shard's overlay
-//    cannot consume another shard's guaranteed part; the other half is shared.
+//  * half of each window is reserved and divided equally among the tracked
+//    shards, so traffic arriving through one shard's overlay cannot consume
+//    another shard's guaranteed part; the other half is shared.
+//
+// A shard is tracked while it is registered and, after its last registration
+// is withdrawn, for as long as its reserved usage is still inside a window.
+// Only a registered shard may draw on the reservation, but a departed shard
+// keeps counting towards the division until its usage drains, so shrinking the
+// shard set never hands out capacity that the departing shard has already
+// consumed, and re-registering a shard resumes its earlier usage instead of
+// granting it a fresh reservation. Growing the set shrinks every share at
+// once; a newcomer's share can then be held up by usage admitted under the
+// earlier, larger shares for at most one window, and the aggregate ceiling
+// holds throughout.
 //
 // This bounds what any one source or shard can take. It is resource
 // protection, not a service guarantee: enough distinct identities on the
@@ -195,8 +207,8 @@ class SourceAwareRateLimiter {
   SourceAwareRateLimiter &operator=(SourceAwareRateLimiter &&) = delete;
 
   // A shard may be registered more than once (for example while an old actor
-  // for it is still tearing down); its reservation lasts until the last
-  // registration is withdrawn.
+  // for it is still tearing down); it may draw on its reservation until the
+  // last registration is withdrawn.
   void register_shard(const ShardID &shard) {
     std::unique_lock lock(mutex_);
     auto it = shards_.find(shard);
@@ -216,8 +228,10 @@ class SourceAwareRateLimiter {
     if (it == shards_.end()) {
       return;
     }
-    if (--it->second.registrations == 0) {
-      shards_.erase(it);
+    // The entry and its reserved usage stay; expire_shards() drops it once
+    // that usage has drained.
+    if (it->second.registrations != 0) {
+      it->second.registrations--;
     }
   }
 
@@ -258,8 +272,31 @@ class SourceAwareRateLimiter {
     return sources_.size();
   }
 
+  // Shards counted in the division of the reservation: registered ones plus
+  // departed ones whose reserved usage has not drained yet.
+  size_t tracked_shards(td::Timestamp time = td::Timestamp::now()) {
+    std::unique_lock lock(mutex_);
+    expire_shards(time);
+    return shards_.size();
+  }
+
   static size_t per_source_limit(size_t window_limit) {
     return window_limit / 4 + (window_limit % 4 != 0 ? 1 : 0);
+  }
+
+  // A window that is enabled must let one source send at least one request of
+  // `cost`, or that request could never be admitted at all.
+  static td::Status check_window_admits(const char *name, RateLimit limit, size_t cost) {
+    if (limit.window_size == 0.0) {
+      return td::Status::OK();
+    }
+    if (per_source_limit(limit.window_limit) < cost) {
+      return td::Status::Error(PSLICE() << name << " rate limit " << limit.window_limit << " gives each source "
+                                        << per_source_limit(limit.window_limit) << " per window, less than the " << cost
+                                        << " that one mandatory request costs; use at least "
+                                        << (cost == 0 ? 0 : 4 * cost - 3));
+    }
+    return td::Status::OK();
   }
 
  private:
@@ -309,7 +346,12 @@ class SourceAwareRateLimiter {
 
   bool admit(const Charge &charge, size_t cost, const ShardID &shard, const SourceID &source, td::Timestamp time) {
     expire_sources(time);
+    expire_shards(time);
     auto shard_it = shards_.find(shard);
+    // A departed shard is still tracked but may not draw on the reservation.
+    if (shard_it != shards_.end() && shard_it->second.registrations == 0) {
+      shard_it = shards_.end();
+    }
     auto source_it = sources_.find(source);
     td::uint64 take_reserved[kWindows] = {0, 0, 0, 0};
     td::uint64 take_shared[kWindows] = {0, 0, 0, 0};
@@ -373,6 +415,22 @@ class SourceAwareRateLimiter {
       }
     }
     return true;
+  }
+
+  void expire_shards(td::Timestamp time) {
+    for (auto it = shards_.begin(); it != shards_.end();) {
+      bool drained = true;
+      for (size_t w = 0; w < kWindows; w++) {
+        if (it->second.reserved[w].used(time) != 0) {
+          drained = false;
+        }
+      }
+      if (it->second.registrations == 0 && drained) {
+        it = shards_.erase(it);
+      } else {
+        ++it;
+      }
+    }
   }
 
   // Sources are kept in order of their latest charge, so the front entry is

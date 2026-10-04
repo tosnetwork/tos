@@ -253,6 +253,92 @@ TEST(SourceAwareRateLimiter, ShardRegistrationIsCounted) {
   ASSERT_EQ(2u, admit_until_refused(*limiter, k_heavy_a, 1, k_shard_a, /* source = */ 1, t));
 }
 
+TEST(SourceAwareRateLimiter, ReregistrationCannotTakeAnotherShardsReservation) {
+  // Heavy ceiling 8: shards A and B reserve 2 each, 4 are shared.
+  auto limiter = make_source_limiter(/* global = */ 100, /* heavy = */ 8, /* medium = */ 100, /* small = */ 100);
+  limiter->register_shard(k_shard_a);
+  limiter->register_shard(k_shard_b);
+  auto t = td::Timestamp::at(1000.0);
+  ASSERT_EQ(6u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_a, 100, t));
+  // A leaves and comes back inside the window: its earlier usage comes back
+  // with it rather than a fresh reservation.
+  limiter->unregister_shard(k_shard_a);
+  limiter->register_shard(k_shard_a);
+  ASSERT_EQ(0u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_a, 200, t));
+  // B keeps the 2 it was promised.
+  ASSERT_EQ(2u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_b, 300, t));
+}
+
+TEST(SourceAwareRateLimiter, DepartedShardOnlyUsesTheSharedHalf) {
+  auto limiter = make_source_limiter(/* global = */ 100, /* heavy = */ 8, /* medium = */ 100, /* small = */ 100);
+  limiter->register_shard(k_shard_a);
+  limiter->register_shard(k_shard_b);
+  auto t = td::Timestamp::at(1000.0);
+  // A uses one of its two reserved units, then departs.
+  ASSERT_TRUE(limiter->check_in(k_heavy_a, 1, k_shard_a, /* source = */ 1, t));
+  limiter->unregister_shard(k_shard_a);
+  // Late traffic through A gets only the shared 4, not A's leftover unit.
+  ASSERT_EQ(4u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_a, 100, t));
+  ASSERT_EQ(2u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_b, 200, t));
+}
+
+TEST(SourceAwareRateLimiter, ShardRemovalDoesNotRedistributeConsumedCapacity) {
+  // Heavy ceiling 12: shards A, B and C reserve 2 each, 6 are shared.
+  auto limiter = make_source_limiter(/* global = */ 100, /* heavy = */ 12, /* medium = */ 100, /* small = */ 100);
+  limiter->register_shard(k_shard_a);
+  limiter->register_shard(k_shard_b);
+  constexpr int k_shard_c = 3;
+  limiter->register_shard(k_shard_c);
+  auto t = td::Timestamp::at(1000.0);
+  // A uses exactly its reservation, then departs while that usage is live.
+  ASSERT_TRUE(limiter->check_in(k_heavy_a, 1, k_shard_a, /* source = */ 1, t));
+  ASSERT_TRUE(limiter->check_in(k_heavy_a, 1, k_shard_a, /* source = */ 2, t));
+  limiter->unregister_shard(k_shard_a);
+  // C floods first. Its share stays 2 while A's usage is outstanding, so it
+  // takes its 2 plus the shared 6...
+  ASSERT_EQ(8u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_c, 100, t));
+  // ...and B, which never changed, still gets the 2 it was promised.
+  ASSERT_EQ(2u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_b, 200, t));
+  ASSERT_EQ(3u, limiter->tracked_shards(t));
+  // Once A's usage has drained, it stops counting and the reservation is
+  // split between the two remaining shards.
+  auto later = td::Timestamp::at(1001.5);
+  ASSERT_EQ(2u, limiter->tracked_shards(later));
+  ASSERT_EQ(9u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_c, 300, later));
+  ASSERT_EQ(3u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_b, 400, later));
+}
+
+TEST(SourceAwareRateLimiter, NewShardsShareIsAvailableWithinOneWindow) {
+  auto limiter = make_source_limiter(/* global = */ 100, /* heavy = */ 8, /* medium = */ 100, /* small = */ 100);
+  limiter->register_shard(k_shard_a);
+  auto t = td::Timestamp::at(1000.0);
+  ASSERT_EQ(8u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_a, 100, t));
+  // B joins while A's usage, admitted under the larger share, is live; the
+  // aggregate ceiling holds and B waits.
+  limiter->register_shard(k_shard_b);
+  ASSERT_EQ(0u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_b, 200, t));
+  // One window later, B's share holds against A flooding first.
+  auto later = td::Timestamp::at(1001.5);
+  ASSERT_EQ(6u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_a, 300, later));
+  ASSERT_EQ(2u, flood_from_many_sources(*limiter, k_heavy_a, k_shard_b, 400, later));
+}
+
+TEST(SourceAwareRateLimiter, WindowMustAdmitOneMandatoryRequestPerSource) {
+  // A source holds a quarter, rounded up: 29 is the least that fits 8.
+  ASSERT_TRUE(ShardAwareLimiter::check_window_admits("heavy", RateLimit{1.0, 29}, 8).is_ok());
+  ASSERT_TRUE(ShardAwareLimiter::check_window_admits("heavy", RateLimit{1.0, 28}, 8).is_error());
+  ASSERT_TRUE(ShardAwareLimiter::check_window_admits("small", RateLimit{1.0, 1}, 1).is_ok());
+  ASSERT_TRUE(ShardAwareLimiter::check_window_admits("small", RateLimit{1.0, 0}, 1).is_error());
+  // A disabled window admits everything.
+  ASSERT_TRUE(ShardAwareLimiter::check_window_admits("heavy", RateLimit{0.0, 0}, 8).is_ok());
+  // The boundary holds in the limiter itself.
+  auto ok = make_source_limiter(/* global = */ 100, /* heavy = */ 29, /* medium = */ 100, /* small = */ 100);
+  auto t = td::Timestamp::at(1000.0);
+  ASSERT_TRUE(ok->check_in(k_heavy_a, 8, k_shard_a, 1, t));
+  auto tight = make_source_limiter(/* global = */ 100, /* heavy = */ 28, /* medium = */ 100, /* small = */ 100);
+  ASSERT_TRUE(!tight->check_in(k_heavy_a, 8, k_shard_a, 1, t));
+}
+
 TEST(SourceAwareRateLimiter, UnparseableQueriesAreChargedToTheirSource) {
   auto limiter = make_source_limiter(/* global = */ 8, /* heavy = */ 100, /* medium = */ 100, /* small = */ 12);
   limiter->register_shard(k_shard_a);
@@ -441,6 +527,20 @@ TEST(MasterIngressLimiter, PublicSourcesShareOnlyThePublicHalf) {
   clock.advance(1000);
   ASSERT_TRUE(limiter->try_acquire(5000));
   ASSERT_TRUE(!limiter->try_acquire(5000));
+}
+
+TEST(MasterIngressLimiter, TrustedFallbackKeepsThePerSourceLimit) {
+  FakeClock clock;
+  auto limiter = make_master({k_trusted}, clock);
+  // The slave spends its own share of 8...
+  for (int i = 0; i < 8; i++) {
+    ASSERT_TRUE(limiter->try_acquire(k_trusted));
+  }
+  // ...then falls back to the public half like any other source: one request
+  // from its per-source bucket, although the public bucket still holds 8.
+  ASSERT_TRUE(limiter->try_acquire(k_trusted));
+  ASSERT_TRUE(!limiter->try_acquire(k_trusted));
+  ASSERT_EQ(7u, hostile_round(*limiter, 100));
 }
 
 TEST(MasterIngressLimiter, OneTrustedSlaveCannotDrainAnother) {

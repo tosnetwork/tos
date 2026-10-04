@@ -476,6 +476,8 @@ class ValidatorEngine : public td::actor::Actor {
   void set_ratelimit_medium(size_t count) {
     full_node_options_.ratelimit_medium_ = count;
   }
+  // Startup configuration only: the masters' shared limiter is built from this
+  // set when they start, and nothing updates it while the engine runs.
   void set_full_node_master_trusted(std::set<tos::adnl::AdnlNodeIdShort> ids) {
     full_node_master_trusted_ = std::move(ids);
   }

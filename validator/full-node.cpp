@@ -961,30 +961,22 @@ CustomOverlayParams CustomOverlayParams::fetch(const tos_api::engine_validator_c
   return c;
 }
 
+FullNodeRateLimits FullNode::rate_limits(const FullNodeOptions &opts) {
+  return full_node_rate_limits(opts.ratelimit_window_size_, opts.ratelimit_global_, opts.ratelimit_heavy_,
+                               opts.ratelimit_medium_);
+}
+
+td::Status FullNode::check_rate_limits(const FullNodeOptions &opts) {
+  return check_full_node_rate_limits(rate_limits(opts));
+}
+
 decltype(FullNodeImpl::limiter_) FullNodeImpl::make_limiter(const FullNodeOptions &opts) {
-  double w_size = opts.ratelimit_window_size_;
-  size_t h_limit = opts.ratelimit_heavy_;
-  size_t m_limit = opts.ratelimit_medium_;
-  size_t g_limit = opts.ratelimit_global_;
-  // Small requests are cheap fixed-size lookups, but they still read from the
-  // database, so they get their own (generous) bound instead of being free.
-  size_t s_limit = 200;
-  return std::make_shared<FullNodeRateLimiter>(
-      RateLimit{w_size, g_limit}, RateLimit{w_size, h_limit},
-      std::set{tos_api::tosNode_getArchiveSlice::ID, tos_api::tosNode_downloadPersistentStateSliceV2::ID,
-               tos_api::tosNode_downloadZeroState::ID},
-      RateLimit{w_size, m_limit},
-      std::set{tos_api::tosNode_downloadBlock::ID, tos_api::tosNode_downloadBlockFull::ID,
-               tos_api::tosNode_downloadNextBlockFull::ID, tos_api::tosNode_downloadNextBlocksFull::ID,
-               tos_api::tosNode_downloadBlockProof::ID, tos_api::tosNode_downloadBlockProofLink::ID,
-               tos_api::tosNode_downloadKeyBlockProof::ID, tos_api::tosNode_downloadKeyBlockProofLink::ID,
-               tos_api::tosNode_getOutMsgQueueProof::ID, tos_api::tosNode_prepareKeyBlockProof::ID},
-      RateLimit{w_size, s_limit},
-      std::set{tos_api::tosNode_getNextBlockDescription::ID, tos_api::tosNode_getNextBlocksDescription::ID,
-               tos_api::tosNode_prepareBlockProof::ID, tos_api::tosNode_prepareBlock::ID,
-               tos_api::tosNode_prepareZeroState::ID, tos_api::tosNode_getNextKeyBlockIds::ID,
-               tos_api::tosNode_getArchiveInfo::ID, tos_api::tosNode_getShardArchiveInfo::ID,
-               tos_api::tosNode_preparePersistentState::ID, tos_api::tosNode_getPersistentStateSizeV2::ID});
+  auto limits = rate_limits(opts);
+  auto S = check_full_node_rate_limits(limits);
+  if (S.is_error()) {
+    LOG(ERROR) << "full-node rate limits refuse mandatory requests: " << S;
+  }
+  return make_full_node_rate_limiter(limits);
 }
 
 }  // namespace fullnode

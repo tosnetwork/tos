@@ -25,8 +25,8 @@
 #include "td/actor/PromiseFuture.h"
 #include "td/utils/port/Poll.h"
 
+#include "full-node-shard-admission.h"
 #include "full-node-shard.h"
-#include "rate-limiter.h"
 
 namespace tos {
 
@@ -307,8 +307,7 @@ class FullNodeShardImpl : public FullNodeShard {
   std::set<td::Bits256> processed_ext_msg_broadcasts_;
   td::Timestamp cleanup_processed_ext_msg_at_;
 
-  std::shared_ptr<FullNodeRateLimiter> limiter_;
-  bool limiter_registered_ = false;
+  ShardQueryAdmission admission_;
 };
 
 }  // namespace fullnode

@@ -20,19 +20,17 @@
 #pragma once
 
 #include "adnl/adnl-ext-client.h"
+#include "net/download-state.hpp"
 #include "validator/interfaces/block-handle.h"
 
+#include "full-node-shard-admission.h"
 #include "full-node.h"
-#include "net/download-state.hpp"
-#include "rate-limiter.h"
 
 namespace tos {
 
 namespace validator {
 
 namespace fullnode {
-
-using FullNodeRateLimiter = SourceAwareRateLimiter<td::int32, ShardIdFull, adnl::AdnlNodeIdShort>;
 
 class FullNodeShard : public td::actor::Actor {
  public:

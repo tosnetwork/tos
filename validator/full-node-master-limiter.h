@@ -27,7 +27,9 @@ namespace tos::validator::fullnode {
 // each trusted identity owns its own bucket that neither public identities nor
 // other trusted identities can drain. The other half serves everybody else
 // through a shared public bucket plus a small bucket per source, with bounded
-// per-source state.
+// per-source state. A trusted identity whose own bucket is empty may also use
+// the public half, but only as an ordinary public source under its own
+// per-source bucket; the public half is best effort for everyone.
 //
 // A trusted identity is an authenticated ADNL id: a slave signs in to the
 // master's external port with its full-node key. With no trusted identity
@@ -64,7 +66,8 @@ class MasterIngressLimiter {
   MasterIngressLimiter(const MasterIngressLimiter &) = delete;
   MasterIngressLimiter &operator=(const MasterIngressLimiter &) = delete;
 
-  // Replace the trusted set. A change never raises the tokens any bucket
+  // Replace the trusted set. The engine sets the trusted set once, when the
+  // masters start, and never calls this while running. A change never raises the tokens any bucket
   // holds: surviving buckets keep their current level clamped to their new
   // capacity, and identities that join the set start with an empty bucket.
   td::Status set_trusted(std::set<SourceID> trusted) {

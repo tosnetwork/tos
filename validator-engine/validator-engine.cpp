@@ -2579,8 +2579,8 @@ void ValidatorEngine::start_full_node() {
       // --full-node-master-trusted) instead of a fresh random key per
       // connection.
       if (full_node_id_.is_zero()) {
-        LOG(WARNING) << "full-node slave mode without a full-node ADNL id: connections to masters are anonymous and "
-                        "cannot be admitted as trusted";
+        LOG(WARNING) << "full-node slave mode without a full-node ADNL id: connections to masters are anonymous, "
+                        "so no master can admit this slave as trusted and its reserved service does not apply";
         start_full_node_with_slave_key(tos::PrivateKey{});
         return;
       }
@@ -2589,7 +2589,10 @@ void ValidatorEngine::start_full_node() {
         if (R.is_ok()) {
           key = R.move_as_ok();
         } else {
-          LOG(ERROR) << "cannot load the full-node ADNL key for signing in to masters, connecting anonymously: "
+          // Falling back keeps the slave running, but anonymously: masters
+          // then treat it as a public source, without its reserved share.
+          LOG(ERROR) << "cannot load the full-node ADNL key for signing in to masters, connecting anonymously; "
+                        "masters will not admit this slave as trusted: "
                      << R.move_as_error();
         }
         td::actor::send_closure(SelfId, &ValidatorEngine::start_full_node_with_slave_key, std::move(key));
@@ -6135,6 +6138,9 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::function<void()>> acts;
   std::set<tos::adnl::AdnlNodeIdShort> full_node_master_trusted;
+  // The full-node rate limits as the options set them, checked once parsing
+  // is complete.
+  tos::validator::fullnode::FullNodeOptions ratelimit_options;
   std::string measurement_jsonl;
   std::string measurement_node_id;
   std::optional<td::IPAddress> json_rpc_bind_address;
@@ -6536,6 +6542,7 @@ int main(int argc, char *argv[]) {
         if (v < 0) {
           return td::Status::Error("ratelimit-window-size should be non-negative");
         }
+        ratelimit_options.ratelimit_window_size_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_window_size, v); });
         return td::Status::OK();
       });
@@ -6543,6 +6550,7 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-global", "ratelimit for all kind of requests (in request-cost units per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_global_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_global, v); });
         return td::Status::OK();
       });
@@ -6550,6 +6558,7 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-heavy", "ratelimit for heavy requests (in 2 MiB request-cost units per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_heavy_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_heavy, v); });
         return td::Status::OK();
       });
@@ -6557,13 +6566,17 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-medium", "ratelimit for medium requests (in counts per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_medium_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_medium, v); });
         return td::Status::OK();
       });
   p.add_checked_option(
       '\0', "full-node-master-trusted",
       "full-node slave ADNL id (hex) for which a full-node master reserves an equal share of half its request budget; "
-      "repeatable, at most 8",
+      "repeatable, at most 8. Read once at startup: changing the set needs a restart. A slave is recognised only "
+      "while it signs in with the full-node ADNL key of that id; if the slave cannot load that key it connects "
+      "anonymously and gets no reserved share, and a slave whose full-node ADNL id changes must be restarted to "
+      "sign in with the new key",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(id, parse_adnl_id_hex(s));
         full_node_master_trusted.insert(id);
@@ -6980,6 +6993,11 @@ int main(int argc, char *argv[]) {
       LOG(ERROR) << admission.message();
       std::_Exit(2);
     }
+  }
+  auto ratelimits_ok = tos::validator::fullnode::FullNode::check_rate_limits(ratelimit_options);
+  if (ratelimits_ok.is_error()) {
+    LOG(ERROR) << "full-node rate limits would refuse a mandatory request from every peer: " << ratelimits_ok;
+    std::_Exit(2);
   }
   if (!full_node_master_trusted.empty()) {
     acts.push_back([&x, ids = full_node_master_trusted]() mutable {

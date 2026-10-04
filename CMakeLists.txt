@@ -771,6 +771,11 @@ target_link_libraries(test-msg-envelope PRIVATE tos_crypto)
 
 add_executable(test-rate-limiter test/test-td-main.cpp test/test-rate-limiter.cpp)
 target_link_libraries(test-rate-limiter PRIVATE tdutils)
+
+add_executable(test-full-node-shard-admission test/test-td-main.cpp test/test-full-node-shard-admission.cpp)
+target_link_libraries(test-full-node-shard-admission PRIVATE tl_api tl-utils keys tos_crypto tdutils)
+target_include_directories(test-full-node-shard-admission PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_include_directories(test-rate-limiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test-config-transition test/test-td-main.cpp test/test-config-transition.cpp)
@@ -1626,6 +1631,7 @@ tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
+tos_test(test-full-node-shard-admission)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
 tos_test(test-account-model-detection)
