@@ -55,8 +55,11 @@ constexpr std::size_t kDefaultMaxTunnels = 512;
 // Concurrent tunnels from one ADNL peer. Browsers open about six connections
 // per site, so a client with several tabs on a few sites fits; one peer
 // cannot take the whole global allowance. ADNL ids are cheap to create, so
-// this is a bound on a single well-behaved or careless client, not a defense
-// against a peer that mints identities; the global cap is that defense.
+// this bounds a single well-behaved or careless client, not a peer that mints
+// identities. Against identity spraying the global cap bounds only the
+// resources tunnels hold (sockets, actors); it does not keep the proxy
+// available: such a peer can hold every global slot, and other peers' CONNECTs
+// are then refused until those tunnels end.
 constexpr std::size_t kDefaultMaxTunnelsPerPeer = 16;
 // A tunnel that moves no bytes in either direction for this long is closed.
 // Ten minutes outlasts the keep-alive idle periods of browsers and TLS
@@ -68,10 +71,17 @@ constexpr double kDefaultTunnelIdleTimeout = 600.0;
 // that every socket is eventually reclaimed.
 constexpr double kDefaultTunnelMaxLifetime = 86400.0;
 
+// Longest delay, in seconds, accepted for any deadline here. The I/O worker
+// turns the earliest pending deadline into an int32 millisecond wait, so a
+// longer delay cannot be represented there (about 24.8 days). Values such as
+// 1e300 or infinity are refused rather than turned into a deadline that
+// never arrives.
+constexpr double kMaxDeadlineSeconds = 2147483.0;
+
 // Largest values the command-line options accept.
 constexpr std::size_t kMaxTunnelLimit = 65536;
 constexpr double kMaxTunnelIdleTimeout = 7 * 86400.0;
-constexpr double kMaxTunnelLifetime = 30 * 86400.0;
+constexpr double kMaxTunnelLifetime = kMaxDeadlineSeconds;
 
 struct TunnelTimeouts {
   double idle = kDefaultTunnelIdleTimeout;
@@ -79,10 +89,10 @@ struct TunnelTimeouts {
 };
 
 // Largest --forward-timeout (seconds a request forwarded to a local HTTP
-// server may take in total). A forward still running after an hour is held
-// open by a backend, not by a request; a larger value would make the deadline
-// meaningless.
-constexpr double kMaxHttpForwardTimeout = 3600.0;
+// server may take in total, response included). Large downloads can
+// legitimately take hours, so the only limit is that the deadline stays
+// representable.
+constexpr double kMaxHttpForwardTimeout = kMaxDeadlineSeconds;
 
 // "<n>" with 1 <= n <= kMaxTunnelLimit, digits only.
 td::Result<std::size_t> parse_tunnel_limit(td::Slice text);

@@ -23,6 +23,7 @@
 #include "common/delay.h"
 #include "http/http.h"
 #include "rldp-http-proxy/tcp-tunnel.h"
+#include "td/utils/misc.h"
 #include "tl-utils/tl-utils.hpp"
 #include "validator-engine/json-rpc-http-policy.h"
 
@@ -42,6 +43,13 @@ td::Result<std::size_t> parse_tunnel_limit(td::Slice text) {
 }
 
 td::Result<double> parse_positive_seconds(td::Slice text, double max) {
+  // Decimal notation only: strtod would also read hexadecimal ("0x10"),
+  // "inf" and "nan".
+  for (char c : text) {
+    if (!(td::is_digit(c) || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-')) {
+      return td::Status::Error("expected a decimal number of seconds");
+    }
+  }
   TRY_RESULT(seconds, json_rpc::parse_timeout_seconds(text));
   if (!(seconds > 0) || seconds > max) {
     return td::Status::Error(PSLICE() << "expected a number of seconds greater than 0 and at most " << max);

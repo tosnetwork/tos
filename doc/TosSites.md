@@ -56,8 +56,9 @@ Example pattern:
 - `--forward-timeout`: total seconds a request forwarded to a local HTTP
   server may take, response included (default 60). It is a total, not an idle
   limit: a response still streaming when it passes is cut off. Concurrent
-  forwards are capped (1000 per remote); more are answered 503. Values above
-  3600 are refused.
+  forwards are capped (1000 per remote); more are answered 503. Values must be
+  finite and at most 2147483 (about 24.8 days, the longest delay the
+  scheduler can represent); larger values are refused.
 - `--max-tunnels`, `--max-tunnels-per-peer`: how many CONNECT tunnels a
   service-side proxy keeps open at once, from all peers together (default 512)
   and from one ADNL peer (default 16). Each tunnel holds a TCP connection to
@@ -67,7 +68,7 @@ Example pattern:
 - `--tunnel-idle-timeout`: seconds a tunnel may pass without moving a byte in
   either direction before it is closed (default 600, at most 604800).
 - `--tunnel-max-lifetime`: seconds after which a tunnel is closed however busy
-  it is (default 86400, at most 2592000), so every tunnel's connection is
+  it is (default 86400, at most 2147483), so every tunnel's connection is
   eventually reclaimed.
 
 `-p 8080` used to listen on every interface; it now listens on `127.0.0.1`

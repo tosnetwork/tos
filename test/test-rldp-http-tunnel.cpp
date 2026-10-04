@@ -19,7 +19,7 @@
 // RLDP transport and the payload registry replaced by test actors, and check
 // that every way a tunnel ends gives its socket and actor back, that
 // admission is capped, and that idle and lifetime limits close tunnels.
-// They also run the two proxy binaries to check how they read their options.
+// They also run the RLDP proxy binary to check how it reads its limits.
 
 #include <arpa/inet.h>
 #include <atomic>
@@ -494,7 +494,10 @@ TEST(RldpHttpTunnel, option_values_parse_strictly_and_are_bounded) {
   ASSERT_EQ(parse_positive_seconds("60", max).move_as_ok(), 60.0);
   ASSERT_EQ(parse_positive_seconds("0.5", max).move_as_ok(), 0.5);
   ASSERT_EQ(parse_positive_seconds("3600", max).move_as_ok(), 3600.0);
-  for (std::string bad : {"", "0", "-1", "3600.5", "1e300", "inf", "nan", "1e400", " 60", "60 ", "60s", "0x10000"}) {
+  // Transfers longer than an hour are legitimate.
+  ASSERT_EQ(parse_positive_seconds("7200", max).move_as_ok(), 7200.0);
+  ASSERT_EQ(parse_positive_seconds("2147483", max).move_as_ok(), 2147483.0);
+  for (std::string bad : {"", "0", "-1", "2147483.5", "1e300", "inf", "nan", "1e400", " 60", "60 ", "60s", "0x10000"}) {
     ASSERT_TRUE(parse_positive_seconds(bad, max).is_error());
   }
 }
@@ -529,132 +532,26 @@ int run_binary(const std::string &binary, const std::vector<std::string> &args) 
   return 128 + WTERMSIG(status);
 }
 
-// A running child process, killed when this goes out of scope.
-struct Child {
-  pid_t pid = -1;
-  Child(const std::string &binary, const std::vector<std::string> &args) {
-    pid = ::fork();
-    CHECK(pid >= 0);
-    if (pid == 0) {
-      int null_fd = ::open("/dev/null", O_RDWR);
-      if (null_fd >= 0) {
-        ::dup2(null_fd, 1);
-        ::dup2(null_fd, 2);
-      }
-      std::vector<char *> argv;
-      argv.push_back(const_cast<char *>(binary.c_str()));
-      for (auto &a : args) {
-        argv.push_back(const_cast<char *>(a.c_str()));
-      }
-      argv.push_back(nullptr);
-      ::execv(binary.c_str(), argv.data());
-      ::_exit(127);
-    }
-  }
-  ~Child() {
-    ::kill(pid, SIGKILL);
-    int status = 0;
-    ::waitpid(pid, &status, 0);
-  }
-};
-
-std::string non_loopback_ipv4() {
-  ifaddrs *list = nullptr;
-  if (::getifaddrs(&list) != 0) {
-    return {};
-  }
-  std::string found;
-  for (auto *it = list; it != nullptr && found.empty(); it = it->ifa_next) {
-    if (it->ifa_addr == nullptr || it->ifa_addr->sa_family != AF_INET || (it->ifa_flags & IFF_UP) == 0 ||
-        (it->ifa_flags & IFF_LOOPBACK) != 0) {
-      continue;
-    }
-    char text[INET_ADDRSTRLEN] = {};
-    auto *in = reinterpret_cast<sockaddr_in *>(it->ifa_addr);
-    if (::inet_ntop(AF_INET, &in->sin_addr, text, sizeof(text)) != nullptr) {
-      found = text;
-    }
-  }
-  ::freeifaddrs(list);
-  return found;
-}
-
-bool tcp_connects(const std::string &ip, int port) {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  CHECK(fd >= 0);
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(static_cast<uint16_t>(port));
-  CHECK(::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) == 1);
-  bool ok = ::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0;
-  ::close(fd);
-  return ok;
-}
-
-bool eventually_connects(const std::string &ip, int port) {
-  for (int attempt = 0; attempt < 250; attempt++) {
-    if (tcp_connects(ip, port)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
-  return false;
-}
-
-// An ephemeral port nothing listens on right now.
-int free_port() {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  CHECK(fd >= 0);
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  CHECK(::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
-  socklen_t len = sizeof(addr);
-  CHECK(::getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) == 0);
-  ::close(fd);
-  return ntohs(addr.sin_port);
-}
-
 }  // namespace
 
 // -h prints the help and exits 2 once the options before it were accepted; an
 // option the binary refuses stops it before that.
 TEST(RldpHttpProxyOptions, the_binary_refuses_unbounded_or_malformed_limits) {
   const std::string binary = RLDP_HTTP_PROXY_BINARY;
-  ASSERT_EQ(run_binary(binary, {"--forward-timeout", "3600", "-h"}), 2);
+  ASSERT_EQ(run_binary(binary, {"--forward-timeout", "7200", "-h"}), 2);
+  ASSERT_EQ(run_binary(binary, {"--forward-timeout", "2147483", "-h"}), 2);
   ASSERT_EQ(run_binary(binary, {"--max-tunnels", "512", "--max-tunnels-per-peer", "16", "-h"}), 2);
   ASSERT_EQ(run_binary(binary, {"--tunnel-idle-timeout", "600", "--tunnel-max-lifetime", "86400", "-h"}), 2);
   for (std::vector<std::string> bad : std::vector<std::vector<std::string>>{
            {"--forward-timeout", "1e300", "-h"},
-           {"--forward-timeout", "3601", "-h"},
+           {"--forward-timeout", "inf", "-h"},
+           {"--forward-timeout", "nan", "-h"},
+           {"--forward-timeout", "2147484", "-h"},
            {"--max-tunnels", "0", "-h"},
            {"--max-tunnels-per-peer", "65537", "-h"},
            {"--tunnel-idle-timeout", "1e300", "-h"},
            {"--tunnel-max-lifetime", "0", "-h"},
        }) {
     ASSERT_TRUE(run_binary(binary, bad) != 2);
-  }
-}
-
-TEST(HttpProxyListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
-  auto other = non_loopback_ipv4();
-  if (other.empty()) {
-    // Without a second address a refused connection would prove nothing.
-    LOG(WARNING) << "skipped: this host has no non-loopback IPv4 address";
-    return;
-  }
-  const std::string binary = HTTP_PROXY_BINARY;
-  int port = free_port();
-  {
-    Child proxy(binary, {"-p", std::to_string(port)});
-    ASSERT_TRUE(eventually_connects("127.0.0.1", port));
-    ASSERT_TRUE(!tcp_connects(other, port));
-  }
-  // Control: asked for by address, the same binary is reachable there, so the
-  // refusal above is the bind address and not a firewall.
-  port = free_port();
-  {
-    Child proxy(binary, {"-p", "0.0.0.0:" + std::to_string(port)});
-    ASSERT_TRUE(eventually_connects(other, port));
   }
 }

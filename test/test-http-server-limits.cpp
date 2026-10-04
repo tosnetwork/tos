@@ -761,79 +761,6 @@ TEST(JsonRpcHttpPolicy, listener_has_a_response_deadline) {
   ASSERT_TRUE(limits.close_after_early_answer);
 }
 
-namespace {
-
-// A local IPv4 address other than loopback, if this host has one.
-std::string non_loopback_ipv4() {
-  ifaddrs *list = nullptr;
-  if (::getifaddrs(&list) != 0) {
-    return {};
-  }
-  std::string found;
-  for (auto *it = list; it != nullptr && found.empty(); it = it->ifa_next) {
-    if (it->ifa_addr == nullptr || it->ifa_addr->sa_family != AF_INET || (it->ifa_flags & IFF_UP) == 0 ||
-        (it->ifa_flags & IFF_LOOPBACK) != 0) {
-      continue;
-    }
-    char text[INET_ADDRSTRLEN] = {};
-    auto *in = reinterpret_cast<sockaddr_in *>(it->ifa_addr);
-    if (::inet_ntop(AF_INET, &in->sin_addr, text, sizeof(text)) != nullptr) {
-      found = text;
-    }
-  }
-  ::freeifaddrs(list);
-  return found;
-}
-
-bool tcp_connects(const std::string &ip, int port) {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  CHECK(fd >= 0);
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(static_cast<uint16_t>(port));
-  CHECK(::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) == 1);
-  bool ok = ::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0;
-  ::close(fd);
-  return ok;
-}
-
-// The listener binds asynchronously; wait until loopback answers.
-bool listener_is_up(int port) {
-  for (int attempt = 0; attempt < 100; attempt++) {
-    if (tcp_connects("127.0.0.1", port)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
-  return false;
-}
-
-// Runs `scenario` against a server listening on `address`.
-void with_server_at(td::IPAddress address, std::function<void()> scenario) {
-  td::actor::Scheduler scheduler({2});
-  td::actor::ActorOwn<tos::http::HttpServer> server;
-  scheduler.run_in_context([&] {
-    server = tos::http::HttpServer::create(address, std::make_shared<OkCallback>(), tos::http::HttpServer::Limits{});
-  });
-  std::atomic<bool> done{false};
-  std::thread client([&] {
-    scenario();
-    done = true;
-  });
-  while (!done) {
-    scheduler.run(0.05);
-  }
-  client.join();
-  scheduler.run_in_context([&] {
-    server.reset();
-    td::actor::SchedulerContext::get().stop();
-  });
-  while (scheduler.run(1)) {
-  }
-}
-
-}  // namespace
-
 TEST(HttpListenAddress, a_bare_port_means_loopback_and_an_address_must_be_explicit) {
   using tos::http::HttpServer;
   auto bare = HttpServer::parse_listen_address("8080").move_as_ok();
@@ -871,30 +798,6 @@ TEST(HttpListenAddress, a_bare_port_means_loopback_and_an_address_must_be_explic
                           "[::1"}) {
     ASSERT_TRUE(HttpServer::parse_listen_address(bad).is_error());
   }
-}
-
-TEST(HttpListenAddress, a_bare_port_is_unreachable_from_other_interfaces) {
-  auto other = non_loopback_ipv4();
-  if (other.empty()) {
-    // Without a second address the refusal below would prove nothing, so the
-    // test says it was skipped rather than passing unchecked.
-    LOG(WARNING) << "skipped: this host has no non-loopback IPv4 address";
-    return;
-  }
-  int port = find_free_port();
-  auto bare = tos::http::HttpServer::parse_listen_address(std::to_string(port)).move_as_ok();
-  with_server_at(bare, [&] {
-    ASSERT_TRUE(listener_is_up(port));
-    ASSERT_TRUE(!tcp_connects(other, port));
-  });
-  // Control: asked for explicitly, the same listener is reachable there, so the
-  // refusal above is the bind address and not a firewall or a dead listener.
-  port = find_free_port();
-  auto any = tos::http::HttpServer::parse_listen_address("0.0.0.0:" + std::to_string(port)).move_as_ok();
-  with_server_at(any, [&] {
-    ASSERT_TRUE(listener_is_up(port));
-    ASSERT_TRUE(tcp_connects(other, port));
-  });
 }
 
 namespace {

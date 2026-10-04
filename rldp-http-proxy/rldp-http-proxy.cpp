@@ -1466,7 +1466,7 @@ int main(int argc, char *argv[]) {
   p.add_checked_option(
       '\0', "forward-timeout",
       "seconds a request forwarded to a local HTTP server may take in total, response "
-      "included (default 60, at most 3600); a response still streaming then is cut off",
+      "included (default 60, at most 2147483); a response still streaming then is cut off",
       [&](td::Slice arg) -> td::Status {
         TRY_RESULT_PREFIX(seconds, tos::rldp_http::parse_positive_seconds(arg, tos::rldp_http::kMaxHttpForwardTimeout),
                           "--forward-timeout: ");
@@ -1499,7 +1499,7 @@ int main(int argc, char *argv[]) {
       });
   p.add_checked_option('\0', "tunnel-max-lifetime",
                        "seconds after which a CONNECT tunnel is closed however busy it is "
-                       "(default 86400, at most 2592000)",
+                       "(default 86400, at most 2147483)",
                        [&](td::Slice arg) -> td::Status {
                          TRY_RESULT_PREFIX(
                              seconds, tos::rldp_http::parse_positive_seconds(arg, tos::rldp_http::kMaxTunnelLifetime),
