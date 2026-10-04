@@ -64,8 +64,10 @@ constexpr size_t kEventPruneDrainPerBlock = 256;
 // wc0-index on-disk schema version, bumped when a key layout changes so open()
 // can migrate. Version 1 introduces the event-age index (0x14) and global
 // retention; a database with no version key predates this and is treated as
-// version 0.
-constexpr uint32_t kWalletIndexSchemaVersion = 1;
+// version 0. Version 2 introduces the jetton wallet record (0x17); jetton rows
+// written before it have no record to retract them by, so a database upgraded
+// from an earlier version with any jetton row is marked as needing a rebuild.
+constexpr uint32_t kWalletIndexSchemaVersion = 2;
 
 // Bound the TVM verification work a single block can demand: token candidates
 // verified per block, the block's own and deferred ones together. Candidates
@@ -176,6 +178,30 @@ class WalletIndexDb {
   td::Status for_each_jetton(
       const HashKey& owner, size_t limit,
       std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
+
+  // --- Jetton wallet record: 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8) ---
+  // The last verdict on a jetton wallet and the logical time of the block it
+  // came from; present = 0 records that the wallet was found not to be a
+  // jetton wallet acknowledged by its master at that time. It is the reverse
+  // of the 0x10 entry, so a wallet whose owner or master changes, or which
+  // stops verifying, can have its old 0x10 entry removed.
+  struct JettonVerdict {
+    bool present;
+    HashKey owner;
+    HashKey master;
+    td::Ref<vm::Cell> value;  // the 0x10 entry for (owner, master) when present
+  };
+  // Record what the post-state of the block ending at `end_lt` says about
+  // `wallet` (into the open batch), unless its record is from a later block.
+  // The previous 0x10 entry is removed when the owner or master changed or the
+  // wallet is no longer present, but only while that entry still names this
+  // wallet: another wallet indexed under the same pair since keeps its entry.
+  // Call it only with a definite verdict; a verification that could not
+  // complete must leave the record as it is.
+  td::Status apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt);
+  // Returns true and fills `owner` and `master` if the wallet's last verdict
+  // found it present. Reads committed state only.
+  td::Result<bool> get_jetton_wallet(const HashKey& wallet, HashKey& owner, HashKey& master);
 
   // --- NFT ownership: 0x11 + owner(32) + nft(32) -> value cell ---
   td::Status put_nft(const HashKey& owner, const HashKey& nft, td::Ref<vm::Cell> value);
@@ -362,6 +388,9 @@ class WalletIndexDb {
   // Delete every key in the single-byte-tag namespace [tag, tag+1). Migration
   // only; routes through the active write batch.
   td::Status clear_namespace(uint8_t tag);
+  // Erase the (owner, master) jetton entry if it names `wallet` and was not
+  // written earlier in the open batch. Joins the open batch.
+  td::Status erase_jetton_if_wallet(const HashKey& owner, const HashKey& master, const HashKey& wallet);
 
   std::unique_ptr<td::RocksDb> db_;
   // Same database, own (never batched) write path, for mark_blocks_incomplete.
@@ -382,6 +411,9 @@ class WalletIndexDb {
     std::map<std::string, std::string> index_overlay;
     // Queue rows already erased in the batch, which committed reads still see.
     std::set<std::string> queue_erased;
+    // Jetton (owner, master) keys written in the batch, which committed reads
+    // do not see yet: a stale entry under such a key was already replaced.
+    std::set<std::string> jetton_written;
   };
   TokenBatchState token_batch_;
   uint64_t token_backlog_limit_ = kMaxTokenBacklogEntries;
@@ -421,6 +453,23 @@ class WalletIndexSnapshot {
   }
   std::unique_ptr<WalletIndexDb> view_;
 };
+
+// The result of checking one jetton-wallet candidate against a block's
+// post-state.
+enum class JettonWalletCheck {
+  Verified,       // its master resolves (owner) back to it
+  Rejected,       // the post-state definitely does not show it as a jetton wallet
+  Indeterminate,  // the node could not reach a verdict (budget, virtualization)
+  OtherShard,     // the verdict needs another shard's state
+};
+
+// Record a jetton-wallet check in the index (into the open batch). Only a
+// definite verdict changes the index: Verified records the wallet under
+// (owner, master) with `value`, Rejected removes what it had. Indeterminate
+// and OtherShard leave the wallet's record and entry as they are.
+TokenVerifyOutcome record_jetton_wallet_check(WalletIndexDb& db, const HashKey& wallet, JettonWalletCheck check,
+                                              const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value,
+                                              uint64_t end_lt);
 
 // Module-scope singleton. Returns nullptr until the
 // validator opens the index at startup.

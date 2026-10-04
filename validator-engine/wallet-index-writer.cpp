@@ -418,27 +418,32 @@ void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_m
   }
 }
 
-// Verify and index one jetton-wallet candidate (into the open batch). Returns
-// false when the node could not reach a verdict, so the caller retries it.
+// Verify and index one jetton-wallet candidate (into the open batch). A check
+// that reached no verdict is retried and leaves the index as it was.
 TokenVerifyOutcome index_jetton_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& wallet,
                                           unsigned long long end_lt, WalletIndexVerificationBudget& budget) {
-  td::Bits256 owner, master;
+  td::Bits256 owner = td::Bits256::zero();
+  td::Bits256 master = td::Bits256::zero();
+  JettonWalletCheck check = JettonWalletCheck::Rejected;
   switch (verify_jetton_wallet(state, wallet, owner, master, budget)) {
     case JettonVerification::Indeterminate:
-      return TokenVerifyOutcome::Retry;
+      check = JettonWalletCheck::Indeterminate;
+      break;
     case JettonVerification::OtherShard:
-      return TokenVerifyOutcome::Unverifiable;
+      check = JettonWalletCheck::OtherShard;
+      break;
     case JettonVerification::Rejected:
-      return TokenVerifyOutcome::Done;
+      check = JettonWalletCheck::Rejected;
+      break;
     case JettonVerification::Verified:
+      check = JettonWalletCheck::Verified;
       break;
   }
-  auto status = db->put_jetton(owner, master, make_jetton_value(wallet, end_lt));
-  if (status.is_error()) {
-    LOG(WARNING) << "wc0-index: put_jetton failed: " << status.message();
-    return TokenVerifyOutcome::WriteFailed;
+  td::Ref<vm::Cell> value;
+  if (check == JettonWalletCheck::Verified) {
+    value = make_jetton_value(wallet, end_lt);
   }
-  return TokenVerifyOutcome::Done;
+  return record_jetton_wallet_check(*db, wallet, check, owner, master, std::move(value), end_lt);
 }
 
 // Verify and index one NFT-item candidate; erases the previous owner's entry

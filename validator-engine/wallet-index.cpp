@@ -13,6 +13,7 @@
 #include "td/utils/optional.h"
 #include "td/utils/port/path.h"
 #include "vm/boc.h"
+#include "vm/cellslice.h"
 
 #include "wallet-index.h"
 
@@ -28,6 +29,7 @@ constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
 constexpr uint8_t kEventAgeTag = 0x14;      // 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel(1)
 constexpr uint8_t kTokenQueueTag = 0x15;    // 0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1)
 constexpr uint8_t kTokenIndexTag = 0x16;    // 0x16 + kind(1) + address(32) -> bucket(1) + seq_be(8)
+constexpr uint8_t kJettonWalletTag = 0x17;  // 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8)
 // Meta namespace, sorts before every data tag. 0x00 0x01 -> schema version
 // (u32_be); 0x00 0x02 -> event-retention watermark (u32_be, max gen_utime seen).
 constexpr uint8_t kMetaTag = 0x00;
@@ -297,6 +299,141 @@ td::Status WalletIndexDb::for_each_jetton(
   });
 }
 
+// --- jetton wallet records ---
+
+namespace {
+
+constexpr size_t kJettonWalletRecordLen = 1 + 32 + 32 + 8;
+
+struct JettonWalletRecord {
+  bool present = false;
+  HashKey owner;
+  HashKey master;
+  uint64_t lt = 0;
+};
+
+td::Status put_jetton_wallet_record(td::RocksDb& db, const HashKey& wallet, const JettonWalletRecord& record) {
+  char key[kSingleHashKeyLen];
+  make_owner_prefix(kJettonWalletTag, wallet, key);
+  char value[kJettonWalletRecordLen];
+  value[0] = record.present ? 1 : 0;
+  std::memcpy(value + 1, record.owner.data(), 32);
+  std::memcpy(value + 1 + 32, record.master.data(), 32);
+  put_u64_be(value + 1 + 32 + 32, record.lt);
+  return db.set(td::Slice{key, kSingleHashKeyLen}, td::Slice{value, kJettonWalletRecordLen});
+}
+
+td::Result<td::optional<JettonWalletRecord>> get_jetton_wallet_record(td::RocksDb& db, const HashKey& wallet) {
+  char key[kSingleHashKeyLen];
+  make_owner_prefix(kJettonWalletTag, wallet, key);
+  std::string value;
+  TRY_RESULT(status, db.get(td::Slice{key, kSingleHashKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return td::optional<JettonWalletRecord>{};
+  }
+  if (value.size() != kJettonWalletRecordLen) {
+    return td::Status::Error("wc0-index: malformed jetton wallet record");
+  }
+  JettonWalletRecord record;
+  record.present = value[0] != 0;
+  record.owner.as_slice().copy_from(td::Slice{value.data() + 1, 32});
+  record.master.as_slice().copy_from(td::Slice{value.data() + 1 + 32, 32});
+  record.lt = get_u64_be(value.data() + 1 + 32 + 32);
+  return td::optional<JettonWalletRecord>(record);
+}
+
+}  // namespace
+
+td::Status WalletIndexDb::erase_jetton_if_wallet(const HashKey& owner, const HashKey& master, const HashKey& wallet) {
+  char key[kOwnerPairKeyLen];
+  make_owner_pair_key(kJettonTag, owner, master, key);
+  if (token_batch_.jetton_written.contains(std::string(key, kOwnerPairKeyLen))) {
+    // Another wallet was indexed under this pair earlier in this block.
+    return td::Status::OK();
+  }
+  std::string value;
+  TRY_RESULT(status, db_->get(td::Slice{key, kOwnerPairKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return td::Status::OK();
+  }
+  auto cell_r = vm::std_boc_deserialize(td::Slice{value});
+  if (cell_r.is_ok()) {
+    vm::CellSlice cs = vm::load_cell_slice(cell_r.move_as_ok());
+    HashKey named;
+    if (cs.prefetch_bits_to(named.bits(), 256) && named != wallet) {
+      // Another wallet was indexed under this pair since; its entry stays.
+      return td::Status::OK();
+    }
+  }
+  // The entry names this wallet, or cannot be read and so cannot be shown to
+  // name another: it is this wallet's stale entry.
+  return db_->erase(td::Slice{key, kOwnerPairKeyLen});
+}
+
+td::Status WalletIndexDb::apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt) {
+  TRY_RESULT(record, get_jetton_wallet_record(*db_, wallet));
+  if (record && record.value().lt > end_lt) {
+    // A later block already decided this wallet.
+    return td::Status::OK();
+  }
+  if (record && record.value().present &&
+      (!verdict.present || record.value().owner != verdict.owner || record.value().master != verdict.master)) {
+    TRY_STATUS(erase_jetton_if_wallet(record.value().owner, record.value().master, wallet));
+  }
+  JettonWalletRecord next;
+  next.present = verdict.present;
+  next.lt = end_lt;
+  if (verdict.present) {
+    next.owner = verdict.owner;
+    next.master = verdict.master;
+    TRY_STATUS(put_jetton(verdict.owner, verdict.master, verdict.value));
+    char key[kOwnerPairKeyLen];
+    make_owner_pair_key(kJettonTag, verdict.owner, verdict.master, key);
+    token_batch_.jetton_written.insert(std::string(key, kOwnerPairKeyLen));
+  } else {
+    // Kept even when nothing was recorded before: an older block indexed later
+    // (recovered at a later start, or fetched late) must find this.
+    next.owner = HashKey::zero();
+    next.master = HashKey::zero();
+  }
+  return put_jetton_wallet_record(*db_, wallet, next);
+}
+
+td::Result<bool> WalletIndexDb::get_jetton_wallet(const HashKey& wallet, HashKey& owner, HashKey& master) {
+  TRY_RESULT(record, get_jetton_wallet_record(*db_, wallet));
+  if (!record || !record.value().present) {
+    return false;
+  }
+  owner = record.value().owner;
+  master = record.value().master;
+  return true;
+}
+
+TokenVerifyOutcome record_jetton_wallet_check(WalletIndexDb& db, const HashKey& wallet, JettonWalletCheck check,
+                                              const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value,
+                                              uint64_t end_lt) {
+  WalletIndexDb::JettonVerdict verdict{false, HashKey::zero(), HashKey::zero(), {}};
+  switch (check) {
+    case JettonWalletCheck::Indeterminate:
+      // Not a verdict: a check that could not complete says nothing about
+      // whether the wallet is still there.
+      return TokenVerifyOutcome::Retry;
+    case JettonWalletCheck::OtherShard:
+      return TokenVerifyOutcome::Unverifiable;
+    case JettonWalletCheck::Rejected:
+      break;
+    case JettonWalletCheck::Verified:
+      verdict = {true, owner, master, std::move(value)};
+      break;
+  }
+  auto status = db.apply_jetton_verdict(wallet, verdict, end_lt);
+  if (status.is_error()) {
+    LOG(WARNING) << "wc0-index: recording jetton wallet failed: " << status.message();
+    return TokenVerifyOutcome::WriteFailed;
+  }
+  return TokenVerifyOutcome::Done;
+}
+
 // --- nfts ---
 
 td::Status WalletIndexDb::put_nft(const HashKey& owner, const HashKey& nft,
@@ -543,12 +680,39 @@ td::Status WalletIndexDb::migrate_schema() {
   // history (a derived, non-consensus RPC index), so pre-upgrade event history,
   // including recent history, is not available until re-indexed. Jetton/NFT/
   // nft-owner/incomplete-block namespaces are left intact.
-  LOG(WARNING) << "wc0-index: migrating schema " << version << " -> " << kWalletIndexSchemaVersion
-               << "; clearing event history (rebuilds forward from new blocks)";
+  //
+  // Version 2 adds the jetton wallet record (0x17), the reverse of each 0x10
+  // jetton entry. Jetton entries written before it have no record, so if the
+  // wallet's owner or master later changes, or it stops verifying, the old
+  // entry cannot be found to remove. If any exist, the index is marked as
+  // needing a rebuild.
+  LOG(WARNING) << "wc0-index: migrating schema " << version << " -> " << kWalletIndexSchemaVersion;
+  bool has_unrecorded_jettons = false;
+  if (version < 2) {
+    const char begin[1] = {static_cast<char>(kJettonTag)};
+    const char end[1] = {static_cast<char>(static_cast<uint8_t>(kJettonTag + 1))};
+    auto scan = db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice, td::Slice) {
+      has_unrecorded_jettons = true;
+      return td::Status::Error("wc0-index: found a jetton entry");
+    });
+    if (scan.is_error() && !has_unrecorded_jettons) {
+      return scan;
+    }
+  }
   TRY_STATUS(db_->begin_write_batch());
   auto migrate = [&]() -> td::Status {
-    TRY_STATUS(clear_namespace(kEventTag));
-    TRY_STATUS(clear_namespace(kEventAgeTag));
+    if (version < 1) {
+      LOG(WARNING) << "wc0-index: clearing event history (rebuilds forward from new blocks)";
+      TRY_STATUS(clear_namespace(kEventTag));
+      TRY_STATUS(clear_namespace(kEventAgeTag));
+    }
+    if (has_unrecorded_jettons) {
+      LOG(WARNING) << "wc0-index: jetton entries predate their wallet records; the index needs a rebuild";
+      char rebuild_key[kMetaKeyLen];
+      make_meta_key(kMetaNeedsRebuildSub, rebuild_key);
+      const char one[1] = {1};
+      TRY_STATUS(db_->set(td::Slice{rebuild_key, kMetaKeyLen}, td::Slice{one, 1}));
+    }
     char v[4];
     put_u32_be(v, kWalletIndexSchemaVersion);
     return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
