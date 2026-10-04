@@ -47,7 +47,8 @@ class AdnlInboundConnection : public AdnlExtConnection {
                         std::string peer_ip, std::shared_ptr<ExtServerQueryLimits> server_query_limits,
                         std::shared_ptr<ExtQueryFailurePolicy> failure_policy, std::unique_ptr<Callback> callback,
                         std::shared_ptr<AdnlExtOutputBudget> server_output_budget,
-                        std::shared_ptr<AdnlExtByteBudget> server_input_budget)
+                        std::shared_ptr<AdnlExtByteBudget> server_input_budget,
+                        std::shared_ptr<SourceShareLedger> input_source_shares, std::string input_source)
       : AdnlExtConnection(std::move(fd), std::move(callback), false)
       , peer_table_(peer_table)
       , ext_server_(ext_server)
@@ -57,6 +58,7 @@ class AdnlInboundConnection : public AdnlExtConnection {
       , failure_policy_(std::move(failure_policy)) {
     set_shared_output_budget(std::move(server_output_budget));
     set_input_limits(std::move(server_input_budget));
+    set_input_source_share(std::move(input_source_shares), std::move(input_source));
   }
 
   td::Status process_packet(td::BufferSlice data) override;
@@ -149,6 +151,9 @@ class AdnlExtServerImpl : public AdnlExtServer {
   // Received bytes of unfinished frames held by all of this server's connections.
   std::shared_ptr<AdnlExtByteBudget> input_bytes_ =
       std::make_shared<AdnlExtByteBudget>(adnl_ext_max_server_pending_input_bytes);
+  // Each source's part of `input_bytes_`, summed across its connections.
+  std::shared_ptr<SourceShareLedger> input_source_shares_ =
+      std::make_shared<SourceShareLedger>(adnl_ext_max_source_pending_input_bytes);
   // Bound parked and executing requests across connections. The per-IP limit
   // stays below the validator execution budget so one address cannot monopolize it.
   std::shared_ptr<ExtServerQueryLimits> query_limits_ = std::make_shared<ExtServerQueryLimits>(4096, 256);

@@ -927,7 +927,7 @@ target_link_libraries(test-adnl-ext-output-backpressure PRIVATE adnl tl_api tdut
 add_executable(test-adnl-ext-input-budget test/pq-native/adnl-ext-input-budget-test.cpp)
 target_include_directories(test-adnl-ext-input-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-target_link_libraries(test-adnl-ext-input-budget PRIVATE adnl tl_api tdutils tdactor)
+target_link_libraries(test-adnl-ext-input-budget PRIVATE adnl dht keyring keys tl_api tdutils tdactor)
 
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1836,6 +1836,8 @@ add_test(NAME quic-inbound-budget COMMAND test-quic-sender
   -p 47000 -d tmp-dir-test-quic-inbound-budget -f QuicInboundBudget)
 add_test(NAME quic-transport-budget COMMAND test-quic-sender
   -p 49000 -d tmp-dir-test-quic-transport-budget -f QuicTransportBudget)
+add_test(NAME quic-source-share COMMAND test-quic-sender
+  -p 51000 -d tmp-dir-test-quic-source-share -f QuicSourceShare)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
@@ -1844,6 +1846,7 @@ set_tests_properties(
   quic-admission-full-table
   quic-inbound-budget
   quic-transport-budget
+  quic-source-share
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
   PROPERTIES LABELS "network-safety")

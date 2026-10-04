@@ -32,12 +32,15 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       , inbound_budget_(inbound_budget ? std::move(inbound_budget) : QuicInboundStreamBudget::process_default()) {
   }
 
-  td::Status on_connected(QuicConnectionId cid, td::SecureString local_public_key,
-                          td::SecureString peer_public_key, bool is_outbound) override {
+  td::Status on_connected(QuicConnectionId cid, td::SecureString local_public_key, td::SecureString peer_public_key,
+                          bool is_outbound, const std::string &source) override {
     auto server = td::actor::actor_dynamic_cast<QuicServer>(td::actor::actor_id());
     CHECK(!server.empty());
     TRY_RESULT(peer_id, parse_peer_id(peer_public_key));
     connections_[cid].peer_id = peer_id;
+    // Streams the peer opens on this connection, whichever side opened it,
+    // are charged to the peer's source share as well as the global budget.
+    connections_[cid].source = source;
     TRY_RESULT(local_id, parse_peer_id(local_public_key));
     connections_[cid].local_id = local_id;
     td::actor::send_closure(sender_, &QuicSender::on_connected, server, cid, local_id, peer_id, is_outbound);
@@ -68,7 +71,9 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     if (!state.try_reserve_bytes(data.size())) {
       auto status =
           td::Status::Error(PSLICE() << "inbound stream budget exhausted: " << inbound_budget_->bytes()
-                                     << " bytes buffered across " << inbound_budget_->streams() << " streams");
+                                     << " bytes buffered across " << inbound_budget_->streams() << " streams; source "
+                                     << state.source() << " holds " << inbound_budget_->source_bytes(state.source())
+                                     << " of its " << inbound_budget_->max_bytes_per_source() << " bytes");
       LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " peer_id=" << peer_id << " due to " << status;
       fail_stream(state, status.clone());
       return status;
@@ -221,6 +226,11 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     QuicInboundByteCharge take_byte_charge() {
       return reservation_.take_bytes();
     }
+    // The source this stream's slot and bytes are charged to; empty for the
+    // answer to one of our own queries.
+    const QuicBudgetSource &source() const {
+      return reservation_.source();
+    }
     // A failed stream delivers nothing more, so what it buffered is dropped.
     void drop_buffer() {
       builder_ = td::BufferBuilder();
@@ -285,6 +295,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
   struct Connection {
     adnl::AdnlNodeIdShort local_id;
     adnl::AdnlNodeIdShort peer_id;
+    QuicBudgetSource source;
     std::map<QuicStreamID, StreamState> streams;
   };
   std::map<QuicConnectionId, Connection> connections_;
@@ -313,10 +324,12 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     if (existing != it->second.streams.end()) {
       return std::make_tuple(&existing->second, false, it->second.local_id, it->second.peer_id);
     }
-    auto reservation = QuicInboundStreamReservation::acquire_stream(inbound_budget_);
+    auto reservation = QuicInboundStreamReservation::acquire_stream(inbound_budget_, it->second.source);
     if (!reservation) {
       return td::Status::Error(PSLICE() << "inbound stream budget exhausted: " << inbound_budget_->streams()
-                                        << " streams open");
+                                        << " streams open; source " << it->second.source << " holds "
+                                        << inbound_budget_->source_streams(it->second.source) << " of its "
+                                        << inbound_budget_->max_streams_per_source() << " streams");
     }
     auto inserted = it->second.streams.try_emplace(sid, StreamState{cid, sid});
     inserted.first->second.hold_reservation(std::move(reservation.value()));

@@ -66,8 +66,9 @@ static void apply_platform_pmtu_policy(ngtcp2_settings& settings) {
   settings.no_pmtud = 1;
 }
 
-QuicTransportAllocator::QuicTransportAllocator(std::shared_ptr<QuicTransportMemoryBudget> budget)
-    : budget_(budget ? std::move(budget) : QuicTransportMemoryBudget::process_default()) {
+QuicTransportAllocator::QuicTransportAllocator(std::shared_ptr<QuicTransportMemoryBudget> budget,
+                                               QuicBudgetSource source)
+    : budget_(budget ? std::move(budget) : QuicTransportMemoryBudget::process_default()), source_(std::move(source)) {
   mem_.user_data = this;
   mem_.malloc = &QuicTransportAllocator::malloc_cb;
   mem_.free = &QuicTransportAllocator::free_cb;
@@ -90,12 +91,12 @@ void* QuicTransportAllocator::allocate(size_t size, bool zero) {
     return nullptr;
   }
   size_t total = size + kTransportBlockHeader;
-  if (!budget_->try_reserve(total)) {
+  if (!budget_->try_reserve(source_, total)) {
     return nullptr;
   }
   void* base = zero ? std::calloc(1, total) : std::malloc(total);
   if (!base) {
-    budget_->release(total);
+    budget_->release(source_, total);
     return nullptr;
   }
   block_size(base) = total;
@@ -111,7 +112,7 @@ void QuicTransportAllocator::release(void* ptr) {
   size_t total = block_size(base);
   std::free(base);
   held_ -= std::min(held_, total);
-  if (!budget_->release(total)) {
+  if (!budget_->release(source_, total)) {
     LOG(ERROR) << "QUIC transport budget: released more than was reserved";
   }
 }
@@ -131,13 +132,13 @@ void* QuicTransportAllocator::reallocate(void* ptr, size_t size) {
   size_t old_total = block_size(base);
   size_t total = size + kTransportBlockHeader;
   // Growth is reserved before the block grows; a shrink is given back after.
-  if (total > old_total && !budget_->try_reserve(total - old_total)) {
+  if (total > old_total && !budget_->try_reserve(source_, total - old_total)) {
     return nullptr;
   }
   void* grown = std::realloc(base, total);
   if (!grown) {
     if (total > old_total) {
-      budget_->release(total - old_total);
+      budget_->release(source_, total - old_total);
     }
     return nullptr;
   }
@@ -146,7 +147,7 @@ void* QuicTransportAllocator::reallocate(void* ptr, size_t size) {
     held_ += total - old_total;
   } else {
     held_ -= std::min(held_, old_total - total);
-    if (!budget_->release(old_total - total)) {
+    if (!budget_->release(source_, old_total - total)) {
       LOG(ERROR) << "QUIC transport budget: released more than was reserved";
     }
   }
@@ -443,7 +444,8 @@ td::Status QuicConnectionPImpl::init_quic_client() {
   ngtcp2_path path = make_path();
 
   ngtcp2_conn* new_conn = nullptr;
-  allocator_ = std::make_unique<QuicTransportAllocator>(options_.transport_budget);
+  // Charged to the peer's source as well as to the shared budget.
+  allocator_ = std::make_unique<QuicTransportAllocator>(options_.transport_budget, options_.transport_source);
   int rv = ngtcp2_conn_client_new(&new_conn, &dcid_raw, &scid_raw, &path, NGTCP2_PROTO_VER_V1, &callbacks, &settings,
                                   &params, allocator_->mem(), this);
 
@@ -477,7 +479,8 @@ td::Status QuicConnectionPImpl::init_quic_server(const ServerInitialInfo& initia
   ngtcp2_path path = make_path();
 
   ngtcp2_conn* new_conn = nullptr;
-  allocator_ = std::make_unique<QuicTransportAllocator>(options_.transport_budget);
+  // Charged to the peer's source as well as to the shared budget.
+  allocator_ = std::make_unique<QuicTransportAllocator>(options_.transport_budget, options_.transport_source);
   int rv = ngtcp2_conn_server_new(&new_conn, &client_scid, &server_scid_raw, &path, initial.packet.version, &callbacks,
                                   &settings, &params, allocator_->mem(), this);
   if (rv != 0) {

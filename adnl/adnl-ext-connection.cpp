@@ -175,13 +175,19 @@ td::Result<std::size_t> AdnlExtConnection::read_input_within_budget() {
   }
   auto wanted = held + std::min(adnl_ext_input_read_chunk_bytes, max_pending_input_ - held);
   if (wanted > input_accounted_) {
-    input_accounted_ += input_budget_->try_reserve_up_to(wanted - input_accounted_);
+    input_accounted_ += reserve_input(wanted - input_accounted_);
   }
   if (input_accounted_ <= held) {
-    // The server's connections together hold as much unfinished input as they
-    // may. Reading on would grow memory past the bound; leaving bytes in the
-    // socket would stall this peer with no end. Closing releases everything
-    // this connection holds.
+    // This source's connections, or the server's connections together, hold as
+    // much unfinished input as they may. Reading on would grow memory past the
+    // bound; leaving bytes in the socket would stall this peer with no end.
+    // Closing this connection, the one asking for more, releases everything it
+    // holds; no other connection is touched.
+    if (input_source_shares_ && input_source_shares_->used(input_source_) >= input_source_shares_->per_source_limit()) {
+      return td::Status::Error(ErrorCode::notready, PSTRING() << "external connections from " << input_source_
+                                                              << " hold their source's whole input share ("
+                                                              << input_source_shares_->per_source_limit() << " bytes)");
+    }
     return td::Status::Error(ErrorCode::notready, PSTRING() << "external connections hold their whole input budget ("
                                                             << input_budget_->limit() << " bytes)");
   }
@@ -190,16 +196,44 @@ td::Result<std::size_t> AdnlExtConnection::read_input_within_budget() {
   return read;
 }
 
+std::size_t AdnlExtConnection::reserve_input(std::size_t bytes) {
+  // The source's share first, then the server budget; whatever the server
+  // budget does not grant goes back to the share at once.
+  auto allowed = bytes;
+  if (input_source_shares_) {
+    allowed = input_source_shares_->try_reserve_up_to(input_source_, bytes);
+  }
+  auto taken = input_budget_->try_reserve_up_to(allowed);
+  if (input_source_shares_ && taken < allowed && !input_source_shares_->release(input_source_, allowed - taken)) {
+    LOG(ERROR) << "ADNL external input source share: released more than was reserved";
+  }
+  return taken;
+}
+
+void AdnlExtConnection::release_input(std::size_t bytes) {
+  if (!input_budget_ || bytes == 0) {
+    return;
+  }
+  if (bytes > input_accounted_) {
+    LOG(ERROR) << "ADNL external input budget: released more than this connection holds";
+    bytes = input_accounted_;
+  }
+  if (!input_budget_->release(bytes)) {
+    LOG(ERROR) << "ADNL external input budget: released more than was reserved";
+  }
+  if (input_source_shares_ && !input_source_shares_->release(input_source_, bytes)) {
+    LOG(ERROR) << "ADNL external input source share: released more than was reserved";
+  }
+  input_accounted_ -= bytes;
+}
+
 void AdnlExtConnection::account_input() {
   if (!input_budget_) {
     return;
   }
   auto held = buffered_fd_.input_buffer().size();
   if (held < input_accounted_) {
-    if (!input_budget_->release(input_accounted_ - held)) {
-      LOG(ERROR) << "ADNL external input budget: released more than was reserved";
-    }
-    input_accounted_ = held;
+    release_input(input_accounted_ - held);
   }
 }
 

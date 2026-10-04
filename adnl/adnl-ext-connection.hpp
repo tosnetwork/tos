@@ -23,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 
 #include "common/errorcode.h"
 #include "td/net/TcpListener.h"
@@ -131,6 +132,14 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
     max_pending_input_ = max_pending_bytes;
     partial_frame_lifetime_ = partial_frame_lifetime;
   }
+  // Charge what this connection holds of unfinished frames to `source`'s share
+  // of the input budget as well, so one source's connections together hold at
+  // most the ledger's per-source limit. A read the source's share cannot cover
+  // closes this connection, as a read the server budget cannot cover does.
+  void set_input_source_share(std::shared_ptr<SourceShareLedger> ledger, std::string source) {
+    input_source_shares_ = std::move(ledger);
+    input_source_ = std::move(source);
+  }
   // Bytes of the shared input budget this connection holds.
   std::size_t input_reserved() const {
     return input_accounted_;
@@ -184,12 +193,7 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   }
 
   void tear_down() override {
-    if (input_budget_) {
-      if (!input_budget_->release(input_accounted_)) {
-        LOG(ERROR) << "ADNL external input budget: released more than was reserved";
-      }
-      input_accounted_ = 0;
-    }
+    release_input(input_accounted_);
     if (server_output_budget_) {
       if (!server_output_budget_->release(output_accounted_)) {
         LOG(ERROR) << "ADNL external output budget: released more than was reserved";
@@ -235,6 +239,15 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   // Bytes of the input budget this connection holds: at least its received,
   // unprocessed input. Grows only by reservation before a read.
   std::size_t input_accounted_ = 0;
+  // The per-source ledger `input_accounted_` is also charged to, and the source
+  // it is charged under; unset when only the server budget applies.
+  std::shared_ptr<SourceShareLedger> input_source_shares_;
+  std::string input_source_;
+  // Reserve up to `bytes` more input from the source's share and the server
+  // budget together; returns what both granted, which may be less.
+  std::size_t reserve_input(std::size_t bytes);
+  // Give back `bytes` of input to the server budget and the source's share.
+  void release_input(std::size_t bytes);
   // When the unfinished frame this connection holds must be complete; unset
   // while it holds none.
   td::Timestamp partial_frame_deadline_;

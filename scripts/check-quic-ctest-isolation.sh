@@ -18,6 +18,7 @@ names = (
     "quic-admission-full-table",
     "quic-inbound-budget",
     "quic-transport-budget",
+    "quic-source-share",
 )
 ports = []
 roots = []

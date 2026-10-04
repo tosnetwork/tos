@@ -8,6 +8,8 @@
 #include "common/errorcode.h"
 #include "td/utils/Status.h"
 
+#include "adnl-source-share.h"
+
 namespace tos::adnl {
 
 inline constexpr std::size_t adnl_ext_max_packet_bytes = 1U << 24;
@@ -42,6 +44,18 @@ inline constexpr std::size_t adnl_ext_max_pending_input_bytes = adnl_ext_max_fra
 // traffic is small queries; the bound only bites when many peers hold large
 // unfinished frames, and the partial-frame lifetime below ends those.
 inline constexpr std::size_t adnl_ext_max_server_pending_input_bytes = std::size_t{256} << 20;
+
+// The part of the server's input budget one source may hold, summed across all
+// of that source's connections: one eighth, 32 MiB, which is two maximal frames.
+// A source that asks for more has the connection that asked closed; no other
+// connection is touched. Without it, one address within its 64-connection limit
+// could hold the whole budget with sixteen unfinished frames, and every other
+// external connection that needed to read would be closed. Sources are keyed by
+// IPv4 address or IPv6 /64 (see network_source_key). This isolates sources; it
+// is not a Sybil-resistant availability guarantee: eight sources can still
+// together hold the whole budget.
+inline constexpr std::size_t adnl_ext_max_source_pending_input_bytes =
+    default_source_share(adnl_ext_max_server_pending_input_bytes);
 
 // Bytes reserved from the shared input budget per read. Reads never take more
 // than they reserved, so the budget is charged before the buffer grows.

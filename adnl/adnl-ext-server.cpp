@@ -376,10 +376,14 @@ void AdnlExtServerImpl::accepted(td::SocketFd fd) {
   // the call, so neither depends on the order the arguments below happen to be
   // evaluated in.
   auto identity = make_ext_connection_identity(std::move(peer_ip));
+  // Pending input is charged to the peer's source (its IPv4 address or IPv6
+  // /64) across all of that source's connections.
+  auto input_source = network_source_key(peer_address);
   td::actor::create_actor<AdnlInboundConnection>(
       td::actor::ActorOptions().with_name("inconn").with_poll(), std::move(fd), peer_table_, actor_id(this),
       AdnlNodeIdShort{identity.anonymous_id}, identity.peer_ip, query_limits_, failure_policy_,
-      std::make_unique<Callback>(actor_id(this), identity.peer_ip), output_bytes_, input_bytes_)
+      std::make_unique<Callback>(actor_id(this), identity.peer_ip), output_bytes_, input_bytes_, input_source_shares_,
+      std::move(input_source))
       .release();
 }
 

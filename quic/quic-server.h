@@ -78,6 +78,13 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     // finite one; lower it per deployment to trade reachable-peer headroom for a
     // tighter memory bound.
     size_t max_connections = 1 << 13;
+    // Ceiling on the live inbound connections one source address (IPv4
+    // address or IPv6 /64) may hold, checked whether or not flood control is
+    // enabled. Unset means one eighth of max_connections, so one ordinary
+    // source cannot fill the connection table that every other source needs.
+    // This isolates sources; it is not a Sybil-resistant availability
+    // guarantee, since eight sources together still fill the table.
+    std::optional<size_t> max_connections_per_source = std::nullopt;
     // Inactivity window for an inbound QUIC stream, consumed by the sender's
     // inbound stream callback (not by QuicServer itself). Inbound streams
     // otherwise carry no timeout, so a peer can open a stream, send partial
@@ -92,15 +99,23 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     bool stateless_retry = true;
     // Peer-initiated streams and their buffered bytes, shared by every server
     // given the same budget, consumed by the sender's inbound stream callback.
-    // Unset means the process-wide default; there is no unlimited setting.
+    // Each source's share of it is set when the budget is constructed (one
+    // eighth by default). Unset means the process-wide default; there is no
+    // unlimited setting.
     std::shared_ptr<QuicInboundStreamBudget> inbound_stream_budget = nullptr;
     // Heap every connection's transport may allocate, shared by every server
-    // given the same budget. Unset means the process-wide default; there is no
-    // unlimited setting.
+    // given the same budget, each connection's allocations also charged to its
+    // peer's source share (one eighth by default). Unset means the process-wide
+    // default; there is no unlimited setting.
     std::shared_ptr<QuicTransportMemoryBudget> transport_budget = nullptr;
     // Test hook: a datagram for which this returns true is not sent. Unset in
     // production.
     std::function<bool(td::Slice datagram)> drop_outgoing_datagram = nullptr;
+    // Test hook: the source a peer address is charged under. Endpoints in one
+    // process all send from the same loopback address, so a test names which
+    // of them stand for other sources. Unset in production, where a peer's
+    // source is its network_source_key (IPv4 address or IPv6 /64).
+    std::function<std::string(const td::IPAddress &peer)> source_key_for_test = nullptr;
   };
   class Callback {
    public:
@@ -109,8 +124,10 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
       size_t inbound_stream_bytes = 0;
     };
 
+    // `source` is the key the connection's peer is charged under in the
+    // per-source shares of the inbound budgets (see network_source_key).
     virtual td::Status on_connected(QuicConnectionId cid, td::SecureString local_public_key,
-                                    td::SecureString peer_public_key, bool is_outbound) = 0;
+                                    td::SecureString peer_public_key, bool is_outbound, const std::string &source) = 0;
     virtual td::Status on_stream(QuicConnectionId cid, QuicStreamID sid, td::BufferSlice data, bool is_end) = 0;
     virtual void on_closed(QuicConnectionId cid) = 0;
     virtual void on_stream_closed(QuicConnectionId cid, QuicStreamID sid) = 0;
@@ -132,6 +149,12 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
   // Source addresses the new-connection limiter currently tracks.
   td::Result<size_t> tracked_new_connection_sources() {
     return conn_rate_limiters_.tracked();
+  }
+  // Live inbound connections held by `source` (a network_source_key), and the
+  // number of sources holding any.
+  td::Result<std::pair<size_t, size_t>> inbound_connections_by_source(std::string source) {
+    auto it = inbound_per_source_.find(source);
+    return std::make_pair(it == inbound_per_source_.end() ? size_t{0} : it->second, inbound_per_source_.size());
   }
   void send_stream_end(QuicConnectionId cid, QuicStreamID sid);
   td::Result<QuicStreamID> open_stream(QuicConnectionId cid, StreamOptions options = {});
@@ -223,6 +246,8 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     }
     std::unique_ptr<QuicConnectionPImpl> impl_;
     td::IPAddress remote_address;
+    // The source key this connection's inbound slot is counted under.
+    std::string source;
     QuicConnectionId cid;
     std::optional<QuicConnectionId> bootstrap_routed_cid;
     std::set<QuicConnectionId> routed_cids;
@@ -247,8 +272,11 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
   void unbind_cid(const QuicConnectionId &primary_cid, const QuicConnectionId &cid);
   void unbind_all_cids(ConnectionState &state);
   td::Result<std::shared_ptr<ConnectionState>> install_connection(std::unique_ptr<QuicConnectionPImpl> p_impl,
-                                                                  const td::IPAddress &remote_address, bool is_outbound,
+                                                                  const td::IPAddress &remote_address,
+                                                                  std::string source, bool is_outbound,
                                                                   std::optional<QuicConnectionId> bootstrap_routed_cid);
+  // The source a peer address is charged under in every per-source share.
+  std::string source_of(const td::IPAddress &peer) const;
   void on_local_cid_issued(const QuicConnectionId &primary_cid, const QuicConnectionId &cid);
   void on_local_cid_retired(const QuicConnectionId &primary_cid, const QuicConnectionId &cid);
   td::Result<std::optional<ServerInitialInfo>> prepare_server_initial_info(const VersionCid &initial_packet,
@@ -267,10 +295,11 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
 
   std::shared_ptr<ConnectionState> find_connection(const QuicConnectionId &cid);
   td::Result<std::shared_ptr<ConnectionState>> get_or_create_connection(const UdpMessageBuffer &msg_in);
-  td::Status ensure_flood_allowed(const std::string &flood_addr);
-  void flood_on_inbound_connection_created(const std::string &flood_addr);
-  void flood_on_inbound_connection_closed(const std::string &flood_addr);
-  QuicConnectionOptions build_connection_options() const;
+  td::Status ensure_flood_allowed(const std::string &flood_addr, const std::string &source);
+  void flood_on_inbound_connection_created(const std::string &flood_addr, const std::string &source);
+  void flood_on_inbound_connection_closed(const std::string &flood_addr, const std::string &source);
+  size_t max_connections_per_source() const;
+  QuicConnectionOptions build_connection_options(std::string source) const;
   bool handle_expiry(ConnectionState &state);
   void log_conn_stats(ConnectionState &state, const char *reason);
 
@@ -284,6 +313,9 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
   bool gso_enabled_{true};
   bool gro_enabled_{false};
   std::unordered_map<std::string, size_t> flood_map_;
+  // Live inbound connections per source key; an entry exists only while its
+  // source holds a connection, so the map is bounded by max_connections.
+  std::unordered_map<std::string, size_t> inbound_per_source_;
 
   std::unique_ptr<Callback> callback_;
   td::actor::ActorId<QuicServer> self_id_;

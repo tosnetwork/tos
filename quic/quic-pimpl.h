@@ -58,15 +58,19 @@ struct QuicConnectionOptions {
   // Every transport allocation of the connection is reserved here first.
   // Unset means the process-wide default.
   std::shared_ptr<QuicTransportMemoryBudget> transport_budget;
+  // The peer source the allocations are also charged to, within its share of
+  // the transport budget. Empty charges the global budget only.
+  QuicBudgetSource transport_source;
 };
 
 // The transport's allocator for one connection: each allocation is reserved
-// from a shared budget before it is made, and refused when it does not fit,
-// which the transport reports as a fatal error that closes the connection.
+// from a shared budget, and from the share of it the connection's peer source
+// may hold, before it is made, and refused when it does not fit either, which
+// the transport reports as a fatal error that closes the connection.
 // Must outlive the transport connection that uses it.
 class QuicTransportAllocator {
  public:
-  explicit QuicTransportAllocator(std::shared_ptr<QuicTransportMemoryBudget> budget);
+  QuicTransportAllocator(std::shared_ptr<QuicTransportMemoryBudget> budget, QuicBudgetSource source);
   QuicTransportAllocator(const QuicTransportAllocator&) = delete;
   QuicTransportAllocator& operator=(const QuicTransportAllocator&) = delete;
   const ngtcp2_mem* mem() const {
@@ -87,6 +91,7 @@ class QuicTransportAllocator {
   void* reallocate(void* ptr, size_t size);
 
   std::shared_ptr<QuicTransportMemoryBudget> budget_;
+  QuicBudgetSource source_;
   ngtcp2_mem mem_{};
   size_t held_{0};
 };
