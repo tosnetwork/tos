@@ -430,7 +430,11 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     hash = -0xc2616456;  ;; bad value
   }
   if ((param_id == -999) & (~ param_val.null?())) {
-    ;; a configuration master key anyone can sign for is never appointed
+    ;; A new proposal cannot appoint a configuration master key anyone can
+    ;; sign for. This covers registration only: a proposal already pending
+    ;; when this code was installed is not rechecked. Before the master key
+    ;; authorizes anything, it must be validated where it is used, and pending
+    ;; proposals revalidated when they take effect.
     slice key_cs = param_val.begin_parse();
     if (key_cs.slice_bits() >= 256) {
       if (weak_ed25519_key?(key_cs.preload_uint(256))) {
