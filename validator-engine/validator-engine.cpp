@@ -1391,9 +1391,11 @@ void ValidatorEngine::schedule_shutdown(double at) {
         []() {
           LOG(WARNING) << "Shutting down as scheduled";
           // Mark every queued block for recovery before the process ends.
-          // The hook stays installed: block-apply actors may still read it.
+          // The hook stays installed: block-apply actors may still read it,
+          // and from here on it marks each block itself before returning.
           if (!tos_wallet_index::flush_wc0_index_for_exit()) {
-            LOG(ERROR) << "wc0-index: queued blocks not all marked for recovery before shutdown";
+            LOG(ERROR) << "wc0-index: indexing did not finish cleanly before shutdown; "
+                       << "the next start reports that the index needs a rebuild";
           }
           std::_Exit(0);
         },
@@ -2368,12 +2370,15 @@ void ValidatorEngine::start_validator() {
   // block-apply actors may already be reading it.
   // The hook only queues the block for a dedicated indexing worker, so block
   // application never waits on the index.
-  if (json_rpc_addr_) {
-    tos_wallet_index::open_wallet_index_db(db_root_);
+  // When the index cannot be opened or made safe to index into, no worker is
+  // started and no hook installed: a worker with nothing to mark into would
+  // hold queued blocks forever, and the account-index RPC reports the index
+  // unavailable instead.
+  if (json_rpc_addr_ && tos_wallet_index::open_wallet_index_db(db_root_) &&
+      tos_wallet_index::start_wc0_index_worker(true)) {
     // Take the blocks earlier runs left unindexed before any block of this run
     // can be marked; index them before the worker starts on this run's blocks.
     collect_wc0_recovery_markers();
-    tos_wallet_index::start_wc0_index_worker(true);
     tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
   }
 
@@ -7113,6 +7118,9 @@ int main(int argc, char *argv[]) {
   // Stop the indexing worker while the index it writes to still exists;
   // blocks it did not reach stay marked for the next start.
   tos::validator::g_wc0_block_index_hook = nullptr;
+  if (!tos_wallet_index::flush_wc0_index_for_exit()) {
+    LOG(ERROR) << "wc0-index: indexing did not finish cleanly; the next start reports that the index needs a rebuild";
+  }
   tos_wallet_index::stop_wc0_index_worker();
   return 0;
 }

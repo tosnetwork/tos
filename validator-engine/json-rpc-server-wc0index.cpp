@@ -23,6 +23,7 @@
 //
 #include <algorithm>
 #include <charconv>
+#include <utility>
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
@@ -38,6 +39,17 @@
 namespace tos {
 
 namespace {
+
+// Why the index is not there. A node that keeps no index says it is disabled;
+// a node whose index failed says it is unavailable and why, so neither is
+// mistaken for an empty account.
+std::pair<int, std::string> wallet_index_absent() {
+  auto reason = tos_wallet_index::wallet_index_unavailable_reason();
+  if (!reason.empty()) {
+    return {-32603, "wallet index unavailable on this node: " + reason};
+  }
+  return {-32601, "wallet index disabled on this node"};
+}
 
 // Optional "limit" param: default 100, clamped to [1, 1000]. The index can be
 // inflated by third parties (anyone can send notification/spam transactions at
@@ -261,10 +273,11 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
-    // No index DB on this node (JSON-RPC-less nodes never open one, and an
-    // open failure leaves it null). An explicit error beats silently empty
+    // No index DB on this node (JSON-RPC-less nodes never open one, and a
+    // failure to open or arm it leaves it null). An explicit error beats silently empty
     // results that look like "this account holds nothing".
-    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    auto [code, message] = wallet_index_absent();
+    promise.set_value(make_json_error(code, std::move(message), req_id));
     return;
   }
   // The state and the list come from one view of the index, so a block
@@ -339,7 +352,8 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
-    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    auto [code, message] = wallet_index_absent();
+    promise.set_value(make_json_error(code, std::move(message), req_id));
     return;
   }
   td::StringBuilder sb;
@@ -415,7 +429,8 @@ void JsonRpcServer::handle_getAccountEvent(td::JsonObject &params, std::string r
   auto addr = addr_r.move_as_ok();
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
-    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    auto [code, message] = wallet_index_absent();
+    promise.set_value(make_json_error(code, std::move(message), req_id));
     return;
   }
   if (!is_indexed_workchain(addr)) {
@@ -442,7 +457,8 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
-    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    auto [code, message] = wallet_index_absent();
+    promise.set_value(make_json_error(code, std::move(message), req_id));
     return;
   }
   // The state and the list come from one view of the index, so a block

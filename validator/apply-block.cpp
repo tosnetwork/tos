@@ -297,9 +297,12 @@ void ApplyBlock::applied_set() {
   // wc=0 wallet index hook (best-effort, installed by validator-engine). Runs
   // here — after the block is applied — so only canonical-chain blocks are ever
   // indexed; data stored for unfinalized candidates (e.g. nonfinal candidate
-  // broadcasts) must not reach the index. When the block data was already in the
-  // database before this apply (block_ is null), fetch it asynchronously; a
-  // fetch failure only degrades RPC for this block.
+  // broadcasts) must not reach the index. It runs before the handle is flushed:
+  // a block whose apply is durable has always been handed to the index first,
+  // which is what lets the index's exit flush account for every applied block.
+  // When the block data was already in the database before this apply (block_
+  // is null), it is fetched first; a fetch failure only degrades RPC for this
+  // block.
   if (g_wc0_block_index_hook && handle_->id().id.workchain == 0 && handle_->id().seqno() > 0) {
     auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
     if (block_.not_null()) {
@@ -307,15 +310,25 @@ void ApplyBlock::applied_set() {
                       [&] { g_wc0_block_index_hook(block_->root_cell(), state_root, handle_->id()); });
     } else {
       td::actor::send_closure(manager_, &ValidatorManager::get_block_data_from_db, handle_,
-                              [manager = manager_, id = handle_->id(), state_root](td::Result<td::Ref<BlockData>> R) {
-                                if (R.is_error() || R.ok().is_null() || !g_wc0_block_index_hook) {
-                                  return;
-                                }
-                                call_index_hook(manager, id,
-                                                [&] { g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id); });
+                              [SelfId = actor_id(this)](td::Result<td::Ref<BlockData>> R) {
+                                td::actor::send_closure(SelfId, &ApplyBlock::indexed_stored_block, std::move(R));
                               });
+      return;
     }
   }
+  flush_applied();
+}
+
+void ApplyBlock::indexed_stored_block(td::Result<td::Ref<BlockData>> R) {
+  if (R.is_ok() && R.ok().not_null() && g_wc0_block_index_hook) {
+    auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
+    auto id = handle_->id();
+    call_index_hook(manager_, id, [&] { g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id); });
+  }
+  flush_applied();
+}
+
+void ApplyBlock::flush_applied() {
   if (handle_->id().seqno() > 0) {
     CHECK(handle_->handle_moved_to_archive());
     CHECK(handle_->moved_to_archive());

@@ -726,6 +726,17 @@ struct BlockToIndex {
 
 std::unique_ptr<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>> g_index_queue;
 std::mutex g_index_queue_mutex;
+// Set by flush_wc0_index_for_exit (under g_index_queue_mutex): blocks are no
+// longer handed to the queue but marked by the hook itself.
+bool g_index_closed = false;
+std::atomic<bool> g_marking_fault{false};
+
+td::Status mark_blocks(WalletIndexDb& db, const std::vector<tos::BlockIdExt>& block_ids) {
+  if (g_marking_fault.load()) {
+    return td::Status::Error("injected marking fault");
+  }
+  return db.mark_blocks_incomplete(block_ids);
+}
 
 // Durably mark queued blocks before any of them is indexed: a block the worker
 // never reaches (dropped, or the node stopped first) stays marked, startup
@@ -735,7 +746,7 @@ bool mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
   if (db == nullptr) {
     return false;
   }
-  auto status = db->mark_blocks_incomplete(block_ids);
+  auto status = mark_blocks(*db, block_ids);
   if (status.is_error()) {
     LOG(ERROR) << "wc0-index: could not mark " << block_ids.size()
                << " queued block(s) for recovery, will retry: " << status.message();
@@ -749,7 +760,7 @@ bool mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
 bool persist_index_degraded() {
   LOG(ERROR) << "wc0-index: a block may have gone unindexed with no mark to recover it; the index needs a rebuild";
   auto* db = wallet_index_db();
-  if (db == nullptr) {
+  if (db == nullptr || g_marking_fault.load()) {
     return false;
   }
   auto status = db->mark_needs_rebuild();
@@ -770,29 +781,87 @@ void index_queued_block(BlockToIndex& block) {
 
 }  // namespace
 
-void start_wc0_index_worker(bool paused) {
+namespace {
+
+// Leave the index closed and say why, so RPC reports it unavailable rather
+// than serving what it has as if it were complete.
+bool refuse_to_index(std::string reason) {
+  LOG(ERROR) << "wc0-index: indexing is disabled for this run: " << reason
+             << "; the account-index RPC reports the index unavailable";
+  set_wallet_index_unavailable(std::move(reason));
+  set_wallet_index_db(nullptr);
+  return false;
+}
+
+}  // namespace
+
+bool start_wc0_index_worker(bool paused) {
   std::lock_guard<std::mutex> guard(g_index_queue_mutex);
   if (g_index_queue) {
-    return;
+    return true;
   }
+  auto* db = wallet_index_db();
+  if (db == nullptr) {
+    LOG(ERROR) << "wc0-index: no index is open; the indexing worker is not started";
+    return false;
+  }
+  auto previous_run = db->indexing_run_active();
+  if (previous_run.is_error()) {
+    return refuse_to_index(PSTRING() << "could not read the indexing-run marker: " << previous_run.error().message());
+  }
+  if (previous_run.ok()) {
+    LOG(WARNING) << "wc0-index: the previous run did not finish cleanly and may have lost a block; "
+                 << "the index is marked as needing a rebuild";
+    auto latched = db->mark_needs_rebuild();
+    if (latched.is_error()) {
+      return refuse_to_index(PSTRING() << "the previous run did not finish cleanly and recording that the index "
+                                       << "needs a rebuild failed: " << latched.message());
+    }
+  }
+  auto begun = db->begin_indexing_run();
+  if (begun.is_error()) {
+    return refuse_to_index(PSTRING() << "could not record the indexing run: " << begun.message());
+  }
+  g_index_closed = false;
   g_index_queue = std::make_unique<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>>(
       kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block, persist_index_degraded, 0, paused);
+  return true;
 }
 
 void resume_wc0_index_worker() {
   std::lock_guard<std::mutex> guard(g_index_queue_mutex);
-  if (g_index_queue) {
+  if (g_index_queue && !g_index_closed) {
     g_index_queue->resume();
   }
 }
 
-bool flush_wc0_index_for_exit() {
+bool flush_wc0_index_for_exit(std::chrono::milliseconds limit) {
   std::lock_guard<std::mutex> guard(g_index_queue_mutex);
   if (!g_index_queue) {
     return true;
   }
+  g_index_closed = true;
   g_index_queue->pause();
-  return g_index_queue->wait_recorded(std::chrono::milliseconds(2000));
+  bool recorded = g_index_queue->wait_recorded(limit);
+  if (!recorded) {
+    LOG(ERROR) << "wc0-index: queued blocks were not all marked for recovery in time; "
+               << "the run stays recorded as unfinished";
+    return false;
+  }
+  if (g_index_queue->degraded()) {
+    LOG(ERROR) << "wc0-index: this run lost track of a block; the run stays recorded as unfinished";
+    return false;
+  }
+  auto* db = wallet_index_db();
+  if (db == nullptr) {
+    return false;
+  }
+  auto ended = db->end_indexing_run();
+  if (ended.is_error()) {
+    LOG(ERROR) << "wc0-index: could not record the indexing run as finished: " << ended.message();
+    return false;
+  }
+  return true;
 }
 
 void stop_wc0_index_worker() {
@@ -800,6 +869,7 @@ void stop_wc0_index_worker() {
   {
     std::lock_guard<std::mutex> guard(g_index_queue_mutex);
     queue = std::move(g_index_queue);
+    g_index_closed = false;
   }
   // Joined here, outside the lock, so a hook call in flight is not blocked on it.
   queue.reset();
@@ -815,10 +885,33 @@ void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> sta
   if (!g_index_queue) {
     return;
   }
+  if (g_index_closed) {
+    // The exit flush has already accounted for the queue; this block is marked
+    // here, before the caller goes on to persist its apply, or the index is
+    // marked as needing a rebuild.
+    auto* db = wallet_index_db();
+    if (db == nullptr) {
+      return;
+    }
+    auto marked = mark_blocks(*db, {block_id});
+    if (marked.is_error()) {
+      LOG(ERROR) << "wc0-index: block " << block_id.id.to_str()
+                 << " applied during shutdown could not be marked: " << marked.message();
+      auto latched = db->mark_needs_rebuild();
+      if (latched.is_error()) {
+        LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild: " << latched.message();
+      }
+    }
+    return;
+  }
   if (!g_index_queue->push(block_id, BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
     LOG(WARNING) << "wc0-index: indexing is " << kWc0IndexQueueCapacity << " blocks behind; block "
                  << block_id.id.to_str() << " left marked for re-indexing at the next start";
   }
+}
+
+void set_wc0_index_marking_fault_for_testing(bool fail) {
+  g_marking_fault.store(fail);
 }
 
 }  // namespace tos_wallet_index

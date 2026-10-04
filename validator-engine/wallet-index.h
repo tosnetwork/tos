@@ -350,6 +350,16 @@ class WalletIndexDb {
   // Durably record that the index may be missing a block nothing can recover
   // (same separate handle; no write_mutex needed). Cleared only by rebuilding.
   td::Status mark_needs_rebuild();
+  // --- Indexing-run marker (meta 0x0A) ---
+  // Indexing is asynchronous: a block is applied before the recorder thread
+  // durably marks it, so a stop in between leaves a block that is neither
+  // indexed nor marked, and is never applied again. The run marker is written
+  // and WAL-synced before any block can be queued, and removed only after a
+  // clean finish; finding it at startup means the previous run may have lost a
+  // block, so the index must not be reported complete.
+  td::Status begin_indexing_run();
+  td::Result<bool> indexing_run_active();
+  td::Status end_indexing_run();
   td::Status delete_incomplete_block(const tos::BlockIdExt& block_id);
   td::Result<bool> has_incomplete_block(const tos::BlockIdExt& block_id);
   // Crash-recovery scan: calls `cb(block_id)` for every currently-recorded
@@ -505,7 +515,15 @@ WalletIndexDb* wallet_index_db();
 void set_wallet_index_db(std::unique_ptr<WalletIndexDb> db);
 
 // Open the index at `${db_root}/wc0-index` and install it as the singleton.
-// Best-effort: logs and leaves the singleton null on failure.
-void open_wallet_index_db(const std::string& db_root);
+// On failure the singleton stays null, the reason is kept for
+// wallet_index_unavailable_reason(), and false is returned.
+bool open_wallet_index_db(const std::string& db_root);
+
+// Why the index this node meant to keep is not available (it failed to open,
+// or could not be made safe to index into); empty when nothing failed. RPC
+// reports this instead of "disabled", so a failure is not mistaken for a node
+// that never kept an index.
+void set_wallet_index_unavailable(std::string reason);
+std::string wallet_index_unavailable_reason();
 
 }  // namespace tos_wallet_index

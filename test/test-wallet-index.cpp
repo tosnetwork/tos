@@ -46,8 +46,10 @@
 #include "../validator-engine/wallet-index-writer.h"
 #include "../validator-engine/wallet-index.h"
 #include "td/db/RocksDb.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
+#include "vm/cells/CellBuilder.h"
 
 namespace {
 
@@ -2013,5 +2015,163 @@ TEST(WalletIndex, AnOlderReleaseNeverRewindsANewerPairRemoval) {
   // An observation of Y at lt 250 is still older than the removal at lt 300.
   apply_jetton(*db, wallet_y, jetton_present(wallet_y, owner, master, 250), 250);
   ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+td::Ref<vm::Cell> empty_cell() {
+  vm::CellBuilder cb;
+  return cb.finalize();
+}
+
+tos::BlockIdExt worker_block_id(tos::BlockSeqno seqno) {
+  return make_test_block_id(0, tos::shardIdAll, seqno, 0x61, 0x62);
+}
+
+// Leaves the process-wide index state as a fresh process would have it.
+void reset_index_singletons() {
+  tos_wallet_index::set_wc0_index_marking_fault_for_testing(false);
+  tos_wallet_index::stop_wc0_index_worker();
+  tos_wallet_index::set_wallet_index_db(nullptr);
+  tos_wallet_index::set_wallet_index_unavailable("");
+}
+
+// Opens the index at `path` as the process-wide singleton, as a node start does.
+tos_wallet_index::WalletIndexDb &install_db(const std::string &path) {
+  auto r = tos_wallet_index::WalletIndexDb::open(path);
+  r.ensure();
+  tos_wallet_index::set_wallet_index_db(r.move_as_ok());
+  return *tos_wallet_index::wallet_index_db();
+}
+
+bool run_active(tos_wallet_index::WalletIndexDb &db) {
+  return db.indexing_run_active().move_as_ok();
+}
+
+}  // namespace
+
+TEST(WalletIndexWorker, WithoutAnIndexNoWorkerStartsAndNoBlockIsHeld) {
+  reset_index_singletons();
+  ASSERT_TRUE(!tos_wallet_index::start_wc0_index_worker(false));
+  auto block = empty_cell();
+  auto state = empty_cell();
+  // More than the queue holds and enough to fill the id list: with a worker
+  // and nothing to mark into, every one would be kept and retried forever.
+  for (tos::BlockSeqno seqno = 1; seqno <= 4200; ++seqno) {
+    tos_wallet_index::enqueue_wc0_index_block(block, state, worker_block_id(seqno));
+  }
+  ASSERT_EQ(block->get_refcnt(), 1);
+  ASSERT_EQ(state->get_refcnt(), 1);
+  ASSERT_TRUE(!tos_wallet_index::wc0_index_degraded());
+  reset_index_singletons();
+}
+
+TEST(WalletIndexWorker, AnIndexThatFailsToOpenIsReportedUnavailable) {
+  reset_index_singletons();
+  // A regular file where the database directory's parent should be.
+  auto root = std::string("test-wallet-index-root-is-a-file");
+  td::rmrf(root).ignore();
+  td::write_file(root, "not a directory").ensure();
+  ASSERT_TRUE(!tos_wallet_index::open_wallet_index_db(root));
+  ASSERT_TRUE(tos_wallet_index::wallet_index_db() == nullptr);
+  ASSERT_TRUE(!tos_wallet_index::wallet_index_unavailable_reason().empty());
+  ASSERT_TRUE(!tos_wallet_index::start_wc0_index_worker(true));
+  td::unlink(root).ignore();
+  reset_index_singletons();
+}
+
+// A block whose apply was persisted but which the recorder never marked (the
+// process stopped first) leaves no trace in the index itself; only the run
+// marker can tell the next start that the index may be missing it.
+TEST(WalletIndexWorker, AStopBeforeABlockIsMarkedKeepsTheIndexIncomplete) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-unclean-stop");
+  td::rmrf(path).ignore();
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(!run_active(db));
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(run_active(db));
+    // The disk refuses the recorder's writes, so the block is never marked and
+    // its loss cannot be recorded either; then the process stops without the
+    // exit flush.
+    tos_wallet_index::set_wc0_index_marking_fault_for_testing(true);
+    tos_wallet_index::enqueue_wc0_index_block(empty_cell(), empty_cell(), worker_block_id(7));
+    tos_wallet_index::stop_wc0_index_worker();
+    tos_wallet_index::set_wc0_index_marking_fault_for_testing(false);
+    ASSERT_TRUE(!db.has_incomplete_block(worker_block_id(7)).move_as_ok());
+    ASSERT_TRUE(!backlog_stats(db).needs_rebuild);
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    auto stats = backlog_stats(db);
+    ASSERT_TRUE(stats.needs_rebuild);
+    ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndexWorker, ACleanFinishClearsTheRunAndNeedsNoRebuild) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-clean-stop");
+  td::rmrf(path).ignore();
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    tos_wallet_index::enqueue_wc0_index_block(empty_cell(), empty_cell(), worker_block_id(8));
+    ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit());
+    ASSERT_TRUE(!run_active(db));
+    ASSERT_TRUE(db.has_incomplete_block(worker_block_id(8)).move_as_ok());
+    // A block applied after the flush is marked before the hook returns.
+    tos_wallet_index::enqueue_wc0_index_block(empty_cell(), empty_cell(), worker_block_id(9));
+    ASSERT_TRUE(db.has_incomplete_block(worker_block_id(9)).move_as_ok());
+    tos_wallet_index::stop_wc0_index_worker();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    ASSERT_TRUE(!backlog_stats(db).needs_rebuild);
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndexWorker, AFlushThatCouldNotMarkEveryBlockLeavesTheRunUnfinished) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-flush-fails");
+  td::rmrf(path).ignore();
+  auto &db = install_db(path);
+  ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+  tos_wallet_index::set_wc0_index_marking_fault_for_testing(true);
+  tos_wallet_index::enqueue_wc0_index_block(empty_cell(), empty_cell(), worker_block_id(10));
+  ASSERT_TRUE(!tos_wallet_index::flush_wc0_index_for_exit(std::chrono::milliseconds(200)));
+  ASSERT_TRUE(run_active(db));
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndexWorker, AFlushAfterALostBlockLeavesTheRunUnfinished) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-flush-degraded");
+  td::rmrf(path).ignore();
+  auto &db = install_db(path);
+  ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+  // While marking fails, more ids arrive than the list keeps: one is lost.
+  tos_wallet_index::set_wc0_index_marking_fault_for_testing(true);
+  for (tos::BlockSeqno seqno = 1;
+       seqno <= static_cast<tos::BlockSeqno>(16 * tos_wallet_index::kWc0IndexQueueCapacity + 1); ++seqno) {
+    tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, td::Ref<vm::Cell>{}, worker_block_id(seqno));
+  }
+  ASSERT_TRUE(tos_wallet_index::wc0_index_degraded());
+  // The disk recovers, so every remaining id is marked in time.
+  tos_wallet_index::set_wc0_index_marking_fault_for_testing(false);
+  ASSERT_TRUE(!tos_wallet_index::flush_wc0_index_for_exit(std::chrono::milliseconds(10000)));
+  ASSERT_TRUE(run_active(db));
+  reset_index_singletons();
   td::rmrf(path).ignore();
 }

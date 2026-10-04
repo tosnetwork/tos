@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <set>
 
 #include "td/db/RocksDb.h"
@@ -49,6 +50,8 @@ constexpr uint8_t kMetaTokenUnverifiableSub = 0x07;
 constexpr uint8_t kMetaTokenPositionSub = 0x08;
 // 0x00 0x09 -> 1 once a block may have gone unindexed without a mark.
 constexpr uint8_t kMetaNeedsRebuildSub = 0x09;
+// 0x00 0x0A -> 1 while an indexing run is active (see begin_indexing_run).
+constexpr uint8_t kMetaRunActiveSub = 0x0A;
 
 // (kMaxEventsPerAccount / kMaxEventTrimPerPass are declared in the header
 // so tests can reference the exact bound.)
@@ -1008,6 +1011,29 @@ td::Status WalletIndexDb::mark_needs_rebuild() {
   return marker_db_->flush_wal(true);
 }
 
+td::Status WalletIndexDb::begin_indexing_run() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaRunActiveSub, key);
+  const char one[1] = {1};
+  TRY_STATUS(marker_db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{one, 1}));
+  return marker_db_->flush_wal(true);
+}
+
+td::Result<bool> WalletIndexDb::indexing_run_active() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaRunActiveSub, key);
+  std::string value;
+  TRY_RESULT(status, marker_db_->get(td::Slice{key, kMetaKeyLen}, value));
+  return status == td::KeyValue::GetStatus::Ok;
+}
+
+td::Status WalletIndexDb::end_indexing_run() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaRunActiveSub, key);
+  TRY_STATUS(marker_db_->erase(td::Slice{key, kMetaKeyLen}));
+  return marker_db_->flush_wal(true);
+}
+
 td::Status WalletIndexDb::delete_incomplete_block(const tos::BlockIdExt& block_id) {
   char key[kIncompleteBlockKeyLen];
   make_incomplete_block_key(block_id, key);
@@ -1639,17 +1665,36 @@ WalletIndexDb* wallet_index_db() { return g_db.get(); }
 
 void set_wallet_index_db(std::unique_ptr<WalletIndexDb> db) { g_db = std::move(db); }
 
-void open_wallet_index_db(const std::string& db_root) {
+namespace {
+std::mutex g_unavailable_mutex;
+std::string g_unavailable_reason;
+}  // namespace
+
+void set_wallet_index_unavailable(std::string reason) {
+  std::lock_guard<std::mutex> guard(g_unavailable_mutex);
+  g_unavailable_reason = std::move(reason);
+}
+
+std::string wallet_index_unavailable_reason() {
+  std::lock_guard<std::mutex> guard(g_unavailable_mutex);
+  return g_unavailable_reason;
+}
+
+bool open_wallet_index_db(const std::string& db_root) {
   if (db_root.empty()) {
-    return;
+    set_wallet_index_unavailable("no database root");
+    return false;
   }
   auto db_r = WalletIndexDb::open(db_root + "/wc0-index");
   if (db_r.is_error()) {
-    LOG(ERROR) << "wc0-index: failed to open: " << db_r.error().message();
-    return;
+    LOG(ERROR) << "wc0-index: failed to open: " << db_r.error().message()
+               << "; wallet indexing is disabled for this run and the account-index RPC reports it unavailable";
+    set_wallet_index_unavailable(PSTRING() << "the index database failed to open: " << db_r.error().message());
+    return false;
   }
   set_wallet_index_db(db_r.move_as_ok());
   LOG(INFO) << "wc0-index: opened at " << db_root << "/wc0-index";
+  return true;
 }
 
 }  // namespace tos_wallet_index

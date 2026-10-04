@@ -1,11 +1,12 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 
-#include "vm/cells.h"
-#include "vm/vm.h"
 #include "tos/tos-shard.h"
 #include "tos/tos-types.h"
+#include "vm/cells.h"
+#include "vm/vm.h"
 
 namespace tos_wallet_index {
 
@@ -80,16 +81,28 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
 // Blocks waiting to be indexed at most. Each holds its block and state cells.
 constexpr size_t kWc0IndexQueueCapacity = 256;
 
-// Start the indexing worker. Call once, before installing
-// enqueue_wc0_index_block as the block-apply hook. A paused worker records
-// queued blocks but indexes none until resumed: startup recovery re-indexes
-// blocks from earlier runs first, so no older block is indexed after a newer.
-void start_wc0_index_worker(bool paused);
+// Start indexing for this run. Call once, before installing
+// enqueue_wc0_index_block as the block-apply hook, and only install it when
+// this returns true. It needs the index open (wallet_index_db()). A previous
+// run that did not finish cleanly (flush_wc0_index_for_exit) may have lost a
+// block between its apply and its mark, so the index is first durably marked
+// as needing a rebuild; then this run is durably recorded as active, and only
+// then does the worker start. If any step fails, or no index is open, nothing
+// is started, the index is closed and reported unavailable, and false is
+// returned: a worker with no index to mark into would hold every queued block
+// in memory and retry forever.
+// A paused worker records queued blocks but indexes none until resumed:
+// startup recovery re-indexes blocks from earlier runs first, so no older
+// block is indexed after a newer.
+bool start_wc0_index_worker(bool paused);
 void resume_wc0_index_worker();
-// Before an abrupt exit: stop indexing and wait (up to 2 s) until every queued
-// block is marked for recovery. A block applied after this returns is not
-// marked. True when everything was marked in time.
-bool flush_wc0_index_for_exit();
+// Before an exit: stop indexing and wait (up to `limit`) until every queued
+// block is marked for recovery. From then on the hook marks each block it is
+// given before returning, so no block can be applied unmarked. If every block
+// was marked in time, nothing was lost and no mark failed, the run is recorded
+// as finished cleanly, and true is returned; otherwise the run stays recorded
+// as active and the next start reports that the index needs a rebuild.
+bool flush_wc0_index_for_exit(std::chrono::milliseconds limit = std::chrono::milliseconds(2000));
 // Stop it: the block in hand is finished, queued ones stay marked. Call
 // before the index database is closed.
 void stop_wc0_index_worker();
@@ -102,5 +115,9 @@ bool wc0_index_degraded();
 // indexed now; it is marked incomplete instead, and the startup recovery
 // re-indexes marked blocks.
 void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
+
+// Tests only: make the recorder's writes (marking blocks for recovery, and
+// recording that the index needs a rebuild) fail, as a failing disk would.
+void set_wc0_index_marking_fault_for_testing(bool fail);
 
 }  // namespace tos_wallet_index
