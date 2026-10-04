@@ -167,6 +167,12 @@ td::Result<std::unique_ptr<WalletIndexDb>> WalletIndexDb::open(std::string path)
 }
 
 WalletIndexDb::WalletIndexDb(std::unique_ptr<td::RocksDb> db) : db_(std::move(db)) {}
+
+td::Result<std::unique_ptr<WalletIndexDb>> WalletIndexDb::read_snapshot() {
+  auto view = std::make_unique<td::RocksDb>(db_->clone());
+  TRY_STATUS(view->begin_snapshot());
+  return std::unique_ptr<WalletIndexDb>(new WalletIndexDb(std::move(view)));
+}
 WalletIndexDb::~WalletIndexDb() = default;
 
 td::Status WalletIndexDb::put_cell(td::Slice key, td::Ref<vm::Cell> value) {
@@ -849,8 +855,15 @@ td::Status WalletIndexDb::token_index_erase(const std::string& index_key) {
   return td::Status::OK();
 }
 
+// Callers erase only rows token_queue_has still reports, so each row is
+// erased, and counted out of `entries`, once per batch.
+td::Status WalletIndexDb::token_queue_erase(const std::string& queue_key) {
+  token_batch_.queue_erased.insert(queue_key);
+  return db_->erase(td::Slice{queue_key});
+}
+
 td::Result<bool> WalletIndexDb::token_queue_has(const std::string& queue_key) {
-  if (queue_key.size() != kTokenQueueKeyLen) {
+  if (queue_key.size() != kTokenQueueKeyLen || token_batch_.queue_erased.count(queue_key) != 0) {
     return false;
   }
   std::string value;
@@ -867,15 +880,18 @@ td::Result<uint8_t> WalletIndexDb::token_claim(const TokenCandidate& candidate) 
   // Waiting already: take its queue entry and keep the attempts it has used.
   uint8_t attempts = 0;
   std::string value;
-  TRY_RESULT(status, db_->get(td::Slice{queue_key}, value));
-  if (status == td::KeyValue::GetStatus::Ok) {
-    auto parsed = parse_token_queue_entry(queue_key, value);
-    if (parsed.is_ok() && parsed.ok().candidate == candidate) {
-      attempts = parsed.ok().attempts;
-    }
-    TRY_STATUS(db_->erase(td::Slice{queue_key}));
-    if (token_batch_.entries > 0) {
-      --token_batch_.entries;
+  TRY_RESULT(queued, token_queue_has(queue_key));
+  if (queued) {
+    TRY_RESULT(status, db_->get(td::Slice{queue_key}, value));
+    if (status == td::KeyValue::GetStatus::Ok) {
+      auto parsed = parse_token_queue_entry(queue_key, value);
+      if (parsed.is_ok() && parsed.ok().candidate == candidate) {
+        attempts = parsed.ok().attempts;
+      }
+      TRY_STATUS(token_queue_erase(queue_key));
+      if (token_batch_.entries > 0) {
+        --token_batch_.entries;
+      }
     }
   }
   TRY_STATUS(token_index_erase(index_key));
@@ -1055,7 +1071,7 @@ td::Result<std::vector<ScheduledTokenCandidate>> WalletIndexDb::schedule_token_c
   for (auto& key : malformed) {
     std::string value;
     TRY_RESULT(status, db_->get(td::Slice{key}, value));
-    TRY_STATUS(db_->erase(td::Slice{key}));
+    TRY_STATUS(token_queue_erase(key));
     if (status == td::KeyValue::GetStatus::Ok) {
       auto identity = token_queue_identity(key, value);
       if (identity.is_ok()) {
@@ -1098,7 +1114,7 @@ td::Result<std::vector<ScheduledTokenCandidate>> WalletIndexDb::schedule_token_c
   std::set<TokenCandidate> seen;
   for (size_t i = 0; i < from_backlog; ++i) {
     const auto& entry = backlog[i];
-    TRY_STATUS(db_->erase(td::Slice{entry.key}));
+    TRY_STATUS(token_queue_erase(entry.key));
     TRY_STATUS(token_index_erase(token_index_key(entry.scheduled.candidate)));
     if (token_batch_.entries > 0) {
       --token_batch_.entries;
@@ -1193,7 +1209,14 @@ td::Result<TokenBacklogStats> WalletIndexDb::token_backlog_stats() {
   TRY_RESULT(entries, get_meta_u64(kMetaTokenEntriesSub));
   TRY_RESULT(lost, get_meta_u64(kMetaTokenLostSub));
   TRY_RESULT(unverifiable, get_meta_u64(kMetaTokenUnverifiableSub));
-  return TokenBacklogStats{entries, lost, unverifiable};
+  uint64_t incomplete_blocks = 0;
+  const char marker_prefix[1] = {static_cast<char>(kIncompleteBlockTag)};
+  TRY_STATUS(for_each_key_with_prefix(td::Slice{marker_prefix, 1}, std::numeric_limits<size_t>::max(),
+                                      [&](td::Slice) -> td::Status {
+                                        ++incomplete_blocks;
+                                        return td::Status::OK();
+                                      }));
+  return TokenBacklogStats{entries, lost, unverifiable, incomplete_blocks};
 }
 
 td::Status WalletIndexDb::for_each_deferred_token_candidate(size_t limit,

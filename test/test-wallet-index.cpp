@@ -1007,14 +1007,47 @@ TEST(WalletIndex, ProcessingRetriesCountsAndStopsOnAWriteFailure) {
 
 TEST(WalletIndex, TokenIndexStateSaysWhenItIsIncomplete) {
   using tos_wallet_index::format_token_index_state;
-  ASSERT_EQ(format_token_index_state({0, 0, 0}),
-            std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0}"));
-  ASSERT_EQ(format_token_index_state({3, 0, 0}),
-            std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0}"));
-  ASSERT_EQ(format_token_index_state({0, 1, 0}),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0}"));
-  ASSERT_EQ(format_token_index_state({0, 0, 2}),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2}"));
+  ASSERT_EQ(format_token_index_state({0, 0, 0, 0}),
+            std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"incomplete_blocks\":0}"));
+  ASSERT_EQ(format_token_index_state({3, 0, 0, 0}),
+            std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0,\"incomplete_blocks\":0}"));
+  ASSERT_EQ(format_token_index_state({0, 1, 0, 0}),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0,\"incomplete_blocks\":0}"));
+  ASSERT_EQ(format_token_index_state({0, 0, 2, 0}),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2,\"incomplete_blocks\":0}"));
+  ASSERT_EQ(format_token_index_state({0, 0, 0, 1}),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"incomplete_blocks\":1}"));
+}
+
+TEST(WalletIndex, ABlockWhoseIndexingDidNotCommitLeavesTheIndexIncomplete) {
+  auto path = std::string("test-wallet-index-db-token-incomplete-block");
+  auto db = open_fresh_db(path);
+  ASSERT_EQ(backlog_stats(*db).incomplete_blocks, static_cast<uint64_t>(0));
+  // The writer marks a block before indexing it; a failed block aborts its
+  // batch, so the mark stays while nothing else changed.
+  auto id = make_test_block_id(0, tos::shardIdAll, 7, 0x11, 0x22);
+  db->put_incomplete_block(id).ensure();
+  db->begin_batch().ensure();
+  db->schedule_token_candidates(token_candidates(0, 3), kWholeBasechain).ensure();
+  db->abort_batch();
+  auto stats = backlog_stats(*db);
+  ASSERT_EQ(stats.incomplete_blocks, static_cast<uint64_t>(1));
+  ASSERT_EQ(stats.entries + stats.lost + stats.unverifiable, static_cast<uint64_t>(0));
+  ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, AReadSnapshotIgnoresLaterCommits) {
+  auto path = std::string("test-wallet-index-db-token-snapshot");
+  auto db = open_fresh_db(path);
+  auto view = db->read_snapshot().move_as_ok();
+  ASSERT_TRUE(schedule_block(*db, token_candidates(0, 5), kWholeBasechain, 0).empty());
+  ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(5));
+  // The view still answers as of when it was taken, for counters and lists alike.
+  ASSERT_EQ(backlog_stats(*view).entries, static_cast<uint64_t>(0));
+  ASSERT_EQ(backlog_size(*view), static_cast<size_t>(0));
+  view.reset();
+  td::rmrf(path).ignore();
 }
 
 namespace {
@@ -1131,5 +1164,80 @@ TEST(WalletIndex, MalformedBacklogEntriesAreDroppedCountedAndDoNotBlockTheirCand
   ASSERT_TRUE(schedule_block(*db, {readable, unreadable}, kWholeBasechain, 0).empty());
   ASSERT_EQ(backlog_size(*db), static_cast<size_t>(2));
   ASSERT_EQ(candidates_of(schedule_block(*db, {})), (std::set<TokenCandidate>{readable, unreadable}));
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+// A truncated row for `broken` that its index still points to, and a valid
+// row of the other depth-9 sibling in the same queue.
+void write_broken_entry_beside_a_sibling(const std::string &path, const TokenCandidate &broken,
+                                         const TokenCandidate &sibling) {
+  auto raw = td::RocksDb::open(path).move_as_ok();
+  auto broken_queue = raw_queue_key(0, 0);
+  raw.set(broken_queue, std::string(5, '\x01')).ensure();
+  raw.set(raw_index_key(broken), broken_queue.substr(1)).ensure();
+  std::string value(34, '\0');
+  value[0] = static_cast<char>(sibling.kind);
+  std::memcpy(&value[1], sibling.address.data(), 32);
+  auto sibling_queue = raw_queue_key(0, 1);
+  raw.set(sibling_queue, value).ensure();
+  raw.set(raw_index_key(sibling), sibling_queue.substr(1)).ensure();
+  raw.set(std::string("\x00\x04", 2), raw_u64(2)).ensure();
+  raw.set(std::string("\x00\x03", 2), raw_u64(2)).ensure();
+}
+
+TokenCandidate deep_candidate(uint32_t n, bool high) {
+  auto address = token_address(n, 0x00);
+  address.data()[1] = high ? 0x80 : 0x00;
+  return TokenCandidate{TokenKind::Jetton, address};
+}
+
+}  // namespace
+
+TEST(WalletIndex, AnEntryDroppedAsMalformedIsNotCountedTwiceWhenItsCandidateReturns) {
+  auto path = std::string("test-wallet-index-db-token-corrupt-claim");
+  auto db = open_fresh_db(path);
+  db.reset();
+  const tos::ShardIdFull high{0, (1ULL << 55) | (1ULL << 54)};
+  auto broken = deep_candidate(1, true);
+  auto sibling = deep_candidate(2, false);
+  write_broken_entry_beside_a_sibling(path, broken, sibling);
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+
+  // In one block: the broken row is dropped, and the same candidate arrives
+  // from the block and is verified directly.
+  auto chosen = candidates_of(schedule_block(*db, {broken}, high));
+  ASSERT_EQ(chosen, std::set<TokenCandidate>{broken});
+  auto stats = backlog_stats(*db);
+  ASSERT_EQ(stats.lost, static_cast<uint64_t>(1));
+  // The sibling's row is still there, and still counted.
+  ASSERT_EQ(stats.entries, static_cast<uint64_t>(1));
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(1));
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, AnEntryDroppedAsMalformedDoesNotHideItsCandidateDeferredInTheSameBlock) {
+  auto path = std::string("test-wallet-index-db-token-corrupt-defer");
+  auto db = open_fresh_db(path);
+  db.reset();
+  const tos::ShardIdFull high{0, (1ULL << 55) | (1ULL << 54)};
+  auto broken = deep_candidate(1, true);
+  auto sibling = deep_candidate(2, false);
+  write_broken_entry_beside_a_sibling(path, broken, sibling);
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+
+  // Capacity 1: another candidate takes the slot and the broken row's
+  // candidate is deferred in the very block that drops that row.
+  auto first = deep_candidate(3, true);
+  auto chosen = candidates_of(schedule_block(*db, {first, broken}, high, 1));
+  ASSERT_EQ(chosen, std::set<TokenCandidate>{first});
+  bool waiting = false;
+  db->for_each_deferred_token_candidate(16, [&](const TokenCandidate &c) -> td::Status {
+      waiting = waiting || c == broken;
+      return td::Status::OK();
+    }).ensure();
+  ASSERT_TRUE(waiting);
+  ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(2));
   td::rmrf(path).ignore();
 }

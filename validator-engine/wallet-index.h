@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -125,16 +126,20 @@ struct TokenBacklogStats {
   // master or NFT collection outside the shard being indexed). This index
   // verifies against one shard's state, so they cannot be indexed here.
   uint64_t unverifiable;
+  // Blocks marked in progress: one being indexed right now, or one whose
+  // indexing failed and was rolled back, leaving its updates unapplied.
+  uint64_t incomplete_blocks;
 };
 
 // Completeness of the token index as RPC answers report it: a JSON object
-// value. `complete` is false while candidates wait or once any was lost or
-// could not be verified; only rebuilding the index clears lost and
-// unverifiable.
+// value. `complete` is false while candidates wait, while any block's
+// indexing is unfinished, and once any candidate was lost or could not be
+// verified; only rebuilding the index clears lost and unverifiable.
 inline std::string format_token_index_state(const TokenBacklogStats& stats) {
-  bool complete = stats.entries == 0 && stats.lost == 0 && stats.unverifiable == 0;
+  bool complete = stats.entries == 0 && stats.lost == 0 && stats.unverifiable == 0 && stats.incomplete_blocks == 0;
   return "{\"complete\":" + std::string(complete ? "true" : "false") + ",\"pending\":" + std::to_string(stats.entries) +
-         ",\"lost\":" + std::to_string(stats.lost) + ",\"unverifiable\":" + std::to_string(stats.unverifiable) + "}";
+         ",\"lost\":" + std::to_string(stats.lost) + ",\"unverifiable\":" + std::to_string(stats.unverifiable) +
+         ",\"incomplete_blocks\":" + std::to_string(stats.incomplete_blocks) + "}";
 }
 
 // What became of one scheduled candidate's verification.
@@ -149,6 +154,10 @@ class WalletIndexDb {
  public:
   // Open (or create) the index DB at `path`. The directory is created if needed.
   static td::Result<std::unique_ptr<WalletIndexDb>> open(std::string path);
+  // A read-only view of the index as committed at this moment. Reads through
+  // it (the token state and the lists an answer is built from) all see the
+  // same commit; writes through it fail.
+  td::Result<std::unique_ptr<WalletIndexDb>> read_snapshot();
 
   WalletIndexDb(const WalletIndexDb&) = delete;
   WalletIndexDb& operator=(const WalletIndexDb&) = delete;
@@ -336,6 +345,8 @@ class WalletIndexDb {
     uint64_t lost = 0;
     uint64_t unverifiable = 0;
     std::map<std::string, std::string> index_overlay;
+    // Queue rows already erased in the batch, which committed reads still see.
+    std::set<std::string> queue_erased;
   };
   TokenBatchState token_batch_;
   uint64_t token_backlog_limit_ = kMaxTokenBacklogEntries;
@@ -344,6 +355,7 @@ class WalletIndexDb {
   td::Result<std::string> token_index_get(const std::string& index_key);
   td::Status token_index_erase(const std::string& index_key);
   td::Result<bool> token_queue_has(const std::string& queue_key);
+  td::Status token_queue_erase(const std::string& queue_key);
   td::Result<uint8_t> token_claim(const TokenCandidate& candidate);
   td::Status token_enqueue(const TokenCandidate& candidate, uint8_t attempts);
   td::Status token_note_lost(const TokenCandidate& candidate, td::Slice reason);

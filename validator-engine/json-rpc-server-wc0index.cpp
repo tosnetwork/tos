@@ -265,6 +265,15 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
     promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
     return;
   }
+  // The state and the list come from one view of the index, so a block
+  // committed in between cannot make them disagree.
+  auto view_r = db->read_snapshot();
+  if (view_r.is_error()) {
+    promise.set_value(make_json_error(-32603, view_r.error().message().str(), req_id));
+    return;
+  }
+  auto view = view_r.move_as_ok();
+  db = view.get();
   auto index_state_r = token_index_state_json(db);
   if (index_state_r.is_error()) {
     promise.set_value(make_json_error(-32603, index_state_r.error().message().str(), req_id));
@@ -435,6 +444,15 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
     promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
     return;
   }
+  // The state and the list come from one view of the index, so a block
+  // committed in between cannot make them disagree.
+  auto view_r = db->read_snapshot();
+  if (view_r.is_error()) {
+    promise.set_value(make_json_error(-32603, view_r.error().message().str(), req_id));
+    return;
+  }
+  auto view = view_r.move_as_ok();
+  db = view.get();
   auto index_state_r = token_index_state_json(db);
   if (index_state_r.is_error()) {
     promise.set_value(make_json_error(-32603, index_state_r.error().message().str(), req_id));
