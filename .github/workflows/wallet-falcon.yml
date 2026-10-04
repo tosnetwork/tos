@@ -35,12 +35,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # x86_64 compiled slower with every core than with two (55 vs 31 minutes);
+          # aarch64 compiled faster (10.4 vs 14). An empty value means every core.
           - runner: ubuntu-24.04
             arch: x86_64
+            jobs: '2'
           - runner: ubuntu-24.04-arm
             arch: aarch64
+            jobs: ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      BUILD_JOBS: ${{ matrix.jobs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -68,11 +74,11 @@ jobs:
           fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOSLIBJSON_STATIC=OFF \
             "${falcon_crypto_args[@]}"
-          cmake --build build --target func fift tol emulator test-pq-falcon512-parity -j"$(nproc)"
+          cmake --build build --target func fift tol emulator test-pq-falcon512-parity -j"${BUILD_JOBS:-$(nproc)}"
           cmake -S tools/falcon -B build-falcon -G Ninja -DCMAKE_BUILD_TYPE=Release -DFALCON_BUILD_OFFICIAL_TESTS=ON
-          cmake --build build-falcon -j"$(nproc)"
+          cmake --build build-falcon -j"${BUILD_JOBS:-$(nproc)}"
           cmake -S test/mldsa-auth -B build-old-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-old-signer -j"$(nproc)"
+          cmake --build build-old-signer -j"${BUILD_JOBS:-$(nproc)}"
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example falcon-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --example pq-tx-parity
           cargo test --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_assembler pq_
@@ -116,7 +122,7 @@ jobs:
           cmake -S crypto/pq -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
             -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
-          cmake --build build-sanitize --target test-falcon512-fuzz -j"$(nproc)"
+          cmake --build build-sanitize --target test-falcon512-fuzz -j"${BUILD_JOBS:-$(nproc)}"
           build-sanitize/test-falcon512-fuzz artifacts/public_key.bin artifacts/signature.bin artifacts/message.bin | tee artifacts/sanitize.txt
           python test/pq-falcon512/benchmark.py --cpp build/crypto/pq/test-pq-falcon512-parity \
             --rust tosctl/src/target/release/examples/falcon-parity --scenarios artifacts/scenarios.tsv --out artifacts/benchmark
@@ -125,7 +131,7 @@ jobs:
       - name: Disposable version-19 chain and real funded delivery
         if: matrix.arch == 'x86_64'
         run: |
-          cmake --build build --target validator-engine dht-server validator-engine-console lite-client create-state generate-random-id tos-pq-consensus-key toslibjson -j"$(nproc)"
+          cmake --build build --target validator-engine dht-server validator-engine-console lite-client create-state generate-random-id tos-pq-consensus-key toslibjson -j"${BUILD_JOBS:-$(nproc)}"
           python test/tostester/generate_tl.py
           falcon_network_dir="$RUNNER_TEMP/falcon-devnet"
           setsid env PYTHONUNBUFFERED=1 PYTHONPATH="$PWD/test/tostester/src" \
