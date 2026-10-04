@@ -29,6 +29,19 @@ const int status::funded = 2;
 const int status::release_pending = 3;
 const int status::refund_pending = 4;
 
+;; Known limitation: a payout the recipient's jetton wallet refuses (for example,
+;; a wallet the stablecoin admin has locked for incoming transfers) bounces into
+;; this escrow's own wallet and is re-credited there without telling the escrow,
+;; which stays release_pending / refund_pending with the jettons in its own
+;; wallet. No operation moves them. This is deliberate: with the issuer's jetton
+;; wallet the escrow cannot tell a refused payout from a delivered one whose
+;; excesses was lost followed by unrelated jettons arriving, so any retry could
+;; pay the recipient with someone else's funds, and an excesses from the
+;; recipient's wallet can be produced by any transfer naming this escrow and its
+;; public query id, so it cannot confirm delivery. Resolving such a settlement
+;; needs authenticated, request-specific evidence of the payout's outcome, which
+;; this escrow does not have; it stays funds-safe and pending.
+
 const int err::bad_message = 2400;
 const int err::bad_state = 2401;
 const int err::wrong_wallet = 2402;

@@ -1206,6 +1206,43 @@ fn buyer_receive_locked_refund_is_funds_safe_but_pending() {
     assert_eq!(f.own_wallet_balance(), AMOUNT);
 }
 
+#[test]
+fn unrelated_credits_replays_and_other_queries_never_trigger_another_payout() {
+    // Nothing a third party can arrange moves a pending settlement's jettons
+    // again: not an unsolicited credit to the escrow's own wallet (no
+    // notification), not an exact replay, not another query or a refund, for a
+    // settlement whose payout was delivered or refused at the recipient.
+    for refused in [false, true] {
+        let mut f = Fixture::new();
+        f.fund();
+        if refused {
+            let provider = f.provider.address().clone();
+            let pw = f.provider_wallet.clone();
+            f.deploy_incoming_locked(provider, pw);
+        }
+        let relayer = f.relayer.address().clone();
+        let body = f.release_body(90, f.receipt(0xa3));
+        f.send(&relayer, body.clone()).expect_success();
+        assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
+        let delivered = if refused { 0 } else { AMOUNT };
+        assert_eq!(f.provider_wallet_balance(), delivered);
+        let held = AMOUNT - delivered;
+        assert_eq!(f.own_wallet_balance(), held);
+
+        let donor = f.relayer.address().clone();
+        f.credit_own_wallet(AMOUNT, &donor);
+        let before = f.data_hash();
+        f.send(&relayer, body).expect_success();
+        let other = f.release_body(91, f.receipt(0xa3));
+        f.send(&relayer, other).expect_aborted().expect_exit_code(ERR_BAD_STATE);
+        f.bc.set_now(f.refund_at as u32);
+        f.send(&relayer, Fixture::refund_body(92)).expect_aborted().expect_exit_code(ERR_BAD_STATE);
+        assert_eq!(f.data_hash(), before);
+        assert_eq!(f.provider_wallet_balance(), delivered, "paid at most once");
+        assert_eq!(f.own_wallet_balance(), held + AMOUNT, "the unrelated credit stays put");
+    }
+}
+
 fn excesses_body(query_id: u64) -> Cell {
     let mut e = BuilderData::new();
     e.append_u32(OP_EXCESSES).unwrap().append_u64(query_id).unwrap();
