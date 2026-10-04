@@ -376,7 +376,8 @@ pub struct AgentTaskCreateCmd {
     #[arg(
         long,
         conflicts_with = "amount_nanotos",
-        help = "Funding amount in TOS; must exceed the budget; defaults to the budget plus 0.2"
+        help = "Funding amount in TOS; at least the budget plus 0.05; defaults to the budget plus 0.2 \
+                (recommended)"
     )]
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact funding amount in nanoTOS")]
@@ -2207,6 +2208,9 @@ struct AgentTaskDataView {
     settlement_policy_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     attestor_pubkey: Option<String>,
+    balance: String,
+    /// Whether the escrow holds its budget; claim and accept refuse until it does.
+    budget_held: bool,
 }
 
 impl AgentTaskShowCmd {
@@ -2214,9 +2218,11 @@ impl AgentTaskShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_task_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        let balance = rpc_client.get_address_information(&address).await?.balance;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_task_data", vec![]).await?;
         let data = TaskEscrowContract::decode_data(&stack)?;
+        let shortfall = data.budget.saturating_sub(balance);
         let permission_id = config
             .agent_tasks
             .values()
@@ -2239,6 +2245,8 @@ impl AgentTaskShowCmd {
             dispute_hash: hex::encode(data.dispute_hash),
             settlement_policy_hash: hex::encode(data.settlement_policy_hash),
             attestor_pubkey: data.attestor_pubkey.map(hex::encode),
+            balance: display_tos(balance),
+            budget_held: shortfall == 0,
         };
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&view)?);
@@ -2253,6 +2261,13 @@ impl AgentTaskShowCmd {
             println!("Review period: {}s", view.review_period);
             println!("Review deadline: {}", view.review_deadline);
             println!("Status: {}", view.status);
+            println!("Balance: {} TOS", view.balance);
+            if shortfall > 0 && data.status == 0 {
+                println!(
+                    "Not claimable yet: the escrow holds less than its budget; top it up by at least {} TOS",
+                    display_tos(shortfall)
+                );
+            }
             println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
         }
         Ok(())
@@ -11283,18 +11298,28 @@ pub(crate) fn parse_optional_signature(
     Ok(Some(signature))
 }
 
-/// Reserve added to the budget when no funding amount is given: the escrow pays
-/// its deployment and storage out of the excess over the budget.
+/// Recommended margin over the budget when no funding amount is given. The
+/// escrow pays its deployment and storage out of the excess; this is a default
+/// that covers deployment with room for storage, not a guarantee for every fee
+/// configuration or holding period (`agent task show` reports a shortfall).
 const TASK_ESCROW_FUNDING_RESERVE_NANOTOS: u64 = 200_000_000;
+/// Smallest margin over the budget an explicit amount may leave. Below it,
+/// deployment fees alone can bring the balance under the budget, and the task
+/// can then not be claimed until it is topped up.
+const TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS: u64 = 50_000_000;
 
 /// The value a new Task Escrow is funded with. The contract refuses claim and
-/// accept until it holds the full budget, so funding at or below the budget
-/// would create a task no agent can take.
+/// accept until it holds the full budget, so funding must cover the budget and
+/// the escrow's own fees.
 fn task_escrow_funding_nanotos(budget: u64, explicit_amount: Option<u64>) -> anyhow::Result<u64> {
+    let minimum = budget.checked_add(TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS).ok_or_else(|| {
+        anyhow::anyhow!("budget {budget} nanoTOS plus the funding margin overflows")
+    })?;
     match explicit_amount {
-        Some(amount) if amount <= budget => anyhow::bail!(
-            "funding amount {amount} nanoTOS must exceed the budget {budget} nanoTOS: the escrow must hold \
-             the whole budget before an agent can take the task, and pays its own fees from the excess"
+        Some(amount) if amount < minimum => anyhow::bail!(
+            "funding amount {amount} nanoTOS must be at least the budget {budget} nanoTOS plus \
+             {TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS} nanoTOS: the escrow must hold the whole budget \
+             before an agent can take the task, and pays its own fees from the excess"
         ),
         Some(amount) => Ok(amount),
         None => budget.checked_add(TASK_ESCROW_FUNDING_RESERVE_NANOTOS).ok_or_else(|| {
@@ -11574,9 +11599,12 @@ mod tests {
         // can take: the contract refuses claim/accept until it holds the budget.
         assert!(task_escrow_funding_nanotos(5_000_000_000, Some(200_000_000)).is_err());
         assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_000)).is_err());
+        // A sliver over the budget is consumed by deployment fees.
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_001)).is_err());
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_049_999_999)).is_err());
         assert_eq!(
-            task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_001)).unwrap(),
-            5_000_000_001
+            task_escrow_funding_nanotos(5_000_000_000, Some(5_050_000_000)).unwrap(),
+            5_050_000_000
         );
         assert!(task_escrow_funding_nanotos(u64::MAX, None).is_err());
     }
