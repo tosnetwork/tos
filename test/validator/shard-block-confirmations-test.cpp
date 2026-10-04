@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "validator/shard-block-confirmations.h"
+#include "validator/shard-block-subscription.h"
 
 namespace {
 
@@ -254,20 +255,6 @@ int main() {
     require(store.deferred() == 0, "nothing is left held");
   }
 
-  // The retainer side of a resend request: a new subscription is always
-  // answered with every held confirmation, a flagged renewal only when the
-  // retainer's interval allows, and an unflagged renewal never.
-  {
-    using tos::validator::kShardBlockVerifierResendFlag;
-    using tos::validator::shard_block_retainer_sends_retained;
-    require(shard_block_retainer_sends_retained(true, 0, false), "a new subscription is answered");
-    require(shard_block_retainer_sends_retained(false, kShardBlockVerifierResendFlag, true),
-            "a flagged renewal is answered when allowed");
-    require(!shard_block_retainer_sends_retained(false, kShardBlockVerifierResendFlag, false),
-            "a flagged renewal within the interval is not");
-    require(!shard_block_retainer_sends_retained(false, 0, true), "an unflagged renewal is not");
-  }
-
   // A configuration change keeps confirmations by nodes still trusted and
   // the entries local waits created. A peer-created entry stays charged to its
   // creator, or to another node that confirmed it if the creator is no longer
@@ -295,175 +282,255 @@ int main() {
     require(waiter.done, "the waiter completes under the new configuration");
   }
 
-  // Recovery of dropped confirmations through subscriptions, driven through a
-  // small harness: a fake transport that can fail requests, and a fake
-  // retainer that decides with the real retainer rules. A retainer that
-  // predates the resend flag ignores it and never acknowledges a replay; it
-  // forgets a subscription that is not renewed within its time to live (the
-  // real one erases expired subscriptions as it confirms new blocks).
+  // Recovery of lost confirmations through subscriptions. The harness moves
+  // the production requests and answers (ShardBlockVerifierSubscriptions on
+  // the verifier side, ShardBlockRetainerSubscriptions on the retainer side)
+  // over a fake transport that can fail a request or lose the replay
+  // messages, with the verifier's confirmation store behind it.
   {
-    using tos::validator::kShardBlockRetainerMinResendInterval;
     using tos::validator::kShardBlockRetainerReplayedFlag;
     using tos::validator::kShardBlockRetainerSubscriptionTtl;
     using tos::validator::kShardBlockVerifierResendFlag;
     using tos::validator::kShardBlockVerifierSubscribePeriod;
-    using tos::validator::shard_block_retainer_is_new_subscription;
-    using tos::validator::shard_block_retainer_sends_retained;
-    using Key = std::pair<Peer, tos::ShardIdFull>;
-    using Recovery = tos::validator::ShardBlockSubscriptionRecovery<Key>;
-    const Key key{kA, tos::ShardIdFull{tos::basechainId, tos::shardIdAll}};
+    using tos::validator::ShardBlockRetainerSubscriptions;
+    using tos::validator::ShardBlockVerifierSubscriptions;
+    using Key = ShardBlockVerifierSubscriptions::Key;
+    using Recovery = ShardBlockVerifierSubscriptions::Recovery;
+    const double period = kShardBlockVerifierSubscribePeriod;
+    const tos::ShardIdFull shard{tos::basechainId, tos::shardIdAll};
+    const Key key{kA, shard};
 
-    struct FakeRetainer {
-      bool understands_flags = true;
-      std::vector<BlockIdExt> held;
+    // A retainer as it was before confirmation recovery: it ignores request
+    // flags, never acknowledges, replays only when it has no subscription at
+    // all, and here never confirms another block, so an expired subscription
+    // is never cleaned up.
+    struct OldRetainer {
       std::optional<double> ttl;
-      double resend_allowed_at = 0;
-      unsigned replays = 0;
-      td::uint32 subscribe(td::uint32 flags, double now, std::vector<BlockIdExt> &sent) {
-        bool expired = ttl && *ttl <= now;
-        bool is_new = shard_block_retainer_is_new_subscription(ttl.has_value(), expired);
-        td::uint32 seen = understands_flags ? flags : 0;
-        td::uint32 reply = 0;
-        if (shard_block_retainer_sends_retained(is_new, seen, now >= resend_allowed_at)) {
-          sent = held;
-          ++replays;
-          resend_allowed_at = now + kShardBlockRetainerMinResendInterval;
-          if (understands_flags) {
-            reply |= kShardBlockRetainerReplayedFlag;
-          }
-        }
+      bool subscribe(double now, td::BufferSlice &reply) {
+        bool replay = !ttl.has_value();
         ttl = now + kShardBlockRetainerSubscriptionTtl;
-        return reply;
+        reply = tos::create_serialize_tl_object<tos::tos_api::shardBlockVerifier_subscribed>(0);
+        return replay;
       }
     };
 
-    struct Scenario {
+    struct Harness {
+      tos::ShardIdFull shard{tos::basechainId, tos::shardIdAll};
+      Key key{kA, shard};
       Masterchain mc;
+      td::Ref<ShardBlockVerifierConfig> cfg = config({kA}, 1);
       ShardBlockConfirmations store;
-      Recovery recovery;
-      FakeRetainer retainer;
-      std::vector<bool> fail_next;
-      unsigned requests = 0;
-      Key key;
-      Scenario(ShardBlockConfirmationLimits limits, Key key) : store(mc.view(), limits), key(std::move(key)) {
-        store.set_config(config({kA}, 1));
+      ShardBlockVerifierSubscriptions verifier;
+      ShardBlockRetainerSubscriptions retainer;
+      OldRetainer old_retainer;
+      bool old = false;
+      std::vector<BlockIdExt> held;
+      bool fail_next = false;
+      bool lose_replay_next = false;
+      unsigned replays = 0;
+      std::vector<td::uint32> request_flags;
+
+      explicit Harness(ShardBlockConfirmationLimits limits) : store(mc.view(), limits) {
+        store.set_config(cfg);
+        verifier.configured(*cfg);
       }
       void collect() {
-        for (const auto &peer : store.take_resend_requests()) {
-          if (peer == kA) {
-            recovery.request(key);
-          }
+        auto dropped = store.take_resend_requests();
+        if (!dropped.empty()) {
+          verifier.dropped(dropped, *cfg);
         }
       }
-      // One regular subscription round at `now`.
-      void tick(double now) {
-        auto flags = recovery.subscription(key, now);
-        if (!flags) {
-          return;
-        }
-        ++requests;
-        if (!fail_next.empty()) {
-          bool fail = fail_next.front();
-          fail_next.erase(fail_next.begin());
-          if (fail) {
-            recovery.on_failure(key, now);
-            return;
+      void round(double now) {
+        for (auto &out : verifier.round(*cfg, store.unresolved_wait_sources())) {
+          auto request = ShardBlockRetainerSubscriptions::parse_request(out.request.as_slice());
+          require(request.is_ok() && request.ok().shard == shard, "the request names its shard");
+          request_flags.push_back(request.ok().flags);
+          if (fail_next) {
+            fail_next = false;
+            require(verifier.answered(out.key, td::Status::Error("timeout")).is_error(), "a failure is reported");
+            continue;
           }
+          td::BufferSlice reply;
+          bool replay = false;
+          if (old) {
+            replay = old_retainer.subscribe(now, reply);
+          } else {
+            auto answer = retainer.subscribe(kA, request.ok().shard, request.ok().flags, now);
+            replay = answer.send_retained;
+            reply = std::move(answer.reply);
+          }
+          if (replay) {
+            ++replays;
+            if (lose_replay_next) {
+              lose_replay_next = false;
+            } else {
+              for (const auto &block_id : held) {
+                store.confirm(kA, block_id);
+              }
+            }
+          }
+          require(verifier.answered(out.key, std::move(reply)).is_ok(), "an answer is accepted");
+          collect();
         }
-        std::vector<BlockIdExt> sent;
-        auto reply = retainer.subscribe(*flags, now, sent);
-        for (const auto &block_id : sent) {
-          store.confirm(kA, block_id);
-        }
-        recovery.on_reply(key, reply, now);
-        collect();
       }
-      // The retainer confirms blocks and sends each confirmation once; the
-      // verifier holds one for budget and must drop the next.
+      // The retainer confirms three blocks and sends each confirmation once;
+      // the verifier holds one for budget and drops the next.
       void overflow() {
-        retainer.held = {block_at(101), block_at(102), block_at(103)};
+        held = {block_at(101), block_at(102), block_at(103)};
         require(store.confirm(kA, block_at(101)) == Result::Confirmed, "the peer's budget is used");
         require(store.confirm(kA, block_at(102)) == Result::PeerBudget, "one confirmation is held");
         require(store.confirm(kA, block_at(103)) == Result::Dropped, "the next is dropped");
         collect();
-        require(recovery.outstanding(key), "a dropped confirmation starts recovery");
+        require(verifier.recovery().outstanding(key), "a dropped confirmation starts recovery");
+        mc.top = 101;
+        store.prune_registered();
       }
     };
     ShardBlockConfirmationLimits limits;
     limits.max_entries_per_peer = 1;
     limits.max_deferred_per_peer = 1;
     limits.max_deferred = 1;
-    const double period = kShardBlockVerifierSubscribePeriod;
 
-    // An upgraded retainer: the resend request fails once, the retry
-    // succeeds and is acknowledged, and a local wait on the dropped block
-    // completes without the confirmation being injected again.
+    // The wire adapter: the request carries its flags, the answer its
+    // acknowledgement, and an unreadable answer counts as a failure.
     {
-      Scenario sc(limits, key);
-      sc.tick(0);
-      require(sc.retainer.replays == 1, "the first subscription is new");
-      sc.overflow();
-      sc.mc.top = 101;
-      sc.store.prune_registered();
-      sc.fail_next = {true};
-      sc.tick(period);
-      require(sc.recovery.outstanding(key), "a failed resend request leaves recovery outstanding");
-      sc.tick(2 * period);
-      require(sc.retainer.replays == 2, "the retried request was answered with a replay");
-      require(!sc.recovery.outstanding(key), "an acknowledged replay completes recovery");
-      Waiter waiter;
-      sc.store.wait({block_at(103)}, waiter.promise());
-      require(waiter.done, "the dropped confirmation completes a local wait after recovery");
-      sc.tick(3 * period);
-      require(sc.retainer.replays == 2, "a recovered subscription asks for nothing more");
+      auto request = ShardBlockRetainerSubscriptions::parse_request(
+          tos::validator::make_shard_block_subscribe_request(shard, kShardBlockVerifierResendFlag).as_slice());
+      require(request.is_ok() && request.ok().shard == shard && request.ok().flags == kShardBlockVerifierResendFlag,
+              "a request round-trips");
+      ShardBlockRetainerSubscriptions retainer;
+      auto first = retainer.subscribe(kA, shard, 0, 0);
+      auto parsed = tos::validator::parse_shard_block_subscribe_reply(std::move(first.reply));
+      require(first.send_retained && parsed.is_ok() && parsed.ok() == kShardBlockRetainerReplayedFlag,
+              "a replay is acknowledged in the answer");
+      auto renewal = retainer.subscribe(kA, shard, 0, period);
+      parsed = tos::validator::parse_shard_block_subscribe_reply(std::move(renewal.reply));
+      require(!renewal.send_retained && parsed.is_ok() && parsed.ok() == 0, "a plain renewal is not");
+      ShardBlockVerifierSubscriptions verifier;
+      verifier.recovery().request(key);
+      require(verifier.answered(key, td::BufferSlice("garbage")).is_error(), "an unreadable answer is a failure");
+      require(verifier.recovery().outstanding(key), "and leaves recovery outstanding");
     }
 
-    // A retainer that predates the flag: resend requests go unacknowledged,
-    // so after kMaxResendAttempts the subscription is let lapse, and the next
-    // one, new to the retainer, is answered with everything it holds.
+    // The retainer answers a subscription whose time to live passed as a new
+    // one, even though it still has an entry for it.
     {
-      Scenario sc(limits, key);
-      sc.retainer.understands_flags = false;
-      sc.tick(0);
-      sc.overflow();
-      sc.mc.top = 101;
-      sc.store.prune_registered();
+      ShardBlockRetainerSubscriptions retainer;
+      require(retainer.subscribe(kA, shard, 0, 0).send_retained, "a new subscription is replayed");
+      require(!retainer.subscribe(kA, shard, 0, 30).send_retained, "a renewal is not");
+      require(retainer.size() == 1, "the expired subscription is still recorded");
+      require(retainer.subscribe(kA, shard, 0, 30 + kShardBlockRetainerSubscriptionTtl).send_retained,
+              "an expired one is treated as new");
+      require(retainer.subscribe(kA, shard, kShardBlockVerifierResendFlag, 100).send_retained,
+              "a resend request is answered");
+      require(!retainer.subscribe(kA, shard, kShardBlockVerifierResendFlag, 101).send_retained,
+              "but not twice within the interval");
+    }
+
+    // The acknowledgement arrives but the replay is lost, before any wait:
+    // recovery ends. A later local wait for the lost block starts it again
+    // by itself, and the next replay completes the wait. No overflow, and no
+    // confirmation is injected.
+    {
+      Harness h(limits);
+      h.round(0);
+      h.overflow();
+      h.lose_replay_next = true;
+      h.round(period);
+      require(h.replays == 2, "the dropped confirmation was replayed");
+      require(!h.verifier.recovery().outstanding(key), "the acknowledgement ended recovery");
+      h.request_flags.clear();
+      h.round(2 * period);
+      require(h.request_flags == std::vector<td::uint32>{0}, "nothing is asked while nothing waits");
+      Waiter waiter;
+      h.store.wait({block_at(103)}, waiter.promise());
+      require(!waiter.done, "the lost confirmation leaves the wait unresolved");
+      h.round(3 * period);
+      require(h.request_flags.back() == kShardBlockVerifierResendFlag, "the unresolved wait asks for a replay");
+      require(waiter.done, "the replay completes the wait");
+      h.request_flags.clear();
+      h.round(4 * period);
+      require(h.request_flags == std::vector<td::uint32>{0}, "a resolved wait asks for nothing more");
+    }
+
+    // The same with the wait already outstanding: an acknowledged replay that
+    // is lost does not end the asking.
+    {
+      Harness h(limits);
+      h.round(0);
+      h.overflow();
+      Waiter waiter;
+      h.store.wait({block_at(103)}, waiter.promise());
+      h.lose_replay_next = true;
+      h.round(period);
+      require(!waiter.done, "the replay was lost");
+      h.round(2 * period);
+      require(waiter.done, "the next round asks again and completes the wait");
+    }
+
+    // A failed request leaves recovery outstanding, and the retry completes
+    // it and the wait.
+    {
+      Harness h(limits);
+      h.round(0);
+      h.overflow();
+      h.fail_next = true;
+      h.round(period);
+      require(h.verifier.recovery().outstanding(key), "a failed request leaves recovery outstanding");
+      h.round(2 * period);
+      require(!h.verifier.recovery().outstanding(key), "an acknowledged retry ends recovery");
+      Waiter waiter;
+      h.store.wait({block_at(103)}, waiter.promise());
+      require(waiter.done, "the replayed confirmation completes a later wait");
+    }
+
+    // Recovery started by a dropped confirmation that no wait needs is given
+    // up after a bounded number of attempts.
+    {
+      Harness h(limits);
+      h.round(0);
+      h.overflow();
+      for (unsigned i = 0; i < Recovery::kMaxAttempts; ++i) {
+        h.fail_next = true;
+        h.round((i + 1) * period);
+      }
+      require(h.verifier.recovery().outstanding(key), "spent attempts are given up at the next round");
+      h.round((Recovery::kMaxAttempts + 1) * period);
+      require(!h.verifier.recovery().outstanding(key), "recovery no wait needs is given up");
+    }
+
+    // A retainer that predates recovery, with an expired subscription it
+    // never cleans up: no request makes it replay. The verifier keeps asking
+    // while the wait is unresolved, reports the retainer as needing an
+    // upgrade, and the wait resolves only when its block is registered.
+    {
+      Harness h(limits);
+      h.old = true;
+      h.round(0);
+      h.overflow();
+      Waiter waiter;
+      h.store.wait({block_at(103)}, waiter.promise());
       double now = 0;
-      for (unsigned i = 0; i < Recovery::kMaxResendAttempts; ++i) {
+      bool reported = false;
+      for (unsigned i = 0; i < 20; ++i) {
         now += period;
-        sc.tick(now);
-        require(sc.retainer.replays == 1, "an old retainer does not replay on a renewal");
+        h.round(now);
+        require(h.request_flags.back() == kShardBlockVerifierResendFlag, "the verifier keeps asking");
+        reported = reported || h.verifier.recovery().take_newly_unsupported().contains(key);
       }
-      require(sc.recovery.stage(key) == Recovery::Stage::Lapse, "unacknowledged requests let the subscription lapse");
-      const unsigned before_lapse = sc.requests;
-      while (sc.recovery.outstanding(key) && now < 1000) {
+      require(now > 2 * kShardBlockRetainerSubscriptionTtl, "the subscription expired meanwhile");
+      require(h.replays == 1, "the old retainer never replayed");
+      require(!waiter.done, "the wait stays unresolved");
+      require(reported && h.verifier.recovery().unsupported(key), "the retainer is reported as unsupported");
+      require(h.verifier.recovery().take_newly_unsupported().empty(), "and reported once");
+      h.mc.top = 103;
+      h.store.prune_registered();
+      require(waiter.done, "registering the block resolves the wait");
+      for (unsigned i = 0; i <= Recovery::kMaxAttempts; ++i) {
         now += period;
-        sc.tick(now);
+        h.round(now);
       }
-      require(!sc.recovery.outstanding(key), "recovery completes");
-      require(sc.retainer.replays == 2, "the fresh subscription was answered with a replay");
-      require(sc.requests == before_lapse + 1, "no subscription was renewed during the lapse");
-      Waiter waiter;
-      sc.store.wait({block_at(103)}, waiter.promise());
-      require(waiter.done, "the dropped confirmation completes a local wait after the fresh subscription");
-    }
-
-    // A fresh subscription that fails may still have reached the retainer
-    // and made the subscription current again, so it lapses again.
-    {
-      Recovery recovery;
-      recovery.request(key);
-      for (unsigned i = 0; i < Recovery::kMaxResendAttempts; ++i) {
-        require(recovery.subscription(key, 0) == kShardBlockVerifierResendFlag, "a resend is requested");
-        recovery.on_failure(key, 0);
-      }
-      require(recovery.stage(key) == Recovery::Stage::Lapse, "repeated failures let the subscription lapse");
-      require(!recovery.subscription(key, Recovery::kLapse - 1), "nothing is sent during the lapse");
-      require(recovery.subscription(key, Recovery::kLapse) == td::uint32{0}, "then a fresh subscription");
-      recovery.on_failure(key, Recovery::kLapse);
-      require(recovery.stage(key) == Recovery::Stage::Lapse, "a failed fresh subscription lapses again");
-      recovery.retain_if([](const Key &) { return false; });
-      require(!recovery.outstanding(key), "an unconfigured subscription is forgotten");
+      require(!h.verifier.recovery().outstanding(key), "recovery stops once nothing needs it");
     }
   }
 

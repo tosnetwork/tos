@@ -20,6 +20,7 @@
 #include "interfaces/validator-manager.h"
 #include "rldp2/rldp.h"
 #include "validator/shard-block-confirmations.h"
+#include "validator/shard-block-subscription.h"
 
 namespace tos::validator {
 
@@ -66,8 +67,8 @@ class ShardBlockVerifier : public td::actor::Actor {
 
   ShardBlockConfirmations confirmations_;
   // Recovery of dropped confirmations, per (trusted node, shard) subscription.
-  using SubscriptionKey = std::pair<adnl::AdnlNodeIdShort, ShardIdFull>;
-  ShardBlockSubscriptionRecovery<SubscriptionKey> recovery_;
+  using SubscriptionKey = ShardBlockVerifierSubscriptions::Key;
+  ShardBlockVerifierSubscriptions subscriptions_;
 
   void update_config(td::Ref<ShardBlockVerifierConfig> new_config);
   void process_message(adnl::AdnlNodeIdShort src, td::BufferSlice data);

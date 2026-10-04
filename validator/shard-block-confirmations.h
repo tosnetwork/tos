@@ -39,178 +39,9 @@ struct ShardBlockConfirmationLimits {
   // Confirmations held for a later retry because they were beyond the
   // lookahead or over a budget, per peer and in total. Each holds one block
   // id. Past these the newest is dropped and its peer is asked to send its
-  // confirmations again (see kShardBlockVerifierResendFlag).
+  // confirmations again (see shard-block-subscription.h).
   std::size_t max_deferred_per_peer = 1024;
   std::size_t max_deferred = 4096;
-};
-
-// Subscription flag asking a shard block retainer to send every confirmation
-// it still holds for the shard again, as it does for a new subscriber. A
-// verifier sets it after it had to drop confirmations from that retainer.
-inline constexpr td::uint32 kShardBlockVerifierResendFlag = 1;
-// Reply flag by which a retainer acknowledges that it sent every confirmation
-// it holds for the shard in answer to this subscription. A retainer that
-// predates it never sets it.
-inline constexpr td::uint32 kShardBlockRetainerReplayedFlag = 1;
-// The least interval between two resends a retainer makes to one subscriber
-// on request; a new subscription is always answered.
-inline constexpr double kShardBlockRetainerMinResendInterval = 5.0;
-// How long a retainer keeps a subscription that is not renewed.
-inline constexpr double kShardBlockRetainerSubscriptionTtl = 60.0;
-// How often a verifier renews its subscriptions.
-inline constexpr double kShardBlockVerifierSubscribePeriod = 10.0;
-
-// Whether a retainer treats a subscription request as a new subscription: it
-// has none for the subscriber, or the one it has expired.
-inline bool shard_block_retainer_is_new_subscription(bool has_subscription, bool expired) {
-  return !has_subscription || expired;
-}
-
-// Whether a retainer answers a subscription by sending every confirmation it
-// holds for the shard.
-inline bool shard_block_retainer_sends_retained(bool new_subscription, td::uint32 flags, bool resend_allowed) {
-  return new_subscription || ((flags & kShardBlockVerifierResendFlag) != 0 && resend_allowed);
-}
-
-// Recovery of confirmations a verifier had to drop, per (trusted node, shard)
-// subscription. Owned by one actor; not thread-safe.
-//
-// A dropped confirmation is recovered only by the retainer sending everything
-// it holds again, and recovery stays outstanding until that is acknowledged:
-// - Resend: each regular subscription carries kShardBlockVerifierResendFlag.
-//   A reply with kShardBlockRetainerReplayedFlag completes recovery. A failed
-//   request, or a reply without the flag, counts as an attempt and recovery
-//   stays outstanding; after kMaxResendAttempts the retainer is taken not to
-//   understand the flag (it predates it) or not to be reachable for it.
-// - Lapse: the verifier stops renewing that subscription for longer than the
-//   retainer keeps one (kLapse), so the retainer forgets it. Every retainer
-//   version answers a new subscription with everything it holds.
-// - Fresh: the next subscription after the lapse is new to the retainer. A
-//   reply completes recovery; a failure lapses again, since the request may
-//   have reached the retainer and made the subscription current again.
-template <class Key>
-class ShardBlockSubscriptionRecovery {
- public:
-  static constexpr unsigned kMaxResendAttempts = 3;
-  static constexpr double kLapse = kShardBlockRetainerSubscriptionTtl + 2 * kShardBlockVerifierSubscribePeriod;
-
-  enum class Stage { Resend, Lapse, Fresh };
-
-  // Starts recovery for a subscription unless it is already recovering.
-  void request(const Key &key) {
-    states_.try_emplace(key);
-  }
-
-  // The flags for the regular subscription `key` at `now`, or nullopt when
-  // the subscription must not be renewed now (it is being let lapse).
-  std::optional<td::uint32> subscription(const Key &key, double now) {
-    auto it = states_.find(key);
-    if (it == states_.end()) {
-      return td::uint32{0};
-    }
-    State &state = it->second;
-    switch (state.stage) {
-      case Stage::Resend:
-        return kShardBlockVerifierResendFlag;
-      case Stage::Lapse:
-        if (now < state.lapse_until) {
-          return std::nullopt;
-        }
-        state.stage = Stage::Fresh;
-        return td::uint32{0};
-      case Stage::Fresh:
-        return td::uint32{0};
-    }
-    return td::uint32{0};
-  }
-
-  void on_reply(const Key &key, td::uint32 reply_flags, double now) {
-    auto it = states_.find(key);
-    if (it == states_.end()) {
-      return;
-    }
-    State &state = it->second;
-    switch (state.stage) {
-      case Stage::Resend:
-        if ((reply_flags & kShardBlockRetainerReplayedFlag) != 0) {
-          states_.erase(it);
-          return;
-        }
-        attempt_failed(state, now);
-        return;
-      case Stage::Fresh:
-        // The retainer had forgotten the subscription, so it answered it as a
-        // new one, with everything it holds.
-        states_.erase(it);
-        return;
-      case Stage::Lapse:
-        return;
-    }
-  }
-
-  void on_failure(const Key &key, double now) {
-    auto it = states_.find(key);
-    if (it == states_.end()) {
-      return;
-    }
-    State &state = it->second;
-    switch (state.stage) {
-      case Stage::Resend:
-        attempt_failed(state, now);
-        return;
-      case Stage::Fresh:
-        lapse(state, now);
-        return;
-      case Stage::Lapse:
-        return;
-    }
-  }
-
-  // Forgets recovery for subscriptions `keep` rejects (no longer configured).
-  template <class Predicate>
-  void retain_if(Predicate keep) {
-    for (auto it = states_.begin(); it != states_.end();) {
-      if (keep(it->first)) {
-        ++it;
-      } else {
-        it = states_.erase(it);
-      }
-    }
-  }
-
-  bool outstanding(const Key &key) const {
-    return states_.contains(key);
-  }
-  std::optional<Stage> stage(const Key &key) const {
-    auto it = states_.find(key);
-    if (it == states_.end()) {
-      return std::nullopt;
-    }
-    return it->second.stage;
-  }
-  std::size_t size() const {
-    return states_.size();
-  }
-
- private:
-  struct State {
-    Stage stage = Stage::Resend;
-    unsigned attempts = 0;
-    double lapse_until = 0;
-  };
-
-  void attempt_failed(State &state, double now) {
-    if (++state.attempts >= kMaxResendAttempts) {
-      lapse(state, now);
-    }
-  }
-
-  static void lapse(State &state, double now) {
-    state.stage = Stage::Lapse;
-    state.lapse_until = now + kLapse;
-  }
-
-  std::map<Key, State> states_;
 };
 
 // The blocks awaited or confirmed by trusted shard-block verifiers, and who
@@ -394,6 +225,27 @@ class ShardBlockConfirmations {
   // can ask them to send their confirmations again.
   std::set<Peer> take_resend_requests() {
     return std::exchange(resend_requests_, {});
+  }
+  // For every local wait not yet resolved, the trusted nodes of its shard
+  // that have not confirmed the block, as (node, configured shard) pairs: the
+  // subscriptions recovery must keep asking while the wait is outstanding.
+  std::set<std::pair<Peer, ShardIdFull>> unresolved_wait_sources() const {
+    std::set<std::pair<Peer, ShardIdFull>> result;
+    if (config_.is_null()) {
+      return result;
+    }
+    for (const auto &[block_id, info] : blocks_) {
+      if (info.confirmed || info.promises.empty()) {
+        continue;
+      }
+      const auto &shard_config = config_->shards[info.config_shard_idx];
+      for (std::size_t i = 0; i < shard_config.trusted_nodes.size() && i < info.confirmed_by.size(); ++i) {
+        if (!info.confirmed_by[i]) {
+          result.emplace(shard_config.trusted_nodes[i], shard_config.shard_id);
+        }
+      }
+    }
+    return result;
   }
   std::size_t deferred() const {
     return deferred_total_;

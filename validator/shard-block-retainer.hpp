@@ -19,6 +19,7 @@
 
 #include "interfaces/validator-manager.h"
 #include "rldp2/rldp.h"
+#include "validator/shard-block-subscription.h"
 
 namespace tos::validator {
 
@@ -54,12 +55,7 @@ class ShardBlockRetainer : public td::actor::Actor {
 
   bool inited_ = false;
   std::set<adnl::AdnlNodeIdShort> validator_adnl_ids_;
-  struct Subscription {
-    td::Timestamp ttl;
-    // When this subscriber may next have every confirmation sent again on request.
-    td::Timestamp resend_allowed_at;
-  };
-  std::map<std::pair<adnl::AdnlNodeIdShort, ShardIdFull>, Subscription> subscribers_;
+  ShardBlockRetainerSubscriptions subscriptions_;
   std::set<BlockIdExt> confirmed_blocks_;
 
   void process_query(adnl::AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
