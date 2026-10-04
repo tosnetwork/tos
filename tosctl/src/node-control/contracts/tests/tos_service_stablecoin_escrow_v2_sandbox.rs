@@ -31,7 +31,6 @@ const MAGIC_INTENT: u32 = 0x4e53_4931;
 const OP_RELEASE: u32 = 0x4e45_0001;
 const OP_REFUND: u32 = 0x4e45_0002;
 const OP_ACCEPT: u32 = 0x4e45_0003;
-const OP_RETRY_SETTLEMENT: u32 = 0x4e45_0004;
 const OP_TRANSFER_NOTIFICATION: u32 = 0x7362_d09c;
 const OP_INTERNAL_TRANSFER: u32 = 0x178d_4519;
 const OP_TOP_UP: u32 = 0xd372_158c;
@@ -41,8 +40,6 @@ const STATUS_AWAITING_FUNDING: u8 = 1;
 const STATUS_FUNDED: u8 = 2;
 const STATUS_RELEASE_PENDING: u8 = 3;
 const STATUS_REFUND_PENDING: u8 = 4;
-const STATUS_RELEASE_RETRYING: u8 = 5;
-const STATUS_REFUND_RETRYING: u8 = 6;
 const ERR_BAD_STATE: i32 = 2401;
 const ERR_DEADLINE: i32 = 2405;
 const ERR_BAD_RECEIPT: i32 = 2406;
@@ -1170,141 +1167,43 @@ fn repeated_replay_bounce_consumes_only_fees_and_preserves_reserve_and_jettons()
     assert!(f.escrow_balance() >= ESCROW_STORAGE_FLOOR);
 }
 
-fn retry_body(query_id: u64) -> Cell {
-    let mut b = BuilderData::new();
-    b.append_u32(OP_RETRY_SETTLEMENT).unwrap().append_u64(query_id).unwrap();
-    b.into_cell().unwrap()
-}
-
-/// Value a retrier attaches: the 0.1 TOS payout budget plus fees, with margin.
-const RETRY_VALUE: u64 = TOS / 2;
-
 #[test]
-fn a_release_the_provider_wallet_rejects_is_recovered_by_a_funded_retry() {
-    // A receive-locked provider wallet makes the payout's second leg bounce into
-    // the escrow's own wallet, which re-credits it without telling the escrow.
-    // The settlement stays pending with the jettons back in the own wallet; a
-    // funded retry re-sends the recorded payout once the provider can receive.
+fn provider_receive_locked_release_is_funds_safe_but_pending() {
+    // Item 6 (BUG-002 accepted posture): a receive-locked provider wallet makes
+    // the second leg re-credit the escrow's own wallet with no signal; the escrow
+    // stays release_pending, the provider is unpaid, and no retry double-moves.
     let mut f = Fixture::new();
     f.fund();
     let provider = f.provider.address().clone();
     let pw = f.provider_wallet.clone();
-    f.deploy_incoming_locked(provider, pw.clone());
+    f.deploy_incoming_locked(provider, pw);
     let relayer = f.relayer.address().clone();
     let body = f.release_body(90, f.receipt(0xa3));
     f.send(&relayer, body).expect_success();
     assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
-    assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (0, AMOUNT));
-    // A new release cannot start while the first is pending.
-    let other = f.release_body(91, f.receipt(0xa3));
-    f.send(&relayer, other).expect_aborted().expect_exit_code(ERR_BAD_STATE);
-
-    // Still locked: the retry fails at the same leg and nothing moves.
-    let anyone = f.buyer.address().clone();
-    f.send_with_value(&anyone, retry_body(90), RETRY_VALUE).expect_success();
-    let (st, funded, settled, _, pq, _) = f.runtime();
-    assert_eq!(
-        (st, funded, settled, pq),
-        (STATUS_RELEASE_RETRYING, AMOUNT as u128, AMOUNT as u128, 90)
-    );
-    assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (0, AMOUNT));
-
-    // Unlocked: the retry delivers the recorded amount to the provider.
-    f.set_wallet_status(&pw, 0);
-    f.send_with_value(&anyone, retry_body(90), RETRY_VALUE).expect_success();
-    assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
-    assert_eq!(f.state().0, STATUS_RELEASE_RETRYING);
-
-    // A retry after delivery cannot pay twice: the own wallet is empty, the
-    // attempt bounces, and the bounce does not roll the escrow back to funded.
-    let before = f.escrow_balance();
-    f.send_with_value(&anyone, retry_body(90), RETRY_VALUE).expect_success();
-    assert_eq!((f.provider_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
-    assert_eq!(f.state().0, STATUS_RELEASE_RETRYING);
-    assert!(f.escrow_balance() + TOS / 5 > before, "a spent retry costs only fees");
-    assert!(f.escrow_balance() >= ESCROW_STORAGE_FLOOR);
-}
-
-#[test]
-fn a_refund_the_buyer_wallet_rejects_is_recovered_by_a_funded_retry() {
-    let mut f = Fixture::new();
-    f.fund();
-    let buyer = f.buyer.address().clone();
-    let bw = f.buyer_wallet.clone();
-    f.deploy_incoming_locked(buyer, bw.clone());
-    f.bc.set_now(f.refund_at as u32);
-    let relayer = f.relayer.address().clone();
-    f.send(&relayer, Fixture::refund_body(80)).expect_success();
-    assert_eq!(f.state().0, STATUS_REFUND_PENDING);
-    assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (0, AMOUNT));
-
-    f.send_with_value(&relayer, retry_body(80), RETRY_VALUE).expect_success();
-    assert_eq!(f.state().0, STATUS_REFUND_RETRYING);
-    assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (0, AMOUNT));
-
-    f.set_wallet_status(&bw, 0);
-    f.send_with_value(&relayer, retry_body(80), RETRY_VALUE).expect_success();
-    assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
-    f.send_with_value(&relayer, retry_body(80), RETRY_VALUE).expect_success();
-    assert_eq!((f.buyer_wallet_balance(), f.own_wallet_balance()), (AMOUNT, 0));
-    assert_eq!(f.state().0, STATUS_REFUND_RETRYING);
-    // The pending refund still answers its exact replay idempotently.
-    f.send(&relayer, Fixture::refund_body(80)).expect_success();
-    assert_eq!(f.state().0, STATUS_REFUND_RETRYING);
-}
-
-#[test]
-fn a_retry_needs_a_pending_settlement_its_query_and_its_own_funding() {
-    let mut f = Fixture::new();
-    f.fund();
-    let relayer = f.relayer.address().clone();
-    // Nothing to retry while merely funded.
-    let before = f.data_hash();
-    f.send_with_value(&relayer, retry_body(90), RETRY_VALUE)
-        .expect_aborted()
-        .expect_exit_code(ERR_BAD_STATE);
-    assert_eq!(f.data_hash(), before);
-
-    let provider = f.provider.address().clone();
-    let pw = f.provider_wallet.clone();
-    f.deploy_incoming_locked(provider, pw);
-    let body = f.release_body(90, f.receipt(0xa3));
-    f.send(&relayer, body).expect_success();
-    let pending = f.data_hash();
-    // Another query cannot retry this settlement.
-    f.send_with_value(&relayer, retry_body(91), RETRY_VALUE)
-        .expect_aborted()
-        .expect_exit_code(ERR_BAD_STATE);
-    // The retrier funds the attempt; the escrow's balance does not.
-    f.send_with_value(&relayer, retry_body(90), TOS / 20)
-        .expect_aborted()
-        .expect_exit_code(ERR_INSUFFICIENT_GAS);
-    assert_eq!(f.data_hash(), pending);
+    assert_eq!(f.provider_wallet_balance(), 0);
+    assert_eq!(f.own_wallet_balance(), AMOUNT);
+    let retry = f.release_body(91, f.receipt(0xa3));
+    f.send(&relayer, retry).expect_aborted().expect_exit_code(ERR_BAD_STATE);
+    assert_eq!(f.provider_wallet_balance(), 0);
     assert_eq!(f.own_wallet_balance(), AMOUNT);
 }
 
 #[test]
-fn once_retried_a_bounce_no_longer_rolls_the_settlement_back() {
-    // Before any retry an own-wallet bounce of the pending query means the
-    // jettons never left, and restores funded (covered above). After a retry it
-    // can also mean an earlier attempt already paid, so it changes nothing.
+fn buyer_receive_locked_refund_is_funds_safe_but_pending() {
+    // Item 7: symmetric for refund with a receive-locked buyer wallet.
     let mut f = Fixture::new();
     f.fund();
-    let provider = f.provider.address().clone();
-    let pw = f.provider_wallet.clone();
-    f.deploy_incoming_locked(provider, pw);
+    let buyer = f.buyer.address().clone();
+    let bw = f.buyer_wallet.clone();
+    f.deploy_incoming_locked(buyer, bw);
+    f.bc.set_now(f.refund_at as u32);
     let relayer = f.relayer.address().clone();
-    let body = f.release_body(90, f.receipt(0xa3));
+    let body = Fixture::refund_body(80);
     f.send(&relayer, body).expect_success();
-    f.send_with_value(&relayer, retry_body(90), RETRY_VALUE).expect_success();
-    let retrying = f.data_hash();
-    let own = f.own_wallet.clone();
-    f.send_bounced(&own, bounce_body(90)).expect_success();
-    assert_eq!(f.data_hash(), retrying);
-    assert_eq!(f.state().0, STATUS_RELEASE_RETRYING);
-    // A bounce of another query is still refused.
-    f.send_bounced(&own, bounce_body(91)).expect_aborted().expect_exit_code(ERR_BAD_CONFIRMATION);
-    assert_eq!(f.data_hash(), retrying);
+    assert_eq!(f.state().0, STATUS_REFUND_PENDING);
+    assert_eq!(f.buyer_wallet_balance(), 0);
+    assert_eq!(f.own_wallet_balance(), AMOUNT);
 }
 
 fn excesses_body(query_id: u64) -> Cell {

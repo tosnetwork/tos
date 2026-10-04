@@ -18,9 +18,9 @@ import json, pathlib, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert manifest["schema"] == "tos.contract.release.v1"
 assert manifest["protocol"] == "tos_service_stablecoin_escrow_v2"
-assert manifest["code_hash"] == "tvm-cell-sha256:caaa56fc1e10d967d754e79de52a2a2d601a58f73e1b84fe0bc2976aa605bff3"
-assert manifest["boc_sha256"] == "sha256:db48f74be8a3309040502eb3a857da7f5074e07af2a7e7c6afa719882422c4c8"
-assert manifest["boc_bytes"] == 2815
+assert manifest["code_hash"] == "tvm-cell-sha256:8bb0b7c809b9abfc8c3446a6a283f8cf4278c31dadc7f3bbd377d984e7d27544"
+assert manifest["boc_sha256"] == "sha256:cb6ca9b958230c55222d521e29c7222cb24121fdc48e9add1edc696f2860b2f0"
+assert manifest["boc_bytes"] == 2609
 assert manifest["accepted_quote_schema"] == 2
 assert manifest["initial_state"] == "pending_acceptance"
 PY
