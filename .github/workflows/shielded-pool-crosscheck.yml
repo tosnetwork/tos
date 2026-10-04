@@ -29,6 +29,13 @@ on:
       - "tools/shielded-pool-circuit/**"
       - "tools/shielded-pool-genesis/**"
       - "tools/shielded-pool-wallet/**"
+      # The genesis tests build against the ceremony crate and read the
+      # committed ceremony transcript, the phase-1 inputs, the profile and
+      # the genesis manifest.
+      - "tools/shielded-pool-ceremony/**"
+      - "artifacts/phase1/**"
+      - "artifacts/phase2/ceremony/**"
+      - "artifacts/shielded-pool/**"
       - ".github/workflows/shielded-pool-crosscheck.yml"
     types: [opened, reopened, synchronize, ready_for_review]
   push:
@@ -39,6 +46,13 @@ on:
       - "tools/shielded-pool-circuit/**"
       - "tools/shielded-pool-genesis/**"
       - "tools/shielded-pool-wallet/**"
+      # The genesis tests build against the ceremony crate and read the
+      # committed ceremony transcript, the phase-1 inputs, the profile and
+      # the genesis manifest.
+      - "tools/shielded-pool-ceremony/**"
+      - "artifacts/phase1/**"
+      - "artifacts/phase2/ceremony/**"
+      - "artifacts/shielded-pool/**"
       - ".github/workflows/shielded-pool-crosscheck.yml"
   workflow_dispatch:
 

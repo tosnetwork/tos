@@ -42,3 +42,41 @@ jobs:
       - name: Run every registered source guard
         working-directory: build-source-guards
         run: ctest -L source-guard --no-tests=error --output-on-failure
+
+  # Offline regression tests for the local PQ testnet tooling: the root-run
+  # service drivers, the root-service snapshot installer, planning, and the
+  # config-34 proof helper. They need the locked Python dependencies and the
+  # generated TL API, so they run here rather than as configure-only CTest
+  # guards. Every test works in a temporary directory; none reads /data,
+  # starts a node, or talks to a systemd unit.
+  local-testnet-python:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up repository Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Prepare generated Python API and dependencies
+        run: |
+          uv sync --frozen --no-dev
+          uv run --frozen test/tostester/generate_tl.py
+
+      - name: Run the local testnet tooling tests
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          PYTHONPATH: scripts
+        run: >-
+          uv run --frozen pytest -q -p no:cacheprovider
+          test/pq-native/test_local_pq_testnet.py
+          test/pq-native/test_x02_config34_proof.py
+          scripts/test_install_root_services.py
+          scripts/test_local_pq_transfers.py
+          scripts/test_local_pq_privacy.py
+          scripts/test_local_pq_elections.py
