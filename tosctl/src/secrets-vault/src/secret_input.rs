@@ -184,10 +184,12 @@ fn read_fd(fd: i32) -> Result<Zeroizing<Vec<u8>>, SecretInputError> {
     }
     // Read through a duplicate of the inherited descriptor rather than by
     // reopening /dev/fd/N: reopening fails for sockets on Linux. The duplicate
-    // is owned here and closed on drop; the original stays open, untouched.
-    // SAFETY: dup has no memory-safety preconditions; an invalid descriptor
-    // makes it fail with EBADF, which is reported below.
-    let duplicate = unsafe { libc::dup(fd) };
+    // is owned here, close-on-exec so no child inherits it, and closed on
+    // drop. The original stays open, but it shares the duplicate's file
+    // offset: what is read here is consumed from the caller's stream too.
+    // SAFETY: fcntl(F_DUPFD_CLOEXEC) has no memory-safety preconditions; an
+    // invalid descriptor makes it fail with EBADF, which is reported below.
+    let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
     if duplicate < 0 {
         return Err(SecretInputError::BadFd {
             fd,

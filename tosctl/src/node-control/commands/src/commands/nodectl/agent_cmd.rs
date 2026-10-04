@@ -413,6 +413,11 @@ enum AgentTaskOperation {
     Cancel,
     Timeout,
     /// Ends a dispute left unresolved past its deadline with the fallback split.
+    /// The escrow must still hold the whole budget: the default message value
+    /// pays this call's gas and forwarding, not storage rent that has eaten
+    /// into the budget. If it has, top the escrow up first (a plain transfer,
+    /// with headroom for further rent); a larger value on this call does not
+    /// count towards the budget.
     DisputeTimeout,
     RotateAttestorKey,
     RevokeAttestor,
