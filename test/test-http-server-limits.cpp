@@ -161,6 +161,33 @@ class Client {
     }
   }
 
+  // Reads for the whole window and succeeds only if the connection is still
+  // open at the end: a clean close, a reset or a read error all fail it.
+  bool stays_open(int window_ms, std::string &out) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(window_ms);
+    while (true) {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
+        return true;
+      }
+      int remaining = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+      pollfd pfd{fd_, POLLIN, 0};
+      int rc = ::poll(&pfd, 1, remaining);
+      if (rc == 0) {
+        return true;
+      }
+      if (rc < 0) {
+        return false;
+      }
+      char buf[1024];
+      auto n = ::recv(fd_, buf, sizeof(buf), 0);
+      if (n <= 0) {
+        return false;
+      }
+      out.append(buf, static_cast<size_t>(n));
+    }
+  }
+
   // Reads one chunked response through its terminating zero chunk.
   bool read_chunked_response(int timeout_ms, std::string &out) {
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -651,7 +678,7 @@ TEST(HttpServerLimits, without_the_option_an_early_answer_keeps_reading_the_body
     ASSERT_TRUE(early.connect_with_retries());
     ASSERT_TRUE(early.send_all(kLargeDeclaredBody));
     std::string received;
-    ASSERT_TRUE(!early.read_until_clean_eof(1500, received));
+    ASSERT_TRUE(early.stays_open(1500, received));
     ASSERT_TRUE(received.rfind("HTTP/1.1 200", 0) == 0);
   });
 }
