@@ -267,6 +267,7 @@ pub struct ConfigurationSection {
 pub struct StateSection {
     pub commitment_root: String,
     pub commitment_next_index: u64,
+    pub reserved_recovery_leaves: u64,
     pub nullifier_root: String,
     pub nullifier_next_index: u64,
     pub last_anchor_epoch: String,

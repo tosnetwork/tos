@@ -314,6 +314,11 @@ fn each_bound_field_is_refused_when_it_differs() {
             "\"withdrawal_fee\": \"1\"".into(),
             "does not describe",
         ),
+        (
+            "\"reserved_recovery_leaves\": 0".into(),
+            "\"reserved_recovery_leaves\": 1".into(),
+            "does not describe",
+        ),
         ("    \"class\": \"ceremony\",\n".into(), "    \"class\": \"other\",\n".into(), "not one"),
         (
             "  }\n}\n".into(),
