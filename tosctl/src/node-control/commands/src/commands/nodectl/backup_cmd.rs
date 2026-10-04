@@ -8,9 +8,9 @@
  */
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
@@ -102,6 +102,10 @@ fn format_timestamp(t: SystemTime) -> String {
     format!("{:04}{:02}{:02}_{:02}{:02}{:02}", year, mon, d, h, m, s)
 }
 
+/// Largest file a backup copies. Configs and keys are small; anything larger
+/// is not one of them, and a device file could otherwise be read without end.
+const MAX_BACKUP_FILE_BYTES: u64 = 64 << 20;
+
 /// A fresh directory only this user can enter (0700), with an unpredictable
 /// name. Staging key material under a guessable /tmp path would let another
 /// local user plant the directory, or links inside it, before we write.
@@ -114,50 +118,130 @@ fn private_temp_dir(prefix: &str) -> anyhow::Result<tempfile::TempDir> {
         .tempdir()?)
 }
 
+/// Whether `path` is a directory itself, not a symlink to one.
+fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).map(|meta| meta.is_dir()).unwrap_or(false)
+}
+
+/// Whether `path` is a regular file itself, not a symlink to one.
+fn is_real_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).map(|meta| meta.is_file()).unwrap_or(false)
+}
+
+/// Read a regular file, refusing a symlink at `path` and anything that is not
+/// a regular file. O_NONBLOCK keeps a FIFO from stalling the open.
+fn read_regular_file(path: &Path) -> anyhow::Result<Vec<u8>> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|err| anyhow::anyhow!("refusing to read {}: {}", path.display(), err))?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        anyhow::bail!("refusing to read {}: not a regular file", path.display());
+    }
+    if meta.len() > MAX_BACKUP_FILE_BYTES {
+        anyhow::bail!(
+            "refusing to read {}: larger than {} bytes",
+            path.display(),
+            MAX_BACKUP_FILE_BYTES
+        );
+    }
+    let mut data = Vec::new();
+    file.take(MAX_BACKUP_FILE_BYTES + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > MAX_BACKUP_FILE_BYTES {
+        anyhow::bail!(
+            "refusing to read {}: larger than {} bytes",
+            path.display(),
+            MAX_BACKUP_FILE_BYTES
+        );
+    }
+    Ok(data)
+}
+
+/// The directory `root/<components>`, creating missing components with mode
+/// 0700. A component that exists as a symlink or a non-directory is refused, so
+/// a write below it cannot be redirected elsewhere. `root` itself is trusted.
+fn ensure_real_dir(root: &Path, components: &[&str]) -> anyhow::Result<PathBuf> {
+    let mut dir = root.to_path_buf();
+    for component in components {
+        dir.push(component);
+        match std::fs::symlink_metadata(&dir) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => anyhow::bail!("refusing to use {}: not a real directory", dir.display()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(dir)
+}
+
 /// How a copied file may be written at its destination.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CopyMode {
     /// Only into a new file: an existing entry, a symlink included, is an error.
     CreateNew,
-    /// Replace an existing regular file; a symlink at the destination is an
-    /// error rather than followed.
+    /// Replace an existing regular file atomically; a symlink or a special file
+    /// at the destination is an error rather than followed.
     Replace,
 }
 
 /// Copy one regular file to `dst` with mode 0600, never following a symlink at
-/// `dst`.
+/// either end. A replacement is written beside `dst` and renamed over it, so a
+/// failed restore leaves the old file in place.
 fn copy_file_private(src: &Path, dst: &Path, mode: CopyMode) -> anyhow::Result<()> {
-    if mode == CopyMode::Replace {
-        match std::fs::symlink_metadata(dst) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                anyhow::bail!("refusing to write through symlink {}", dst.display())
+    let data = read_regular_file(src)?;
+    match mode {
+        CopyMode::CreateNew => {
+            let mut out = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(dst)?;
+            out.write_all(&data)?;
+            out.sync_all()?;
+        }
+        CopyMode::Replace => {
+            match std::fs::symlink_metadata(dst) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    anyhow::bail!("refusing to write through symlink {}", dst.display())
+                }
+                Ok(meta) if !meta.is_file() => {
+                    anyhow::bail!("refusing to replace non-file {}", dst.display())
+                }
+                Ok(_) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
             }
-            Ok(meta) if !meta.file_type().is_file() => {
-                anyhow::bail!("refusing to replace non-file {}", dst.display())
-            }
-            Ok(_) => std::fs::remove_file(dst)?,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
+            let parent = dst
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", dst.display()))?;
+            let mut tmp = tempfile::Builder::new()
+                .prefix(".tosctl-restore-")
+                .permissions(std::fs::Permissions::from_mode(0o600))
+                .tempfile_in(parent)?;
+            tmp.write_all(&data)?;
+            tmp.as_file().sync_all()?;
+            tmp.persist(dst)
+                .map_err(|err| anyhow::anyhow!("replacing {}: {}", dst.display(), err))?;
         }
     }
-    let data = std::fs::read(src)?;
-    let mut out = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(dst)?;
-    out.write_all(&data)?;
-    out.sync_all()?;
     Ok(())
 }
 
 /// Recursively copy a directory tree of regular files from `src` to `dst`.
-/// Symlinks and other special files in `src` are refused: a restored archive
-/// could otherwise make the copy read any file on the host.
+/// `src` itself and everything in it must be real directories and regular
+/// files: a restored archive could otherwise make the copy read any file on
+/// the host.
 fn copy_dir_recursive(src: &Path, dst: &Path, mode: CopyMode) -> anyhow::Result<()> {
+    if !is_real_dir(src) {
+        anyhow::bail!("refusing to copy {}: not a real directory", src.display());
+    }
     match std::fs::symlink_metadata(dst) {
-        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
+        Ok(meta) if !meta.is_dir() => {
             anyhow::bail!("refusing to copy into non-directory {}", dst.display())
         }
         Ok(_) => {}
@@ -182,6 +266,53 @@ fn copy_dir_recursive(src: &Path, dst: &Path, mode: CopyMode) -> anyhow::Result<
         }
     }
     Ok(())
+}
+
+/// Refuse an archive holding anything but regular files and directories under
+/// safe relative names, before a byte of it is extracted.
+fn screen_archive(archive: &Path) -> anyhow::Result<()> {
+    let listing = Command::new("tar").arg("-tvzf").arg(archive).output()?;
+    if !listing.status.success() {
+        anyhow::bail!("cannot list archive {}", archive.display());
+    }
+    for line in String::from_utf8_lossy(&listing.stdout).lines() {
+        match line.chars().next() {
+            Some('-') | Some('d') => {}
+            _ => anyhow::bail!("archive member is not a regular file or directory: {}", line),
+        }
+    }
+    let names = Command::new("tar").arg("-tzf").arg(archive).output()?;
+    if !names.status.success() {
+        anyhow::bail!("cannot list archive {}", archive.display());
+    }
+    for name in String::from_utf8_lossy(&names.stdout).lines() {
+        if name.starts_with('/') || name.split('/').any(|part| part == "..") {
+            anyhow::bail!("archive member has an unsafe name: {}", name);
+        }
+    }
+    Ok(())
+}
+
+/// Extract a screened archive into a new 0700 directory inside `private_root`
+/// and return it. The archive's own directory entries apply to that inner
+/// directory, never to `private_root`, and owners are not restored.
+fn extract_archive(archive: &Path, private_root: &Path) -> anyhow::Result<PathBuf> {
+    screen_archive(archive)?;
+    let inner = private_root.join("archive");
+    std::fs::DirBuilder::new().mode(0o700).create(&inner)?;
+    let status = Command::new("tar")
+        .arg("-xzf")
+        .arg(archive)
+        .arg("-C")
+        .arg(&inner)
+        .arg("--no-same-owner")
+        .arg("--no-same-permissions")
+        .arg("--no-overwrite-dir")
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("Failed to extract archive (tar exit code: {:?})", status.code());
+    }
+    Ok(inner)
 }
 
 /// Write a gzip tar of `dir` to a new file at `archive_path`, created 0600: the
@@ -240,7 +371,7 @@ impl BackupCreateCmd {
 
         // 1. Copy config.json
         let config_json = format!("{}/db/config.json", self.config_dir);
-        if Path::new(&config_json).exists() {
+        if is_real_file(Path::new(&config_json)) {
             let dest = format!("{}/db", staging_dir);
             std::fs::DirBuilder::new().mode(0o700).create(&dest)?;
             copy_file_private(
@@ -256,11 +387,8 @@ impl BackupCreateCmd {
 
         // 2. Copy keyring directory
         let keyring_dir = format!("{}/db/keyring", self.config_dir);
-        if Path::new(&keyring_dir).is_dir() {
-            let dest = format!("{}/db", staging_dir);
-            if !Path::new(&dest).is_dir() {
-                std::fs::DirBuilder::new().mode(0o700).create(&dest)?;
-            }
+        if is_real_dir(Path::new(&keyring_dir)) {
+            ensure_real_dir(staging.path(), &["db"])?;
             let dest = format!("{}/db/keyring", staging_dir);
             copy_dir_recursive(Path::new(&keyring_dir), Path::new(&dest), CopyMode::CreateNew)?;
             backed_up.push("db/keyring/".into());
@@ -271,7 +399,7 @@ impl BackupCreateCmd {
 
         // 3. Copy keys directory
         let keys_dir = format!("{}/keys", self.config_dir);
-        if Path::new(&keys_dir).is_dir() {
+        if is_real_dir(Path::new(&keys_dir)) {
             let dest = format!("{}/keys", staging_dir);
             copy_dir_recursive(Path::new(&keys_dir), Path::new(&dest), CopyMode::CreateNew)?;
             backed_up.push("keys/".into());
@@ -282,7 +410,7 @@ impl BackupCreateCmd {
 
         // 4. Copy tosctl config file
         let tosctl_cfg = Path::new(tosctl_config_path);
-        if tosctl_cfg.exists() {
+        if is_real_file(tosctl_cfg) {
             let file_name =
                 tosctl_cfg.file_name().unwrap_or_default().to_string_lossy().to_string();
             copy_file_private(
@@ -358,27 +486,23 @@ impl BackupRestoreCmd {
             }
         }
 
-        // Private extraction directory, removed when `extract` is dropped.
+        // Private extraction directory, removed when `extract` is dropped. The
+        // archive is screened and unpacked into a directory inside it.
         let extract = private_temp_dir("tosctl_restore_")?;
-        let extract_dir = extract.path().to_string_lossy().to_string();
-
-        // Extract archive to temp dir
-        let status = Command::new("tar").args(["-xzf", &self.file, "-C", &extract_dir]).status()?;
-
-        if !status.success() {
-            anyhow::bail!("Failed to extract archive (tar exit code: {:?})", status.code());
-        }
+        let extracted = extract_archive(archive, extract.path())?;
+        let extract_dir = extracted.to_string_lossy().to_string();
+        let config_root = Path::new(&self.config_dir);
+        std::fs::create_dir_all(config_root)?;
 
         let mut restored: Vec<String> = Vec::new();
 
         // Restore db/config.json
         let src_config = format!("{}/db/config.json", extract_dir);
-        if Path::new(&src_config).exists() {
-            let dest_dir = format!("{}/db", self.config_dir);
-            std::fs::create_dir_all(&dest_dir)?;
+        if is_real_file(Path::new(&src_config)) {
+            let dest_dir = ensure_real_dir(config_root, &["db"])?;
             copy_file_private(
                 Path::new(&src_config),
-                Path::new(&format!("{}/config.json", dest_dir)),
+                &dest_dir.join("config.json"),
                 CopyMode::Replace,
             )?;
             restored.push("db/config.json".into());
@@ -387,20 +511,18 @@ impl BackupRestoreCmd {
 
         // Restore db/keyring/
         let src_keyring = format!("{}/db/keyring", extract_dir);
-        if Path::new(&src_keyring).is_dir() {
-            let dest = format!("{}/db/keyring", self.config_dir);
-            std::fs::create_dir_all(&dest)?;
-            copy_dir_recursive(Path::new(&src_keyring), Path::new(&dest), CopyMode::Replace)?;
+        if is_real_dir(Path::new(&src_keyring)) {
+            let dest = ensure_real_dir(config_root, &["db", "keyring"])?;
+            copy_dir_recursive(Path::new(&src_keyring), &dest, CopyMode::Replace)?;
             restored.push("db/keyring/".into());
             println!("  {} db/keyring/", "+".green());
         }
 
         // Restore keys/
         let src_keys = format!("{}/keys", extract_dir);
-        if Path::new(&src_keys).is_dir() {
-            let dest = format!("{}/keys", self.config_dir);
-            std::fs::create_dir_all(&dest)?;
-            copy_dir_recursive(Path::new(&src_keys), Path::new(&dest), CopyMode::Replace)?;
+        if is_real_dir(Path::new(&src_keys)) {
+            let dest = ensure_real_dir(config_root, &["keys"])?;
+            copy_dir_recursive(Path::new(&src_keys), &dest, CopyMode::Replace)?;
             restored.push("keys/".into());
             println!("  {} keys/", "+".green());
         }
@@ -585,6 +707,163 @@ mod tests {
         assert!(write_private_archive(staging.path(), &link).is_err());
         assert!(write_private_archive(staging.path(), &archive).is_err());
         assert_eq!(std::fs::metadata(victim.path())?.len(), 0);
+        Ok(())
+    }
+
+    fn make_fifo(path: &Path) -> anyhow::Result<()> {
+        let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())?;
+        // SAFETY: mkfifo reads a NUL-terminated path we own for the call.
+        let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+        anyhow::ensure!(rc == 0, "mkfifo failed");
+        Ok(())
+    }
+
+    fn tar_of(dir: &Path, out: &Path, extra: &[&str]) -> anyhow::Result<()> {
+        let status = Command::new("tar")
+            .arg("-czf")
+            .arg(out)
+            .args(extra)
+            .arg("-C")
+            .arg(dir)
+            .arg(".")
+            .status()?;
+        anyhow::ensure!(status.success(), "tar failed");
+        Ok(())
+    }
+
+    #[test]
+    fn sources_must_be_real_files_and_directories() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let secret = dir.path().join("secret");
+        std::fs::write(&secret, b"outside")?;
+        symlink(&secret, dir.path().join("link"))?;
+        make_fifo(&dir.path().join("fifo"))?;
+        // A link and a FIFO are refused, and the FIFO does not stall the read.
+        assert!(read_regular_file(&dir.path().join("link")).is_err());
+        let started = std::time::Instant::now();
+        assert!(read_regular_file(&dir.path().join("fifo")).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        // A symlinked source directory is refused as a whole, not only its entries.
+        let real = tempfile::tempdir()?;
+        std::fs::write(real.path().join("key"), b"key")?;
+        symlink(real.path(), dir.path().join("keys"))?;
+        let dst = tempfile::tempdir()?;
+        assert!(
+            copy_dir_recursive(
+                &dir.path().join("keys"),
+                &dst.path().join("keys"),
+                CopyMode::CreateNew
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_symlinked_destination_component_is_refused() -> anyhow::Result<()> {
+        let config = tempfile::tempdir()?;
+        let elsewhere = tempfile::tempdir()?;
+        symlink(elsewhere.path(), config.path().join("db"))?;
+        assert!(ensure_real_dir(config.path(), &["db", "keyring"]).is_err());
+        assert_eq!(std::fs::read_dir(elsewhere.path())?.count(), 0);
+        // Real components are created owner-only.
+        let made = ensure_real_dir(config.path(), &["keys", "sub"])?;
+        assert_eq!(mode_of(&config.path().join("keys")), 0o700);
+        assert!(made.is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_replacement_keeps_the_old_file() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let dst = dir.path().join("config.json");
+        std::fs::write(&dst, b"old")?;
+        assert!(copy_file_private(&dir.path().join("missing"), &dst, CopyMode::Replace).is_err());
+        assert_eq!(std::fs::read(&dst)?, b"old");
+        Ok(())
+    }
+
+    #[test]
+    fn archives_with_links_special_files_or_unsafe_names_are_refused() -> anyhow::Result<()> {
+        let out = tempfile::tempdir()?;
+        let outside = tempfile::NamedTempFile::new()?;
+        // A symlink member.
+        let with_link = tempfile::tempdir()?;
+        symlink(outside.path(), with_link.path().join("config.json"))?;
+        tar_of(with_link.path(), &out.path().join("link.tgz"), &[])?;
+        // A FIFO member.
+        let with_fifo = tempfile::tempdir()?;
+        make_fifo(&with_fifo.path().join("config.json"))?;
+        tar_of(with_fifo.path(), &out.path().join("fifo.tgz"), &[])?;
+        // A member named outside the extraction root.
+        let plain = tempfile::tempdir()?;
+        std::fs::write(plain.path().join("x"), b"x")?;
+        tar_of(plain.path(), &out.path().join("dotdot.tgz"), &["--transform", "s,^\\./x,../x,"])?;
+        for name in ["link.tgz", "fifo.tgz", "dotdot.tgz"] {
+            let root = private_temp_dir("tosctl_restore_")?;
+            assert!(
+                extract_archive(&out.path().join(name), root.path()).is_err(),
+                "{name} was accepted"
+            );
+            // Nothing was unpacked.
+            assert!(!root.path().join("archive").exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_archive_cannot_open_up_the_private_directory() -> anyhow::Result<()> {
+        let src = tempfile::tempdir()?;
+        std::fs::write(src.path().join("key"), b"key")?;
+        std::fs::set_permissions(src.path(), std::fs::Permissions::from_mode(0o777))?;
+        let out = tempfile::tempdir()?;
+        tar_of(src.path(), &out.path().join("open.tgz"), &[])?;
+        let root = private_temp_dir("tosctl_restore_")?;
+        let inner = extract_archive(&out.path().join("open.tgz"), root.path())?;
+        assert_eq!(mode_of(root.path()), 0o700);
+        assert_eq!(mode_of(&inner), 0o700);
+        assert_eq!(std::fs::read(inner.join("key"))?, b"key");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_backup_restores_into_a_fresh_config_dir() -> anyhow::Result<()> {
+        let config = tempfile::tempdir()?;
+        std::fs::create_dir_all(config.path().join("db/keyring"))?;
+        std::fs::create_dir_all(config.path().join("keys"))?;
+        std::fs::write(config.path().join("db/config.json"), b"{\"config\":1}")?;
+        std::fs::write(config.path().join("db/keyring/k1"), b"keyring key")?;
+        std::fs::write(config.path().join("keys/k2"), b"server key")?;
+        let out = tempfile::tempdir()?;
+        let missing_tosctl_config = out.path().join("no-tosctl-config.json");
+        BackupCreateCmd {
+            output: out.path().to_string_lossy().to_string(),
+            config_dir: config.path().to_string_lossy().to_string(),
+        }
+        .run(&missing_tosctl_config.to_string_lossy())
+        .await?;
+        let archive = std::fs::read_dir(out.path())?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .find(|path| path.to_string_lossy().ends_with(".tar.gz"))
+            .ok_or_else(|| anyhow::anyhow!("no archive written"))?;
+        assert_eq!(mode_of(&archive), 0o600);
+
+        let restored = tempfile::tempdir()?;
+        BackupRestoreCmd {
+            file: archive.to_string_lossy().to_string(),
+            config_dir: restored.path().to_string_lossy().to_string(),
+            yes: true,
+        }
+        .run()
+        .await?;
+        for file in ["db/config.json", "db/keyring/k1", "keys/k2"] {
+            assert_eq!(
+                std::fs::read(restored.path().join(file))?,
+                std::fs::read(config.path().join(file))?
+            );
+            assert_eq!(mode_of(&restored.path().join(file)), 0o600);
+        }
         Ok(())
     }
 }
