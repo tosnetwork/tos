@@ -77,6 +77,23 @@ void HttpServer::accepted(td::SocketFd fd) {
       .release();
 }
 
+td::Result<td::IPAddress> HttpServer::parse_listen_address(td::Slice arg) {
+  td::IPAddress addr;
+  if (arg.find(':') == td::Slice::npos) {
+    TRY_RESULT(port, td::to_integer_safe<td::uint16>(arg));
+    if (port == 0) {
+      return td::Status::Error("listening port must not be 0");
+    }
+    TRY_STATUS(addr.init_ipv4_port("127.0.0.1", port));
+    return addr;
+  }
+  TRY_STATUS(addr.init_host_port(arg.str()));
+  if (addr.get_port() == 0) {
+    return td::Status::Error("listening port must not be 0");
+  }
+  return addr;
+}
+
 td::IPAddress HttpServer::make_any_address(td::uint16 port) {
   td::IPAddress addr;
   addr.init_ipv4_port("0.0.0.0", port).ensure();

@@ -796,12 +796,12 @@ class RldpHttpProxy : public td::actor::Actor {
  public:
   RldpHttpProxy() = default;
 
-  void set_port(td::uint16 port) {
-    if (port_) {
+  void set_listen_address(td::IPAddress address) {
+    if (listen_address_.is_valid()) {
       LOG(ERROR) << "duplicate listening port";
       std::_Exit(2);
     }
-    port_ = port;
+    listen_address_ = address;
   }
 
   void set_global_config(std::string path) {
@@ -987,7 +987,7 @@ class RldpHttpProxy : public td::actor::Actor {
       dht_ = D.move_as_ok();
       td::actor::send_closure(adnl_, &tos::adnl::Adnl::register_dht_node, dht_.get());
     }
-    if (port_) {
+    if (listen_address_.is_valid()) {
       class Cb : public tos::http::HttpServer::Callback {
        public:
         Cb(td::actor::ActorId<RldpHttpProxy> proxy) : proxy_(proxy) {
@@ -1008,7 +1008,7 @@ class RldpHttpProxy : public td::actor::Actor {
       // headroom than the library default, but still a finite bound.
       tos::http::HttpServer::Limits limits;
       limits.max_connections = 4096;
-      server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)), limits);
+      server_ = tos::http::HttpServer::create(listen_address_, std::make_shared<Cb>(actor_id(this)), limits);
     }
 
     class AdnlPayloadCb : public tos::adnl::Adnl::Callback {
@@ -1337,7 +1337,7 @@ class RldpHttpProxy : public td::actor::Actor {
     std::map<td::uint16, Server> ports_;
   };
 
-  td::uint16 port_{0};
+  td::IPAddress listen_address_;
   td::IPAddress addr_;
   std::string global_config_;
 
@@ -1603,11 +1603,14 @@ int main(int argc, char *argv[]) {
     std::cout << sb.as_cslice().c_str();
     std::exit(2);
   });
-  p.add_checked_option('p', "port", "sets http listening port", [&](td::Slice arg) -> td::Status {
-    TRY_RESULT(port, td::to_integer_safe<td::uint16>(arg));
-    td::actor::send_closure(x, &RldpHttpProxy::set_port, port);
-    return td::Status::OK();
-  });
+  p.add_checked_option('p', "port",
+                       "http listening <port> on 127.0.0.1, or <ip>:<port> to listen elsewhere "
+                       "(0.0.0.0:<port> exposes the proxy to other hosts)",
+                       [&](td::Slice arg) -> td::Status {
+                         TRY_RESULT(address, tos::http::HttpServer::parse_listen_address(arg));
+                         td::actor::send_closure(x, &RldpHttpProxy::set_listen_address, address);
+                         return td::Status::OK();
+                       });
   p.add_checked_option('a', "address", "local <ip>:<port> to use for adnl queries", [&](td::Slice arg) -> td::Status {
     td::IPAddress addr;
     TRY_STATUS(addr.init_host_port(arg.str()));

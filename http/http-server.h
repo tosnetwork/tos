@@ -104,6 +104,15 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
                                                 Limits limits) {
     return td::actor::create_actor<HttpServer>("httpserver", port, std::move(callback), limits);
   }
+  static td::actor::ActorOwn<HttpServer> create(td::IPAddress address, std::shared_ptr<Callback> callback,
+                                                Limits limits) {
+    return td::actor::create_actor<HttpServer>("httpserver", address, std::move(callback), limits);
+  }
+
+  // The address a listener given as "<port>" or "<ip>:<port>" binds. A bare
+  // port binds loopback only: a listener other hosts can reach has to be
+  // asked for by address. Port 0 is refused.
+  static td::Result<td::IPAddress> parse_listen_address(td::Slice arg);
 
   struct AllMetrics {
     metrics::AtomicGauge<size_t>::Ptr connections =
