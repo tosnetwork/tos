@@ -1,7 +1,7 @@
 {
   "name": "@tos/wallets",
   "version": "0.1.0",
-  "description": "Wallet contract implementations for TOS Blockchain — V3R2, V4R2, V5R1, Highload",
+  "description": "Wallet contract implementations for TOS Blockchain — V3R2, V4R2, V5R1",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

@@ -6,7 +6,8 @@ on:
       - 'crypto/smartcont/**'
       - 'crypto/CMakeLists.txt'
       - 'tosctl/src/node-control/contracts/**'
-      - 'sdk/js/packages/wallets/src/codes.ts'
+      - 'sdk/js/packages/wallets/**'
+      - 'sdk/js/packages/client/src/client/TosClient.ts'
       - 'test/auth-extensions/**'
       - 'scripts/update-auth-contract-code.py'
       - '.github/workflows/auth-extension-validation.yml'
@@ -43,4 +44,15 @@ jobs:
           python3 scripts/update-auth-contract-code.py --check
           python3 test/auth-extensions/test_auth.py
           python3 test/auth-extensions/mutations.py
+          python3 test/auth-extensions/test_sdk_wallet_vectors.py
+          git diff --exit-code
+      # The SDK half of the wallet vectors: the committed messages the native
+      # test above executes must still be exactly what the SDK produces.
+      - name: SDK wallet tests and network-bound vectors
+        working-directory: sdk/js
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter @tos/wallets --filter @tos/client typecheck
+          pnpm --filter @tos/wallets test
           git diff --exit-code

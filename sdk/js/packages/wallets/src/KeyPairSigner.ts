@@ -82,7 +82,8 @@ function toStateInit(init: SenderArguments["init"]): StateInit | undefined {
  * import { mnemonicToPrivateKey } from "@tos/crypto";
  *
  * const keys = await mnemonicToPrivateKey(mnemonic);
- * const wallet = open(WalletV4R2.create({ publicKey: keys.publicKey }), client);
+ * const networkGlobalId = await client.getNetworkGlobalId();
+ * const wallet = open(WalletV4R2.create({ publicKey: keys.publicKey, networkGlobalId }), client);
  * const signer = new KeyPairSigner(keys, wallet);
  *
  * // Use signer to send a transfer

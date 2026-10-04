@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Regenerate the existing Agent Account and Wallet V5 SDK BOCs, without a version bump.
+"""Regenerate the Agent Account and wallet BOCs embedded in Rust and the JS SDK.
+
+Every embedded wallet must be the network-bound code compiled from this
+repository's FunC source: an embedding that drifts from it (for example an
+upstream wallet without the global_id check) is stale. The Rust V3R2/V4R2
+constants are verified by their decoded bytes rather than rewritten.
 
 Build func/fift first and set FUNC_PATH/FIFT_PATH (or use build/crypto).
 --check verifies reproducibility without writing to the working tree.
@@ -26,7 +31,8 @@ def main():
     with tempfile.TemporaryDirectory() as work:
         work = Path(work)
         outputs = {}
-        for name, source in [('agent', 'agent-account-code.fc'), ('wallet', 'wallet-v5-code.fc')]:
+        for name, source in [('agent', 'agent-account-code.fc'), ('wallet', 'wallet-v5-code.fc'),
+                             ('wallet3', 'wallet3-code.fc'), ('wallet4', 'wallet-v4-code.fc')]:
             output = work / f'{name}.boc'
             code = compile_contract(source, output)
             outputs[name] = output.read_bytes()
@@ -41,8 +47,23 @@ def main():
             ('sdk/js/packages/wallets/src/codes.ts',
              r'(export const WALLET_V5R1_CODE\s*=\s*")[^"]*(";)',
              outputs['wallet'].hex()),
+            ('sdk/js/packages/wallets/src/codes.ts',
+             r'(export const WALLET_V3R2_CODE\s*=\s*")[^"]*(";)',
+             outputs['wallet3'].hex()),
+            ('sdk/js/packages/wallets/src/codes.ts',
+             r'(export const WALLET_V4R2_CODE\s*=\s*")[^"]*(";)',
+             outputs['wallet4'].hex()),
         ]
         stale = []
+        rust = (ROOT / 'tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs').read_text()
+        for const, decode, name in [('V3R2_CODE', bytes.fromhex, 'wallet3'),
+                                    ('V4R2_CODE_B64', base64.b64decode, 'wallet4')]:
+            match = re.search(rf'pub const {const}: &str = "(.*?)";', rust, re.S)
+            if match is None:
+                raise SystemExit(f'wallet_contract.rs: {const} not found')
+            embedded = decode(re.sub(r'\\\s*\n\s*', '', match[1]))
+            if embedded != outputs[name]:
+                raise SystemExit(f'wallet_contract.rs: {const} differs from {name} source; update it by hand')
         for relative, pattern, value in replacements:
             path = ROOT / relative
             text = path.read_text()

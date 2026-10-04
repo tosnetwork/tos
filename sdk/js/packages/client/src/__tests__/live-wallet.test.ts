@@ -60,7 +60,9 @@ describe.skipIf(!canRun)("Wallet live integration", () => {
     keyPair = await mnemonicToPrivateKey(mnemonic!);
 
     // Create wallet contract instance
-    wallet = WalletV4R2.create({ publicKey: keyPair.publicKey });
+    // Messages are signed for the network the node reports (ConfigParam 19).
+    const networkGlobalId = await client.getNetworkGlobalId();
+    wallet = WalletV4R2.create({ publicKey: keyPair.publicKey, networkGlobalId });
 
     // Open it against the live client
     openedWallet = open(wallet as any, client);

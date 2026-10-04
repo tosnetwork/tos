@@ -43,6 +43,7 @@ import type {
   SendQueryResult,
 } from "../types.js";
 import { TosError, TosRpcError, ErrorCodes } from "../errors.js";
+import { Cell, base64ToBytes } from "@tos/core";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -609,6 +610,26 @@ export class TosClient implements TosProvider {
       param,
       ...seqnoParam(opts),
     });
+  }
+
+  /**
+   * The network's global ID (ConfigParam 19, signed int32).
+   *
+   * Wallets sign it into every external message and their code refuses a
+   * message naming another network, so pass this to a wallet's `create`.
+   */
+  async getNetworkGlobalId(opts?: BlockQueryOpts): Promise<number> {
+    const { config } = await this.getConfigParam(19, opts);
+    const cells = Cell.fromBoc(base64ToBytes(config.bytes));
+    const [cell] = cells;
+    if (cells.length !== 1 || cell === undefined) {
+      throw new TosError("ConfigParam 19 must be exactly one cell", ErrorCodes.INVALID_RESPONSE);
+    }
+    const slice = cell.beginParse();
+    if (slice.remainingBits < 32) {
+      throw new TosError("ConfigParam 19 is shorter than its 32-bit global ID", ErrorCodes.INVALID_RESPONSE);
+    }
+    return slice.loadInt(32);
   }
 
   async getConfigAll(opts?: BlockQueryOpts): Promise<ConfigAll> {

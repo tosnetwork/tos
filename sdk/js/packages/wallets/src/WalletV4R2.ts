@@ -5,8 +5,12 @@
  * signing message is an additional `op:uint8` field after the seqno.
  *
  * Signing message format (simple transfer, op=0):
- *   walletId:uint32  validUntil:uint32  seqno:uint32  op:uint8(0)
- *   [mode:uint8 message:^Cell]*
+ *   networkGlobalId:int32  walletId:uint32  validUntil:uint32  seqno:uint32
+ *   op:uint8(0)  [mode:uint8 message:^Cell]*
+ *
+ * The wallet code (crypto/smartcont/wallet-v4-code.fc) refuses a message whose
+ * networkGlobalId differs from the executing network's GLOBALID (exit 36), so a
+ * signature never replays on another network.
  *
  * External message body:
  *   signature:bits512  signingMessage
@@ -14,10 +18,8 @@
  * Initial data layout:
  *   seqno:uint32  walletId:uint32  publicKey:bits256  plugins:bit(0)
  *
- * Plugin operations:
- *   op=1: deploy and install plugin
- *   op=2: install plugin
- *   op=3: remove plugin
+ * Plugin operations (signed, same header):
+ *   op=1: install plugin   op=2: remove plugin
  */
 
 import {
@@ -53,6 +55,20 @@ const DEFAULT_WALLET_ID_BASE = 698983191;
 /** Maximum number of outgoing messages per transfer */
 const MAX_MESSAGES = 4;
 
+/**
+ * Validate an explicitly supplied network global ID (ConfigParam 19, int32).
+ *
+ * The wallet code compares the leading int32 of every signed message with the
+ * GLOBALID of the network executing it, so a message signed for one network is
+ * refused on every other. There is deliberately no default.
+ */
+function requireNetworkGlobalId(value: number, wallet: string): number {
+  if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) {
+    throw new Error(`${wallet}: networkGlobalId must be an explicitly supplied signed int32 integer`);
+  }
+  return value;
+}
+
 /** Simple transfer opcode */
 const OP_SIMPLE_TRANSFER = 0;
 
@@ -74,9 +90,9 @@ const OP_SIMPLE_TRANSFER = 0;
  * import { TosClient, open } from "@tos/client";
  *
  * const keys = await mnemonicToPrivateKey(mnemonic);
- * const wallet = WalletV4R2.create({ publicKey: keys.publicKey });
- *
  * const client = new TosClient({ endpoint: "http://localhost:8081" });
+ * const networkGlobalId = await client.getNetworkGlobalId();
+ * const wallet = WalletV4R2.create({ publicKey: keys.publicKey, networkGlobalId });
  * const opened = open(wallet, client);
  * const balance = await opened.getBalance();
  * ```
@@ -85,6 +101,7 @@ export class WalletV4R2 implements Wallet {
   readonly address: Address;
   readonly init: StateInit;
   readonly walletId: number;
+  readonly networkGlobalId: number;
   readonly publicKey: Uint8Array;
 
   private constructor(
@@ -92,35 +109,41 @@ export class WalletV4R2 implements Wallet {
     init: StateInit,
     publicKey: Uint8Array,
     walletId: number,
+    networkGlobalId: number,
   ) {
     this.address = address;
     this.init = init;
     this.publicKey = publicKey;
     this.walletId = walletId;
+    this.networkGlobalId = networkGlobalId;
   }
 
   /**
    * Create a new WalletV4R2 instance from a public key.
    *
    * The wallet address is computed deterministically from the code cell
-   * and initial data (seqno=0, walletId, publicKey, empty plugins dict).
+   * and initial data (seqno=0, walletId, publicKey, empty plugins dict); it does
+   * not depend on the network, only the signed messages do.
    *
    * @param args.publicKey - 32-byte Ed25519 public key
+   * @param args.networkGlobalId - Required network global ID (ConfigParam 19, int32)
    * @param args.workchain - Workchain ID (default 0)
    * @param args.walletId - Custom wallet ID (default auto-computed)
    * @returns A new WalletV4R2 instance with computed address and init
    *
    * @example
    * ```typescript
-   * const wallet = WalletV4R2.create({ publicKey: keys.publicKey });
+   * const wallet = WalletV4R2.create({ publicKey: keys.publicKey, networkGlobalId });
    * console.log(wallet.address.toString());
    * ```
    */
   static create(args: {
     publicKey: Uint8Array;
+    networkGlobalId: number;
     workchain?: number;
     walletId?: number;
   }): WalletV4R2 {
+    const networkGlobalId = requireNetworkGlobalId(args.networkGlobalId, "WalletV4R2");
     const workchain = args.workchain ?? 0;
     const walletId = args.walletId ?? DEFAULT_WALLET_ID_BASE + workchain;
 
@@ -137,7 +160,7 @@ export class WalletV4R2 implements Wallet {
     const init: StateInit = { code, data };
     const address = contractAddress(workchain, init);
 
-    return new WalletV4R2(address, init, args.publicKey, walletId);
+    return new WalletV4R2(address, init, args.publicKey, walletId, networkGlobalId);
   }
 
   // -------------------------------------------------------------------------
@@ -183,6 +206,7 @@ export class WalletV4R2 implements Wallet {
 
     const until = validUntil ?? defaultValidUntil();
     const builder = beginCell()
+      .storeInt(this.networkGlobalId, 32)
       .storeUint(this.walletId, 32)
       .storeUint(until, 32)
       .storeUint(seqno, 32)
@@ -268,6 +292,7 @@ export class WalletV4R2 implements Wallet {
   ): Promise<void> {
     // Deploy message: seqno=0 with validUntil=0xFFFFFFFF
     const deployMessage = beginCell()
+      .storeInt(this.networkGlobalId, 32)
       .storeUint(this.walletId, 32)
       .storeUint(0xFFFFFFFF, 32) // validUntil = max for initial deploy
       .storeUint(0, 32)          // seqno = 0
