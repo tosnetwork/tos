@@ -87,14 +87,18 @@ done
 rm -f /etc/systemd/system/tos-dht.service /etc/systemd/system/tos-validator@*.service
 rm -rf /etc/systemd/system/tos-validator@*.service.d
 systemctl disable --now tos-rss-monitor.timer 2>/dev/null || true
+# Root-run tools write throughout /data, so it is root's before anything is
+# written in it: a tos-owned /data would let tos swap directories or plant
+# links for root to follow.
+mkdir -p /data
+chown root:root /data
+chmod 0755 /data
 if [[ $CLEAN == 1 ]]; then
     # Literal fixed root: never derive this destructive target from an environment variable.
-    mkdir -p /data
     find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 fi
 id tos >/dev/null 2>&1 || useradd --system --home-dir /data --shell /usr/sbin/nologin tos
-mkdir -p /data /usr/local/share/tos/fift/lib /usr/local/share/tos/smartcont
-chmod 0755 /data
+mkdir -p /usr/local/share/tos/fift/lib /usr/local/share/tos/smartcont
 for pair in 'validator-engine/validator-engine:validator-engine' 'dht-server/dht-server:dht-server' \
     'validator-engine-console/validator-engine-console:validator-console' 'lite-client/lite-client:lite-client' \
     'utils/generate-random-id:genkey' 'crypto/pq/tos-pq-consensus-key:pq-consensus-key' \
@@ -108,20 +112,14 @@ cp -a "$STAGING/pool" /data/shielded-pool
 PREPARE_ARGS=()
 [[ $ROTATE == 0 ]] || PREPARE_ARGS+=(--rotate)
 "$UV" run python scripts/local_pq_testnet.py prepare "${PREPARE_ARGS[@]}"
-chown -R tos:tos /data
-# The daemons run as tos and own what they write; /data itself and the
-# directories root-run tools write stay root's, so tos cannot replace them or
-# plant links in them for root to follow.
-chown root:root /data
-chmod 0755 /data
-for dir in preparation transfers privacy-transfers elections; do
-    [[ ! -e "/data/$dir" ]] || chown -R root:root "/data/$dir"
-done
-chmod 0755 /data/shielded-pool /data/configs
+# Everything in /data was written by root just now. Set modes while it is
+# all still root's, then hand tos only the directories its daemons write.
+chmod 0755 /data/testnet /data/shielded-pool /data/configs
 chmod 0644 /data/shielded-pool/* /data/configs/*
 find /data/testnet -name 'pq-consensus.seed' -exec chmod 0600 {} +
 find /data/testnet -name keyring -type d -exec chmod 0700 {} +
 chmod 0700 /data/testnet/state
+chown -R tos:tos /data/testnet/node* /data/lite-client
 install -m644 "$REPO/scripts/tos-pq-dht.service" /etc/systemd/system/tos-pq-dht.service
 install -m644 "$REPO/scripts/tos-pq-validator@.service" /etc/systemd/system/tos-pq-validator@.service
 install -m644 "$REPO/scripts/tos-pq-observer@.service" /etc/systemd/system/tos-pq-observer@.service
@@ -220,7 +218,6 @@ UNIT
     systemctl daemon-reload
 fi
 "$UV" run python scripts/local_pq_testnet.py deploy
-chown -R tos:tos /data/shielded-pool
 systemctl enable --now tos-pq-lite-client
 [[ $ROTATE == 0 ]] || systemctl enable --now tos-pq-elections
 printf '\nFour PQ validators, two observers, lite-client and the local development pool are running.\n'

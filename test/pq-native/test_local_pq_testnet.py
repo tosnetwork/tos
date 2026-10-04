@@ -235,3 +235,60 @@ def test_json_is_written_with_the_requested_mode_whatever_the_umask(tmp_path):
     finally:
         os.umask(previous)
     assert (tmp_path / "status.json").stat().st_mode & 0o777 == 0o644
+
+
+ROOT_RUN_DRIVERS = ("local-pq-transfers.py", "local-pq-privacy.py", "local-pq-elections.py")
+
+
+def path_writes(source):
+    """Calls that write or chmod through a path that follows a planted link."""
+    import ast
+
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        receiver = node.func.value
+        if isinstance(receiver, ast.Name) and receiver.id in ("local", "os", "f"):
+            continue
+        name = node.func.attr
+        mode = next(
+            (
+                a.value
+                for a in node.args
+                if isinstance(a, ast.Constant) and isinstance(a.value, str)
+            ),
+            "r",
+        )
+        if name in ("write_bytes", "write_text", "chmod", "touch", "copyfile", "copy") or (
+            name == "open" and any(c in mode for c in "wax+")
+        ):
+            found.append(f"line {node.lineno}: .{name}")
+    return found
+
+
+@pytest.mark.parametrize("name", ROOT_RUN_DRIVERS)
+def test_root_run_drivers_write_only_through_the_no_follow_helpers(name):
+    source = (SOURCE.parent / name).read_text()
+    assert path_writes(source) == []
+
+
+def test_the_path_write_guard_sees_each_kind_of_write():
+    source = "\n".join(
+        [
+            'p.write_bytes(b"")',
+            'p.write_text("")',
+            "p.chmod(0o644)",
+            'p.open("ab")',
+            "shutil.copyfile(a, b)",
+            'p.open("rb")',
+            'local.write_bytes(p, b"")',
+        ]
+    )
+    assert [line.split(": ")[1] for line in path_writes(source)] == [
+        ".write_bytes",
+        ".write_text",
+        ".chmod",
+        ".open",
+        ".copyfile",
+    ]

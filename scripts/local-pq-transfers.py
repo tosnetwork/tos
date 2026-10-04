@@ -194,8 +194,8 @@ async def bootstrap(args, client, blueprints):
             "wallets": [b.address.to_str(is_user_friendly=False) for b in blueprints],
             "purpose": "disposable local transfer verification; non-consensus wallet keys",
         },
+        0o644,
     )
-    (args.data / "configs" / getattr(args, "bootstrap_config", "transfer-test.json")).chmod(0o644)
 
 
 async def run(args):

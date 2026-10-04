@@ -317,7 +317,9 @@ async def main():
                                     raise ValueError(
                                         "node stake authorization differs from candidate"
                                     )
-                                (OUT / f"authorization-{election}-{i}.json").write_bytes(raw)
+                                local.write_bytes(
+                                    OUT / f"authorization-{election}-{i}.json", raw, 0o600
+                                )
                                 body = build_pool_stake_order(
                                     query_id=query,
                                     stake_amount=11000 * NANO,

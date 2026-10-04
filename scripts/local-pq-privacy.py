@@ -188,7 +188,15 @@ async def run(args):
             pool = json.loads((args.data / "shielded-pool/pool.json").read_text())
             address = pool["address"]
             network = json.loads((args.data / "network.json").read_text())
-            stderr = stack.enter_context((args.output / "generator.stderr").open("ab"))
+            stderr = stack.enter_context(
+                os.fdopen(
+                    local.open_private(
+                        args.output / "generator.stderr",
+                        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                    ),
+                    "ab",
+                )
+            )
             generator = await asyncio.create_subprocess_exec(
                 str(
                     args.generator
@@ -270,7 +278,7 @@ async def run(args):
                         return (account, found[0]) if found else None
 
                     pool_account, tx = await transfers.wait_for(included, timeout=120)
-                    (args.output / "last-pool-transaction.boc").write_bytes(tx.data)
+                    local.write_bytes(args.output / "last-pool-transaction.boc", tx.data, 0o600)
                     transfers.check_transaction(tx)
                     transfers.verify_message(
                         tx.in_msg,
