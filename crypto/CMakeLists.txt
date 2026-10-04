@@ -548,7 +548,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   endfunction()
 
   GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config
-    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/pq-launch-limits.fc)
   GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
   GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
   GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)
@@ -569,7 +569,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3)
   GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
   GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow
-    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc)
   GenFif(DEST smartcont/auto/pq-highload-wallet-code SOURCE smartcont/pq-highload-wallet-code.fc
     NAME pq-highload-wallet EXTRA_DEPS smartcont/replay-guard.fc smartcont/pq-bytes.fc smartcont/pq.fc)
   GenFif(DEST smartcont/auto/multisig-wallet-code SOURCE smartcont/multisig-wallet-code.fc NAME multisig-wallet
@@ -606,7 +606,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
       ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
-    DEPENDS func fift smartcont/stdlib.fc
+    DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc
       smartcont/tos-service-stablecoin-escrow-v2.boc.base64
       smartcont/tos-service-stablecoin-escrow-v2.release.json
       ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v2.sh
