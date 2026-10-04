@@ -34,6 +34,11 @@ on:
       - "crypto/pq/**"
       - "test/regression-tests.ans"
       - "scripts/check-regression-db.sh"
+      # Retired escrow v1 and the escrow deployment policy.
+      - "scripts/check-retired-escrow-v1.py"
+      - "scripts/test_check_retired_escrow_v1.py"
+      - "scripts/tos_service_escrow_deploy_policy.py"
+      - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
     types: [opened, reopened, synchronize, ready_for_review]
   # Restricted to the integration branches on purpose. Without this, a push to
@@ -64,6 +69,11 @@ on:
       - "crypto/pq/**"
       - "test/regression-tests.ans"
       - "scripts/check-regression-db.sh"
+      # Retired escrow v1 and the escrow deployment policy.
+      - "scripts/check-retired-escrow-v1.py"
+      - "scripts/test_check_retired_escrow_v1.py"
+      - "scripts/tos_service_escrow_deploy_policy.py"
+      - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
   workflow_dispatch:
 
@@ -240,6 +250,15 @@ jobs:
       # comes back.
       - name: No removed validator-authority path has returned
         run: ./scripts/check-removed-validator-authority.sh .
+
+      # Escrow v1 was retired by deleting it, and escrow v2 may be deployed only
+      # for non-production use. The test first shows the check can fail (planted
+      # v1 artifacts, a deploy script that stops applying the policy); the check
+      # then holds the tree.
+      - name: No supported tooling can deploy the retired escrow v1
+        run: |
+          python3 scripts/test_check_retired_escrow_v1.py
+          python3 scripts/check-retired-escrow-v1.py .
 
       - name: Frozen BOCs match their sources
         run: git diff --exit-code

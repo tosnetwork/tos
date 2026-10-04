@@ -28,6 +28,11 @@ As TOS evolves toward AI-native actor workflows, security review should also cov
 
 Agent workflows should be designed so that balances, task state, permissions, and settlement rules remain auditable from chain state.
 
+## Accepted Risks and Retired Contracts
+
+- The TOS Service Protocol stablecoin escrow v1 is retired: no supported tooling deploys it. Escrow v2 is supported only for non-production deployments because a payout refused by the recipient's jetton wallet can leave funds stranded; this is an accepted risk for the current version. See [crypto/smartcont/STABLECOIN-ESCROW.md](crypto/smartcont/STABLECOIN-ESCROW.md).
+- The token bridge must not be activated in production while its pre-mainnet checklist is incomplete, and an operation left in flight follows the incident procedure in [crosschain/token-bridge/SECURITY.md](crosschain/token-bridge/SECURITY.md).
+
 ## Reporting
 
 Report suspected vulnerabilities privately to the project maintainers. Include:

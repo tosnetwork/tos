@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Deploy and independently observe the frozen Gate D escrow StateInit."""
+"""Deploy and independently observe the frozen Gate D escrow StateInit.
+
+Only the code of a supported escrow release is deployed, and escrow v2 only
+with --non-production-test-deployment; see tos_service_escrow_deploy_policy.
+"""
 
 import argparse
 import base64
@@ -21,9 +25,19 @@ module_spec = importlib.util.spec_from_file_location("native_gate_c", MODULE_PAT
 gate = importlib.util.module_from_spec(module_spec)
 module_spec.loader.exec_module(gate)
 
+sys.path.insert(0, str(REPO / "scripts"))
+from tos_service_escrow_deploy_policy import (  # noqa: E402
+    NON_PRODUCTION_FLAG,
+    check_escrow_deployment,
+)
+
 
 def rpc(endpoint, method, **params):
-    request = urllib.request.Request(endpoint, data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode(), headers={"Content-Type": "application/json"})
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
     with urllib.request.urlopen(request, timeout=10) as response:
         value = json.loads(response.read().decode())
     if not value.get("ok"):
@@ -50,15 +64,33 @@ def main():
     parser.add_argument("--network-id", default="tos-local-gate-c-20260814")
     parser.add_argument("--state-init-vector", required=True)
     parser.add_argument("--evidence", required=True)
+    parser.add_argument(
+        NON_PRODUCTION_FLAG,
+        dest="non_production",
+        action="store_true",
+        help="acknowledge a local or test-network deployment with test assets; required for "
+        "escrow v2, whose refused payouts can leave funds stranded",
+    )
     args = parser.parse_args()
 
-    config_path = Path(args.global_config)
-    zero = json.loads(config_path.read_text())["validator"]["zero_state"]
+    # Decide whether this code may be deployed at all before reading any
+    # network configuration or key.
     vector = json.loads(Path(args.state_init_vector).read_text())
     if vector.get("schema") != "tos.service.escrow-state-init.v1":
         raise RuntimeError("invalid escrow StateInit vector")
-    state_init_cell = Cell.one_from_boc(base64.b64decode(vector["escrow_state_init_boc_base64"], validate=True))
+    state_init_cell = Cell.one_from_boc(
+        base64.b64decode(vector["escrow_state_init_boc_base64"], validate=True)
+    )
     state_init = StateInit.deserialize(state_init_cell.begin_parse())
+    if state_init.code is None or state_init.library is not None:
+        raise RuntimeError("escrow StateInit must carry its code directly and no library")
+    code_hash = "tvm-cell-sha256:" + state_init.code.hash.hex()
+    if code_hash != vector["escrow_code_hash"]:
+        raise RuntimeError("escrow StateInit code does not match the vector's code hash")
+    check_escrow_deployment(code_hash, non_production=args.non_production)
+
+    config_path = Path(args.global_config)
+    zero = json.loads(config_path.read_text())["validator"]["zero_state"]
     destination = Address(vector["escrow_address"])
     if destination.to_tl_account_id()["id"].lower() != state_init.serialize().hash.hex():
         raise RuntimeError("StateInit does not derive the requested escrow address")
@@ -71,8 +103,15 @@ def main():
         code = gate.account_code(config_path, destination.to_str())
         data = gate.account_data(config_path, destination.to_str())
     except Exception:
-        gate.send_wallet_message(config_path, payer_key, payer, destination, 2 * gate.NANO,
-            Builder().end_cell(), state_init)
+        gate.send_wallet_message(
+            config_path,
+            payer_key,
+            payer,
+            destination,
+            2 * gate.NANO,
+            Builder().end_cell(),
+            state_init,
+        )
         code, data = wait_account(config_path, destination.to_str())
         deployed_now = True
     if "tvm-cell-sha256:" + code.hash.hex() != vector["escrow_code_hash"]:
@@ -86,24 +125,51 @@ def main():
     observations = []
     votes = set()
     for endpoint in endpoints:
-        info = rpc(endpoint, "getAddressInformation", address=destination.to_str(), seqno=checkpoint)
+        info = rpc(
+            endpoint, "getAddressInformation", address=destination.to_str(), seqno=checkpoint
+        )
         observed_code = Cell.one_from_boc(base64.b64decode(info["code"], validate=True))
         observed_data = Cell.one_from_boc(base64.b64decode(info["data"], validate=True))
-        vote = (observed_code.hash.hex(), observed_data.hash.hex(), info["block_id"]["root_hash"], info["block_id"]["file_hash"])
+        vote = (
+            observed_code.hash.hex(),
+            observed_data.hash.hex(),
+            info["block_id"]["root_hash"],
+            info["block_id"]["file_hash"],
+        )
         votes.add(vote)
-        observations.append({"endpoint": endpoint, "checkpoint": checkpoint,
-            "block_root_hash": info["block_id"]["root_hash"], "block_file_hash": info["block_id"]["file_hash"],
-            "code_hash": "tvm-cell-sha256:" + observed_code.hash.hex(), "data_hash": "tvm-cell-sha256:" + observed_data.hash.hex()})
-    if len(votes) != 1 or next(iter(votes))[0] != code.hash.hex() or next(iter(votes))[1] != data.hash.hex():
+        observations.append(
+            {
+                "endpoint": endpoint,
+                "checkpoint": checkpoint,
+                "block_root_hash": info["block_id"]["root_hash"],
+                "block_file_hash": info["block_id"]["file_hash"],
+                "code_hash": "tvm-cell-sha256:" + observed_code.hash.hex(),
+                "data_hash": "tvm-cell-sha256:" + observed_data.hash.hex(),
+            }
+        )
+    if (
+        len(votes) != 1
+        or next(iter(votes))[0] != code.hash.hex()
+        or next(iter(votes))[1] != data.hash.hex()
+    ):
         raise RuntimeError("three endpoints did not agree on the escrow account")
 
-    evidence = {"schema": "tos.service.escrow-deployment.v1", "deployed_now": deployed_now,
-        "network": {"network_id": args.network_id,
+    evidence = {
+        "schema": "tos.service.escrow-deployment.v1",
+        "deployed_now": deployed_now,
+        "non_production": args.non_production,
+        "network": {
+            "network_id": args.network_id,
             "genesis_root_hash": "sha256:" + base64.b64decode(zero["root_hash"]).hex(),
-            "genesis_file_hash": "sha256:" + base64.b64decode(zero["file_hash"]).hex()},
-        "escrow": vector, "transaction": gate.account_transaction(config_path, destination.to_str()),
-        "checkpoint": gate.master_checkpoint(config_path), "endpoint_verification": observations,
-        "quorum": 2, "verdict": "PASS_CANONICAL_QUOTE_ACCEPTANCE_DEPLOYMENT"}
+            "genesis_file_hash": "sha256:" + base64.b64decode(zero["file_hash"]).hex(),
+        },
+        "escrow": vector,
+        "transaction": gate.account_transaction(config_path, destination.to_str()),
+        "checkpoint": gate.master_checkpoint(config_path),
+        "endpoint_verification": observations,
+        "quorum": 2,
+        "verdict": "PASS_CANONICAL_QUOTE_ACCEPTANCE_DEPLOYMENT",
+    }
     Path(args.evidence).write_text(json.dumps(evidence, indent=2) + "\n")
     print(json.dumps(evidence, indent=2))
 
