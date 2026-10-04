@@ -66,7 +66,7 @@ async def wait(predicate, timeout=60):
 
 async def lite_int(method, *args, address=ELECTOR):
     proc = await asyncio.create_subprocess_exec(
-        "/usr/local/bin/tos-lite-client",
+        str(local.INSTALLED_LITE_CLIENT),
         "-C",
         str(DATA / "configs/node-1-lite.json"),
         "-v",
@@ -198,6 +198,9 @@ async def snapshot(previous):
 
 
 async def main():
+    # Runs from a snapshot with no build tree: the lite-client is the
+    # installed one, checked before anything else is touched.
+    local.require_installed_executable(local.INSTALLED_LITE_CLIENT)
     # Runs as root: refuse an output directory another user could redirect.
     local.secure_output_dir(OUT)
     plan = json.loads((OUT / "plan.json").read_text())

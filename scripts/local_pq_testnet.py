@@ -70,7 +70,10 @@ def topology(data):
 
 
 def write_plan(data):
-    destination = secure_output_dir(data / "preparation", 0o755)
+    # Planning runs before setup on a host that may not have /data yet; the
+    # missing directories are created the way setup creates /data: owned by
+    # the caller (root under sudo), mode 0755, never through a symlink.
+    destination = secure_output_dir(data / "preparation", 0o755, create_parents=True)
     write_json(destination / "topology.json", topology(data))
     for name in (
         "tos-pq-observer@.service",
@@ -180,16 +183,25 @@ def prepare_observers(data):
     print("Prepared two observer identities/configs; no validator membership or Genesis changed")
 
 
-def secure_output_dir(path, mode=0o700):
+def secure_output_dir(path, mode=0o700, create_parents=False):
     """Return `path` as a directory only this user can change.
 
     Root-run tools write here while unprivileged daemons own other parts of
     /data. The directory must not be a symlink, must belong to the effective
     user and not be writable by anyone else, and its parent must not let
     another user swap it out.
+
+    With `create_parents`, a missing parent is created first under the same
+    rules (mode 0755), one level at a time, so every directory created is
+    checked against its own parent; an existing ancestor is never changed.
     """
     path = Path(path)
-    parent = path.parent.lstat()
+    if create_parents and not os.path.lexists(path.parent):
+        secure_output_dir(path.parent, 0o755, create_parents=True)
+    try:
+        parent = path.parent.lstat()
+    except FileNotFoundError:
+        raise RuntimeError(f"{path.parent} does not exist") from None
     if not stat.S_ISDIR(parent.st_mode):
         raise RuntimeError(f"{path.parent} is not a directory")
     if parent.st_uid not in (0, os.geteuid()) or parent.st_mode & 0o022:
@@ -522,10 +534,39 @@ async def wait_network(args):
     raise RuntimeError(f"network did not become ready: {error}")
 
 
-def get_method(build, data, address, method):
+# The lite-client setup-testnet.sh installs for the services. Root-run drivers
+# execute this explicit path: they run from a snapshot that holds no build
+# tree, and a PATH search could reach a directory another user can write.
+INSTALLED_LITE_CLIENT = Path("/usr/local/bin/tos-lite-client")
+
+
+def require_installed_executable(path):
+    """Return `path` if it is an executable a root service may run, else refuse.
+
+    The path must be absolute and name a regular file (a symlink is refused)
+    that belongs to root or the effective user, is writable by nobody else, and
+    is executable.
+    """
+    path = Path(path)
+    if not path.is_absolute():
+        raise RuntimeError(f"{path} is not an absolute path")
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        raise RuntimeError(f"{path} does not exist; install it before starting") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"{path} is not a regular file (a symlink is refused)")
+    if info.st_uid not in (0, os.geteuid()) or info.st_mode & 0o022:
+        raise RuntimeError(f"{path} can be changed by another user; refusing to run it")
+    if not os.access(path, os.X_OK):
+        raise RuntimeError(f"{path} is not executable")
+    return path
+
+
+def get_method(lite_client, data, address, method):
     result = subprocess.run(
         [
-            str(build / "lite-client/lite-client"),
+            str(lite_client),
             "-C",
             str(data / "configs/node-1-lite.json"),
             "-v",
@@ -551,7 +592,7 @@ async def pool_methods(args, pool, initial=False):
     # Pace separate lite clients rather than bursting requests at one connection.
     for name in names:
         values[name] = await asyncio.to_thread(
-            get_method, args.build, args.data, pool["address"], name
+            get_method, args.build / "lite-client/lite-client", args.data, pool["address"], name
         )
     expected = {"reserve_floor": int(pool["reserve_floor_nanotos"]), "backed": -1}
     if initial:

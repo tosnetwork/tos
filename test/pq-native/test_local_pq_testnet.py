@@ -228,6 +228,95 @@ def test_output_directory_is_made_private(tmp_path):
     assert out.stat().st_mode & 0o777 == 0o700
 
 
+def test_plan_creates_a_missing_data_directory(tmp_path):
+    # A host that has never run setup has no /data; planning must still work.
+    data = tmp_path / "host" / "data"
+    previous = os.umask(0o077)
+    try:
+        local.write_plan(data)
+    finally:
+        os.umask(previous)
+    for directory in (tmp_path / "host", data, data / "preparation"):
+        info = directory.lstat()
+        assert info.st_uid == os.geteuid()
+        assert info.st_mode & 0o777 == 0o755, directory
+    assert (data / "preparation/topology.json").is_file()
+
+
+def test_plan_does_not_create_through_a_symlinked_ancestor(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "link").symlink_to(elsewhere)
+    with pytest.raises(RuntimeError, match="is not a directory"):
+        local.write_plan(tmp_path / "link" / "data")
+    assert not any(elsewhere.iterdir())
+
+
+def test_plan_does_not_create_under_a_shared_writable_ancestor(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    with pytest.raises(RuntimeError, match="another user"):
+        local.write_plan(shared / "data")
+    assert not any(shared.iterdir())
+
+
+def test_an_output_directory_without_its_parent_is_refused(tmp_path):
+    # The root-run drivers do not create /data; only planning does.
+    with pytest.raises(RuntimeError, match="does not exist"):
+        local.secure_output_dir(tmp_path / "missing" / "out")
+    assert not (tmp_path / "missing").exists()
+
+
+def installed(tmp_path, mode=0o755):
+    path = tmp_path / "tos-lite-client"
+    path.write_text("#!/bin/sh\n")
+    path.chmod(mode)
+    return path
+
+
+def test_an_installed_executable_is_accepted(tmp_path):
+    path = installed(tmp_path)
+    assert local.require_installed_executable(path) == path
+
+
+@pytest.mark.parametrize(
+    "case,message",
+    [
+        ("missing", "does not exist"),
+        ("relative", "not an absolute path"),
+        ("symlink", "not a regular file"),
+        ("directory", "not a regular file"),
+        ("group-writable", "another user"),
+        ("world-writable", "another user"),
+        ("not-executable", "not executable"),
+    ],
+)
+def test_an_unsafe_or_missing_executable_is_refused(tmp_path, case, message):
+    if case == "missing":
+        path = tmp_path / "absent"
+    elif case == "relative":
+        path = Path("tos-lite-client")
+    elif case == "symlink":
+        path = tmp_path / "link"
+        path.symlink_to(installed(tmp_path))
+    elif case == "directory":
+        path = tmp_path / "dir"
+        path.mkdir()
+    elif case == "group-writable":
+        path = installed(tmp_path, 0o775)
+    elif case == "world-writable":
+        path = installed(tmp_path, 0o757)
+    else:
+        path = installed(tmp_path, 0o644)
+    with pytest.raises(RuntimeError, match=message):
+        local.require_installed_executable(path)
+
+
+def test_the_installed_lite_client_path_is_explicit():
+    assert local.INSTALLED_LITE_CLIENT == Path("/usr/local/bin/tos-lite-client")
+
+
 def test_json_is_written_with_the_requested_mode_whatever_the_umask(tmp_path):
     previous = os.umask(0o077)
     try:

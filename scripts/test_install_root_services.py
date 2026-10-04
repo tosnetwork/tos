@@ -1,8 +1,10 @@
 """The root-service installer snapshots everything the services run, outside the checkout,
 and refuses a snapshot or a location that would still let anyone else change it."""
 
+import ast
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -415,3 +417,179 @@ def test_a_loadable_library_with_a_program_interpreter_is_still_a_library(tmp_pa
     result = check_snapshot(dest)
     assert result.returncode == 1
     assert "climbs from $ORIGIN" in result.stderr
+
+
+# ---- every checkout path a root driver resolves by default is in the snapshot
+#
+# The services run from BASE/current/src with the drivers' REPO-relative
+# defaults, so a default naming a checkout file the installer does not copy
+# fails only when the service starts. The drivers are read from the units
+# setup-testnet.sh writes, and the paths are found in their source:
+# REPO-relative expressions, argparse defaults joined with a further path
+# (`args.build / "toslib/..."`), and a default passed to a repository helper
+# that joins it (`local.get_method(args.build, ...)` joining
+# `build / "lite-client/lite-client"`).
+
+SCRIPTS = INSTALLER.parent
+CHECKOUT = SCRIPTS.parent
+SETUP = SCRIPTS / "setup-testnet.sh"
+
+
+def root_drivers():
+    pattern = r"ExecStart=\$SNAPSHOT/venv/bin/python \$SNAPSHOT/src/scripts/(\S+)"
+    return sorted(set(re.findall(pattern, SETUP.read_text())))
+
+
+def path_parts(node):
+    """Split `base / "a" / "b/c"` into (base node, ["a", "b/c"]), or None."""
+    parts = []
+    while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        if not (isinstance(node.right, ast.Constant) and isinstance(node.right.value, str)):
+            return None
+        parts.insert(0, node.right.value)
+        node = node.left
+    return (node, parts) if parts else None
+
+
+def repo_path(node):
+    split = path_parts(node)
+    if split and isinstance(split[0], ast.Name) and split[0].id == "REPO":
+        return "/".join(split[1])
+    return None
+
+
+def parameter_joins(tree):
+    """{function: {parameter index: [joined suffixes]}} for a helper module."""
+    joins = {}
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        params = [a.arg for a in function.args.args]
+        for node in ast.walk(function):
+            split = path_parts(node)
+            if split and isinstance(split[0], ast.Name) and split[0].id in params:
+                index = params.index(split[0].id)
+                joins.setdefault(function.name, {}).setdefault(index, []).append("/".join(split[1]))
+    return joins
+
+
+def module_aliases(tree, scripts):
+    """Driver-local names bound to repository modules, mapped to their files."""
+    aliases = {}
+    spec_files = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                if (scripts / f"{name.name}.py").exists():
+                    aliases[name.asname or name.name] = scripts / f"{name.name}.py"
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            call = node.value
+            target = node.targets[0].id if isinstance(node.targets[0], ast.Name) else None
+            func = ast.unparse(call.func)
+            if func.endswith("spec_from_file_location") and len(call.args) == 2 and target:
+                relative = repo_path(call.args[1])
+                if relative:
+                    spec_files[target] = scripts.parent / relative
+            if func.endswith("module_from_spec") and call.args and target:
+                source = ast.unparse(call.args[0])
+                if source in spec_files:
+                    aliases[target] = spec_files[source]
+    return aliases
+
+
+def resolved_checkout_paths(driver, scripts=SCRIPTS):
+    """Checkout-relative paths `driver` reaches with its default arguments."""
+    tree = ast.parse((scripts / driver).read_text())
+    found = set()
+    defaults = {}
+    for node in ast.walk(tree):
+        relative = repo_path(node)
+        if relative:
+            found.add(relative)
+        if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("add_argument"):
+            first = node.args[0] if node.args else None
+            flag = first.value if isinstance(first, ast.Constant) else None
+            for keyword in node.keywords:
+                if keyword.arg == "default" and isinstance(flag, str) and flag.startswith("--"):
+                    relative = repo_path(keyword.value)
+                    if relative:
+                        defaults[flag[2:].replace("-", "_")] = relative
+
+    def default_of(node):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "args"
+        ):
+            return defaults.get(node.attr)
+        return None
+
+    helpers = {
+        alias: parameter_joins(ast.parse(path.read_text()))
+        for alias, path in module_aliases(tree, scripts).items()
+    }
+    for node in ast.walk(tree):
+        split = path_parts(node)
+        if split and default_of(split[0]):
+            found.add("/".join([default_of(split[0]), *split[1]]))
+        if not isinstance(node, ast.Call):
+            continue
+        func, args = node.func, list(node.args)
+        if ast.unparse(func) == "asyncio.to_thread" and args:
+            func, args = args[0], args[1:]
+        if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)):
+            continue
+        joins = helpers.get(func.value.id, {}).get(func.attr, {})
+        for index, argument in enumerate(args):
+            base = default_of(argument)
+            for suffix in joins.get(index, []) if base else []:
+                found.add(f"{base}/{suffix}")
+    return found
+
+
+def test_the_root_drivers_and_their_paths_are_found():
+    # A scan that finds no driver, or no path, would let the coverage test pass.
+    drivers = root_drivers()
+    assert {"local-pq-privacy.py", "local-pq-transfers.py", "local-pq-elections.py"} <= set(drivers)
+    privacy = resolved_checkout_paths("local-pq-privacy.py")
+    assert "build/toslib/libtoslibjson.so" in privacy, "argument-default joins are resolved"
+    assert GENERATOR in privacy
+    assert HEX in resolved_checkout_paths("local-pq-elections.py")
+
+
+def test_a_default_passed_to_a_joining_helper_is_resolved(tmp_path):
+    # The shape that once sent a root driver to build/lite-client/lite-client.
+    scripts = tmp_path / "scripts"
+    write(
+        scripts / "helper_module.py",
+        'def get_method(build, data):\n    return build / "lite-client/lite-client"\n',
+    )
+    write(
+        scripts / "driver.py",
+        "import asyncio\nimport helper_module as local\n"
+        'p.add_argument("--build", type=Path, default=REPO / "build")\n'
+        "asyncio.to_thread(local.get_method, args.build, args.data)\n",
+    )
+    assert "build/lite-client/lite-client" in resolved_checkout_paths("driver.py", scripts)
+
+
+def test_every_default_path_of_a_root_driver_is_in_the_snapshot(setup):
+    repo, tools, base = setup
+    wanted = set()
+    for driver in root_drivers():
+        wanted |= resolved_checkout_paths(driver)
+    # A complete checkout holds every path a driver names; so must the snapshot.
+    for relative in sorted(wanted):
+        target = repo / relative
+        is_directory = (CHECKOUT / relative).is_dir() or any(
+            other.startswith(relative + "/") for other in wanted
+        )
+        if is_directory:
+            target.mkdir(parents=True, exist_ok=True)
+        elif not target.exists():
+            write(target)
+    result = install(repo, tools, base)
+    assert result.returncode == 0, result.stderr
+    src = Path(result.stdout.strip()) / "src"
+    missing = sorted(p for p in wanted if not (src / p).exists())
+    assert not missing, f"root drivers resolve checkout paths the snapshot lacks: {missing}"

@@ -119,7 +119,7 @@ def choose(state, rng, sequence):
 
 async def pool_state(args, address):
     return {
-        k: await asyncio.to_thread(local.get_method, args.build, args.data, address, k)
+        k: await asyncio.to_thread(local.get_method, args.lite_client, args.data, address, k)
         for k in METHODS
     }
 
@@ -145,6 +145,7 @@ async def run(args):
         "invalid interval",
     )
     require(args.count >= 0, "invalid count")
+    args.lite_client = local.require_installed_executable(args.lite_client)
     local.secure_output_dir(args.output)
     with os.fdopen(local.open_private(args.output / "run.lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -415,6 +416,7 @@ def main():
     p.add_argument("--output", type=Path, default=Path("/data/privacy-transfers"))
     p.add_argument("--nodes", type=int, default=7, help="fixed full-node inventory size")
     p.add_argument("--build", type=Path, default=REPO / "build")
+    p.add_argument("--lite-client", type=Path, default=local.INSTALLED_LITE_CLIENT)
     p.add_argument(
         "--generator", type=Path,
         default=REPO / "tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic",
