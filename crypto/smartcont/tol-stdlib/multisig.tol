@@ -4,6 +4,11 @@
 // approval with no secret behind it. It is refused when it joins the signer
 // set and again whenever it would act or be counted as a signer, so a set
 // stored or built without [multisigAddSigner] still cannot use one.
+//
+// A signer field in a message is only a claim. [multisigRequireSubmitSignature]
+// is what makes it an identity: it checks an Ed25519 signature by that key over
+// [multisigSubmitSigningHash], which binds the request to one network, one
+// contract, one query id, one expiry and one actions cell.
 tol 1.3
 
 import "@stdlib/slice3-common"
@@ -21,6 +26,7 @@ const MULTISIG_FUNC_THROW_PROPOSAL_REPLAY = 1805
 const MULTISIG_FUNC_THROW_EXPIRED = 1806
 const MULTISIG_FUNC_THROW_INVALID_ACTIONS = 1807
 const MULTISIG_FUNC_THROW_WEAK_SIGNER = 1808
+const MULTISIG_FUNC_THROW_BAD_SIGNATURE = 1809
 
 const MULTISIG_STDLIB_ERROR_BAD_THRESHOLD = 2801
 const MULTISIG_STDLIB_ERROR_NOT_SIGNER = 2802
@@ -30,9 +36,15 @@ const MULTISIG_STDLIB_ERROR_PROPOSAL_REPLAY = 2805
 const MULTISIG_STDLIB_ERROR_EXPIRED = 2806
 const MULTISIG_STDLIB_ERROR_INVALID_ACTIONS = 2807
 const MULTISIG_STDLIB_ERROR_WEAK_SIGNER = 2808
+const MULTISIG_STDLIB_ERROR_BAD_SIGNATURE = 2809
 
 const MULTISIG_SIGNER_KEY_BITS = 256
 const MULTISIG_PROPOSAL_KEY_BITS = 64
+
+/// Domain tag of [multisigSubmitSigningHash], version 1 ("msv1"). A change to
+/// what the hash binds gets a new tag, so a signature made for one layout can
+/// never verify under another.
+const MULTISIG_SUBMIT_SIGNING_TAG_V1 = 0x6d737631
 
 struct MultisigConfig {
     threshold: uint16;
@@ -81,6 +93,9 @@ fun multisigErrorForFuncThrow(funcThrow: int, originalOp: uint32, queryId: uint6
     if (funcThrow == MULTISIG_FUNC_THROW_WEAK_SIGNER) {
         return slice3Error(queryId, originalOp, ErrorClass.Authorization, MULTISIG_STDLIB_ERROR_WEAK_SIGNER);
     }
+    if (funcThrow == MULTISIG_FUNC_THROW_BAD_SIGNATURE) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, MULTISIG_STDLIB_ERROR_BAD_SIGNATURE);
+    }
     return slice3Error(queryId, originalOp, ErrorClass.Protocol, MULTISIG_STDLIB_ERROR_INVALID_ACTIONS);
 }
 
@@ -125,6 +140,37 @@ fun multisigRequireSigner(signers: dict, publicKey: uint256): void {
         throw MULTISIG_FUNC_THROW_NOT_SIGNER;
     }
     multisigRequireStrongSigner(publicKey);
+}
+
+/// The network's global id (ConfigParam 19), read on chain.
+fun multisigGlobalId(): int
+    asm "GLOBALID"
+
+/// Hash a signer signs to submit `actions` under `queryId` to the multisig at
+/// `target`. It binds a versioned domain tag, the network (read on chain, so a
+/// signature for one network never verifies on another), the target contract,
+/// the query id, the expiry and the actions cell, so a signature cannot be
+/// moved to another network, contract, proposal, deadline or set of actions.
+fun multisigSubmitSigningHash(target: address, queryId: uint64, validUntil: uint32, actions: cell): int {
+    return beginCell()
+        .storeUint(MULTISIG_SUBMIT_SIGNING_TAG_V1, 32)
+        .storeInt(multisigGlobalId(), 32)
+        .storeAddress(target)
+        .storeUint(queryId, 64)
+        .storeUint(validUntil, 32)
+        .storeRef(actions)
+        .endCell()
+        .hash();
+}
+
+/// Throws unless `signature` is a valid Ed25519 signature of `hash` by
+/// `publicKey`. A weak key is refused before the signature is looked at:
+/// anyone can produce a signature that verifies under one.
+fun multisigRequireSubmitSignature(hash: int, signature: bits512, publicKey: uint256): void {
+    multisigRequireStrongSigner(publicKey);
+    if (!isSignatureValid(hash, signature as slice, publicKey)) {
+        throw MULTISIG_FUNC_THROW_BAD_SIGNATURE;
+    }
 }
 
 fun multisigAddSigner(signers: dict, publicKey: uint256): dict {

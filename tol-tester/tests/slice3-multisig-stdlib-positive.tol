@@ -195,6 +195,35 @@ fun test_weak_signer_keys_refused(): int {
     return 7;
 }
 
+// A real Ed25519 vector: private key sha256("quorum-key-1") signing HASH with
+// CHKSIGNU semantics; and a weak key (the identity with the sign bit set) whose
+// forged signature R = identity, S = 0 verifies for every hash.
+const SIG_HASH = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+const SIG_K1 = 0xA0E39282B780E9EF18283DD09ED1CABA55B468EB9C5014967EA5CAA3256C6795
+const SIG_WEAK = 0x0100000000000000000000000000000000000000000000000000000000000080
+
+fun sigK1(): bits512 { return "A2622A17A2AFAB596F3E424967925F73908AC39299D77CFCC462EFC9FA8A72EBF11D44355287786746C3F25431DBCC9B8E8C2EB2777FE26254AA2B6BBB512C01".hexToSlice() as bits512; }
+fun sigForged(): bits512 { return "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".hexToSlice() as bits512; }
+
+@method_id(108)
+fun test_submit_signature(): int {
+    // the fixtures are what they claim to be
+    assert(isSignatureValid(SIG_HASH, sigK1() as slice, SIG_K1)) throw 181;
+    assert(isSignatureValid(SIG_HASH, sigForged() as slice, SIG_WEAK)) throw 182;
+    multisigRequireSubmitSignature(SIG_HASH, sigK1(), SIG_K1);
+    var rejected = 0;
+    try { multisigRequireSubmitSignature(SIG_HASH + 1, sigK1(), SIG_K1); } catch (code) { assert(code == MULTISIG_FUNC_THROW_BAD_SIGNATURE) throw 183; rejected += 1; }
+    try { multisigRequireSubmitSignature(SIG_HASH, sigForged(), SIG_K1); } catch (code) { assert(code == MULTISIG_FUNC_THROW_BAD_SIGNATURE) throw 184; rejected += 1; }
+    // a signature that verifies, under a key anyone can sign for
+    try { multisigRequireSubmitSignature(SIG_HASH, sigForged(), SIG_WEAK); } catch (code) { assert(code == MULTISIG_FUNC_THROW_WEAK_SIGNER) throw 185; rejected += 1; }
+    assert(rejected == 3) throw 186;
+
+    val err = multisigErrorForFuncThrow(MULTISIG_FUNC_THROW_BAD_SIGNATURE, 0, 99);
+    assert(err.errorClass == ErrorClass.Authorization) throw 187;
+    assert(err.errorCode == MULTISIG_STDLIB_ERROR_BAD_SIGNATURE) throw 188;
+    return 8;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -203,4 +232,5 @@ fun test_weak_signer_keys_refused(): int {
 @testcase | 105 | | 5
 @testcase | 106 | | 2
 @testcase | 107 | | 7
+@testcase | 108 | | 8
  */

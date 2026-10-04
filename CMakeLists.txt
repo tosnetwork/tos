@@ -1419,6 +1419,23 @@ if (NOT NIX)
           "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
           "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     endif()
+    # Committed scaffold examples must match `tol new` output, and the tests
+    # it generates must pass.
+    add_test(
+      NAME test-tol-scaffolds
+      COMMAND ${PYTHON_VER} check-scaffolds.py
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tol-tester)
+    if (WIN32)
+        set_property(TEST test-tol-scaffolds PROPERTY ENVIRONMENT
+          "TOL_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tol/tol.exe"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift.exe"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    else()
+        set_property(TEST test-tol-scaffolds PROPERTY ENVIRONMENT
+          "TOL_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tol/tol"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    endif()
 endif()
 
 #BEGIN internal
