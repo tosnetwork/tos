@@ -451,6 +451,11 @@ int get_burn_cost(slice owner_address, int amount, int destination_address, int 
                      wallet_min_tos_for_storage);
 }
 
+;; The forwarding allowance for one small message (see settlement.fc).
+int get_small_message_fee(int is_mc) method_id {
+    return small_message_fee(is_mc);
+}
+
 ;; What a credit must deliver to a wallet for either outcome to be reported.
 int get_wallet_need() method_id {
     (_, _, _, _, _, _, int wallet_min_tos_for_storage, _, _, _) = get_jetton_bridge_config();

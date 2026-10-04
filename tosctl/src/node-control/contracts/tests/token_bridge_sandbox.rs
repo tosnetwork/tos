@@ -407,6 +407,7 @@ impl Bridge {
                     "dst": h.dst.to_string(),
                     "value": h.value.coins.as_u128().to_string(),
                     "bounce": h.bounce,
+                    "bounced": h.bounced,
                     "fwd_fee": h.fwd_fee.as_u128().to_string(),
                     "body": body,
                 }));
@@ -435,6 +436,7 @@ impl Bridge {
                 "out": out,
                 "balance": after.and_then(|a| a.balance().cloned()).map(|b| b.coins.as_u128().to_string()),
                 "data": after.and_then(|a| a.get_data_hash()).map(|h| h.as_hex_string()),
+                "code": after.and_then(|a| a.get_code_hash()).map(|h| h.as_hex_string()),
             },
         });
         std::fs::write(dir.join(format!("{:04}.json", self.traced)), record.to_string())
@@ -1375,6 +1377,100 @@ fn a_report_the_minter_cannot_fund_is_skipped_and_the_supply_still_counted() {
         MINT_IN_FLIGHT,
         "the bridge still waits, which is the documented residual"
     );
+}
+
+/// What forwarding a message as sent costs: every cell but the root, at the
+/// prices of the masterchain if either end is on it.
+fn forwarding_fee(bc: &Blockchain, message: &Cell, masterchain: bool) -> u128 {
+    fn visit(
+        c: &Cell,
+        seen: &mut std::collections::HashSet<UInt256>,
+        cells: &mut u128,
+        bits: &mut u128,
+    ) {
+        for i in 0..c.references_count() {
+            let child = c.reference(i).expect("a reference");
+            if seen.insert(child.repr_hash()) {
+                *cells += 1;
+                *bits += child.bit_length() as u128;
+                visit(&child, seen, cells, bits);
+            }
+        }
+    }
+    let (mut cells, mut bits) = (0u128, 0u128);
+    visit(message, &mut std::collections::HashSet::new(), &mut cells, &mut bits);
+    let prices = bc.config_params().fwd_prices(masterchain).expect("forward prices");
+    u128::from(prices.lump_price)
+        + ((u128::from(prices.bit_price) * bits + u128::from(prices.cell_price) * cells + 0xffff)
+            >> 16)
+}
+
+/// Confirmations, completion and failure reports, burn answers and bounces are
+/// priced as one small message. Each one these flows send, at the widest values
+/// a bridge can carry, costs no more to forward than that allowance.
+#[test]
+fn every_small_message_fits_its_forwarding_allowance() {
+    let mut b = Bridge::new();
+    let bridge = b.bridge.clone();
+    let nowhere = MsgAddressInt::with_params(-1, UInt256::from([0x99; 32])).unwrap();
+
+    // A credit refused by its wallet: the bounce and the failure report.
+    b.start_swap(MAX_SUPPLY / 2);
+    b.deliver_until(|m| body_op(m) == Some(OP_INTERNAL_TRANSFER));
+    let credit_value = b.queue.front().unwrap().get_value().unwrap().coins.as_u128() as u64;
+    let price = b.basechain_gas_price();
+    b.set_basechain_gas_price(
+        (u128::from(credit_value) * 65_536 * 11
+            / (10 * u128::from(declared_gas("WALLET_CREDIT_GAS")))) as u64,
+    );
+    b.deliver_one();
+    b.set_basechain_gas_price(price);
+    b.settle();
+    assert_eq!(b.pending_mint(0), MINT_FAILED);
+    // The widest mint: its confirmation and completion report.
+    b.swap(MAX_SUPPLY - 10);
+    // The widest burn, logged and answered; then one bounced and refunded.
+    b.start_burn(MAX_SUPPLY - 1_000);
+    b.settle();
+    b.configure(&nowhere, Prices::default());
+    b.start_burn(500);
+    b.settle();
+    b.configure(&bridge, Prices::default());
+
+    let allowance = |is_mc: bool| {
+        let arg = StackItem::integer(IntegerData::from_i32(if is_mc { -1 } else { 0 }));
+        b.get(&b.minter, "get_small_message_fee", vec![arg]).int_at(0) as u128
+    };
+    let mut seen = std::collections::BTreeMap::new();
+    for (addr, tx) in &b.delivered {
+        tx.iterate_out_msgs_with_cells(|m, cell| {
+            let Some(h) = m.int_header() else { return Ok(true) };
+            let kind = if h.bounced {
+                "bounce"
+            } else {
+                match body_op(&m) {
+                    Some(OP_MINT_CREDITED) => "confirmation",
+                    Some(OP_MINT_COMPLETED) => "completion",
+                    Some(OP_MINT_FAILED) => "failure report",
+                    Some(OP_BURN_RECORDED) => "burn answer",
+                    _ => return Ok(true),
+                }
+            };
+            let masterchain = addr.workchain_id() == -1 || h.dst.workchain_id() == -1;
+            let fee = forwarding_fee(&b.bc, &cell, masterchain);
+            assert!(
+                fee <= allowance(masterchain),
+                "a {kind} costs {fee} to forward, over the allowance of {}",
+                allowance(masterchain)
+            );
+            *seen.entry(kind).or_insert(0) += 1;
+            Ok(true)
+        })
+        .expect("the outgoing messages");
+    }
+    for kind in ["confirmation", "completion", "failure report", "burn answer", "bounce"] {
+        assert!(seen.contains_key(kind), "no {kind} was checked: {seen:?}");
+    }
 }
 
 fn hex_bytes(text: &str) -> Vec<u8> {

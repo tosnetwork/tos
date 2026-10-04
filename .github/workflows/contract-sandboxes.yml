@@ -21,6 +21,7 @@ on:
       - "crosschain/token-bridge/tvm/**"
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
+      - "scripts/test_replay_token_bridge_trace.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -50,6 +51,7 @@ on:
       - "crosschain/token-bridge/tvm/**"
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
+      - "scripts/test_replay_token_bridge_trace.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -207,6 +209,7 @@ jobs:
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
           TOKEN_BRIDGE_TRACE_DIR: ${{ runner.temp }}/token-bridge-trace
         run: |
+          python3 scripts/test_replay_token_bridge_trace.py
           cmake --build build --target emulator -j2
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
           python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR"

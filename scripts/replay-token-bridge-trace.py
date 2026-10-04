@@ -136,7 +136,7 @@ def outgoing(tx: Cell) -> list[dict]:
         if m.uint(1) == 0:
             m.uint(1)  # ihr_disabled
             bounce = bool(m.uint(1))
-            m.uint(1)  # bounced
+            bounced = bool(m.uint(1))
             read_int_address(m)
             dst = read_int_address(m)
             value = skip_currency_collection(m)
@@ -151,6 +151,7 @@ def outgoing(tx: Cell) -> list[dict]:
                     "dst": dst,
                     "value": str(value),
                     "bounce": bounce,
+                    "bounced": bounced,
                     "fwd_fee": str(fwd_fee),
                     "body": body_hash(m),
                 }
@@ -229,10 +230,26 @@ def description(tx: Cell) -> dict:
     }
 
 
-def account_after(shard_account: Cell) -> tuple[str | None, str | None]:
+def read_state_init(s) -> tuple[str | None, str | None]:
+    """The code and data hashes of an inline StateInit."""
+    if s.uint(1):
+        s.uint(5)
+    if s.uint(1):
+        s.uint(2)
+    code = s.maybe()
+    data = s.maybe()
+    s.maybe()
+    return (
+        code.hash.hex() if code is not None else None,
+        data.hash.hex() if data is not None else None,
+    )
+
+
+def read_account(shard_account: Cell) -> dict:
+    """An account's state, balance, and code and data hashes."""
     s = shard_account.refs[0].slice()
     if not s.uint(1):
-        return None, None
+        return {"state": "none", "balance": None, "code": None, "data": None}
     read_int_address(s)
     s.varuint(7)
     s.varuint(7)
@@ -242,32 +259,60 @@ def account_after(shard_account: Cell) -> tuple[str | None, str | None]:
     if s.uint(1):
         s.coins()
     s.uint(64)
-    balance = skip_currency_collection(s)
-    if s.uint(1) == 0:  # uninit or frozen
-        return str(balance), None
+    balance = str(skip_currency_collection(s))
+    if s.uint(1) == 0:
+        state = "frozen" if s.uint(1) else "uninit"
+        return {"state": state, "balance": balance, "code": None, "data": None}
+    code, data = read_state_init(s)
+    return {"state": "active", "balance": balance, "code": code, "data": data}
+
+
+def message_init(message: Cell) -> tuple[str | None, str | None] | None:
+    """The StateInit an internal message carries, as code and data hashes."""
+    s = message.slice()
+    if s.uint(1) != 0:
+        return None
+    s.uint(3)
+    read_int_address(s)
+    read_int_address(s)
+    skip_currency_collection(s)
+    s.coins()
+    s.coins()
+    s.uint(64)
+    s.uint(32)
+    if not s.uint(1):
+        return None
     if s.uint(1):
-        s.uint(5)
-    if s.uint(1):
-        s.uint(2)
-    s.maybe()
-    data = s.maybe()
-    return str(balance), data.hash.hex() if data is not None else None
+        return read_state_init(s.ref().slice())
+    return read_state_init(s)
 
 
-def failed_deployment_kept_by_rust(expect: dict, got: dict) -> bool:
-    """A deploying message whose compute phase failed and bounced everything.
+def failed_deployment_kept_by_rust(expect: dict, got: dict, before: dict, init) -> bool:
+    """A deployment refused in its compute phase, which bounced everything.
 
-    The native engine leaves no account behind; the Rust executor keeps an
-    active account holding nothing. Only this exact shape is set apart, and
-    only after every other field of the transaction has to agree.
+    The native engine leaves no account behind; the Rust executor keeps the
+    account active, holding nothing, with the deployed code and data. Only that
+    exact shape is set apart: an account that did not exist or held no code
+    before, a message carrying the StateInit, a compute phase that ran and
+    failed with no action phase, a bounce, and code and data equal to the
+    StateInit's. Every other field of the transaction must still agree.
     """
     return (
-        got["balance"] is None
+        before["state"] in ("none", "uninit")
+        and init is not None
+        and got["balance"] is None
         and got["data"] is None
+        and got["code"] is None
         and expect["balance"] == "0"
-        and expect["data"] is not None
+        and (expect["code"], expect["data"]) == init
         and expect["aborted"]
         and got["aborted"]
+        and not expect["compute_skipped"]
+        and not got["compute_skipped"]
+        and expect["exit_code"] == got["exit_code"]
+        and expect["exit_code"] not in (0, 1)
+        and expect["action"] is None
+        and got["action"] is None
         and expect["bounce"] == got["bounce"] == "ok"
     )
 
@@ -301,12 +346,17 @@ def main() -> int:
         tx = from_boc(base64.b64decode(result["transaction"]))
         got = description(tx)
         got["out"] = outgoing(tx)
-        got["balance"], got["data"] = account_after(
-            from_boc(base64.b64decode(result["shard_account"]))
-        )
-        if failed_deployment_kept_by_rust(expect, got):
+        after = read_account(from_boc(base64.b64decode(result["shard_account"])))
+        got["balance"], got["data"], got["code"] = after["balance"], after["data"], after["code"]
+        before = read_account(from_boc(base64.b64decode(record["shard_account"])))
+        init = message_init(from_boc(base64.b64decode(record["message"])))
+        if failed_deployment_kept_by_rust(expect, got, before, init):
             kept_deployments.append(str(path.relative_to(args.trace_dir)))
-            got["balance"], got["data"] = expect["balance"], expect["data"]
+            got["balance"], got["data"], got["code"] = (
+                expect["balance"],
+                expect["data"],
+                expect["code"],
+            )
         for key in (
             "aborted",
             "exit_code",
@@ -316,6 +366,7 @@ def main() -> int:
             "out",
             "balance",
             "data",
+            "code",
         ):
             if got[key] != expect[key]:
                 differences.append(

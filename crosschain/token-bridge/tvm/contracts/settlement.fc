@@ -70,8 +70,12 @@ int fee_of(cell msg, int is_mc) inline {
     return forward_fee(cells, bits, is_mc);
 }
 
-;; Confirmations, completion reports, burn answers and bounces each fit in a
-;; single cell of at most 1023 bits; this prices any of them.
+;; Forwarding is charged for a message's cells other than its root. A
+;; confirmation, completion report, burn answer or bounce is a header and a body
+;; of a few hundred bits: once the network writes in the source address and the
+;; value, the body may spill out of the root, but never into more than one cell
+;; of at most 1023 bits. This prices one such cell, so it covers any of them; the
+;; token-bridge sandbox checks it against every such message at maximum width.
 int small_message_fee(int is_mc) inline {
     return forward_fee(1, 1023, is_mc);
 }
