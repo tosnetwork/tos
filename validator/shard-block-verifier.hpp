@@ -19,6 +19,7 @@
 
 #include "interfaces/validator-manager.h"
 #include "rldp2/rldp.h"
+#include "validator/shard-block-confirmations.h"
 
 namespace tos::validator {
 
@@ -32,7 +33,8 @@ class ShardBlockVerifier : public td::actor::Actor {
       , opts_(std::move(opts))
       , manager_(std::move(manager))
       , adnl_(std::move(adnl))
-      , rldp_(std::move(rldp)) {
+      , rldp_(std::move(rldp))
+      , confirmations_([this](const BlockIdExt& block_id) { return registered_seqno(block_id); }) {
   }
 
   void start_up() override;
@@ -62,29 +64,12 @@ class ShardBlockVerifier : public td::actor::Actor {
 
   td::Timestamp send_subscribe_at_ = td::Timestamp::never();
 
-  struct BlockInfo {
-    size_t config_shard_idx = 0;
-    std::vector<bool> confirmed_by;
-    td::uint32 confirmed_by_cnt = 0;
-    bool confirmed = false;
-    std::vector<td::Promise<td::Unit>> promises;
-
-    void finalize_promises() {
-      for (auto& promise : promises) {
-        promise.set_value(td::Unit());
-      }
-    }
-  };
-  std::map<BlockIdExt, BlockInfo> blocks_;
+  ShardBlockConfirmations confirmations_;
 
   void update_config(td::Ref<ShardBlockVerifierConfig> new_config);
   void process_message(adnl::AdnlNodeIdShort src, td::BufferSlice data);
 
-  int get_config_shard_idx(const ShardIdFull& shard_id) const;
-  bool is_block_outdated(const BlockIdExt& block_id) const;
-  BlockInfo* get_block_info(const BlockIdExt& block_id);
-
-  void set_block_confirmed(adnl::AdnlNodeIdShort src, BlockIdExt block_id);
+  std::optional<BlockSeqno> registered_seqno(const BlockIdExt& block_id) const;
 
   static constexpr double SEND_SUBSCRIBE_PERIOD = 10.0;
 };

@@ -56,49 +56,16 @@ void ShardBlockVerifier::tear_down() {
 
 void ShardBlockVerifier::update_masterchain_state(td::Ref<MasterchainState> state) {
   last_masterchain_state_ = std::move(state);
-  for (auto it = blocks_.begin(); it != blocks_.end();) {
-    if (is_block_outdated(it->first)) {
-      it->second.finalize_promises();
-      it = blocks_.erase(it);
-    } else {
-      ++it;
-    }
-  }
+  confirmations_.prune_registered();
 }
 
 void ShardBlockVerifier::wait_shard_blocks(std::vector<BlockIdExt> blocks, td::Promise<td::Unit> promise) {
-  td::MultiPromise mp;
-  auto ig = mp.init_guard();
-  ig.add_promise(std::move(promise));
-  for (const BlockIdExt& block_id : blocks) {
-    BlockInfo* info = get_block_info(block_id);
-    if (info && !info->confirmed) {
-      info->promises.push_back(ig.get_promise());
-    }
-  }
+  confirmations_.wait(blocks, std::move(promise));
 }
 
 void ShardBlockVerifier::update_config(td::Ref<ShardBlockVerifierConfig> new_config) {
-  auto old_config = std::move(config_);
-  config_ = std::move(new_config);
-  auto old_blocks = std::move(blocks_);
-  blocks_.clear();
-  for (auto& [block_id, old_info] : old_blocks) {
-    BlockInfo* new_info = get_block_info(block_id);
-    if (new_info == nullptr) {
-      old_info.finalize_promises();
-      continue;
-    }
-    new_info->promises = std::move(old_info.promises);
-    if (new_info->confirmed) {
-      new_info->finalize_promises();
-    }
-    for (size_t old_src_idx = 0; old_src_idx < old_info.confirmed_by.size(); ++old_src_idx) {
-      if (old_info.confirmed_by[old_src_idx]) {
-        set_block_confirmed(old_config->shards[old_info.config_shard_idx].trusted_nodes[old_src_idx], block_id);
-      }
-    }
-  }
+  config_ = new_config;
+  confirmations_.set_config(std::move(new_config));
   all_trusted_nodes_.clear();
   for (auto& shard : config_->shards) {
     all_trusted_nodes_.insert(shard.trusted_nodes.begin(), shard.trusted_nodes.end());
@@ -137,74 +104,59 @@ void ShardBlockVerifier::process_message(adnl::AdnlNodeIdShort src, td::BufferSl
     LOG(INFO) << "Message from " << src << " : " << r_obj.move_as_error();
     return;
   }
+  using ConfirmResult = ShardBlockConfirmations::ConfirmResult;
   for (const auto& b : r_obj.ok()->blocks_) {
-    set_block_confirmed(src, create_block_id(b));
-  }
-}
-
-int ShardBlockVerifier::get_config_shard_idx(const ShardIdFull& shard_id) const {
-  for (size_t i = 0; i < config_->shards.size(); i++) {
-    if (shard_intersects(shard_id, config_->shards[i].shard_id)) {
-      return (int)i;
+    BlockIdExt block_id = create_block_id(b);
+    switch (confirmations_.confirm(src, block_id)) {
+      case ConfirmResult::Accepted:
+        VLOG(VALIDATOR_DEBUG) << "Confirm for " << block_id.to_str() << " from " << src << " : accepted";
+        break;
+      case ConfirmResult::Confirmed:
+        LOG(INFO) << "Confirm for " << block_id.to_str() << " from " << src << " : accepted, CONFIRMED";
+        break;
+      case ConfirmResult::Duplicate:
+        VLOG(VALIDATOR_DEBUG) << "Confirm for " << block_id.to_str() << " from " << src << " : duplicate";
+        break;
+      case ConfirmResult::UnknownSource:
+        LOG(INFO) << "Confirm for " << block_id.to_str() << " from " << src << " : unknown src";
+        break;
+      case ConfirmResult::NotTracked:
+        VLOG(VALIDATOR_DEBUG) << "Confirm for " << block_id.to_str() << " from " << src << " : ignored";
+        break;
+      case ConfirmResult::Deferred:
+        VLOG(VALIDATOR_DEBUG) << "Confirm for " << block_id.to_str() << " from " << src
+                              << " : deferred, beyond the registered shard top lookahead";
+        break;
+      case ConfirmResult::BeyondLookahead:
+        LOG(WARNING) << "Confirm for " << block_id.to_str() << " from " << src
+                     << " : refused, beyond the registered shard top lookahead and the deferral bound ("
+                     << confirmations_.deferred(src) << " held for this peer, " << confirmations_.deferred()
+                     << " in total)";
+        break;
+      case ConfirmResult::PeerBudget:
+        LOG(WARNING) << "Confirm for " << block_id.to_str() << " from " << src << " : refused, peer budget exhausted ("
+                     << confirmations_.peer_entries(src) << " entries, " << confirmations_.peer_bytes(src) << " bytes)";
+        break;
+      case ConfirmResult::GlobalBudget:
+        LOG(WARNING) << "Confirm for " << block_id.to_str() << " from " << src
+                     << " : refused, global budget exhausted (" << confirmations_.peer_entries() << " entries, "
+                     << confirmations_.peer_bytes() << " bytes)";
+        break;
     }
   }
-  return -1;
 }
 
-bool ShardBlockVerifier::is_block_outdated(const BlockIdExt& block_id) const {
+std::optional<BlockSeqno> ShardBlockVerifier::registered_seqno(const BlockIdExt& block_id) const {
+  if (last_masterchain_state_.is_null()) {
+    return std::nullopt;
+  }
   ShardIdFull shard = block_id.shard_full();
   shard.shard |= 1;
   auto shard_desc = last_masterchain_state_->get_shard_from_config(shard, false);
-  return shard_desc.not_null() && shard_desc->top_block_id().seqno() >= block_id.seqno();
-}
-
-ShardBlockVerifier::BlockInfo* ShardBlockVerifier::get_block_info(const BlockIdExt& block_id) {
-  auto it = blocks_.find(block_id);
-  if (it != blocks_.end()) {
-    return &it->second;
+  if (shard_desc.is_null()) {
+    return std::nullopt;
   }
-  int config_shard_idx = get_config_shard_idx(block_id.shard_full());
-  if (config_shard_idx < 0 || is_block_outdated(block_id)) {
-    return nullptr;
-  }
-  auto& shard_config = config_->shards[config_shard_idx];
-  BlockInfo& info = blocks_[block_id];
-  info.config_shard_idx = config_shard_idx;
-  info.confirmed_by.resize(shard_config.trusted_nodes.size(), false);
-  info.confirmed = (shard_config.required_confirms == 0);
-  return &info;
-}
-
-void ShardBlockVerifier::set_block_confirmed(adnl::AdnlNodeIdShort src, BlockIdExt block_id) {
-  BlockInfo* info = get_block_info(block_id);
-  if (info == nullptr) {
-    LOG(INFO) << "Confirm for " << block_id.to_str() << " from " << src << " : ignored";
-    return;
-  }
-  auto& shard_config = config_->shards[info->config_shard_idx];
-  size_t src_idx = 0;
-  while (src_idx < shard_config.trusted_nodes.size() && shard_config.trusted_nodes[src_idx] != src) {
-    ++src_idx;
-  }
-  if (src_idx == shard_config.trusted_nodes.size()) {
-    LOG(INFO) << "Confirm for " << block_id.to_str() << " from " << src << " : unknown src";
-    return;
-  }
-  if (info->confirmed_by[src_idx]) {
-    LOG(INFO) << "Confirm for " << block_id.to_str() << " from " << src << " #" << src_idx << " : duplicate";
-    return;
-  }
-  info->confirmed_by[src_idx] = true;
-  ++info->confirmed_by_cnt;
-  LOG(INFO) << "Confirm for " << block_id.to_str() << " from " << src << " #" << src_idx << " : accepted ("
-            << info->confirmed_by_cnt << "/" << shard_config.required_confirms << "/"
-            << shard_config.trusted_nodes.size() << ")"
-            << (info->confirmed_by_cnt == shard_config.required_confirms ? ", CONFIRMED" : "");
-  if (info->confirmed_by_cnt == shard_config.required_confirms) {
-    info->confirmed = true;
-    info->finalize_promises();
-    info->promises.clear();
-  }
+  return shard_desc->top_block_id().seqno();
 }
 
 }  // namespace tos::validator
