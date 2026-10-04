@@ -7,6 +7,7 @@
 const int op::release = 0x4e450001;
 const int op::refund = 0x4e450002;
 const int op::accept = 0x4e450003;
+const int op::retry_settlement = 0x4e450004;
 const int op::jetton_transfer = 0x0f8a7ea5;
 const int op::transfer_notification = 0x7362d09c;
 const int op::excesses = 0xd53276db;
@@ -28,6 +29,10 @@ const int status::awaiting_funding = 1;
 const int status::funded = 2;
 const int status::release_pending = 3;
 const int status::refund_pending = 4;
+;; A settlement whose payout has been retried at least once. A retry re-sends the
+;; recorded payout (same recipient, amount and query id); see op::retry_settlement.
+const int status::release_retrying = 5;
+const int status::refund_retrying = 6;
 
 const int err::bad_message = 2400;
 const int err::bad_state = 2401;
@@ -90,7 +95,7 @@ const int reason::wrong_wallet = 0xffffffa2;
   cell authorization = ds~load_ref();
   cell runtime = ds~load_ref();
   ds.end_parse();
-  throw_unless(err::bad_state, (status <= status::refund_pending) &
+  throw_unless(err::bad_state, (status <= status::refund_retrying) &
     (cell_hash(quote) == quote_hash) & (cell_hash(terms) == terms_hash) &
     (cell_hash(authorization) == auth_hash));
   return (status, quote_hash, terms_hash, auth_hash, quote, terms, authorization, runtime);
@@ -443,6 +448,14 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     body~skip_bits(32);
     throw_unless(err::bad_confirmation, body~load_uint(32) == op::jetton_transfer);
     int bounced_query = body~load_uint(64);
+    ;; Once a payout has been retried, a bounce no longer says the jettons are
+    ;; back: a retry also bounces when an earlier attempt already paid and left
+    ;; the own wallet empty. Rolling back to funded then would record unpaid
+    ;; funds that are gone, so a retrying settlement stays where it is.
+    if (((status == status::release_retrying) | (status == status::refund_retrying)) &
+        (bounced_query == pending_query)) {
+      return ();
+    }
     throw_unless(err::bad_confirmation, ((status == status::release_pending) |
       (status == status::refund_pending)) & (bounced_query == pending_query));
     save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
@@ -528,7 +541,7 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     throw_unless(err::bad_receipt, (completed_at <= now()) & (completed_at < refund_at));
     cell intent = settlement_intent(query_id, charged, quote_hash, new_receipt_hash);
     throw_unless(err::bad_signature, check_signature(cell_hash(intent), signature, public_key));
-    if (status == status::release_pending) {
+    if ((status == status::release_pending) | (status == status::release_retrying)) {
       throw_unless(err::bad_state, (query_id == pending_query) &
         (new_receipt_hash == receipt_hash) & (charged == settled));
       return ();
@@ -554,7 +567,7 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     int query_id = body~load_uint(64);
     body.end_parse();
     throw_unless(err::bad_message, query_id != 0);
-    if (status == status::refund_pending) {
+    if ((status == status::refund_pending) | (status == status::refund_retrying)) {
       throw_unless(err::bad_state, query_id == pending_query);
       return ();
     }
@@ -572,6 +585,38 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     return ();
   }
 
+  ;; A payout can fail at its second leg: the recipient's jetton wallet refuses
+  ;; the credit, which bounces to this escrow's own wallet and is re-credited
+  ;; there without telling the escrow. The settlement then stays pending with the
+  ;; jettons back in the own wallet. Anyone may re-send the recorded payout --
+  ;; same recipient, same amount, same query id -- and must fund the attempt.
+  ;; The own wallet holds only this escrow's jettons, so a retry cannot pay
+  ;; twice: after a delivered payout it has nothing left and the retry bounces.
+  if (op == op::retry_settlement) {
+    int query_id = body~load_uint(64);
+    body.end_parse();
+    int releasing = (status == status::release_pending) | (status == status::release_retrying);
+    int refunding = (status == status::refund_pending) | (status == status::refund_retrying);
+    throw_unless(err::bad_state, (releasing | refunding) & (query_id == pending_query));
+    slice recipient = releasing ? provider : buyer;
+    int amount = releasing ? settled : funded;
+    (cell payout_message, int payout_forward_fee) = make_stablecoin_message(
+      own_wallet, recipient, amount, query_id);
+    ;; The caller funds the payout budget and its fees; the escrow's own balance
+    ;; still has to clear the same guard as the first attempt.
+    throw_unless(err::insufficient_gas, msg_value >= wallet_transfer_tos + payout_forward_fee
+      + get_compute_fee(base_workchain, settlement_compute_gas_units));
+    throw_unless(err::insufficient_gas,
+      get_balance().pair_first() >= settlement_required_balance(payout_forward_fee));
+    save_escrow(releasing ? status::release_retrying : status::refund_retrying, quote_hash,
+      terms_hash, auth_hash, quote, terms, authorization, runtime);
+    send_stablecoin(payout_message);
+    return ();
+  }
+
+  ;; An excesses message is never evidence of a delivered payout: any jetton
+  ;; transfer to the recipient that names this escrow as response destination
+  ;; and reuses the public pending query id makes the recipient's wallet send one.
   if (op == op::excesses) { return (); }
   throw(err::bad_message);
 }
