@@ -74,7 +74,8 @@ What remains:
 
 - [x] Resolve burn-path partial execution: a burn the bridge does not log is credited back to its owner (see Completion of mints and burns).
 - [x] Resolve mint-path partial execution: supply counts a mint only once its wallet confirms the credit, a failed mint stays retryable without a new vote, and the completion fee budget is validated in the contract (see Completion of mints and burns).
-- [ ] Decide the operator procedure for a mint left in flight by a sustained gas price rise or a ConfigParam change (see What remains).
+- [x] Decide the operator procedure for a mint left in flight by a sustained gas price rise or a ConfigParam change (see Incident procedure: an operation left in flight). The procedure contains the incident; it does not recover the operation.
+- [ ] Production-grade recovery for an operation left in flight: authenticated, request-specific evidence of the outcome of each step, so that a stuck mint or burn can be resolved without inferring delivery from balances or elapsed time.
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.
@@ -91,6 +92,27 @@ What remains:
 ## Deployment prohibitions
 
 Do not reuse the source chain's production addresses, oracle sets, generated BOCs, or deployment command files. Do not deploy the same deterministic EVM address/oracle configuration as another bridge deployment. Do not enable EVM locking until the TOS ConfigParam and oracle observers are verified from independent nodes.
+
+## Incident procedure: an operation left in flight
+
+This procedure covers a mint or burn whose record stays in flight (see What remains). It contains the incident. It is not a recovery mechanism, and none exists for this release: the contracts cannot tell a credit that landed but whose confirmation was lost from one that never landed, and neither can an operator who looks only at balances or elapsed time.
+
+Standing rules, which apply before any incident:
+
+- **No production activation while the pre-mainnet checklist above is incomplete.** Populating a configuration slot, enabling EVM locking, or giving oracle daemons production keys is activation.
+- **Do not change ConfigParam 79 (or the slot of the affected network) while any affected mint or burn is unresolved.** The minter and wallets read the bridge address, fees and flags from it on every step; a change made while a record is in flight can make the confirmation that would have closed it unreadable, which turns a delayed operation into a lost one. This includes changes intended as a fix. The TOS-side suspension flags (`state_flags`) live in the same ConfigParam, so setting them is such a change and is not part of this procedure; whether to set them during an incident is an owner decision, taken with the same reconciliation evidence as any other ConfigParam change.
+
+When a mint stays in flight (`get_pending_mint` reports status 0 past the expected completion time), or a burn stays awaiting the bridge (`get_pending_burn` reports status 0 the same way):
+
+1. **Pause the affected direction with controls that leave the ConfigParam untouched.** For EVM to TOS (mints): disable locking on the EVM bridge (`voteForSwitchLock(false, nonce, ...)`), or disable the affected token (`voteForDisableToken(true, token, nonce, ...)`), and instruct oracle operators to stop signing new swap votes for that network. For TOS to EVM (burns): instruct oracle operators to stop signing unlocks for that network. Record the governance transactions and the time each oracle operator confirmed.
+2. **Freeze the evidence.** Record the affected mint or burn ids, the bridge, minter and wallet addresses, their current state from independent nodes, and the ConfigParam cell (its hash) at the time of the incident.
+3. **Reconcile the original transaction chain.** Starting from the transaction that created the record (the oracle vote or `retry_mint` for a mint; the wallet burn for a burn), follow every outgoing message through the bridge, minter and wallet transactions, from at least two independently operated nodes. For each step establish whether it executed, its compute and action phase results, and whether it bounced. Compare the wallet's balance history and the minter's `get_in_flight` against the records.
+4. **Classify the result:**
+   - **Authenticated failure.** The chain contains the bounce or failure report the protocol defines (the minter's `mint_failed`, the bounce of a mint to the bridge, or a burn notification's bounce) and the record moved to failed accordingly. Only this state may be retried, through the protocol's own operation (`retry_mint`, `retry_refund`), and only once the cause (fee schedule, gas prices) no longer prevents the step from completing.
+   - **Completed but unrecorded.** The chain shows the credit landed (the wallet's credit transaction executed) and the confirmation was lost. The tokens exist in the wallet; supply has not counted them. Do not mint, refund or retry. Record it and remain paused; closing such a record needs a release that can act on authenticated evidence.
+   - **Unresolved.** The chain does not establish either outcome, or the nodes disagree. **The procedure concludes "unresolved; remain paused".** That is an acceptable outcome of this procedure.
+5. **Never act on time alone.** Do not clear a swap's consumption, remint, issue a compensating refund or unlock, or mark a record failed because a timer expired or an operation has been pending for long. Elapsed time is not evidence of failure, and any of those actions can pay the same transfer twice.
+6. **Resume only after every affected record is closed by the protocol itself**, the cause is removed, and the reconciliation is written down with the transaction hashes it relied on. Re-enable in the reverse order of step 1.
 
 ## Incident default
 
