@@ -969,7 +969,7 @@ decltype(FullNodeImpl::limiter_) FullNodeImpl::make_limiter(const FullNodeOption
   // Small requests are cheap fixed-size lookups, but they still read from the
   // database, so they get their own (generous) bound instead of being free.
   size_t s_limit = 200;
-  return std::make_shared<RateLimiter<>>(
+  return std::make_shared<FullNodeRateLimiter>(
       RateLimit{w_size, g_limit}, RateLimit{w_size, h_limit},
       std::set{tos_api::tosNode_getArchiveSlice::ID, tos_api::tosNode_downloadPersistentStateSliceV2::ID,
                tos_api::tosNode_downloadZeroState::ID},

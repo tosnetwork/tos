@@ -17,6 +17,8 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <memory>
+
 #include "adnl/utils.hpp"
 #include "auto/tl/lite_api.h"
 #include "block/workchain-execution-dispatch.h"
@@ -29,150 +31,11 @@
 #include "full-node-master.hpp"
 #include "full-node-shard-queries.hpp"
 
-#include <atomic>
-#include <chrono>
-#include <map>
-#include <memory>
-#include <mutex>
-
 namespace tos {
 
 namespace validator {
 
 namespace fullnode {
-
-namespace {
-
-// The shard endpoint runs every query
-// through a `RateLimiter<>` (see full-node-shard.cpp:743-750), but the
-// master endpoint had no per-method rate limit. An ADNL peer could
-// repeatedly issue heavy `getArchiveSlice` / `downloadPersistentStateSliceV2`
-// queries (each up to 16 MiB after the max_size cap) and drive disk I/O
-// + bandwidth on the master.
-//
-// Mirroring shard's full RateLimiter would require plumbing a shared_ptr
-// through `FullNodeMaster::create` to all callers — out of scope for this
-// focused hardening change. Instead install a simple process-wide bucket here:
-//
-// A single process-wide bucket lets one misbehaving or aggressive peer burn
-// the entire
-// 16-burst / 4-per-sec budget and starve every other peer. Add a
-// per-source bucket (keyed by `adnl::AdnlNodeIdShort`) with the global
-// bucket as a backstop. A query is admitted only when both buckets allow
-// it, so the global cap still bounds total master CPU/IO and the
-// per-source cap stops one peer from monopolising it. Per-source map
-// grows by adnl id; in practice the slave set is small (validator-set
-// scale), but cap entries with a soft eviction every 1000 unique sources
-// to bound worst-case memory under spray attacks.
-struct MasterIngressLimiter {
-    std::mutex mutex;
-    uint64_t   tokens;
-    uint64_t   max_tokens;
-    uint64_t   refill_rate;
-    uint64_t   last_refill;
-
-    MasterIngressLimiter(uint64_t max_tok, uint64_t rate)
-        : tokens(max_tok), max_tokens(max_tok), refill_rate(rate),
-          last_refill(now_sec()) {}
-
-    static uint64_t now_sec() {
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-    }
-
-    // Refill + try-consume; takes the mutex internally. Returns true on
-    // success.
-    bool try_consume() {
-        std::lock_guard<std::mutex> lock(mutex);
-        uint64_t now = now_sec();
-        if (now > last_refill) {
-            tokens = std::min(tokens + (now - last_refill) * refill_rate, max_tokens);
-            last_refill = now;
-        }
-        if (tokens == 0) return false;
-        --tokens;
-        return true;
-    }
-
-    // Refund a previously-consumed token
-    // when a downstream gate (per-source bucket) rejects. Bounded by
-    // max_tokens so a refund storm cannot overflow the bucket.
-    void refund() {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (tokens < max_tokens) {
-            ++tokens;
-        }
-    }
-};
-
-constexpr uint64_t kMasterIngressBurst  = 16;
-constexpr uint64_t kMasterIngressPerSec = 4;
-constexpr uint64_t kPerSourcePerSec     = 1;
-constexpr uint64_t kPerSourceFreshBurst = 1;   // new bucket only gets 1 token, not full burst
-constexpr size_t   kMaxTrackedSources   = 1000;
-constexpr uint64_t kPerSourceIdleSec    = 300; // 5 min idle → eligible for eviction
-
-MasterIngressLimiter g_master_ingress_limiter{kMasterIngressBurst, kMasterIngressPerSec};
-
-struct PerSourceLimiterMap {
-    std::mutex mutex;
-    struct Entry {
-        std::unique_ptr<MasterIngressLimiter> limiter;
-        uint64_t last_use_sec;
-    };
-    // The previous implementation evicted
-    // `buckets.begin()` (lowest adnl-id bytes) when the cap was hit and gave
-    // every fresh bucket a full `kPerSourceBurst` token allowance. An attacker
-    // churning through fresh adnl ids could (a) evict legitimate peers'
-    // accumulated history and (b) effectively run at the global cap by
-    // burning the fresh-bucket burst on every new identity.
-    //
-    // New design: track last-use time per source. On cap-pressure, evict the
-    // longest-idle entry (real LRU). New buckets are seeded with only
-    // `kPerSourceFreshBurst` (1) tokens — they refill at the normal rate, but
-    // a churn attacker no longer gets a free 4-burst per identity.
-    std::map<adnl::AdnlNodeIdShort, Entry> buckets;
-
-    bool try_consume(adnl::AdnlNodeIdShort src) {
-        std::lock_guard<std::mutex> lock(mutex);
-        uint64_t now = MasterIngressLimiter::now_sec();
-        auto it = buckets.find(src);
-        if (it == buckets.end()) {
-            if (buckets.size() >= kMaxTrackedSources) {
-                // LRU eviction: scan for the longest-idle entry. Map is small
-                // bounded (1000 entries); linear scan is cheap.
-                auto victim = buckets.end();
-                uint64_t oldest = now;
-                for (auto cur = buckets.begin(); cur != buckets.end(); ++cur) {
-                    if (cur->second.last_use_sec < oldest) {
-                        oldest = cur->second.last_use_sec;
-                        victim = cur;
-                    }
-                }
-                // Only evict if the victim is truly idle. If even the oldest
-                // entry is fresh (cap reached under sustained load from many
-                // active peers), fall through and reject this new source —
-                // the global limiter still bounds aggregate load.
-                if (victim != buckets.end() && now - oldest >= kPerSourceIdleSec) {
-                    buckets.erase(victim);
-                } else {
-                    return false;
-                }
-            }
-            it = buckets.emplace(src,
-                Entry{std::make_unique<MasterIngressLimiter>(
-                          kPerSourceFreshBurst, kPerSourcePerSec),
-                      now}).first;
-        }
-        it->second.last_use_sec = now;
-        return it->second.limiter->try_consume();
-    }
-};
-
-PerSourceLimiterMap g_per_source_master_limiter;
-
-}  // namespace
 
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getNextBlockDescription &query,
                                        td::Promise<td::BufferSlice> promise) {
@@ -583,20 +446,12 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query,
                                        td::Promise<td::BufferSlice> promise) {
-  // The per-source bucket
-  // gates one peer's share; global bucket is the backstop on aggregate
-  // cost. Order matters — debit global FIRST (cheap reject if cap hit),
-  // then per-source. If per-source rejects, refund the global token so a
-  // honest peer that hits its (very tight, fresh-burst=1) per-source cap
-  // does not also burn the global pool. This pattern keeps both caps
-  // strictly enforced AND avoids charging tokens for rejected requests.
-  if (!g_master_ingress_limiter.try_consume()) {
+  // Admission happens before any parsing, so malformed queries are charged
+  // like any other. The engine shares one limiter across every master, and
+  // the source id is the authenticated ADNL id (or, for an anonymous
+  // external connection, an id derived from its address).
+  if (!limiter_ || !limiter_->try_acquire(src)) {
     promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
-    return;
-  }
-  if (!g_per_source_master_limiter.try_consume(src)) {
-    g_master_ingress_limiter.refund();
-    promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests from this source"));
     return;
   }
   auto BX = fetch_tl_prefix<tos_api::tosNode_query>(query, true);
@@ -646,21 +501,23 @@ void FullNodeMasterImpl::start_up() {
 FullNodeMasterImpl::FullNodeMasterImpl(adnl::AdnlNodeIdShort adnl_id, td::uint16 port, FileHash zero_state_file_hash,
                                        td::actor::ActorId<keyring::Keyring> keyring,
                                        td::actor::ActorId<adnl::Adnl> adnl,
-                                       td::actor::ActorId<ValidatorManagerInterface> validator_manager)
+                                       td::actor::ActorId<ValidatorManagerInterface> validator_manager,
+                                       std::shared_ptr<FullNodeMasterLimiter> limiter)
     : adnl_id_(adnl_id)
     , port_(port)
     , zero_state_file_hash_(zero_state_file_hash)
     , keyring_(keyring)
     , adnl_(adnl)
-    , validator_manager_(validator_manager) {
+    , validator_manager_(validator_manager)
+    , limiter_(std::move(limiter)) {
 }
 
 td::actor::ActorOwn<FullNodeMaster> FullNodeMaster::create(
     adnl::AdnlNodeIdShort adnl_id, td::uint16 port, FileHash zero_state_file_hash,
     td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
-    td::actor::ActorId<ValidatorManagerInterface> validator_manager) {
+    td::actor::ActorId<ValidatorManagerInterface> validator_manager, std::shared_ptr<FullNodeMasterLimiter> limiter) {
   return td::actor::create_actor<FullNodeMasterImpl>("tosnode", adnl_id, port, zero_state_file_hash, keyring, adnl,
-                                                     validator_manager);
+                                                     validator_manager, std::move(limiter));
 }
 
 }  // namespace fullnode

@@ -81,6 +81,7 @@
 #include <unistd.h>
 #endif
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -2573,54 +2574,85 @@ void ValidatorEngine::start_full_node() {
   if (!config_.full_node.is_zero() || !config_.full_node_slaves.empty()) {
     full_node_id_ = tos::adnl::AdnlNodeIdShort{config_.full_node};
     if (config_.full_node_slaves.size() > 0) {
-      std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
-      for (auto &x : config_.full_node_slaves) {
-        vec.emplace_back(tos::adnl::AdnlNodeIdFull{x.key}, x.addr);
+      // A slave signs in to its masters with the full node's ADNL key, so a
+      // master can admit it as one stable authenticated identity (see
+      // --full-node-master-trusted) instead of a fresh random key per
+      // connection.
+      if (full_node_id_.is_zero()) {
+        LOG(WARNING) << "full-node slave mode without a full-node ADNL id: connections to masters are anonymous and "
+                        "cannot be admitted as trusted";
+        start_full_node_with_slave_key(tos::PrivateKey{});
+        return;
       }
-      class Cb : public tos::adnl::AdnlExtClient::Callback {
-       public:
-        void on_ready() override {
+      auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<tos::PrivateKey> R) {
+        tos::PrivateKey key;
+        if (R.is_ok()) {
+          key = R.move_as_ok();
+        } else {
+          LOG(ERROR) << "cannot load the full-node ADNL key for signing in to masters, connecting anonymously: "
+                     << R.move_as_error();
         }
-        void on_stop_ready() override {
-        }
-      };
-      full_node_client_ = tos::adnl::AdnlExtMultiClient::create(std::move(vec), std::make_unique<Cb>());
+        td::actor::send_closure(SelfId, &ValidatorEngine::start_full_node_with_slave_key, std::move(key));
+      });
+      td::actor::send_closure(keyring_, &tos::keyring::Keyring::export_private_key, full_node_id_.pubkey_hash(),
+                              std::move(P));
+      return;
     }
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
-      R.ensure();
-      td::actor::send_closure(SelfId, &ValidatorEngine::started_full_node);
-    });
-    tos::validator::fullnode::FullNodeOptions full_node_options = full_node_options_;
-    full_node_options.config_ = config_.full_node_config;
-    full_node_ = tos::validator::fullnode::FullNode::create(
-        full_node_id_, validator_options_->zero_block_id().file_hash, full_node_options, keyring_.get(), adnl_.get(),
-        rldp2_.get(), quic_.get(),
-        default_dht_node_.is_zero() ? td::actor::ActorId<tos::dht::Dht>{} : dht_nodes_[default_dht_node_].get(),
-        overlay_manager_.get(), validator_manager_.get(), full_node_client_.get(), db_root_, std::move(P));
-    for (const auto &[id, references] : local_validator_adnl_ids_) {
-      for (std::size_t i = 0; i < references; ++i) {
-        td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_validator_adnl_id, id);
-      }
-    }
-    for (auto &[c, shards] : config_.collators) {
-      for (auto &_ : shards) {
-        td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_collator_adnl_id, c);
-      }
-    }
-    for (auto &x : config_.fast_sync_member_certificates) {
-      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::import_fast_sync_member_certificate,
-                              x.first, x.second);
-    }
-    if (!validator_telemetry_filename_.empty()) {
-      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::set_validator_telemetry_filename,
-                              validator_telemetry_filename_);
-    }
-    load_custom_overlays_config();
-    register_fast_sync_certificate_callback();
-    register_shard_overlay_certificate_callback();
+    start_full_node_with_slave_key(tos::PrivateKey{});
   } else {
     started_full_node();
   }
+}
+
+// An empty slave_key makes slave connections sign in with a fresh random key.
+void ValidatorEngine::start_full_node_with_slave_key(tos::PrivateKey slave_key) {
+  if (config_.full_node_slaves.size() > 0) {
+    std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
+    for (auto &x : config_.full_node_slaves) {
+      vec.emplace_back(tos::adnl::AdnlNodeIdFull{x.key}, x.addr);
+    }
+    class Cb : public tos::adnl::AdnlExtClient::Callback {
+     public:
+      void on_ready() override {
+      }
+      void on_stop_ready() override {
+      }
+    };
+    full_node_client_ =
+        tos::adnl::AdnlExtMultiClient::create(std::move(vec), std::move(slave_key), std::make_unique<Cb>());
+  }
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
+    R.ensure();
+    td::actor::send_closure(SelfId, &ValidatorEngine::started_full_node);
+  });
+  tos::validator::fullnode::FullNodeOptions full_node_options = full_node_options_;
+  full_node_options.config_ = config_.full_node_config;
+  full_node_ = tos::validator::fullnode::FullNode::create(
+      full_node_id_, validator_options_->zero_block_id().file_hash, full_node_options, keyring_.get(), adnl_.get(),
+      rldp2_.get(), quic_.get(),
+      default_dht_node_.is_zero() ? td::actor::ActorId<tos::dht::Dht>{} : dht_nodes_[default_dht_node_].get(),
+      overlay_manager_.get(), validator_manager_.get(), full_node_client_.get(), db_root_, std::move(P));
+  for (const auto &[id, references] : local_validator_adnl_ids_) {
+    for (std::size_t i = 0; i < references; ++i) {
+      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_validator_adnl_id, id);
+    }
+  }
+  for (auto &[c, shards] : config_.collators) {
+    for (auto &_ : shards) {
+      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_collator_adnl_id, c);
+    }
+  }
+  for (auto &x : config_.fast_sync_member_certificates) {
+    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::import_fast_sync_member_certificate,
+                            x.first, x.second);
+  }
+  if (!validator_telemetry_filename_.empty()) {
+    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::set_validator_telemetry_filename,
+                            validator_telemetry_filename_);
+  }
+  load_custom_overlays_config();
+  register_fast_sync_certificate_callback();
+  register_shard_overlay_certificate_callback();
 }
 
 void ValidatorEngine::started_full_node() {
@@ -2721,12 +2753,32 @@ void ValidatorEngine::started_control_interface(td::actor::ActorOwn<tos::adnl::A
 }
 
 void ValidatorEngine::start_full_node_masters() {
+  if (!config_.full_node_masters.empty() && !full_node_master_limiter_) {
+    auto clock = []() -> td::uint64 {
+      return static_cast<td::uint64>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+              .count());
+    };
+    auto R = tos::validator::fullnode::FullNodeMasterLimiter::create(full_node_master_trusted_, clock);
+    if (R.is_error()) {
+      LOG(ERROR) << "invalid full-node master trusted set: " << R.move_as_error();
+      std::_Exit(2);
+    }
+    full_node_master_limiter_ = std::shared_ptr<tos::validator::fullnode::FullNodeMasterLimiter>(R.move_as_ok());
+    if (full_node_master_trusted_.empty()) {
+      LOG(WARNING) << "full-node master runs without --full-node-master-trusted: every source shares the public "
+                      "request budget, so there is no Sybil-resistant availability guarantee for slaves";
+    } else {
+      LOG(INFO) << "full-node master reserves half of its request budget for " << full_node_master_trusted_.size()
+                << " trusted slave id(s)";
+    }
+  }
   for (auto &x : config_.full_node_masters) {
-    full_node_masters_.emplace(
-        static_cast<td::uint16>(x.first),
-        tos::validator::fullnode::FullNodeMaster::create(
-            tos::adnl::AdnlNodeIdShort{x.second}, static_cast<td::uint16>(x.first),
-            validator_options_->zero_block_id().file_hash, keyring_.get(), adnl_.get(), validator_manager_.get()));
+    full_node_masters_.emplace(static_cast<td::uint16>(x.first),
+                               tos::validator::fullnode::FullNodeMaster::create(
+                                   tos::adnl::AdnlNodeIdShort{x.second}, static_cast<td::uint16>(x.first),
+                                   validator_options_->zero_block_id().file_hash, keyring_.get(), adnl_.get(),
+                                   validator_manager_.get(), full_node_master_limiter_));
   }
   started_full_node_masters();
 }
@@ -6082,6 +6134,7 @@ int main(int argc, char *argv[]) {
   LOG_STATUS(td::change_maximize_rlimit(td::RlimitType::nofile, 1572864));
 
   std::vector<std::function<void()>> acts;
+  std::set<tos::adnl::AdnlNodeIdShort> full_node_master_trusted;
   std::string measurement_jsonl;
   std::string measurement_node_id;
   std::optional<td::IPAddress> json_rpc_bind_address;
@@ -6508,6 +6561,20 @@ int main(int argc, char *argv[]) {
         return td::Status::OK();
       });
   p.add_checked_option(
+      '\0', "full-node-master-trusted",
+      "full-node slave ADNL id (hex) for which a full-node master reserves an equal share of half its request budget; "
+      "repeatable, at most 8",
+      [&](td::Slice s) -> td::Status {
+        TRY_RESULT(id, parse_adnl_id_hex(s));
+        full_node_master_trusted.insert(id);
+        if (full_node_master_trusted.size() > tos::validator::fullnode::FullNodeMasterLimiter::kMaxTrusted) {
+          return td::Status::Error(PSLICE()
+                                   << "at most " << tos::validator::fullnode::FullNodeMasterLimiter::kMaxTrusted
+                                   << " --full-node-master-trusted ids are supported");
+        }
+        return td::Status::OK();
+      });
+  p.add_checked_option(
       '\0', "auto-sign", "ADNL id (hex) to receive automatically issued shard overlay certificates",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(id, parse_adnl_id_hex(s));
@@ -6913,6 +6980,11 @@ int main(int argc, char *argv[]) {
       LOG(ERROR) << admission.message();
       std::_Exit(2);
     }
+  }
+  if (!full_node_master_trusted.empty()) {
+    acts.push_back([&x, ids = full_node_master_trusted]() mutable {
+      td::actor::send_closure(x, &ValidatorEngine::set_full_node_master_trusted, std::move(ids));
+    });
   }
   if (!measurement_jsonl.empty() || !measurement_node_id.empty()) {
     if (measurement_jsonl.empty() || measurement_node_id.empty()) {

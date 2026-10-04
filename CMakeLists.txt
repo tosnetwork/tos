@@ -892,6 +892,12 @@ target_include_directories(test-quic-admission PRIVATE ${CMAKE_CURRENT_SOURCE_DI
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-quic-admission PRIVATE adnl tl_api tdutils)
 
+add_executable(test-adnl-ext-client-identity test/test-adnl-ext-client-identity.cpp)
+target_include_directories(test-adnl-ext-client-identity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-client-identity PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
+                      tdutils tdactor)
+
 add_executable(test-adnl-ext-query-refusal test/pq-native/adnl-ext-query-refusal-test.cpp)
 target_include_directories(test-adnl-ext-query-refusal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1614,6 +1620,7 @@ tos_test(test-pq-lite-forward-proof)
 tos_test(test-adnl-ext-query-closure)
 tos_test(test-adnl-ext-query-refusal)
 tos_test(test-adnl-ext-output-backpressure)
+tos_test(test-adnl-ext-client-identity)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)

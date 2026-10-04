@@ -53,6 +53,12 @@ class AdnlExtMultiClient : public AdnlExtClient {
   virtual void del_server(td::IPAddress dst_addr, td::Promise<td::Unit> promise) = 0;
   static td::actor::ActorOwn<AdnlExtMultiClient> create(std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids,
                                                         std::unique_ptr<AdnlExtClient::Callback> callback);
+  // Every connection signs in to its server with local_id, so the server sees
+  // one stable authenticated identity. An empty key keeps the default of a
+  // fresh random key per connection.
+  static td::actor::ActorOwn<AdnlExtMultiClient> create(std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids,
+                                                        PrivateKey local_id,
+                                                        std::unique_ptr<AdnlExtClient::Callback> callback);
 };
 
 }  // namespace adnl

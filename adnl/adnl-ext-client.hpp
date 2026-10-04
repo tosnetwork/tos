@@ -177,9 +177,9 @@ class AdnlExtClientImpl : public AdnlExtClient {
 
 class AdnlExtMultiClientImpl : public AdnlExtMultiClient {
  public:
-  AdnlExtMultiClientImpl(std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids,
+  AdnlExtMultiClientImpl(std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids, PrivateKey local_id,
                          std::unique_ptr<AdnlExtClient::Callback> callback)
-      : ids_(std::move(ids)), callback_(std::move(callback)) {
+      : ids_(std::move(ids)), local_id_(std::move(local_id)), callback_(std::move(callback)) {
   }
 
   void start_up() override;
@@ -218,6 +218,7 @@ class AdnlExtMultiClientImpl : public AdnlExtMultiClient {
   std::map<td::uint32, std::unique_ptr<Client>> clients_;
 
   std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids_;
+  PrivateKey local_id_;
   std::unique_ptr<AdnlExtClient::Callback> callback_;
 };
 

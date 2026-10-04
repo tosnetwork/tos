@@ -224,7 +224,8 @@ void AdnlExtMultiClientImpl::add_server(AdnlNodeIdFull dst, td::IPAddress dst_ad
   }
 
   auto g = ++generation_;
-  auto cli = std::make_unique<Client>(AdnlExtClient::create(dst, dst_addr, make_callback(g)), dst, dst_addr, g);
+  auto cli =
+      std::make_unique<Client>(AdnlExtClient::create(dst, local_id_, dst_addr, make_callback(g)), dst, dst_addr, g);
   clients_[g] = std::move(cli);
 }
 
@@ -312,7 +313,14 @@ std::unique_ptr<AdnlExtClient::Callback> AdnlExtMultiClientImpl::make_callback(t
 
 td::actor::ActorOwn<AdnlExtMultiClient> AdnlExtMultiClient::create(
     std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids, std::unique_ptr<AdnlExtClient::Callback> callback) {
-  return td::actor::create_actor<AdnlExtMultiClientImpl>("extmulticlient", std::move(ids), std::move(callback));
+  return create(std::move(ids), PrivateKey{}, std::move(callback));
+}
+
+td::actor::ActorOwn<AdnlExtMultiClient> AdnlExtMultiClient::create(
+    std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids, PrivateKey local_id,
+    std::unique_ptr<AdnlExtClient::Callback> callback) {
+  return td::actor::create_actor<AdnlExtMultiClientImpl>("extmulticlient", std::move(ids), std::move(local_id),
+                                                         std::move(callback));
 }
 
 }  // namespace adnl

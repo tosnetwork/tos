@@ -755,11 +755,20 @@ void FullNodeShardImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice
   }
   auto B = fetch_tl_object<tos_api::Function>(std::move(query), true);
   if (B.is_error()) {
+    // Parsing already cost work; charge it to the sender so malformed probes
+    // are bounded by the sender's own allowance rather than being free.
+    if (!limiter_->check_in_unparseable(shard_, src)) {
+      promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
+      return;
+    }
     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "cannot parse tosnode query"));
     return;
   }
   auto fun_ptr = B.move_as_ok();
-  if (!limiter_->check_in(fun_ptr->get_id(), request_cost_for_limiter(*fun_ptr))) {
+  // The cost is priced from the claimed size before any lookup, so a request
+  // for a missing or oversized resource is charged to its sender's own
+  // allowance and to this shard's part of the shared windows.
+  if (!limiter_->check_in(fun_ptr->get_id(), request_cost_for_limiter(*fun_ptr), shard_, src)) {
     promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
     return;
   }
@@ -1248,6 +1257,10 @@ void FullNodeShardImpl::start_up() {
     overlay_id_ = overlay_id_full_.compute_short_id();
     rules_ = overlay::OverlayPrivacyRules{overlay::Overlays::max_fec_broadcast_size()};
 
+    if (limiter_ && !limiter_registered_) {
+      limiter_->register_shard(shard_);
+      limiter_registered_ = true;
+    }
     create_overlay();
 
     reload_neighbours_at_ = td::Timestamp::now();
@@ -1258,6 +1271,10 @@ void FullNodeShardImpl::start_up() {
 }
 
 void FullNodeShardImpl::tear_down() {
+  if (limiter_ && limiter_registered_) {
+    limiter_->unregister_shard(shard_);
+    limiter_registered_ = false;
+  }
   td::actor::send_closure(overlays_, &tos::overlay::Overlays::delete_overlay, adnl_id_, overlay_id_);
 }
 
@@ -1607,7 +1624,7 @@ void FullNodeShardImpl::get_stats_extra(td::Promise<std::string> promise) {
 
 FullNodeShardImpl::FullNodeShardImpl(
     ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-    FullNodeOptions opts, std::shared_ptr<RateLimiter<>> limiter, td::actor::ActorId<keyring::Keyring> keyring,
+    FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter, td::actor::ActorId<keyring::Keyring> keyring,
     td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
     td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
     td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client,
@@ -1632,7 +1649,7 @@ FullNodeShardImpl::FullNodeShardImpl(
 
 td::actor::ActorOwn<FullNodeShard> FullNodeShard::create(
     ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-    FullNodeOptions opts, std::shared_ptr<RateLimiter<>> limiter, td::actor::ActorId<keyring::Keyring> keyring,
+    FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter, td::actor::ActorId<keyring::Keyring> keyring,
     td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
     td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
     td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client,

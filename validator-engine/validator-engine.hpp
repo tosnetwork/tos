@@ -193,6 +193,8 @@ class ValidatorEngine : public td::actor::Actor {
   tos::validator::ValidatorAdnlRefCounts local_validator_adnl_ids_;
   std::set<tos::adnl::AdnlNodeIdShort> local_pq_validator_adnl_ids_;
   std::map<td::uint16, td::actor::ActorOwn<tos::validator::fullnode::FullNodeMaster>> full_node_masters_;
+  std::set<tos::adnl::AdnlNodeIdShort> full_node_master_trusted_;
+  std::shared_ptr<tos::validator::fullnode::FullNodeMasterLimiter> full_node_master_limiter_;
   td::actor::ActorOwn<tos::adnl::AdnlExtServer> control_ext_server_;
   td::actor::ActorOwn<tos::PrometheusExporter> exporter_;
   td::actor::ActorOwn<tos::JsonRpcServer> json_rpc_server_;
@@ -474,6 +476,9 @@ class ValidatorEngine : public td::actor::Actor {
   void set_ratelimit_medium(size_t count) {
     full_node_options_.ratelimit_medium_ = count;
   }
+  void set_full_node_master_trusted(std::set<tos::adnl::AdnlNodeIdShort> ids) {
+    full_node_master_trusted_ = std::move(ids);
+  }
   void add_auto_sign_adnl(tos::adnl::AdnlNodeIdShort id) {
     LOG(INFO) << "configured auto-sign shard overlay certificates for adnl=" << id;
     auto_sign_adnls_.insert(id);
@@ -540,6 +545,7 @@ class ValidatorEngine : public td::actor::Actor {
   size_t wc0_recovery_index_ = 0;
 
   void start_full_node();
+  void start_full_node_with_slave_key(tos::PrivateKey slave_key);
   void started_full_node();
 
   void add_lite_server(tos::PublicKeyHash id, td::uint16 port);
