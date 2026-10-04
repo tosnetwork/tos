@@ -10,6 +10,7 @@
 #include "td/db/RocksDb.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/logging.h"
+#include "td/utils/optional.h"
 #include "td/utils/port/path.h"
 #include "vm/boc.h"
 
@@ -43,6 +44,8 @@ constexpr uint8_t kMetaTokenLostSub = 0x05;
 constexpr uint8_t kMetaTokenCursorSub = 0x06;
 constexpr uint8_t kMetaTokenUnverifiableSub = 0x07;
 constexpr uint8_t kMetaTokenPositionSub = 0x08;
+// 0x00 0x09 -> 1 once a block may have gone unindexed without a mark.
+constexpr uint8_t kMetaNeedsRebuildSub = 0x09;
 
 // (kMaxEventsPerAccount / kMaxEventTrimPerPass are declared in the header
 // so tests can reference the exact bound.)
@@ -623,10 +626,76 @@ td::Result<td::Ref<vm::Cell>> WalletIndexDb::get_event(const HashKey& account, u
 
 // --- nft current-owner reverse map ---
 
-td::Status WalletIndexDb::put_nft_owner(const HashKey& nft, const HashKey& owner) {
+namespace {
+
+constexpr size_t kNftRecordLen = 1 + 32 + 8;
+
+struct NftRecord {
+  bool owned = false;
+  HashKey owner;
+  uint64_t lt = 0;
+};
+
+}  // namespace
+
+static td::Status put_nft_record(td::RocksDb& db, const HashKey& nft, bool owned, const HashKey& owner, uint64_t lt) {
   char key[kSingleHashKeyLen];
   make_owner_prefix(kNftOwnerTag, nft, key);
-  return db_->set(td::Slice{key, kSingleHashKeyLen}, owner.as_slice());
+  char value[kNftRecordLen];
+  value[0] = owned ? 1 : 0;
+  std::memcpy(value + 1, owner.data(), 32);
+  put_u64_be(value + 1 + 32, lt);
+  return db.set(td::Slice{key, kSingleHashKeyLen}, td::Slice{value, kNftRecordLen});
+}
+
+static td::Result<td::optional<NftRecord>> get_nft_record(td::RocksDb& db, const HashKey& nft) {
+  char key[kSingleHashKeyLen];
+  make_owner_prefix(kNftOwnerTag, nft, key);
+  std::string value;
+  TRY_RESULT(status, db.get(td::Slice{key, kSingleHashKeyLen}, value));
+  if (status == td::KeyValue::GetStatus::NotFound) {
+    return td::optional<NftRecord>{};
+  }
+  NftRecord record;
+  if (value.size() == 32) {
+    record.owned = true;
+    record.owner.as_slice().copy_from(td::Slice{value});
+    return td::optional<NftRecord>(record);
+  }
+  if (value.size() != kNftRecordLen) {
+    return td::Status::Error("wc0-index: malformed NFT ownership record");
+  }
+  record.owned = value[0] != 0;
+  record.owner.as_slice().copy_from(td::Slice{value.data() + 1, 32});
+  record.lt = get_u64_be(value.data() + 1 + 32);
+  return td::optional<NftRecord>(record);
+}
+
+td::Status WalletIndexDb::put_nft_owner(const HashKey& nft, const HashKey& owner) {
+  return put_nft_record(*db_, nft, true, owner, 0);
+}
+
+td::Status WalletIndexDb::apply_nft_verdict(const HashKey& item, const NftVerdict& verdict, uint64_t end_lt) {
+  TRY_RESULT(record, get_nft_record(*db_, item));
+  if (record && record.value().lt > end_lt) {
+    // A later block already decided this item.
+    return td::Status::OK();
+  }
+  bool had_owner = record && record.value().owned;
+  if (!verdict.owned) {
+    if (had_owner) {
+      TRY_STATUS(erase_nft(record.value().owner, item));
+    }
+    if (had_owner || record) {
+      return put_nft_record(*db_, item, false, HashKey::zero(), end_lt);
+    }
+    return td::Status::OK();
+  }
+  if (had_owner && record.value().owner != verdict.owner) {
+    TRY_STATUS(erase_nft(record.value().owner, item));
+  }
+  TRY_STATUS(put_nft(verdict.owner, item, verdict.value));
+  return put_nft_record(*db_, item, true, verdict.owner, end_lt);
 }
 
 td::Status WalletIndexDb::erase_nft_owner(const HashKey& nft) {
@@ -636,15 +705,11 @@ td::Status WalletIndexDb::erase_nft_owner(const HashKey& nft) {
 }
 
 td::Result<bool> WalletIndexDb::get_nft_owner(const HashKey& nft, HashKey& owner) {
-  char key[kSingleHashKeyLen];
-  make_owner_prefix(kNftOwnerTag, nft, key);
-  std::string value;
-  auto status = db_->get(td::Slice{key, kSingleHashKeyLen}, value);
-  if (status.is_error()) return status.move_as_error();
-  if (status.ok() == td::KeyValue::GetStatus::NotFound || value.size() != 32) {
+  TRY_RESULT(record, get_nft_record(*db_, nft));
+  if (!record || !record.value().owned) {
     return false;
   }
-  owner.as_slice().copy_from(td::Slice{value});
+  owner = record.value().owner;
   return true;
 }
 
@@ -673,6 +738,14 @@ td::Status WalletIndexDb::mark_blocks_incomplete(const std::vector<tos::BlockIdE
     make_incomplete_block_key(block_id, key);
     TRY_STATUS(marker_db_->set(td::Slice{key, kIncompleteBlockKeyLen}, td::Slice{val, kIncompleteBlockValueLen}));
   }
+  return marker_db_->flush_wal(true);
+}
+
+td::Status WalletIndexDb::mark_needs_rebuild() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaNeedsRebuildSub, key);
+  const char one[1] = {1};
+  TRY_STATUS(marker_db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{one, 1}));
   return marker_db_->flush_wal(true);
 }
 
@@ -1239,7 +1312,12 @@ td::Result<TokenBacklogStats> WalletIndexDb::token_backlog_stats() {
   if (!unfinished_block) {
     TRY_STATUS(std::move(status));
   }
-  return TokenBacklogStats{entries, lost, unverifiable, unfinished_block};
+  char rebuild_key[kMetaKeyLen];
+  make_meta_key(kMetaNeedsRebuildSub, rebuild_key);
+  std::string rebuild_value;
+  TRY_RESULT(rebuild_status, db_->get(td::Slice{rebuild_key, kMetaKeyLen}, rebuild_value));
+  bool needs_rebuild = rebuild_status == td::KeyValue::GetStatus::Ok;
+  return TokenBacklogStats{entries, lost, unverifiable, unfinished_block, needs_rebuild};
 }
 
 td::Status WalletIndexDb::for_each_deferred_token_candidate(size_t limit,

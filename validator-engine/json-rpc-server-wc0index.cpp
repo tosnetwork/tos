@@ -32,6 +32,7 @@
 #include "vm/dict.h"
 
 #include "json-rpc-server-internal.h"
+#include "wallet-index-writer.h"
 #include "wallet-index.h"
 
 namespace tos {
@@ -244,6 +245,7 @@ td::Result<AccountEventId> parse_event_id(td::Slice value) {
 // an empty or short answer is not read as the whole truth.
 static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIndexSnapshot &view) {
   TRY_RESULT(stats, view.token_backlog_stats());
+  stats.needs_rebuild = stats.needs_rebuild || tos_wallet_index::wc0_index_degraded();
   return tos_wallet_index::format_token_index_state(stats);
 }
 

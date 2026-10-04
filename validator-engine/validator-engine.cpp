@@ -1389,6 +1389,9 @@ void ValidatorEngine::schedule_shutdown(double at) {
     tos::delay_action(
         []() {
           LOG(WARNING) << "Shutting down as scheduled";
+          // Stop indexing first: queued blocks keep their recovery marks.
+          tos::validator::g_wc0_block_index_hook = nullptr;
+          tos_wallet_index::stop_wc0_index_worker();
           std::_Exit(0);
         },
         ts);

@@ -86,6 +86,9 @@ void start_wc0_index_worker();
 // Stop it: the block in hand is finished, queued ones stay marked. Call
 // before the index database is closed.
 void stop_wc0_index_worker();
+// Whether this run lost track of a block it could not mark for recovery
+// (in memory, for when recording that fact durably failed too).
+bool wc0_index_degraded();
 // The block-apply hook: hands the block to the indexing worker and returns at
 // once, so applying a block never waits on the index's lock, TVM getters or
 // WAL sync. When the worker is kWc0IndexQueueCapacity blocks behind, the block is not

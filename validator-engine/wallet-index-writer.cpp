@@ -14,6 +14,7 @@
               collection must resolve back to the item.
     Only verified facts are indexed. Best-effort and off the consensus path.
 */
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -461,27 +462,17 @@ TokenVerifyOutcome index_nft_candidate(WalletIndexDb* db, StateAccounts& state, 
     return verification == NftVerification::Indeterminate ? TokenVerifyOutcome::Retry
                                                           : TokenVerifyOutcome::Unverifiable;
   }
-  if (verification == NftVerification::Absent) {
-    // A previously indexed NFT can become unowned, uninitialized, frozen, or
-    // deleted (DNS expiry/release is the important case). Its committed
-    // post-state no longer proves the old ownership claim, so remove both
-    // directions in the same batch.
-    if (had_owner) {
-      if (db->erase_nft(prev_owner, item).is_error() || db->erase_nft_owner(item).is_error()) {
-        return TokenVerifyOutcome::WriteFailed;
-      }
-    }
-    return TokenVerifyOutcome::Done;
+  // A previously indexed NFT can become unowned, uninitialized, frozen, or
+  // deleted (DNS expiry/release is the important case): its committed
+  // post-state no longer proves the old ownership claim, and the verdict
+  // removes it.
+  WalletIndexDb::NftVerdict verdict{verification == NftVerification::Verified, owner, {}};
+  if (verdict.owned) {
+    verdict.value = make_nft_value(has_collection, collection, end_lt);
   }
-  if (had_owner && prev_owner != owner && db->erase_nft(prev_owner, item).is_error()) {
-    return TokenVerifyOutcome::WriteFailed;
-  }
-  auto status = db->put_nft(owner, item, make_nft_value(has_collection, collection, end_lt));
+  auto status = db->apply_nft_verdict(item, verdict, end_lt);
   if (status.is_error()) {
-    LOG(WARNING) << "wc0-index: put_nft failed: " << status.message();
-    return TokenVerifyOutcome::WriteFailed;
-  }
-  if (db->put_nft_owner(item, owner).is_error()) {
+    LOG(WARNING) << "wc0-index: recording NFT ownership failed: " << status.message();
     return TokenVerifyOutcome::WriteFailed;
   }
   return TokenVerifyOutcome::Done;
@@ -734,15 +725,34 @@ std::mutex g_index_queue_mutex;
 // Durably mark queued blocks before any of them is indexed: a block the worker
 // never reaches (dropped, or the node stopped first) stays marked, startup
 // recovery re-indexes it, and RPC reports the index unfinished until then.
-void mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
+bool mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
   auto* db = wallet_index_db();
   if (db == nullptr) {
-    return;
+    return false;
   }
   auto status = db->mark_blocks_incomplete(block_ids);
   if (status.is_error()) {
     LOG(ERROR) << "wc0-index: could not mark " << block_ids.size()
-               << " queued block(s) for recovery: " << status.message();
+               << " queued block(s) for recovery, will retry: " << status.message();
+    return false;
+  }
+  return true;
+}
+
+std::atomic<bool> g_index_degraded{false};
+
+// The queue lost track of a block. Say so durably if possible, and in memory
+// regardless, so RPC stops reporting the index complete.
+void index_degraded() {
+  g_index_degraded = true;
+  LOG(ERROR) << "wc0-index: a block may have gone unindexed with no mark to recover it; the index needs a rebuild";
+  auto* db = wallet_index_db();
+  if (db == nullptr) {
+    return;
+  }
+  auto status = db->mark_needs_rebuild();
+  if (status.is_error()) {
+    LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild: " << status.message();
   }
 }
 
@@ -762,7 +772,7 @@ void start_wc0_index_worker() {
     return;
   }
   g_index_queue = std::make_unique<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>>(
-      kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block);
+      kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block, index_degraded);
 }
 
 void stop_wc0_index_worker() {
@@ -773,6 +783,10 @@ void stop_wc0_index_worker() {
   }
   // Joined here, outside the lock, so a hook call in flight is not blocked on it.
   queue.reset();
+}
+
+bool wc0_index_degraded() {
+  return g_index_degraded.load();
 }
 
 void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {

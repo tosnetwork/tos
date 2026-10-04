@@ -1013,15 +1013,20 @@ TEST(WalletIndex, ProcessingRetriesCountsAndStopsOnAWriteFailure) {
 TEST(WalletIndex, TokenIndexStateSaysWhenItIsIncomplete) {
   using tos_wallet_index::format_token_index_state;
   ASSERT_EQ(format_token_index_state({0, 0, 0, false}),
-            std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false}"));
+            std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
+                        "\"needs_rebuild\":false}"));
   ASSERT_EQ(format_token_index_state({3, 0, 0, false}),
-            std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false}"));
+            std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
+                        "\"needs_rebuild\":false}"));
   ASSERT_EQ(format_token_index_state({0, 1, 0, false}),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0,\"unfinished_block\":false}"));
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0,\"unfinished_block\":false,"
+                        "\"needs_rebuild\":false}"));
   ASSERT_EQ(format_token_index_state({0, 0, 2, false}),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2,\"unfinished_block\":false}"));
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2,\"unfinished_block\":false,"
+                        "\"needs_rebuild\":false}"));
   ASSERT_EQ(format_token_index_state({0, 0, 0, true}),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":true}"));
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":true,"
+                        "\"needs_rebuild\":false}"));
 }
 
 TEST(WalletIndex, ABlockWhoseIndexingDidNotCommitLeavesTheIndexIncomplete) {
@@ -1283,9 +1288,10 @@ TEST(WalletIndexQueue, PushingNeverWaitsForTheWork) {
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         8,
-        [&](const std::vector<int> &ids) {
+        [&](const std::vector<int> &ids) -> bool {
           std::lock_guard<std::mutex> lock(log.mutex);
           log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
+          return true;
         },
         [&](int &) {
           while (!release.load()) {
@@ -1308,10 +1314,11 @@ TEST(WalletIndexQueue, WorkIsRecordedFirstAndDoneInOrder) {
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         64,
-        [&](const std::vector<int> &ids) {
+        [&](const std::vector<int> &ids) -> bool {
           std::this_thread::sleep_for(std::chrono::milliseconds(2));
           std::lock_guard<std::mutex> lock(log.mutex);
           log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
+          return true;
         },
         [&](int &item) {
           std::lock_guard<std::mutex> lock(log.mutex);
@@ -1347,9 +1354,10 @@ TEST(WalletIndexQueue, AFullQueueDropsTheWorkButStillRecordsIt) {
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         2,
-        [&](const std::vector<int> &ids) {
+        [&](const std::vector<int> &ids) -> bool {
           std::lock_guard<std::mutex> lock(log.mutex);
           log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
+          return true;
         },
         [&](int &item) {
           first_started = true;
@@ -1385,9 +1393,10 @@ TEST(WalletIndexQueue, WorkLeftAtShutdownStaysRecordedAndUndone) {
   {
     tos_wallet_index::BoundedWorkQueue<int, int> queue(
         8,
-        [&](const std::vector<int> &ids) {
+        [&](const std::vector<int> &ids) -> bool {
           std::lock_guard<std::mutex> lock(log.mutex);
           log.recorded.insert(log.recorded.end(), ids.begin(), ids.end());
+          return true;
         },
         [&](int &item) {
           while (!release.load()) {
@@ -1419,5 +1428,153 @@ TEST(WalletIndex, MarkingQueuedBlocksDoesNotJoinAnOpenBatch) {
   // The marks were written directly and survive the aborted batch.
   ASSERT_TRUE(db->has_incomplete_block(first).move_as_ok());
   ASSERT_TRUE(db->has_incomplete_block(second).move_as_ok());
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndexQueue, NothingIsDoneUntilItsRecordSucceeds) {
+  std::atomic<int> attempts{0};
+  std::atomic<int> processed{0};
+  std::atomic<bool> allow{false};
+  {
+    tos_wallet_index::BoundedWorkQueue<int, int> queue(
+        8,
+        [&](const std::vector<int> &) -> bool {
+          attempts++;
+          if (attempts.load() == 2) {
+            throw std::runtime_error("recorder failed");
+          }
+          return allow.load();
+        },
+        [&](int &) { processed++; });
+    queue.push(1, 1);
+    queue.push(2, 2);
+    // Recording keeps failing (once by throwing): the work waits, and is retried.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    ASSERT_TRUE(attempts.load() >= 2);
+    ASSERT_EQ(processed.load(), 0);
+    ASSERT_TRUE(!queue.degraded());
+    allow = true;
+    for (int spin = 0; spin < 600 && processed.load() < 2; ++spin) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(processed.load(), 2);
+  }
+}
+
+TEST(WalletIndexQueue, AnIdThatCannotBeRecordedMarksTheQueueDegraded) {
+  std::atomic<int> degraded_calls{0};
+  std::atomic<bool> allow{false};
+  {
+    // Room for one id awaiting record; recording blocked until released.
+    tos_wallet_index::BoundedWorkQueue<int, int> queue(
+        8, [&](const std::vector<int> &) -> bool { return allow.load(); }, [](int &) {}, [&] { degraded_calls++; }, 1);
+    queue.push(1, 1);
+    ASSERT_TRUE(!queue.degraded());
+    queue.push(2, 2);
+    queue.push(3, 3);
+    ASSERT_TRUE(queue.degraded());
+    ASSERT_EQ(degraded_calls.load(), 1);
+    allow = true;
+  }
+}
+
+TEST(WalletIndexQueue, IdsStillUnrecordedAtShutdownMarkTheQueueDegraded) {
+  std::atomic<int> degraded_calls{0};
+  {
+    tos_wallet_index::BoundedWorkQueue<int, int> queue(
+        8, [](const std::vector<int> &) -> bool { return false; }, [](int &) {}, [&] { degraded_calls++; });
+    queue.push(1, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  ASSERT_EQ(degraded_calls.load(), 1);
+}
+
+TEST(WalletIndex, AnOlderBlocksVerdictNeverUndoesANewerOne) {
+  auto path = std::string("test-wallet-index-db-nft-order");
+  auto db = open_fresh_db(path);
+  auto item = token_address(1, 0x40);
+  auto old_owner = token_address(2, 0x40);
+  auto new_owner = token_address(3, 0x40);
+  vm::CellBuilder cb;
+  cb.store_long(1, 8);
+  auto value = cb.finalize();
+  using Verdict = tos_wallet_index::WalletIndexDb::NftVerdict;
+  auto apply = [&](const Verdict &verdict, uint64_t lt) {
+    db->begin_batch().ensure();
+    db->apply_nft_verdict(item, verdict, lt).ensure();
+    db->commit_batch().ensure();
+  };
+  auto owner_of = [&]() {
+    td::Bits256 owner;
+    return db->get_nft_owner(item, owner).move_as_ok() ? owner : td::Bits256::zero();
+  };
+  auto listed_for = [&](const td::Bits256 &owner) {
+    size_t n = 0;
+    db->for_each_nft(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+        ++n;
+        return td::Status::OK();
+      }).ensure();
+    return n;
+  };
+
+  // The newer block (lt 200) is indexed first; recovery then indexes lt 100.
+  apply(Verdict{true, new_owner, value}, 200);
+  apply(Verdict{true, old_owner, value}, 100);
+  ASSERT_TRUE(owner_of() == new_owner);
+  ASSERT_EQ(listed_for(new_owner), static_cast<size_t>(1));
+  ASSERT_EQ(listed_for(old_owner), static_cast<size_t>(0));
+
+  // Found unowned at lt 300; an older "owned" verdict cannot bring it back.
+  apply(Verdict{false, td::Bits256::zero(), {}}, 300);
+  ASSERT_TRUE(owner_of() == td::Bits256::zero());
+  apply(Verdict{true, old_owner, value}, 250);
+  ASSERT_TRUE(owner_of() == td::Bits256::zero());
+  ASSERT_EQ(listed_for(old_owner), static_cast<size_t>(0));
+
+  // In order, a newer verdict moves the item.
+  apply(Verdict{true, old_owner, value}, 400);
+  ASSERT_TRUE(owner_of() == old_owner);
+  ASSERT_EQ(listed_for(new_owner), static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, ARecordFromAnOlderBinaryCountsAsOldest) {
+  auto path = std::string("test-wallet-index-db-nft-legacy");
+  auto db = open_fresh_db(path);
+  auto item = token_address(1, 0x40);
+  auto owner = token_address(2, 0x40);
+  // An older binary stored the owner alone: 0x13 + nft(32) -> owner(32).
+  db.reset();
+  {
+    auto raw = td::RocksDb::open(path).move_as_ok();
+    std::string key(33, '\0');
+    key[0] = 0x13;
+    std::memcpy(&key[1], item.data(), 32);
+    raw.set(key, td::Slice(owner.as_slice()).str()).ensure();
+  }
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  td::Bits256 before;
+  ASSERT_TRUE(db->get_nft_owner(item, before).move_as_ok());
+  ASSERT_TRUE(before == owner);
+  db->begin_batch().ensure();
+  db->apply_nft_verdict(item, {false, td::Bits256::zero(), {}}, 1).ensure();
+  db->commit_batch().ensure();
+  td::Bits256 found;
+  ASSERT_TRUE(!db->get_nft_owner(item, found).move_as_ok());
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, ALostBlockKeepsTheIndexIncompleteUntilRebuilt) {
+  auto path = std::string("test-wallet-index-db-needs-rebuild");
+  auto db = open_fresh_db(path);
+  ASSERT_TRUE(!backlog_stats(*db).needs_rebuild);
+  db->begin_batch().ensure();
+  db->mark_needs_rebuild().ensure();
+  db->abort_batch();
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  auto stats = backlog_stats(*db);
+  ASSERT_TRUE(stats.needs_rebuild);
+  ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
   td::rmrf(path).ignore();
 }

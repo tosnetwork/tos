@@ -131,6 +131,9 @@ struct TokenBacklogStats {
   // unapplied. Only presence is read, so the check costs one key however many
   // marks have piled up.
   bool unfinished_block;
+  // Some block may have gone unindexed with no mark to recover it by; only
+  // rebuilding the index makes it complete again.
+  bool needs_rebuild = false;
 };
 
 // Completeness of the token index as RPC answers report it: a JSON object
@@ -138,10 +141,12 @@ struct TokenBacklogStats {
 // indexing is unfinished, and once any candidate was lost or could not be
 // verified; only rebuilding the index clears lost and unverifiable.
 inline std::string format_token_index_state(const TokenBacklogStats& stats) {
-  bool complete = stats.entries == 0 && stats.lost == 0 && stats.unverifiable == 0 && !stats.unfinished_block;
+  bool complete = stats.entries == 0 && stats.lost == 0 && stats.unverifiable == 0 && !stats.unfinished_block &&
+                  !stats.needs_rebuild;
   return "{\"complete\":" + std::string(complete ? "true" : "false") + ",\"pending\":" + std::to_string(stats.entries) +
          ",\"lost\":" + std::to_string(stats.lost) + ",\"unverifiable\":" + std::to_string(stats.unverifiable) +
-         ",\"unfinished_block\":" + std::string(stats.unfinished_block ? "true" : "false") + "}";
+         ",\"unfinished_block\":" + std::string(stats.unfinished_block ? "true" : "false") +
+         ",\"needs_rebuild\":" + std::string(stats.needs_rebuild ? "true" : "false") + "}";
 }
 
 // What became of one scheduled candidate's verification.
@@ -227,7 +232,13 @@ class WalletIndexDb {
       std::function<td::Status(uint64_t lt, td::Ref<vm::Cell>)> cb);
   td::Result<td::Ref<vm::Cell>> get_event(const HashKey& account, uint64_t lt);
 
-  // --- NFT current-owner reverse map: 0x13 + nft(32) -> owner(32) ---
+  // --- NFT ownership record: 0x13 + nft(32) -> owned(1) + owner(32) + lt_be(8) ---
+  // (A record written by an older binary is just owner(32): owned, lt 0.)
+  // The last verdict on the item and the logical time of the block it came
+  // from; owned = 0 records that the item was found unowned at that time.
+  // Blocks can be indexed out of order -- startup recovery re-indexes old
+  // blocks while new ones arrive -- so apply_nft_verdict ignores a verdict
+  // older than the record.
   // Tracks the last verified owner of each indexed NFT so the writer can erase
   // the previous owner's 0x11 entry when ownership changes (no stale entries).
   td::Status put_nft_owner(const HashKey& nft, const HashKey& owner);
@@ -236,6 +247,16 @@ class WalletIndexDb {
   // committed state only — an open write batch is not visible — which is what
   // the writer wants: the pre-block owner.
   td::Result<bool> get_nft_owner(const HashKey& nft, HashKey& owner);
+  struct NftVerdict {
+    bool owned;
+    HashKey owner;
+    td::Ref<vm::Cell> value;  // the 0x11 entry for (owner, item) when owned
+  };
+  // Record what the post-state of the block ending at `end_lt` says about
+  // `item` (into the open batch), unless the item's record is from a later
+  // block. Moves the 0x11 entry when the owner changed, removes it when the
+  // item is no longer owned.
+  td::Status apply_nft_verdict(const HashKey& item, const NftVerdict& verdict, uint64_t end_lt);
 
   // --- Deferred token candidates ---
   //   0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1)
@@ -291,6 +312,9 @@ class WalletIndexDb {
   // separate handle, so it neither joins nor waits for a write batch another
   // thread has open; safe to call without write_mutex().
   td::Status mark_blocks_incomplete(const std::vector<tos::BlockIdExt>& block_ids);
+  // Durably record that the index may be missing a block nothing can recover
+  // (same separate handle; no write_mutex needed). Cleared only by rebuilding.
+  td::Status mark_needs_rebuild();
   td::Status delete_incomplete_block(const tos::BlockIdExt& block_id);
   td::Result<bool> has_incomplete_block(const tos::BlockIdExt& block_id);
   // Crash-recovery scan: calls `cb(block_id)` for every currently-recorded
