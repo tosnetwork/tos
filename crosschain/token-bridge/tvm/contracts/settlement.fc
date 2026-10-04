@@ -47,39 +47,94 @@ const int LOG_BURN_REFUND_FAILED = 0xc0990ccf;
 ;; phase rolls the transaction back and produces no bounce at all.
 const int SEND_MODE_BOUNCE_ON_ACTION_FAIL = 16;
 
-;; Gas, in gas units, that each completion step may use. The fee budget below is
+;; Gas, in gas units, that each completion step may use. Every budget below is
 ;; priced from these at the network's current gas and forwarding prices, so a
 ;; price change is followed without a configuration change. The token-bridge
 ;; sandbox measures every step and fails if one exceeds its constant.
-const int WALLET_CREDIT_GAS = 12000;
-const int MINTER_STEP_GAS = 20000;
+const int WALLET_CREDIT_GAS = 15000;
+const int MINTER_STEP_GAS = 40000;
 const int BRIDGE_STEP_GAS = 25000;
-
-;; A small completion message: a header and up to two addresses and an amount.
-const int STEP_MSG_BITS = 1023;
-const int STEP_MSG_CELLS = 1;
 
 int gas_fee(int gas, int is_mc) asm "GETGASFEE";
 int forward_fee(int cells, int bits, int is_mc) asm "GETFORWARDFEE";
 
-;; What a credit sent to a wallet must carry so that either outcome reaches the
-;; bridge: the wallet's storage reserve and gas, its confirmation or bounce, the
-;; minter's step, its message to the masterchain and the bridge's step there.
-int credit_budget(int wallet_min_tos_for_storage) inline {
-    return wallet_min_tos_for_storage
-        + gas_fee(WALLET_CREDIT_GAS, 0)
-        + forward_fee(STEP_MSG_CELLS, STEP_MSG_BITS, 0)
-        + gas_fee(MINTER_STEP_GAS, 0)
-        + forward_fee(STEP_MSG_CELLS, STEP_MSG_BITS, -1)
-        + gas_fee(BRIDGE_STEP_GAS, -1);
+;; A value as large as any message here carries, for pricing a message before
+;; its value is known: a message priced with it costs at least as much to
+;; forward as the same message with its real value.
+const int PRICING_VALUE = MAX_SUPPLY;
+
+;; What forwarding `msg` costs, counting every cell including the root, which
+;; the network does not charge for: never less than the real fee.
+int fee_of(cell msg, int is_mc) inline {
+    (int cells, int bits, _) = compute_data_size(msg, 1024);
+    return forward_fee(cells, bits, is_mc);
 }
 
-;; What a burn notification sent to the bridge must carry so that either
-;; outcome reaches the minter: the bridge's step and its log, then its answer or
-;; bounce back to the basechain and the minter's step there.
-int burn_report_budget() inline {
-    return gas_fee(BRIDGE_STEP_GAS, -1)
-        + forward_fee(STEP_MSG_CELLS, STEP_MSG_BITS, -1)
-        + forward_fee(STEP_MSG_CELLS + 1, STEP_MSG_BITS * 2, -1)
-        + gas_fee(MINTER_STEP_GAS, 0);
+;; Confirmations, completion reports, burn answers and bounces each fit in a
+;; single cell of at most 1023 bits; this prices any of them.
+int small_message_fee(int is_mc) inline {
+    return forward_fee(1, 1023, is_mc);
+}
+
+;; Logs are records for observers, paid from the contract's own balance. One the
+;; contract cannot pay for is skipped (mode 2): a log must never undo the state
+;; change it describes. LOG_BURN is not one of these; the bridge sends it itself.
+() emit_record(int event_id, cell data) impure inline {
+    send_raw_message(begin_cell()
+        .store_uint(12, 4) ;; ext_out_msg_info$11 src:MsgAddressInt ()
+        .store_uint(1, 2) ;; addr_extern$01
+        .store_uint(256, 9) ;; len:(## 9)
+        .store_uint(event_id, 256) ;; external_address:(bits len)
+        .store_uint(0, 64 + 32 + 2) ;; created_lt, created_at, init:Maybe, body:Either
+        .store_slice(data.begin_parse())
+        .end_cell(), SEND_MODE_IGNORE_ERRORS);
+}
+
+;; The minter's report to the bridge once a wallet has confirmed a credit: the
+;; minter's step, the message to the masterchain and the bridge's step there.
+int completion_need() inline {
+    return gas_fee(MINTER_STEP_GAS, 0) + small_message_fee(-1) + gas_fee(BRIDGE_STEP_GAS, -1);
+}
+
+;; What a credit must deliver to a wallet so that either outcome reaches the
+;; bridge: a new wallet's storage reserve and its gas, then its confirmation and
+;; the completion report. A refused credit bounces with all of it but the
+;; wallet's gas and the bounce's forwarding, which leaves the report funded.
+int wallet_need(int wallet_min_tos_for_storage) inline {
+    return wallet_min_tos_for_storage + gas_fee(WALLET_CREDIT_GAS, 0) + small_message_fee(0) + completion_need();
+}
+
+;; What the minter must hold beyond its storage reserve to send `credit_msg`
+;; (priced with PRICING_VALUE): its own step, the credit's forwarding, and the
+;; wallet's need.
+int credit_cost(cell credit_msg, int wallet_min_tos_for_storage) inline {
+    return gas_fee(MINTER_STEP_GAS, 0) + fee_of(credit_msg, 0) + wallet_need(wallet_min_tos_for_storage);
+}
+
+;; What the minter must hold beyond its storage reserve to send a burn
+;; notification so that either outcome completes: its own step and the
+;; notification's forwarding; the bridge's step, its log and its answer or
+;; bounce; and then either the minter's step on the answer, or the refund
+;; credit after a bounce, which costs more.
+int burn_cost(cell notification_msg, cell burn_log_msg, cell refund_credit_msg, int wallet_min_tos_for_storage) inline {
+    return gas_fee(MINTER_STEP_GAS, 0) + fee_of(notification_msg, -1)
+        + gas_fee(BRIDGE_STEP_GAS, -1) + fee_of(burn_log_msg, -1) + small_message_fee(-1)
+        + credit_cost(refund_credit_msg, wallet_min_tos_for_storage);
+}
+
+;; The external message that carries LOG_BURN: the event the relayer reads.
+cell burn_log_message(int destination_address, int jetton_amount, int token_address, int from_address_hash) inline {
+    return begin_cell()
+        .store_uint(12, 4) ;; ext_out_msg_info$11 src:MsgAddressInt ()
+        .store_uint(1, 2) ;; addr_extern$01
+        .store_uint(256, 9) ;; len:(## 9)
+        .store_uint(LOG_BURN, 256) ;; external_address:(bits len)
+        .store_uint(1, 64 + 32 + 2) ;; created_lt, created_at, init:Maybe, body:Either
+        .store_ref(begin_cell() ;; 704 bit
+                .store_uint(destination_address, 160)
+                .store_uint(jetton_amount, 128) ;; max 124 bits
+                .store_uint(token_address, 160)
+                .store_uint(from_address_hash, 256)
+                .end_cell())
+        .end_cell();
 }

@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use chain_block::{
-    BuilderData, Cell, Coins, ConfigParamEnum, Deserializable, IBitstring, Message,
-    MsgAddressExt, MsgAddressInt, Serializable, SliceData, StateInit, TrBouncePhase,
-    TrComputePhase, Transaction, TransactionDescr, UInt256,
+    BuilderData, Cell, Coins, ConfigParamEnum, Deserializable, IBitstring, Message, MsgAddressExt,
+    MsgAddressInt, Serializable, SliceData, StateInit, TrBouncePhase, TrComputePhase, Transaction,
+    TransactionDescr, UInt256,
 };
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 use tos_vm::stack::StackItem;
@@ -50,6 +50,7 @@ const OP_RETRY_REFUND: u32 = 27;
 const OP_BURN_NOTIFICATION: u32 = 0x7bdd_97de;
 
 const LOG_BURN: u32 = 0xc047_0ccf;
+const LOG_MINT_ON_MINTER: u32 = 0xc066_0ccf;
 const LOG_MINT_FAILED: u32 = 0xc088_0ccf;
 const LOG_BURN_REFUND_FAILED: u32 = 0xc099_0ccf;
 
@@ -72,6 +73,11 @@ const ERR_MINT_IDS_EXHAUSTED: i32 = 391;
 const ERR_BURN_IDS_EXHAUSTED: i32 = 390;
 
 const MAX_SUPPLY: u128 = (1 << 120) - 1;
+
+/// Where to record every transaction for replay in the native engine, if set.
+fn trace_dir() -> Option<PathBuf> {
+    std::env::var_os("TOKEN_BRIDGE_TRACE_DIR").map(PathBuf::from)
+}
 
 fn repo_root() -> PathBuf {
     std::env::var("TOS_ROOT").map(PathBuf::from).unwrap_or_else(|_| {
@@ -99,8 +105,8 @@ struct Codes {
 fn codes() -> &'static Codes {
     static CODES: OnceLock<Codes> = OnceLock::new();
     CODES.get_or_init(|| {
-        let stage = std::env::temp_dir()
-            .join(format!("tos-token-bridge-sandbox-{}", std::process::id()));
+        let stage =
+            std::env::temp_dir().join(format!("tos-token-bridge-sandbox-{}", std::process::id()));
         std::fs::create_dir_all(&stage).expect("a staging directory");
         let mut staged = 0;
         for entry in std::fs::read_dir(contracts_dir()).expect("the bridge contracts") {
@@ -132,8 +138,8 @@ fn codes() -> &'static Codes {
 /// A gas constant as the contracts declare it, so the measurement below is held
 /// against the number the fee budget is priced from rather than a copy of it.
 fn declared_gas(name: &str) -> u64 {
-    let source = std::fs::read_to_string(contracts_dir().join("settlement.fc"))
-        .expect("settlement.fc");
+    let source =
+        std::fs::read_to_string(contracts_dir().join("settlement.fc")).expect("settlement.fc");
     let prefix = format!("const int {name} = ");
     let line = source
         .lines()
@@ -192,6 +198,7 @@ struct Bridge {
     logs: Vec<(MsgAddressInt, u32, Message)>,
     next_index: i16,
     burn_fee: u64,
+    traced: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -199,6 +206,7 @@ struct Prices {
     mint_fee: u64,
     burn_fee: u64,
     wallet_min_storage: u64,
+    minter_min_storage: u64,
     state_flags: u8,
 }
 
@@ -208,6 +216,7 @@ impl Default for Prices {
             mint_fee: MINT_FEE,
             burn_fee: BURN_FEE,
             wallet_min_storage: WALLET_MIN_STORAGE,
+            minter_min_storage: MINTER_MIN_STORAGE,
             state_flags: 0,
         }
     }
@@ -223,7 +232,8 @@ impl Bridge {
         let user = bc.treasury("token-bridge-user", 1_000 * TOS).expect("user");
         let stranger = bc.treasury("token-bridge-stranger", 1_000 * TOS).expect("stranger");
 
-        let collector = MsgAddressInt::with_params(0, UInt256::from([0x42; 32])).expect("collector");
+        let collector =
+            MsgAddressInt::with_params(0, UInt256::from([0x42; 32])).expect("collector");
         let data = cell(|b| {
             collector.write_to(b).unwrap();
             b.checked_append_reference(codes().minter.clone()).unwrap();
@@ -249,6 +259,7 @@ impl Bridge {
             logs: Vec::new(),
             next_index: 1,
             burn_fee: BURN_FEE,
+            traced: 0,
         };
         this.configure(&bridge, Prices::default());
 
@@ -262,7 +273,8 @@ impl Bridge {
         this.send(deploy);
         assert!(this.bc.get_account(&bridge).and_then(|a| a.get_code()).is_some(), "deployed");
 
-        let minter = this.get(&bridge, "get_minter_address", vec![StackItem::cell(wrapped_token_data())]);
+        let minter =
+            this.get(&bridge, "get_minter_address", vec![StackItem::cell(wrapped_token_data())]);
         this.minter = MsgAddressInt::construct_from(&mut minter.slice_at(0)).expect("a minter");
         this
     }
@@ -281,7 +293,7 @@ impl Bridge {
                 coins(p, prices.mint_fee.into());
                 coins(p, prices.wallet_min_storage.into());
                 coins(p, (TOS / 50).into());
-                coins(p, MINTER_MIN_STORAGE.into());
+                coins(p, prices.minter_min_storage.into());
                 coins(p, (TOS / 100).into());
             }))
             .unwrap();
@@ -316,7 +328,14 @@ impl Bridge {
 
     fn deliver_one(&mut self) -> (MsgAddressInt, Transaction) {
         let msg = self.queue.pop_front().expect("a message to deliver");
+        let before = trace_dir().map(|dir| {
+            let dst = msg.dst().expect("a destination");
+            (dir, msg.clone(), self.bc.get_account(&dst).cloned().unwrap_or_default())
+        });
         let (addr, tx, outs) = self.bc.execute_one(msg).expect("the executor runs");
+        if let Some((dir, msg, account)) = before {
+            self.record(&dir, &msg, &account, &addr, &tx);
+        }
         for out in outs {
             if out.is_internal() {
                 self.queue.push_back(out);
@@ -334,6 +353,92 @@ impl Bridge {
         }
         self.delivered.push((addr.clone(), tx.clone()));
         (addr, tx)
+    }
+
+    /// Writes this transaction, as input and as outcome, for the native
+    /// transaction engine to replay (scripts/replay-token-bridge-trace.py).
+    fn record(
+        &mut self,
+        dir: &Path,
+        msg: &Message,
+        account: &chain_block::Account,
+        addr: &MsgAddressInt,
+        tx: &Transaction,
+    ) {
+        use chain_block::{HashmapType, ShardAccount, TrActionPhase, base64_encode, write_boc};
+        let test = std::thread::current().name().unwrap_or("unnamed").replace("::", "-");
+        let dir = dir.join(test);
+        std::fs::create_dir_all(&dir).expect("a trace directory");
+        self.traced += 1;
+
+        let config = HashmapType::data(&self.bc.config_params().config_params)
+            .cloned()
+            .expect("a configuration");
+        let shard_account =
+            ShardAccount::with_params(account, UInt256::default(), 0).expect("a shard account");
+        let boc = |c: Cell| base64_encode(write_boc(&c).expect("a boc"));
+
+        let d = match tx.read_description().expect("a description") {
+            TransactionDescr::Ordinary(d) => d,
+            other => panic!("not an ordinary transaction: {other:?}"),
+        };
+        let (exit_code, skipped) = match &d.compute_ph {
+            TrComputePhase::Vm(vm) => (Some(vm.exit_code), false),
+            TrComputePhase::Skipped(_) => (None, true),
+        };
+        let action = d.action.as_ref().map(|a: &TrActionPhase| {
+            serde_json::json!({"success": a.success, "result_code": a.result_code, "skipped": a.skipped_actions})
+        });
+        let bounce = match &d.bounce {
+            None => "none",
+            Some(TrBouncePhase::Ok(_)) => "ok",
+            Some(TrBouncePhase::Nofunds(_)) => "nofunds",
+            Some(TrBouncePhase::Negfunds) => "negfunds",
+        };
+        let mut out = Vec::new();
+        tx.iterate_out_msgs(|m| {
+            let body = m
+                .body()
+                .map(|b| b.clone().into_cell().expect("a body cell").repr_hash().as_hex_string())
+                .unwrap_or_default();
+            if let Some(h) = m.int_header() {
+                out.push(serde_json::json!({
+                    "kind": "internal",
+                    "dst": h.dst.to_string(),
+                    "value": h.value.coins.as_u128().to_string(),
+                    "bounce": h.bounce,
+                    "fwd_fee": h.fwd_fee.as_u128().to_string(),
+                    "body": body,
+                }));
+            } else if let Some(h) = m.ext_out_header() {
+                let topic = match &h.dst {
+                    MsgAddressExt::AddrExtern(ext) => ext.external_address.as_hex_string(),
+                    MsgAddressExt::AddrNone => String::new(),
+                };
+                out.push(serde_json::json!({"kind": "external", "topic": topic, "body": body}));
+            }
+            Ok(true)
+        })
+        .expect("the outgoing messages");
+        let after = self.bc.get_account(addr);
+        let record = serde_json::json!({
+            "unixtime": self.bc.now(),
+            "config": boc(config),
+            "shard_account": boc(shard_account.serialize().expect("a shard account cell")),
+            "message": boc(msg.serialize().expect("a message cell")),
+            "expect": {
+                "aborted": d.aborted,
+                "exit_code": exit_code,
+                "compute_skipped": skipped,
+                "action": action,
+                "bounce": bounce,
+                "out": out,
+                "balance": after.and_then(|a| a.balance().cloned()).map(|b| b.coins.as_u128().to_string()),
+                "data": after.and_then(|a| a.get_data_hash()).map(|h| h.as_hex_string()),
+            },
+        });
+        std::fs::write(dir.join(format!("{:04}.json", self.traced)), record.to_string())
+            .expect("a trace record");
     }
 
     fn send(&mut self, msg: Message) -> Transaction {
@@ -366,7 +471,12 @@ impl Bridge {
         panic!("the cascade ended before the awaited message");
     }
 
-    fn get(&self, addr: &MsgAddressInt, method: &str, args: Vec<StackItem>) -> tos_sandbox::GetMethodResult {
+    fn get(
+        &self,
+        addr: &MsgAddressInt,
+        method: &str,
+        args: Vec<StackItem>,
+    ) -> tos_sandbox::GetMethodResult {
         let result = self.bc.run_get_method(addr, method, args).expect("the get-method runs");
         result.expect_success();
         result
@@ -479,7 +589,12 @@ impl Bridge {
     fn retry_mint_message(&self, from: &MsgAddressInt, mint_id: u64, value: u64) -> Message {
         MessageBuilder::internal(from, &self.bridge, value)
             .body(cell(|b| {
-                b.append_u32(OP_RETRY_MINT).unwrap().append_u64(0).unwrap().append_u64(mint_id).unwrap();
+                b.append_u32(OP_RETRY_MINT)
+                    .unwrap()
+                    .append_u64(0)
+                    .unwrap()
+                    .append_u64(mint_id)
+                    .unwrap();
             }))
             .build()
     }
@@ -492,7 +607,12 @@ impl Bridge {
     fn retry_refund_message(&self, burn_id: u64, value: u64) -> Message {
         MessageBuilder::internal(self.stranger.address(), &self.minter, value)
             .body(cell(|b| {
-                b.append_u32(OP_RETRY_REFUND).unwrap().append_u64(0).unwrap().append_u64(burn_id).unwrap();
+                b.append_u32(OP_RETRY_REFUND)
+                    .unwrap()
+                    .append_u64(0)
+                    .unwrap()
+                    .append_u64(burn_id)
+                    .unwrap();
             }))
             .build()
     }
@@ -728,7 +848,8 @@ fn only_the_mints_own_minter_can_settle_it() {
     // Only the bridge can tell the minter to mint, and only wallets confirm.
     let minter = b.minter.clone();
     let stranger = b.stranger.address().clone();
-    for (op, code) in [(OP_MINT, ERR_BRIDGE_NOT_SENDER), (OP_BURN_RECORDED, ERR_BRIDGE_NOT_SENDER)] {
+    for (op, code) in [(OP_MINT, ERR_BRIDGE_NOT_SENDER), (OP_BURN_RECORDED, ERR_BRIDGE_NOT_SENDER)]
+    {
         let forged = MessageBuilder::internal(&stranger, &minter, TOS)
             .body(cell(|x| {
                 x.append_u32(op).unwrap().append_u64(0).unwrap();
@@ -763,11 +884,7 @@ fn a_transfer_between_wallets_is_not_a_credit_and_leaves_supply_alone() {
     assert_eq!((b.tokens(b.user.address()), b.tokens(&stranger)), (750, 250));
     assert_eq!((b.supply(), b.in_flight()), (1_000, 0));
     let minter = b.minter.clone();
-    let confirmations = b
-        .delivered
-        .iter()
-        .filter(|(a, _)| *a == minter)
-        .count();
+    let confirmations = b.delivered.iter().filter(|(a, _)| *a == minter).count();
     assert_eq!(confirmations, 2, "the minter saw the mint and its confirmation only");
 }
 
@@ -829,12 +946,15 @@ fn a_refund_the_minter_cannot_fund_waits_and_anyone_can_retry_it() {
     let mut b = Bridge::new();
     b.swap(1_000);
 
-    // The bridge does not log the burn, and the wallet storage reserve has grown
-    // beyond what the returned notification can fund. The refund is recorded as
-    // failed instead of being sent.
+    // The bridge does not log the burn, and while the notification is on its way
+    // the wallet storage reserve grows beyond what the notification was priced
+    // to fund. (A burn priced under the larger reserve would have been refused.)
+    // The refund is recorded as failed instead of being sent.
     let nowhere = MsgAddressInt::with_params(-1, UInt256::from([0x99; 32])).unwrap();
-    b.configure(&nowhere, Prices { wallet_min_storage: 20 * TOS, ..Prices::default() });
+    b.configure(&nowhere, Prices::default());
     b.start_burn(400);
+    b.deliver_until(|m| body_op(m) == Some(OP_BURN_NOTIFICATION) && is_to(m, &nowhere));
+    b.configure(&nowhere, Prices { wallet_min_storage: 20 * TOS, ..Prices::default() });
     b.settle();
     assert_eq!(b.pending_burn(0), BURN_REFUND_FAILED);
     assert_eq!(b.logs_from(&b.minter, LOG_BURN_REFUND_FAILED), 1);
@@ -957,6 +1077,311 @@ fn ids_stop_short_of_the_refund_flag() {
 }
 
 // ---------------------------------------------------------------------------
+// Budgets at their exact thresholds
+// ---------------------------------------------------------------------------
+
+fn address_arg(addr: &MsgAddressInt) -> StackItem {
+    StackItem::Slice(SliceData::load_cell(cell(|b| addr.write_to(b).unwrap())).unwrap())
+}
+
+const DESTINATION_HEX: &str = "7777777777777777777777777777777777777777";
+
+impl Bridge {
+    fn set_balance(&mut self, addr: &MsgAddressInt, balance: u64) {
+        let mut account = self.bc.get_account(addr).expect("deployed").clone();
+        account.set_balance(chain_block::CurrencyCollection::with_coins(balance));
+        self.bc.set_account(addr.clone(), account);
+    }
+
+    fn balance(&self, addr: &MsgAddressInt) -> u64 {
+        self.bc
+            .get_account(addr)
+            .and_then(|a| a.balance().cloned())
+            .map(|b| b.coins.as_u128() as u64)
+            .unwrap_or(0)
+    }
+
+    fn credit_cost(&self, owner: &MsgAddressInt, amount: u64, credit_id: u64) -> u64 {
+        let args = vec![address_arg(owner), int_arg(amount), int_arg(credit_id)];
+        self.get(&self.minter, "get_credit_cost", args).int_at(0) as u64
+    }
+
+    fn burn_cost(&self, owner: &MsgAddressInt, amount: u64, burn_id: u64) -> u64 {
+        let destination =
+            StackItem::integer(IntegerData::from_str_radix(DESTINATION_HEX, 16).unwrap());
+        let args = vec![address_arg(owner), int_arg(amount), destination, int_arg(burn_id)];
+        self.get(&self.minter, "get_burn_cost", args).int_at(0) as u64
+    }
+
+    /// Delivers `msg` and everything it causes, and returns the first transaction.
+    fn deliver(&mut self, msg: Message) -> Transaction {
+        self.queue.push_back(msg);
+        let (_, tx) = self.deliver_one();
+        self.settle();
+        tx
+    }
+
+    /// The transactions the bridge ran on reports of `op`, by outcome.
+    fn bridge_reports(&self, op: u32) -> Vec<Outcome> {
+        let bridge = self.bridge.clone();
+        let mut outcomes = Vec::new();
+        for (addr, tx) in &self.delivered {
+            if *addr != bridge {
+                continue;
+            }
+            let in_op = tx
+                .in_msg_cell()
+                .and_then(|c| Message::construct_from_cell(c).ok())
+                .and_then(|m| body_op(&m));
+            if in_op == Some(op) {
+                outcomes.push(outcome(tx));
+            }
+        }
+        outcomes
+    }
+}
+
+fn mint_body(mint_id: u64, to: &MsgAddressInt, amount: u64) -> Cell {
+    cell(|b| {
+        b.append_u32(OP_MINT).unwrap().append_u64(mint_id).unwrap();
+        to.write_to(b).unwrap();
+        coins(b, amount.into());
+        coins(b, 0);
+    })
+}
+
+/// A credit sent at exactly what the minter must hold leaves the minter at its
+/// bare reserve, reaches a new wallet with exactly what it needs, and is still
+/// confirmed and reported to the bridge. One unit less and nothing is sent.
+#[test]
+fn a_credit_at_exactly_its_cost_completes_and_one_short_is_not_sent() {
+    let mut b = Bridge::new();
+    b.swap(1_000);
+    let fresh = b.bc.treasury("token-bridge-fresh", TOS).unwrap().address().clone();
+    let (minter, bridge) = (b.minter.clone(), b.bridge.clone());
+    b.set_balance(&minter, MINTER_MIN_STORAGE);
+    let cost = b.credit_cost(&fresh, 777, 4_242);
+    let start = b.bc.snapshot();
+
+    b.delivered.clear();
+    let short = MessageBuilder::internal(&bridge, &minter, cost - 1)
+        .body(mint_body(4_242, &fresh, 777))
+        .build();
+    refused_with(&b.deliver(short), ERR_CREDIT_UNDERFUNDED);
+    assert_eq!((b.tokens(&fresh), b.supply(), b.in_flight()), (0, 1_000, 0));
+
+    b.bc.restore(start);
+    b.delivered.clear();
+    let exact = MessageBuilder::internal(&bridge, &minter, cost)
+        .body(mint_body(4_242, &fresh, 777))
+        .build();
+    assert!(!outcome(&b.deliver(exact)).aborted);
+    assert_eq!((b.tokens(&fresh), b.supply(), b.in_flight()), (777, 1_777, 0));
+    let reports = b.bridge_reports(OP_MINT_COMPLETED);
+    assert_eq!(reports.len(), 1, "the completion reached the bridge");
+    assert!(
+        !reports[0].aborted && reports[0].exit_code == Some(0),
+        "and the bridge could act on it"
+    );
+    assert!(b.balance(&minter) >= MINTER_MIN_STORAGE, "the minter kept its reserve");
+}
+
+/// A credit that reaches a new wallet with exactly what it needs is confirmed
+/// and reported; one unit less is refused, and its bounce still carries the
+/// minter's report of the failure to the bridge.
+#[test]
+fn a_wallet_credited_with_exactly_its_need_confirms_and_one_short_reports_failure() {
+    let mut b = Bridge::new();
+    b.swap(1_000);
+    let fresh = b.bc.treasury("token-bridge-fresh", TOS).unwrap().address().clone();
+    let (minter, bridge) = (b.minter.clone(), b.bridge.clone());
+    let need = b.get(&minter, "get_wallet_need", vec![]).int_at(0) as u64;
+    let wallet = b.wallet_of(&fresh);
+    let init = StateInit::with_code_and_data(
+        codes().wallet.clone(),
+        cell(|x| {
+            coins(x, 0);
+            fresh.write_to(x).unwrap();
+            minter.write_to(x).unwrap();
+            x.checked_append_reference(codes().wallet.clone()).unwrap();
+        }),
+    );
+    let credit = |value: u64| {
+        MessageBuilder::internal(&minter, &wallet, value)
+            .bounce(true)
+            .state_init(init.clone())
+            .body(cell(|x| {
+                x.append_u32(OP_INTERNAL_TRANSFER).unwrap().append_u64(5_151).unwrap();
+                coins(x, 300);
+                x.append_bits(0, 2).unwrap(); // from: none, the minter
+                bridge.write_to(x).unwrap();
+                coins(x, 0);
+                x.append_bit_zero().unwrap();
+            }))
+            .build()
+    };
+    // The minter has these 300 in flight, as it would after sending the credit.
+    let set_in_flight = |b: &mut Bridge| {
+        let data = cell(|x| {
+            coins(x, 1_000);
+            coins(x, 300);
+            x.checked_append_reference(wrapped_token_data()).unwrap();
+            x.checked_append_reference(codes().wallet.clone()).unwrap();
+            x.append_u64(0).unwrap();
+            x.append_bit_zero().unwrap();
+        });
+        let mut account = b.bc.get_account(&b.minter).unwrap().clone();
+        assert!(account.set_data(data));
+        b.bc.set_account(b.minter.clone(), account);
+    };
+    set_in_flight(&mut b);
+    let start = b.bc.snapshot();
+
+    b.delivered.clear();
+    let short = b.deliver(credit(need - 1));
+    let o = outcome(&short);
+    assert!(o.aborted && o.bounced && o.exit_code == Some(709), "the wallet refuses and bounces");
+    let reports = b.bridge_reports(OP_MINT_FAILED);
+    assert_eq!(reports.len(), 1, "the failure reached the bridge");
+    assert!(
+        !reports[0].aborted && reports[0].exit_code == Some(0),
+        "and the bridge could act on it"
+    );
+    assert_eq!((b.tokens(&fresh), b.supply(), b.in_flight()), (0, 1_000, 0));
+
+    b.bc.restore(start);
+    b.delivered.clear();
+    assert!(!outcome(&b.deliver(credit(need))).aborted);
+    assert_eq!((b.tokens(&fresh), b.supply(), b.in_flight()), (300, 1_300, 0));
+    let reports = b.bridge_reports(OP_MINT_COMPLETED);
+    assert_eq!(reports.len(), 1, "the completion reached the bridge");
+    assert!(
+        !reports[0].aborted && reports[0].exit_code == Some(0),
+        "and the bridge could act on it"
+    );
+}
+
+/// A burn notification sent at exactly what the minter must hold completes
+/// either way it can end: logged and answered, or bounced and credited back.
+/// One unit less is refused while the wallet still has the tokens.
+#[test]
+fn a_burn_at_exactly_its_cost_completes_either_way_and_one_short_is_refused() {
+    let mut b = Bridge::new();
+    b.swap(1_000);
+    let (minter, bridge) = (b.minter.clone(), b.bridge.clone());
+    let user = b.user.address().clone();
+    let wallet = b.wallet_of(&user);
+    b.set_balance(&minter, MINTER_MIN_STORAGE);
+    let cost = b.burn_cost(&user, 400, 0);
+    let notification = |value: u64| {
+        MessageBuilder::internal(&wallet, &minter, value)
+            .body(cell(|x| {
+                x.append_u32(OP_BURN_NOTIFICATION).unwrap().append_u64(7).unwrap();
+                coins(x, 400);
+                user.write_to(x).unwrap();
+                user.write_to(x).unwrap();
+                x.append_raw(&hex_bytes(DESTINATION_HEX), 160).unwrap();
+            }))
+            .build()
+    };
+    let start = b.bc.snapshot();
+
+    b.delivered.clear();
+    refused_with(&b.deliver(notification(cost - 1)), ERR_BURN_UNDERFUNDED);
+    assert_eq!(b.get(&minter, "get_next_burn_id", vec![]).int_at(0), 0);
+
+    // Logged and answered.
+    b.bc.restore(b.bc.snapshot());
+    b.bc.restore(start.clone());
+    b.delivered.clear();
+    b.logs.clear();
+    assert!(!outcome(&b.deliver(notification(cost))).aborted);
+    assert_eq!(b.logs_from(&bridge, LOG_BURN), 1);
+    assert_eq!((b.pending_burn(0), b.supply()), (NOTHING, 600));
+    assert!(b.balance(&minter) >= MINTER_MIN_STORAGE, "the minter kept its reserve");
+
+    // Bounced, because no bridge is there, and credited back.
+    b.bc.restore(start);
+    b.delivered.clear();
+    b.logs.clear();
+    let nowhere = MsgAddressInt::with_params(-1, UInt256::from([0x99; 32])).unwrap();
+    b.configure(&nowhere, Prices::default());
+    assert!(!outcome(&b.deliver(notification(cost))).aborted);
+    assert_eq!(b.logs.iter().filter(|(_, t, _)| *t == LOG_BURN).count(), 0);
+    assert_eq!(
+        (b.pending_burn(0), b.supply(), b.in_flight()),
+        (NOTHING, 1_000, 0),
+        "the refund completed"
+    );
+    b.configure(&bridge, Prices::default());
+}
+
+/// The bridge logs and answers a burn from what the notification carries, not
+/// from its own balance: emptied, it still does both.
+#[test]
+fn a_bridge_with_nothing_of_its_own_still_logs_and_answers_a_burn() {
+    let mut b = Bridge::new();
+    b.swap(1_000);
+    let bridge = b.bridge.clone();
+    b.start_burn(400);
+    b.deliver_until(|m| body_op(m) == Some(OP_BURN_NOTIFICATION) && is_to(m, &bridge));
+    b.set_balance(&bridge, 0);
+    let (_, tx) = b.deliver_one();
+    assert!(!outcome(&tx).aborted, "the bridge logged and answered");
+    b.settle();
+    assert_eq!(b.logs_from(&bridge, LOG_BURN), 1);
+    assert_eq!((b.pending_burn(0), b.supply()), (NOTHING, 600));
+}
+
+/// A log is a record for observers. One the minter cannot pay for is skipped,
+/// and the supply it would have recorded is counted all the same.
+#[test]
+fn a_log_the_minter_cannot_pay_for_is_skipped_not_allowed_to_undo_the_supply() {
+    let mut b = Bridge::new();
+    let bridge = b.bridge.clone();
+    b.start_swap(500);
+    b.deliver_until(|m| body_op(m) == Some(OP_MINT_CREDITED));
+    // Nothing left for the minter's own records: no reserve and no balance.
+    b.configure(&bridge, Prices { minter_min_storage: 0, ..Prices::default() });
+    let minter = b.minter.clone();
+    b.set_balance(&minter, 0);
+    let (_, tx) = b.deliver_one();
+    assert!(!outcome(&tx).aborted, "the confirmation is taken");
+    b.settle();
+    assert_eq!(b.logs_from(&minter, LOG_MINT_ON_MINTER), 0, "the log was skipped");
+    assert_eq!((b.supply(), b.in_flight(), b.pending_mint(0)), (500, 0, NOTHING));
+}
+
+/// A confirmation can reach the minter with less than its report needs, as
+/// after a rise in gas prices on its way. The report is then skipped; it is not
+/// allowed to undo the supply, which nothing could bounce back to restore.
+#[test]
+fn a_report_the_minter_cannot_fund_is_skipped_and_the_supply_still_counted() {
+    let mut b = Bridge::new();
+    b.start_swap(500);
+    b.deliver_until(|m| body_op(m) == Some(OP_MINT_CREDITED));
+    let mut confirmation = b.queue.pop_front().expect("the confirmation");
+    let minter = b.minter.clone();
+    b.set_balance(&minter, MINTER_MIN_STORAGE);
+    confirmation.set_value(chain_block::CurrencyCollection::with_coins(TOS / 10_000));
+    b.queue.push_front(confirmation);
+    let (_, tx) = b.deliver_one();
+    assert!(!outcome(&tx).aborted, "the confirmation is taken");
+    b.settle();
+    assert_eq!((b.supply(), b.in_flight()), (500, 0), "the supply is counted");
+    assert_eq!(b.bridge_reports(OP_MINT_COMPLETED).len(), 0, "the report was not sent");
+    assert_eq!(
+        b.pending_mint(0),
+        MINT_IN_FLIGHT,
+        "the bridge still waits, which is the documented residual"
+    );
+}
+
+fn hex_bytes(text: &str) -> Vec<u8> {
+    (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap()).collect()
+}
+
+// ---------------------------------------------------------------------------
 // Fees
 // ---------------------------------------------------------------------------
 
@@ -965,8 +1390,9 @@ fn ids_stop_short_of_the_refund_flag() {
 fn pending_dict(count: u64, entry: impl Fn() -> BuilderData) -> Option<Cell> {
     let mut dict = chain_block::HashmapE::with_bit_len(64);
     for id in 0..count {
-        let key = SliceData::load_builder(BuilderData::with_raw(id.to_be_bytes().to_vec(), 64).unwrap())
-            .unwrap();
+        let key =
+            SliceData::load_builder(BuilderData::with_raw(id.to_be_bytes().to_vec(), 64).unwrap())
+                .unwrap();
         dict.set_builder(key, &entry()).unwrap();
     }
     chain_block::HashmapType::data(&dict).cloned()
@@ -1025,7 +1451,8 @@ impl Bridge {
             b.append_u64(count).unwrap();
             store_dict(b, mints);
         });
-        for (addr, data) in [(self.minter.clone(), minter_data), (self.bridge.clone(), bridge_data)] {
+        for (addr, data) in [(self.minter.clone(), minter_data), (self.bridge.clone(), bridge_data)]
+        {
             let mut account = self.bc.get_account(&addr).expect("deployed").clone();
             assert!(account.set_data(data), "the data is replaced");
             self.bc.set_account(addr, account);
@@ -1106,8 +1533,9 @@ fn every_completion_step_fits_the_gas_it_is_priced_at() {
     b.start_burn(100);
     b.settle();
     assert_eq!(b.pending_burn(AGE + 1), NOTHING);
-    b.configure(&nowhere, Prices { wallet_min_storage: 20 * TOS, ..Prices::default() });
     b.start_burn(100);
+    b.deliver_until(|m| body_op(m) == Some(OP_BURN_NOTIFICATION) && is_to(m, &nowhere));
+    b.configure(&nowhere, Prices { wallet_min_storage: 20 * TOS, ..Prices::default() });
     b.settle();
     assert_eq!(b.pending_burn(AGE + 2), BURN_REFUND_FAILED);
     assert!(!outcome(&b.retry_refund(AGE + 2, 40 * TOS)).aborted);

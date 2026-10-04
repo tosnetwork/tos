@@ -139,7 +139,7 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
         (pending_mints, _) = pending_mints.udict_delete?(64, mint_id);
     } else {
         pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_FAILED, key, to_address_hash, amount, wrapped_token_data));
-        emit_log_simple(LOG_MINT_FAILED, begin_cell().store_uint(mint_id, 64).store_uint(key, 256).end_cell(), 0);
+        emit_record(LOG_MINT_FAILED, begin_cell().store_uint(mint_id, 64).store_uint(key, 256).end_cell());
     }
     save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
 }
@@ -244,8 +244,10 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
 
 ;; A burn the minter has already taken out of supply. The log and the answer
 ;; to the minter are sent together or not at all: if either cannot be sent, the
-;; notification bounces and the minter credits the tokens back.
-() record_burn(slice sender_address, int burn_id, slice in_msg_body) impure {
+;; notification bounces and the minter credits the tokens back. Both are paid
+;; from the notification, which the minter priced for them: the log's fee comes
+;; off the answer's value, so the bridge's own balance is not drawn on.
+() record_burn(slice sender_address, int burn_id, slice in_msg_body, int msg_value) impure {
     int jetton_amount = in_msg_body~load_coins();
     slice from_address = in_msg_body~load_msg_addr();
     slice response_address = in_msg_body~load_msg_addr();
@@ -264,27 +266,16 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
 
     throw_unless(error::wrong_sender_workchain, from_address_wc == WORKCHAIN); ;; can never happen
 
-    var log = begin_cell()
-            .store_uint(12, 4) ;; ext_out_msg_info$11 src:MsgAddressInt ()
-            .store_uint(1, 2) ;; addr_extern$01
-            .store_uint(256, 9) ;; len:(## 9)
-            .store_uint(LOG_BURN, 256) ;; external_address:(bits len)
-            .store_uint(1, 64 + 32 + 2) ;; created_lt, created_at, init:Maybe, body:Either
-            .store_ref(begin_cell() ;; 704 bit
-                    .store_uint(destination_address, 160)
-                    .store_uint(jetton_amount, 128) ;; max 124 bits
-                    .store_uint(token_address, 160)
-                    .store_uint(from_address_hash, 256)
-                    .end_cell());
-    send_raw_message(log.end_cell(), SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+    cell log = burn_log_message(destination_address, jetton_amount, token_address, from_address_hash);
+    send_raw_message(log, SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
 
     var answer = begin_cell()
             .store_msg_flags(NON_BOUNCEABLE)
             .store_slice(sender_address)
-            .store_coins(0)
+            .store_coins(msg_value - gas_fee(BRIDGE_STEP_GAS, -1) - fee_of(log, -1))
             .store_msgbody_prefix_slice()
             .store_body_header(op::burn_recorded, burn_id);
-    send_raw_message(answer.end_cell(), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+    send_raw_message(answer.end_cell(), SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
 }
 
 () recv_internal(int msg_value, cell in_msg_cell, slice in_msg_body) impure {
@@ -315,7 +306,7 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
         return ();
     }
     if (op == op::burn_notification) {
-        record_burn(sender_address, query_id, in_msg_body);
+        record_burn(sender_address, query_id, in_msg_body, msg_value);
         return ();
     }
 

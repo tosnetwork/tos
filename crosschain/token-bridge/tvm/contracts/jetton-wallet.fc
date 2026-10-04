@@ -134,8 +134,12 @@ This is suitable for most tokens, if you need tokens transferable between workch
     ;; credit back to it instead, so the confirmation is the only action and a
     ;; failure to send it bounces too.
     throw_unless(error::malformed_forward_payload, forward_tos_amount == 0);
+    ;; What is left once the storage reserve is topped up and this step's gas
+    ;; paid must carry the confirmation and the minter's report. The fee comes
+    ;; out of the value (mode 0), and the value is never more than the balance
+    ;; holds then, since the declared gas is never below the real gas.
     int confirmation_value = msg_value - storage_fee - gas_fee(WALLET_CREDIT_GAS, 0);
-    throw_unless(error::not_enough_tos, confirmation_value > 0);
+    throw_unless(error::not_enough_tos, confirmation_value >= small_message_fee(0) + completion_need());
     var msg = begin_cell()
             .store_msg_flags(NON_BOUNCEABLE)
             .store_slice(jetton_master_address)

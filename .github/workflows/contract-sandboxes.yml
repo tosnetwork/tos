@@ -19,6 +19,8 @@ on:
       - "tosctl/src/sandbox/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
+      - "scripts/replay-token-bridge-trace.py"
+      - "test/auth-extensions/cells.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -46,6 +48,8 @@ on:
       - "tosctl/src/sandbox/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
+      - "scripts/replay-token-bridge-trace.py"
+      - "test/auth-extensions/cells.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -191,6 +195,21 @@ jobs:
         # that broke four deploy sandbox tests showed up here as three stale
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
+
+      # The token bridge's completion guarantees rest on fee arithmetic and on
+      # how send modes 1, 2, 16 and 64 fail and bounce. The sandbox runs the Rust
+      # executor; this records every transaction of its bridge suite and replays
+      # each in libemulator, the production engine, requiring the same outcome.
+      - name: Token-bridge transactions agree with the native engine
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          TOKEN_BRIDGE_TRACE_DIR: ${{ runner.temp }}/token-bridge-trace
+        run: |
+          cmake --build build --target emulator -j2
+          cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
+          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR"
 
       # A guard nothing reaches is decoration. This removes each rule the validator
       # controller work added and requires a test to go red for it; a mutation that
