@@ -20,8 +20,9 @@
 
 // The transport policy of the JSON-RPC listener, kept free of the server's
 // actor and chain dependencies so a test can run it through a real HttpServer
-// (see test/test-json-rpc-http-policy.cpp). JsonRpcServer uses these and only
-// these to configure its listener and to refuse unauthenticated requests.
+// (see the JsonRpcHttpPolicy tests in test/test-http-server-limits.cpp).
+// JsonRpcServer uses these and only these to configure its listener and to
+// refuse unauthenticated requests.
 
 #include <cctype>
 #include <cerrno>
