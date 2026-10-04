@@ -47,6 +47,12 @@ td::Ref<block::BlockSignatureSet> evidence(unsigned char marker) {
   return block::BlockSignatureSet::create_ordinary(std::move(signatures), 7, 0x1234);
 }
 
+struct ShardBlockInfo {
+  tos::BlockIdExt block_id;
+  tos::CatchainSeqno cc_seqno;
+  std::string data;
+};
+
 struct Candidate {
   tos::BlockIdExt block_id;
   tos::CatchainSeqno cc_seqno;
@@ -67,6 +73,10 @@ struct Harness {
               candidates.push_back(Candidate{id, cc_seqno, validator_set_hash, data.as_slice().str()});
             },
         .send_finality = [this](const BlockFinalityBroadcast &finality) { finality_sent.push_back(finality.clone()); },
+        .send_shard_block_info =
+            [this](const tos::BlockIdExt &id, tos::CatchainSeqno cc_seqno, const td::BufferSlice &data) {
+              shard_block_infos.push_back(ShardBlockInfo{id, cc_seqno, data.as_slice().str()});
+            },
     });
   }
 
@@ -89,6 +99,7 @@ struct Harness {
   std::vector<BlockBroadcast> blocks;
   std::vector<Candidate> candidates;
   std::vector<BlockFinalityBroadcast> finality_sent;
+  std::vector<ShardBlockInfo> shard_block_infos;
 };
 
 BlockBroadcast broadcast(const tos::BlockIdExt &id, td::Slice data, unsigned char signatures) {
@@ -190,6 +201,29 @@ int main() {
     require(h.finality_sent.size() == 2, "the same evidence is forwarded once");
     h.relay.offer_finality(BlockFinalityBroadcast{block_id(16, fill(0x44)), evidence(0x02), 0});
     require(h.finality_sent.size() == 3, "the same signature set for another block is different evidence");
+  }
+
+  // Shard block info received from a peer is never forwarded: nothing reports
+  // back whether its validation succeeded. An invalid description received
+  // first under a block id leaves no record, so the genuine description this
+  // node produces for that block is still forwarded; a valid description
+  // received from a peer is not forwarded either.
+  {
+    using Origin = CustomOverlayRelay::ShardBlockInfoOrigin;
+    Harness h(16);
+    auto id = block_id(30, genuine_hash);
+    h.relay.offer_shard_block_info(id, 7, td::BufferSlice("an invalid description"), Origin::Received);
+    require(h.shard_block_infos.empty(), "received shard block info is not forwarded");
+    h.relay.offer_shard_block_info(id, 7, td::BufferSlice("the valid description"), Origin::Received);
+    require(h.shard_block_infos.empty(), "received shard block info is not forwarded even when valid");
+    h.relay.offer_shard_block_info(id, 7, td::BufferSlice("the valid description"), Origin::ProducedLocally);
+    require(h.shard_block_infos.size() == 1 && h.shard_block_infos[0].data == "the valid description" &&
+                h.shard_block_infos[0].block_id == id && h.shard_block_infos[0].cc_seqno == 7,
+            "an invalid description received first did not suppress the genuine one");
+    h.relay.offer_shard_block_info(id, 7, td::BufferSlice("the valid description"), Origin::ProducedLocally);
+    require(h.shard_block_infos.size() == 1, "shard block info is forwarded once");
+    h.relay.offer_block(broadcast(id, genuine_data, 0x01), true);
+    require(h.blocks.size() == 1, "shard block info does not suppress the block broadcast");
   }
 
   // Forwarding records are bounded: the oldest are forgotten.

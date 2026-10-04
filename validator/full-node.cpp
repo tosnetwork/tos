@@ -316,7 +316,8 @@ void FullNodeImpl::send_ext_message(AccountIdPrefixFull dst, td::BufferSlice dat
 }
 
 void FullNodeImpl::send_shard_block_info(BlockIdExt block_id, CatchainSeqno cc_seqno, td::BufferSlice data) {
-  send_shard_block_info_to_custom_overlays(block_id, cc_seqno, data);
+  custom_overlays_relay_.offer_shard_block_info(block_id, cc_seqno, data,
+                                                CustomOverlayRelay::ShardBlockInfoOrigin::ProducedLocally);
   auto shard = get_shard(ShardIdFull{masterchainId});
   if (shard.empty()) {
     VLOG(FULL_NODE_WARNING) << "dropping OUT shard block info message to unknown shard";
@@ -637,7 +638,8 @@ void FullNodeImpl::process_block_candidate_broadcast(BlockIdExt block_id, Catcha
 
 void FullNodeImpl::process_shard_block_info_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
                                                       td::BufferSlice data) {
-  send_shard_block_info_to_custom_overlays(block_id, cc_seqno, data);
+  custom_overlays_relay_.offer_shard_block_info(block_id, cc_seqno, data,
+                                                CustomOverlayRelay::ShardBlockInfoOrigin::Received);
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::new_shard_block_description_broadcast,
                           block_id, cc_seqno, std::move(data));
 }
@@ -694,6 +696,10 @@ void FullNodeImpl::start_up() {
       .send_finality =
           [this](const BlockFinalityBroadcast &finality) {
             send_block_finality_broadcast_to_custom_overlays(finality);
+          },
+      .send_shard_block_info =
+          [this](const BlockIdExt &block_id, CatchainSeqno cc_seqno, const td::BufferSlice &data) {
+            send_shard_block_info_to_custom_overlays(block_id, cc_seqno, data);
           },
   });
   update_shard_actor(ShardIdFull{masterchainId}, true, false);
@@ -874,10 +880,6 @@ void FullNodeImpl::send_block_candidate_broadcast_to_custom_overlays(const Block
 
 void FullNodeImpl::send_shard_block_info_to_custom_overlays(BlockIdExt block_id, CatchainSeqno cc_seqno,
                                                             const td::BufferSlice &data) {
-  if (custom_overlays_sent_shard_block_desc_.contains(block_id)) {
-    return;
-  }
-  custom_overlays_sent_shard_block_desc_.put(block_id, {});
   for (auto &[_, private_overlay] : custom_overlays_) {
     if (private_overlay.params_.send_shard(block_id.shard_full())) {
       for (auto &[local_id, actor] : private_overlay.actors_) {

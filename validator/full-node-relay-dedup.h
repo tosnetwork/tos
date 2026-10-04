@@ -36,7 +36,12 @@ namespace tos::validator::fullnode {
 //   signature set): evidence that fails verification cannot suppress different
 //   evidence for the same block. This deduplicates only while resident and does
 //   not bound how many distinct pieces of evidence are forwarded; it relies on
-//   the ingress (fast-sync members, allowlisted custom senders) being limited.
+//   the ingress (fast-sync members, allowlisted custom senders) being limited;
+// - shard block info is forwarded only when this node produced it. Received
+//   shard block info is validated asynchronously by the validator manager with
+//   no completion signal back to the relay, so it is never forwarded and never
+//   remembered: an unverified description cannot take the key its genuine
+//   counterpart would use.
 class CustomOverlayRelay {
  public:
   struct Hooks {
@@ -46,9 +51,13 @@ class CustomOverlayRelay {
     std::function<void(const BlockBroadcast &)> send_block;
     std::function<void(const BlockIdExt &, CatchainSeqno, td::uint32, const td::BufferSlice &)> send_candidate;
     std::function<void(const BlockFinalityBroadcast &)> send_finality;
+    std::function<void(const BlockIdExt &, CatchainSeqno, const td::BufferSlice &)> send_shard_block_info;
   };
 
-  explicit CustomOverlayRelay(size_t capacity) : blocks_(capacity), candidates_(capacity), finality_(capacity) {
+  enum class ShardBlockInfoOrigin { ProducedLocally, Received };
+
+  explicit CustomOverlayRelay(size_t capacity)
+      : blocks_(capacity), candidates_(capacity), finality_(capacity), shard_block_infos_(capacity) {
   }
 
   void set_hooks(Hooks hooks) {
@@ -90,6 +99,19 @@ class CustomOverlayRelay {
     }
     if (claim(finality_, finality_key(finality.block_id, *finality.sig_set))) {
       hooks_.send_finality(finality);
+    }
+  }
+
+  // Shard block info: forwarded once, and only if this node produced it. A
+  // received description is processed locally by the caller but takes no part
+  // in relaying until a validation result can be fed back here.
+  void offer_shard_block_info(const BlockIdExt &block_id, CatchainSeqno cc_seqno, const td::BufferSlice &data,
+                              ShardBlockInfoOrigin origin) {
+    if (origin != ShardBlockInfoOrigin::ProducedLocally) {
+      return;
+    }
+    if (claim(shard_block_infos_, block_id)) {
+      hooks_.send_shard_block_info(block_id, cc_seqno, data);
     }
   }
 
@@ -144,6 +166,7 @@ class CustomOverlayRelay {
   td::LRUCache<BlockIdExt, td::Unit> blocks_;
   td::LRUCache<td::Bits256, td::Unit> candidates_;
   td::LRUCache<td::Bits256, td::Unit> finality_;
+  td::LRUCache<BlockIdExt, td::Unit> shard_block_infos_;
 };
 
 }  // namespace tos::validator::fullnode
