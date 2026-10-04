@@ -1837,6 +1837,9 @@ mod tests {
             permission_hash: [0; 32],
             dispute_hash: [0; 32],
             attestor_pubkey: None,
+            dispute_fallback_agent_bps:
+                contracts::TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+            dispute_deadline: 0,
         };
         let json = serde_json::to_string(&TaskEscrowRecordDto::from(&data)).unwrap();
         let dto = crate::http::agent_query_api::indexed_dto::<TaskDto>(&json, "0:aa", true);

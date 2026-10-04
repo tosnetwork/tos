@@ -243,7 +243,7 @@ pub struct AgentTaskSendCmd {
     #[arg(
         long,
         conflicts_with = "amount_nanotos",
-        help = "Message value in TOS; defaults to 0.01"
+        help = "Message value in TOS; defaults to the gas allowance of any Task Escrow action, priced from the chain's config"
     )]
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact message value in nanoTOS")]
@@ -319,6 +319,13 @@ pub struct AgentTaskCreateCmd {
     deadline: u64,
     #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
     review_period: u32,
+    #[arg(
+        long,
+        default_value_t = TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+        value_parser = clap::value_parser!(u16).range(0..=10_000),
+        help = "Agent's share of the budget, in basis points, if a dispute is still unresolved 7 days after it is raised; the creator receives the rest"
+    )]
+    dispute_fallback_agent_bps: u16,
     #[arg(long)]
     policy_hash: String,
     #[arg(
@@ -405,6 +412,8 @@ enum AgentTaskOperation {
     Settle,
     Cancel,
     Timeout,
+    /// Ends a dispute left unresolved past its deadline with the fallback split.
+    DisputeTimeout,
     RotateAttestorKey,
     RevokeAttestor,
 }
@@ -414,7 +423,7 @@ impl AgentTaskOperation {
         match self {
             Self::Accept | Self::Claim => Ok(status == 1),
             Self::Result => Ok(status == 2),
-            Self::Settle | Self::Resolve => Ok(status == 3),
+            Self::Settle | Self::Resolve | Self::DisputeTimeout => Ok(status == 3),
             Self::Cancel => Ok(status == 4),
             Self::Timeout => Ok(matches!(status, 3 | 5)),
             Self::Reject => Ok(status == 6),
@@ -436,6 +445,7 @@ impl AgentTaskOperation {
             Self::Settle => "settle",
             Self::Cancel => "cancel",
             Self::Timeout => "timeout",
+            Self::DisputeTimeout => "dispute-timeout",
             Self::RotateAttestorKey => "rotate-attestor-key",
             Self::RevokeAttestor => "revoke-attestor",
         }
@@ -538,6 +548,13 @@ pub struct AgentTaskBuildStateCmd {
     deadline: u64,
     #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
     review_period: u32,
+    #[arg(
+        long,
+        default_value_t = TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+        value_parser = clap::value_parser!(u16).range(0..=10_000),
+        help = "Agent's share of the budget, in basis points, if a dispute is still unresolved 7 days after it is raised; the creator receives the rest"
+    )]
+    dispute_fallback_agent_bps: u16,
     #[arg(long, help = "32-byte settlement policy hash")]
     policy_hash: String,
     #[arg(
@@ -1816,6 +1833,12 @@ fn validate_controller_task_action(
             validate_controller_task_payout(task, context)?;
             validate_controller_task_attestation(operation, task, context)?;
         }
+        AgentTaskOperation::DisputeTimeout => {
+            require_task_status(task, 7, "disputed")?;
+            if context.now < task.dispute_deadline {
+                anyhow::bail!("Task Escrow dispute deadline has not passed");
+            }
+        }
         AgentTaskOperation::RotateAttestorKey | AgentTaskOperation::RevokeAttestor => {
             anyhow::bail!("this Task operation is not supported through Agent Account custody")
         }
@@ -1899,8 +1922,11 @@ fn validate_controller_task_attestation(
 
 impl AgentTaskSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let amount_nanotos =
-            resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.01))?;
+        let explicit_amount = if self.amount.is_some() || self.amount_nanotos.is_some() {
+            Some(resolve_nanotos("amount", self.amount, self.amount_nanotos, None)?)
+        } else {
+            None
+        };
         let mut payout_nanotos = None;
         let mut dispute_hash = None;
         let mut attestation_signature = None;
@@ -1951,6 +1977,9 @@ impl AgentTaskSendCmd {
             }
             AgentTaskOperation::Cancel => Some(TaskEscrowContract::cancel(self.query_id)?),
             AgentTaskOperation::Timeout => Some(TaskEscrowContract::timeout(self.query_id)?),
+            AgentTaskOperation::DisputeTimeout => {
+                Some(TaskEscrowContract::dispute_timeout(self.query_id)?)
+            }
             AgentTaskOperation::RotateAttestorKey => {
                 match parse_optional_hash("new-attestor-pubkey", &self.new_attestor_pubkey)? {
                     Some(pubkey) => {
@@ -1970,6 +1999,13 @@ impl AgentTaskSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
+        let amount_nanotos = match explicit_amount {
+            Some(amount) => amount,
+            None => {
+                let schedule = load_agent_deploy_fee_schedule(&rpc_client, &destination).await?;
+                TaskEscrowContract::action_value(&schedule.gas, &schedule.forwarding)?
+            }
+        };
         if body.is_none() {
             let vault_key = self
                 .signer_vault_key
@@ -2090,6 +2126,7 @@ impl AgentTaskSendCmd {
                 AgentTaskOperation::Settle
                     | AgentTaskOperation::Timeout
                     | AgentTaskOperation::Dispute
+                    | AgentTaskOperation::DisputeTimeout
             ) {
                 let master = rpc_client.get_masterchain_info().await?;
                 let header = rpc_client
@@ -2214,6 +2251,10 @@ struct AgentTaskDataView {
     settlement_policy_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     attestor_pubkey: Option<String>,
+    /// The agent's share, in basis points, if a dispute outlives its deadline.
+    dispute_fallback_agent_bps: u16,
+    /// When the fallback may end an open dispute; zero until one is raised.
+    dispute_deadline: u64,
     balance: String,
     /// Whether the escrow holds its budget; claim and accept refuse until it does.
     budget_held: bool,
@@ -2251,6 +2292,8 @@ impl AgentTaskShowCmd {
             dispute_hash: hex::encode(data.dispute_hash),
             settlement_policy_hash: hex::encode(data.settlement_policy_hash),
             attestor_pubkey: data.attestor_pubkey.map(hex::encode),
+            dispute_fallback_agent_bps: data.dispute_fallback_agent_bps,
+            dispute_deadline: data.dispute_deadline,
             balance: display_tos(balance),
             budget_held: shortfall == 0,
         };
@@ -2600,6 +2643,7 @@ impl AgentTaskCreateCmd {
             settlement_policy_hash: policy_hash,
             permission_hash,
             attestor_pubkey,
+            dispute_fallback_agent_bps: self.dispute_fallback_agent_bps,
         };
         let address = TaskEscrowContract::calculate_address(deployment_workchain, &init)?;
         let state_init = TaskEscrowContract::build_state_init(&init)?;
@@ -3483,6 +3527,9 @@ impl AgentTaskEncodeCmd {
             }
             AgentTaskOperation::Cancel => TaskEscrowContract::cancel(self.query_id)?,
             AgentTaskOperation::Timeout => TaskEscrowContract::timeout(self.query_id)?,
+            AgentTaskOperation::DisputeTimeout => {
+                TaskEscrowContract::dispute_timeout(self.query_id)?
+            }
             AgentTaskOperation::RotateAttestorKey => TaskEscrowContract::rotate_attestor_key(
                 self.query_id,
                 parse_required_hash("new-attestor-pubkey", &self.new_attestor_pubkey)?,
@@ -3552,6 +3599,7 @@ impl AgentTaskBuildStateCmd {
             settlement_policy_hash: policy_hash,
             permission_hash,
             attestor_pubkey,
+            dispute_fallback_agent_bps: self.dispute_fallback_agent_bps,
         };
         let state_init = TaskEscrowContract::build_state_init(&init)?;
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
@@ -11998,6 +12046,9 @@ mod tests {
             permission_hash: permission_id_hash(Some("bounded-task")),
             dispute_hash: [0; 32],
             attestor_pubkey: None,
+            dispute_fallback_agent_bps:
+                contracts::TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+            dispute_deadline: 0,
         }
     }
 
@@ -14063,6 +14114,49 @@ mod tests {
     }
 
     #[test]
+    fn controller_dispute_timeout_waits_for_the_dispute_deadline_and_has_no_sender_restriction() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let mut disputed = controller_task(7);
+        disputed.dispute_deadline = 100;
+        let mut context = controller_task_context(&task_address);
+        context.now = 99;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::DisputeTimeout,
+                &disputed,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("dispute deadline has not passed")
+        );
+        context.now = 100;
+        validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+        let mut submitted = controller_task(2);
+        submitted.dispute_deadline = 100;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::DisputeTimeout,
+                &submitted,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn controller_timeout_matches_contract_deadlines_and_has_no_sender_restriction() {
         let permission_hash = permission_id_hash(Some("bounded-task"));
         let task_address = address(9);
@@ -14449,6 +14543,7 @@ mod tests {
             (AgentTaskOperation::Settle, vec![3]),
             (AgentTaskOperation::Cancel, vec![4]),
             (AgentTaskOperation::Timeout, vec![3, 5]),
+            (AgentTaskOperation::DisputeTimeout, vec![3]),
         ] {
             for status in 0..=7 {
                 assert_eq!(

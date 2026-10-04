@@ -4,12 +4,12 @@
  * Licensed under the GNU General Public License v3.0.
  */
 use chain_block::{
-    BuilderData, Coins, Deserializable, IBitstring, MsgAddressInt, Serializable, StateInit,
-    base64_decode, read_single_root_boc,
+    BuilderData, Coins, Deserializable, GasLimitsPrices, IBitstring, MsgAddressInt,
+    MsgForwardPrices, Serializable, StateInit, base64_decode, read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const TASK_ESCROW_CODE_B64: &str = "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";
+pub const TASK_ESCROW_CODE_B64: &str = "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77qwAYEA7b6wkjB/4CCD97ohgvDHF2pwPU3YT7o8C3YNEGcPKiBT+iw5zMZOx/13kqwDerqxIYMGurEhgvAm6JWPwrInsEXD9Iny75jw1d+sBdPGMzmxOAKIbVP8BbqxIRcAhgHIywDL/8kEyMv/E8v/yw/LP8kGyMv/Fcv/E8v/yx/LPxLMzMnIUAnPFhbLAFAGzxYSywBYzxYB+gISyz/LB8zJ7VQBEuMCXw9fBvLAbxgAwgwREAwQrxC+EI0QnHAMEHtzCxBaEEkQOBAnEEZAFAHIywDL/8kEyMv/E8v/yw/LP8kGyMv/Fcv/E8v/yx/LPxLMzMnIUAnPFhbLAFAGzxYSywBYzxYB+gISyz/LB8zJ7VQA5ILw7P///////////////////////////////////////3+6sSGC8CbolY/CsiewRcP0ifLvmPDV36wF08YzObE4AohtU/yFurEhwACxAYLwxxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA/q6sQD+ERNWEMcF8uCBERPAACjAA7EowASxKMAGsSjABbHy4IIP0Q0REQ0LERALEM8QnhCtEIwQexBqVUReIXABAcjLAMv/yQTIy/8Ty//LD8s/yQbIy/8Vy/8Ty//LH8s/EszMychQCc8WFssAUAbPFhLLAFjPFgH6AhLLP8sHzMntVA==";
 pub const TASK_ACCEPT_OPCODE: u32 = 0x5441_5301;
 pub const TASK_RESULT_OPCODE: u32 = 0x5441_5302;
 pub const TASK_SETTLE_OPCODE: u32 = 0x5441_5303;
@@ -21,6 +21,7 @@ pub const TASK_DISPUTE_OPCODE: u32 = 0x5441_5308;
 pub const TASK_RESOLVE_OPCODE: u32 = 0x5441_5309;
 pub const TASK_ROTATE_ATTESTOR_KEY_OPCODE: u32 = 0x5441_530a;
 pub const TASK_REVOKE_ATTESTOR_OPCODE: u32 = 0x5441_530b;
+pub const TASK_DISPUTE_TIMEOUT_OPCODE: u32 = 0x5441_530c;
 
 #[derive(Clone, Debug)]
 pub struct TaskEscrowInit {
@@ -37,6 +38,10 @@ pub struct TaskEscrowInit {
     /// a signature over `result_hash` under this key -- on top of, never
     /// instead of, the existing creator/verifier sender authorization.
     pub attestor_pubkey: Option<[u8; 32]>,
+    /// The agent's share, in basis points of the budget, when a dispute is
+    /// still unresolved at its deadline; the creator receives the rest. Fixed
+    /// before the agent claims or accepts the task.
+    pub dispute_fallback_agent_bps: u16,
 }
 
 pub struct TaskEscrowContract;
@@ -57,6 +62,9 @@ pub struct TaskEscrowData {
     pub permission_hash: [u8; 32],
     pub dispute_hash: [u8; 32],
     pub attestor_pubkey: Option<[u8; 32]>,
+    pub dispute_fallback_agent_bps: u16,
+    /// When the fallback may end an open dispute; zero until one is raised.
+    pub dispute_deadline: u64,
 }
 
 impl TaskEscrowContract {
@@ -70,12 +78,44 @@ impl TaskEscrowContract {
     /// instead of only failing once the agent has already done the work.
     pub const MIN_REVIEW_PERIOD_SECS: u32 = 3_600;
 
+    /// The fallback split a task carries unless its creator chooses another.
+    pub const DEFAULT_DISPUTE_FALLBACK_AGENT_BPS: u16 = 5_000;
+    /// The contract's `bps_denominator`.
+    pub const BPS_DENOMINATOR: u16 = 10_000;
+    /// How long after a dispute is raised the verifier alone may resolve it;
+    /// the contract's `dispute_window`.
+    pub const DISPUTE_WINDOW_SECS: u64 = 604_800;
+    /// Gas any Task Escrow action may use at its widest valid inputs, with
+    /// margin. `dispute_timeout` charges its caller for exactly this much
+    /// (the contract's `dispute_timeout_gas`, which must stay equal).
+    pub const MAX_ACTION_GAS: u64 = 20_000;
+
+    /// The message value that pays for any Task Escrow action under these
+    /// prices: [`Self::MAX_ACTION_GAS`] plus forwarding for the two value
+    /// transfers a terminal action sends. tosctl attaches this unless told
+    /// otherwise, and it is what `dispute_timeout` requires.
+    pub fn action_value(
+        gas: &GasLimitsPrices,
+        forwarding: &MsgForwardPrices,
+    ) -> anyhow::Result<u64> {
+        let transfer = forwarding.calc_fwd_fee(0, 0);
+        let value = gas
+            .calc_gas_fee(Self::MAX_ACTION_GAS)
+            .checked_add(transfer)
+            .and_then(|value| value.checked_add(transfer))
+            .ok_or_else(|| anyhow::anyhow!("Task Escrow action value overflowed"))?;
+        u64::try_from(value).map_err(|_| anyhow::anyhow!("Task Escrow action value exceeds uint64"))
+    }
+
     pub fn build_data(init: &TaskEscrowInit) -> anyhow::Result<chain_block::Cell> {
         if init.review_period < Self::MIN_REVIEW_PERIOD_SECS {
             anyhow::bail!(
                 "review_period must be at least {} seconds",
                 Self::MIN_REVIEW_PERIOD_SECS
             );
+        }
+        if init.dispute_fallback_agent_bps > Self::BPS_DENOMINATOR {
+            anyhow::bail!("dispute_fallback_agent_bps must be at most {}", Self::BPS_DENOMINATOR);
         }
         let agent = init.assigned_agent.as_ref().unwrap_or(&init.creator);
         let verifier = init.verifier.as_ref().unwrap_or(&init.creator);
@@ -97,7 +137,11 @@ impl TaskEscrowContract {
         data.append_u64(init.deadline)?.append_u8(0)?;
         let mut hashes = BuilderData::new();
         let mut permission = BuilderData::new();
-        permission.append_u256(&init.permission_hash)?.append_u256(&[0; 32])?;
+        permission
+            .append_u256(&init.permission_hash)?
+            .append_u256(&[0; 32])?
+            .append_u16(init.dispute_fallback_agent_bps)?
+            .append_u64(0)?;
         hashes
             .append_u256(&[0; 32])?
             .append_u256(&[0; 32])?
@@ -159,6 +203,9 @@ impl TaskEscrowContract {
             review_deadline: stack.u64(13)?,
             dispute_hash: parse_hash(stack, 14)?,
             attestor_pubkey: if stack.u64(15)? == 0 { None } else { Some(parse_hash(stack, 16)?) },
+            dispute_fallback_agent_bps: u16::try_from(stack.u64(17)?)
+                .map_err(|_| anyhow::anyhow!("dispute fallback share does not fit 16 bits"))?,
+            dispute_deadline: stack.u64(18)?,
         })
     }
 
@@ -250,6 +297,13 @@ impl TaskEscrowContract {
     pub fn revoke_attestor(query_id: u64) -> anyhow::Result<chain_block::Cell> {
         message(TASK_REVOKE_ATTESTOR_OPCODE, query_id, |_| Ok(()))
     }
+
+    /// Ends a dispute left unresolved past its deadline with the fallback
+    /// split. Anyone may send it; the message value must cover the call's
+    /// gas and the two payouts' forwarding fees.
+    pub fn dispute_timeout(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message(TASK_DISPUTE_TIMEOUT_OPCODE, query_id, |_| Ok(()))
+    }
 }
 
 fn parse_hash(stack: &TvmStackParser, index: usize) -> anyhow::Result<[u8; 32]> {
@@ -304,6 +358,7 @@ mod tests {
             settlement_policy_hash: [0x33; 32],
             permission_hash: [0x77; 32],
             attestor_pubkey: None,
+            dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
         }
     }
 
@@ -418,6 +473,8 @@ mod tests {
             hash_number([0x88; 32]),
             number("1"),
             hash_number([0x99; 32]),
+            number("3333"),
+            number("1234999999"),
         ]);
         let data = TaskEscrowContract::decode_data(&stack).unwrap();
         assert_eq!(data.creator, task.creator);
@@ -434,6 +491,17 @@ mod tests {
         assert_eq!(data.review_deadline, 1_234_567_890);
         assert_eq!(data.dispute_hash, [0x88; 32]);
         assert_eq!(data.attestor_pubkey, Some([0x99; 32]));
+        assert_eq!(data.dispute_fallback_agent_bps, 3_333);
+        assert_eq!(data.dispute_deadline, 1_234_999_999);
+    }
+
+    #[test]
+    fn a_fallback_share_above_the_budget_is_refused() {
+        let mut task = init();
+        task.dispute_fallback_agent_bps = TaskEscrowContract::BPS_DENOMINATOR;
+        assert!(TaskEscrowContract::build_data(&task).is_ok());
+        task.dispute_fallback_agent_bps = TaskEscrowContract::BPS_DENOMINATOR + 1;
+        assert!(TaskEscrowContract::build_data(&task).is_err());
     }
 
     #[test]
@@ -457,6 +525,8 @@ mod tests {
             hash_number([0; 32]),
             number("0"),
             hash_number([0; 32]),
+            number("5000"),
+            number("0"),
         ]);
         let data = TaskEscrowContract::decode_data(&stack).unwrap();
         assert_eq!(data.assigned_agent, None);

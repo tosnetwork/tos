@@ -75,6 +75,7 @@ fn main() -> anyhow::Result<()> {
         settlement_policy_hash: [0x33; 32],
         permission_hash: [0x44; 32],
         attestor_pubkey: Some(attestor_pubkey),
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let task_address = TaskEscrowContract::calculate_address(-1, &task_init)?;
     println!("task escrow address: {task_address}");
