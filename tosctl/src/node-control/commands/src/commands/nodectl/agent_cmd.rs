@@ -2003,7 +2003,18 @@ impl AgentTaskSendCmd {
             Some(amount) => amount,
             None => {
                 let schedule = load_agent_deploy_fee_schedule(&rpc_client, &destination).await?;
-                TaskEscrowContract::action_value(&schedule.gas, &schedule.forwarding)?
+                // A payout to a masterchain account is forwarded at masterchain
+                // rates even from a workchain escrow.
+                let masterchain_forwarding = match rpc_client.get_config_param(24).await? {
+                    ConfigParamEnum::ConfigParam24(value) => value,
+                    _ => anyhow::bail!(
+                        "chain config parameter 24 is not masterchain forwarding pricing"
+                    ),
+                };
+                TaskEscrowContract::action_value(
+                    &schedule.gas,
+                    &[&schedule.forwarding, &masterchain_forwarding],
+                )?
             }
         };
         if body.is_none() {

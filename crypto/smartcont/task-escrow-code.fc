@@ -344,9 +344,15 @@ const int status::disputed = 7;
     ;; The principal held for the task, without what this caller attached.
     throw_unless(126, budget <= get_balance().pair_first() - msg_value);
     ;; The caller pays this call's gas and both payouts' forwarding, so neither
-    ;; share comes out of the principal.
+    ;; share comes out of the principal. A transfer is priced at masterchain
+    ;; rates when either of its ends is in the masterchain, so each payout is
+    ;; priced from both ends, not from this escrow's workchain alone.
     (int wc, _) = my_address().parse_std_addr();
-    int fee = get_compute_fee(wc, dispute_timeout_gas) + get_forward_fee(wc, 0, 0) * 2;
+    (int agent_wc, _) = agent.parse_std_addr();
+    (int creator_wc, _) = creator.parse_std_addr();
+    int fee = get_compute_fee(wc, dispute_timeout_gas)
+      + get_forward_fee((wc == -1) | (agent_wc == -1), 0, 0)
+      + get_forward_fee((wc == -1) | (creator_wc == -1), 0, 0);
     throw_unless(err::fallback_fee_unpaid, msg_value >= fee);
     ;; The agent's share rounds down; the creator receives the rest of the
     ;; budget, rounding included, plus whatever the balance holds beyond it.

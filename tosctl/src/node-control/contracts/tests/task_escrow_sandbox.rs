@@ -121,11 +121,7 @@ impl Fixture {
     }
 
     fn action_value(&self) -> u64 {
-        let config = self.bc.config_params();
-        let gas = config.gas_prices(self.escrow.is_masterchain()).expect("gas prices");
-        let forwarding =
-            config.fwd_prices(self.escrow.is_masterchain()).expect("forwarding prices");
-        TaskEscrowContract::action_value(&gas, &forwarding).expect("action value")
+        default_action_value(&self.bc, &self.escrow)
     }
 
     /// Like [`Fixture::send_from`], but with an explicit message value.
@@ -1573,12 +1569,7 @@ fn a_fallback_share_above_the_budget_is_refused_before_acceptance() {
         dispute_fallback_agent_bps: 10_001,
     };
     assert!(TaskEscrowContract::build_data(&init).is_err());
-    let config = bc.config_params();
-    let value = TaskEscrowContract::action_value(
-        &config.gas_prices(true).expect("gas"),
-        &config.fwd_prices(true).expect("forwarding"),
-    )
-    .expect("value");
+    let value = default_action_value(&bc, creator.address());
     for assigned in [false, true] {
         let init = TaskEscrowInit {
             assigned_agent: assigned.then(|| agent.address().clone()),
@@ -1726,5 +1717,122 @@ fn every_action_fits_the_declared_gas_allowance_with_margin() {
             <= TaskEscrowContract::MAX_ACTION_GAS.checked_mul(2).expect("gas"),
         "MAX_ACTION_GAS {} leaves less than half again the most used ({most}): {used:?}",
         TaskEscrowContract::MAX_ACTION_GAS
+    );
+}
+
+/// The value tosctl attaches by default, priced as tosctl prices it: the
+/// escrow's own gas schedule and the dearest of its workchain's and the
+/// masterchain's forwarding schedules. A chain without a basechain schedule
+/// has only the masterchain's.
+fn default_action_value(bc: &Blockchain, escrow: &MsgAddressInt) -> u64 {
+    let config = bc.config_params();
+    let gas = config.gas_prices(escrow.is_masterchain()).expect("gas prices");
+    let masterchain = config.fwd_prices(true).expect("masterchain forwarding prices");
+    let own = config.fwd_prices(escrow.is_masterchain()).unwrap_or_else(|_| masterchain.clone());
+    TaskEscrowContract::action_value(&gas, &[&own, &masterchain]).expect("action value")
+}
+
+/// A basechain escrow paying masterchain accounts forwards each payout at
+/// masterchain rates. With those rates far above the basechain's, the escrow
+/// holding exactly its budget, and the value tosctl attaches by default, the
+/// fallback still pays the agent its exact share and the creator at least the
+/// rest of the budget.
+#[test]
+fn a_basechain_fallback_paying_masterchain_accounts_keeps_both_shares_whole() {
+    let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
+    let mut config = bc.config_params().clone();
+    let mut masterchain = config.fwd_prices(true).expect("masterchain forwarding");
+    let basechain = config.fwd_prices(false).expect("basechain forwarding");
+    masterchain.lump_price = basechain.lump_price.checked_mul(20).expect("lump").max(TOS / 50);
+    config.set_config(chain_block::ConfigParamEnum::ConfigParam24(masterchain)).expect("param 24");
+    // A configuration the sandbox rebuilds needs the fundamental-contract list.
+    if config.config(31).expect("param 31").is_none() {
+        config
+            .set_config(chain_block::ConfigParamEnum::ConfigParam31(chain_block::ConfigParam31 {
+                fundamental_smc_addr: chain_block::FundamentalSmcAddresses::default(),
+            }))
+            .expect("the fundamental contracts are listed");
+    }
+    bc.set_config(config).expect("config");
+    bc.set_workchain(-1);
+    let creator = bc.treasury("creator", 1_000 * TOS).expect("creator");
+    let agent = bc.treasury("agent", 1_000 * TOS).expect("agent");
+    let verifier = bc.treasury("verifier", 1_000 * TOS).expect("verifier");
+    let outsider = bc.treasury("outsider", 1_000 * TOS).expect("outsider");
+    let budget = 2 * TOS + 1;
+    let init = TaskEscrowInit {
+        creator: creator.address().clone(),
+        assigned_agent: Some(agent.address().clone()),
+        verifier: Some(verifier.address().clone()),
+        budget,
+        deadline: u64::from(bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x11; 32],
+        permission_hash: [0x22; 32],
+        attestor_pubkey: None,
+        dispute_fallback_agent_bps: DEFAULT_FALLBACK_BPS,
+    };
+    let escrow = TaskEscrowContract::calculate_address(0, &init).expect("address");
+    assert!(!escrow.is_masterchain());
+    let deploy = MessageBuilder::internal(creator.address(), &escrow, budget + TOS / 5)
+        .bounce(false)
+        .state_init(TaskEscrowContract::build_state_init(&init).expect("state init"))
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+    let value = default_action_value(&bc, &escrow);
+    let send = |bc: &mut Blockchain, from: &MsgAddressInt, body: Cell| {
+        let msg = MessageBuilder::internal(from, &escrow, value).body(body).build();
+        bc.send_message(msg).expect("send")
+    };
+    send(&mut bc, agent.address(), TaskEscrowContract::accept(1).unwrap()).expect_success();
+    send(&mut bc, agent.address(), TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    send(&mut bc, creator.address(), TaskEscrowContract::dispute(3, [0xCC; 32]).unwrap())
+        .expect_success();
+    let deadline = bc
+        .run_get_method(&escrow, "get_task_data", vec![])
+        .expect("get_task_data")
+        .expect_success()
+        .int_at(18);
+    bc.set_now(u32::try_from(deadline).expect("deadline"));
+
+    // Exactly the budget, nothing beyond it to absorb fees, with storage
+    // already paid up to now so only this call's own costs are in play.
+    let mut account = bc.get_account(&escrow).expect("escrow").clone();
+    account.set_balance(CurrencyCollection::with_coins(budget));
+    account.set_last_paid(bc.now());
+    bc.set_account(escrow.clone(), account);
+
+    // A caller that prices both transfers at basechain rates does not pay
+    // for forwarding them to masterchain accounts, and is refused.
+    let config = bc.config_params().clone();
+    let basechain_only = TaskEscrowContract::action_value(
+        &config.gas_prices(false).expect("basechain gas"),
+        &[&config.fwd_prices(false).expect("basechain forwarding")],
+    )
+    .expect("value");
+    assert!(basechain_only < value);
+    let msg = MessageBuilder::internal(outsider.address(), &escrow, basechain_only)
+        .body(TaskEscrowContract::dispute_timeout(4).unwrap())
+        .build();
+    bc.send_message(msg).expect("send").expect_aborted().expect_exit_code(138);
+    let mut account = bc.get_account(&escrow).expect("escrow").clone();
+    account.set_balance(CurrencyCollection::with_coins(budget));
+    account.set_last_paid(bc.now());
+    bc.set_account(escrow.clone(), account);
+
+    let result = send(&mut bc, outsider.address(), TaskEscrowContract::dispute_timeout(4).unwrap());
+    result.expect_success();
+    let agent_share = u128::from(budget) * u128::from(DEFAULT_FALLBACK_BPS) / 10_000;
+    let sent = payouts(&result, &escrow);
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent[0], (agent.address().clone(), agent_share));
+    assert_eq!(sent[1].0, creator.address().clone());
+    assert!(
+        sent[1].1 >= u128::from(budget) - agent_share,
+        "masterchain forwarding came out of the creator's share: {} < {}",
+        sent[1].1,
+        u128::from(budget) - agent_share
     );
 }
