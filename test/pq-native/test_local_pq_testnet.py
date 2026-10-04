@@ -191,3 +191,47 @@ def test_existing_observer_is_not_overwritten(tmp_path):
     (tmp_path / "testnet/node5").mkdir()
     with pytest.raises(RuntimeError, match="already exists"):
         local.prepare_observers(tmp_path)
+
+
+def test_plan_refuses_a_symlink_planted_where_it_writes(tmp_path):
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    (tmp_path / "preparation").mkdir(mode=0o755)
+    (tmp_path / "preparation" / "topology.json").symlink_to(victim)
+    with pytest.raises(OSError):
+        local.write_plan(tmp_path)
+    assert victim.read_text() == "untouched"
+
+
+def test_plan_refuses_a_preparation_directory_that_is_a_symlink(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "preparation").symlink_to(elsewhere)
+    with pytest.raises(RuntimeError, match="symlink is refused"):
+        local.write_plan(tmp_path)
+    assert not any(elsewhere.iterdir())
+
+
+def test_output_directory_in_a_shared_writable_parent_is_refused(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    with pytest.raises(RuntimeError, match="another user"):
+        local.secure_output_dir(shared / "out")
+    assert not (shared / "out").exists()
+
+
+def test_output_directory_is_made_private(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir(mode=0o755)
+    assert local.secure_output_dir(out) == out
+    assert out.stat().st_mode & 0o777 == 0o700
+
+
+def test_json_is_written_with_the_requested_mode_whatever_the_umask(tmp_path):
+    previous = os.umask(0o077)
+    try:
+        local.write_json(tmp_path / "status.json", {"ok": True}, 0o644)
+    finally:
+        os.umask(previous)
+    assert (tmp_path / "status.json").stat().st_mode & 0o777 == 0o644

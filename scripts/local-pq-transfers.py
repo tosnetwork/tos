@@ -102,21 +102,19 @@ def begin_cell_from_boc(data):
     return Cell.one_from_boc(data)
 
 
-def record(directory, row):
+def record(directory, row, status_mode=0o644):
     row = {"at": time.time(), **row}
     encoded = json.dumps(row) + "\n"
     path = directory / "transfers.jsonl"
-    if path.exists() and path.stat().st_size + len(encoded.encode()) > 16 * 1024**2:
+    # lexists/lstat: rotation renames names, it never follows them.
+    if path.exists(follow_symlinks=False) and path.lstat().st_size + len(encoded.encode()) > 16 * 1024**2:
         for i in range(3, 0, -1):
             older = directory / f"transfers.jsonl.{i}"
-            if older.exists():
+            if older.exists(follow_symlinks=False):
                 older.replace(directory / f"transfers.jsonl.{i + 1}")
         path.replace(directory / "transfers.jsonl.1")
-    with path.open("a") as f:
-        f.write(encoded)
-        f.flush()
-        os.fsync(f.fileno())
-    local.write_json(directory / "status.json", row)
+    local.append_text(path, encoded)
+    local.write_json(directory / "status.json", row, status_mode)
     print(json.dumps({k: v for k, v in row.items() if k != "transaction_bocs"}), flush=True)
 
 
@@ -210,9 +208,8 @@ async def run(args):
     )
     low, high = nanos(args.min_amount), nanos(args.max_amount)
     require(low <= high <= 10 * NANO and args.count >= 0, "invalid amount or count")
-    args.output.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(args.output, 0o700)
-    with (args.output / "run.lock").open("a") as lock:
+    local.secure_output_dir(args.output)
+    with os.fdopen(local.open_private(args.output / "run.lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         blueprints = []
         for i in range(3):

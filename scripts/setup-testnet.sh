@@ -109,6 +109,14 @@ PREPARE_ARGS=()
 [[ $ROTATE == 0 ]] || PREPARE_ARGS+=(--rotate)
 "$UV" run python scripts/local_pq_testnet.py prepare "${PREPARE_ARGS[@]}"
 chown -R tos:tos /data
+# The daemons run as tos and own what they write; /data itself and the
+# directories root-run tools write stay root's, so tos cannot replace them or
+# plant links in them for root to follow.
+chown root:root /data
+chmod 0755 /data
+for dir in preparation transfers privacy-transfers elections; do
+    [[ ! -e "/data/$dir" ]] || chown -R root:root "/data/$dir"
+done
 chmod 0755 /data/shielded-pool /data/configs
 chmod 0644 /data/shielded-pool/* /data/configs/*
 find /data/testnet -name 'pq-consensus.seed' -exec chmod 0600 {} +

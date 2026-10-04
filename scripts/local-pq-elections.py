@@ -50,8 +50,7 @@ def write(name, obj):
 
 def event(kind, **fields):
     row = {"at": time.time(), "kind": kind, **fields}
-    with (OUT / "events.jsonl").open("a") as f:
-        f.write(json.dumps(row) + "\n")
+    local.append_text(OUT / "events.jsonl", json.dumps(row) + "\n")
     print(json.dumps(row), flush=True)
 
 
@@ -123,7 +122,9 @@ def trace_once(offsets):
     import os
 
     captured = 0
-    with (OUT / "relay-trace.jsonl").open("a") as out:
+    with os.fdopen(
+        local.open_private(OUT / "relay-trace.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a"
+    ) as out:
         for node in (1, 2, 3, 4, 7):
             for path in (DATA / f"testnet/node{node}").glob("log*"):
                 try:
@@ -197,6 +198,8 @@ async def snapshot(previous):
 
 
 async def main():
+    # Runs as root: refuse an output directory another user could redirect.
+    local.secure_output_dir(OUT)
     plan = json.loads((OUT / "plan.json").read_text())
     if plan["elected_for"] != 600 or plan["rosters"] != [list(roster(0)), list(roster(1))]:
         raise ValueError("rotation plan differs")

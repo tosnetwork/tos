@@ -46,13 +46,11 @@ METHODS = (
 
 
 def write_private_json(path, value):
-    local.write_json(path, value)
-    path.chmod(0o600)
+    local.write_json(path, value, 0o600)
 
 
 def record(directory, row):
-    transfers.record(directory, row)
-    (directory / "status.json").chmod(0o600)
+    transfers.record(directory, row, status_mode=0o600)
 
 
 def verify_state(actual, expected):
@@ -147,9 +145,8 @@ async def run(args):
         "invalid interval",
     )
     require(args.count >= 0, "invalid count")
-    args.output.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(args.output, 0o700)
-    with (args.output / "run.lock").open("a") as lock:
+    local.secure_output_dir(args.output)
+    with os.fdopen(local.open_private(args.output / "run.lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         wallets = []
         for i in range(3):
