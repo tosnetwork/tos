@@ -126,9 +126,11 @@ struct TokenBacklogStats {
   // master or NFT collection outside the shard being indexed). This index
   // verifies against one shard's state, so they cannot be indexed here.
   uint64_t unverifiable;
-  // Blocks marked in progress: one being indexed right now, or one whose
-  // indexing failed and was rolled back, leaving its updates unapplied.
-  uint64_t incomplete_blocks;
+  // Whether any block is marked in progress: one being indexed right now, or
+  // one whose indexing failed and was rolled back, leaving its updates
+  // unapplied. Only presence is read, so the check costs one key however many
+  // marks have piled up.
+  bool unfinished_block;
 };
 
 // Completeness of the token index as RPC answers report it: a JSON object
@@ -136,10 +138,10 @@ struct TokenBacklogStats {
 // indexing is unfinished, and once any candidate was lost or could not be
 // verified; only rebuilding the index clears lost and unverifiable.
 inline std::string format_token_index_state(const TokenBacklogStats& stats) {
-  bool complete = stats.entries == 0 && stats.lost == 0 && stats.unverifiable == 0 && stats.incomplete_blocks == 0;
+  bool complete = stats.entries == 0 && stats.lost == 0 && stats.unverifiable == 0 && !stats.unfinished_block;
   return "{\"complete\":" + std::string(complete ? "true" : "false") + ",\"pending\":" + std::to_string(stats.entries) +
          ",\"lost\":" + std::to_string(stats.lost) + ",\"unverifiable\":" + std::to_string(stats.unverifiable) +
-         ",\"incomplete_blocks\":" + std::to_string(stats.incomplete_blocks) + "}";
+         ",\"unfinished_block\":" + std::string(stats.unfinished_block ? "true" : "false") + "}";
 }
 
 // What became of one scheduled candidate's verification.
@@ -150,14 +152,12 @@ enum class TokenVerifyOutcome {
   WriteFailed,   // an index write failed; the block must not commit
 };
 
+class WalletIndexSnapshot;
+
 class WalletIndexDb {
  public:
   // Open (or create) the index DB at `path`. The directory is created if needed.
   static td::Result<std::unique_ptr<WalletIndexDb>> open(std::string path);
-  // A read-only view of the index as committed at this moment. Reads through
-  // it (the token state and the lists an answer is built from) all see the
-  // same commit; writes through it fail.
-  td::Result<std::unique_ptr<WalletIndexDb>> read_snapshot();
 
   WalletIndexDb(const WalletIndexDb&) = delete;
   WalletIndexDb& operator=(const WalletIndexDb&) = delete;
@@ -314,7 +314,12 @@ class WalletIndexDb {
   void abort_batch();
 
  private:
+  friend class WalletIndexSnapshot;
   explicit WalletIndexDb(std::unique_ptr<td::RocksDb> db);
+  // A second WalletIndexDb over a RocksDB snapshot. Private: its write methods
+  // would reach the live database, so it is handed out only as a
+  // WalletIndexSnapshot.
+  td::Result<std::unique_ptr<WalletIndexDb>> read_snapshot();
   td::Status put_cell(td::Slice key, td::Ref<vm::Cell> value);
   // Iterate keys in [prefix, next(prefix)) — a bounded range scan, never a full
   // table walk. Visits at most `limit` keys.
@@ -360,6 +365,31 @@ class WalletIndexDb {
   td::Status token_enqueue(const TokenCandidate& candidate, uint8_t attempts);
   td::Status token_note_lost(const TokenCandidate& candidate, td::Slice reason);
   td::Status token_write_counters();
+};
+
+// The index as committed at one moment, for building an answer whose parts
+// must agree: every read through it sees the same commit. It offers reads
+// only; the index is written through WalletIndexDb alone.
+class WalletIndexSnapshot {
+ public:
+  static td::Result<WalletIndexSnapshot> of(WalletIndexDb& db);
+
+  td::Result<TokenBacklogStats> token_backlog_stats() {
+    return view_->token_backlog_stats();
+  }
+  td::Status for_each_jetton(const HashKey& owner, size_t limit,
+                             std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb) {
+    return view_->for_each_jetton(owner, limit, std::move(cb));
+  }
+  td::Status for_each_nft(const HashKey& owner, size_t limit,
+                          std::function<td::Status(const HashKey& nft, td::Ref<vm::Cell>)> cb) {
+    return view_->for_each_nft(owner, limit, std::move(cb));
+  }
+
+ private:
+  explicit WalletIndexSnapshot(std::unique_ptr<WalletIndexDb> view) : view_(std::move(view)) {
+  }
+  std::unique_ptr<WalletIndexDb> view_;
 };
 
 // Module-scope singleton. Returns nullptr until the

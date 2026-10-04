@@ -1007,31 +1007,32 @@ TEST(WalletIndex, ProcessingRetriesCountsAndStopsOnAWriteFailure) {
 
 TEST(WalletIndex, TokenIndexStateSaysWhenItIsIncomplete) {
   using tos_wallet_index::format_token_index_state;
-  ASSERT_EQ(format_token_index_state({0, 0, 0, 0}),
-            std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"incomplete_blocks\":0}"));
-  ASSERT_EQ(format_token_index_state({3, 0, 0, 0}),
-            std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0,\"incomplete_blocks\":0}"));
-  ASSERT_EQ(format_token_index_state({0, 1, 0, 0}),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0,\"incomplete_blocks\":0}"));
-  ASSERT_EQ(format_token_index_state({0, 0, 2, 0}),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2,\"incomplete_blocks\":0}"));
-  ASSERT_EQ(format_token_index_state({0, 0, 0, 1}),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"incomplete_blocks\":1}"));
+  ASSERT_EQ(format_token_index_state({0, 0, 0, false}),
+            std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false}"));
+  ASSERT_EQ(format_token_index_state({3, 0, 0, false}),
+            std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false}"));
+  ASSERT_EQ(format_token_index_state({0, 1, 0, false}),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0,\"unfinished_block\":false}"));
+  ASSERT_EQ(format_token_index_state({0, 0, 2, false}),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2,\"unfinished_block\":false}"));
+  ASSERT_EQ(format_token_index_state({0, 0, 0, true}),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":true}"));
 }
 
 TEST(WalletIndex, ABlockWhoseIndexingDidNotCommitLeavesTheIndexIncomplete) {
   auto path = std::string("test-wallet-index-db-token-incomplete-block");
   auto db = open_fresh_db(path);
-  ASSERT_EQ(backlog_stats(*db).incomplete_blocks, static_cast<uint64_t>(0));
+  ASSERT_TRUE(!backlog_stats(*db).unfinished_block);
   // The writer marks a block before indexing it; a failed block aborts its
   // batch, so the mark stays while nothing else changed.
-  auto id = make_test_block_id(0, tos::shardIdAll, 7, 0x11, 0x22);
-  db->put_incomplete_block(id).ensure();
+  for (tos::BlockSeqno seqno = 7; seqno < 10; ++seqno) {
+    db->put_incomplete_block(make_test_block_id(0, tos::shardIdAll, seqno, 0x11, 0x22)).ensure();
+  }
   db->begin_batch().ensure();
   db->schedule_token_candidates(token_candidates(0, 3), kWholeBasechain).ensure();
   db->abort_batch();
   auto stats = backlog_stats(*db);
-  ASSERT_EQ(stats.incomplete_blocks, static_cast<uint64_t>(1));
+  ASSERT_TRUE(stats.unfinished_block);
   ASSERT_EQ(stats.entries + stats.lost + stats.unverifiable, static_cast<uint64_t>(0));
   ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
   td::rmrf(path).ignore();
@@ -1040,13 +1041,30 @@ TEST(WalletIndex, ABlockWhoseIndexingDidNotCommitLeavesTheIndexIncomplete) {
 TEST(WalletIndex, AReadSnapshotIgnoresLaterCommits) {
   auto path = std::string("test-wallet-index-db-token-snapshot");
   auto db = open_fresh_db(path);
-  auto view = db->read_snapshot().move_as_ok();
+  auto view = tos_wallet_index::WalletIndexSnapshot::of(*db).move_as_ok();
   ASSERT_TRUE(schedule_block(*db, token_candidates(0, 5), kWholeBasechain, 0).empty());
+  auto owner = token_address(1, 0x40);
+  auto master = token_address(2, 0x40);
+  vm::CellBuilder cb;
+  cb.store_long(1, 8);
+  db->put_jetton(owner, master, cb.finalize()).ensure();
   ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(5));
-  // The view still answers as of when it was taken, for counters and lists alike.
-  ASSERT_EQ(backlog_stats(*view).entries, static_cast<uint64_t>(0));
-  ASSERT_EQ(backlog_size(*view), static_cast<size_t>(0));
-  view.reset();
+  // The view still answers as of when it was taken, for the state and the list alike.
+  ASSERT_EQ(view.token_backlog_stats().move_as_ok().entries, static_cast<uint64_t>(0));
+  size_t listed = 0;
+  view.for_each_jetton(owner, 16,
+                       [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+                         ++listed;
+                         return td::Status::OK();
+                       })
+      .ensure();
+  ASSERT_EQ(listed, static_cast<size_t>(0));
+  size_t live = 0;
+  db->for_each_jetton(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+      ++live;
+      return td::Status::OK();
+    }).ensure();
+  ASSERT_EQ(live, static_cast<size_t>(1));
   td::rmrf(path).ignore();
 }
 

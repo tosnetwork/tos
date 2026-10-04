@@ -173,6 +173,11 @@ td::Result<std::unique_ptr<WalletIndexDb>> WalletIndexDb::read_snapshot() {
   TRY_STATUS(view->begin_snapshot());
   return std::unique_ptr<WalletIndexDb>(new WalletIndexDb(std::move(view)));
 }
+
+td::Result<WalletIndexSnapshot> WalletIndexSnapshot::of(WalletIndexDb& db) {
+  TRY_RESULT(view, db.read_snapshot());
+  return WalletIndexSnapshot(std::move(view));
+}
 WalletIndexDb::~WalletIndexDb() = default;
 
 td::Status WalletIndexDb::put_cell(td::Slice key, td::Ref<vm::Cell> value) {
@@ -1209,14 +1214,17 @@ td::Result<TokenBacklogStats> WalletIndexDb::token_backlog_stats() {
   TRY_RESULT(entries, get_meta_u64(kMetaTokenEntriesSub));
   TRY_RESULT(lost, get_meta_u64(kMetaTokenLostSub));
   TRY_RESULT(unverifiable, get_meta_u64(kMetaTokenUnverifiableSub));
-  uint64_t incomplete_blocks = 0;
-  const char marker_prefix[1] = {static_cast<char>(kIncompleteBlockTag)};
-  TRY_STATUS(for_each_key_with_prefix(td::Slice{marker_prefix, 1}, std::numeric_limits<size_t>::max(),
-                                      [&](td::Slice) -> td::Status {
-                                        ++incomplete_blocks;
-                                        return td::Status::OK();
-                                      }));
-  return TokenBacklogStats{entries, lost, unverifiable, incomplete_blocks};
+  bool unfinished_block = false;
+  const char begin[1] = {static_cast<char>(kIncompleteBlockTag)};
+  const char end[1] = {static_cast<char>(kIncompleteBlockTag + 1)};
+  auto status = db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice, td::Slice) {
+    unfinished_block = true;
+    return td::Status::Error("wc0-index: one mark is enough");
+  });
+  if (!unfinished_block) {
+    TRY_STATUS(std::move(status));
+  }
+  return TokenBacklogStats{entries, lost, unverifiable, unfinished_block};
 }
 
 td::Status WalletIndexDb::for_each_deferred_token_candidate(size_t limit,
