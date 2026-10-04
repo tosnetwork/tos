@@ -1911,3 +1911,107 @@ TEST(WalletIndex, UpgradingJettonRowsWithoutWalletRecordsNeedsARebuild) {
   }
   td::rmrf(path).ignore();
 }
+
+TEST(WalletIndex, AnOlderWalletVerdictNeverReplacesANewerPairDecision) {
+  auto path = std::string("test-wallet-index-db-jetton-pair-order");
+  auto db = open_fresh_db(path);
+  auto wallet_a = token_address(1, 0x55);
+  auto wallet_b = token_address(2, 0x55);
+  auto owner = token_address(3, 0x55);
+  auto master = token_address(4, 0x55);
+  auto named = [&]() {
+    auto listed = jettons_of(*db, owner);
+    CHECK(listed.size() <= 1);
+    return listed.empty() ? td::Bits256::zero() : listed[0].second;
+  };
+
+  // Across batches: A holds the pair at lt 100, B takes it at lt 200, then a
+  // recovered block observes A at lt 150.
+  apply_jetton(*db, wallet_a, jetton_present(wallet_a, owner, master, 100), 100);
+  apply_jetton(*db, wallet_b, jetton_present(wallet_b, owner, master, 200), 200);
+  apply_jetton(*db, wallet_a, jetton_present(wallet_a, owner, master, 150), 150);
+  ASSERT_TRUE(named() == wallet_b);
+
+  // Across a restart the decision still holds, for a claim and for a removal.
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  apply_jetton(*db, wallet_a, jetton_present(wallet_a, owner, master, 180), 180);
+  ASSERT_TRUE(named() == wallet_b);
+  apply_jetton(*db, wallet_a, jetton_absent(), 300);
+  ASSERT_TRUE(named() == wallet_b);
+
+  // B is removed at lt 400; an older observation of another wallet cannot
+  // restore the pair, before or after a restart.
+  apply_jetton(*db, wallet_b, jetton_absent(), 400);
+  ASSERT_TRUE(named() == td::Bits256::zero());
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  auto wallet_c = token_address(5, 0x55);
+  apply_jetton(*db, wallet_c, jetton_present(wallet_c, owner, master, 350), 350);
+  ASSERT_TRUE(named() == td::Bits256::zero());
+
+  // A newer observation decides the pair again.
+  apply_jetton(*db, wallet_c, jetton_present(wallet_c, owner, master, 500), 500);
+  ASSERT_TRUE(named() == wallet_c);
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, AnOlderWalletVerdictInTheSameBatchNeverReplacesANewerPairDecision) {
+  auto path = std::string("test-wallet-index-db-jetton-pair-batch");
+  auto db = open_fresh_db(path);
+  auto wallet_a = token_address(1, 0x56);
+  auto wallet_b = token_address(2, 0x56);
+  auto owner = token_address(3, 0x56);
+  auto master = token_address(4, 0x56);
+  apply_jetton(*db, wallet_a, jetton_present(wallet_a, owner, master, 100), 100);
+
+  // In one batch, B's newer claim is written first and A's older one second;
+  // the older one must see the newer decision before it is committed.
+  db->begin_batch().ensure();
+  db->apply_jetton_verdict(wallet_b, jetton_present(wallet_b, owner, master, 200), 200).ensure();
+  db->apply_jetton_verdict(wallet_a, jetton_present(wallet_a, owner, master, 150), 150).ensure();
+  db->commit_batch().ensure();
+  auto listed = jettons_of(*db, owner);
+  ASSERT_EQ(listed.size(), static_cast<size_t>(1));
+  ASSERT_TRUE(listed[0].second == wallet_b);
+
+  // An older removal in the same batch as a newer claim leaves the claim.
+  auto wallet_c = token_address(5, 0x56);
+  db->begin_batch().ensure();
+  db->apply_jetton_verdict(wallet_c, jetton_present(wallet_c, owner, master, 300), 300).ensure();
+  db->apply_jetton_verdict(wallet_b, jetton_absent(), 250).ensure();
+  db->commit_batch().ensure();
+  listed = jettons_of(*db, owner);
+  ASSERT_EQ(listed.size(), static_cast<size_t>(1));
+  ASSERT_TRUE(listed[0].second == wallet_c);
+
+  // A removal in the same batch before an older claim keeps the pair removed.
+  db->begin_batch().ensure();
+  db->apply_jetton_verdict(wallet_c, jetton_absent(), 600).ensure();
+  db->apply_jetton_verdict(wallet_a, jetton_present(wallet_a, owner, master, 550), 550).ensure();
+  db->commit_batch().ensure();
+  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, AnOlderReleaseNeverRewindsANewerPairRemoval) {
+  auto path = std::string("test-wallet-index-db-jetton-pair-release");
+  auto db = open_fresh_db(path);
+  auto wallet_x = token_address(1, 0x57);
+  auto wallet_w = token_address(2, 0x57);
+  auto wallet_y = token_address(3, 0x57);
+  auto owner = token_address(4, 0x57);
+  auto master = token_address(5, 0x57);
+
+  // X holds the pair and is removed at lt 300.
+  apply_jetton(*db, wallet_x, jetton_present(wallet_x, owner, master, 100), 100);
+  apply_jetton(*db, wallet_x, jetton_absent(), 300);
+  // A recovered block observes W under the pair at lt 150 (too old to claim
+  // it), then W gone at lt 200: W's release is older than the removal.
+  apply_jetton(*db, wallet_w, jetton_present(wallet_w, owner, master, 150), 150);
+  apply_jetton(*db, wallet_w, jetton_absent(), 200);
+  // An observation of Y at lt 250 is still older than the removal at lt 300.
+  apply_jetton(*db, wallet_y, jetton_present(wallet_y, owner, master, 250), 250);
+  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}

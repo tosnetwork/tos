@@ -184,7 +184,8 @@ class WalletIndexDb {
   // came from; present = 0 records that the wallet was found not to be a
   // jetton wallet acknowledged by its master at that time. It is the reverse
   // of the 0x10 entry, so a wallet whose owner or master changes, or which
-  // stops verifying, can have its old 0x10 entry removed.
+  // stops verifying, can have its old 0x10 entry removed. Whether the 0x10
+  // entry itself changes is decided by the pair record below.
   struct JettonVerdict {
     bool present;
     HashKey owner;
@@ -193,15 +194,23 @@ class WalletIndexDb {
   };
   // Record what the post-state of the block ending at `end_lt` says about
   // `wallet` (into the open batch), unless its record is from a later block.
-  // The previous 0x10 entry is removed when the owner or master changed or the
-  // wallet is no longer present, but only while that entry still names this
-  // wallet: another wallet indexed under the same pair since keeps its entry.
-  // Call it only with a definite verdict; a verification that could not
-  // complete must leave the record as it is.
+  // The previous pair is released when the owner or master changed or the
+  // wallet is no longer present, and the new pair is claimed; each only if the
+  // pair's record is not from a later block, and a release only while the
+  // pair still names this wallet. Call it only with a definite verdict; a
+  // verification that could not complete must leave the record as it is.
   td::Status apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt);
   // Returns true and fills `owner` and `master` if the wallet's last verdict
-  // found it present. Reads committed state only.
+  // found it present.
   td::Result<bool> get_jetton_wallet(const HashKey& wallet, HashKey& owner, HashKey& master);
+
+  // --- Jetton pair record: 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8) ---
+  // The last decision on the (owner, master) 0x10 entry, shared by every
+  // wallet that has claimed the pair: which wallet it names, or that it was
+  // removed, and the logical time of the block that decided it. An older
+  // block's verdict, for any wallet, neither replaces nor removes a newer
+  // decision. A pair with no record (written before records existed) takes
+  // its decision from the 0x10 entry's own wallet and lt.
 
   // --- NFT ownership: 0x11 + owner(32) + nft(32) -> value cell ---
   td::Status put_nft(const HashKey& owner, const HashKey& nft, td::Ref<vm::Cell> value);
@@ -388,9 +397,28 @@ class WalletIndexDb {
   // Delete every key in the single-byte-tag namespace [tag, tag+1). Migration
   // only; routes through the active write batch.
   td::Status clear_namespace(uint8_t tag);
-  // Erase the (owner, master) jetton entry if it names `wallet` and was not
-  // written earlier in the open batch. Joins the open batch.
-  td::Status erase_jetton_if_wallet(const HashKey& owner, const HashKey& master, const HashKey& wallet);
+  // The decision currently recorded for a jetton pair: its pair record, or for
+  // a pair written before pair records existed, the 0x10 entry's own wallet
+  // and lt. `known` is false when the pair has neither.
+  struct JettonPairDecision {
+    bool known = false;
+    bool present = false;
+    HashKey wallet = HashKey::zero();
+    uint64_t lt = 0;
+  };
+  td::Result<JettonPairDecision> jetton_pair_decision(const HashKey& owner, const HashKey& master);
+  // Reads a jetton record as the open batch leaves it.
+  td::Result<bool> get_jetton_record(td::Slice key, std::string& value);
+  // Writes a jetton record into the open batch, visible to later reads in it.
+  td::Status put_jetton_record(td::Slice key, td::Slice value);
+  // Decide the (owner, master) pair for `wallet` as of the block ending at
+  // `end_lt`: claim it (point the 0x10 entry at the wallet) or release it
+  // (remove the entry if it names the wallet). Ignored when the pair's own
+  // record is from a later block; a release is also ignored while the pair
+  // names another wallet.
+  td::Status claim_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
+                               td::Ref<vm::Cell> value, uint64_t end_lt);
+  td::Status release_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet, uint64_t end_lt);
 
   std::unique_ptr<td::RocksDb> db_;
   // Same database, own (never batched) write path, for mark_blocks_incomplete.
@@ -411,9 +439,9 @@ class WalletIndexDb {
     std::map<std::string, std::string> index_overlay;
     // Queue rows already erased in the batch, which committed reads still see.
     std::set<std::string> queue_erased;
-    // Jetton (owner, master) keys written in the batch, which committed reads
-    // do not see yet: a stale entry under such a key was already replaced.
-    std::set<std::string> jetton_written;
+    // Jetton wallet and pair records written in the batch, which committed
+    // reads do not see yet: key -> value.
+    std::map<std::string, std::string> jetton_records;
   };
   TokenBatchState token_batch_;
   uint64_t token_backlog_limit_ = kMaxTokenBacklogEntries;
