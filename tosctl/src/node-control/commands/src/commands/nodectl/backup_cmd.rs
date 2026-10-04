@@ -293,8 +293,35 @@ fn screen_archive(archive: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Largest backup archive restore will take. Archives hold configs and keys.
+const MAX_ARCHIVE_BYTES: u64 = 1 << 30;
+
+/// Copy `archive` into a new 0600 file inside `private_root`. Screening and
+/// extraction then read only this copy: the original could be replaced, or
+/// rewritten in place, between the checks and the unpacking.
+fn private_archive_copy(archive: &Path, private_root: &Path) -> anyhow::Result<PathBuf> {
+    let mut source = std::fs::File::open(archive)
+        .map_err(|err| anyhow::anyhow!("cannot open archive {}: {}", archive.display(), err))?;
+    if !source.metadata()?.is_file() {
+        anyhow::bail!("archive {} is not a regular file", archive.display());
+    }
+    let copy_path = private_root.join("archive.tar.gz");
+    let mut copy = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&copy_path)?;
+    let copied = std::io::copy(&mut (&mut source).take(MAX_ARCHIVE_BYTES + 1), &mut copy)?;
+    if copied > MAX_ARCHIVE_BYTES {
+        anyhow::bail!("archive {} is larger than {} bytes", archive.display(), MAX_ARCHIVE_BYTES);
+    }
+    copy.sync_all()?;
+    Ok(copy_path)
+}
+
 /// Extract a screened archive into a new 0700 directory inside `private_root`
-/// and return it. The archive's own directory entries apply to that inner
+/// and return it. `archive` must already be a private copy. The archive's own directory entries apply to that inner
 /// directory, never to `private_root`, and owners are not restored.
 fn extract_archive(archive: &Path, private_root: &Path) -> anyhow::Result<PathBuf> {
     screen_archive(archive)?;
@@ -489,7 +516,8 @@ impl BackupRestoreCmd {
         // Private extraction directory, removed when `extract` is dropped. The
         // archive is screened and unpacked into a directory inside it.
         let extract = private_temp_dir("tosctl_restore_")?;
-        let extracted = extract_archive(archive, extract.path())?;
+        let archive_copy = private_archive_copy(archive, extract.path())?;
+        let extracted = extract_archive(&archive_copy, extract.path())?;
         let extract_dir = extracted.to_string_lossy().to_string();
         let config_root = Path::new(&self.config_dir);
         std::fs::create_dir_all(config_root)?;
@@ -864,6 +892,34 @@ mod tests {
             );
             assert_eq!(mode_of(&restored.path().join(file)), 0o600);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn restore_reads_the_archive_it_screened_not_a_later_swap() -> anyhow::Result<()> {
+        // A good archive, copied privately before screening.
+        let good = tempfile::tempdir()?;
+        std::fs::write(good.path().join("key"), b"good key")?;
+        let out = tempfile::tempdir()?;
+        let archive = out.path().join("backup.tgz");
+        tar_of(good.path(), &archive, &[])?;
+        let root = private_temp_dir("tosctl_restore_")?;
+        let copy = private_archive_copy(&archive, root.path())?;
+        assert_eq!(mode_of(&copy), 0o600);
+
+        // The original is then replaced by one holding a link to a sentinel.
+        let sentinel = tempfile::NamedTempFile::new()?;
+        std::fs::write(sentinel.path(), b"sentinel")?;
+        let evil = tempfile::tempdir()?;
+        symlink(sentinel.path(), evil.path().join("key"))?;
+        std::fs::remove_file(&archive)?;
+        tar_of(evil.path(), &archive, &[])?;
+
+        // Extraction uses the screened copy.
+        let inner = extract_archive(&copy, root.path())?;
+        assert_eq!(std::fs::read(inner.join("key"))?, b"good key");
+        assert!(!std::fs::symlink_metadata(inner.join("key"))?.file_type().is_symlink());
+        assert_eq!(std::fs::read(sentinel.path())?, b"sentinel");
         Ok(())
     }
 }
