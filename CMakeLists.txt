@@ -916,6 +916,9 @@ target_link_libraries(test-account-model-detection PRIVATE json-rpc-account-mode
 add_executable(test-json-rpc-source-ip test/test-json-rpc-source-ip.cpp)
 target_include_directories(test-json-rpc-source-ip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-source-ip PRIVATE tdutils)
+add_executable(test-json-rpc-listen-policy test/test-json-rpc-listen-policy.cpp)
+target_include_directories(test-json-rpc-listen-policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-listen-policy PRIVATE tdutils)
 add_executable(test-json-rpc-signing-payload test/test-json-rpc-signing-payload.cpp)
 target_include_directories(test-json-rpc-signing-payload PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-signing-payload PRIVATE tdutils)
@@ -1522,6 +1525,28 @@ add_test(NAME tosctl-election-chain-reads-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-election-chain-reads.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(tosctl-election-chain-reads-source PROPERTIES LABELS "source-guard")
+# Release and deployment supply chain: pinned actions, per-job permissions,
+# authenticated build inputs, digest-pinned images, release artifacts bound to
+# the tag commit, and authenticated snapshot import.
+add_test(NAME workflow-supply-chain-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-workflow-supply-chain.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(workflow-supply-chain-source PROPERTIES LABELS "source-guard")
+add_test(NAME workflow-supply-chain-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-workflow-supply-chain.py --self-test)
+set_tests_properties(workflow-supply-chain-self-test PROPERTIES LABELS "source-guard")
+add_test(NAME release-artifacts-binding
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_release_artifacts.py)
+set_tests_properties(release-artifacts-binding PROPERTIES LABELS "source-guard")
+add_test(NAME image-digest-pinning
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_pin_image_digest.py)
+set_tests_properties(image-digest-pinning PROPERTIES LABELS "source-guard")
+add_test(NAME llvm-apt-key-pin
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_install_llvm_toolchain.py)
+set_tests_properties(llvm-apt-key-pin PROPERTIES LABELS "source-guard")
+add_test(NAME snapshot-import-offline
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_import_snapshot.py)
+set_tests_properties(snapshot-import-offline PROPERTIES LABELS "source-guard")
 add_test(NAME dns-pq-vote-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-dns-pq-vote-source.py
           ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1598,6 +1623,7 @@ tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
 tos_test(test-account-model-detection)
 tos_test(test-json-rpc-source-ip)
+tos_test(test-json-rpc-listen-policy)
 tos_test(test-json-rpc-signing-payload)
 tos_test(test-consensus-db-path)
 tos_test(test-validator-cleanup)
@@ -1615,6 +1641,12 @@ if (Python3_Interpreter_FOUND)
            COMMAND ${Python3_EXECUTABLE}
                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-route-gating.py)
   set_tests_properties(jsonrpc-route-gating PROPERTIES LABELS "source-guard")
+  # The real engine binary must refuse to start a write-enabled plaintext
+  # JSON-RPC listener on a non-loopback address.
+  add_test(NAME json-rpc-startup-refusal
+           COMMAND ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-json-rpc-startup-refusal.py
+                   --binary $<TARGET_FILE:validator-engine>)
 endif()
 tos_test(test-http-server-limits)
 tos_test(test-wallet-message-processor)

@@ -1,134 +1,177 @@
 name: Docker Ubuntu 22.04 image
 
+# Builds the node image for a release tag and publishes it under that tag only.
+# The multi-architecture index digest is attested with build provenance, and
+# the deployment manifests pinned to that digest are produced as an artifact
+# (image-release) together with image-release.json, which records the image
+# digest, the tag, the source commit and this run. Deployments reference the
+# image by that digest; there is no "latest" tag to follow.
+
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - 'master'
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions: {}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+concurrency:
+  group: docker-image-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build-arm64:
-    runs-on: ubuntu-22.04-arm
+  source:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Require a release tag
+        id: tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [ "$REF_TYPE" = "tag" ] || { echo "run this workflow on a release tag, not a branch" >&2; exit 1; }
+          [[ "$TAG" =~ ^v[0-9A-Za-z._-]+$ ]] || { echo "not a release tag: $TAG" >&2; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3.5.0
+  build:
+    needs: source
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the tag commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.10.0
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get next tag
-        id: tag
-        run: |
-          git fetch --all --tags
-          git tag -l
-          NEW_TAG=v$(date +'%Y.%m')
-          FOUND=$(git tag -l | grep $NEW_TAG | wc -l)
-          if [ $FOUND -eq 0 ]; then
-            echo "TAG=$NEW_TAG" >> $GITHUB_OUTPUT
-          else
-            echo "TAG=$NEW_TAG-$FOUND" >> $GITHUB_OUTPUT
-          fi
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          platforms: linux/arm64
+          platforms: linux/${{ matrix.arch }}
           push: true
           context: ./
-          tags:  ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }}-arm64
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.source.outputs.tag }}-${{ matrix.arch }}
 
-  build-amd64:
-    runs-on: ubuntu-22.04
+      - name: Record the per-architecture digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "build produced no digest" >&2; exit 1; }
+          mkdir -p digests
+          printf '%s' "$DIGEST" > "digests/$ARCH"
+
+      - name: Hand the digest to the index job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: digests/${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 3
+
+  index:
+    needs: [source, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Check out the tag commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3.5.0
+      - name: Receive the per-architecture digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: image-digest-*
+          merge-multiple: true
+          path: digests
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.10.0
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
-      - name: Get next tag
-        id: tag
+      - name: Create the multi-architecture index from the built digests
+        id: index
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          TAG: ${{ needs.source.outputs.tag }}
         run: |
-          git fetch --all --tags
-          git tag -l
-          NEW_TAG=v$(date +'%Y.%m')
-          FOUND=$(git tag -l | grep $NEW_TAG | wc -l)
-          if [ $FOUND -eq 0 ]; then
-            echo "TAG=$NEW_TAG" >> $GITHUB_OUTPUT
-          else
-            echo "TAG=$NEW_TAG-$FOUND" >> $GITHUB_OUTPUT
-          fi
+          set -euo pipefail
+          image="${IMAGE,,}"
+          amd64="$(cat digests/amd64)"
+          arm64="$(cat digests/arm64)"
+          docker buildx imagetools create --tag "$image:$TAG" "$image@$amd64" "$image@$arm64"
+          digest="$(docker buildx imagetools inspect "$image:$TAG" --format '{{json .Manifest}}' | jq -r .digest)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "index has no digest" >&2; exit 1; }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - name: Attest build provenance for the index
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
-          platforms: linux/amd64
-          push: true
-          context: ./
-          tags:  ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }}-amd64
+          subject-name: ${{ steps.index.outputs.image }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
 
-  merge:
-    runs-on: ubuntu-22.04
-    needs:
-      - build-amd64
-      - build-arm64
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Get next tag
-        id: tag
+      - name: Pin the deployment manifests to the released digest
+        env:
+          IMAGE: ${{ steps.index.outputs.image }}
+          DIGEST: ${{ steps.index.outputs.digest }}
+          TAG: ${{ needs.source.outputs.tag }}
         run: |
-          git fetch --all --tags
-          git tag -l
-          NEW_TAG=v$(date +'%Y.%m')
-          FOUND=$(git tag -l | grep $NEW_TAG | wc -l)
-          if [ $FOUND -eq 0 ]; then
-            echo "TAG=$NEW_TAG" >> $GITHUB_OUTPUT
-          else
-            echo "TAG=$NEW_TAG-$FOUND" >> $GITHUB_OUTPUT
-          fi
+          set -euo pipefail
+          jq -n --arg image "$IMAGE" --arg digest "$DIGEST" --arg tag "$TAG" \
+            --arg commit "$GITHUB_SHA" --arg repository "$GITHUB_REPOSITORY" \
+            --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{image: $image, digest: $digest, tag: $tag, source_commit: $commit, repository: $repository,
+              run_id: $run_id, run_attempt: $run_attempt, run_url: $run_url}' > image-release.json
+          python3 scripts/pin-image-digest.py --record image-release.json docker/tos-*.yaml
+          mkdir -p image-release/docker
+          cp image-release.json image-release/
+          cp docker/tos-*.yaml image-release/docker/
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Publish the pinned manifests and the release record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.10.0
-
-      - name: Create manifest list and push
-        run: |
-          docker buildx imagetools create \
-            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }}-arm64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.TAG }}-amd64
-
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          name: image-release
+          path: image-release
+          if-no-files-found: error

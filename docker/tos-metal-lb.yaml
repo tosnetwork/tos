@@ -11,14 +11,25 @@ spec:
         claimName: validator-engine-pvc
   containers:
     - name: validator-engine-container
-      image: ghcr.io/tosnetwork/tos:latest
+      # image-provenance: unreleased. scripts/pin-image-digest.py sets the digest from a
+      # release's image-release.json; the all-zero digest cannot be pulled.
+      image: ghcr.io/tosnetwork/tos@sha256:0000000000000000000000000000000000000000000000000000000000000000
       env:
         - name: PUBLIC_IP
           value: "<PUBLIC_IP>"
         - name: GLOBAL_CONFIG_URL
           value: "https://tos.network/global-config.json"
-        - name: DUMP_URL
-          value: "https://dump.tos.network/dumps/latest.tar.lz"
+        # Snapshot import is opt-in and needs the archive's SHA-256 from a source
+        # you trust, never one downloaded next to the archive (docker/README.md).
+        # To import one, uncomment all four entries and fill them in.
+        # - name: SNAPSHOT_IMPORT
+        #   value: "1"
+        # - name: DUMP_URL
+        #   value: "https://<snapshot host>/<archive>.tar.lz"
+        # - name: DUMP_SHA256
+        #   value: "<SHA-256 of the archive>"
+        # - name: DUMP_ZEROSTATE_ROOT_HASH
+        #   value: "<validator.zero_state.root_hash of the network>"
         - name: LITESERVER
           value: "true"
         - name: VALIDATOR_PORT

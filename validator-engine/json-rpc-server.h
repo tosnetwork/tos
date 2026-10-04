@@ -34,6 +34,7 @@
 #include "validator/validator.h"
 
 #include "json-rpc-http-policy.h"
+#include "json-rpc-listen-policy.h"
 #include "json-rpc-rate-gate.h"
 
 namespace tos {
@@ -253,24 +254,6 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // itself enforce a loopback-only listener.
     bool expose_consensus_status = false;
   };
-
-  // M-02 hardening: the listen-time decision matrix is broken out so
-  // unit tests can drive every (loopback, profile, api_key, override)
-  // tuple without standing up a real TCP listener. Returns the result
-  // type below; `listen()` itself only translates `Refuse*` outcomes
-  // into the appropriate LOG(ERROR) + early return.
-  enum class ListenDecision {
-    Accept,
-    RefuseWriteRemoteWithoutAuth,
-  };
-  // Pure decision-making helper. No side effects, no logging.
-  // - `is_loopback`     : true iff the listening address is 127.0.0.1 / ::1.
-  // - `api_key_empty`   : `Options::api_key.empty()` snapshot.
-  // - `readonly`        : `Options::readonly` snapshot.
-  static ListenDecision decide_listen_admission(
-      bool is_loopback,
-      bool api_key_empty,
-      bool readonly);
 
   // M-01 hardening: pure helper that maps a real TCP peer IP plus
   // optional X-Forwarded-For / X-Real-IP header values onto the

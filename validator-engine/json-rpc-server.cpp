@@ -257,46 +257,15 @@ JsonRpcServer::JsonRpcServer(
   }
 }
 
-// M-02 hardening: pure decision helper for the listener-layer admission
-// matrix. Tested directly from `validator-engine/test-json-rpc-cache.cpp`
-// against every (is_loopback, profile, api_key, allow_remote_admin,
-// readonly) tuple in the audit's M-02 matrix. Keep this function
-// stateless and side-effect-free — `listen()` translates every
-// `Refuse*` outcome into the appropriate LOG(ERROR) and early return.
-JsonRpcServer::ListenDecision JsonRpcServer::decide_listen_admission(
-    bool is_loopback,
-    bool api_key_empty,
-    bool readonly) {
-  // A write-enabled, unauthenticated RPC surface
-  //    cannot be exposed on a non-loopback address. Operators that
-  //    really want this must pass `--json-rpc-readonly` or
-  //    `--json-rpc-api-key`.
-  if (!is_loopback && !readonly && api_key_empty) {
-    return ListenDecision::RefuseWriteRemoteWithoutAuth;
-  }
-  return ListenDecision::Accept;
-}
-
 void JsonRpcServer::listen(td::IPAddress addr) {
   CHECK(http_.empty());
-  bool is_loopback = false;
-  {
-    auto ip_str = addr.get_ip_str().str();
-    is_loopback = (ip_str == "127.0.0.1" || ip_str == "::1" ||
-                   ip_str == "0:0:0:0:0:0:0:1");
-  }
-
-  const auto decision = decide_listen_admission(
-      is_loopback, opts_.api_key.empty(), opts_.readonly);
-  switch (decision) {
-    case ListenDecision::RefuseWriteRemoteWithoutAuth:
-      LOG(ERROR) << "JSON-RPC: refusing to listen on non-loopback address "
-                 << addr << " with write methods enabled and no API key. "
-                 << "Set --json-rpc-readonly or --json-rpc-api-key.";
-      http_ = {};
-      return;
-    case ListenDecision::Accept:
-      break;
+  // The engine already refused to start with this combination; checking again
+  // here keeps the listener safe for any other caller that constructs it.
+  auto admission = json_rpc::check_listen_admission(addr, opts_.readonly);
+  if (admission.is_error()) {
+    LOG(ERROR) << admission.message();
+    http_ = {};
+    return;
   }
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
   auto limits = json_rpc::listener_limits(opts_.max_connections, opts_.request_header_timeout,

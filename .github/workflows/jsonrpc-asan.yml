@@ -39,12 +39,15 @@ env:
   # stop the run at the first one, with its trace intact.
   ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
 
+permissions:
+  contents: read
+
 jobs:
   unit:
     name: instrumented unit tests
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install system libraries
       run: |
@@ -83,7 +86,8 @@ jobs:
           test-json-rpc-handler-guard \
           test-json-rpc-payload-waiter \
           test-json-rpc-signing-payload \
-          test-json-rpc-source-ip
+          test-json-rpc-source-ip \
+          test-json-rpc-listen-policy
 
     - name: Run under AddressSanitizer
       run: |
@@ -93,6 +97,7 @@ jobs:
         ./build-asan/test-json-rpc-payload-waiter
         ./build-asan/test-json-rpc-signing-payload
         ./build-asan/test-json-rpc-source-ip
+        ./build-asan/test-json-rpc-listen-policy
 
     - name: Check JSON-RPC route gating
       run: python3 scripts/check-jsonrpc-route-gating.py
@@ -102,7 +107,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install system libraries
       run: |

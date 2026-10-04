@@ -6084,6 +6084,8 @@ int main(int argc, char *argv[]) {
   std::vector<std::function<void()>> acts;
   std::string measurement_jsonl;
   std::string measurement_node_id;
+  std::optional<td::IPAddress> json_rpc_bind_address;
+  bool json_rpc_readonly = false;
 
   td::OptionParser p;
   p.set_description("validator or full node for TOS network");
@@ -6612,14 +6614,19 @@ int main(int argc, char *argv[]) {
     acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::export_metrics, addr); });
     return td::Status::OK();
   });
-  p.add_checked_option('\0', "json-rpc-address", "address to bind for JSON-RPC HTTP server", [&](td::Slice arg) {
-    td::BufferSlice buff{arg};
-    td::IPAddress addr;
-    TRY_STATUS(addr.init_host_port(td::CSlice{buff.as_slice()}));
-    acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::serve_json_rpc, addr); });
-    return td::Status::OK();
-  });
+  p.add_checked_option(
+      '\0', "json-rpc-address",
+      "address to bind for the plaintext JSON-RPC HTTP server; loopback only unless --json-rpc-readonly",
+      [&](td::Slice arg) {
+        td::BufferSlice buff{arg};
+        td::IPAddress addr;
+        TRY_STATUS(addr.init_host_port(td::CSlice{buff.as_slice()}));
+        json_rpc_bind_address = addr;
+        acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::serve_json_rpc, addr); });
+        return td::Status::OK();
+      });
   p.add_option('\0', "json-rpc-readonly", "disable write methods (sendBoc, sendQuery) on JSON-RPC server", [&]() {
+    json_rpc_readonly = true;
     acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readonly, true); });
   });
   p.add_option('\0', "json-rpc-expose-consensus-status",
@@ -6627,16 +6634,19 @@ int main(int argc, char *argv[]) {
                "validator-set membership). Default off. This flag does NOT enforce a loopback-only listener: "
                "restricting access is the operator's responsibility (bind --json-rpc-address to loopback).",
                [&]() {
-    acts.push_back(
-        [&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_expose_consensus_status, true); });
-  });
+                 acts.push_back([&x] {
+                   td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_expose_consensus_status, true);
+                 });
+               });
   p.add_checked_option('\0', "json-rpc-cors-origin",
                        "CORS origin for the JSON-RPC server (default: unset, no CORS header is sent)",
                        [&](td::Slice arg) {
-    std::string origin{arg.data(), arg.size()};
-    acts.push_back([&x, origin] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cors_origin, origin); });
-    return td::Status::OK();
-  });
+                         std::string origin{arg.data(), arg.size()};
+                         acts.push_back([&x, origin] {
+                           td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cors_origin, origin);
+                         });
+                         return td::Status::OK();
+                       });
   p.add_checked_option('\0', "json-rpc-readyz-threshold", "sync lag threshold in seconds for /readyz (default: 60)", [&](td::Slice arg) {
     TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
     acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readyz_threshold, v); });
@@ -6659,21 +6669,23 @@ int main(int argc, char *argv[]) {
         acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_response_timeout, v); });
         return td::Status::OK();
       });
-  p.add_checked_option('\0', "json-rpc-api-key", "require API key for JSON-RPC access", [&](td::Slice arg) {
-    std::string key{arg.data(), arg.size()};
-    acts.push_back([&x, key] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_api_key, key); });
-    return td::Status::OK();
-  });
-  p.add_checked_option('\0', "json-rpc-cache-ttl",
-      "cache TTL in seconds for read-only JSON-RPC methods (default: 0 = disabled)",
+  p.add_checked_option(
+      '\0', "json-rpc-api-key",
+      "require API key for JSON-RPC access (it does not permit a non-loopback write listener)", [&](td::Slice arg) {
+        std::string key{arg.data(), arg.size()};
+        acts.push_back([&x, key] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_api_key, key); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "json-rpc-cache-ttl", "cache TTL in seconds for read-only JSON-RPC methods (default: 0 = disabled)",
       [&](td::Slice arg) {
-    TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
-    if (v < 0) {
-      return td::Status::Error("cache TTL must be >= 0");
-    }
-    acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
-    return td::Status::OK();
-  });
+        TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
+        if (v < 0) {
+          return td::Status::Error("cache TTL must be >= 0");
+        }
+        acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
+        return td::Status::OK();
+      });
   // M-01 hardening: control whether the JSON-RPC server honours
   // X-Forwarded-For / X-Real-IP headers when attributing a request to
   // a per-IP rate-limit bucket. Default off — direct public listeners
@@ -6894,6 +6906,13 @@ int main(int argc, char *argv[]) {
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
     std::_Exit(2);
+  }
+  if (json_rpc_bind_address) {
+    auto admission = tos::json_rpc::check_listen_admission(json_rpc_bind_address.value(), json_rpc_readonly);
+    if (admission.is_error()) {
+      LOG(ERROR) << admission.message();
+      std::_Exit(2);
+    }
   }
   if (!measurement_jsonl.empty() || !measurement_node_id.empty()) {
     if (measurement_jsonl.empty() || measurement_node_id.empty()) {

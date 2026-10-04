@@ -1,726 +1,108 @@
 name: Create release
 
-on: [workflow_dispatch]
+# Publishes the binaries built from exactly the commit a release tag names.
+#
+# Push the release tag first. The build workflows listed in
+# scripts/release-artifacts.json run on that tag push; once they have all
+# succeeded, run this workflow with the tag. It refuses the release unless every
+# build workflow has a successful run whose head_sha is the tag commit, and it
+# binds each published file to that run, the artifact id and the artifact
+# digest in release-provenance.json and SHA256SUMS.
 
-permissions: write-all
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag (v*) to publish'
+        required: true
 
-env:
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+permissions: {}
+
+concurrency:
+  group: create-release-${{ inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
-  create-release:
-    runs-on: ubuntu-22.04
-
+  collect:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag_sha: ${{ steps.tag.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Linux arm64 artifacts
-        uses: dawidd6/action-download-artifact@v6
+      - name: Check out the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          workflow: build-tos-linux-arm64-appimage.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: true
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
 
-      - name: Download and unzip Linux arm64 artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-linux-arm64-appimage.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: false
-
-      - name: Download Linux x86-64 artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-linux-x86-64-appimage.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: true
-
-      - name: Download and unzip Linux x86-64 artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-linux-x86-64-appimage.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: false
-
-      - name: Download Mac x86-64 artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-macos-15-x86-64-portable.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: true
-
-      - name: Download Mac arm64 artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-macos-14-arm64-portable.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: true
-
-      - name: Download and unzip Mac x86-64 artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-macos-15-x86-64-portable.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: false
-
-      - name: Download and unzip arm64 artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-macos-14-arm64-portable.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: false
-
-      - name: Download Windows artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: tos-x86-64-windows.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: true
-
-      - name: Download and unzip Windows artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: tos-x86-64-windows.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: false
-
-      - name: Download WASM artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-wasm-emscripten.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: true
-
-      - name: Download Android Toslib artifacts
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          workflow: build-tos-linux-android-toslib.yml
-          path: artifacts
-          workflow_conclusion: success
-          branch: master
-          skip_unpack: true
-
-      - name: Show all artifacts
-        run: |
-          tree artifacts
-
-      # create release
-
-      - name: Read Changelog.md and use it as a body of new release
-        id: read_release
-        shell: bash
-        run: |
-          r=$(cat recent_changelog.md)
-          r="${r//'%'/'%25'}"
-          r="${r//$'\n'/'%0A'}"
-          r="${r//$'\r'/'%0D'}"
-          echo "CHANGELOG_BODY=$r" >> $GITHUB_OUTPUT
-
-      - name: Get next tag
+      - name: Resolve the tag commit
         id: tag
-        run: |
-          git fetch --all --tags
-          git tag -l
-          NEW_TAG=v$(date +'%Y.%m')
-          FOUND=$(git tag -l | grep $NEW_TAG | wc -l)
-          if [ $FOUND -eq 0 ]; then
-            echo "TAG=$NEW_TAG" >> $GITHUB_OUTPUT
-          else
-            echo "TAG=$NEW_TAG-$FOUND" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Get registration token
-        id: getRegToken
-        run: |
-          curl -X POST -H \"Accept: application/vnd.github+json\"  -H 'Authorization: token ${{ secrets.GITHUB_TOKEN }}' https://api.github.com/repos/tosnetwork/tos/actions/runners/registration-token
-
-      - name: Create release
-        id: create_release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
-          gh release create ${{ steps.tag.outputs.TAG }} \
-            --title "TOS ${{ steps.tag.outputs.TAG }}" \
-            --notes "${{ steps.read_release.outputs.CHANGELOG_BODY }}" \
-            --verify-tag
+          set -euo pipefail
+          [[ "$TAG" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]] || { echo "not a release tag: $TAG" >&2; exit 1; }
+          git fetch --no-tags --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          [ "$sha" = "$(git rev-parse HEAD)" ] || { echo "checkout is not the tag commit" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      # upload
-
-      # win
-
-      - name: Upload Windows 2019 artifacts
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows.zip
-          asset_name: tos-win-x86-64.zip
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - fift
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/fift.exe
-          asset_name: fift.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - func
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/func.exe
-          asset_name: func.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - tol
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/tol.exe
-          asset_name: tol.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - lite-client
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/lite-client.exe
-          asset_name: lite-client.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - proxy-liteserver
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/proxy-liteserver.exe
-          asset_name: proxy-liteserver.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - rldp-http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/rldp-http-proxy.exe
-          asset_name: rldp-http-proxy.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/http-proxy.exe
-          asset_name: http-proxy.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - storage-daemon-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/storage-daemon-cli.exe
-          asset_name: storage-daemon-cli.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - storage-daemon
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/storage-daemon.exe
-          asset_name: storage-daemon.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - toslibjson
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/toslibjson.dll
-          asset_name: toslibjson.dll
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - libemulator
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/emulator.dll
-          asset_name: libemulator.dll
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Windows 2019 single artifact - toslib-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86-64-windows/toslib-cli.exe
-          asset_name: toslib-cli.exe
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      # mac x86-64
-
-      - name: Upload Mac x86-64 artifacts
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos.zip
-          asset_name: tos-mac-x86-64.zip
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - fift
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/fift
-          asset_name: fift-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - func
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/func
-          asset_name: func-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - tol
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/tol
-          asset_name: tol-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - lite-client
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/lite-client
-          asset_name: lite-client-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - proxy-liteserver
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/proxy-liteserver
-          asset_name: proxy-liteserver-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - rldp-http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/rldp-http-proxy
-          asset_name: rldp-http-proxy-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/http-proxy
-          asset_name: http-proxy-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - storage-daemon-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/storage-daemon-cli
-          asset_name: storage-daemon-cli-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - storage-daemon
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/storage-daemon
-          asset_name: storage-daemon-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - toslibjson
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/libtoslibjson.dylib
-          asset_name: toslibjson-mac-x86-64.dylib
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - libemulator
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/libemulator.dylib
-          asset_name: libemulator-mac-x86-64.dylib
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac x86-64 single artifact - toslib-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-macos/toslib-cli
-          asset_name: toslib-cli-mac-x86-64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-
-      # mac arm64
-
-      - name: Upload Mac arm64 artifacts
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos.zip
-          asset_name: tos-mac-arm64.zip
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - fift
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/fift
-          asset_name: fift-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - func
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/func
-          asset_name: func-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - tol
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/tol
-          asset_name: tol-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - lite-client
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/lite-client
-          asset_name: lite-client-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - proxy-liteserver
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/proxy-liteserver
-          asset_name: proxy-liteserver-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - rldp-http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/rldp-http-proxy
-          asset_name: rldp-http-proxy-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/http-proxy
-          asset_name: http-proxy-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - storage-daemon-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/storage-daemon-cli
-          asset_name: storage-daemon-cli-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - storage-daemon
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/storage-daemon
-          asset_name: storage-daemon-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - toslibjson
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/libtoslibjson.dylib
-          asset_name: toslibjson-mac-arm64.dylib
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - libemulator
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/libemulator.dylib
-          asset_name: libemulator-mac-arm64.dylib
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Mac arm64 single artifact - toslib-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-macos/toslib-cli
-          asset_name: toslib-cli-mac-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      # linux x86-64
-
-      - name: Upload Linux x86-64 artifacts
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux.zip
-          asset_name: tos-linux-x86_64.zip
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload generic smartcont+lib artifact
+      - name: Collect artifacts built from the tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          TAG_SHA: ${{ steps.tag.outputs.sha }}
         run: |
-          mkdir smartcont_lib
-          cd smartcont_lib
-          cp -r ../artifacts/tos-x86_64-linux/{smartcont,lib} .
-          zip -r smartcont_lib.zip .
-          gh release upload ${{ steps.tag.outputs.TAG }} smartcont_lib.zip
+          python3 scripts/release-artifacts.py collect \
+            --repo "$GITHUB_REPOSITORY" --tag "$TAG" --tag-sha "$TAG_SHA" --out artifacts
 
-      - name: Upload Linux x86-64 single artifact - fift
-        uses: svenstaro/upload-release-action@v2
+      - name: Stage release assets
+        run: |
+          python3 scripts/release-artifacts.py stage --set full --artifacts artifacts --out stage
+          cp recent_changelog.md stage-notes.md
+
+      - name: Hand the staged assets to the publishing job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/fift
-          asset_name: fift-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
+          name: release-stage
+          path: |
+            stage
+            stage-notes.md
+          if-no-files-found: error
+          retention-days: 3
 
-      - name: Upload Linux x86-64 single artifact - func
-        uses: svenstaro/upload-release-action@v2
+  publish:
+    needs: collect
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Receive the staged assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/func
-          asset_name: func-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
+          name: release-stage
+          path: release
 
-      - name: Upload Linux x86-64 single artifact - tol
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/tol
-          asset_name: tol-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
+      - name: Verify every staged file against SHA256SUMS
+        working-directory: release/stage
+        env:
+          TAG_SHA: ${{ needs.collect.outputs.tag_sha }}
+        run: |
+          set -euo pipefail
+          sha256sum --check --strict SHA256SUMS
+          listed="$(cut -d' ' -f3- SHA256SUMS | sort)"
+          present="$(find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort)"
+          [ "$listed" = "$present" ] || { echo "staged files differ from SHA256SUMS" >&2; exit 1; }
+          jq -e --arg sha "$TAG_SHA" '.tag_commit == $sha' release-provenance.json
 
-      - name: Upload Linux x86-64 single artifact - lite-client
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/lite-client
-          asset_name: lite-client-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux x86-64 single artifact - proxy-liteserver
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/proxy-liteserver
-          asset_name: proxy-liteserver-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux x86-64 single artifact - rldp-http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/rldp-http-proxy
-          asset_name: rldp-http-proxy-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux x86-64 single artifact - http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/http-proxy
-          asset_name: http-proxy-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux x86-64 single artifact - storage-daemon-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/storage-daemon-cli
-          asset_name: storage-daemon-cli-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux x86-64 single artifact - storage-daemon
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/storage-daemon
-          asset_name: storage-daemon-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux x86-64 single artifact - toslibjson
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/libtoslibjson.so
-          asset_name: toslibjson-linux-x86_64.so
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux x86-64 single artifact - libemulator
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/libemulator.so
-          asset_name: libemulator-linux-x86_64.so
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux x86-64 single artifact - toslib-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-x86_64-linux/toslib-cli
-          asset_name: toslib-cli-linux-x86_64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-
-      # linux arm64
-
-      - name: Upload Linux arm64 artifacts
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux.zip
-          asset_name: tos-linux-arm64.zip
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - fift
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/fift
-          asset_name: fift-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - func
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/func
-          asset_name: func-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - tol
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/tol
-          asset_name: tol-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - lite-client
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/lite-client
-          asset_name: lite-client-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - proxy-liteserver
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/proxy-liteserver
-          asset_name: proxy-liteserver-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - rldp-http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/rldp-http-proxy
-          asset_name: rldp-http-proxy-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - http-proxy
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/http-proxy
-          asset_name: http-proxy-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - storage-daemon-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/storage-daemon-cli
-          asset_name: storage-daemon-cli-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - storage-daemon
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/storage-daemon
-          asset_name: storage-daemon-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - toslibjson
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/libtoslibjson.so
-          asset_name: toslibjson-linux-arm64.so
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - libemulator
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/libemulator.so
-          asset_name: libemulator-linux-arm64.so
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Linux arm64 single artifact - toslib-cli
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-arm64-linux/toslib-cli
-          asset_name: toslib-cli-linux-arm64
-          tag: ${{ steps.tag.outputs.TAG }}
-
-
-      - name: Upload WASM artifacts
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-wasm.zip
-          asset_name: tos-wasm.zip
-          tag: ${{ steps.tag.outputs.TAG }}
-
-      - name: Upload Android Toslib artifacts
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: artifacts/tos-android-toslib.zip
-          asset_name: tos-android-toslib.zip
-          tag: ${{ steps.tag.outputs.TAG }}
+      - name: Create the release and upload the assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "TOS $TAG" --notes-file release/stage-notes.md
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" release/stage/*

@@ -24,7 +24,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_BUILD_PIPELINING: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - run: scripts/install-rust-toolchain.sh
@@ -55,7 +55,7 @@ jobs:
   native:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - run: |
@@ -71,7 +71,7 @@ jobs:
           echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
           echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
       - name: Restore compiler cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.ccache
           key: ${{ runner.os }}-${{ runner.arch }}-node-health-native-ccache-${{ steps.date-stamp.outputs.timestamp }}

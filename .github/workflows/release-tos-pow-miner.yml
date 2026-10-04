@@ -2,6 +2,8 @@ name: Release TOS pow-miner
 
 # Builds the TOS pow-miner binary for multiple platforms and
 # publishes the artifacts to the GitHub Release created by the tag push.
+# The build jobs run with a read-only token; only the publish job, which runs
+# no build code, can write to the release.
 #
 # Trigger: push of any tag matching "v*" (e.g. v0.1.0, v1.2.3-rc1).
 # Each matrix leg produces:
@@ -19,8 +21,7 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: release-tos-pow-miner-${{ github.ref }}
@@ -44,12 +45,15 @@ jobs:
             archive_ext: tar.gz
 
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
+          persist-credentials: false
 
       # ------------------------------------------------------------------
       # Linux: install build dependencies
@@ -74,12 +78,7 @@ jobs:
 
       - name: Install clang-21 (Linux)
         if: runner.os == 'Linux'
-        run: |
-          cd /tmp
-          rm -f llvm.sh
-          wget -q https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 21
+        run: sudo scripts/install-llvm-toolchain.sh 21
 
       # ------------------------------------------------------------------
       # macOS: install build dependencies (mirrors build-macos-portable.sh)
@@ -163,20 +162,39 @@ jobs:
 
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
-      - name: Upload release asset
-        uses: svenstaro/upload-release-action@v2
+      - name: Hand the archive to the publishing job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ env.ARCHIVE }}
-          asset_name: ${{ env.ARCHIVE }}
-          tag: ${{ github.ref_name }}
-          overwrite: true
+          name: pow-miner-${{ matrix.platform }}
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+          if-no-files-found: error
+          retention-days: 3
 
-      - name: Upload SHA256 checksum
-        uses: svenstaro/upload-release-action@v2
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Receive the archives built in this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ env.ARCHIVE }}.sha256
-          asset_name: ${{ env.ARCHIVE }}.sha256
-          tag: ${{ github.ref_name }}
-          overwrite: true
+          pattern: pow-miner-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify and upload
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          for sum in *.sha256; do
+            sha256sum --check --strict "$sum"
+          done
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes ""
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber ./*
