@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import socket
 import stat
 import subprocess
 import tarfile
@@ -24,7 +25,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "docker" / "import-snapshot.sh"
+REPO = Path(__file__).resolve().parent.parent
+SCRIPT = REPO / "docker" / "import-snapshot.sh"
+INIT_SCRIPT = REPO / "docker" / "init.sh"
+# A real global config the engine accepts, for the test that initializes a
+# database with the built validator-engine.
+ENGINE_GLOBAL_CONFIG = REPO / "tosctl" / "src" / "adnl" / "tests" / "config" / "testnet.json"
 ZEROSTATE = "F6OpKZKqvqeFp6CQmFomXNMfMj2EnaUSOXN+Mh+wVWk="
 OTHER_ZEROSTATE = "XplPz01CXAps5qeSWUtxcyBfdAo5zVb1N979KLSKD24="
 
@@ -93,6 +99,43 @@ GOOD_MEMBERS: list[tuple[str, str, bytes | str]] = [
     ("celldb/CURRENT", "file", b"MANIFEST-000001\n"),
     ("state", "dir", b""),
 ]
+
+
+def make_engine_error_log(db: Path) -> None:
+    """Create what validator-engine's error log setup leaves in a new database.
+
+    Observed by initializing a database with the built engine
+    (validator-engine -C <global config> --db <dir> --ip 127.0.0.1:<port>):
+    error/ (0700) holding an empty files/ (0700) and an empty log.txt (0600).
+    test_real_engine_initialized_database_is_accepted reproduces it from the
+    binary when one is available.
+    """
+    error = db / "error"
+    error.mkdir(mode=0o700)
+    (error / "files").mkdir(mode=0o700)
+    (error / "log.txt").touch(mode=0o600)
+
+
+def find_validator_engine() -> Path | None:
+    configured = os.environ.get("TOS_VALIDATOR_ENGINE")
+    candidates = [Path(configured)] if configured else []
+    candidates.append(REPO / "build" / "validator-engine" / "validator-engine")
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def free_local_port() -> int:
+    # A port well away from every range a local validator network uses.
+    for port in range(47000, 48000):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError("no free UDP port in 47000-47999")
 
 
 def tree(root: Path) -> dict[str, tuple[str, bytes]]:
@@ -487,6 +530,150 @@ class ImportSnapshotTest(unittest.TestCase):
         result = self.run_import(**self.enabled(url, digest))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("stop the validator and any other importer", result.stdout)
+
+    # ---- the error log validator-engine creates when it initializes a database
+
+    def test_engine_initialized_database_is_accepted(self) -> None:
+        make_engine_error_log(self.db)
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.db / ".snapshot-imported").read_text(), digest)
+        self.assertEqual((self.db / "celldb" / "CURRENT").read_bytes(), b"MANIFEST-000001\n")
+        self.assertEqual(
+            sorted(p.name for p in (self.db / "error").iterdir()), ["files", "log.txt"]
+        )
+        self.assertEqual((self.db / "error" / "log.txt").read_bytes(), b"")
+
+    def test_real_engine_initialized_database_is_accepted(self) -> None:
+        engine = find_validator_engine()
+        if engine is None:
+            self.skipTest("no built validator-engine; set TOS_VALIDATOR_ENGINE to run this test")
+        for path in sorted(self.db.rglob("*"), reverse=True):
+            path.rmdir() if path.is_dir() else path.unlink()
+        global_config = self.db / "tos-global.config"
+        global_config.write_bytes(ENGINE_GLOBAL_CONFIG.read_bytes())
+        zerostate = json.loads(ENGINE_GLOBAL_CONFIG.read_text())["validator"]["zero_state"][
+            "root_hash"
+        ]
+        init = subprocess.run(
+            [
+                str(engine),
+                "-C",
+                str(global_config),
+                "--db",
+                str(self.db),
+                "--ip",
+                f"127.0.0.1:{free_local_port()}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        self.assertEqual(init.returncode, 0, init.stderr[-2000:])
+        self.assertTrue((self.db / "config.json").is_file())
+        # The layout the replicated fixture claims to reproduce.
+        self.assertEqual(
+            sorted(p.name for p in self.db.iterdir()),
+            ["config.json", "error", "keyring", "tos-global.config"],
+        )
+        self.assertEqual(
+            sorted(p.name for p in (self.db / "error").iterdir()), ["files", "log.txt"]
+        )
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest, DUMP_ZEROSTATE_ROOT_HASH=zerostate))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.db / ".snapshot-imported").read_text(), digest)
+
+    def test_error_log_with_entries_is_refused(self) -> None:
+        make_engine_error_log(self.db)
+        (self.db / "error" / "log.txt").write_bytes(b"[1700000000] REJECT: aborting validation\n")
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_error_log_with_saved_files_is_refused(self) -> None:
+        make_engine_error_log(self.db)
+        (self.db / "error" / "files" / ("ab" * 32)).write_bytes(b"candidate")
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_error_log_with_extra_entry_is_refused(self) -> None:
+        make_engine_error_log(self.db)
+        (self.db / "error" / "celldb").mkdir()
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_incomplete_error_log_is_refused(self) -> None:
+        make_engine_error_log(self.db)
+        (self.db / "error" / "log.txt").unlink()
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_error_log_symlink_is_refused(self) -> None:
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        make_engine_error_log(elsewhere)
+        (self.db / "error").symlink_to(elsewhere / "error")
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_error_log_that_is_a_file_is_refused(self) -> None:
+        (self.db / "error").write_bytes(b"")
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_error_log_file_symlink_is_refused(self) -> None:
+        make_engine_error_log(self.db)
+        (self.db / "error" / "log.txt").unlink()
+        (self.root / "empty").write_bytes(b"")
+        (self.db / "error" / "log.txt").symlink_to(self.root / "empty")
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_error_log_hard_linked_file_is_refused(self) -> None:
+        make_engine_error_log(self.db)
+        os.link(self.db / "error" / "log.txt", self.root / "second-name")
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_error_files_symlink_is_refused(self) -> None:
+        make_engine_error_log(self.db)
+        (self.db / "error" / "files").rmdir()
+        (self.root / "files").mkdir()
+        (self.db / "error" / "files").symlink_to(self.root / "files")
+        self.assert_member_refused(GOOD_MEMBERS, "database entry error is not the empty error log")
+
+    def test_error_member_is_refused(self) -> None:
+        self.assert_member_refused(
+            [*GOOD_MEMBERS, ("error/log.txt", "file", b"")],
+            "archive member overwrites the node's own error",
+        )
+
+    def test_error_member_is_refused_without_an_existing_error_log(self) -> None:
+        self.assert_spelling_refused("././error", "dir", "error")
+
+    def test_temporary_config_member_is_refused(self) -> None:
+        # validator-engine promotes config.json.tmp to config.json when the
+        # latter is missing, which it is when the import runs before init.
+        self.assert_spelling_refused("config.json.tmp", "file", "config.json.tmp")
+
+    def test_unpacked_error_is_refused(self) -> None:
+        self.assert_unpacked_refused(
+            [*GOOD_MEMBERS, ("error/log.txt", "file", b"")],
+            "unpacked archive carries the node's own error",
+        )
+
+    def test_init_imports_before_the_engine_initializes_the_database(self) -> None:
+        # The engine creates config.json, keyring/ and error/ when it
+        # initializes a database; the import runs first, so a first start
+        # imports into a database holding only the global config.
+        lines = INIT_SCRIPT.read_text().splitlines()
+        imports = [
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("/var/tos-work/scripts/import-snapshot.sh")
+        ]
+        engine_init = [
+            i
+            for i, line in enumerate(lines)
+            if line.strip().startswith("validator-engine ") and "--ip" in line
+        ]
+        self.assertEqual(len(imports), 1, "init.sh must run the import exactly once")
+        self.assertEqual(len(engine_init), 1, "init.sh must initialize the engine exactly once")
+        self.assertLess(imports[0], engine_init[0])
 
     # ---- markers
 

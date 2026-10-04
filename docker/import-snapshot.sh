@@ -16,8 +16,10 @@
 # It does not authenticate the global config, which is trusted as configured.
 #
 # The database must be new: before anything is installed it may hold only the
-# node's own configuration and keys (config.json, keyring/, tos-global.config)
-# and an empty lost+found. A snapshot is never merged into existing chain data.
+# node's own configuration and keys (config.json, keyring/, tos-global.config),
+# the empty error log validator-engine creates when it initializes a database
+# (error/ holding an empty files/ directory and an empty log.txt), and an empty
+# lost+found. A snapshot is never merged into existing chain data.
 #
 # Prerequisite: this script must be the database's only writer for the whole
 # import. Stop the validator and any other importer, and let no other
@@ -56,12 +58,16 @@ MARKER="$DB_DIR/.snapshot-imported"
 LEGACY_MARKER="$DB_DIR/dump_downloaded"
 
 # What a new database may already hold before the import: the node's own
-# identity and configuration written by validator-engine and init.sh, and the
+# identity and configuration written by validator-engine and init.sh, the
+# error log directory validator-engine creates on its first start, and the
 # lost+found a freshly formatted volume carries at its root.
-NEW_DB_ENTRIES=(config.json keyring tos-global.config lost+found)
+NEW_DB_ENTRIES=(config.json keyring tos-global.config error lost+found)
 # Top-level names an archive may not carry: everything a new database may
-# already hold, and this script's bookkeeping.
-RESERVED_TOP_LEVEL=("${NEW_DB_ENTRIES[@]}" .snapshot-imported .snapshot-imported.tmp dump_downloaded)
+# already hold, the temporary file validator-engine promotes to config.json
+# when config.json is missing (init.sh runs the import before validator-engine
+# initializes the database, so an archive-supplied one would become the
+# node's configuration), and this script's bookkeeping.
+RESERVED_TOP_LEVEL=("${NEW_DB_ENTRIES[@]}" config.json.tmp .snapshot-imported .snapshot-imported.tmp dump_downloaded)
 
 fail() {
   echo "[snapshot] refused: $*" >&2
@@ -80,6 +86,22 @@ is_reserved() {
   return 1
 }
 
+# True when DIR is exactly the error log validator-engine creates before it
+# has logged anything: a real directory holding only an empty real directory
+# files/ and an empty, singly linked regular file log.txt. Anything the
+# engine writes later (a rejected candidate's log line or saved block) means
+# the node has already run, so the database is not new.
+is_fresh_error_log() {
+  local dir="$1" count
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  count="$(find "$dir/" -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c)" || return 1
+  [ "$count" = 2 ] || return 1
+  [ -d "$dir/files" ] && [ ! -L "$dir/files" ] || return 1
+  [ -z "$(ls -A -- "$dir/files" 2>/dev/null || echo unreadable)" ] || return 1
+  [ -f "$dir/log.txt" ] && [ ! -L "$dir/log.txt" ] && [ ! -s "$dir/log.txt" ] || return 1
+  [ "$(stat -c %h -- "$dir/log.txt")" = 1 ] || return 1
+}
+
 # Refuse unless the database holds nothing but NEW_DB_ENTRIES, each of the
 # expected kind. Runs before the download and again immediately before the
 # install, so content that appears while the archive is staged is not merged.
@@ -96,6 +118,10 @@ require_new_database() {
       keyring)
         [ -d "$entry" ] && [ ! -L "$entry" ] ||
           fail "database entry keyring is not a directory; import only into a new database"
+        ;;
+      error)
+        is_fresh_error_log "$entry" ||
+          fail "database entry error is not the empty error log validator-engine creates (a directory holding only an empty files/ and an empty log.txt); import only into a new database"
         ;;
       lost+found)
         [ -d "$entry" ] && [ ! -L "$entry" ] && [ -z "$(ls -A -- "$entry" 2>/dev/null || echo unreadable)" ] ||

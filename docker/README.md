@@ -147,15 +147,19 @@ The import script (`docker/import-snapshot.sh`) then:
   the digest or the network binding is missing or does not match;
 - imports only into a new database: before downloading, and again immediately
   before installing, the database directory may hold nothing but the node's
-  `config.json`, `keyring/` and `tos-global.config`, plus an empty
-  `lost+found`. Any other content, even with names the snapshot does not use,
-  is refused;
+  `config.json`, `keyring/` and `tos-global.config`, the empty error log
+  `validator-engine` creates when it initializes a database (`error/` holding
+  only an empty `files/` and an empty `log.txt`), and an empty `lost+found`.
+  Any other content, even with names the snapshot does not use, is refused.
+  `init.sh` runs the import before `validator-engine` initializes the
+  database, so on a first start the database holds only the global config;
 - downloads into `SNAPSHOT_STAGING_DIR`, which must be outside the database
   directory (mount it on the same filesystem as the database so the final step
   is a rename), and checks the SHA-256 before anything is unpacked;
 - accepts only regular files and directories with relative names, never `..`,
   and never a top-level name the database already reserves (`config.json`,
-  `keyring`, `tos-global.config`, `lost+found`, the import markers), however
+  `keyring`, `tos-global.config`, `error`, `lost+found`, `config.json.tmp`,
+  the import markers), however
   the name is spelled (`././keyring`, `.//keyring` and `keyring/` are all
   `keyring`);
 - checks the unpacked tree itself again before installing it: its real

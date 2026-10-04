@@ -31,17 +31,19 @@ else
     exit 1
 fi
 
+# Snapshot import is opt-in and authenticated by an operator-supplied digest;
+# see import-snapshot.sh. It runs before validator-engine initializes the
+# database, so a first start imports into a database that holds only the
+# global config. Any refusal stops the container before the node starts on a
+# partially imported or unverified database.
+/var/tos-work/scripts/import-snapshot.sh || { echo "Snapshot import refused or failed"; exit 3; }
+
 if [ ! -f "/var/tos-work/db/config.json" ]; then
   echo -e "\e[1;32m[+]\e[0m Initializing validator-engine:"
   echo validator-engine -C /var/tos-work/db/tos-global.config --db /var/tos-work/db --ip "$PUBLIC_IP:$VALIDATOR_PORT"
   validator-engine -C /var/tos-work/db/tos-global.config --db /var/tos-work/db --ip "$PUBLIC_IP:$VALIDATOR_PORT"
   test $? -eq 0 || { echo "Cannot initialize validator-engine"; exit 2; }
 fi
-
-# Snapshot import is opt-in and authenticated by an operator-supplied digest;
-# see import-snapshot.sh. Any refusal stops the container before the node
-# starts on a partially imported or unverified database.
-/var/tos-work/scripts/import-snapshot.sh || { echo "Snapshot import refused or failed"; exit 3; }
 
 if [ -z "$STATE_TTL" ]; then
     STATE_TTL=86400
