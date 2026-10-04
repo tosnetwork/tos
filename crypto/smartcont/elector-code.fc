@@ -837,16 +837,23 @@ int recovery_upgrade_format() impure method_id(1667) {
 
 int relay_return_upgrade_format() impure method_id(1668) { return 0x52525634; }
 
+;; Upgrades wait on what the elector still owes: an election, unclaimed
+;; credits, frozen stakes and relay returns in flight. A recovery receipt
+;; awaiting its owner's ACK is not one of them: the receipt is written by the
+;; transaction whose action phase paid it, so it exists only once paid. It
+;; keeps its ACK and replay protection across the upgrade instead -- the target
+;; must declare the same recovery format and keep the metadata unchanged
+;; (upgrade_code) -- so an owner who never ACKs cannot veto upgrades.
 int upgrade_ready() method_id {
   var (elect, credits, past, _, _, _) = load_data();
-  var (outstanding, _) = recovery_book();
   var (returning, _) = relay_return_book();
-  return elect.null?() & credits.null?() & past.null?() & (outstanding == 0) & (returning == 0);
+  return elect.null?() & credits.null?() & past.null?() & (returning == 0);
 }
 
 () after_code_upgrade(slice s_addr, slice cs, int query_id) impure method_id(1666) {
   ;; The installation tool always supplies a hook marker. No format conversion
-  ;; is implicit: finish elections, unfreeze and recover all claims first.
+  ;; is implicit: finish elections, unfreeze and pay out all credits first.
+  ;; Paid recovery receipts carry over unchanged (upgrade_code checks them).
   throw_unless(66, upgrade_ready());
   var op = 0x4e436f64;
   return send_message_back(s_addr, 0xce436f64, query_id, op, 0, 64);
