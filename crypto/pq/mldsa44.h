@@ -21,4 +21,10 @@ VerifyResult verify_mldsa44(std::string_view message, std::string_view context,
 // incremented at the public verification boundary, before input validation.
 std::uint64_t mldsa44_verification_calls_for_test() noexcept;
 void reset_mldsa44_verification_calls_for_test() noexcept;
+// TEMPORARY red probe for the compile cache: a header-only warning that -Werror must reject
+// even when every object that includes this header is already cached.
+inline int strict_build_cache_probe() {
+  int unused_probe = 0;
+  return 1;
+}
 }  // namespace tos::pq
