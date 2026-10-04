@@ -914,6 +914,11 @@ target_include_directories(test-adnl-ext-output-backpressure PRIVATE ${CMAKE_CUR
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-adnl-ext-output-backpressure PRIVATE adnl tl_api tdutils tdactor)
 
+add_executable(test-adnl-ext-input-budget test/pq-native/adnl-ext-input-budget-test.cpp)
+target_include_directories(test-adnl-ext-input-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-input-budget PRIVATE adnl tl_api tdutils tdactor)
+
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1626,6 +1631,7 @@ tos_test(test-adnl-ext-query-closure)
 tos_test(test-adnl-ext-query-refusal)
 tos_test(test-adnl-ext-output-backpressure)
 tos_test(test-adnl-ext-client-identity)
+tos_test(test-adnl-ext-input-budget)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)

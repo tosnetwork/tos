@@ -119,6 +119,22 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   void set_shared_output_budget(std::shared_ptr<AdnlExtOutputBudget> budget) {
     server_output_budget_ = std::move(budget);
   }
+  // Bound what this connection holds of frames it has not finished receiving:
+  // at most `max_pending_bytes`, every byte reserved from `budget` (shared by a
+  // server's connections) before it is read, and no unfinished frame held
+  // longer than `partial_frame_lifetime` seconds. Without a budget, reads are
+  // unbounded, as a client reading its own server's answers needs.
+  void set_input_limits(std::shared_ptr<AdnlExtByteBudget> budget,
+                        std::size_t max_pending_bytes = adnl_ext_max_pending_input_bytes,
+                        double partial_frame_lifetime = adnl_ext_partial_frame_lifetime_seconds) {
+    input_budget_ = std::move(budget);
+    max_pending_input_ = max_pending_bytes;
+    partial_frame_lifetime_ = partial_frame_lifetime;
+  }
+  // Bytes of the shared input budget this connection holds.
+  std::size_t input_reserved() const {
+    return input_accounted_;
+  }
   bool check_ready() const {
     return received_bytes_ && inited_ && authorized() && !td::can_close(buffered_fd_);
   }
@@ -168,6 +184,12 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   }
 
   void tear_down() override {
+    if (input_budget_) {
+      if (!input_budget_->release(input_accounted_)) {
+        LOG(ERROR) << "ADNL external input budget: released more than was reserved";
+      }
+      input_accounted_ = 0;
+    }
     if (server_output_budget_) {
       if (!server_output_budget_->release(output_accounted_)) {
         LOG(ERROR) << "ADNL external output budget: released more than was reserved";
@@ -207,6 +229,21 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
       output_accounted_ = pending;
     }
   }
+  std::shared_ptr<AdnlExtByteBudget> input_budget_;
+  std::size_t max_pending_input_ = adnl_ext_max_pending_input_bytes;
+  double partial_frame_lifetime_ = adnl_ext_partial_frame_lifetime_seconds;
+  // Bytes of the input budget this connection holds: at least its received,
+  // unprocessed input. Grows only by reservation before a read.
+  std::size_t input_accounted_ = 0;
+  // When the unfinished frame this connection holds must be complete; unset
+  // while it holds none.
+  td::Timestamp partial_frame_deadline_;
+  // Reads at most one reserved chunk; returns the bytes read.
+  td::Result<std::size_t> read_input_within_budget();
+  // Give back the input budget for bytes already taken off the buffer.
+  void account_input();
+  // Start or clear the unfinished-frame deadline after input was processed.
+  void update_partial_frame_deadline();
   bool read_len_ = false;
   td::uint32 len_;
   td::uint32 received_bytes_ = 0;
@@ -232,7 +269,12 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
 
   void alarm() override {
     alarm_timestamp() = fail_at_;
-    if (fail_at_.is_in_past()) {
+    alarm_timestamp().relax(partial_frame_deadline_);
+    if (partial_frame_deadline_ && partial_frame_deadline_.is_in_past()) {
+      LOG(INFO) << "ADNL external peer did not finish a frame within " << partial_frame_lifetime_
+                << " s; closing connection";
+      stop();
+    } else if (fail_at_.is_in_past()) {
       stop();
     } else if (is_client_ && !ping_sent_) {
       if (send_ping_at_.is_in_past()) {

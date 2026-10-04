@@ -17,6 +17,8 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <algorithm>
+
 #include "adnl-ext-connection.hpp"
 
 namespace tos {
@@ -113,7 +115,13 @@ td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_l
       // Packet layout after decrypt:
       //   [32 bytes random prefix] [payload bytes (may be empty)] [32 bytes sha256]
       // So minimal valid length is 64 bytes (keepalive has empty payload).
-      if (check_adnl_ext_framed_size(len_).is_error()) {
+      // A server connection holds at most its pending-input bound, so a frame
+      // that could not fit is refused here, before any of it is read.
+      auto max_packet_bytes = adnl_ext_max_packet_bytes;
+      if (input_budget_) {
+        max_packet_bytes = max_pending_input_ > 4 ? std::min(max_packet_bytes, max_pending_input_ - 4) : 0;
+      }
+      if (check_adnl_ext_framed_size(len_, max_packet_bytes).is_error()) {
         return td::Status::Error(ErrorCode::protoviolation, PSTRING() << "bad packet size: size=" << len_);
       }
       read_len_ = true;
@@ -124,6 +132,7 @@ td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_l
     }
     auto data = input.cut_head(len_).move_as_buffer_slice();
     update_timer();
+    partial_frame_deadline_ = {};
 
     td::BufferSlice dec_data{data.size()};
     in_ctr_.encrypt(data.as_slice(), dec_data.as_slice());
@@ -140,20 +149,92 @@ td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_l
 
     auto data = input.cut_head(256).move_as_buffer_slice();
     update_timer();
+    partial_frame_deadline_ = {};
 
     exit_loop = false;
     return process_init_packet(std::move(data));
   }
 }
 
+td::Result<std::size_t> AdnlExtConnection::read_input_within_budget() {
+  if (!input_budget_) {
+    TRY_STATUS(buffered_fd_.flush_read());
+    return 0;
+  }
+  if (!td::can_read(buffered_fd_)) {
+    return 0;
+  }
+  auto held = buffered_fd_.input_buffer().size();
+  if (held >= max_pending_input_) {
+    // Only reachable while reading is paused: a full buffer otherwise holds a
+    // complete frame, which receive() has already taken. The socket stays
+    // readable, so the next loop() resumes here.
+    return 0;
+  }
+  auto wanted = held + std::min(adnl_ext_input_read_chunk_bytes, max_pending_input_ - held);
+  if (wanted > input_accounted_) {
+    input_accounted_ += input_budget_->try_reserve_up_to(wanted - input_accounted_);
+  }
+  if (input_accounted_ <= held) {
+    // The server's connections together hold as much unfinished input as they
+    // may. Reading on would grow memory past the bound; leaving bytes in the
+    // socket would stall this peer with no end. Closing releases everything
+    // this connection holds.
+    return td::Status::Error(ErrorCode::notready, PSTRING() << "external connections hold their whole input budget ("
+                                                            << input_budget_->limit() << " bytes)");
+  }
+  // Never read more than is reserved: the budget is charged before the buffer grows.
+  TRY_RESULT(read, buffered_fd_.flush_read(input_accounted_ - held));
+  return read;
+}
+
+void AdnlExtConnection::account_input() {
+  if (!input_budget_) {
+    return;
+  }
+  auto held = buffered_fd_.input_buffer().size();
+  if (held < input_accounted_) {
+    if (!input_budget_->release(input_accounted_ - held)) {
+      LOG(ERROR) << "ADNL external input budget: released more than was reserved";
+    }
+    input_accounted_ = held;
+  }
+}
+
+void AdnlExtConnection::update_partial_frame_deadline() {
+  if (!input_budget_) {
+    return;
+  }
+  bool holds_partial_frame = read_len_ || buffered_fd_.input_buffer().size() > 0;
+  if (!holds_partial_frame) {
+    partial_frame_deadline_ = {};
+    return;
+  }
+  if (!partial_frame_deadline_) {
+    partial_frame_deadline_ = td::Timestamp::in(partial_frame_lifetime_);
+  }
+  // Re-armed every time: update_timer() resets the alarm to the idle timeout.
+  alarm_timestamp().relax(partial_frame_deadline_);
+}
+
 void AdnlExtConnection::loop() {
   auto status = [&] {
-    TRY_STATUS(buffered_fd_.flush_read());
     auto &input = buffered_fd_.input_buffer();
-    bool exit_loop = false;
-    while (!exit_loop) {
-      TRY_STATUS(receive(input, exit_loop));
+    // Read a reserved chunk, take every complete frame off the buffer, and
+    // repeat while the socket has more, so what is held between reads is at
+    // most one unfinished frame.
+    while (true) {
+      TRY_RESULT(read, read_input_within_budget());
+      bool exit_loop = false;
+      while (!exit_loop) {
+        TRY_STATUS(receive(input, exit_loop));
+      }
+      account_input();
+      if (read == 0) {
+        break;
+      }
     }
+    update_partial_frame_deadline();
     TRY_STATUS(buffered_fd_.flush_write());
     account_output();
     if (td::can_close(buffered_fd_)) {
