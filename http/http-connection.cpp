@@ -257,7 +257,7 @@ td::Status HttpConnection::continue_payload_read(td::ChainBufferReader &input) {
     auto s = input.size();
     auto R = reading_payload_->parse(input);
     if (R.is_error()) {
-      reading_payload_->set_error();
+      reading_payload_->fail();
       return R.move_as_error();
     }
     if (input.size() == s) {

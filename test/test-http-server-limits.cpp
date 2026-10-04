@@ -1133,3 +1133,67 @@ TEST(HttpMultiClient, a_body_still_arriving_at_the_deadline_fails_and_frees_its_
   while (scheduler.run(1)) {
   }
 }
+
+namespace {
+
+std::shared_ptr<tos::http::HttpPayload> response_body(const std::string &framing_header, const std::string &value) {
+  auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  response->add_header({framing_header, value});
+  response->complete_parse_header();
+  return response->create_empty_payload().move_as_ok();
+}
+
+td::Status feed(tos::http::HttpPayload &payload, const std::string &bytes) {
+  td::ChainBufferWriter writer;
+  writer.append(bytes);
+  auto reader = writer.extract_reader();
+  reader.sync_with_writer();
+  return payload.parse(reader);
+}
+
+}  // namespace
+
+TEST(HttpPayloadEnd, AConsumerAddedAfterAFailureIsToldAtOnce) {
+  auto body = response_body("Content-Length", "100");
+  ASSERT_TRUE(feed(*body, "0123456789").is_ok());
+  body->fail();
+  std::atomic<int> completed{0};
+  body->add_callback(std::make_unique<CompletionCounter>(completed));
+  ASSERT_EQ(completed.load(), 1);
+  ASSERT_TRUE(body->is_error());
+}
+
+TEST(HttpPayloadEnd, AFailedBodyNeitherCompletesNorNotifiesTwice) {
+  for (auto framing : {std::make_pair(std::string("Content-Length"), std::string("10")),
+                       std::make_pair(std::string("Transfer-Encoding"), std::string("chunked"))}) {
+    auto body = response_body(framing.first, framing.second);
+    std::atomic<int> completed{0};
+    body->add_callback(std::make_unique<CompletionCounter>(completed));
+    body->fail();
+    body->fail();
+    ASSERT_EQ(completed.load(), 1);
+    // The rest of the body arriving late cannot complete it.
+    auto rest =
+        framing.first == "Content-Length" ? std::string("0123456789") : std::string("a\r\n0123456789\r\n0\r\n\r\n");
+    ASSERT_TRUE(feed(*body, rest).is_error());
+    body->complete_parse();
+    ASSERT_TRUE(!body->parse_completed());
+    ASSERT_EQ(completed.load(), 1);
+  }
+}
+
+TEST(HttpPayloadEnd, ACompletedBodyCannotBeFailed) {
+  for (auto framing : {std::make_pair(std::string("Content-Length"), std::string("10")),
+                       std::make_pair(std::string("Transfer-Encoding"), std::string("chunked"))}) {
+    auto body = response_body(framing.first, framing.second);
+    std::atomic<int> completed{0};
+    body->add_callback(std::make_unique<CompletionCounter>(completed));
+    auto all =
+        framing.first == "Content-Length" ? std::string("0123456789") : std::string("a\r\n0123456789\r\n0\r\n\r\n");
+    ASSERT_TRUE(feed(*body, all).is_ok());
+    ASSERT_TRUE(body->parse_completed());
+    body->fail();
+    ASSERT_TRUE(!body->is_error());
+    ASSERT_EQ(completed.load(), 1);
+  }
+}

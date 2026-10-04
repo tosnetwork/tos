@@ -19,6 +19,7 @@
 */
 #pragma once
 
+#include <atomic>
 #include <list>
 #include <map>
 #include <mutex>
@@ -121,13 +122,13 @@ class HttpPayload {
     return ready_bytes_ > high_watermark_;
   }
   bool is_error() const {
-    return error_;
-  }
-  void set_error() {
-    error_ = true;
+    return error_.load(std::memory_order_acquire);
   }
   // The payload will not be completed: mark it failed and tell its consumers,
-  // once, as completion would, so they see is_error() instead of waiting.
+  // once, as completion would, so they see is_error() instead of waiting. A
+  // consumer added later is told when it is added. Completion and failure
+  // exclude each other: whichever comes first is the payload's end, and a
+  // failed payload accepts no more input.
   void fail();
   PayloadType payload_type() const {
     return type_;
@@ -172,7 +173,7 @@ class HttpPayload {
   size_t chunk_size_ = 1 << 14;
   bool written_zero_chunk_ = false;
   bool written_trailer_ = false;
-  bool error_ = false;
+  std::atomic<bool> error_{false};
   bool is_flushing_ = false;
 
   std::list<std::unique_ptr<Callback>> callbacks_;

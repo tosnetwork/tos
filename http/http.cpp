@@ -299,6 +299,9 @@ td::Result<std::unique_ptr<HttpRequest>> HttpRequest::create(const tos_api::http
 
 td::Status HttpPayload::parse(td::ChainBufferReader &input) {
   CHECK(!parse_completed());
+  if (is_error()) {
+    return td::Status::Error("payload already failed");
+  }
   while (true) {
     if (high_watermark_reached()) {
       return td::Status::OK();
@@ -348,19 +351,7 @@ td::Status HttpPayload::parse(td::ChainBufferReader &input) {
             break;
           } else if (type_ == PayloadType::pt_content_length) {
             LOG(INFO) << "payload parse success";
-            std::vector<Callback *> callbacks;
-            size_t ready_bytes = 0;
-            {
-              const std::lock_guard<std::mutex> lock{mutex_};
-              state_ = ParseState::completed;
-              ready_bytes = ready_bytes_;
-              callbacks.reserve(callbacks_.size());
-              for (auto &cb : callbacks_) {
-                callbacks.push_back(cb.get());
-              }
-              callbacks_completed_notified_ = true;
-            }
-            run_callbacks(std::move(callbacks), true, ready_bytes);
+            complete_parse();
             return td::Status::OK();
           } else {
             UNREACHABLE();
@@ -385,19 +376,7 @@ td::Status HttpPayload::parse(td::ChainBufferReader &input) {
         }
         if (!l.size()) {
           LOG(INFO) << "payload parse success";
-          std::vector<Callback *> callbacks;
-          size_t ready_bytes = 0;
-          {
-            const std::lock_guard<std::mutex> lock{mutex_};
-            state_ = ParseState::completed;
-            ready_bytes = ready_bytes_;
-            callbacks.reserve(callbacks_.size());
-            for (auto &cb : callbacks_) {
-              callbacks.push_back(cb.get());
-            }
-            callbacks_completed_notified_ = true;
-          }
-          run_callbacks(std::move(callbacks), true, ready_bytes);
+          complete_parse();
           return td::Status::OK();
         }
         TRY_RESULT(h, util::get_header(std::move(l)));
@@ -433,6 +412,10 @@ void HttpPayload::complete_parse() {
   size_t ready_bytes = 0;
   {
     const std::lock_guard<std::mutex> lock{mutex_};
+    if (error_.load(std::memory_order_relaxed)) {
+      // Already failed; a failed payload does not complete.
+      return;
+    }
     state_ = ParseState::completed;
     ready_bytes = ready_bytes_;
     if (!callbacks_completed_notified_) {
@@ -631,7 +614,11 @@ void HttpPayload::fail() {
   std::vector<Callback *> callbacks;
   {
     const std::lock_guard<std::mutex> lock{mutex_};
-    error_ = true;
+    if (state_.load(std::memory_order_relaxed) == ParseState::completed) {
+      // Already complete; nothing is lost.
+      return;
+    }
+    error_.store(true, std::memory_order_release);
     if (callbacks_completed_notified_) {
       return;
     }
@@ -890,7 +877,7 @@ void HttpPayload::add_callback(std::unique_ptr<HttpPayload::Callback> callback) 
   {
     const std::lock_guard<std::mutex> lock{mutex_};
     ready_bytes = ready_bytes_;
-    if (state_.load(std::memory_order_relaxed) == ParseState::completed) {
+    if (state_.load(std::memory_order_relaxed) == ParseState::completed || error_.load(std::memory_order_relaxed)) {
       call_completed = true;
     } else {
       call_run = true;

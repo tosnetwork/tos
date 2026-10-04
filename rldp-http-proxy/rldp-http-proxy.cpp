@@ -251,7 +251,7 @@ class HttpRldpPayloadReceiver : public td::actor::Actor {
   void abort_query(td::Status error) {
     LOG(INFO) << "failed to receive HTTP payload: " << error;
     if (payload_) {
-      payload_->set_error();
+      payload_->fail();
     }
     stop();
   }
