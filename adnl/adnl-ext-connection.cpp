@@ -116,7 +116,9 @@ td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_l
       //   [32 bytes random prefix] [payload bytes (may be empty)] [32 bytes sha256]
       // So minimal valid length is 64 bytes (keepalive has empty payload).
       // A server connection holds at most its pending-input bound, so a frame
-      // that could not fit is refused here, before any of it is read.
+      // that could not fit is refused as soon as its length is parsed. The
+      // bounded read that brought the length may already hold some of the
+      // body; nothing beyond that read is taken.
       auto max_packet_bytes = adnl_ext_max_packet_bytes;
       if (input_budget_) {
         max_packet_bytes = max_pending_input_ > 4 ? std::min(max_packet_bytes, max_pending_input_ - 4) : 0;

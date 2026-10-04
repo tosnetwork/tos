@@ -31,7 +31,9 @@ inline constexpr std::size_t adnl_ext_max_server_pending_output_bytes = std::siz
 inline constexpr std::size_t adnl_ext_max_pending_input_bytes = adnl_ext_max_frame_bytes;
 
 // Received bytes all of one server's external connections may hold together
-// before they form frames. Held bytes sit in 4 KiB chain-buffer blocks: the
+// before they form frames. This is a budget of pending input bytes, not a
+// ceiling on process memory: buffer blocks, the decrypted copy of a frame being
+// dispatched and everything downstream of dispatch are outside it. Held bytes sit in 4 KiB chain-buffer blocks: the
 // input budget test measures 53664 buffer bytes for 49996 held (1.07x), and a
 // connection holding a single byte still has one 4 KiB block, at most 4 MiB
 // across the 1024-connection limit. Sixteen maximal frames at once,

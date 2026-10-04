@@ -243,8 +243,9 @@ void holds_and_returns() {
   std::printf("ADNL_EXT_INPUT_CASE holds_and_returns ok\n");
 }
 
-// A frame larger than the connection may hold is refused at its length, before
-// any of it is read; one that just fits is accepted.
+// A frame larger than the connection may hold is refused as soon as its length
+// is parsed, without reading past the bounded read that carried the length; one
+// that just fits is accepted.
 void per_connection_bound() {
   Harness h(1 << 20);
   const size_t max_pending = 64 << 10;

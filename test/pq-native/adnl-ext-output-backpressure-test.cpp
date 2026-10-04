@@ -111,8 +111,10 @@ class ProbeConnection final : public adnl::AdnlExtConnection {
  public:
   ProbeConnection(td::SocketFd fd, std::shared_ptr<adnl::AdnlExtTransportWriter> transport,
                   std::shared_ptr<adnl::AdnlExtOutputBudget> budget, size_t pending_limit,
-                  std::shared_ptr<Observation> observation)
+                  std::shared_ptr<Observation> observation, std::shared_ptr<adnl::AdnlExtByteBudget> input_budget)
       : AdnlExtConnection(std::move(fd), nullptr, false), observation_(std::move(observation)) {
+    // Reads go through the server's input budget, as a server connection's do.
+    set_input_limits(std::move(input_budget));
     set_transport_writer(std::move(transport));
     set_pending_output_limit(pending_limit);
     set_shared_output_budget(std::move(budget));
@@ -253,6 +255,7 @@ class Harness {
   ~Harness() {
     scheduler_.run_in_context([&] { connections_.clear(); });
     scheduler_.run(0.2);
+    require(input_budget_->used() == 0, "teardown left input bytes reserved");
     scheduler_.stop();
   }
   Harness(const Harness&) = delete;
@@ -265,7 +268,7 @@ class Harness {
     scheduler_.run_in_context([&] {
       connections_.push_back(td::actor::create_actor<ProbeConnection>(
           td::actor::ActorOptions().with_name("probe").with_poll(), std::move(fd), std::move(transport),
-          std::move(budget), pending_limit, std::move(observation)));
+          std::move(budget), pending_limit, std::move(observation), input_budget_));
     });
     return connections_.size() - 1;
   }
@@ -296,6 +299,7 @@ class Harness {
  private:
   td::actor::Scheduler scheduler_;
   std::vector<td::actor::ActorOwn<ProbeConnection>> connections_;
+  std::shared_ptr<adnl::AdnlExtByteBudget> input_budget_ = std::make_shared<adnl::AdnlExtByteBudget>(1 << 20);
 };
 
 struct Snapshot {
