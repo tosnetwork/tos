@@ -13,7 +13,11 @@
 // required to have read its block back exactly once, and no sample without the
 // hook may read; otherwise the run fails.
 //
-// Usage: test-apply-block-readback-latency <scratch dir> [samples] [delay ms...]
+// Usage: test-apply-block-readback-latency <parent dir> [samples] [delay ms...]
+// The index is created in a new, uniquely named directory under <parent dir>,
+// and only that directory is removed afterwards; nothing already in <parent
+// dir> is touched, so pointing it at a node's database root by mistake cannot
+// erase that node's index.
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -154,11 +158,11 @@ Distribution distribution(std::vector<double> samples) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::fprintf(stderr, "usage: %s <scratch dir> [samples] [delay ms...]\n", argv[0]);
+    std::fprintf(stderr, "usage: %s <parent dir> [samples] [delay ms...]\n", argv[0]);
     return 2;
   }
   SET_VERBOSITY_LEVEL(verbosity_ERROR);
-  std::string scratch = argv[1];
+  std::string parent = argv[1];
   size_t samples = argc > 2 ? static_cast<size_t>(std::strtoul(argv[2], nullptr, 10)) : 2000;
   std::vector<long> delays_us;
   for (int i = 3; i < argc; i++) {
@@ -172,17 +176,25 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  auto index_path = scratch + "/wc0-index";
-  td::rmrf(index_path).ignore();
-  td::mkpath(scratch + "/").ensure();
+  auto own_dir_r = td::mkdtemp(parent, "apply-readback-");
+  if (own_dir_r.is_error()) {
+    std::fprintf(stderr, "cannot create a scratch directory under %s: %s\n", parent.c_str(),
+                 own_dir_r.error().message().c_str());
+    return 2;
+  }
+  auto own_dir = own_dir_r.move_as_ok();
+  auto index_path = own_dir + "/wc0-index";
   auto db = tos_wallet_index::WalletIndexDb::open(index_path);
   if (db.is_error()) {
     std::fprintf(stderr, "cannot open the index: %s\n", db.error().message().c_str());
+    td::rmrf(own_dir).ignore();
     return 1;
   }
   tos_wallet_index::set_wallet_index_db(db.move_as_ok());
   if (!tos_wallet_index::start_wc0_index_worker(false)) {
     std::fprintf(stderr, "the index worker did not start\n");
+    tos_wallet_index::set_wallet_index_db(nullptr);
+    td::rmrf(own_dir).ignore();
     return 1;
   }
 
@@ -268,6 +280,6 @@ int main(int argc, char **argv) {
   while (scheduler.run(1)) {
   }
   tos_wallet_index::set_wallet_index_db(nullptr);
-  td::rmrf(index_path).ignore();
+  td::rmrf(own_dir).ignore();
   return ok && flushed ? 0 : 1;
 }
