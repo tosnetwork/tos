@@ -229,8 +229,16 @@ counted as an independent participant.
 
 ```sh
 cargo run --manifest-path tools/shielded-pool-genesis/Cargo.toml --bin genesis -- \
-    . out/manifest.json --verifying-key vk.bin
+    . out/manifest.json <profile commit> <profile blob> \
+    --verifying-key vk.bin --ceremony-transcript <transcript digest phase2-verify printed>
 ```
+
+The generator never falls back to the development key: without a key, the
+ceremony's transcript digest and the profile's source commit and blob it
+refuses, and it refuses the development key itself. A development genesis must
+be asked for with `--development`; its manifest then carries
+`"key": {"class": "development"}`, which `manifest::require_production`
+refuses.
 
 The key is part of the genesis state, so it fixes the state hash and therefore
 the deployment address. **No address can be published before this point**, and

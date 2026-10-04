@@ -16,6 +16,9 @@
     "vk_bytes": 1248,
     "vk_sha256": "5b760517f330e3914d76fc5baf18cc9e46f6b03d8467eeafb4de10d9681c9251"
   },
+  "key": {
+    "class": "development"
+  },
   "configuration": {
     "reserve_floor": "50000000000",
     "withdrawal_fee": "20000000",

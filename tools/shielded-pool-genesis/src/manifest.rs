@@ -14,7 +14,7 @@
 
 use chain_block::Cell;
 
-use crate::{fr_be32, profile_hash, sha256, Genesis, Result};
+use crate::{fr_be32, profile_hash, sha256, Error, Genesis, KeyClass, Result};
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -39,7 +39,12 @@ pub struct Provenance {
 /// Renders the manifest. JSON by hand rather than through a serialiser: the
 /// field order is part of what is being frozen, and a derive would put that in
 /// the gift of a dependency.
-pub fn render(genesis: &Genesis, provenance: &Provenance, code: Option<&Cell>) -> Result<String> {
+pub fn render(
+    genesis: &Genesis,
+    provenance: &Provenance,
+    key: &KeyClass,
+    code: Option<&Cell>,
+) -> Result<String> {
     let parameters = &genesis.parameters;
     let mut out = String::new();
     out.push_str("{\n");
@@ -74,6 +79,18 @@ pub fn render(genesis: &Genesis, provenance: &Provenance, code: Option<&Cell>) -
     out.push_str("  \"groth16\": {\n");
     out.push_str(&format!("    \"vk_bytes\": {},\n", parameters.verifying_key.len()));
     out.push_str(&format!("    \"vk_sha256\": \"{}\"\n", hex(&sha256(&parameters.verifying_key))));
+    out.push_str("  },\n");
+
+    // Machine-readable, so deployment tooling refuses a development state
+    // instead of trusting someone to recognise its hash.
+    out.push_str("  \"key\": {\n");
+    match key {
+        KeyClass::Development => out.push_str("    \"class\": \"development\"\n"),
+        KeyClass::Ceremony { transcript } => {
+            out.push_str("    \"class\": \"ceremony\",\n");
+            out.push_str(&format!("    \"ceremony_transcript\": \"{transcript}\"\n"));
+        }
+    }
     out.push_str("  },\n");
 
     out.push_str("  \"configuration\": {\n");
@@ -120,4 +137,41 @@ pub fn render(genesis: &Genesis, provenance: &Provenance, code: Option<&Cell>) -
     }
     out.push_str("\n}\n");
     Ok(out)
+}
+
+/// The quoted value of the first `"name": "..."` field in a manifest this
+/// module rendered.
+fn field<'a>(manifest: &'a str, name: &str) -> Option<&'a str> {
+    let needle = format!("\"{name}\": \"");
+    let start = manifest.find(&needle)? + needle.len();
+    let end = start + manifest[start..].find('"')?;
+    Some(&manifest[start..end])
+}
+
+/// Refuses a manifest that may not be deployed where funds are real: one built
+/// around the development key, one that does not say where its key came from,
+/// or one whose profile provenance is unknown.
+pub fn require_production(manifest: &str) -> Result<()> {
+    match field(manifest, "class") {
+        Some("ceremony") => {}
+        Some("development") => {
+            return Err(Error::Parameter(
+                "this genesis carries the development verifying key".into(),
+            ))
+        }
+        _ => {
+            return Err(Error::Parameter(
+                "this manifest does not say where its key came from".into(),
+            ))
+        }
+    }
+    if field(manifest, "ceremony_transcript").is_none_or(|t| t.len() != 64) {
+        return Err(Error::Parameter("this manifest names no ceremony transcript".into()));
+    }
+    for name in ["source_commit", "source_blob"] {
+        if field(manifest, name).is_none_or(|v| v.is_empty() || v == "unknown") {
+            return Err(Error::Parameter(format!("this manifest's {name} is unknown")));
+        }
+    }
+    Ok(())
 }

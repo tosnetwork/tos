@@ -744,8 +744,16 @@ cargo run --release --manifest-path \
 # what would it deploy as? the key is part of the genesis state, so it fixes
 # the state hash, so it fixes the address
 cargo run --manifest-path tools/shielded-pool-genesis/Cargo.toml --bin genesis -- \
-    . out/manifest.json --verifying-key vk.bin
+    . out/manifest.json <profile commit> <profile blob> \
+    --verifying-key vk.bin --ceremony-transcript <transcript digest phase2-verify printed>
 ```
+
+The generator never falls back to the development key: without a key, the
+ceremony's transcript digest and the profile's source commit and blob it
+refuses, and it refuses the development key itself. A development genesis must
+be asked for with `--development`; its manifest then carries
+`"key": {"class": "development"}`, which `manifest::require_production`
+refuses.
 
 Until `--verifying-key` existed there was no supported route from a ceremony's
 output to a genesis state: the only way was hand-editing the development

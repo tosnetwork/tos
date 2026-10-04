@@ -517,6 +517,93 @@ pub fn development_parameters(root: &std::path::Path) -> Result<Parameters> {
     })
 }
 
+/// Where the verifying key in a genesis state came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyClass {
+    /// The fixed-seed development key. Its toxic waste is in the source, so a
+    /// pool built around it protects nothing; it exists for test chains.
+    Development,
+    /// A key `phase2-verify` extracted from an audited ceremony, named by the
+    /// transcript digest that audit printed.
+    Ceremony { transcript: String },
+}
+
+/// What the caller asked the generator for.
+#[derive(Clone, Debug, Default)]
+pub struct Request {
+    /// Build around the development key. Must be asked for; it is never the
+    /// fallback for a missing key.
+    pub development: bool,
+    /// The 1,248 bytes `phase2-verify --vk-out` wrote.
+    pub verifying_key: Option<Vec<u8>>,
+    /// The ceremony transcript digest `phase2-verify` printed for that key.
+    pub ceremony_transcript: Option<String>,
+    /// The memo commit and blob the profile was copied from.
+    pub source_commit: Option<String>,
+    pub source_blob: Option<String>,
+}
+
+/// The parameters, key class and provenance a request may be built with.
+///
+/// A genesis built around the development key was the default whenever no key
+/// was named, and its manifest said so only by a hash. Now the development key
+/// has to be asked for by name and is marked as such, and anything else needs
+/// a ceremony key, the ceremony it came from, and where the profile came from.
+pub fn plan(
+    root: &std::path::Path,
+    request: Request,
+) -> Result<(Parameters, KeyClass, manifest::Provenance)> {
+    let unknown = || "unknown".to_string();
+    if request.development {
+        if request.verifying_key.is_some() || request.ceremony_transcript.is_some() {
+            return Err(Error::Parameter(
+                "a development genesis takes no verifying key or ceremony".into(),
+            ));
+        }
+        let provenance = manifest::Provenance {
+            source_commit: request.source_commit.unwrap_or_else(unknown),
+            source_blob: request.source_blob.unwrap_or_else(unknown),
+        };
+        return Ok((development_parameters(root)?, KeyClass::Development, provenance));
+    }
+
+    let verifying_key = request.verifying_key.ok_or_else(|| {
+        Error::Parameter(
+            "a production genesis needs a ceremony verifying key; the development key \
+             is only used when asked for by name"
+                .into(),
+        )
+    })?;
+    let transcript = request.ceremony_transcript.ok_or_else(|| {
+        Error::Parameter("a ceremony key needs the ceremony's transcript digest".into())
+    })?;
+    if transcript.len() != 64
+        || !transcript.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(Error::Parameter(format!(
+            "a ceremony transcript digest is 64 lowercase hex digits, not {transcript:?}"
+        )));
+    }
+    let known =
+        |value: &Option<String>| value.as_deref().is_some_and(|v| !v.is_empty() && v != "unknown");
+    if !known(&request.source_commit) || !known(&request.source_blob) {
+        return Err(Error::Parameter(
+            "a production genesis needs the profile's source commit and blob".into(),
+        ));
+    }
+    if verifying_key == development_parameters(root)?.verifying_key {
+        return Err(Error::Parameter(
+            "that is the development verifying key, whose toxic waste is in the source".into(),
+        ));
+    }
+    let parameters = parameters_with_verifying_key(root, verifying_key)?;
+    let provenance = manifest::Provenance {
+        source_commit: request.source_commit.unwrap_or_else(unknown),
+        source_blob: request.source_blob.unwrap_or_else(unknown),
+    };
+    Ok((parameters, KeyClass::Ceremony { transcript }, provenance))
+}
+
 /// Section 13.1: line endings normalised to LF, nothing else touched.
 pub fn normalise(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
