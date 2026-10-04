@@ -1,0 +1,85 @@
+;; Completion of mints and burns across the bridge, minter and wallet.
+;;
+;; A mint spans three transactions (bridge, minter, wallet) and a burn spans
+;; three (wallet, minter, bridge), and nothing makes them atomic. Each step that
+;; can still fail after an earlier one committed therefore reports back:
+;;
+;; mint: bridge --mint--> minter --credit--> wallet
+;;       wallet --mint_credited--> minter --mint_completed--> bridge
+;;       a failed credit bounces to the minter, which sends mint_failed; a failed
+;;       mint bounces to the bridge. A failed mint stays recorded and anyone may
+;;       retry it by paying the mint fee again, without a new oracle vote.
+;;       The minter counts supply only when the wallet confirms the credit.
+;;
+;; burn: wallet --burn_notification--> minter --burn_notification--> bridge
+;;       bridge emits LOG_BURN and answers burn_recorded. If the bridge fails,
+;;       the notification bounces and the minter credits the tokens back to the
+;;       owner. A refund that fails stays recorded and anyone may retry it.
+;;
+;; Every credit the minter sends carries an id in its query_id: a mint id, which
+;; the bridge assigns below REFUND_ID_FLAG, or a burn id with REFUND_ID_FLAG set.
+
+const int op::mint_credited = 22;   ;; wallet -> minter: credited, supply may count it
+const int op::mint_completed = 23;  ;; minter -> bridge: the mint reached the wallet
+const int op::mint_failed = 24;     ;; minter -> bridge: the wallet refused the credit
+const int op::retry_mint = 25;      ;; anyone -> bridge: send a failed mint again
+const int op::burn_recorded = 26;   ;; bridge -> minter: LOG_BURN was emitted
+const int op::retry_refund = 27;    ;; anyone -> minter: send a failed refund again
+
+const int REFUND_ID_FLAG = 0x8000000000000000;
+
+;; The largest amount Coins can hold. Supply plus every credit in flight must
+;; stay within it, or a wallet's confirmation would arrive at a minter that
+;; cannot store the new supply and be lost.
+const int MAX_SUPPLY = 0xffffffffffffffffffffffffffffff;
+
+const int MINT_IN_FLIGHT = 0;
+const int MINT_FAILED = 1;
+
+const int BURN_AWAITING_BRIDGE = 0;
+const int BURN_REFUNDING = 1;
+const int BURN_REFUND_FAILED = 2;
+
+const int LOG_MINT_FAILED = 0xc0880ccf;
+const int LOG_BURN_REFUND_FAILED = 0xc0990ccf;
+
+;; Bounce on action-phase failure. Without it a send that fails in the action
+;; phase rolls the transaction back and produces no bounce at all.
+const int SEND_MODE_BOUNCE_ON_ACTION_FAIL = 16;
+
+;; Gas, in gas units, that each completion step may use. The fee budget below is
+;; priced from these at the network's current gas and forwarding prices, so a
+;; price change is followed without a configuration change. The token-bridge
+;; sandbox measures every step and fails if one exceeds its constant.
+const int WALLET_CREDIT_GAS = 12000;
+const int MINTER_STEP_GAS = 20000;
+const int BRIDGE_STEP_GAS = 25000;
+
+;; A small completion message: a header and up to two addresses and an amount.
+const int STEP_MSG_BITS = 1023;
+const int STEP_MSG_CELLS = 1;
+
+int gas_fee(int gas, int is_mc) asm "GETGASFEE";
+int forward_fee(int cells, int bits, int is_mc) asm "GETFORWARDFEE";
+
+;; What a credit sent to a wallet must carry so that either outcome reaches the
+;; bridge: the wallet's storage reserve and gas, its confirmation or bounce, the
+;; minter's step, its message to the masterchain and the bridge's step there.
+int credit_budget(int wallet_min_tos_for_storage) inline {
+    return wallet_min_tos_for_storage
+        + gas_fee(WALLET_CREDIT_GAS, 0)
+        + forward_fee(STEP_MSG_CELLS, STEP_MSG_BITS, 0)
+        + gas_fee(MINTER_STEP_GAS, 0)
+        + forward_fee(STEP_MSG_CELLS, STEP_MSG_BITS, -1)
+        + gas_fee(BRIDGE_STEP_GAS, -1);
+}
+
+;; What a burn notification sent to the bridge must carry so that either
+;; outcome reaches the minter: the bridge's step and its log, then its answer or
+;; bounce back to the basechain and the minter's step there.
+int burn_report_budget() inline {
+    return gas_fee(BRIDGE_STEP_GAS, -1)
+        + forward_fee(STEP_MSG_CELLS, STEP_MSG_BITS, -1)
+        + forward_fee(STEP_MSG_CELLS + 1, STEP_MSG_BITS * 2, -1)
+        + gas_fee(MINTER_STEP_GAS, 0);
+}

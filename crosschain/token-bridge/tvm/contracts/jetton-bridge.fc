@@ -5,28 +5,62 @@
 #include "messages.fc";
 #include "utils.fc";
 #include "config.fc";
+#include "settlement.fc";
 
 ;; collector_address: MsgAddress jetton_minter_code:^Cell jetton_wallet_code:^Cell
 ;;   paid_swaps:(HashmapE 256 Unit)
+;;   next_mint_id:uint64 pending_mints:(HashmapE 64 PendingMint)
+;; pending_mint#_ status:uint1 swap_key:uint256 to_address_hash:uint256
+;;   amount:Coins wrapped_token_data:^Cell = PendingMint;
 ;;
 ;; paid_swaps holds the swaps whose mint fee has been paid and not yet spent.
 ;; pay_swap adds a key; a swap vote requires one and removes it, so a fee pays
 ;; for exactly one mint and the set does not grow without bound.
-(slice, cell, cell, cell) load_data() inline_ref {
+;;
+;; pending_mints holds every mint a vote started until its wallet confirmed the
+;; credit. A mint that failed stays here and anyone may send it again by paying
+;; the mint fee; the vote that authorised it is not needed a second time.
+(slice, cell, cell, cell, int, cell) load_data() inline_ref {
     slice slice_data = get_data().begin_parse();
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps) = (slice_data~load_msg_addr(), slice_data~load_ref(), slice_data~load_ref(), slice_data~load_dict());
+    slice collector_address = slice_data~load_msg_addr();
+    cell jetton_minter_code = slice_data~load_ref();
+    cell jetton_wallet_code = slice_data~load_ref();
+    cell paid_swaps = slice_data~load_dict();
+    int next_mint_id = slice_data~load_uint(64);
+    cell pending_mints = slice_data~load_dict();
     slice_data.end_parse();
-    return (collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps);
+    return (collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
 }
 
-() save_data(slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps) impure inline_ref {
+() save_data(slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) impure inline_ref {
     set_data(begin_cell()
         .store_slice(collector_address)
         .store_ref(jetton_minter_code)
         .store_ref(jetton_wallet_code)
         .store_dict(paid_swaps)
+        .store_uint(next_mint_id, 64)
+        .store_dict(pending_mints)
         .end_cell()
     );
+}
+
+builder pack_pending_mint(int status, int swap_key, int to_address_hash, int amount, cell wrapped_token_data) inline {
+    return begin_cell()
+        .store_uint(status, 1)
+        .store_uint(swap_key, 256)
+        .store_uint(to_address_hash, 256)
+        .store_coins(amount)
+        .store_ref(wrapped_token_data);
+}
+
+(int, int, int, int, cell) unpack_pending_mint(slice entry) inline {
+    int status = entry~load_uint(1);
+    int swap_key = entry~load_uint(256);
+    int to_address_hash = entry~load_uint(256);
+    int amount = entry~load_coins();
+    cell wrapped_token_data = entry~load_ref();
+    entry.end_parse();
+    return (status, swap_key, to_address_hash, amount, wrapped_token_data);
 }
 
 ;; A swap's identity, derived from the source event rather than chosen.
@@ -42,12 +76,15 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
 }
 
 (slice, cell) calculate_minter_address(cell wrapped_token_data) impure inline_ref {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, _) = load_data();
+    (_, cell jetton_minter_code, cell jetton_wallet_code, _, _, _) = load_data();
 
     cell jetton_minter_data = begin_cell()
             .store_coins(0) ;; total_supply
+            .store_coins(0) ;; in_flight
             .store_ref(wrapped_token_data)
             .store_ref(jetton_wallet_code)
+            .store_uint(0, 64) ;; next_burn_id
+            .store_dict(null()) ;; pending_burns
             .end_cell();
 
     cell jetton_minter_state_init = begin_cell()
@@ -61,8 +98,54 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
     return (minter_address, jetton_minter_state_init);
 }
 
+;; Sends a recorded mint to its minter. The mint id travels as the query_id, so
+;; the minter's report, or its bounce, names the mint it is about.
+() send_mint(int mint_id, int to_address_hash, int amount, cell wrapped_token_data, int value) impure inline_ref {
+    (slice minter_address, cell jetton_minter_state_init) = calculate_minter_address(wrapped_token_data);
+
+    cell master_msg = begin_cell() ;; mint tokens to wallet address
+            .store_body_header(op::mint, mint_id)
+            .store_slice(create_address(WORKCHAIN, to_address_hash)) ;; 3 + 8 + 256 = 267 bit
+            .store_coins(amount) ;; max 124 bit
+            .store_coins(0) ;; forward_coins_amount
+            .end_cell();
+
+    var msg = begin_cell()
+            .store_msg_flags(BOUNCEABLE)
+            .store_slice(minter_address)
+            .store_coins(value)
+            .store_msgbody_prefix_stateinit()
+            .store_ref(jetton_minter_state_init)
+            .store_ref(master_msg);
+
+    send_raw_message(msg.end_cell(), SEND_MODE_REGULAR); ;; revert on errors
+}
+
+;; The outcome of an in-flight mint: completed removes it, failed keeps it for a
+;; retry. Only the mint's own minter can report on it.
+() settle_mint(int mint_id, int completed, slice sender_address) impure {
+    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) = load_data();
+    (slice entry, int found) = pending_mints.udict_get?(64, mint_id);
+    if (~ found) {
+        return ();
+    }
+    (int status, int key, int to_address_hash, int amount, cell wrapped_token_data) = unpack_pending_mint(entry);
+    (slice minter_address, _) = calculate_minter_address(wrapped_token_data);
+    throw_unless(error::minter_not_sender, equal_slices(minter_address, sender_address));
+    if (status != MINT_IN_FLIGHT) {
+        return ();
+    }
+    if (completed) {
+        (pending_mints, _) = pending_mints.udict_delete?(64, mint_id);
+    } else {
+        pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_FAILED, key, to_address_hash, amount, wrapped_token_data));
+        emit_log_simple(LOG_MINT_FAILED, begin_cell().store_uint(mint_id, 64).store_uint(key, 256).end_cell(), 0);
+    }
+    save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
+}
+
 () execute_voting (slice oracles_address, slice voting_data, int query_id, int bridge_mint_fee, int state_flags, int msg_value) impure {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps) = load_data();
+    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) = load_data();
 
     int op = voting_data~load_uint(8);
 
@@ -77,7 +160,7 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
         throw_if(error::operation_suspended, state_flags & STATE_SWAPS_SUSPENDED);
         (
             int ext_chain_hash,
-            int internal_index, 
+            int internal_index,
             int addr_hash,
             int mint_jetton_amount,
             cell wrapped_token_data,
@@ -101,8 +184,6 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
 
         throw_unless(error::wrong_external_chain_id, chain_id == MY_CHAIN_ID);
 
-        slice to_address = create_address(WORKCHAIN, addr_hash);
-
         throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0);
         throw_unless(error::mint_fee_less_forward, bridge_mint_fee > forward_coins_amount);
 
@@ -117,26 +198,13 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
         int key = swap_key(ext_chain_hash, internal_index);
         (cell remaining, int was_paid) = paid_swaps.udict_delete?(256, key);
         throw_unless(error::swap_not_paid, was_paid);
-        save_data(collector_address, jetton_minter_code, jetton_wallet_code, remaining);
+        throw_unless(error::mint_ids_exhausted, next_mint_id < REFUND_ID_FLAG);
 
-        (slice minter_address, cell jetton_minter_state_init) = calculate_minter_address(wrapped_token_data);
+        int mint_id = next_mint_id;
+        pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_IN_FLIGHT, key, addr_hash, mint_jetton_amount, wrapped_token_data));
+        save_data(collector_address, jetton_minter_code, jetton_wallet_code, remaining, mint_id + 1, pending_mints);
 
-        cell master_msg = begin_cell() ;; mint tokens to wallet address
-                .store_body_header(op::mint, query_id)
-                .store_slice(to_address) ;; 3 + 8 + 256 = 267 bit
-                .store_coins(mint_jetton_amount) ;; max 124 bit
-                .store_coins(forward_coins_amount) ;; max 124 bit
-                .end_cell();
-
-        var msg = begin_cell()
-                .store_msg_flags(BOUNCEABLE)
-                .store_slice(minter_address)
-                .store_coins(bridge_mint_fee)
-                .store_msgbody_prefix_stateinit()
-                .store_ref(jetton_minter_state_init)
-                .store_ref(master_msg);
-
-        send_raw_message(msg.end_cell(), SEND_MODE_REGULAR); ;; revert on errors
+        send_mint(mint_id, addr_hash, mint_jetton_amount, wrapped_token_data, bridge_mint_fee);
 
     } elseif (op == op::execute_voting::get_reward) {
 
@@ -165,7 +233,7 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
         collector_address = voting_data~load_msg_addr();
         voting_data.end_parse();
 
-        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps);
+        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
 
     }
 
@@ -174,11 +242,63 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
     }
 }
 
+;; A burn the minter has already taken out of supply. The log and the answer
+;; to the minter are sent together or not at all: if either cannot be sent, the
+;; notification bounces and the minter credits the tokens back.
+() record_burn(slice sender_address, int burn_id, slice in_msg_body) impure {
+    int jetton_amount = in_msg_body~load_coins();
+    slice from_address = in_msg_body~load_msg_addr();
+    slice response_address = in_msg_body~load_msg_addr();
+    int destination_address = in_msg_body~load_uint(160);
+    cell wrapped_token_data = in_msg_body~load_ref();
+    in_msg_body.end_parse();
+
+    (slice minter_address, _) = calculate_minter_address(wrapped_token_data);
+
+    throw_unless(error::minter_not_sender, equal_slices(minter_address, sender_address));
+    (int chain_id, int token_address, _) = unpack_wrapped_token_data(wrapped_token_data);
+
+    throw_unless(error::wrong_external_chain_id, chain_id == MY_CHAIN_ID); ;; can never happen
+
+    (int from_address_wc, int from_address_hash) = parse_std_addr(from_address);
+
+    throw_unless(error::wrong_sender_workchain, from_address_wc == WORKCHAIN); ;; can never happen
+
+    var log = begin_cell()
+            .store_uint(12, 4) ;; ext_out_msg_info$11 src:MsgAddressInt ()
+            .store_uint(1, 2) ;; addr_extern$01
+            .store_uint(256, 9) ;; len:(## 9)
+            .store_uint(LOG_BURN, 256) ;; external_address:(bits len)
+            .store_uint(1, 64 + 32 + 2) ;; created_lt, created_at, init:Maybe, body:Either
+            .store_ref(begin_cell() ;; 704 bit
+                    .store_uint(destination_address, 160)
+                    .store_uint(jetton_amount, 128) ;; max 124 bits
+                    .store_uint(token_address, 160)
+                    .store_uint(from_address_hash, 256)
+                    .end_cell());
+    send_raw_message(log.end_cell(), SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+
+    var answer = begin_cell()
+            .store_msg_flags(NON_BOUNCEABLE)
+            .store_slice(sender_address)
+            .store_coins(0)
+            .store_msgbody_prefix_slice()
+            .store_body_header(op::burn_recorded, burn_id);
+    send_raw_message(answer.end_cell(), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+}
+
 () recv_internal(int msg_value, cell in_msg_cell, slice in_msg_body) impure {
     var cs = in_msg_cell.begin_parse();
     var flags = cs~load_uint(4);  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
+    slice sender_address = cs~load_msg_addr();
+
     if (flags & 1) {
-        ;; ignore all bounced messages
+        ;; The only bounceable message the bridge sends is a mint, and a bounce
+        ;; carries the first 256 bits of it: the op and the mint id.
+        in_msg_body~skip_bits(32); ;; 0xFFFFFFFF
+        if (in_msg_body~load_uint(32) == op::mint) {
+            settle_mint(in_msg_body~load_uint(64), false, sender_address);
+        }
         return ();
     }
 
@@ -186,9 +306,21 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
 
     (int op, int query_id) = in_msg_body~load_body_header();
 
-    throw_if(error::unknown_op, (op != op::burn_notification) & (op != op::execute_voting) & (op != op::pay_swap) & (op != op::excesses));
+    ;; Completion reports do not read the configuration: their senders are
+    ;; derived from this contract's own storage, and refusing one for a missing
+    ;; parameter would leave a mint or a burn without its outcome.
+    if ((op == op::mint_completed) | (op == op::mint_failed)) {
+        in_msg_body.end_parse();
+        settle_mint(query_id, op == op::mint_completed, sender_address);
+        return ();
+    }
+    if (op == op::burn_notification) {
+        record_burn(sender_address, query_id, in_msg_body);
+        return ();
+    }
 
-    slice sender_address = cs~load_msg_addr();
+    throw_if(error::unknown_op, (op != op::execute_voting) & (op != op::pay_swap) & (op != op::excesses) & (op != op::retry_mint));
+
     (int sender_wc, int sender_address_hash) = parse_std_addr(sender_address);
 
     (_, int oracles_address_hash, _, int state_flags, int bridge_burn_fee, int bridge_mint_fee, _, _, _, _) = get_jetton_bridge_config();
@@ -213,38 +345,26 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
         ;; the vote will compute it. Recording it is what lets the swap branch
         ;; check that a fee was paid at all.
         int swap_id = in_msg_body~load_uint(256);
-        (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps) = load_data();
+        (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) = load_data();
         paid_swaps~udict_set_builder(256, swap_id, begin_cell());
-        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps);
+        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
         emit_log_simple(LOG_SWAP_PAID, begin_cell().store_uint(swap_id, 256).end_cell(), 0);
-    } elseif (op == op::burn_notification) {
-        int jetton_amount = in_msg_body~load_coins();
-        slice from_address = in_msg_body~load_msg_addr();
-        slice response_address = in_msg_body~load_msg_addr();
-        int destination_address = in_msg_body~load_uint(160);
-        cell wrapped_token_data = in_msg_body~load_ref();
+    } elseif (op == op::retry_mint) {
+
+        ;; The caller pays the mint fee again and the mint goes out as voted.
+        throw_if(error::oracles_sender, is_oracles);
+        throw_if(error::operation_suspended, state_flags & STATE_SWAPS_SUSPENDED);
+        throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee);
+        int mint_id = in_msg_body~load_uint(64);
         in_msg_body.end_parse();
-
-        (slice minter_address, _) = calculate_minter_address(wrapped_token_data);
-
-        throw_unless(error::minter_not_sender, equal_slices(minter_address, sender_address));
-        (int chain_id, int token_address, _) = unpack_wrapped_token_data(wrapped_token_data);
-
-        throw_unless(error::wrong_external_chain_id, chain_id == MY_CHAIN_ID); ;; can never happen
-
-        (int from_address_wc, int from_address_hash) = parse_std_addr(from_address);
-
-        throw_unless(error::wrong_sender_workchain, from_address_wc == WORKCHAIN); ;; can never happen
-
-        emit_log_simple(LOG_BURN, 
-            begin_cell() ;; 704 bit
-                    .store_uint(destination_address, 160)
-                    .store_uint(jetton_amount, 128) ;; max 124 bits
-                    .store_uint(token_address, 160)
-                    .store_uint(from_address_hash, 256)
-                    .end_cell(),
-            1
-        );
+        (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) = load_data();
+        (slice entry, int found) = pending_mints.udict_get?(64, mint_id);
+        throw_unless(error::nothing_to_retry, found);
+        (int status, int key, int to_address_hash, int amount, cell wrapped_token_data) = unpack_pending_mint(entry);
+        throw_unless(error::nothing_to_retry, status == MINT_FAILED);
+        pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_IN_FLIGHT, key, to_address_hash, amount, wrapped_token_data));
+        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
+        send_mint(mint_id, to_address_hash, amount, wrapped_token_data, bridge_mint_fee);
     }
 }
 
@@ -256,7 +376,23 @@ slice get_minter_address(cell wrapped_token_data) method_id {
 }
 
 (int, int, cell, cell, int) get_bridge_data() method_id {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, _) = load_data();
+    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, _, _, _) = load_data();
     (int wc, int addr) = parse_std_addr(collector_address);
     return (wc, addr, jetton_minter_code, jetton_wallet_code, MY_CHAIN_ID);
+}
+
+;; status (-1 when there is no such mint), swap key, recipient hash, amount
+(int, int, int, int) get_pending_mint(int mint_id) method_id {
+    (_, _, _, _, _, cell pending_mints) = load_data();
+    (slice entry, int found) = pending_mints.udict_get?(64, mint_id);
+    if (~ found) {
+        return (-1, 0, 0, 0);
+    }
+    (int status, int key, int to_address_hash, int amount, _) = unpack_pending_mint(entry);
+    return (status, key, to_address_hash, amount);
+}
+
+int get_next_mint_id() method_id {
+    (_, _, _, _, int next_mint_id, _) = load_data();
+    return next_mint_id;
 }

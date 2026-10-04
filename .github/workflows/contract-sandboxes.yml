@@ -17,6 +17,8 @@ on:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
       - "tosctl/src/sandbox/**"
+      # The token-bridge sandbox compiles these sources when it runs.
+      - "crosschain/token-bridge/tvm/**"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -42,6 +44,8 @@ on:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
       - "tosctl/src/sandbox/**"
+      # The token-bridge sandbox compiles these sources when it runs.
+      - "crosschain/token-bridge/tvm/**"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"

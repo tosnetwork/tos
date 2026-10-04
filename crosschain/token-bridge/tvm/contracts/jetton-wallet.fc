@@ -7,6 +7,7 @@
 #include "utils.fc";
 #include "errors.fc";
 #include "config.fc";
+#include "settlement.fc";
 
 
 {-
@@ -126,6 +127,28 @@ This is suitable for most tokens, if you need tokens transferable between workch
 
   int tos_balance_before_msg = my_tos_balance - msg_value;
   int storage_fee = wallet_min_tos_for_storage - min(tos_balance_before_msg, wallet_min_tos_for_storage);
+
+  if (equal_slices(jetton_master_address, sender_address)) {
+    ;; A credit from the minter: a mint or a refunded burn. The minter counts it
+    ;; only once this confirmation arrives, and any refusal here bounces the
+    ;; credit back to it instead, so the confirmation is the only action and a
+    ;; failure to send it bounces too.
+    throw_unless(error::malformed_forward_payload, forward_tos_amount == 0);
+    int confirmation_value = msg_value - storage_fee - gas_fee(WALLET_CREDIT_GAS, 0);
+    throw_unless(error::not_enough_tos, confirmation_value > 0);
+    var msg = begin_cell()
+            .store_msg_flags(NON_BOUNCEABLE)
+            .store_slice(jetton_master_address)
+            .store_coins(confirmation_value)
+            .store_msgbody_prefix_slice()
+            .store_body_header(op::mint_credited, query_id)
+            .store_coins(jetton_amount)
+            .store_slice(owner_address);
+    send_raw_message(msg.end_cell(), SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+    save_data(balance, owner_address, jetton_master_address, jetton_wallet_code);
+    return ();
+  }
+
   msg_value -= (storage_fee + wallet_gas_consumption);
   if(forward_tos_amount) {
     msg_value -= (forward_tos_amount + fwd_fee);

@@ -10,7 +10,7 @@ This bridge is not trustless. Safety depends on all of the following remaining t
 4. The EVM bridge address and EVM chain ID domain-separate every signed action.
 5. The TOS and EVM contracts, compiler versions, deployment BOCs/bytecode, and constructor/config cells match audited artifacts.
 6. Locked ERC-20 balances and wrapped Jetton supply are continuously reconciled.
-7. Every deployment satisfies the hard constraints below. The zero forward amount is enforced by the contract; the mint-path fee budget is still an operational responsibility.
+7. Every deployment satisfies the hard constraints below. The zero forward amount and the completion fee budget are enforced by the contracts; the fees configured still decide whether mints and burns go through at all.
 
 A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record.
 
@@ -37,11 +37,7 @@ These are not future work. A deployment that violates one of them is misconfigur
 
 `jetton-bridge` rejects any swap whose `forward_coins_amount` is non-zero (`error::forward_amount_not_zero`, 398). Oracle daemons must therefore sign swaps with a zero forward amount; a message carrying any other value cannot execute.
 
-The mint spans three transactions — bridge, minter, wallet — and TVM gives no atomicity across them. `jetton-minter` commits `total_supply += amount` in its own transaction and then relies on a later wallet transaction to create the matching balance. If that wallet transaction fails, supply is inflated with no credit behind it, the multisig query is already spent, and the depositor's locked ERC-20 is stranded until a new quorum signs a different query. `jetton-minter` ignores bounced messages, so nothing reconciles this. (Note that this cannot be fixed by reordering the send and the state write: `send_raw_message` only appends to the action list, and c4 and c5 commit together at the end of a successful compute phase.)
-
-A zero forward amount closes the reachable half of that window, which is why the contract now requires it rather than leaving it to operational discipline. `jetton-wallet`'s `receive_tokens` has no insufficient-value guard in its compute phase — unlike `send_tokens`, it does not `throw_unless(error::not_enough_tos, ...)` — so its only failure path is the action phase, and the only action it can fail on is the forward notification, which it emits solely when `forward_coins_amount` is non-zero. With a zero forward amount the wallet emits at most the excesses message, which carries `SEND_MODE_IGNORE_ERRORS`.
-
-The residual case is a compute-phase failure of the wallet, which means the fee budget could not deploy and run it. That is covered by the fee-budget constraint below, and its complete resolution is tracked as pre-mainnet work.
+The receiving wallet's only action on a credit from the minter is its confirmation (see below), so a non-zero forward amount would add a second action whose failure the protocol does not report. The minter refuses such a credit as well.
 
 ### Oracles signing for Tron must use the Ethereum message prefix
 
@@ -56,14 +52,26 @@ const signature = Trx.signString(digest, privateKey, false);  // false = no TRON
 
 Note that `signMessageV2` cannot be corrected by an argument: it takes `(message, privateKey)` and silently ignores a third one, so `signMessageV2(digest, key, false)` still produces a TRON-prefixed signature and still fails. `test-tron/tron_vm.js` pins all three behaviours: `Trx.signString(..., false)` and an ethers signer both carry a vote, while a full quorum from `signMessageV2` moves no state.
 
-### The configured fee budget must cover the whole mint path
+## Completion of mints and burns
 
-`jetton-bridge` checks only `bridge_mint_fee > forward_coins_amount`. It does not verify that `bridge_mint_fee` also covers `minter_min_tos_for_storage`, wallet deployment, `wallet_min_tos_for_storage`, and `wallet_gas_consumption`. Before enabling a ConfigParam, compute that budget against the deployed contract sizes on the target network, add margin for storage-rent accrual on the minter between mints, and verify it end to end on testnet. Re-verify after any fee, contract, or network gas-price change.
+A mint spans three transactions (bridge, minter, wallet) and a burn spans three (wallet, minter, bridge), and TVM gives no atomicity across them. `settlement.fc` describes the protocol that reports each outcome back:
+
+- **Mint.** The bridge records the mint under a mint id before sending it, and keeps the record until the wallet's confirmation reaches it through the minter. The minter counts the amount in `total_supply` only when the wallet confirms the credit, so supply never exceeds what the wallets hold. A credit the wallet refuses bounces to the minter, which reports `mint_failed`; a mint the minter refuses bounces to the bridge. Either way the bridge marks the mint failed (`LOG_MINT_FAILED`), and anyone may send it again with `retry_mint` by paying the mint fee. The oracle vote that authorised it is not needed a second time, and a mint still in flight cannot be retried.
+- **Burn.** The minter takes the amount out of supply, records the burn under a burn id and sends the notification bounceable. The bridge emits `LOG_BURN` and answers `burn_recorded` in the same action phase, so either both happen or the notification bounces. On a bounce the minter credits the tokens back to their owner. A refund it cannot fund is recorded as failed (`LOG_BURN_REFUND_FAILED`), and anyone may retry it with `retry_refund`. A burn still awaiting the bridge cannot be refunded.
+- **Fees.** Each step's gas is declared in `settlement.fc` and priced with `GETGASFEE`/`GETFORWARDFEE` at the network's current prices. The minter refuses a credit or a burn notification that cannot fund every later step and the report back. A refusal leaves the funds where they were: the mint stays retryable, and the burning wallet keeps its tokens. The token-bridge sandbox measures every step on a bridge and minter aged to 65,536 unresolved entries and fails if any exceeds its declaration.
+- **Supply bound.** Supply plus every credit in flight stays within `2^120 - 1`, so a confirmation never reaches a minter that cannot store it.
+
+What remains:
+
+- **A sustained gas price rise between steps.** A budget priced at one moment cannot fund every later step at any later price. If prices rise far enough while a mint or burn is in flight (the sandbox needed roughly a 300-fold rise), a step can run out of gas with nothing left to report, and the record stays in flight. Supply is not inflated by this: an unconfirmed credit is never counted. However, a mint stuck in flight cannot be retried safely without knowing whether its credit landed, so recovering one needs an operator decision.
+- **A removed or replaced ConfigParam.** The minter reads the bridge address from the ConfigParam. A minter transaction that cannot read it refuses, and a wallet's confirmation refused that way is lost (it is not bounceable), leaving that mint in flight with the tokens credited but not yet counted. Changing the bridge address in the ConfigParam while mints or burns are in flight is therefore an operational hazard. A burn notification sent to an address with nothing deployed bounces and is credited back. One that the previous bridge still logs is released normally, but the minter refuses that bridge's answer, so the burn stays recorded as awaiting the bridge.
+- **Fees still decide liveness.** A configured fee too small for the budget makes every mint or burn refuse. That is safe, but nothing goes through until the fee is raised.
 
 ## Mandatory pre-mainnet work
 
-- [ ] Resolve burn-path partial execution. `jetton-minter` decreases `total_supply` and then notifies `jetton-bridge` with a **non-bounceable** message. If that notification is not processed — the bridge throws, or its ConfigParam is unavailable in the asynchronous window — the depositor's jettons are already burned and supply already reduced, but no burn log is emitted, so no unlock can ever be signed on the EVM side. Unlike the mint direction, no bounce is even available to compensate. The same pending/finalize treatment applies.
-- [ ] Resolve mint-path partial execution so the bridge no longer depends on the fee-budget constraint above. Rejecting a non-zero forward amount closes the wallet's action-phase failure, but a compute-phase failure remains possible whenever the fee budget cannot deploy and run the wallet. `jetton-minter` increases `total_supply` when it dispatches `internal_transfer` and ignores bounces, and `jetton-bridge` has already marked the multisig query processed by then. Bounce handling alone is not sufficient and not trivial: a wallet action-phase failure produces no bounce at all, and the bounced body carries only the first 256 bits of the original message, which excludes the destination — so the minter cannot prove a bounce came from one of its own wallets without tracking pending mints by query ID. Prefer an acknowledgement protocol that reports completion only after the wallet is credited, and validate the whole fee budget in the contract rather than in operations.
+- [x] Resolve burn-path partial execution: a burn the bridge does not log is credited back to its owner (see Completion of mints and burns).
+- [x] Resolve mint-path partial execution: supply counts a mint only once its wallet confirms the credit, a failed mint stays retryable without a new vote, and the completion fee budget is validated in the contract (see Completion of mints and burns).
+- [ ] Decide the operator procedure for a mint left in flight by a sustained gas price rise or a ConfigParam change (see What remains).
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.

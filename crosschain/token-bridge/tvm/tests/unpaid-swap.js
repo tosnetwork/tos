@@ -47,6 +47,9 @@ const bridgeStorage = [
   "cell", ["uint8", 2],
   // paid_swaps: nothing has been paid for.
   "uint1", 0,
+  // next_mint_id and pending_mints: no mint has started.
+  "uint64", 0,
+  "uint1", 0,
 ];
 
 // The swap key the contract derives, computed the same way here. A cell's

@@ -40,6 +40,9 @@ const bridgeStorage = [
   "cell", ["uint8", 2],
   // paid_swaps: the set of swaps whose mint fee is paid and unspent.
   "uint1", 0,
+  // next_mint_id and pending_mints: no mint has started.
+  "uint64", 0,
+  "uint1", 0,
 ];
 
 // The destination is a 20-byte counterparty address. Tron addresses are also
@@ -146,7 +149,7 @@ funcer({}, {
           stateInitMatchesDestination: true,
           body: [
             "uint32", 21,        // op::mint
-            "uint64", 100502,
+            "uint64", 0,         // the mint id: the first mint the bridge records
             "Address", "0:53dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
             "coins", 1000,
             "coins", 0,

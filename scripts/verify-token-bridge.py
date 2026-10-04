@@ -19,6 +19,7 @@ REQUIRED_SOURCES = [
     "tvm/contracts/multisig.fc",
     "tvm/contracts/votes-collector.fc",
     "tvm/contracts/config.fc",
+    "tvm/contracts/settlement.fc",
     "tvm/contracts/stdlib.fc",
     "tvm/params/ethereum.fc",
     "tvm/params/bsc.fc",
@@ -102,20 +103,29 @@ def verify_tvm_sources() -> None:
         "throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0)",
         "calculate_minter_address(wrapped_token_data)",
         "throw_unless(error::minter_not_sender",
-        "emit_log_simple(LOG_BURN",
+        ".store_uint(LOG_BURN, 256)",
         "emit_log_simple(LOG_SWAP_PAID",
+        # A mint stays recorded until its wallet confirms it, and a burn's log
+        # and answer are sent together or bounce back to the minter.
+        "pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_IN_FLIGHT",
+        "op::burn_recorded, burn_id",
+        "SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE + SEND_MODE_BOUNCE_ON_ACTION_FAIL",
     ])
     require_text(c / "jetton-wallet.fc", [
         "throw_unless(error::not_enough_funds, jetton_amount > 0)",
         "throw_unless(error::burn_fee_not_matched, msg_value == bridge_burn_fee)",
         "state_flags & STATE_BURN_SUSPENDED",
         ".store_uint(destination_address, 160)",
+        ".store_body_header(op::mint_credited, query_id)",
     ])
     require_text(c / "jetton-minter.fc", [
         "sender_wc == -1",
         "sender_address_hash == bridge_address_hash",
         "calculate_user_jetton_wallet_address",
         "https://bridge.tos.network/token/",
+        "throw_unless(error::credit_underfunded, value >= credit_budget(wallet_min_tos_for_storage))",
+        "throw_unless(error::supply_bound, total_supply + in_flight + jetton_amount <= MAX_SUPPLY)",
+        "throw_unless(error::burn_underfunded, value >= burn_report_budget())",
     ])
     require_text(c / "multisig.fc", [
         "recv_external",

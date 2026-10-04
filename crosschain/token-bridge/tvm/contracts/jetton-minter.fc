@@ -8,6 +8,7 @@
 #include "utils.fc";
 #include "config.fc";
 #include "discovery-params.fc";
+#include "settlement.fc";
 
 
 slice zero_address() inline {
@@ -15,41 +16,155 @@ slice zero_address() inline {
 }
 
 ;; storage scheme
-;; storage#_ total_supply:Coins content:^Cell jetton_wallet_code:^Cell = Storage;
+;; storage#_ total_supply:Coins in_flight:Coins content:^Cell jetton_wallet_code:^Cell
+;;   next_burn_id:uint64 pending_burns:(HashmapE 64 PendingBurn) = Storage;
+;; pending_burn#_ status:uint2 owner:MsgAddressInt amount:Coins = PendingBurn;
+;;
+;; total_supply counts only credits a wallet has confirmed, so it never exceeds
+;; what the wallets hold; in_flight is what has been sent to wallets and not yet
+;; confirmed or bounced. A burn leaves the supply when the wallet's tokens are
+;; gone and stays pending until the bridge has logged it or the tokens were
+;; credited back.
 
-(int, cell, cell) load_data() inline {
+(int, int, cell, cell, int, cell) load_data() inline {
     slice ds = get_data().begin_parse();
 
-    (int total_supply, cell content, cell jetton_wallet_code) = (
+    (int total_supply, int in_flight, cell content, cell jetton_wallet_code, int next_burn_id, cell pending_burns) = (
             ds~load_coins(), ;; total_supply
+            ds~load_coins(), ;; in_flight
             ds~load_ref(), ;; content
-            ds~load_ref() ;; jetton_wallet_code
+            ds~load_ref(), ;; jetton_wallet_code
+            ds~load_uint(64), ;; next_burn_id
+            ds~load_dict() ;; pending_burns
     );
     ds.end_parse();
 
-    return (total_supply, content, jetton_wallet_code);
+    return (total_supply, in_flight, content, jetton_wallet_code, next_burn_id, pending_burns);
 }
 
-() save_data(int total_supply, cell content, cell jetton_wallet_code) impure inline {
+() save_data(int total_supply, int in_flight, cell content, cell jetton_wallet_code, int next_burn_id, cell pending_burns) impure inline {
     set_data(begin_cell()
             .store_coins(total_supply)
+            .store_coins(in_flight)
             .store_ref(content)
             .store_ref(jetton_wallet_code)
+            .store_uint(next_burn_id, 64)
+            .store_dict(pending_burns)
             .end_cell()
     );
 }
 
-() mint_tokens(slice to_address, cell jetton_wallet_code, int amount, cell master_msg) impure {
-    cell state_init = calculate_jetton_wallet_state_init(to_address, my_address(), jetton_wallet_code);
+builder pack_pending_burn(int status, slice owner_address, int amount) inline {
+    return begin_cell().store_uint(status, 2).store_slice(owner_address).store_coins(amount);
+}
+
+(int, slice, int) unpack_pending_burn(slice entry) inline {
+    int status = entry~load_uint(2);
+    slice owner_address = entry~load_msg_addr();
+    int amount = entry~load_coins();
+    entry.end_parse();
+    return (status, owner_address, amount);
+}
+
+;; Balance above the minter's own storage reserve.
+int spendable(int minter_min_tos_for_storage) inline {
+    return pair_first(get_balance()) - minter_min_tos_for_storage;
+}
+
+;; Credits amount to owner's wallet, deploying it if needed. The wallet confirms
+;; with mint_credited or the credit bounces back; credit_id says which mint or
+;; refund it was.
+() send_credit(slice owner_address, cell jetton_wallet_code, int credit_id, int amount, int value, int bridge_address_hash) impure inline_ref {
+    cell state_init = calculate_jetton_wallet_state_init(owner_address, my_address(), jetton_wallet_code);
     slice to_wallet_address = calculate_address_by_state_init(state_init);
+    cell credit = begin_cell()
+            .store_body_header(op::internal_transfer, credit_id)
+            .store_coins(amount) ;; max 124 bit
+            .store_slice(zero_address()) ;; from_address, 2 bit
+            .store_slice(create_address(-1, bridge_address_hash)) ;; response_address, 3 + 8 + 256 = 267 bit
+            .store_coins(0) ;; forward_amount, 4 bit
+            .store_uint(0, 1) ;; no forward_payload, 1 bit
+            .end_cell();
     var msg = begin_cell()
             .store_msg_flags(BOUNCEABLE)
             .store_slice(to_wallet_address)
-            .store_coins(amount)
+            .store_coins(value)
             .store_msgbody_prefix_stateinit()
             .store_ref(state_init)
-            .store_ref(master_msg);
-    send_raw_message(msg.end_cell(), SEND_MODE_REGULAR); ;; revert on errors
+            .store_ref(credit);
+    send_raw_message(msg.end_cell(), SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+}
+
+() send_to_bridge(int bridge_address_hash, int op, int query_id) impure inline {
+    var msg = begin_cell()
+            .store_msg_flags(NON_BOUNCEABLE)
+            .store_masterchain_address(bridge_address_hash)
+            .store_coins(0)
+            .store_msgbody_prefix_slice()
+            .store_body_header(op, query_id);
+    send_raw_message(msg.end_cell(), SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+}
+
+;; Sends the refund for a pending burn if the minter can fund the whole credit,
+;; and otherwise leaves it refund_failed for anyone to retry with more funds.
+;; Never throws: it runs on bounces, which cannot bounce in turn, so a throw
+;; would lose the only record that the tokens are owed. Returns the new in_flight.
+(cell, int) ~start_refund(cell pending_burns, int total_supply, int in_flight, int burn_id, slice owner_address, int amount, cell jetton_wallet_code, int bridge_address_hash, int wallet_min_tos_for_storage, int minter_min_tos_for_storage) impure inline_ref {
+    int value = spendable(minter_min_tos_for_storage);
+    if ((value >= credit_budget(wallet_min_tos_for_storage)) & (total_supply + in_flight + amount <= MAX_SUPPLY)) {
+        pending_burns~udict_set_builder(64, burn_id, pack_pending_burn(BURN_REFUNDING, owner_address, amount));
+        send_credit(owner_address, jetton_wallet_code, burn_id | REFUND_ID_FLAG, amount, value, bridge_address_hash);
+        return (pending_burns, in_flight + amount);
+    }
+    pending_burns~udict_set_builder(64, burn_id, pack_pending_burn(BURN_REFUND_FAILED, owner_address, amount));
+    emit_log_simple(LOG_BURN_REFUND_FAILED, begin_cell().store_uint(burn_id, 64).end_cell(), 0);
+    return (pending_burns, in_flight);
+}
+
+;; A bounce cannot be forged, and its body is the first 256 bits of a message
+;; this minter sent, so its op and id are the minter's own.
+() on_bounce(slice in_msg_body) impure inline_ref {
+    in_msg_body~skip_bits(32); ;; 0xFFFFFFFF
+    int op = in_msg_body~load_uint(32);
+    int query_id = in_msg_body~load_uint(64);
+
+    (int total_supply, int in_flight, cell content, cell jetton_wallet_code, int next_burn_id, cell pending_burns) = load_data();
+    (int bridge_address_hash, _, _, _, _, _, int wallet_min_tos_for_storage, _, int minter_min_tos_for_storage, _) = get_jetton_bridge_config();
+
+    if (op == op::internal_transfer) {
+        ;; A wallet refused a credit. The minter sends credits only to wallets,
+        ;; and the amount follows the id within the 256 bits a bounce keeps.
+        in_flight -= in_msg_body~load_coins();
+        if (query_id & REFUND_ID_FLAG) {
+            int burn_id = query_id - REFUND_ID_FLAG;
+            (slice entry, int found) = pending_burns.udict_get?(64, burn_id);
+            if (found) {
+                (int status, slice owner_address, int amount) = unpack_pending_burn(entry);
+                if (status == BURN_REFUNDING) {
+                    pending_burns~udict_set_builder(64, burn_id, pack_pending_burn(BURN_REFUND_FAILED, owner_address, amount));
+                    emit_log_simple(LOG_BURN_REFUND_FAILED, begin_cell().store_uint(burn_id, 64).end_cell(), 0);
+                }
+            }
+            save_data(total_supply, in_flight, content, jetton_wallet_code, next_burn_id, pending_burns);
+            return ();
+        }
+        save_data(total_supply, in_flight, content, jetton_wallet_code, next_burn_id, pending_burns);
+        send_to_bridge(bridge_address_hash, op::mint_failed, query_id);
+        return ();
+    }
+
+    if (op == op::burn_notification) {
+        ;; The bridge did not log the burn, so the tokens go back to their owner.
+        (slice entry, int found) = pending_burns.udict_get?(64, query_id);
+        if (found) {
+            (int status, slice owner_address, int amount) = unpack_pending_burn(entry);
+            if (status == BURN_AWAITING_BRIDGE) {
+                in_flight = pending_burns~start_refund(total_supply, in_flight, query_id, owner_address, amount, jetton_wallet_code, bridge_address_hash, wallet_min_tos_for_storage, minter_min_tos_for_storage);
+                save_data(total_supply, in_flight, content, jetton_wallet_code, next_burn_id, pending_burns);
+            }
+        }
+        return ();
+    }
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -59,7 +174,8 @@ slice zero_address() inline {
     slice cs = in_msg_full.begin_parse();
     int flags = cs~load_uint(4);
 
-    if (flags & 1) { ;; ignore all bounced messages
+    if (flags & 1) {
+        on_bounce(in_msg_body);
         return ();
     }
     slice sender_address = cs~load_msg_addr();
@@ -72,40 +188,55 @@ slice zero_address() inline {
     slice in_msg_body_copy = in_msg_body;
     (int op, int query_id) = in_msg_body~load_body_header();
 
-    (int total_supply, cell content, cell jetton_wallet_code) = load_data();
+    (int total_supply, int in_flight, cell content, cell jetton_wallet_code, int next_burn_id, cell pending_burns) = load_data();
 
     (int bridge_address_hash, int oracles_address_hash, _, int state_flags, int bridge_burn_fee, int bridge_mint_fee, int wallet_min_tos_for_storage, int wallet_gas_consumption, int minter_min_tos_for_storage, int discover_gas_consumption) = get_jetton_bridge_config();
     (int sender_wc, int sender_address_hash) = parse_std_addr(sender_address);
+    int from_bridge = (sender_wc == -1) & (sender_address_hash == bridge_address_hash);
 
     if (op == op::mint) {
-        throw_unless(error::bridge_not_sender, (sender_wc == -1) & (sender_address_hash == bridge_address_hash));
+        throw_unless(error::bridge_not_sender, from_bridge);
         slice to_address = in_msg_body~load_msg_addr();
-
-        int rest_amount = pair_first(get_balance()) - minter_min_tos_for_storage;
-
         int jetton_amount = in_msg_body~load_coins();
         int forward_coins_amount = in_msg_body~load_coins();
         in_msg_body.end_parse();
+        throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0);
 
-        cell master_msg = begin_cell()
-                .store_body_header(op::internal_transfer, query_id)
-                .store_coins(jetton_amount) ;; max 124 bit
-                .store_slice(zero_address()) ;; from_address, 2 bit
-                .store_slice(create_address(-1, bridge_address_hash)) ;; response_address, 3 + 8 + 256 = 267 bit
-                .store_coins(forward_coins_amount) ;; forward_amount, 4 bit if zero
-                .store_uint(0, 1) ;; no forward_payload, 1 bit
-                .end_cell();
+        ;; Refusing here bounces the mint to the bridge, which marks it failed
+        ;; for a retry. A credit that cannot fund its own report would instead
+        ;; leave the bridge waiting for an answer that never comes.
+        int value = spendable(minter_min_tos_for_storage);
+        throw_unless(error::credit_underfunded, value >= credit_budget(wallet_min_tos_for_storage));
+        throw_unless(error::supply_bound, total_supply + in_flight + jetton_amount <= MAX_SUPPLY);
 
-        mint_tokens(to_address, jetton_wallet_code, rest_amount, master_msg);
+        save_data(total_supply, in_flight + jetton_amount, content, jetton_wallet_code, next_burn_id, pending_burns);
+        send_credit(to_address, jetton_wallet_code, query_id, jetton_amount, value, bridge_address_hash);
+        return ();
+    }
+
+    if (op == op::mint_credited) {
+        int jetton_amount = in_msg_body~load_coins();
+        slice owner_address = in_msg_body~load_msg_addr();
+        in_msg_body.end_parse();
+        throw_unless(error::owner_not_sender,
+                equal_slices(calculate_user_jetton_wallet_address(owner_address, my_address(), jetton_wallet_code), sender_address)
+        );
+
         int new_total_supply = total_supply + jetton_amount;
-        save_data(new_total_supply, content, jetton_wallet_code);
+        in_flight -= jetton_amount;
+        if (query_id & REFUND_ID_FLAG) {
+            (pending_burns, _) = pending_burns.udict_delete?(64, query_id - REFUND_ID_FLAG);
+            save_data(new_total_supply, in_flight, content, jetton_wallet_code, next_burn_id, pending_burns);
+        } else {
+            save_data(new_total_supply, in_flight, content, jetton_wallet_code, next_burn_id, pending_burns);
+            send_to_bridge(bridge_address_hash, op::mint_completed, query_id);
+        }
 
         emit_log_simple(
                 LOG_MINT_ON_MINTER,
                 begin_cell().store_coins(new_total_supply).end_cell(),
                 0
         );
-
         return ();
     }
 
@@ -116,24 +247,34 @@ slice zero_address() inline {
         throw_unless(error::owner_not_sender,
                 equal_slices(calculate_user_jetton_wallet_address(from_address, my_address(), jetton_wallet_code), sender_address)
         );
-        int new_total_supply = total_supply - jetton_amount;
-        save_data(new_total_supply, content, jetton_wallet_code);
+        ;; Each refusal here bounces the notification and the wallet keeps its tokens.
+        throw_unless(error::not_enough_funds, jetton_amount <= total_supply);
+        throw_unless(error::burn_ids_exhausted, next_burn_id < REFUND_ID_FLAG);
+        int value = spendable(minter_min_tos_for_storage);
+        throw_unless(error::burn_underfunded, value >= burn_report_budget());
 
+        int burn_id = next_burn_id;
+        int new_total_supply = total_supply - jetton_amount;
+        pending_burns~udict_set_builder(64, burn_id, pack_pending_burn(BURN_AWAITING_BRIDGE, from_address, jetton_amount));
+        save_data(new_total_supply, in_flight, content, jetton_wallet_code, burn_id + 1, pending_burns);
+
+        ;; The wallet's body with its query_id replaced by the burn id, so that a
+        ;; bounce from the bridge, which keeps only the first 256 bits, names it.
+        in_msg_body_copy~skip_bits(32 + 64);
         cell new_body = begin_cell()
+                .store_body_header(op::burn_notification, burn_id)
                 .store_slice(in_msg_body_copy)
                 .store_ref(content)
                 .end_cell();
 
-        int rest_amount = pair_first(get_balance()) - minter_min_tos_for_storage;
-
         builder msg = begin_cell()
-                    .store_msg_flags(NON_BOUNCEABLE)
+                    .store_msg_flags(BOUNCEABLE)
                     .store_masterchain_address(bridge_address_hash)
-                    .store_coins(rest_amount)
+                    .store_coins(value)
                     .store_msgbody_prefix_ref()
                     .store_ref(new_body);
 
-        send_raw_message(msg.end_cell(), SEND_MODE_REGULAR);
+        send_raw_message(msg.end_cell(), SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
 
         emit_log_simple(
                 LOG_BURN_ON_MINTER,
@@ -141,6 +282,35 @@ slice zero_address() inline {
                 0
         );
 
+        return ();
+    }
+
+    if (op == op::burn_recorded) {
+        throw_unless(error::bridge_not_sender, from_bridge);
+        in_msg_body.end_parse();
+        (slice entry, int found) = pending_burns.udict_get?(64, query_id);
+        if (found) {
+            (int status, _, _) = unpack_pending_burn(entry);
+            if (status == BURN_AWAITING_BRIDGE) {
+                (pending_burns, _) = pending_burns.udict_delete?(64, query_id);
+                save_data(total_supply, in_flight, content, jetton_wallet_code, next_burn_id, pending_burns);
+            }
+        }
+        return ();
+    }
+
+    if (op == op::retry_refund) {
+        int burn_id = in_msg_body~load_uint(64);
+        in_msg_body.end_parse();
+        (slice entry, int found) = pending_burns.udict_get?(64, burn_id);
+        throw_unless(error::nothing_to_retry, found);
+        (int status, slice owner_address, int amount) = unpack_pending_burn(entry);
+        throw_unless(error::nothing_to_retry, status == BURN_REFUND_FAILED);
+        ;; An underfunded retry is refused, which returns the caller's funds.
+        throw_unless(error::credit_underfunded, spendable(minter_min_tos_for_storage) >= credit_budget(wallet_min_tos_for_storage));
+        throw_unless(error::supply_bound, total_supply + in_flight + amount <= MAX_SUPPLY);
+        in_flight = pending_burns~start_refund(total_supply, in_flight, burn_id, owner_address, amount, jetton_wallet_code, bridge_address_hash, wallet_min_tos_for_storage, minter_min_tos_for_storage);
+        save_data(total_supply, in_flight, content, jetton_wallet_code, next_burn_id, pending_burns);
         return ();
     }
 
@@ -175,7 +345,7 @@ slice zero_address() inline {
 }
 
 (int, int, slice, cell, cell) get_jetton_data() method_id {
-    (int total_supply, cell content, cell jetton_wallet_code) = load_data();
+    (int total_supply, _, cell content, cell jetton_wallet_code, _, _) = load_data();
     cell content_dict = new_dict();
 
     (
@@ -207,12 +377,33 @@ slice zero_address() inline {
 }
 
 slice get_wallet_address(slice owner_address) method_id {
-    (int total_supply, cell content, cell jetton_wallet_code) = load_data();
+    (_, _, _, cell jetton_wallet_code, _, _) = load_data();
     return calculate_user_jetton_wallet_address(owner_address, my_address(), jetton_wallet_code);
 }
 
 ;; chain_id, token_address, token_decimals
 (int, int, int) get_wrapped_token_data() method_id {
-    (int total_supply, cell content, cell jetton_wallet_code) = load_data();
+    (_, _, cell content, _, _, _) = load_data();
     return unpack_wrapped_token_data(content);
+}
+
+;; status (-1 when there is no such burn), owner, amount
+(int, slice, int) get_pending_burn(int burn_id) method_id {
+    (_, _, _, _, _, cell pending_burns) = load_data();
+    (slice entry, int found) = pending_burns.udict_get?(64, burn_id);
+    if (~ found) {
+        return (-1, zero_address(), 0);
+    }
+    return unpack_pending_burn(entry);
+}
+
+int get_next_burn_id() method_id {
+    (_, _, _, _, int next_burn_id, _) = load_data();
+    return next_burn_id;
+}
+
+;; Sent to wallets and neither confirmed nor bounced yet.
+int get_in_flight() method_id {
+    (_, int in_flight, _, _, _, _) = load_data();
+    return in_flight;
 }
