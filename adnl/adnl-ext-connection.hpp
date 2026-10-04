@@ -76,8 +76,8 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   }
   // Count this connection's unread output against a budget shared by all of
   // a server's connections.
-  void set_shared_output_budget(std::shared_ptr<std::atomic<std::size_t>> server_output_bytes) {
-    server_output_bytes_ = std::move(server_output_bytes);
+  void set_shared_output_budget(std::shared_ptr<AdnlExtOutputBudget> budget) {
+    server_output_budget_ = std::move(budget);
   }
   bool check_ready() const {
     return received_bytes_ && inited_ && authorized() && !td::can_close(buffered_fd_);
@@ -119,8 +119,10 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   }
 
   void tear_down() override {
-    if (server_output_bytes_) {
-      server_output_bytes_->fetch_sub(output_accounted_);
+    if (server_output_budget_) {
+      if (!server_output_budget_->release(output_accounted_)) {
+        LOG(ERROR) << "ADNL external output budget: released more than was reserved";
+      }
       output_accounted_ = 0;
     }
     if (callback_) {
@@ -138,20 +140,22 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   bool inited_ = false;
   bool stop_read_ = false;
   bool output_overflowed_ = false;
-  std::shared_ptr<std::atomic<std::size_t>> server_output_bytes_;
+  std::shared_ptr<AdnlExtOutputBudget> server_output_budget_;
+  // Bytes of the server budget this connection holds: at least its unread
+  // output. Grows only by reservation in send(); shrinks as output is written.
   std::size_t output_accounted_ = 0;
-  // Bring this connection's share of the server's output budget up to date.
+  // Give back the budget for output already written.
   void account_output() {
-    if (!server_output_bytes_) {
+    if (!server_output_budget_) {
       return;
     }
     auto pending = buffered_fd_.ready_for_flush_write();
-    if (pending > output_accounted_) {
-      server_output_bytes_->fetch_add(pending - output_accounted_);
-    } else {
-      server_output_bytes_->fetch_sub(output_accounted_ - pending);
+    if (pending < output_accounted_) {
+      if (!server_output_budget_->release(output_accounted_ - pending)) {
+        LOG(ERROR) << "ADNL external output budget: released more than was reserved";
+      }
+      output_accounted_ = pending;
     }
-    output_accounted_ = pending;
   }
   bool read_len_ = false;
   td::uint32 len_;

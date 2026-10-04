@@ -1,6 +1,7 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 
 #include "common/errorcode.h"
@@ -23,13 +24,42 @@ inline constexpr std::size_t adnl_ext_max_pending_output_bytes = 2 * adnl_ext_ma
 // The per-connection bound times the connection limit would be tens of GiB.
 inline constexpr std::size_t adnl_ext_max_server_pending_output_bytes = std::size_t{256} << 20;
 
-// Whether a frame of `frame_bytes` may join `pending_bytes` already queued on
-// a connection while the server's other connections hold `others_bytes`.
-inline bool adnl_ext_server_output_fits(std::size_t others_bytes, std::size_t pending_bytes, std::size_t frame_bytes,
-                                        std::size_t maximum_server_bytes = adnl_ext_max_server_pending_output_bytes) {
-  return others_bytes <= maximum_server_bytes && pending_bytes <= maximum_server_bytes - others_bytes &&
-         frame_bytes <= maximum_server_bytes - others_bytes - pending_bytes;
-}
+// Unread output shared by a server's connections. A connection reserves a
+// frame's bytes before queuing it and releases them as they are written, so
+// connections on different threads cannot together pass the bound.
+class AdnlExtOutputBudget {
+ public:
+  explicit AdnlExtOutputBudget(std::size_t limit = adnl_ext_max_server_pending_output_bytes) : limit_(limit) {
+  }
+  // Take `bytes` if they fit under the limit; all or nothing.
+  bool try_reserve(std::size_t bytes) {
+    auto used = used_.load();
+    do {
+      if (used > limit_ || bytes > limit_ - used) {
+        return false;
+      }
+    } while (!used_.compare_exchange_weak(used, used + bytes));
+    return true;
+  }
+  // Give back bytes this connection reserved. False if more is given back
+  // than is held, which is an accounting error; nothing is then released.
+  bool release(std::size_t bytes) {
+    auto used = used_.load();
+    do {
+      if (bytes > used) {
+        return false;
+      }
+    } while (!used_.compare_exchange_weak(used, used - bytes));
+    return true;
+  }
+  std::size_t used() const {
+    return used_.load();
+  }
+
+ private:
+  const std::size_t limit_;
+  std::atomic<std::size_t> used_{0};
+};
 
 // Whether a frame of `frame_bytes` may join `pending_bytes` already queued.
 inline bool adnl_ext_output_fits(std::size_t pending_bytes, std::size_t frame_bytes,

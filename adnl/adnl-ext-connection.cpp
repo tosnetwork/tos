@@ -42,10 +42,16 @@ bool AdnlExtConnection::send(td::BufferSlice data) {
   auto frame_bytes = data.size() + 4 + 32 + 32;
   auto pending = buffered_fd_.ready_for_flush_write();
   bool fits = adnl_ext_output_fits(pending, frame_bytes);
-  if (fits && server_output_bytes_) {
-    auto total = server_output_bytes_->load();
-    auto others = total > output_accounted_ ? total - output_accounted_ : 0;
-    fits = adnl_ext_server_output_fits(others, pending, frame_bytes);
+  // Reserve the frame in the server's budget before it is queued, so
+  // connections on other threads cannot pass the bound together.
+  std::size_t reserved = 0;
+  if (fits && server_output_budget_) {
+    auto held = pending + frame_bytes;
+    reserved = held > output_accounted_ ? held - output_accounted_ : 0;
+    fits = server_output_budget_->try_reserve(reserved);
+    if (!fits) {
+      reserved = 0;
+    }
   }
   if (!fits) {
     // The peer is not reading what it asked for, or the server's connections
@@ -75,6 +81,7 @@ bool AdnlExtConnection::send(td::BufferSlice data) {
   out_ctr_.encrypt(d.as_slice(), e.as_slice());
 
   buffered_fd_.output_buffer().append(std::move(e));
+  output_accounted_ += reserved;
   account_output();
   yield();
   return true;
