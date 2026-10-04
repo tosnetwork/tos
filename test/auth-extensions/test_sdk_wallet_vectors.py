@@ -5,7 +5,10 @@ signed external messages the SDK builds for V3R2 and V4R2 (its own test keeps
 the file equal to what the SDK produces). Here each one runs through the native
 emulator on a network whose ConfigParam 19 is 42, against code compiled from
 crypto/smartcont: a message signed for 42 must transfer, one signed for 43 must
-be refused with exit 36 and change nothing.
+be refused with exit 36 and change nothing. The same holds for the body the
+SDK's sendDeploy submits, sent with the SDK's StateInit to a funded,
+uninitialized account: signed for 42 it deploys the wallet, signed for 43 the
+account stays undeployed.
 """
 import base64
 import json
@@ -13,7 +16,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cells import from_boc
+from cells import Cell, from_boc
 from native import (ROOT, NOW, GLOBAL_ID, Emulator, compile_contract, state_init,
                     active_account, account_data, external, outgoing)
 
@@ -28,6 +31,20 @@ def raw_address(text):
 
 def boc(text):
     return from_boc(base64.b64decode(text))
+
+
+def uninitialized_account(address, balance=100_000_000_000):
+    """A funded account with no code yet (account_uninit$00)."""
+    account = (Cell().uint(1, 1).addr(address).varuint(0, 7).varuint(0, 7)
+               .uint(0, 3).uint(NOW, 32).uint(0, 1).uint(0, 64).coins(balance)
+               .uint(0, 1).uint(0, 2))
+    return Cell().uint(0, 256).uint(0, 64).ref(account)
+
+
+def external_with_init(destination, init, body):
+    """ext_in_msg_info with the StateInit and the body each in a reference."""
+    return (Cell().uint(8, 4).addr(destination).coins(0)
+            .uint(1, 1).uint(1, 1).ref(init).uint(1, 1).ref(body))
 
 
 class SdkWalletVectorTests(unittest.TestCase):
@@ -100,6 +117,46 @@ class SdkWalletVectorTests(unittest.TestCase):
                 self.assertEqual(exit_code, 36, result)
                 self.assertFalse(result['success'] and not result['details']['aborted'],
                                  'a refused external message must not commit')
+
+
+    def deploy_vector(self, vector):
+        code, data = self.code[vector['wallet']], boc(vector['data'])
+        address = raw_address(vector['address'])
+        emulator = Emulator(6)
+        self.addCleanup(emulator.close)
+        message = external_with_init(address, state_init(code, data), boc(vector['deploy']))
+        return emulator.send(uninitialized_account(address), message), data
+
+    def test_a_deploy_signed_for_this_network_deploys_the_wallet(self):
+        for vector in self.vectors['vectors']:
+            if vector['network'] != GLOBAL_ID:
+                continue
+            with self.subTest(wallet=vector['wallet']):
+                result, data = self.deploy_vector(vector)
+                self.assertTrue(result['success'], result)
+                details = result['details']
+                self.assertEqual(details['exit'], 0, details)
+                self.assertFalse(details['aborted'], details)
+                after, _ = account_data(from_boc(result['shard_account']))
+                self.assertEqual(after.slice().uint(32), 1, 'deployed with seqno 1')
+                self.assertEqual(outgoing(from_boc(result['transaction'])), [],
+                                 'a deploy sends nothing')
+
+    def test_a_deploy_signed_for_another_network_is_refused(self):
+        for vector in self.vectors['vectors']:
+            if vector['network'] == GLOBAL_ID:
+                continue
+            with self.subTest(wallet=vector['wallet']):
+                result, _ = self.deploy_vector(vector)
+                if result['success']:
+                    exit_code = result['details']['exit']
+                    s = from_boc(result['shard_account']).refs[0].slice()
+                    s.uint(1); s.addr(); s.varuint(7); s.varuint(7); s.uint(3); s.uint(32)
+                    s.uint(1); s.uint(64); s.coins(); s.uint(1)
+                    self.assertEqual(s.uint(2), 0, 'the account must stay uninitialized')
+                else:
+                    exit_code = result.get('vm_exit_code')
+                self.assertEqual(exit_code, 36, result)
 
 
 if __name__ == '__main__':
