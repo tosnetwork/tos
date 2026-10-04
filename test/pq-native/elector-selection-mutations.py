@@ -81,7 +81,7 @@ MUTATIONS = [
             f"rollback-ignores-{claim}",
             [
                 (
-                    "return elect.null?() & credits.null?() & past.null?() & (outstanding == 0);",
+                    "return elect.null?() & credits.null?() & past.null?() & (returning == 0);",
                     expression,
                 )
             ],
@@ -91,17 +91,17 @@ MUTATIONS = [
         for claim, expression, phase in [
             (
                 "active-book",
-                "return credits.null?() & past.null?() & (outstanding == 0);",
+                "return credits.null?() & past.null?() & (returning == 0);",
                 "cached",
             ),
             (
                 "frozen-book",
-                "return elect.null?() & credits.null?() & (outstanding == 0);",
+                "return elect.null?() & credits.null?() & (returning == 0);",
                 "frozen-only",
             ),
             (
                 "credits",
-                "return elect.null?() & past.null?() & (outstanding == 0);",
+                "return elect.null?() & past.null?() & (returning == 0);",
                 "credits-only",
             ),
         ]

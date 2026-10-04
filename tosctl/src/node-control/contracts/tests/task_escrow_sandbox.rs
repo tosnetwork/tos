@@ -1062,7 +1062,7 @@ fn timeout_deadlines_are_inclusive_boundaries() {
 
 #[test]
 fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_tasks() {
-    // The signed message is domain_bound_hash(contract_address, result_hash),
+    // The signed message is settle_domain_hash(contract_address, result_hash, ...),
     // not the bare result_hash -- so a signature minted for one Task Escrow
     // instance is *not* accepted by a second, independent instance that
     // happens to share the same attestor_pubkey and the same result_hash

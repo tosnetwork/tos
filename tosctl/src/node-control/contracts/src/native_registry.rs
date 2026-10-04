@@ -77,14 +77,6 @@ pub struct NativePolicy {
     pub controllers: Vec<NativePolicyController>,
 }
 
-/// Serializes `policy` in the registry's canonical form: controllers sorted by
-/// key, each linked to the next.
-///
-/// Errors for a policy the contract would refuse for its shape: no
-/// controllers, more than [`NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS`], a zero
-/// or duplicate key, a weight of zero or above the maximum, an empty or
-/// unknown purpose set, a zero threshold, a timelock above the maximum, or a
-/// threshold the controllers holding its purpose cannot reach.
 /// Encodings of the Ed25519 8-torsion points, and the sign-bit aliases of the
 /// two with x = 0, as stored: anyone can produce a signature that verifies
 /// under them. The contract's `weak_ed25519_key?` refuses the same set.
@@ -111,6 +103,16 @@ fn is_forgeable_ed25519_key(key: &[u8; 32]) -> bool {
     y_not_reduced || FORGEABLE_ED25519_KEYS.contains(&hex::encode(key).as_str())
 }
 
+/// Serializes `policy` in the registry's canonical form: controllers sorted by
+/// key, each linked to the next.
+///
+/// Errors for a policy the contract would refuse for its shape: no
+/// controllers, more than [`NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS`], a zero
+/// or duplicate key, a key anyone can sign for (an Ed25519 8-torsion encoding
+/// or a non-canonical y, see [`is_forgeable_ed25519_key`]), a weight of zero
+/// or above the maximum, an empty or unknown purpose set, a zero threshold, a
+/// timelock above the maximum, or a threshold the controllers holding its
+/// purpose cannot reach.
 pub fn build_policy(policy: &NativePolicy) -> Result<Cell> {
     let count = policy.controllers.len();
     if count == 0 {
@@ -287,7 +289,9 @@ mod tests {
             let refused_here = build_policy(&weak).is_err();
             assert!(refused_here, "{} was admitted", hex::encode(key));
         }
-        // y = 2^255 - 20 is an ordinary encoding the contract admits.
+        // ec ff..ff 7f is the order-2 point and is refused. Lowering its top
+        // byte to 0x7e gives y = 2^255 - 2^248 - 20 with the sign bit clear: a
+        // reduced encoding outside the forgeable set, which the contract admits.
         let mut ordinary = policy(2);
         let mut key = [0xffu8; 32];
         key[0] = 0xec;

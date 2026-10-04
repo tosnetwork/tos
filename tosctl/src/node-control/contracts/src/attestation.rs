@@ -62,10 +62,10 @@ fn signing_domain(
 
 /// Compute the domain-bound hash that the attestor key must sign for
 /// `contract_address`, given the contract's on-chain `original_hash`
-/// (`attested_hash`). Used by Proof Attestation's `attest` and Agent
-/// Account's controller signature (over its own payload hash, not a
-/// contract-recorded one) -- neither carries a payout, or a second piece of
-/// state like a request, the signature needs to additionally bind.
+/// (`attested_hash`). Used by Proof Attestation's `attest`, which carries no
+/// payout, or second piece of state like a request, that the signature needs
+/// to additionally bind. Agent Account's controller signature does not use
+/// it; that hash is `AgentAccountContract::controller_hash_to_sign`.
 pub fn domain_bound_hash(
     tag: u32,
     global_id: i32,

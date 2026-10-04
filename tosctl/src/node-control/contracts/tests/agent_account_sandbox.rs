@@ -1614,7 +1614,7 @@ fn owner_cannot_install_a_policy_above_the_signed_action_wire_limit() {
 
 #[test]
 fn task_send_signature_is_bound_to_the_account_address_and_rejected_across_accounts() {
-    // The signed message is domain_bound_hash(account_address, payload_hash),
+    // The signed message is controller_hash_to_sign(account_address, ...),
     // not the bare payload hash -- so a signature minted for one Agent
     // Account is *not* accepted by a second, independent Agent Account that
     // happens to share the same controller key (e.g. an operator reusing

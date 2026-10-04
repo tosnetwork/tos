@@ -532,8 +532,13 @@ tosctl service -c tosctl-config.json
 tosctl wallet create --name wallet0
 tosctl wallet ls
 
-# Generate a recoverable TVM identity, then recover it into the vault
+# Generate a recoverable TVM identity, then recover it into the vault.
+# --mnemonic-file (like --private-key-file and the vault's --data-file) must be
+# a regular file, not a symlink, owned by you with no group or other
+# permissions (chmod 600); anything else is refused. --mnemonic-fd reads an
+# inherited descriptor instead, and with neither the mnemonic is prompted for.
 tosctl wallet mnemonic-generate --words 24 --version V3R2 --workchain 0 --subwallet-id 0
+chmod 600 mnemonic.txt
 tosctl wallet mnemonic-import --name wallet1 --mnemonic-file mnemonic.txt --workchain 0 --subwallet-id 0
 
 # Generate actual signed test identities instead of placeholder key material
