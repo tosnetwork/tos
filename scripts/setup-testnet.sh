@@ -131,6 +131,17 @@ install -m644 "$REPO/scripts/tos-pq-observer@.service" /etc/systemd/system/tos-p
 install -m644 "$REPO/scripts/tos-pq-lite-client.service" /etc/systemd/system/tos-pq-lite-client.service
 install -d /usr/local/libexec/tos
 install -m755 "$REPO/scripts/run-local-lite-client.py" /usr/local/libexec/tos/run-local-lite-client.py
+# The traffic and election services run as root from this checkout. Only root and
+# the user who ran this installer may be able to change what they execute; the
+# check runs now and again before every start, from a root-owned copy.
+install -m755 "$REPO/scripts/check-root-exec-tree.py" /usr/local/libexec/tos/check-root-exec-tree
+PYTHON_HOME="$(dirname "$(dirname "$(readlink -f "$REPO/.venv/bin/python")")")"
+ROOT_EXEC_CHECK="/usr/bin/python3 /usr/local/libexec/tos/check-root-exec-tree --trusted-uid ${SUDO_UID:-0}"
+ROOT_EXEC_CHECK+=" --tree $REPO/scripts --tree $REPO/test/tostester/src"
+ROOT_EXEC_CHECK+=" --tree $REPO/.venv --ignore $REPO/.venv/.lock --tree $PYTHON_HOME"
+ROOT_EXEC_CHECK+=" --path $BUILD/toslib/libtoslibjson.so"
+PRIVACY_GENERATOR="$REPO/tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic"
+$ROOT_EXEC_CHECK --path "$PRIVACY_GENERATOR"
 systemctl daemon-reload
 systemd-analyze verify tos-pq-dht.service tos-pq-validator@1.service tos-pq-observer@5.service tos-pq-lite-client.service
 python3 - <<'CHECK'
@@ -165,6 +176,7 @@ WorkingDirectory=$REPO
 Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=RAYON_NUM_THREADS=4
+ExecStartPre=$ROOT_EXEC_CHECK --path $PRIVACY_GENERATOR
 ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-privacy.py
 Restart=no
 CPUQuota=400%
@@ -186,6 +198,7 @@ UMask=0077
 WorkingDirectory=$REPO
 Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
 Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=$ROOT_EXEC_CHECK
 ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-transfers.py
 Restart=no
 CPUQuota=100%
@@ -208,6 +221,7 @@ Group=root
 UMask=0077
 WorkingDirectory=$REPO
 Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
+ExecStartPre=$ROOT_EXEC_CHECK
 ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-elections.py
 # The driver re-reads the elector on every pass, so a restart loses nothing.
 # Left dead after one transient lite-server error it misses a whole election
