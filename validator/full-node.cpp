@@ -333,7 +333,7 @@ void FullNodeImpl::send_shard_block_info(BlockIdExt block_id, CatchainSeqno cc_s
 void FullNodeImpl::send_block_candidate(BlockIdExt block_id, CatchainSeqno cc_seqno, td::uint32 validator_set_hash,
                                         td::BufferSlice data, int mode) {
   if (mode & broadcast_mode_custom) {
-    send_block_candidate_broadcast_to_custom_overlays(block_id, cc_seqno, validator_set_hash, data);
+    custom_overlays_relay_.offer_candidate(block_id, cc_seqno, validator_set_hash, data);
   }
   if (mode & broadcast_mode_fast_sync) {
     auto fast_sync_overlay = fast_sync_overlays_.choose_overlay(block_id.shard_full()).first;
@@ -363,7 +363,8 @@ void FullNodeImpl::send_out_msg_queue_proof_broadcast(td::Ref<OutMsgQueueProofBr
 
 void FullNodeImpl::send_broadcast(BlockBroadcast broadcast, int mode) {
   if (mode & broadcast_mode_custom) {
-    send_block_broadcast_to_custom_overlays(broadcast);
+    // A broadcast this node made carries signatures it checked itself.
+    custom_overlays_relay_.offer_block(broadcast.clone(), true);
   }
   if (mode & broadcast_mode_fast_sync) {
     auto fast_sync_overlay = fast_sync_overlays_.choose_overlay(broadcast.block_id.shard_full()).first;
@@ -387,7 +388,7 @@ void FullNodeImpl::send_block_finality_broadcast(BlockFinalityBroadcast finality
     return;
   }
   if (mode & broadcast_mode_custom) {
-    send_block_finality_broadcast_to_custom_overlays(finality);
+    custom_overlays_relay_.offer_finality(finality);
   }
   if (mode & broadcast_mode_fast_sync) {
     auto fast_sync_overlay = fast_sync_overlays_.choose_overlay(finality.block_id.shard_full()).first;
@@ -592,24 +593,7 @@ void FullNodeImpl::new_key_block(BlockHandle handle) {
 void FullNodeImpl::process_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
                                            bool send_to_custom) {
   if (send_to_custom) {
-    // Forward only what verified: forwarding remembers the block id, and an
-    // unverified broadcast remembered first would keep the genuine one from
-    // ever being forwarded.
-    if (signatures_checked) {
-      send_block_broadcast_to_custom_overlays(broadcast);
-    } else {
-      auto P = td::PromiseCreator::lambda(
-          [SelfId = actor_id(this), relayed = broadcast.clone()](td::Result<td::Unit> R) mutable {
-            if (R.is_error()) {
-              VLOG(FULL_NODE_DEBUG) << "not relaying block broadcast " << relayed.block_id.to_str()
-                                    << " to custom overlays: " << R.move_as_error();
-              return;
-            }
-            td::actor::send_closure(SelfId, &FullNodeImpl::relay_verified_block_broadcast, std::move(relayed));
-          });
-      td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::validate_block_broadcast_signatures,
-                              broadcast.clone(), std::move(P));
-    }
+    custom_overlays_relay_.offer_block(broadcast.clone(), signatures_checked);
   }
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::new_block_broadcast, std::move(broadcast),
                           signatures_checked, source, [](td::Result<td::Unit> R) {
@@ -630,7 +614,7 @@ void FullNodeImpl::process_block_finality_broadcast(BlockFinalityBroadcast final
     return;
   }
   if (send_to_custom) {
-    send_block_finality_broadcast_to_custom_overlays(finality);
+    custom_overlays_relay_.offer_finality(finality);
   }
   // Start the manager task explicitly so failures are surfaced instead of
   // being silently discarded by Task::detach().  Broadcast ingress is
@@ -644,7 +628,7 @@ void FullNodeImpl::process_block_candidate_broadcast(BlockIdExt block_id, Catcha
                                                      td::uint32 validator_set_hash, td::BufferSlice data,
                                                      BroadcastSource source, bool send_to_custom) {
   if (send_to_custom) {
-    send_block_candidate_broadcast_to_custom_overlays(block_id, cc_seqno, validator_set_hash, data);
+    custom_overlays_relay_.offer_candidate(block_id, cc_seqno, validator_set_hash, data);
   }
   std::move(td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_candidate_broadcast, block_id,
                            cc_seqno, std::move(data), source))
@@ -685,6 +669,33 @@ void FullNodeImpl::update_validator_telemetry_collector() {
 }
 
 void FullNodeImpl::start_up() {
+  custom_overlays_relay_.set_hooks(CustomOverlayRelay::Hooks{
+      .verify_block_signatures =
+          [this](BlockBroadcast broadcast) {
+            auto P = td::PromiseCreator::lambda(
+                [SelfId = actor_id(this), verified = broadcast.clone()](td::Result<td::Unit> R) mutable {
+                  if (R.is_error()) {
+                    VLOG(FULL_NODE_DEBUG) << "not relaying block broadcast " << verified.block_id.to_str()
+                                          << " to custom overlays: " << R.move_as_error();
+                    return;
+                  }
+                  td::actor::send_closure(SelfId, &FullNodeImpl::custom_relay_block_signatures_verified,
+                                          std::move(verified));
+                });
+            td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::validate_block_broadcast_signatures,
+                                    std::move(broadcast), std::move(P));
+          },
+      .send_block = [this](const BlockBroadcast &broadcast) { send_block_broadcast_to_custom_overlays(broadcast); },
+      .send_candidate =
+          [this](const BlockIdExt &block_id, CatchainSeqno cc_seqno, td::uint32 validator_set_hash,
+                 const td::BufferSlice &data) {
+            send_block_candidate_broadcast_to_custom_overlays(block_id, cc_seqno, validator_set_hash, data);
+          },
+      .send_finality =
+          [this](const BlockFinalityBroadcast &finality) {
+            send_block_finality_broadcast_to_custom_overlays(finality);
+          },
+  });
   update_shard_actor(ShardIdFull{masterchainId}, true, false);
   class Callback : public ValidatorManagerInterface::Callback {
    public:
@@ -818,14 +829,11 @@ void FullNodeImpl::update_custom_overlay(CustomOverlayInfo &overlay) {
   }
 }
 
-void FullNodeImpl::relay_verified_block_broadcast(BlockBroadcast broadcast) {
-  send_block_broadcast_to_custom_overlays(broadcast);
+void FullNodeImpl::custom_relay_block_signatures_verified(BlockBroadcast broadcast) {
+  custom_overlays_relay_.block_signatures_verified(broadcast);
 }
 
 void FullNodeImpl::send_block_broadcast_to_custom_overlays(const BlockBroadcast &broadcast) {
-  if (!custom_overlays_relay_.claim_verified_block(broadcast.block_id)) {
-    return;
-  }
   for (auto &[_, private_overlay] : custom_overlays_) {
     if (private_overlay.params_.send_shard(broadcast.block_id.shard_full())) {
       for (auto &[local_id, actor] : private_overlay.actors_) {
@@ -838,9 +846,6 @@ void FullNodeImpl::send_block_broadcast_to_custom_overlays(const BlockBroadcast 
 }
 
 void FullNodeImpl::send_block_finality_broadcast_to_custom_overlays(const BlockFinalityBroadcast &finality) {
-  if (!custom_overlays_relay_.claim_finality(finality.block_id, *finality.sig_set)) {
-    return;
-  }
   for (auto &[_, private_overlay] : custom_overlays_) {
     if (private_overlay.params_.send_shard(finality.block_id.shard_full())) {
       for (auto &[local_id, actor] : private_overlay.actors_) {
@@ -855,11 +860,6 @@ void FullNodeImpl::send_block_finality_broadcast_to_custom_overlays(const BlockF
 void FullNodeImpl::send_block_candidate_broadcast_to_custom_overlays(const BlockIdExt &block_id, CatchainSeqno cc_seqno,
                                                                      td::uint32 validator_set_hash,
                                                                      const td::BufferSlice &data) {
-  // Shares the record of forwarded blocks with send_block_broadcast_to_custom_overlays,
-  // and is remembered only if the data is that block's.
-  if (!custom_overlays_relay_.claim_candidate(block_id, data.as_slice())) {
-    return;
-  }
   for (auto &[_, private_overlay] : custom_overlays_) {
     if (private_overlay.params_.send_shard(block_id.shard_full())) {
       for (auto &[local_id, actor] : private_overlay.actors_) {
