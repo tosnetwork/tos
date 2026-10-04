@@ -1,6 +1,6 @@
 {
   "binary_source": "commit d8f42534bfb5fb451bd4978bfbc89bc93ffc2f6a plus the apply-block hook timing committed with this file",
-  "claim": "Block application does not wait on the wc0 index, however slow the index is.",
+  "claim": "Under the measured workload, including one-second index-sync delays and queue saturation, asynchronous indexing preserved apply latency and kept hook calls below 50 ms. Not a universal bound; the shutdown wait on the index queue mutex is outside this measurement.",
   "command": "uv run python test/integration/wc0_index_apply_latency.py --working-dir <new dir> --base-port <free port> --shim <built slow_sync_preload.so> --out <json>",
   "control": {
     "exit_status": 1,
@@ -69,6 +69,7 @@
       "wallets_deployed": 291
     }
   },
+  "limits": "Summary only: no executable hashes or raw samples are retained, so it supports this run but cannot reconstruct it.",
   "raw_logs": "not retained: several hundred MB of node debug logs per run; the runner regenerates them",
   "result": {
     "exit_status": 0,
