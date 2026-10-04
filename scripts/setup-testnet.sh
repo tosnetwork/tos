@@ -97,6 +97,11 @@ if [[ $CLEAN == 1 ]]; then
     # Literal fixed root: never derive this destructive target from an environment variable.
     find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 fi
+# The emptiness check above ran while tos may still have owned /data; only
+# now that tos cannot add entries does an empty /data mean nothing is planted.
+if [[ -n "$(find /data -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    echo '/data gained entries before it became root-owned; refusing to write into it'; exit 1
+fi
 id tos >/dev/null 2>&1 || useradd --system --home-dir /data --shell /usr/sbin/nologin tos
 mkdir -p /usr/local/share/tos/fift/lib /usr/local/share/tos/smartcont
 for pair in 'validator-engine/validator-engine:validator-engine' 'dht-server/dht-server:dht-server' \
