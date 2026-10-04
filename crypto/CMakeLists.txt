@@ -621,10 +621,12 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/prediction-market-code SOURCE smartcont/prediction-market-code.fc NAME prediction-market)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
-  GenFif(DEST smartcont/auto/dns-manual-code SOURCE smartcont/dns-manual-code.fc NAME dns-manual)
+  GenFif(DEST smartcont/auto/dns-manual-code SOURCE smartcont/dns-manual-code.fc NAME dns-manual
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/dns-auto-code SOURCE smartcont/dns-auto-code.fc NAME dns-auto)
 
-  GenFif(DEST smartcont/auto/payment-channel-code SOURCE smartcont/payment-channel-code.fc NAME payment-channel)
+  GenFif(DEST smartcont/auto/payment-channel-code SOURCE smartcont/payment-channel-code.fc NAME payment-channel
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
 
   GenFif(DEST smartcont/auto/simple-wallet-ext-code SOURCE smartcont/simple-wallet-ext-code.fc NAME simple-wallet-ext)
 endif()

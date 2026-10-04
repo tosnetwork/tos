@@ -3,6 +3,8 @@
 ;; on https://verifier.tos.org/Ef9VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVbxn
 ;; Tests and other artifacts of this contract version are available at https://github.com/tos-blockchain/config-with-ownable-params
 
+#include "strong-ed25519-key.fc";
+
 (slice, int) check_exotic(cell c) asm "XCTOS";
 int equal_slice_bits (slice a, slice b) asm "SDEQ";
 
@@ -10,6 +12,15 @@ const int CUSTOM_PARAM_1 = -1024;
 const int CUSTOM_PARAM_2 = -1025;
 const slice ADMIN_ADDRESS_FOR_CUSTOM_PARAMS = "EQA_o6NFLu73wozeYNERTsW8lkU5OarbRbIkoNuWdy5SPDA_"a;
 const int OP_SET_CUSTOM_PARAM = 0x6e43536c;
+const int ERR_WEAK_VALIDATOR_KEY = 45;
+
+;; A validator key anyone can sign for casts no vote: refused before the vote's
+;; signature is checked, so an external vote under one is refused before acceptance.
+() require_strong_validator_key(int public_key) impure inline {
+  if (ed25519_key_may_be_weak?(public_key)) {
+    throw_if(ERR_WEAK_VALIDATOR_KEY, weak_ed25519_key?(public_key));
+  }
+}
 
 () set_conf_param(int index, cell value) impure {
   var cs = get_data().begin_parse();
@@ -418,6 +429,15 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
   if (param_val.cell_depth() >= 256) {
     hash = -0xc2616456;  ;; bad value
   }
+  if ((param_id == -999) & (~ param_val.null?())) {
+    ;; a configuration master key anyone can sign for is never appointed
+    slice key_cs = param_val.begin_parse();
+    if (key_cs.slice_bits() >= 256) {
+      if (weak_ed25519_key?(key_cs.preload_uint(256))) {
+        hash = -0xc2616456;  ;; bad value
+      }
+    }
+  }
   if (hash < -1) {
     return hash;  ;; return error if any
   }
@@ -562,6 +582,7 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     throw_unless(37, sign_tag == 0x566f7445);
     var (vdescr, total_weight) = get_validator_descr(idx);
     var (val_pubkey, weight) = unpack_validator_descr(vdescr);
+    require_strong_validator_key(val_pubkey);
     throw_unless(34, check_data_signature(msg_body, signature, val_pubkey));
     int res = proceed_register_vote(phash, idx, weight);
     return send_confirmation(s_addr, query_id, res + 0xd6745240);
@@ -588,6 +609,7 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     cs.end_parse();
     var (vdescr, total_weight) = get_validator_descr(idx);
     var (val_pubkey, weight) = unpack_validator_descr(vdescr);
+    require_strong_validator_key(val_pubkey);
     throw_unless(34, check_data_signature(in_msg, signature, val_pubkey));
     accept_message();
     stored_seqno = (stored_seqno + 1) % (1 << 32);

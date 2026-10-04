@@ -14,6 +14,18 @@
 ;; Custom ASM instructions                                                   ;;
 ;;===========================================================================;;
 
+#include "strong-ed25519-key.fc";
+
+;; An owner key anyone can sign for: refused as the stored key before its
+;; signature is checked, and as the new key of an OSet before acceptance.
+const int err::weak_owner_key = 46;
+
+() require_strong_key(int public_key) impure inline {
+  if (ed25519_key_may_be_weak?(public_key)) {
+    throw_if(err::weak_owner_key, weak_ed25519_key?(public_key));
+  }
+}
+
 cell udict_get_ref_(cell dict, int key_len, int index) asm(index dict key_len) "DICTUGETOPTREF";
 
 (cell, ()) pfxdict_set_ref(cell dict, int key_len, slice key, cell value) {
@@ -228,10 +240,16 @@ cell process_ops(cell root, slice ops) inline_ref {
   (_, var found?) = old_queries.udict_get?(64, query_id);
   throw_if(32, found?);
   throw_unless(34, contract_id == query_contract);
+  require_strong_key(public_key);
   throw_unless(35, check_signature(shash, signature, public_key));
+  ;; Refused before acceptance: a refusal after it would roll back the stored
+  ;; query id and leave the signed message replayable at the contract's cost.
+  int op = in_msg.preload_uint(6);
+  if (op == 51) {
+    require_strong_key(in_msg.skip_bits(6).preload_uint(256));
+  }
   accept_message(); ;; message is signed by owner, sanity not guaranteed yet
 
-  int op = in_msg.preload_uint(6);
   if (op == 51) {
     in_msg~skip_bits(6);
     public_key = in_msg~load_uint(256);
