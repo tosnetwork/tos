@@ -10,7 +10,26 @@ import {
   Cell,
   type StateInit,
 } from "@tos/core";
+import { isWeakEd25519PublicKey } from "@tos/crypto";
 import type { OutMessage } from "./types.js";
+
+/**
+ * The public key a wallet is created for, refused when it is not 32 bytes or
+ * is a key anyone can sign for: a wallet under such a key has no owner, and a
+ * caller handing in a raw key (rather than one derived from its own secret)
+ * would otherwise compute and fund the address without noticing.
+ *
+ * @throws Error naming the wallet when the key is malformed or forgeable
+ */
+export function requireWalletPublicKey(publicKey: Uint8Array, wallet: string): Uint8Array {
+  if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) {
+    throw new Error(`${wallet}: the public key must be 32 bytes`);
+  }
+  if (isWeakEd25519PublicKey(publicKey)) {
+    throw new Error(`${wallet}: refusing a public key anyone can sign for`);
+  }
+  return publicKey;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
