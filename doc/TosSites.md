@@ -56,13 +56,31 @@ Example pattern:
 - `--forward-timeout`: total seconds a request forwarded to a local HTTP
   server may take, response included (default 60). It is a total, not an idle
   limit: a response still streaming when it passes is cut off. Concurrent
-  forwards are capped (1000 per remote); more are answered 503.
+  forwards are capped (1000 per remote); more are answered 503. Values above
+  3600 are refused.
+- `--max-tunnels`, `--max-tunnels-per-peer`: how many CONNECT tunnels a
+  service-side proxy keeps open at once, from all peers together (default 512)
+  and from one ADNL peer (default 16). Each tunnel holds a TCP connection to
+  the backend; a CONNECT beyond either limit is answered 503 and opens nothing.
+  The per-peer limit bounds one client, not a peer that creates many ADNL
+  identities; the global limit bounds that.
+- `--tunnel-idle-timeout`: seconds a tunnel may pass without moving a byte in
+  either direction before it is closed (default 600, at most 604800).
+- `--tunnel-max-lifetime`: seconds after which a tunnel is closed however busy
+  it is (default 86400, at most 2592000), so every tunnel's connection is
+  eventually reclaimed.
 
 `-p 8080` used to listen on every interface; it now listens on `127.0.0.1`
 only. A proxy that other hosts should reach must name the address, for
 example `-p 0.0.0.0:8080`, which opens the proxy to every host that can
 reach that port. This does not change ADNL: the UDP ports given by `-a` and
 `-c` are still bound on all interfaces.
+
+The generic forwarding proxy `http-proxy` reads `-p` the same way: a bare
+port listens on `127.0.0.1` only. It forwards to any host a client names, so
+listening on another address (for example `-p 0.0.0.0:8080`) makes it an open
+proxy for every host that can reach that port; do that only behind a firewall
+that admits the intended clients.
 
 ## DNS Integration
 

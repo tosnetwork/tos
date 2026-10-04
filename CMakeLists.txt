@@ -952,6 +952,15 @@ target_link_libraries(test-json-rpc-signing-payload PRIVATE tdutils)
 add_executable(test-http-server-limits test/test-td-main.cpp test/test-http-server-limits.cpp)
 target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
 
+# Drives real CONNECT tunnel actors, and runs both proxy binaries to check how
+# they read their listen address and limits.
+add_executable(test-rldp-http-tunnel test/test-td-main.cpp test/test-rldp-http-tunnel.cpp)
+target_link_libraries(test-rldp-http-tunnel PRIVATE rldp-http-tunnel tdactor tdutils)
+target_compile_definitions(test-rldp-http-tunnel PRIVATE
+  RLDP_HTTP_PROXY_BINARY="$<TARGET_FILE:rldp-http-proxy>"
+  HTTP_PROXY_BINARY="$<TARGET_FILE:http-proxy>")
+add_dependencies(test-rldp-http-tunnel rldp-http-proxy http-proxy)
+
 add_executable(test-wallet-message-processor test/test-td-main.cpp test/test-wallet-message-processor.cpp)
 target_link_libraries(test-wallet-message-processor PRIVATE tos_validator smc-envelope tos_crypto tdutils)
 
@@ -1723,6 +1732,7 @@ if (Python3_Interpreter_FOUND)
                    --binary $<TARGET_FILE:validator-engine>)
 endif()
 tos_test(test-http-server-limits)
+tos_test(test-rldp-http-tunnel)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
 tos_test(test-celldb-streaming-import)
