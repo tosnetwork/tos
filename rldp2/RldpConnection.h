@@ -35,6 +35,7 @@
 #include "OutboundTransfer.h"
 #include "Pacer.h"
 #include "RttStats.h"
+#include "rldp-inbound-budget.h"
 
 namespace tos {
 namespace rldp2 {
@@ -69,6 +70,13 @@ class RldpConnection {
   }
   td::uint64 default_mtu() const {
     return default_mtu_;
+  }
+
+  // The process-wide budget inbound decoders are reserved from. Every
+  // connection shares RldpInboundBudget::process_default() unless given
+  // another; set before any transfer arrives.
+  void set_inbound_budget(std::shared_ptr<RldpInboundBudget> budget) {
+    inbound_budget_ = std::move(budget);
   }
 
   // Concurrent inbound transfers one peer may have open on this connection.
@@ -108,6 +116,7 @@ class RldpConnection {
 
  private:
   td::uint64 default_mtu_ = DEFAULT_MTU;
+  std::shared_ptr<RldpInboundBudget> inbound_budget_ = RldpInboundBudget::process_default();
 
   std::map<TransferId, OutboundTransfer> outbound_transfers_;
   td::uint32 in_flight_count_{0};

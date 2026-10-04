@@ -36,7 +36,11 @@ bool InboundTransfer::is_part_completed(td::uint32 part_i) {
   return !parts_.contains(part_i) && part_i < next_part_;
 }
 
-td::Result<InboundTransfer::Part *> InboundTransfer::get_part(td::uint32 part_i, const tos::fec::FecType &fec_type) {
+td::Result<InboundTransfer::Part *> InboundTransfer::get_part(td::uint32 part_i, const tos::fec::FecType &fec_type,
+                                                              bool *refused_by_budget) {
+  if (refused_by_budget) {
+    *refused_by_budget = false;
+  }
   auto it = parts_.find(part_i);
   if (it != parts_.end()) {
     return &it->second;
@@ -45,15 +49,30 @@ td::Result<InboundTransfer::Part *> InboundTransfer::get_part(td::uint32 part_i,
   //LOG_CHECK(next_part_ >= part_i) << next_part_ << " >= " << part_i;
   if (next_part_ == part_i && parts_.size() < 20) {
     auto offset = offset_;
-    offset_ += fec_type.size();
-    if (offset_ > total_size()) {
+    if (fec_type.size() > total_size() - offset) {
       return td::Status::Error(ErrorCode::protoviolation,
-                               PSTRING() << "too big part: offset=" << offset_ << " total_size=" << total_size()
-                                         << " total_size=" << fec_type.size() << " part=" << part_i);
+                               PSTRING() << "too big part: offset=" << offset << " part_size=" << fec_type.size()
+                                         << " total_size=" << total_size() << " part=" << part_i);
     }
+    auto cost = rldp_decoder_reservation_bytes(fec_type.size(), fec_type.symbol_size(), fec_type.symbols_count());
+    auto solver_bytes = rldp_solver_working_bytes(fec_type.symbol_size(), fec_type.symbols_count());
+    if (!cost || !solver_bytes) {
+      return td::Status::Error(ErrorCode::protoviolation, "part decoder size overflows");
+    }
+    // Reserved before the decoder exists, so the budget bounds what is
+    // allocated rather than what was already allocated.
+    auto reservation = RldpInboundReservation::acquire(budget_, 1, cost.value());
+    if (!reservation) {
+      if (refused_by_budget) {
+        *refused_by_budget = true;
+      }
+      return nullptr;
+    }
+    offset_ = offset + fec_type.size();
 
     TRY_RESULT(decoder, fec_type.create_decoder());
-    auto it = parts_.emplace(part_i, Part{std::move(decoder), RldpReceiver(RldpSender::Config()), offset});
+    auto it = parts_.emplace(part_i, Part{std::move(decoder), RldpReceiver(RldpSender::Config()), offset,
+                                          std::move(reservation.value()), solver_bytes.value()});
     data_parts_.emplace_back();
     next_part_++;
     return &it.first->second;
@@ -65,6 +84,10 @@ void InboundTransfer::finish_part(td::uint32 part_i, td::BufferSlice data) {
   auto it = parts_.find(part_i);
   CHECK(it != parts_.end());
   CHECK(part_i < data_parts_.size());
+  // The decoder goes away; its decoded bytes stay until the transfer ends.
+  auto &reservation = it->second.reservation;
+  reservation.shrink_to(0, data.size());
+  finished_reservations_.push_back(std::move(reservation));
   data_parts_[part_i] = std::move(data);
   parts_.erase(it);
 }
