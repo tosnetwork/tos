@@ -1130,11 +1130,14 @@ endfunction()
 
 # Compile FunC sources (one or more .fc files) to a .boc. func -W emits
 # the BoC write directive into its .fif output; running fift on that .fif
-# materializes the .boc on disk.
+# materializes the .boc on disk. The positional arguments are the compiler's
+# inputs; INCLUDES lists the files they #include, which func reads on its own
+# and which must not be passed to it again, so an edit to one rebuilds the BoC.
 function(slice1_func_to_boc OUT_BOC WORKING_DIR)
+    cmake_parse_arguments(ARG "" "" "INCLUDES" ${ARGN})
     get_filename_component(_stem ${OUT_BOC} NAME_WE)
     set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)
-    set(_sources ${ARGN})
+    set(_sources ${ARG_UNPARSED_ARGUMENTS})
     add_custom_command(
         OUTPUT ${OUT_BOC}
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
@@ -1142,7 +1145,7 @@ function(slice1_func_to_boc OUT_BOC WORKING_DIR)
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
                 $<TARGET_FILE:fift> ${_fif}
         WORKING_DIRECTORY ${WORKING_DIR}
-        DEPENDS func fift ${_sources}
+        DEPENDS func fift ${_sources} ${ARG_INCLUDES}
         COMMENT "Compiling FunC contract ${_stem} -> ${OUT_BOC}"
         VERBATIM
     )
@@ -1170,10 +1173,24 @@ slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/examples/slice5/tos-report-bond-or
 
 slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/jetton-minter.fc)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/jetton-minter.fc
+                   INCLUDES
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/stdlib.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/params.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/constants.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/jetton-utils.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/op-codes.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/utils.fc)
 slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/jetton-wallet.fc)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/jetton-wallet.fc
+                   INCLUDES
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/stdlib.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/params.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/constants.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/jetton-utils.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/op-codes.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/utils.fc)
 # wallet-v5 lives at crypto/smartcont/wallet-v5-code.fc per the
 # migration playbook (verified via the find search in this slice's
 # closure work). It depends on crypto/smartcont/stdlib.fc, which is
@@ -1182,7 +1199,8 @@ slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}
 slice1_func_to_boc(${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/stdlib.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc
+                   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/auth-extension.fc)
 
 # Compile a production FunC contract from crypto/smartcont to a .boc, with
 # stdlib.fc first. ARGN lists the library files the contract includes, so an
@@ -1744,6 +1762,9 @@ set_tests_properties(benchmark-exclusion-source PROPERTIES LABELS "source-guard"
 add_test(NAME frozen-boc-toolchain-resolution
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-frozen-boc-toolchain.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(frozen-boc-toolchain-resolution PROPERTIES LABELS "source-guard")
+add_test(NAME func-build-include-deps
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-func-build-deps.py)
+set_tests_properties(func-build-include-deps PROPERTIES LABELS "source-guard")
 add_test(NAME quic-ctest-isolation-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-quic-ctest-isolation.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(quic-ctest-isolation-source PROPERTIES LABELS "source-guard")

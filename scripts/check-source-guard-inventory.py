@@ -23,6 +23,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "finality-evidence-admission-marker-mutations",
         "finality-evidence-admission-source",
         "frozen-boc-toolchain-resolution",
+        "func-build-include-deps",
         "image-digest-pinning",
         "jsonrpc-route-gating",
         "lite-query-error-response-source",
