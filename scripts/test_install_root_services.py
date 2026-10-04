@@ -225,3 +225,104 @@ def test_a_native_library_searching_outside_the_snapshot_is_not_published(setup,
     subprocess.run(build, check=True)
     result = install(repo, tools, base, extra={"elf": str(library)})
     assert result.returncode == 0, result.stderr
+
+
+CHECKER = INSTALLER.with_name("install-root-services-check.py")
+
+
+def check_snapshot(dest):
+    return subprocess.run(
+        ["/usr/bin/python3", "-I", "-S", str(CHECKER), "snapshot", str(dest)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def build_library(tmp_path, *flags):
+    source = write(tmp_path / "native.c", "int native(void) { return 0; }\n")
+    library = tmp_path / "built.so"
+    subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(library), str(source), *flags], check=True)
+    return library
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+@pytest.mark.parametrize(
+    ("rpath", "expected"),
+    [
+        ("$ORIGIN/../../../../../../../../var/tmp/native-libs", "outside the snapshot"),
+        ("$ORIGIN::$ORIGIN", "empty search path entry"),
+        ("$ORIGIN/$LIB", "unsupported loader token"),
+        ("$ORIGIN/../lib", None),
+    ],
+)
+def test_origin_search_paths_are_expanded_and_contained(tmp_path, rpath, expected):
+    dest = tmp_path / "snapshot"
+    (dest / "venv/lib").mkdir(parents=True)
+    library = build_library(tmp_path, f"-Wl,-rpath,{rpath}")
+    shutil.copy(library, dest / "venv/lib/native.so")
+    result = check_snapshot(dest)
+    if expected is None:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode == 1
+        assert expected in result.stderr
+
+
+def test_a_link_through_an_outside_link_is_refused_even_if_it_ends_inside(tmp_path):
+    dest = tmp_path / "snapshot"
+    write(dest / "venv/lib/real.py")
+    outside = tmp_path / "changeable"
+    outside.mkdir()
+    (outside / "hop").symlink_to(dest / "venv/lib/real.py")
+    (dest / "venv/lib/module.py").symlink_to(outside / "hop")
+    assert os.path.realpath(dest / "venv/lib/module.py") == str(dest / "venv/lib/real.py")
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "passes through" in result.stderr and "changeable" in result.stderr
+    # A link that stays inside on every step is accepted.
+    (dest / "venv/lib/module.py").unlink()
+    (dest / "venv/lib/module.py").symlink_to("real.py")
+    assert check_snapshot(dest).returncode == 0
+
+
+def test_a_link_through_a_directory_that_points_back_up_is_refused(tmp_path):
+    dest = tmp_path / "snapshot"
+    (dest / "a").mkdir(parents=True)
+    (dest / "a/up").symlink_to(".")  # resolves to dest/a itself
+    # dest/a/up/../../x is dest/x lexically from the link, but the kernel resolves
+    # up to dest/a first, so .. .. lands outside the snapshot.
+    (dest / "a/escape").symlink_to("up/../../../outside")
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "escape" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("line", "module", "expected"),
+    [
+        ("import sys; sys.path.insert(0, '/var/tmp/external')", None, "unreviewed code"),
+        ("import _virtualenv", "_virtualenv.py", None),
+        ("import _virtualenv", None, "not in the snapshot"),
+        ("../../../../../../../var/tmp/site", None, "outside the snapshot"),
+    ],
+)
+def test_pth_lines_are_contained_or_reviewed(tmp_path, line, module, expected):
+    site = tmp_path / "snapshot/venv/lib/site-packages"
+    write(site / "hook.pth", line + "\n")
+    if module:
+        write(site / module)
+    result = check_snapshot(tmp_path / "snapshot")
+    if expected is None:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode == 1
+        assert expected in result.stderr
+
+
+def test_an_elf_file_readelf_cannot_read_is_refused(tmp_path):
+    dest = tmp_path / "snapshot"
+    broken = write(dest / "venv/lib/broken.so")
+    broken.write_bytes(b"\x7fELF" + b"\x00" * 12)
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "readelf failed" in result.stderr
