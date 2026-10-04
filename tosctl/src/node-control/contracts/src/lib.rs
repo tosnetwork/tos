@@ -58,8 +58,8 @@ pub use agent_account_custody::{
 };
 pub use attestation::{
     DOMAIN_DISPUTE_RULING, DOMAIN_PROOF_ATTESTATION, DOMAIN_SERVICE_RESPOND, DOMAIN_TASK_RESOLVE,
-    DOMAIN_TASK_SETTLE, domain_bound_hash, resolve_domain_hash, service_actor_terms_hash,
-    service_respond_domain_hash, settle_domain_hash,
+    DOMAIN_TASK_SETTLE, domain_bound_hash, resolve_domain_hash, ruling_domain_hash,
+    service_actor_terms_hash, service_respond_domain_hash, settle_domain_hash,
 };
 pub use capability_registry::{
     CapabilityRegistryContract, CapabilityRegistryData, CapabilityRegistryInit,

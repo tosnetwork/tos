@@ -494,10 +494,11 @@ impl DisputeSendCmd {
                     Some(signature) => Some(signature),
                     None => match &self.signer_vault_key {
                         Some(name) => {
-                            let domain_hash = contracts::domain_bound_hash(
-                                contracts::DOMAIN_DISPUTE_RULING,
+                            let domain_hash = contracts::ruling_domain_hash(
                                 super::utils::network_global_id(&rpc_client).await?,
                                 &destination,
+                                ruling,
+                                self.split_bps,
                                 &ruling_hash,
                             )?;
                             Some(sign_hash_with_vault_key(name, &domain_hash, vault.clone()).await?)

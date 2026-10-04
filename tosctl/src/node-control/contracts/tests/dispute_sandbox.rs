@@ -273,10 +273,11 @@ fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
         .expect_aborted();
     assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
 
-    let domain_hash = contracts::domain_bound_hash(
-        contracts::DOMAIN_DISPUTE_RULING,
+    let domain_hash = contracts::ruling_domain_hash(
         sandbox_global_id(&f.bc),
         &f.dispute,
+        RULING_CLAIMANT,
+        0,
         &ruling_hash,
     )
     .unwrap();
@@ -356,10 +357,11 @@ fn reviewer_can_enable_attestor_once_but_cannot_revoke_it() {
         .expect_exit_code(ERR_ATTESTOR_FROZEN);
     assert_eq!(f.data().attestor_pubkey, Some(attestor_pubkey));
 
-    let domain_hash = contracts::domain_bound_hash(
-        contracts::DOMAIN_DISPUTE_RULING,
+    let domain_hash = contracts::ruling_domain_hash(
         sandbox_global_id(&f.bc),
         &f.dispute,
+        RULING_CLAIMANT,
+        0,
         &ruling_hash,
     )
     .unwrap();
@@ -382,10 +384,11 @@ fn configured_attestor_is_immutable_while_dispute_is_open() {
 
     let mut f = Fixture::with_attestor(TOS / 10, old_pubkey);
     let reviewer = f.reviewer.address().clone();
-    let domain_hash = contracts::domain_bound_hash(
-        contracts::DOMAIN_DISPUTE_RULING,
+    let domain_hash = contracts::ruling_domain_hash(
         sandbox_global_id(&f.bc),
         &f.dispute,
+        RULING_CLAIMANT,
+        0,
         &ruling_hash,
     )
     .unwrap();
@@ -450,10 +453,11 @@ fn attestor_rotate_and_revoke_are_frozen_from_deployment_until_resolution() {
 
     // Ruling reaches the terminal resolved status -- rotate/revoke unfrozen.
     let ruling_hash = [0xBB; 32];
-    let domain_hash = contracts::domain_bound_hash(
-        contracts::DOMAIN_DISPUTE_RULING,
+    let domain_hash = contracts::ruling_domain_hash(
         sandbox_global_id(&f.bc),
         &f.dispute,
+        RULING_CLAIMANT,
+        0,
         &ruling_hash,
     )
     .unwrap();
@@ -511,10 +515,11 @@ fn a_ruling_signed_for_another_network_is_refused() {
     let mut f = Fixture::with_attestor(TOS / 10, attestor.verifying_key().to_bytes());
     let reviewer = f.reviewer.address().clone();
     let here = sandbox_global_id(&f.bc);
-    let elsewhere = contracts::domain_bound_hash(
-        contracts::DOMAIN_DISPUTE_RULING,
+    let elsewhere = contracts::ruling_domain_hash(
         here.wrapping_add(1),
         &f.dispute,
+        RULING_CLAIMANT,
+        0,
         &ruling_hash,
     )
     .unwrap();
@@ -554,13 +559,8 @@ fn a_ruling_signed_for_another_network_is_refused() {
     )
     .expect_aborted()
     .expect_exit_code(ERR_BAD_RULING_SIGNATURE);
-    let this_network = contracts::domain_bound_hash(
-        contracts::DOMAIN_DISPUTE_RULING,
-        here,
-        &f.dispute,
-        &ruling_hash,
-    )
-    .unwrap();
+    let this_network =
+        contracts::ruling_domain_hash(here, &f.dispute, RULING_CLAIMANT, 0, &ruling_hash).unwrap();
     f.send_from_with_value(
         &reviewer,
         DisputeContract::rule_signed(
@@ -574,4 +574,40 @@ fn a_ruling_signed_for_another_network_is_refused() {
         TOS / 4,
     )
     .expect_success();
+}
+
+/// The attestor signs the outcome and the split along with the ruling hash, so
+/// the reviewer cannot record a different outcome or split under a signature
+/// given for another.
+#[test]
+fn a_ruling_signature_does_not_cover_another_outcome_or_split() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let ruling_hash = [0xBB; 32];
+    let mut f = Fixture::with_attestor(TOS / 10, attestor.verifying_key().to_bytes());
+    let reviewer = f.reviewer.address().clone();
+    let here = sandbox_global_id(&f.bc);
+    let signed =
+        contracts::ruling_domain_hash(here, &f.dispute, RULING_SPLIT, 2500, &ruling_hash).unwrap();
+    let signature = attestor.sign(&signed).to_bytes();
+    for (query_id, ruling, split_bps) in
+        [(1, RULING_SPLIT, 7500), (2, RULING_CLAIMANT, 2500), (3, RULING_RESPONDENT, 0)]
+    {
+        f.send_from_with_value(
+            &reviewer,
+            DisputeContract::rule_signed(query_id, ruling, split_bps, ruling_hash, &signature)
+                .unwrap(),
+            TOS / 4,
+        )
+        .expect_aborted()
+        .expect_exit_code(ERR_BAD_RULING_SIGNATURE);
+        assert_eq!(f.data().status, DISPUTE_STATUS_OPEN);
+    }
+    f.send_from_with_value(
+        &reviewer,
+        DisputeContract::rule_signed(4, RULING_SPLIT, 2500, ruling_hash, &signature).unwrap(),
+        TOS / 4,
+    )
+    .expect_success();
+    let data = f.data();
+    assert_eq!((data.ruling, data.split_bps), (RULING_SPLIT, 2500));
 }

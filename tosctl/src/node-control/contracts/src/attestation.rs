@@ -23,8 +23,8 @@
 
 use chain_block::{BuilderData, Coins, IBitstring, MsgAddressInt, Serializable};
 
-/// Dispute `rule`: the ruling hash.
-pub const DOMAIN_DISPUTE_RULING: u32 = 0x4452_5532;
+/// Dispute `rule`: the outcome, the split and the ruling hash.
+pub const DOMAIN_DISPUTE_RULING: u32 = 0x4452_5533;
 /// Proof Attestation `attest`: the attested hash.
 pub const DOMAIN_PROOF_ATTESTATION: u32 = 0x5041_5432;
 /// Task Escrow `settle`: result hash and payout.
@@ -62,11 +62,10 @@ fn signing_domain(
 
 /// Compute the domain-bound hash that the attestor key must sign for
 /// `contract_address`, given the contract's on-chain `original_hash`
-/// (`ruling_hash` / `attested_hash`). Used by Dispute's `rule`, Proof
-/// Attestation's `attest`, and Agent Account's controller signature (over
-/// its own payload hash, not a contract-recorded one) -- none of which
-/// carry a payout, or a second piece of state like a request, the signature
-/// needs to additionally bind.
+/// (`attested_hash`). Used by Proof Attestation's `attest` and Agent
+/// Account's controller signature (over its own payload hash, not a
+/// contract-recorded one) -- neither carries a payout, or a second piece of
+/// state like a request, the signature needs to additionally bind.
 pub fn domain_bound_hash(
     tag: u32,
     global_id: i32,
@@ -75,6 +74,26 @@ pub fn domain_bound_hash(
 ) -> anyhow::Result<[u8; 32]> {
     let mut b = signing_domain(tag, global_id, contract_address)?;
     b.append_u256(original_hash)?;
+    let cell = b.into_cell()?;
+    Ok(*cell.repr_hash().as_array())
+}
+
+/// Compute the domain-bound hash Dispute's `rule` attestor signature must
+/// cover: the outcome, the split and the ruling hash. The contract records
+/// all three, so a signature over the hash alone let the reviewer record a
+/// different outcome or split under it. Must match
+/// `crypto/smartcont/dispute-code.fc`'s `rule` computation byte-for-byte.
+pub fn ruling_domain_hash(
+    global_id: i32,
+    contract_address: &MsgAddressInt,
+    ruling: u8,
+    split_bps: u16,
+    ruling_hash: &[u8; 32],
+) -> anyhow::Result<[u8; 32]> {
+    let mut b = signing_domain(DOMAIN_DISPUTE_RULING, global_id, contract_address)?;
+    b.append_u8(ruling)?;
+    b.append_u16(split_bps)?;
+    b.append_u256(ruling_hash)?;
     let cell = b.into_cell()?;
     Ok(*cell.repr_hash().as_array())
 }

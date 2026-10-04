@@ -56,7 +56,7 @@ const int err::attestor_frozen = 2007;
 const int err::weak_attestor = 2008;
 
 ;; A ruling attestor signs: tag, network, this dispute, the ruling hash.
-const int domain::ruling = 0x44525532; ;; "DRU2"
+const int domain::ruling = 0x44525533; ;; "DRU3"
 
 (slice, slice, slice, int, int, int, int, int, int, int, int, int, int) load_state() inline {
   slice ds = get_data().begin_parse();
@@ -141,14 +141,16 @@ const int domain::ruling = 0x44525532; ;; "DRU2"
     int new_ruling_hash = in_msg~load_uint(256);
     if (has_attestor) {
       ;; Additional, independent check: the configured attestor key must have
-      ;; signed the new ruling_hash, domain-bound to this contract's own
-      ;; address so the signature can't be replayed against another instance
-      ;; sharing the same attestor key and ruling_hash. This never replaces
-      ;; the reviewer sender check above -- it is an extra requirement
-      ;; layered on top.
+      ;; signed this ruling -- its outcome, its split and its ruling_hash --
+      ;; domain-bound to this contract, so the signature can't be replayed
+      ;; against another instance, and the reviewer can't reuse it to record
+      ;; a different outcome or split under the same ruling_hash. This never
+      ;; replaces the reviewer sender check above -- it is an extra
+      ;; requirement layered on top.
       slice signature = in_msg~load_bits(512);
       throw_if(err::weak_attestor, weak_ed25519_key?(attestor_pubkey));
       int domain_hash = cell_hash(begin_signing_domain(domain::ruling)
+        .store_uint(new_ruling, 8).store_uint(new_split_bps, 16)
         .store_uint(new_ruling_hash, 256).end_cell());
       throw_unless(err::bad_ruling_signature,
         check_signature(domain_hash, signature, attestor_pubkey));
