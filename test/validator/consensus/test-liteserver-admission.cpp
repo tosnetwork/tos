@@ -91,16 +91,20 @@ TEST(LiteServerAdmission, PerConnectionRateAndInflightCapsCompose) {
   EXPECT(limits.try_acquire(td::Timestamp::at(101.1)) == ExtAdmission::Acquired);
 }
 
+adnl::ExtSourceKey source(const std::string &host) {
+  return adnl::ExtSourceKey(peer(host));
+}
+
 TEST(LiteServerAdmission, ServerQueryCapsComposeAcrossIps) {
   using adnl::ExtAdmission;
   adnl::ExtServerQueryLimits limits(3, 2);
-  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::Acquired);
-  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::Acquired);
-  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::PerIpInflightLimited);
-  EXPECT(limits.try_acquire("192.0.2.2") == ExtAdmission::Acquired);
-  EXPECT(limits.try_acquire("192.0.2.3") == ExtAdmission::ServerInflightLimited);
-  limits.release("192.0.2.1");
-  EXPECT(limits.try_acquire("192.0.2.3") == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(source("192.0.2.1")) == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(source("192.0.2.1")) == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(source("192.0.2.1")) == ExtAdmission::PerIpInflightLimited);
+  EXPECT(limits.try_acquire(source("192.0.2.2")) == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(source("192.0.2.3")) == ExtAdmission::ServerInflightLimited);
+  limits.release(source("192.0.2.1"));
+  EXPECT(limits.try_acquire(source("192.0.2.3")) == ExtAdmission::Acquired);
   EXPECT(limits.inflight() == 3);
 }
 
@@ -109,18 +113,55 @@ TEST(LiteServerAdmission, ServerQueryReleaseIsIdempotentPerIp) {
   adnl::ExtServerQueryLimits limits(2, 2);
   // Releasing an address that never acquired, or releasing more often than it
   // acquired, must not underflow and must not free capacity held by others.
-  limits.release("192.0.2.9");
+  limits.release(source("192.0.2.9"));
   EXPECT(limits.inflight() == 0);
-  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::Acquired);
-  EXPECT(limits.try_acquire("192.0.2.2") == ExtAdmission::Acquired);
-  limits.release("192.0.2.1");
-  limits.release("192.0.2.1");
+  EXPECT(limits.try_acquire(source("192.0.2.1")) == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(source("192.0.2.2")) == ExtAdmission::Acquired);
+  limits.release(source("192.0.2.1"));
+  limits.release(source("192.0.2.1"));
   EXPECT(limits.inflight() == 1);
-  EXPECT(limits.try_acquire("192.0.2.3") == ExtAdmission::Acquired);
-  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::ServerInflightLimited);
-  limits.release("192.0.2.2");
-  limits.release("192.0.2.3");
+  EXPECT(limits.try_acquire(source("192.0.2.3")) == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(source("192.0.2.1")) == ExtAdmission::ServerInflightLimited);
+  limits.release(source("192.0.2.2"));
+  limits.release(source("192.0.2.3"));
   EXPECT(limits.inflight() == 0);
+}
+
+// In-flight queries are counted per source, not per exact address: every
+// address of one IPv6 /64 draws on one allowance, an IPv4-mapped address on its
+// IPv4 address's, an unrelated source is still admitted, and a release made
+// with the key a query was admitted under (as its completion callback does)
+// returns the allowance whichever address of the source asks next.
+TEST(LiteServerAdmission, ServerQueryCapsAreCountedPerSource) {
+  using adnl::ExtAdmission;
+  adnl::ExtServerQueryLimits limits(16, 3);
+  std::vector<adnl::ExtSourceKey> admitted;
+  for (const auto *host : {"2001:db8:1:2::1", "2001:db8:1:2::2", "2001:db8:1:2:ffff:ffff:ffff:ffff"}) {
+    admitted.push_back(source(host));
+    EXPECT(limits.try_acquire(admitted.back()) == ExtAdmission::Acquired);
+  }
+  EXPECT(limits.try_acquire(source("2001:db8:1:2:abcd::9")) == ExtAdmission::PerIpInflightLimited);
+  EXPECT(limits.inflight_from(source("2001:db8:1:2::77")) == 3);
+  EXPECT(limits.inflight() == 3);
+  // The neighbouring /64 and an unrelated IPv4 source are admitted.
+  EXPECT(limits.try_acquire(source("2001:db8:1:3::1")) == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(source("192.0.2.1")) == ExtAdmission::Acquired);
+  // A mapped IPv4 address is the IPv4 source it carries.
+  EXPECT(limits.try_acquire(source("::ffff:192.0.2.1")) == ExtAdmission::Acquired);
+  EXPECT(limits.inflight_from(source("192.0.2.1")) == 2);
+  EXPECT(limits.try_acquire(source("192.0.2.1")) == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(source("::ffff:192.0.2.1")) == ExtAdmission::PerIpInflightLimited);
+
+  // Completing one of the /64's queries lets another address of it in.
+  limits.release(admitted.back());
+  admitted.pop_back();
+  admitted.push_back(source("2001:db8:1:2:abcd::9"));
+  EXPECT(limits.try_acquire(admitted.back()) == ExtAdmission::Acquired);
+  for (const auto &key : admitted) {
+    limits.release(key);
+  }
+  EXPECT(limits.inflight_from(source("2001:db8:1:2::1")) == 0);
+  EXPECT(limits.sources() == 2);
 }
 
 TEST(LiteServerAdmission, AnonymousIdentityIsStablePerIp) {

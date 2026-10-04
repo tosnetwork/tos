@@ -146,36 +146,57 @@ class ExtConnectionQueryLimits {
   size_t inflight_{0};
 };
 
-class ExtServerQueryLimits {
+// The source a connection's server-wide query allowance is counted under:
+// network_source_key of the peer address (IPv4 address or IPv6 /64), the same
+// key as the connection and input-byte shares. Built only from an address, so
+// a caller cannot count queries under the exact address by mistake; the exact
+// address stays the connection's identity for logging.
+class ExtSourceKey {
  public:
-  ExtServerQueryLimits(size_t max_inflight, size_t max_inflight_per_ip)
-      : max_inflight_(max_inflight), max_inflight_per_ip_(max_inflight_per_ip) {
+  explicit ExtSourceKey(const td::IPAddress &peer) : key_(network_source_key(peer)) {
+  }
+  const std::string &str() const {
+    return key_;
   }
 
-  ExtAdmission try_acquire(const std::string &peer_ip) {
+ private:
+  std::string key_;
+};
+
+// Parked and executing queries across a server's connections: at most
+// `max_inflight` in all and `max_inflight_per_source` for one source. Counting
+// per source rather than per exact address keeps one IPv6 /64 from holding an
+// allowance for every address it sends from.
+class ExtServerQueryLimits {
+ public:
+  ExtServerQueryLimits(size_t max_inflight, size_t max_inflight_per_source)
+      : max_inflight_(max_inflight), max_inflight_per_source_(max_inflight_per_source) {
+  }
+
+  ExtAdmission try_acquire(const ExtSourceKey &source) {
     std::lock_guard lock(mutex_);
     if (inflight_ >= max_inflight_) {
       return ExtAdmission::ServerInflightLimited;
     }
-    auto it = inflight_per_ip_.find(peer_ip);
-    size_t per_ip = it == inflight_per_ip_.end() ? 0 : it->second;
-    if (per_ip >= max_inflight_per_ip_) {
+    auto it = inflight_per_source_.find(source.str());
+    size_t per_source = it == inflight_per_source_.end() ? 0 : it->second;
+    if (per_source >= max_inflight_per_source_) {
       return ExtAdmission::PerIpInflightLimited;
     }
     ++inflight_;
-    ++inflight_per_ip_[peer_ip];
+    ++inflight_per_source_[source.str()];
     return ExtAdmission::Acquired;
   }
 
-  void release(const std::string &peer_ip) {
+  void release(const ExtSourceKey &source) {
     std::lock_guard lock(mutex_);
-    auto it = inflight_per_ip_.find(peer_ip);
-    if (it == inflight_per_ip_.end() || it->second == 0) {
+    auto it = inflight_per_source_.find(source.str());
+    if (it == inflight_per_source_.end() || it->second == 0) {
       return;
     }
     --inflight_;
     if (--it->second == 0) {
-      inflight_per_ip_.erase(it);
+      inflight_per_source_.erase(it);
     }
   }
 
@@ -183,13 +204,23 @@ class ExtServerQueryLimits {
     std::lock_guard lock(mutex_);
     return inflight_;
   }
+  size_t inflight_from(const ExtSourceKey &source) const {
+    std::lock_guard lock(mutex_);
+    auto it = inflight_per_source_.find(source.str());
+    return it == inflight_per_source_.end() ? 0 : it->second;
+  }
+  // Sources with a query in flight; an entry is erased when its last one ends.
+  size_t sources() const {
+    std::lock_guard lock(mutex_);
+    return inflight_per_source_.size();
+  }
 
  private:
   size_t max_inflight_;
-  size_t max_inflight_per_ip_;
+  size_t max_inflight_per_source_;
   mutable std::mutex mutex_;
   size_t inflight_{0};
-  std::map<std::string, size_t> inflight_per_ip_;
+  std::map<std::string, size_t> inflight_per_source_;
 };
 
 }  // namespace tos::adnl

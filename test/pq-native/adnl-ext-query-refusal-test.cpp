@@ -675,10 +675,15 @@ void unit_checks() {
   require(limits.tracked_ips() <= 2, "tracked addresses exceeded their bound");
 
   adnl::ExtServerQueryLimits server(1, 1);
-  require(server.try_acquire("192.0.2.1") == adnl::ExtAdmission::Acquired, "server admission failed");
-  require(server.try_acquire("192.0.2.2") == adnl::ExtAdmission::ServerInflightLimited,
+  auto key = [](const char* host) {
+    td::IPAddress address;
+    require(address.init_ipv4_port(td::CSlice(host), 4000).is_ok(), "bad test address");
+    return adnl::ExtSourceKey(address);
+  };
+  require(server.try_acquire(key("192.0.2.1")) == adnl::ExtAdmission::Acquired, "server admission failed");
+  require(server.try_acquire(key("192.0.2.2")) == adnl::ExtAdmission::ServerInflightLimited,
           "server-wide in-flight cap not reported as such");
-  server.release("192.0.2.1");
+  server.release(key("192.0.2.1"));
   require(server.inflight() == 0, "server in-flight counter did not return to zero");
 
   // Output bound: the frame of the largest legal payload, and two of them, fit;
