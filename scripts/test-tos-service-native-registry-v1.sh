@@ -26,9 +26,9 @@ import sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert manifest["schema"] == "tos.contract.release.v1"
 assert manifest["protocol"] == "tos_service_v1"
-assert manifest["code_hash"] == "tvm-cell-sha256:81403925ca77489367abb0880cf4be31092e4f6df2f5e92452010469eed80a0b"
-assert manifest["boc_sha256"] == "sha256:0eb1a41ac42bac9157f4e1cf412b773a4c098c3003f91e6f5a0d6ce9c0569d66"
-assert manifest["boc_bytes"] == 3958
+assert manifest["code_hash"] == "tvm-cell-sha256:bc498a9f6011b34e9fc2e5c49842153866231ff61e450f9c31007c1d9ec2a684"
+assert manifest["boc_sha256"] == "sha256:be782af8d17d646a2ae9c31a7b25be1031d4e190adca732a485cdcd1d21497e3"
+assert manifest["boc_bytes"] == 3962
 PY
 
 printf 'TOS Native Service Registry v1 reproducible build: PASS\n'

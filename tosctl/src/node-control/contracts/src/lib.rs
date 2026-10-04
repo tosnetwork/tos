@@ -31,6 +31,7 @@ pub mod dispute;
 pub mod dns;
 pub mod elector;
 pub mod liquid_controller;
+pub mod native_registry;
 pub mod nominator;
 pub mod nominator_pool;
 pub mod prediction_market;
@@ -78,6 +79,10 @@ pub use dispute::{
 pub use elector::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, Participant};
 pub use liquid_controller::{
     ControllerData, ControllerWrapper, ControllerWrapperImpl, LoanBalanceRequirement,
+};
+pub use native_registry::{
+    NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE, NATIVE_REGISTRY_GAS_CEILING,
+    NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS, NativePolicy, NativePolicyController,
 };
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{

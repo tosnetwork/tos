@@ -15,6 +15,11 @@ use chain_block::{
     BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
     TrComputePhase, TransactionDescr, base64_decode, read_single_root_boc,
 };
+use contracts::native_registry::{
+    NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE, NATIVE_REGISTRY_GAS_CEILING,
+    NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS, NATIVE_REGISTRY_TRANSACTION_GAS_LIMIT, NativePolicy,
+    NativePolicyController, build_policy,
+};
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
@@ -459,8 +464,13 @@ impl Fixture {
     }
 
     fn send_to(&mut self, destination: MsgAddressInt, body: Cell) -> SendResult {
-        let msg =
-            MessageBuilder::internal(self.relayer.address(), &destination, TOS).body(body).build();
+        self.send_value(destination, body, TOS)
+    }
+
+    fn send_value(&mut self, destination: MsgAddressInt, body: Cell, value: u64) -> SendResult {
+        let msg = MessageBuilder::internal(self.relayer.address(), &destination, value)
+            .body(body)
+            .build();
         self.bc.send_message(msg).expect("submit")
     }
 
@@ -613,6 +623,34 @@ impl Fixture {
         version: &[u8],
         manifest: [u8; 32],
     ) -> CapabilityHandle {
+        let (result, capability) = self.register_capability_by(
+            owner_id,
+            owner_address,
+            |register| signature_set(owner_key, register),
+            object_nonce,
+            version,
+            manifest,
+            TOS,
+        );
+        result.expect_success();
+        assert_address_success(&result, &capability.address);
+        assert_eq!(capability_position(&self.state_at(&capability.address)), (1, 1));
+        capability
+    }
+
+    /// Sends a capability registration to its owner agent, signed by
+    /// `authority`, carrying `value`; returns the result without judging it.
+    #[allow(clippy::too_many_arguments)]
+    fn register_capability_by(
+        &mut self,
+        owner_id: &[u8; 32],
+        owner_address: &MsgAddressInt,
+        authority: impl Fn(&Cell) -> Cell,
+        object_nonce: [u8; 32],
+        version: &[u8],
+        manifest: [u8; 32],
+        value: u64,
+    ) -> (SendResult, CapabilityHandle) {
         let version_name = protocol_text(version);
         let version_hash = bytes_hash(version);
         let mut identity_details = BuilderData::new();
@@ -659,18 +697,15 @@ impl Fixture {
             object_nonce[0],
             payload.into_cell().unwrap(),
         );
-        let result = self.send_to(
+        let result = self.send_value(
             owner_address.clone(),
-            authorization_body(
-                register.clone(),
-                signature_set(owner_key, &register),
-                empty_signatures(),
-            ),
+            authorization_body(register.clone(), authority(&register), empty_signatures()),
+            value,
         );
-        result.expect_success();
-        assert_address_success(&result, &address);
-        assert_eq!(capability_position(&self.state_at(&address)), (1, 1));
-        CapabilityHandle { id: capability_id, address, initial_version_hash: version_hash }
+        (
+            result,
+            CapabilityHandle { id: capability_id, address, initial_version_hash: version_hash },
+        )
     }
 }
 
@@ -680,9 +715,14 @@ struct CapabilityHandle {
     initial_version_hash: [u8; 32],
 }
 
+/// Canonical protocol text: a byte snake whose every non-final cell holds 127 bytes.
 fn protocol_text(value: &[u8]) -> Cell {
+    let (head, tail) = value.split_at(value.len().min(127));
     let mut text = BuilderData::new();
-    text.append_raw(value, value.len() * 8).unwrap();
+    text.append_raw(head, head.len() * 8).unwrap();
+    if !tail.is_empty() {
+        text.checked_append_reference(protocol_text(tail)).unwrap();
+    }
     text.into_cell().unwrap()
 }
 
@@ -1589,7 +1629,13 @@ impl Fixture {
     /// Replaces the agent's stored policy without going through any action,
     /// as a hand-built account state could carry it.
     fn install_policy(&mut self, policy: Cell) {
-        let mut state = SliceData::load_cell(self.state()).unwrap();
+        let (address, object_id) = (self.registry.clone(), self.object_id);
+        self.install_policy_at(&address, &object_id, policy);
+    }
+
+    /// [`Fixture::install_policy`] for the agent at `address`.
+    fn install_policy_at(&mut self, address: &MsgAddressInt, object_id: &[u8; 32], policy: Cell) {
+        let mut state = SliceData::load_cell(self.state_at(address)).unwrap();
         let header = state.get_next_slice(32 + 16 + 8 + 1 + 64 + 64 + 256).unwrap();
         state.checked_drain_reference().unwrap();
         let delegations = state.checked_drain_reference().unwrap();
@@ -1611,7 +1657,7 @@ impl Fixture {
             .unwrap()
             .append_u8(1)
             .unwrap()
-            .append_u256(&self.object_id)
+            .append_u256(object_id)
             .unwrap()
             .checked_append_reference(self.config.clone())
             .unwrap()
@@ -1619,9 +1665,9 @@ impl Fixture {
             .unwrap()
             .checked_append_reference(next_state.into_cell().unwrap())
             .unwrap();
-        let mut account = self.bc.get_account(&self.registry).unwrap().clone();
+        let mut account = self.bc.get_account(address).unwrap().clone();
         assert!(account.set_data(data.into_cell().unwrap()));
-        self.bc.set_account(self.registry.clone(), account);
+        self.bc.set_account(address.clone(), account);
     }
 
     fn delegate_action(&self, sequence: u64, nonce: u8) -> Cell {
@@ -1913,38 +1959,532 @@ fn sign_bit_aliases_neither_install_nor_count() {
     }
 }
 
-/// Gas for the widest policy that registers in one transaction, every
-/// controller signing both the possession proof and the authorization.
-#[test]
-fn widest_policy_registration_gas() {
-    // Each controller costs a weak-key check in all three validations a
-    // registration runs, so the widest policy that fits one transaction's gas
-    // limit is narrower than the 64 the contract declares. Pin the widest that
-    // currently fits so a cost increase that narrows it further fails here.
-    const WIDEST_REGISTRABLE: u8 = 28;
-    let mut f = Fixture::new();
-    let (gas, limit, exit, registered) = registration_gas(&mut f, WIDEST_REGISTRABLE);
-    eprintln!("width {WIDEST_REGISTRABLE}: gas {gas} of {limit}, exit {exit}");
-    assert_eq!(exit, 0, "a {WIDEST_REGISTRABLE}-controller policy must still register");
-    assert!(registered);
+// ---------------------------------------------------------------------------
+// Supported policy width.
+//
+// Every path that walks a policy or checks a signature per controller is
+// measured at maximum-width inputs: every controller holds every purpose and
+// the recovery flag, every controller signs, and every key takes the weak-key
+// check's longer branch. Each such path must stay within the gas ceiling at
+// the supported width, and one controller more must be refused wherever a
+// policy enters storage.
+// ---------------------------------------------------------------------------
+
+const MAX_WIDTH: usize = NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS;
+const ERR_POLICY_TOO_WIDE: i32 = NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE;
+/// Enough value for the whole masterchain gas limit and a second leg.
+const MEASURE_VALUE: u64 = 40 * TOS;
+
+/// `width` deterministic keys whose first byte is below 0xec, where the
+/// weak-key check runs its longer branch.
+fn width_keys(width: usize, salt: u8) -> Vec<SigningKey> {
+    let mut keys = Vec::with_capacity(width);
+    let mut counter: u32 = 0;
+    while keys.len() < width {
+        let mut seed = vec![salt];
+        seed.extend_from_slice(&counter.to_be_bytes());
+        counter += 1;
+        let key = SigningKey::from_bytes(&bytes_hash(&seed));
+        if key.verifying_key().to_bytes()[0] < 0xec {
+            keys.push(key);
+        }
+    }
+    keys
 }
 
-/// Registers an agent whose policy has `width` controllers, each signing both
-/// the possession proof and the authorization, and returns the compute phase's
-/// gas used, gas limit, exit code, and whether the agent was registered.
-fn registration_gas(f: &mut Fixture, width: u8) -> (u64, u64, i32, bool) {
-    let keys: Vec<SigningKey> =
-        (0..width).map(|i| SigningKey::from_bytes(&[i.wrapping_add(1); 32])).collect();
+/// Every key holds every purpose and the recovery flag with weight 1, and both
+/// thresholds need every key.
+fn wide_policy(keys: &[SigningKey]) -> Cell {
     let controllers: Vec<_> =
         keys.iter().map(|key| (key.verifying_key().to_bytes(), 1, ALL_PURPOSES, true)).collect();
-    let policy = policy_of(u32::from(width), u32::from(width), &controllers);
-    let (result, address) = f.register_with(policy, [width; 32], |register| {
-        signature_entries(keys.iter().map(|key| signed(key, register)).collect())
-    });
-    match result.read_primary_description().compute_ph {
-        TrComputePhase::Vm(vm) => {
-            (vm.gas_used.as_u64(), vm.gas_limit.as_u64(), vm.exit_code, f.registered(&address))
-        }
+    policy_of(keys.len() as u32, keys.len() as u32, &controllers)
+}
+
+fn all_sign(keys: &[SigningKey], action: &Cell) -> Cell {
+    signature_entries(keys.iter().map(|key| signed(key, action)).collect())
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Gas {
+    used: u64,
+    limit: u64,
+    exit: i32,
+    aborted: bool,
+}
+
+/// The compute phase of the last transaction `result` ran on `address`.
+fn gas_at(result: &SendResult, address: &MsgAddressInt) -> Gas {
+    let transaction =
+        result.transactions_for(address).into_iter().last().expect("transaction for address");
+    let TransactionDescr::Ordinary(description) =
+        transaction.read_description().expect("transaction description")
+    else {
+        panic!("expected ordinary transaction")
+    };
+    match description.compute_ph {
+        TrComputePhase::Vm(vm) => Gas {
+            used: vm.gas_used.as_u64(),
+            limit: vm.gas_limit.as_u64(),
+            exit: vm.exit_code,
+            aborted: description.aborted,
+        },
         TrComputePhase::Skipped(skipped) => panic!("compute skipped: {:?}", skipped.reason),
     }
+}
+
+/// Every policy-walking path, measured once.
+#[derive(Debug)]
+struct PathGas {
+    register: Gas,
+    delegate: Gas,
+    revoke_agent: Gas,
+    update: Gas,
+    initiate_recovery: Gas,
+    complete_recovery: Gas,
+    authorize_register_capability: Gas,
+    authorize_add_version: Gas,
+    authorize_revoke_version: Gas,
+    transfer_old_owner: Gas,
+    transfer_new_owner: Gas,
+}
+
+impl PathGas {
+    fn rows(&self) -> [(&'static str, Gas); 11] {
+        [
+            ("register_agent", self.register),
+            ("delegate_agent", self.delegate),
+            ("revoke_agent", self.revoke_agent),
+            ("update_agent_policy", self.update),
+            ("initiate_recovery", self.initiate_recovery),
+            ("complete_recovery", self.complete_recovery),
+            ("authorize register_capability", self.authorize_register_capability),
+            ("authorize add_capability_version", self.authorize_add_version),
+            ("authorize revoke_capability", self.authorize_revoke_version),
+            ("transfer_capability (old owner)", self.transfer_old_owner),
+            ("transfer_capability (new owner)", self.transfer_new_owner),
+        ]
+    }
+}
+
+/// A 128-byte version name, the longest protocol text, so the capability
+/// paths carry their largest payload.
+fn longest_version(tag: u8) -> Vec<u8> {
+    let mut name = vec![b'v'; 128];
+    name[1] = b'a' + tag;
+    name
+}
+
+/// Measures every path for an agent whose policy has `width` controllers and
+/// whose new, recovery or transfer-recipient policy has `next_width`.
+fn measure_paths(width: usize, next_width: usize) -> PathGas {
+    let keys = width_keys(width, 1);
+    let next_keys = width_keys(next_width, 2);
+
+    // Registration of a `width` policy.
+    let register = {
+        let mut f = Fixture::new();
+        let (result, address) =
+            f.register_with(wide_policy(&keys), [0x60; 32], |action| all_sign(&keys, action));
+        gas_at(&result, &address)
+    };
+
+    // Actions authorized by a stored `width` policy.
+    let agent = |kind: u8, payload: Cell| {
+        let mut f = Fixture::new();
+        f.install_policy(wide_policy(&keys));
+        let action = f.build_action(kind, 1, 2, 0x61, payload);
+        let result = f.send_value(
+            f.registry.clone(),
+            submit_body(action.clone(), all_sign(&keys, &action), empty_signatures()),
+            MEASURE_VALUE,
+        );
+        gas_at(&result, &f.registry)
+    };
+    let delegate = {
+        let mut payload = BuilderData::new();
+        payload.append_u256(&[0x62; 32]).unwrap();
+        agent(DELEGATE_AGENT, payload.into_cell().unwrap())
+    };
+    let revoke_agent = agent(REVOKE_AGENT, BuilderData::new().into_cell().unwrap());
+
+    // Policy update from `width` to `next_width`.
+    let update = {
+        let mut f = Fixture::new();
+        f.install_policy(wide_policy(&keys));
+        let mut payload = BuilderData::new();
+        payload.checked_append_reference(wide_policy(&next_keys)).unwrap();
+        let action = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 0x63, payload.into_cell().unwrap());
+        let result = f.send_value(
+            f.registry.clone(),
+            submit_body(action.clone(), all_sign(&keys, &action), all_sign(&next_keys, &action)),
+            MEASURE_VALUE,
+        );
+        gas_at(&result, &f.registry)
+    };
+
+    // Recovery from `width` to a `next_width` recovery policy, then completion.
+    let (initiate_recovery, complete_recovery) = {
+        let mut f = Fixture::new();
+        f.install_policy(wide_policy(&keys));
+        let execute_after = u64::from(f.bc.now()) + 10;
+        let mut payload = BuilderData::new();
+        payload
+            .append_u64(execute_after)
+            .unwrap()
+            .checked_append_reference(wide_policy(&next_keys))
+            .unwrap();
+        let initiate = f.build_action(INITIATE_RECOVERY, 1, 2, 0x64, payload.into_cell().unwrap());
+        let result = f.send_value(
+            f.registry.clone(),
+            submit_body(
+                initiate.clone(),
+                all_sign(&keys, &initiate),
+                all_sign(&next_keys, &initiate),
+            ),
+            MEASURE_VALUE,
+        );
+        let initiate_gas = gas_at(&result, &f.registry);
+        f.bc.set_now((execute_after + 1) as u32);
+        let mut payload = BuilderData::new();
+        payload.append_raw(initiate.hash(0).as_slice(), 256).unwrap();
+        let complete = f.build_action(COMPLETE_RECOVERY, 2, 1, 0x65, payload.into_cell().unwrap());
+        let result = f.send_value(
+            f.registry.clone(),
+            submit_body(complete.clone(), all_sign(&keys, &complete), empty_signatures()),
+            MEASURE_VALUE,
+        );
+        (initiate_gas, gas_at(&result, &f.registry))
+    };
+
+    // Capability authorization by a `width` owner, and a transfer to a second
+    // agent whose policy has `next_width` controllers.
+    let mut f = Fixture::new();
+    f.install_policy(wide_policy(&keys));
+    let owner_id = f.object_id;
+    let owner = f.registry.clone();
+    let version = longest_version(0);
+    let (result, capability) = f.register_capability_by(
+        &owner_id,
+        &owner,
+        |action| all_sign(&keys, action),
+        [0x66; 32],
+        &version,
+        [0x67; 32],
+        MEASURE_VALUE,
+    );
+    let authorize_register_capability = gas_at(&result, &owner);
+    if authorize_register_capability.exit == 0 {
+        assert_address_success(&result, &capability.address);
+    }
+
+    let added = longest_version(1);
+    let mut payload = BuilderData::new();
+    payload
+        .append_u256(&owner_id)
+        .unwrap()
+        .append_u256(&bytes_hash(&added))
+        .unwrap()
+        .append_u256(&[0x68; 32])
+        .unwrap()
+        .checked_append_reference(protocol_text(&added))
+        .unwrap();
+    let mut authorize_add_version = authorize_register_capability;
+    let mut authorize_revoke_version = authorize_register_capability;
+    let mut transfer_old_owner = authorize_register_capability;
+    let mut transfer_new_owner = authorize_register_capability;
+    if authorize_register_capability.exit == 0 {
+        let add = f.build_capability_action(
+            ADD_CAPABILITY_VERSION,
+            &capability.id,
+            &capability.address,
+            1,
+            2,
+            0x69,
+            payload.into_cell().unwrap(),
+        );
+        let result = f.send_value(
+            owner.clone(),
+            authorization_body(add.clone(), all_sign(&keys, &add), empty_signatures()),
+            MEASURE_VALUE,
+        );
+        authorize_add_version = gas_at(&result, &owner);
+        assert_address_success(&result, &capability.address);
+
+        let mut payload = BuilderData::new();
+        payload
+            .append_u256(&owner_id)
+            .unwrap()
+            .append_bit_one()
+            .unwrap()
+            .append_u256(&bytes_hash(&added))
+            .unwrap()
+            .checked_append_reference(protocol_text(&added))
+            .unwrap();
+        let revoke = f.build_capability_action(
+            REVOKE_CAPABILITY,
+            &capability.id,
+            &capability.address,
+            1,
+            3,
+            0x6a,
+            payload.into_cell().unwrap(),
+        );
+        let result = f.send_value(
+            owner.clone(),
+            authorization_body(revoke.clone(), all_sign(&keys, &revoke), empty_signatures()),
+            MEASURE_VALUE,
+        );
+        authorize_revoke_version = gas_at(&result, &owner);
+        assert_address_success(&result, &capability.address);
+
+        let placeholder = SigningKey::from_bytes(&[0x6b; 32]);
+        let (new_owner_id, new_owner) = f.deploy_agent(&placeholder, [0x6c; 32]);
+        f.install_policy_at(&new_owner, &new_owner_id, wide_policy(&next_keys));
+        let mut payload = BuilderData::new();
+        payload.append_u256(&owner_id).unwrap().append_u256(&new_owner_id).unwrap();
+        let transfer = f.build_capability_action(
+            TRANSFER_CAPABILITY,
+            &capability.id,
+            &capability.address,
+            2,
+            1,
+            0x6d,
+            payload.into_cell().unwrap(),
+        );
+        let result = f.send_value(
+            owner.clone(),
+            authorization_body(
+                transfer.clone(),
+                all_sign(&keys, &transfer),
+                all_sign(&next_keys, &transfer),
+            ),
+            MEASURE_VALUE,
+        );
+        transfer_old_owner = gas_at(&result, &owner);
+        transfer_new_owner = gas_at(&result, &new_owner);
+        if transfer_new_owner.exit == 0 {
+            assert_address_success(&result, &capability.address);
+            assert_eq!(capability_owner(&f.state_at(&capability.address)), new_owner_id);
+        }
+    }
+
+    PathGas {
+        register,
+        delegate,
+        revoke_agent,
+        update,
+        initiate_recovery,
+        complete_recovery,
+        authorize_register_capability,
+        authorize_add_version,
+        authorize_revoke_version,
+        transfer_old_owner,
+        transfer_new_owner,
+    }
+}
+
+/// Every policy-walking path succeeds at the supported width, from and to a
+/// maximum-width policy, within the gas ceiling of the masterchain limit. A
+/// cost increase that erodes the headroom fails here before it can strand a
+/// supported policy.
+#[test]
+fn every_policy_path_fits_the_gas_ceiling_at_the_supported_width() {
+    let gas = measure_paths(MAX_WIDTH, MAX_WIDTH);
+    for (path, gas) in gas.rows() {
+        eprintln!("width {MAX_WIDTH}: {path}: gas {} of {}", gas.used, gas.limit);
+        assert_eq!(gas.limit, NATIVE_REGISTRY_TRANSACTION_GAS_LIMIT, "{path}: gas limit");
+        assert!(!gas.aborted && gas.exit == 0, "{path} must succeed at width {MAX_WIDTH}: {gas:?}");
+        assert!(
+            gas.used <= NATIVE_REGISTRY_GAS_CEILING,
+            "{path}: {} gas exceeds the ceiling of {NATIVE_REGISTRY_GAS_CEILING}",
+            gas.used
+        );
+    }
+}
+
+/// The capacity table behind the supported width. Run with
+/// `--ignored --nocapture`.
+#[test]
+#[ignore = "measurement sweep; prints the gas table"]
+fn policy_width_gas_table() {
+    let mut cases: Vec<(usize, usize)> =
+        [1, 4, 8, 12, 16, 18, 20, 21, 22, 24, 26, 28].iter().map(|w| (*w, *w)).collect();
+    cases.extend([(MAX_WIDTH, 1), (1, MAX_WIDTH)]);
+    for (width, next_width) in cases {
+        let gas = measure_paths(width, next_width);
+        for (path, gas) in gas.rows() {
+            println!(
+                "{width:>2} -> {next_width:>2} | {path:<34} | {:>9} | exit {:>4}",
+                gas.used, gas.exit
+            );
+        }
+    }
+}
+
+// One controller more than the supported width is refused with its own exit
+// code wherever a policy enters storage -- registration, policy update and
+// recovery initiation -- and a stored policy that wide, which only a
+// hand-built state could carry, authorizes nothing. Each admission point has
+// its own test so that each one's guard is shown to be what refuses it.
+
+fn too_wide_keys() -> Vec<SigningKey> {
+    width_keys(MAX_WIDTH + 1, 4)
+}
+
+/// Registration admits the supported width and refuses one controller more.
+#[test]
+fn registration_refuses_a_policy_wider_than_supported() {
+    let keys = width_keys(MAX_WIDTH, 3);
+    let wide_keys = too_wide_keys();
+    let mut f = Fixture::new();
+
+    let (result, address) =
+        f.register_with(wide_policy(&keys), [0x70; 32], |action| all_sign(&keys, action));
+    result.expect_success();
+    assert!(f.registered(&address), "a {MAX_WIDTH}-controller policy must register");
+
+    let (result, address) =
+        f.register_with(wide_policy(&wide_keys), [0x71; 32], |action| all_sign(&wide_keys, action));
+    let gas = gas_at(&result, &address);
+    assert!(gas.aborted && gas.exit == ERR_POLICY_TOO_WIDE, "registration: {gas:?}");
+    assert!(!f.registered(&address), "a too-wide policy must not register");
+}
+
+/// A policy update to one controller more than supported is refused, while
+/// the same update to the supported width is installed.
+#[test]
+fn policy_update_refuses_a_policy_wider_than_supported() {
+    let update_to = |f: &mut Fixture, keys: &[SigningKey]| {
+        let mut payload = BuilderData::new();
+        payload.checked_append_reference(wide_policy(keys)).unwrap();
+        let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 0x72, payload.into_cell().unwrap());
+        f.send_value(
+            f.registry.clone(),
+            submit_body(
+                update.clone(),
+                signature_set(&f.old_key, &update),
+                all_sign(keys, &update),
+            ),
+            MEASURE_VALUE,
+        )
+    };
+    let mut f = Fixture::new();
+    let before = f.state().hash(0);
+    update_to(&mut f, &too_wide_keys()).expect_aborted().expect_exit_code(ERR_POLICY_TOO_WIDE);
+    assert_eq!(f.state().hash(0), before, "a too-wide policy must not be installed");
+    update_to(&mut f, &width_keys(MAX_WIDTH, 3)).expect_success();
+    assert_eq!(f.state_position(), (1, 2));
+}
+
+/// Recovery toward one controller more than supported is refused at
+/// initiation, while recovery toward the supported width is accepted.
+#[test]
+fn recovery_initiation_refuses_a_policy_wider_than_supported() {
+    let initiate_to = |f: &mut Fixture, keys: &[SigningKey]| {
+        let execute_after = u64::from(f.bc.now()) + 10;
+        let mut payload = BuilderData::new();
+        payload
+            .append_u64(execute_after)
+            .unwrap()
+            .checked_append_reference(wide_policy(keys))
+            .unwrap();
+        let initiate = f.build_action(INITIATE_RECOVERY, 1, 2, 0x73, payload.into_cell().unwrap());
+        f.send_value(
+            f.registry.clone(),
+            submit_body(
+                initiate.clone(),
+                signature_set(&f.old_key, &initiate),
+                all_sign(keys, &initiate),
+            ),
+            MEASURE_VALUE,
+        )
+    };
+    let mut f = Fixture::new();
+    let before = f.state().hash(0);
+    initiate_to(&mut f, &too_wide_keys()).expect_aborted().expect_exit_code(ERR_POLICY_TOO_WIDE);
+    assert_eq!(f.state().hash(0), before, "a too-wide recovery policy must not be stored");
+    initiate_to(&mut f, &width_keys(MAX_WIDTH, 3)).expect_success();
+    assert_eq!(f.state_position(), (1, 2));
+}
+
+/// A stored policy wider than supported authorizes nothing, even with every
+/// one of its controllers signing.
+#[test]
+fn a_stored_policy_wider_than_supported_authorizes_nothing() {
+    let wide_keys = too_wide_keys();
+    let mut f = Fixture::new();
+    f.install_policy(wide_policy(&wide_keys));
+    let before = f.state().hash(0);
+    let delegate = f.delegate_action(2, 0x74);
+    f.send_value(
+        f.registry.clone(),
+        submit_body(delegate.clone(), all_sign(&wide_keys, &delegate), empty_signatures()),
+        MEASURE_VALUE,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_POLICY_TOO_WIDE);
+    assert_eq!(f.state().hash(0), before);
+}
+
+/// A signature list longer than the supported width is refused before any
+/// entry is looked up, rather than after walking the policy for each one.
+#[test]
+fn a_signature_list_longer_than_the_supported_width_is_refused_unread() {
+    let keys = width_keys(MAX_WIDTH, 5);
+    let extra = width_keys(MAX_WIDTH + 1, 6).pop().unwrap();
+    let mut f = Fixture::new();
+    f.install_policy(wide_policy(&keys));
+    let before = f.state().hash(0);
+    let delegate = f.delegate_action(2, 0x75);
+    let mut signers: Vec<SigningKey> = keys.clone();
+    signers.push(extra);
+    f.send_value(
+        f.registry.clone(),
+        submit_body(delegate.clone(), all_sign(&signers, &delegate), empty_signatures()),
+        MEASURE_VALUE,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_THRESHOLD);
+    assert_eq!(f.state().hash(0), before);
+
+    // Positive control: the same policy's own signers authorize the action.
+    f.send_value(
+        f.registry.clone(),
+        submit_body(delegate.clone(), all_sign(&keys, &delegate), empty_signatures()),
+        MEASURE_VALUE,
+    )
+    .expect_success();
+    assert_eq!(f.state_position(), (1, 2));
+}
+
+/// The client builder encodes a policy exactly as the contract reads it, and
+/// refuses one controller more than the contract admits.
+#[test]
+fn the_client_builder_matches_the_contract_and_refuses_the_same_width() {
+    let to_policy = |keys: &[SigningKey]| NativePolicy {
+        threshold: keys.len() as u32,
+        recovery_threshold: keys.len() as u32,
+        recovery_timelock: 10,
+        controllers: keys
+            .iter()
+            .map(|key| NativePolicyController {
+                public_key: key.verifying_key().to_bytes(),
+                weight: 1,
+                purposes: ALL_PURPOSES,
+            })
+            .collect(),
+    };
+    let keys = width_keys(MAX_WIDTH, 7);
+    let built = build_policy(&to_policy(&keys)).expect("a supported policy builds");
+    assert_eq!(built.hash(0), wide_policy(&keys).hash(0));
+
+    let mut f = Fixture::new();
+    let (result, address) = f.register_with(built, [0x76; 32], |action| all_sign(&keys, action));
+    result.expect_success();
+    assert!(f.registered(&address));
+
+    let error = build_policy(&to_policy(&width_keys(MAX_WIDTH + 1, 7)))
+        .expect_err("one controller more is refused")
+        .to_string();
+    assert!(error.contains(&format!("at most {MAX_WIDTH}")), "unexpected error: {error}");
 }
