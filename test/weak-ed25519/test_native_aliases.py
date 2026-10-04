@@ -299,11 +299,10 @@ class ForgedAliasTests(unittest.TestCase):
                     finally:
                         emulator.close()
                     if guarded:
-                        # The root is checked right after acceptance: the transaction
-                        # exists, fails with 45, and records nothing.
-                        self.assertTrue(result["success"], str(result)[:400])
+                        # Refused before acceptance: no transaction, so nothing is
+                        # recorded and the wallet pays no fee.
+                        self.assertFalse(result["success"], "a forged alias root was accepted")
                         self.assertEqual(exit_code, MULTISIG_ERR_WEAK_OWNER)
-                        self.assertTrue(result["details"]["aborted"])
                     else:
                         self.assertTrue(result["success"], str(result)[:400])
                         self.assertEqual(exit_code, 0, "without the guard the forgery must pass")

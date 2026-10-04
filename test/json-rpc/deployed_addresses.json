@@ -20,7 +20,7 @@
     },
     "multisig": {
       "address": null,
-      "code_hash": "43bad6e52ea25edf7d33bdd9fabd5ec81c59498394912d0ef8d83bb4e59980dc",
+      "code_hash": "f3778b6de56cac18c461c79332d902f2b0b2966009d92c6377ce3cf75f2cc2c9",
       "error": "Multisig code changed; no account deployed from it yet. Re-run deployer.py to redeploy and refill this entry.",
       "n": 3,
       "k": 2

@@ -11,42 +11,48 @@
 ;;   - the eight canonical encodings of the torsion subgroup;
 ;;   - the identity (y = 1) and the order-2 point (y = -1) with the sign bit
 ;;     set. Both have x = 0, so the sign bit names no other point: these are
-;;     non-canonical aliases of the same two points, and they slip past the
-;;     y range check below because their y is in range;
+;;     non-canonical aliases of the same two points, and their y is in range;
 ;;   - every encoding whose y is at least 2^255 - 19, with either sign bit.
 ;; The other torsion points have x != 0, so flipping their sign bit gives
 ;; another canonical torsion encoding already listed. Callers throw their own
 ;; error code.
+;;
+;; Grouped by first byte (y's lowest byte):
+;;   0x00         00..00 and 00..80 (y = 0, x = +-sqrt(-1))
+;;   0x01         01 00..00 and 01 00..80 (the identity and its alias)
+;;   0x26, 0xc7   two encodings each (the points of order 8)
+;;   0xec         ec ff..ff 7f and ec ff..ff ff (the order-2 point and its alias)
+;;   0xed..0xff   ff..ff [7f|ff] in the remaining bytes: y >= 2^255 - 19
+;; Below 0xec each pair differs only in the sign bit, so one comparison with
+;; that bit forced on covers both; 0xec..0xff share one test, bytes 1..30 all
+;; 0xff and y's top byte 0x7f with either sign bit.
 
-;; True for every key weak_ed25519_key? refuses: each refused encoding starts with
-;; byte 0x00, 0x01, 0x26, 0xc7 or 0xec..0xff. Inline and a
-;; handful of instructions, so code running on an external message's gas credit
-;; can skip the full check for almost every real key.
+;; Nonzero for every key weak_ed25519_key? refuses: bit `first byte` of this
+;; mask is set for 0x00, 0x01, 0x26, 0xc7 and 0xec..0xff. Inline and four
+;; instructions, so code running on an external message's gas credit can skip
+;; the full check for almost every real key.
+const int ed25519::weak_first_bytes = 0xfffff00000000080000000000000000000000000000000000000004000000003;
+
 int ed25519_key_may_be_weak?(int public_key) inline {
-  int first = public_key >> 248;
-  return (first <= 0x01) | (first == 0x26) | (first == 0xc7) | (first >= 0xec);
+  return (ed25519::weak_first_bytes >> (public_key >> 248)) & 1;
 }
 
+;; A separate procedure, not inline: its 256-bit constants would otherwise be
+;; pushed, and charged for, at every call site. Real keys that reach it (the
+;; prefilter passes about one in eleven) leave after comparing only the last
+;; eight bytes; the 256-bit comparisons run only for an exact tail match.
 int weak_ed25519_key?(int public_key) inline_ref {
-  ifnot (ed25519_key_may_be_weak?(public_key)) {
+  if ((public_key >> 248) >= 0xec) {
+    return (((public_key >> 8) & ((1 << 240) - 1)) == ((1 << 240) - 1))
+      & ((public_key & 127) == 127);
+  }
+  int either_sign = public_key | 0x80;
+  int tail = either_sign & 0xffffffffffffffff;
+  if ((tail != 0x80) & (tail != 0xb13802886d53fc85) & (tail != 0x4ec7fd7792ac03fa)) {
     return false;
   }
-  ;; y is little-endian in the low 255 bits, x's sign in the top bit of the last
-  ;; byte. y >= 2^255 - 19 can only appear as 0x[ed..ff] ff..ff [7f|ff].
-  int y_last = (public_key & 255) & 127;
-  int y_middle = (public_key >> 8) & ((1 << 240) - 1);
-  int y_first = public_key >> 248;
-  if ((y_last == 127) & (y_middle == ((1 << 240) - 1)) & (y_first >= 237)) {
-    return true;
-  }
-  return (public_key == 0x0100000000000000000000000000000000000000000000000000000000000000)
-    | (public_key == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a)
-    | (public_key == 0x0000000000000000000000000000000000000000000000000000000000000080)
-    | (public_key == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05)
-    | (public_key == 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f)
-    | (public_key == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85)
-    | (public_key == 0x0000000000000000000000000000000000000000000000000000000000000000)
-    | (public_key == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa)
-    | (public_key == 0x0100000000000000000000000000000000000000000000000000000000000080)
-    | (public_key == 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+  return (either_sign == 0x80)
+    | (either_sign == 0x0100000000000000000000000000000000000000000000000000000000000080)
+    | (either_sign == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85)
+    | (either_sign == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
 }

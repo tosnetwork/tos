@@ -7,9 +7,9 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FUNC_BIN=${FUNC_BIN:-"$REPO_ROOT/build/crypto/func"}
 FIFT_BIN=${FIFT_BIN:-"$REPO_ROOT/build/crypto/fift"}
 OUTPUT=${1:-"$REPO_ROOT/crypto/smartcont/artifacts/tos-service-native-registry-v1.boc"}
-EXPECTED_CODE_HASH=64479da7d6e2646e322b0e271cdc2be7d6b8f90da5a18fcee8ad41456752e967
-EXPECTED_BOC_SHA256=e500cb557c5cd60c85d9f7c8b1b181311aeea86937ae2609410e0b16f68106d2
-EXPECTED_BOC_BYTES=4111
+EXPECTED_CODE_HASH=81403925ca77489367abb0880cf4be31092e4f6df2f5e92452010469eed80a0b
+EXPECTED_BOC_SHA256=0eb1a41ac42bac9157f4e1cf412b773a4c098c3003f91e6f5a0d6ce9c0569d66
+EXPECTED_BOC_BYTES=3958
 
 for binary in "$FUNC_BIN" "$FIFT_BIN"; do
   if [[ ! -x "$binary" ]]; then

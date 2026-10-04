@@ -19,8 +19,13 @@
 // error code.
 tol 1.3
 
-/// True for every key [ed25519IsWeakKey] refuses: each refused encoding starts
-/// with byte 0x00, 0x01, 0x26, 0xc7 or 0xec..0xff. A few instructions, so a
+// Grouped by first byte, as in strong-ed25519-key.fc: below 0xec the listed
+// encodings come in pairs that differ only in the sign bit, so one comparison
+// with that bit forced on covers both; 0xec..0xff share one test, bytes 1..30
+// all 0xff and y's top byte 0x7f with either sign bit (the order-2 point and
+// its alias at 0xec, every y >= 2^255 - 19 above it).
+
+/// True for every key [ed25519IsWeakKey] refuses. A few instructions, so a
 /// caller short of gas can skip the full check for almost every real key.
 fun ed25519KeyMayBeWeak(publicKey: int): bool {
     val first = publicKey >> 248;
@@ -28,25 +33,12 @@ fun ed25519KeyMayBeWeak(publicKey: int): bool {
 }
 
 fun ed25519IsWeakKey(publicKey: int): bool {
-    if (!ed25519KeyMayBeWeak(publicKey)) {
-        return false;
+    if ((publicKey >> 248) >= 0xec) {
+        return ((publicKey >> 8) & ((1 << 240) - 1)) == ((1 << 240) - 1) && (publicKey & 127) == 127;
     }
-    // y is little-endian in the low 255 bits, x's sign in the top bit of the
-    // last byte. y >= 2^255 - 19 can only appear as 0x[ed..ff] ff..ff [7f|ff].
-    val yLast = (publicKey & 255) & 127;
-    val yMiddle = (publicKey >> 8) & ((1 << 240) - 1);
-    val yFirst = publicKey >> 248;
-    if (yLast == 127 && yMiddle == ((1 << 240) - 1) && yFirst >= 237) {
-        return true;
-    }
-    return publicKey == 0x0100000000000000000000000000000000000000000000000000000000000000
-        || publicKey == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a
-        || publicKey == 0x0000000000000000000000000000000000000000000000000000000000000080
-        || publicKey == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05
-        || publicKey == 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
-        || publicKey == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85
-        || publicKey == 0x0000000000000000000000000000000000000000000000000000000000000000
-        || publicKey == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa
-        || publicKey == 0x0100000000000000000000000000000000000000000000000000000000000080
-        || publicKey == 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+    val eitherSign = publicKey | 0x80;
+    return eitherSign == 0x80
+        || eitherSign == 0x0100000000000000000000000000000000000000000000000000000000000080
+        || eitherSign == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85
+        || eitherSign == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa;
 }

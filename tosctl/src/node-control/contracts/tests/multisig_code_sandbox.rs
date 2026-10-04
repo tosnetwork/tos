@@ -127,8 +127,12 @@ impl Wallet {
     /// Deploys a wallet over the given owner keys straight from a StateInit, the way
     /// anyone can deploy one without calling create_init_state.
     fn deploy(owners: &[[u8; 32]], k: u8, keys: Vec<SigningKey>) -> Self {
-        let mut bc = Blockchain::new().expect("blockchain");
         let code = compile_func_with_stdlib(&[smartcont("multisig-code.fc")]).expect("compile");
+        Self::deploy_with_code(owners, k, keys, code)
+    }
+
+    fn deploy_with_code(owners: &[[u8; 32]], k: u8, keys: Vec<SigningKey>, code: Cell) -> Self {
+        let mut bc = Blockchain::new().expect("blockchain");
         let init = StateInit::with_code_and_data(code, wallet_data(owners, k));
         let hash = init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
         let address = MsgAddressInt::with_params(0, hash).unwrap();
@@ -246,10 +250,8 @@ fn create_init_state_refuses_every_weak_owner_key() {
     }
 }
 
-/// A weak key stored by a hand-built StateInit cannot open a query as root. The root is
-/// checked right after acceptance (before it, the external gas credit has no room), so a
-/// forged root signature is accepted, refused with exit 45, and rolled back: nothing is
-/// recorded. A key the verifier cannot be fooled under fails its signature check first.
+/// A weak key stored by a hand-built StateInit cannot open a query as root: the external
+/// is refused with exit 45 before acceptance, even with a signature forged for it.
 #[test]
 fn a_stored_weak_owner_cannot_sign_as_root() {
     let mut forged_count = 0;
@@ -267,14 +269,20 @@ fn a_stored_weak_owner_cannot_sign_as_root() {
         match forgery {
             Some((query_id, signed, forged)) => {
                 forged_count += 1;
-                let result = wallet.send(query(forged, &signed)).expect("accepted for the check");
-                assert_eq!(exit_code(&result), ERR_WEAK_OWNER, "key {i}: forged root counted");
+                let error = wallet.refused(query(forged, &signed));
+                assert!(
+                    error.contains(&format!("exit code: {ERR_WEAK_OWNER}")),
+                    "key {i}: {error}"
+                );
                 assert_eq!(wallet.query_state(query_id), (0, 0), "key {i}: a query was recorded");
             }
             None => {
                 let signed = signed_root(2, None, wallet.query_id(100));
                 let error = wallet.refused(query([0u8; 64], &signed));
-                assert!(error.contains("exit code: 32"), "key {i}: {error}");
+                assert!(
+                    error.contains(&format!("exit code: {ERR_WEAK_OWNER}")),
+                    "key {i}: {error}"
+                );
             }
         }
     }
@@ -406,8 +414,8 @@ fn sign_bit_alias_owners_neither_sign_nor_count() {
                     .map(|forged| (query_id, signed, forged))
             })
             .expect("a forgeable query id");
-        let result = wallet.send(query(forged, &signed)).expect("accepted for the check");
-        assert_eq!(exit_code(&result), ERR_WEAK_OWNER, "alias {index} signed as root");
+        let error = wallet.refused(query(forged, &signed));
+        assert!(error.contains(&format!("exit code: {ERR_WEAK_OWNER}")), "alias {index}: {error}");
         assert_eq!(wallet.query_state(query_id), (0, 0), "alias {index} opened a query");
 
         let (query_id, forged) = std::iter::repeat_with(|| fresh_query(&wallet))
@@ -431,4 +439,428 @@ fn sign_bit_alias_owners_neither_sign_nor_count() {
     let result = wallet.send(query(root_signature, &signed)).expect("strong pair");
     assert_eq!(exit_code(&result), 0);
     assert_eq!(wallet.processed(query_id), -1, "two real owners reach k");
+}
+
+/// wallet_id, query_id, then one (mode, message) pair per action: the query part every
+/// signer signs, with outbound messages.
+fn query_body_with(query_id: u64, messages: &[Cell]) -> Cell {
+    cell(|b| {
+        b.append_u32(WALLET_ID).unwrap();
+        b.append_u64(query_id).unwrap();
+        for message in messages {
+            b.append_u8(3).unwrap();
+            b.checked_append_reference(message.clone()).unwrap();
+        }
+    })
+}
+
+fn signed_root_with(root: u8, body: &Cell) -> Cell {
+    let body = SliceData::load_cell(body.clone()).unwrap();
+    cell(|b| {
+        b.append_u8(root).unwrap();
+        append_maybe_ref(b, None);
+        b.append_builder(&body.as_builder().unwrap()).unwrap();
+    })
+}
+
+/// Three outbound messages of 400 bits with a 200-bit body each: seven cells and 1824
+/// bits after the query id, inside the 8-cell, 2048-bit limit the contract checks
+/// before acceptance.
+fn widest_actions() -> Vec<Cell> {
+    (0..3u8)
+        .map(|i| {
+            let body = cell(|b| {
+                b.append_raw(&[0xa0 + i; 25], 200).unwrap();
+            });
+            cell(|b| {
+                b.append_raw(&[0x50 + i; 50], 400).unwrap();
+                b.checked_append_reference(body).unwrap();
+            })
+        })
+        .collect()
+}
+
+/// A signing key whose public key starts with `first`: the prefilter cannot clear it, so
+/// its root check runs the full comparison.
+fn strong_key_starting_with(first: u8) -> SigningKey {
+    (0u32..)
+        .map(|n| {
+            let mut seed = [0x5au8; 32];
+            seed[..4].copy_from_slice(&n.to_le_bytes());
+            SigningKey::from_bytes(&seed)
+        })
+        .find(|key| key.verifying_key().to_bytes()[0] == first)
+        .expect("a key with that first byte")
+}
+
+/// The source with its acceptance replaced, for roots 1 and up, by a throw whose exit
+/// code is the gas consumed so far: the cost of the whole pre-acceptance path. The
+/// added test runs before the throw, so the figure is an over-estimate.
+fn pre_acceptance_probe_code() -> Cell {
+    let source = std::fs::read_to_string(smartcont("multisig-code.fc")).expect("source");
+    // The one place the external message is accepted.
+    let accept = "  set_gas_limit(";
+    assert_eq!(source.matches(accept).count(), 1);
+    let probe =
+        source.replace(accept, "  if (root_i >= 1) { throw(gas_consumed()); }\n  set_gas_limit(");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("multisig-code.fc"),
+        format!("int gas_consumed() asm \"GASCONSUMED\";\n{probe}"),
+    )
+    .expect("write probe");
+    std::fs::copy(smartcont("strong-ed25519-key.fc"), dir.path().join("strong-ed25519-key.fc"))
+        .expect("copy helper");
+    compile_func_with_stdlib(&[dir.path().join("multisig-code.fc")]).expect("compile probe")
+}
+
+impl Wallet {
+    fn balance(&self) -> u128 {
+        self.bc
+            .get_account(&self.address)
+            .expect("account")
+            .balance()
+            .expect("balance")
+            .coins
+            .as_u128()
+    }
+
+    fn data_hash(&self) -> chain_block::UInt256 {
+        self.bc.get_account(&self.address).expect("account").get_data().expect("data").hash(0)
+    }
+}
+
+/// A funded hand-built wallet whose owners include every weak key a signature can be
+/// forged for. Repeated forged root queries from each of them are refused before
+/// acceptance: no transaction, no state change, and no fee taken from the wallet. Two
+/// real owners then still open a query.
+#[test]
+fn forged_weak_roots_are_refused_before_acceptance_at_no_cost() {
+    let keys = strong_keys(2);
+    let probe_message = query_body(1).hash(0);
+    let weak: Vec<[u8; 32]> = weak_ed25519::weak_keys()
+        .into_iter()
+        .filter(|key| {
+            (0..64u8).any(|i| {
+                let mut message = probe_message.as_slice().to_vec();
+                message[0] = i;
+                weak_ed25519::forge(key, &message).is_some()
+            })
+        })
+        .collect();
+    let aliases = weak_ed25519::sign_bit_aliases();
+    assert!(weak.contains(&aliases[0]) && weak.contains(&aliases[1]));
+    assert!(weak.len() >= 10, "only {} forgeable weak keys", weak.len());
+
+    let mut owners = public(&keys);
+    owners.extend(&weak);
+    let mut wallet = Wallet::deploy(&owners, 2, keys);
+    let balance = wallet.balance();
+    let data = wallet.data_hash();
+    let mut offset = 1u64;
+    let mut refusals = 0;
+    for (i, key) in weak.iter().enumerate() {
+        let root = 2 + i as u8;
+        for _ in 0..3 {
+            let (signed, forged) = loop {
+                offset += 1;
+                let signed = signed_root(root, None, wallet.query_id(offset));
+                if let Some(forged) = weak_ed25519::forge(key, signed.hash(0).as_slice()) {
+                    break (signed, forged);
+                }
+            };
+            let error = wallet.refused(query(forged, &signed));
+            assert!(
+                error.contains(&format!("exit code: {ERR_WEAK_OWNER}")),
+                "root {root}: {error}"
+            );
+            refusals += 1;
+        }
+    }
+    assert_eq!(refusals, 3 * weak.len());
+    assert_eq!(wallet.balance(), balance, "a refused forged root cost the wallet");
+    assert_eq!(wallet.data_hash(), data, "a refused forged root changed state");
+
+    let query_id = wallet.query_id(10_000);
+    let signed = signed_root(0, None, query_id);
+    let root_signature = sign(&wallet.keys[0], &signed);
+    wallet.send(query(root_signature, &signed)).expect("strong root").expect_success();
+    assert_eq!(wallet.query_state(query_id), (0, 1), "a real owner still opens a query");
+}
+
+/// A signing key the prefilter clears: its first byte starts no weak encoding.
+fn strong_key_cleared(n: u8) -> SigningKey {
+    (0u32..)
+        .map(|i| {
+            let mut seed = [0x33u8; 32];
+            seed[0] = n;
+            seed[1..5].copy_from_slice(&i.to_le_bytes());
+            SigningKey::from_bytes(&seed)
+        })
+        .find(|key| {
+            let first = key.verifying_key().to_bytes()[0];
+            first > 0x01 && first != 0x26 && first != 0xc7 && first < 0xec
+        })
+        .expect("a cleared key")
+}
+
+/// Pre-acceptance gas (from the probe build) of every owner after the first acting as
+/// root, opening a fresh query or joining one of the pending queries owner 0 has filled
+/// its flood quota with, all carrying `actions`. Err when a step could not run.
+fn probe_roots(keys: &[SigningKey], actions: &[Cell], join: bool) -> Vec<Result<i64, String>> {
+    let owners: Vec<[u8; 32]> = keys.iter().map(|key| key.verifying_key().to_bytes()).collect();
+    let mut wallet =
+        Wallet::deploy_with_code(&owners, 3, keys.to_vec(), pre_acceptance_probe_code());
+    let ids: Vec<u64> = (1..=10).map(|i| wallet.query_id(i)).collect();
+    for &query_id in &ids {
+        let signed = signed_root_with(0, &query_body_with(query_id, actions));
+        let root_signature = sign(&wallet.keys[0], &signed);
+        if let Err(error) = wallet.send(query(root_signature, &signed)) {
+            return vec![Err(format!("owner 0 cannot open the query: {error}")); keys.len() - 1];
+        }
+    }
+    (1..keys.len())
+        .map(|root| {
+            let query_id =
+                if join { ids[root % ids.len()] } else { wallet.query_id(100 + root as u64) };
+            let signed = signed_root_with(root as u8, &query_body_with(query_id, actions));
+            let root_signature = sign(&wallet.keys[root], &signed);
+            match wallet.send(query(root_signature, &signed)) {
+                Ok(_) => Err("the probe accepted".into()),
+                Err(error) => error
+                    .rsplit("exit code: ")
+                    .next()
+                    .and_then(|tail| tail.trim().parse::<i64>().ok())
+                    .ok_or(error),
+            }
+        })
+        .collect()
+}
+
+/// `count` outbound messages of `bytes` bytes each, every one a single cell.
+fn actions_of(count: usize, bytes: usize) -> Vec<Cell> {
+    (0..count)
+        .map(|i| {
+            cell(|b| {
+                b.append_raw(&vec![0x50 + i as u8; bytes], bytes * 8).unwrap();
+            })
+        })
+        .collect()
+}
+
+/// Every first byte the prefilter cannot clear, as a strong key, after one it clears.
+fn root_keys() -> Vec<SigningKey> {
+    let mut keys = vec![strong_key_cleared(0), strong_key_cleared(1)];
+    for first in [0x00, 0x01, 0x26, 0xc7, 0xec, 0xf7] {
+        keys.push(strong_key_starting_with(first));
+    }
+    keys
+}
+
+/// The pre-acceptance cost of every kind of root, from a probe build that stops right
+/// before acceptance: a key the prefilter clears, and strong keys it cannot clear (first
+/// bytes 0x00, 0x01, 0x26, 0xc7, 0xec, 0xf7) that run the full weak-key comparison,
+/// opening a query or joining a pending one, with no outbound message and with the
+/// largest message this test found the contract taking before the change (two 127-byte
+/// messages; three no longer fit the credit either before or after it). Every case must
+/// stay 10% under the external gas credit, and the full comparison must cost a bounded
+/// amount over a cleared key. The same requests are then sent to the real build, which
+/// must accept every one.
+#[test]
+fn full_check_strong_roots_fit_the_pre_acceptance_path() {
+    const CREDIT: i64 = 10_000;
+    const FULL_CHECK_BUDGET: i64 = 800;
+    let keys = root_keys();
+    for (count, bytes) in [(0, 0), (2, 127)] {
+        let actions = actions_of(count, bytes);
+        for join in [false, true] {
+            let path = if join { "join" } else { "open" };
+            let gas: Vec<i64> = probe_roots(&keys, &actions, join)
+                .into_iter()
+                .enumerate()
+                .map(|(i, used)| used.unwrap_or_else(|e| panic!("root {}: {e}", i + 1)))
+                .collect();
+            let cleared = gas[0];
+            for (i, used) in gas.iter().enumerate() {
+                let root = i + 1;
+                let first = keys[root].verifying_key().to_bytes()[0];
+                eprintln!(
+                    "{count}x{bytes} {path}: root first byte {first:#04x} gas {used} of {CREDIT}"
+                );
+                assert!(
+                    used * 10 <= CREDIT * 9,
+                    "root {root}: {used} leaves under 10% of the credit"
+                );
+                assert!(
+                    used - cleared <= FULL_CHECK_BUDGET,
+                    "root {root}: full check cost {}",
+                    used - cleared
+                );
+            }
+
+            // The real build accepts each of these roots on the same path.
+            let owners: Vec<[u8; 32]> =
+                keys.iter().map(|key| key.verifying_key().to_bytes()).collect();
+            let mut wallet = Wallet::deploy(&owners, 3, keys.clone());
+            let ids: Vec<u64> = (1..=10).map(|i| wallet.query_id(i)).collect();
+            for &query_id in &ids {
+                let signed = signed_root_with(0, &query_body_with(query_id, &actions));
+                let root_signature = sign(&wallet.keys[0], &signed);
+                wallet.send(query(root_signature, &signed)).expect("pending").expect_success();
+            }
+            for root in 1..keys.len() {
+                let query_id =
+                    if join { ids[root % ids.len()] } else { wallet.query_id(100 + root as u64) };
+                let signed = signed_root_with(root as u8, &query_body_with(query_id, &actions));
+                let root_signature = sign(&wallet.keys[root], &signed);
+                let result = wallet.send(query(root_signature, &signed)).expect("accepted");
+                assert_eq!(exit_code(&result), 0, "{path} root {root}");
+                let (_, mask) = wallet.query_state(query_id);
+                assert_ne!(mask & (1 << root), 0, "{path} root {root} did not sign");
+            }
+        }
+    }
+}
+
+/// Joining a pending query with a request that differs from the stored one -- in its own
+/// bits, in a referenced message, or in the number of references -- is refused with exit
+/// 36 before acceptance; the identical request joins.
+#[test]
+fn joining_with_a_different_message_is_refused_before_acceptance() {
+    let keys = vec![strong_key_cleared(0), strong_key_cleared(1)];
+    let owners: Vec<[u8; 32]> = keys.iter().map(|key| key.verifying_key().to_bytes()).collect();
+    let mut wallet = Wallet::deploy(&owners, 3, keys);
+    let stored = actions_of(2, 40);
+    let query_id = wallet.query_id(1);
+    let signed = signed_root_with(0, &query_body_with(query_id, &stored));
+    let root_signature = sign(&wallet.keys[0], &signed);
+    wallet.send(query(root_signature, &signed)).expect("pending").expect_success();
+
+    let other_bits = actions_of(2, 41);
+    let other_ref = {
+        let mut messages = stored.clone();
+        messages[1] = actions_of(1, 40).remove(0);
+        messages
+    };
+    // The request's own bits: the stored messages under another send mode.
+    let other_mode = cell(|b| {
+        b.append_u32(WALLET_ID).unwrap();
+        b.append_u64(query_id).unwrap();
+        for message in &stored {
+            b.append_u8(2).unwrap();
+            b.checked_append_reference(message.clone()).unwrap();
+        }
+    });
+    // Identical bits, one more reference.
+    let extra_ref = cell(|b| {
+        b.append_u32(WALLET_ID).unwrap();
+        b.append_u64(query_id).unwrap();
+        for message in &stored {
+            b.append_u8(3).unwrap();
+            b.checked_append_reference(message.clone()).unwrap();
+        }
+        b.checked_append_reference(stored[0].clone()).unwrap();
+    });
+    for (label, body) in [
+        ("send mode", other_mode),
+        ("a message's bits", query_body_with(query_id, &other_bits)),
+        ("a reference", query_body_with(query_id, &other_ref)),
+        ("reference count", extra_ref),
+    ] {
+        let signed = signed_root_with(1, &body);
+        let root_signature = sign(&wallet.keys[1], &signed);
+        let error = wallet.refused(query(root_signature, &signed));
+        assert!(error.contains("exit code: 36"), "{label}: {error}");
+    }
+    let signed = signed_root_with(1, &query_body_with(query_id, &stored));
+    let root_signature = sign(&wallet.keys[1], &signed);
+    wallet.send(query(root_signature, &signed)).expect("join").expect_success();
+    assert_eq!(wallet.query_state(query_id), (0, 0b11));
+}
+
+/// The size check before acceptance: eight cells and 2048 bits after the query id pass,
+/// a ninth cell or a 2049th bit is refused with exit 40, and so is a cell reached twice,
+/// which the walk counts once per path.
+#[test]
+fn request_size_limits_are_enforced_before_acceptance() {
+    let keys = vec![strong_key_cleared(0)];
+    let owners: Vec<[u8; 32]> = keys.iter().map(|key| key.verifying_key().to_bytes()).collect();
+    let mut wallet = Wallet::deploy(&owners, 2, keys);
+    // `cells` cells in a chain, each holding `bits` data bits.
+    let chain = |cells: usize, bits: usize| -> Cell {
+        let mut next: Option<Cell> = None;
+        for _ in 0..cells {
+            let link = next.take();
+            next = Some(cell(|b| {
+                b.append_raw(&[0x77; 128], bits).unwrap();
+                if let Some(link) = link {
+                    b.checked_append_reference(link).unwrap();
+                }
+            }));
+        }
+        next.expect("at least one cell")
+    };
+    let mut offset = 0u64;
+    let mut send = |wallet: &mut Wallet, message: Cell| {
+        offset += 1;
+        let signed = signed_root_with(0, &query_body_with(wallet.query_id(offset), &[message]));
+        let root_signature = sign(&wallet.keys[0], &signed);
+        wallet.send(query(root_signature, &signed))
+    };
+    // The query body cell itself is the first of the counted cells.
+    send(&mut wallet, chain(7, 8)).expect("eight cells").expect_success();
+    let error = match send(&mut wallet, chain(8, 8)) {
+        Ok(_) => panic!("nine cells accepted"),
+        Err(error) => error,
+    };
+    assert!(error.contains("exit code: 40"), "nine cells: {error}");
+    // 8 bits of send mode plus two cells of 1020 bits is 2048; one bit more is over.
+    send(&mut wallet, chain(2, 1020)).expect("2048 bits").expect_success();
+    let error = match send(
+        &mut wallet,
+        cell(|b| {
+            b.append_raw(&[0x77; 128], 1021).unwrap();
+            b.checked_append_reference(chain(1, 1020)).unwrap();
+        }),
+    ) {
+        Ok(_) => panic!("2049 bits accepted"),
+        Err(error) => error,
+    };
+    assert!(error.contains("exit code: 40"), "2049 bits: {error}");
+    // One leaf reached through four references is four cells, not one: 1 + 1 + 4 = 6
+    // passes, and three such fan-outs (1 + 1 + 3 + 12 = 17) are refused.
+    let leaf = chain(1, 8);
+    let fan = cell(|b| {
+        for _ in 0..4 {
+            b.checked_append_reference(leaf.clone()).unwrap();
+        }
+    });
+    send(&mut wallet, fan.clone()).expect("six counted cells").expect_success();
+    let wide = cell(|b| {
+        for _ in 0..3 {
+            b.checked_append_reference(fan.clone()).unwrap();
+        }
+    });
+    let error = match send(&mut wallet, wide) {
+        Ok(_) => panic!("a shared subtree was counted once"),
+        Err(error) => error,
+    };
+    assert!(error.contains("exit code: 40"), "shared subtree: {error}");
+    // Three distinct cells, each referring four times to the next: 21 counted cells
+    // under the request. The walk stops once the limit is passed, so this is a size
+    // refusal; a walk over every path would exhaust the external credit first.
+    let mut dag = chain(1, 8);
+    for _ in 0..2 {
+        let below = dag.clone();
+        dag = cell(|b| {
+            for _ in 0..4 {
+                b.checked_append_reference(below.clone()).unwrap();
+            }
+        });
+    }
+    let error = match send(&mut wallet, dag) {
+        Ok(_) => panic!("a tree of shared cells was accepted"),
+        Err(error) => error,
+    };
+    assert!(error.contains("exit code: 40"), "tree of shared cells: {error}");
 }

@@ -1,24 +1,27 @@
 ;; Simple wallet smart contract
 ;;
 ;; An owner key anyone can sign for (strong-ed25519-key.fc) would sign as root or
-;; add an approval with no secret behind it. Such a key fails with exit code 45.
-;; create_init_state, which builds the initial data, refuses an owner set that
-;; contains one. The init message does not walk the set: it runs before
-;; accept_message on the external gas credit, which a full owner set exceeds,
-;; and accepting first would let anyone replay a failing init at the wallet's
-;; expense. So a weak key that reaches storage through a hand-built StateInit is
-;; refused where it would act instead, before it counts: as co-signer before its
-;; signature is checked, and as root right after acceptance. The root check
-;; cannot run earlier: the code before accept_message already runs close to the
-;; external gas credit, and even the inline prefilter pushes some valid queries
-;; over it. The cost is that anyone can make such a wallet pay for a refused
-;; forged root query. A hand-built wallet with a weak owner is misconfigured,
-;; not an operational wallet: create_init_state refuses to build one.
+;; add an approval with no secret behind it. Such a key fails with exit code 45,
+;; always before its signature is checked: the root on the external gas credit,
+;; before the message is accepted, so a forged root costs the wallet nothing; a
+;; co-signer before its signature counts. create_init_state, which builds the
+;; initial data, refuses an owner set that contains one; a hand-built StateInit
+;; is not checked until a key acts. The init message does not walk the owner set:
+;; it runs on the external gas credit, which a full owner set exceeds.
+;;
+;; The pre-acceptance path runs close to the external gas credit. To make room
+;; for the root check without moving any check that rejects a malformed or
+;; replayed request past acceptance: the co-signers' message hash, which only
+;; the post-acceptance signature loop uses, is computed after acceptance; a
+;; pending query's message is compared with the request without hashing either
+;; (same_contents?); and the size check walks the request in a loop instead of
+;; a recursive procedure (calc_boc_size).
 
 #include "strong-ed25519-key.fc";
 
 ;; The inline prefilter clears almost every real key; only the rare key it cannot
-;; clear pays for the full check.
+;; clear pays for the full check, which compares against the two encodings that
+;; share its first byte.
 () require_strong_owner_key(int public_key) impure inline {
   if (ed25519_key_may_be_weak?(public_key)) {
     throw_if(45, weak_ed25519_key?(public_key));
@@ -93,11 +96,30 @@ _ unpack_owner_info(slice cs) inline_ref {
   ;; do nothing for internal messages
 }
 
+;; The same test as slice_hash(a) == slice_hash(b) -- equal data bits and the
+;; same references in the same order -- without building a cell from each slice
+;; to hash it, which is most of what the comparison used to cost before
+;; acceptance.
+int same_contents?(slice a, slice b) inline {
+  if (~ equal_slice_bits(a, b)) {
+    return false;
+  }
+  int refs = a.slice_refs();
+  if (refs != b.slice_refs()) {
+    return false;
+  }
+  int same = true;
+  repeat (refs) {
+    same &= cell_hash(a~load_ref()) == cell_hash(b~load_ref());
+  }
+  return same;
+}
+
 (int, int, int, slice) unpack_query_data(slice in_msg, int n, slice query, var found?, int root_i) inline_ref {
   if (found?) {
     throw_unless(35, query~load_int(1));
     (int creator_i, int cnt, int cnt_bits, slice msg) = (query~load_uint(8), query~load_uint(8), query~load_uint(n), query);
-    throw_unless(36, slice_hash(msg) == slice_hash(in_msg));
+    throw_unless(36, same_contents?(msg, in_msg));
     return (creator_i, cnt, cnt_bits, msg);
   }
   return (root_i, 0, 0, in_msg);
@@ -138,14 +160,32 @@ _ unpack_owner_info(slice cs) inline_ref {
   return (pending_queries, owner_infos);
 }
 
-(int, int) calc_boc_size(int cells, int bits, slice root) {
-  cells += 1;
-  bits += root.slice_bits();
+forall X -> (tuple, X) ~tpop(tuple t) asm "TPOP";
+int tuple_length(tuple t) asm "TLEN";
 
-  while (root.slice_refs()) {
-    (cells, bits) = calc_boc_size(cells, bits, root~load_ref().begin_parse());
+;; Cells and data bits of the tree under `root`, counting a cell once for each
+;; path to it -- the count the recursive walk this replaces produced -- and
+;; stopping once more than `max_cells` cells are counted, which fails the same
+;; size check. A loop over an explicit stack rather than a recursive procedure:
+;; every call of that procedure went through the procedure dictionary, which
+;; was most of the cost of this check before acceptance.
+(int, int) calc_boc_size(slice root, int max_cells) inline {
+  int cells = 1;
+  int bits = root.slice_bits();
+  tuple todo = empty_tuple();
+  repeat (root.slice_refs()) {
+    todo~tpush(root~load_ref());
   }
-
+  ;; A cell is opened only when it is counted, so the walk stops paying for cells
+  ;; once the limit is passed, however many paths lead below it.
+  while ((tuple_length(todo) > 0) & (cells <= max_cells)) {
+    slice s = todo~tpop().begin_parse();
+    cells += 1;
+    bits += s.slice_bits();
+    repeat (s.slice_refs()) {
+      todo~tpush(s~load_ref());
+    }
+  }
   return (cells, bits);
 }
 
@@ -166,17 +206,19 @@ _ unpack_owner_info(slice cs) inline_ref {
   (slice owner_info, var found?) = owner_infos.udict_get?(8, root_i);
   throw_unless(31, found?);
   (int public_key, int flood) = unpack_owner_info(owner_info);
+  require_strong_owner_key(public_key);
   throw_unless(32, check_signature(root_hash, root_signature, public_key));
 
   cell signatures = in_msg~load_dict();
 
-  var hash = slice_hash(in_msg);
+  ;; What the co-signers signed; hashed after acceptance, where it is used.
+  slice co_signed = in_msg;
   int query_wallet_id = in_msg~load_uint(32);
   throw_unless(42, query_wallet_id == wallet_id);
 
   int query_id = in_msg~load_uint(64);
 
-  (int cnt, int bits) = calc_boc_size(0, 0, in_msg);
+  (int cnt, int bits) = calc_boc_size(in_msg, 8);
   throw_if(40, (cnt > 8) | (bits > 2048));
 
   (slice query, var found?) = pending_queries.udict_get?(64, query_id);
@@ -200,9 +242,6 @@ _ unpack_owner_info(slice cs) inline_ref {
   ;; Each co-signature costs a weak-key check on top of its signature check;
   ;; this allowance keeps a bundle of root plus 24 co-signers inside one message.
   set_gas_limit(150000);
-  ;; A weak root signs nothing (see the header). Refused here, after acceptance,
-  ;; and before anything it signed is recorded or counted.
-  require_strong_owner_key(public_key);
 
   ifnot (found?) {
     owner_infos~udict_set_builder(8, root_i, pack_owner_info(public_key, flood));
@@ -215,7 +254,7 @@ _ unpack_owner_info(slice cs) inline_ref {
 
   int need_save = 0;
   ifnot (cell_null?(signatures) | (cnt >= k)) {
-    (int new_cnt, cnt_bits) = check_signatures(owner_infos, signatures, hash, cnt_bits);
+    (int new_cnt, cnt_bits) = check_signatures(owner_infos, signatures, slice_hash(co_signed), cnt_bits);
     cnt += new_cnt;
     (pending_queries, owner_infos) = update_pending_queries(pending_queries, owner_infos, msg, query_id, creator_i, cnt, cnt_bits, n, k);
     need_save = -1;
