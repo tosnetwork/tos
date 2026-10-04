@@ -701,6 +701,7 @@ void FullNodeImpl::start_up() {
           [this](const BlockIdExt &block_id, CatchainSeqno cc_seqno, const td::BufferSlice &data) {
             send_shard_block_info_to_custom_overlays(block_id, cc_seqno, data);
           },
+      .has_targets = [this]() { return !custom_overlays_.empty(); },
   });
   update_shard_actor(ShardIdFull{masterchainId}, true, false);
   class Callback : public ValidatorManagerInterface::Callback {

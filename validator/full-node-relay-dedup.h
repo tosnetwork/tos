@@ -52,6 +52,9 @@ class CustomOverlayRelay {
     std::function<void(const BlockIdExt &, CatchainSeqno, td::uint32, const td::BufferSlice &)> send_candidate;
     std::function<void(const BlockFinalityBroadcast &)> send_finality;
     std::function<void(const BlockIdExt &, CatchainSeqno, const td::BufferSlice &)> send_shard_block_info;
+    // Whether any custom overlay exists to forward to. With none, nothing is
+    // hashed, verified or remembered. Unset means there may be.
+    std::function<bool()> has_targets;
   };
 
   enum class ShardBlockInfoOrigin { ProducedLocally, Received };
@@ -66,6 +69,16 @@ class CustomOverlayRelay {
 
   // A block broadcast received from a peer, or made by this node.
   void offer_block(BlockBroadcast broadcast, bool signatures_checked) {
+    if (!has_targets()) {
+      return;
+    }
+    // Only a broadcast that verified and was forwarded is remembered, so a
+    // remembered id is already settled: another copy needs no hashing and no
+    // verification. A copy whose verification failed or is still pending is
+    // not remembered and suppresses nothing.
+    if (blocks_.contains(broadcast.block_id)) {
+      return;
+    }
     if (!data_is_block(broadcast.block_id, broadcast.data.as_slice())) {
       return;
     }
@@ -85,6 +98,9 @@ class CustomOverlayRelay {
 
   void offer_candidate(const BlockIdExt &block_id, CatchainSeqno cc_seqno, td::uint32 validator_set_hash,
                        const td::BufferSlice &data) {
+    if (!has_targets()) {
+      return;
+    }
     if (!data_is_block(block_id, data.as_slice())) {
       return;
     }
@@ -94,7 +110,7 @@ class CustomOverlayRelay {
   }
 
   void offer_finality(const BlockFinalityBroadcast &finality) {
-    if (finality.sig_set.is_null()) {
+    if (!has_targets() || finality.sig_set.is_null()) {
       return;
     }
     if (claim(finality_, finality_key(finality.block_id, *finality.sig_set))) {
@@ -107,7 +123,7 @@ class CustomOverlayRelay {
   // in relaying until a validation result can be fed back here.
   void offer_shard_block_info(const BlockIdExt &block_id, CatchainSeqno cc_seqno, const td::BufferSlice &data,
                               ShardBlockInfoOrigin origin) {
-    if (origin != ShardBlockInfoOrigin::ProducedLocally) {
+    if (origin != ShardBlockInfoOrigin::ProducedLocally || !has_targets()) {
       return;
     }
     if (claim(shard_block_infos_, block_id)) {
@@ -132,6 +148,10 @@ class CustomOverlayRelay {
   }
 
  private:
+  bool has_targets() const {
+    return !hooks_.has_targets || hooks_.has_targets();
+  }
+
   static bool data_is_block(const BlockIdExt &block_id, td::Slice data) {
     return block::compute_file_hash(data) == block_id.file_hash;
   }

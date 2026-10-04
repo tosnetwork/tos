@@ -77,6 +77,7 @@ struct Harness {
             [this](const tos::BlockIdExt &id, tos::CatchainSeqno cc_seqno, const td::BufferSlice &data) {
               shard_block_infos.push_back(ShardBlockInfo{id, cc_seqno, data.as_slice().str()});
             },
+        .has_targets = [this]() { return has_custom_overlays; },
     });
   }
 
@@ -95,6 +96,7 @@ struct Harness {
   }
 
   CustomOverlayRelay relay;
+  bool has_custom_overlays = true;
   std::vector<BlockBroadcast> verifying;
   std::vector<BlockBroadcast> blocks;
   std::vector<Candidate> candidates;
@@ -224,6 +226,49 @@ int main() {
     require(h.shard_block_infos.size() == 1, "shard block info is forwarded once");
     h.relay.offer_block(broadcast(id, genuine_data, 0x01), true);
     require(h.blocks.size() == 1, "shard block info does not suppress the block broadcast");
+  }
+
+  // With no custom overlay to forward to, nothing is verified, forwarded or
+  // remembered; once one exists, the same items are forwarded.
+  {
+    using Origin = CustomOverlayRelay::ShardBlockInfoOrigin;
+    Harness h(16);
+    h.has_custom_overlays = false;
+    auto id = block_id(40, genuine_hash);
+    h.relay.offer_block(broadcast(id, genuine_data, 0x01), false);
+    require(h.verifying.empty(), "no verification is requested with no custom overlays");
+    h.relay.offer_block(broadcast(id, genuine_data, 0x01), true);
+    h.relay.offer_candidate(id, 5, 0xabcd, td::BufferSlice(genuine_data));
+    h.relay.offer_finality(BlockFinalityBroadcast{id, evidence(0x02), 0});
+    h.relay.offer_shard_block_info(id, 7, td::BufferSlice("produced here"), Origin::ProducedLocally);
+    require(h.blocks.empty() && h.candidates.empty() && h.finality_sent.empty() && h.shard_block_infos.empty(),
+            "nothing is forwarded with no custom overlays");
+    h.has_custom_overlays = true;
+    h.relay.offer_block(broadcast(id, genuine_data, 0x01), true);
+    h.relay.offer_candidate(id, 5, 0xabcd, td::BufferSlice(genuine_data));
+    h.relay.offer_finality(BlockFinalityBroadcast{id, evidence(0x02), 0});
+    h.relay.offer_shard_block_info(id, 7, td::BufferSlice("produced here"), Origin::ProducedLocally);
+    require(h.blocks.size() == 1 && h.candidates.size() == 1 && h.finality_sent.size() == 1 &&
+                h.shard_block_infos.size() == 1,
+            "items offered with no custom overlays were not remembered");
+  }
+
+  // A block already verified and forwarded is not verified again; one whose
+  // verification is still pending, or failed, does not stop the next copy from
+  // being verified.
+  {
+    Harness h(16);
+    auto id = block_id(41, genuine_hash);
+    h.relay.offer_block(broadcast(id, genuine_data, 0x01), false);
+    h.relay.offer_block(broadcast(id, genuine_data, 0x02), false);
+    require(h.verifying.size() == 2, "a pending verification does not suppress another copy");
+    h.verification_fails();
+    h.verification_succeeds();
+    require(h.blocks.size() == 1, "the verified copy is forwarded");
+    h.relay.offer_block(broadcast(id, genuine_data, 0x03), false);
+    require(h.verifying.empty(), "a duplicate already forwarded is not verified again");
+    h.relay.offer_block(broadcast(id, genuine_data, 0x03), true);
+    require(h.blocks.size() == 1, "a duplicate already forwarded is not forwarded again");
   }
 
   // Forwarding records are bounded: the oldest are forgotten.
