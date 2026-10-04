@@ -16,17 +16,20 @@
 */
 #include <arpa/inet.h>
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <malloc.h>
 #include <mutex>
 #include <netinet/in.h>
 #include <optional>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 #include <unordered_set>
 
 #include "adnl/adnl-network-manager.h"
 #include "adnl/adnl-peer-table.h"
+#include "adnl/adnl-peer-table.hpp"
 #include "adnl/adnl.h"
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.hpp"
@@ -87,6 +90,40 @@ tos::quic::QuicServer::Options quic_test_options() {
   options.new_connection_rate_limit_capacity = 0;
   return options;
 }
+
+// A peer table whose one-way deliveries wait, unconsumed, until the test
+// releases them: a consumer deliberately paused with messages in its queue.
+struct PausedDeliveries {
+  std::mutex mutex;
+  std::vector<std::pair<td::BufferSlice, std::shared_ptr<void>>> waiting;
+  size_t count() {
+    std::lock_guard lock(mutex);
+    return waiting.size();
+  }
+  void release_all() {
+    std::vector<std::pair<td::BufferSlice, std::shared_ptr<void>>> taken;
+    {
+      std::lock_guard lock(mutex);
+      taken.swap(waiting);
+    }
+  }
+};
+
+class PausingPeerTable final : public tos::adnl::AdnlPeerTableImpl {
+ public:
+  PausingPeerTable(std::string db_root, td::actor::ActorId<tos::keyring::Keyring> keyring,
+                   std::shared_ptr<PausedDeliveries> paused)
+      : AdnlPeerTableImpl(std::move(db_root), keyring), paused_(std::move(paused)) {
+  }
+  void deliver_holding(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice data,
+                       std::shared_ptr<void> held) override {
+    std::lock_guard lock(paused_->mutex);
+    paused_->waiting.emplace_back(std::move(data), std::move(held));
+  }
+
+ private:
+  std::shared_ptr<PausedDeliveries> paused_;
+};
 
 // A query handler that answers nothing until the test releases it: a
 // downstream consumer deliberately paused.
@@ -684,7 +721,8 @@ class RawQuicTestRunner final : public td::actor::Actor {
   // the ServerCallback that owns the inbound-stream timeout). Mirrors the setup
   // in TestRunner::create_node; the node's QUIC server listens on
   // port + QuicSender::NODE_PORT_OFFSET.
-  td::actor::Task<TestNode> create_sender_node(std::string name, int port, tos::quic::QuicServer::Options options) {
+  td::actor::Task<TestNode> create_sender_node(std::string name, int port, tos::quic::QuicServer::Options options,
+                                               std::shared_ptr<PausedDeliveries> paused = nullptr) {
     TestNode node;
     node.ip = "127.0.0.1";
     node.port = port;
@@ -697,7 +735,12 @@ class RawQuicTestRunner final : public td::actor::Actor {
 
     node.keyring = tos::keyring::Keyring::create(db);
     node.network_manager = tos::adnl::AdnlNetworkManager::create(static_cast<td::uint16>(port));
-    node.adnl = tos::adnl::Adnl::create(db, node.keyring.get());
+    if (paused) {
+      node.adnl = td::actor::ActorOwn<tos::adnl::Adnl>(
+          td::actor::create_actor<PausingPeerTable>("PeerTable", db, node.keyring.get(), paused));
+    } else {
+      node.adnl = tos::adnl::Adnl::create(db, node.keyring.get());
+    }
     td::actor::send_closure(node.adnl, &tos::adnl::Adnl::register_network_manager, node.network_manager.get());
 
     tos::adnl::AdnlCategoryMask cat_mask;
@@ -2320,6 +2363,134 @@ TEST(QuicInboundBudget, PayloadsStayChargedUntilConsumed) {
     // The handler answers: the charges end.
     held->release_all();
     co_await poll_until([&] { return streams->bytes() == 0; }, 5.0, "answered queries released their bytes");
+    co_return td::Unit{};
+  });
+}
+
+// A one-way message's bytes stay charged until the peer table consumes it: with
+// that consumer paused, handed-over messages still count, and the next one that
+// does not fit is refused.
+TEST(QuicInboundBudget, MessagesStayChargedUntilDelivered) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kPayload = 400;
+    auto streams = std::make_shared<tos::quic::QuicInboundStreamBudget>(100, 1000);
+    auto options = quic_test_options();
+    options.inbound_stream_budget = streams;
+    auto paused = std::make_shared<PausedDeliveries>();
+    auto receiver = co_await t.create_sender_node("budget-messages", next_port(), options, paused);
+
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    auto message = [&]() -> td::actor::Task<tos::quic::QuicStreamID> {
+      auto wire = tos::serialize_tl_object(
+          tos::create_tl_object<tos::tos_api::quic_message>(td::BufferSlice(std::string(kPayload, 'm'))), true);
+      auto sid = co_await t.open_stream_with_retry(client, cid);
+      auto sent =
+          co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(wire), true)
+              .wrap();
+      LOG_CHECK(sent.is_ok()) << sent.error();
+      co_return sid;
+    };
+
+    co_await message();
+    co_await poll_until([&] { return paused->count() == 1; }, 5.0, "first message handed to the peer table");
+    auto one = streams->bytes();
+    ASSERT_TRUE(one >= kPayload);
+    co_await message();
+    co_await poll_until([&] { return paused->count() == 2; }, 5.0, "second message handed to the peer table");
+    ASSERT_EQ(2 * one, streams->bytes());
+
+    // Both wait in the paused consumer, still charged; a third does not fit.
+    auto refused = co_await message();
+    co_await t.wait_for_stream_close(client, refused);
+    ASSERT_EQ(2u, paused->count());
+    ASSERT_EQ(2 * one, streams->bytes());
+
+    // The consumer takes them: the charges end.
+    paused->release_all();
+    ASSERT_EQ(0u, streams->bytes());
+    co_return td::Unit{};
+  });
+}
+
+// What a sender holds with a one-way message lives until the subscriber has
+// the message, through the peer table's and the local id's mailboxes.
+class HeldProbeCallback : public tos::adnl::Adnl::Callback {
+ public:
+  HeldProbeCallback(std::weak_ptr<void> held, std::shared_ptr<std::atomic<int>> seen)
+      : held_(std::move(held)), seen_(std::move(seen)) {
+  }
+  void receive_message(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice) override {
+    seen_->store(held_.expired() ? 1 : 2);
+  }
+  void receive_query(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice,
+                     td::Promise<td::BufferSlice> promise) override {
+    promise.set_error(td::Status::Error("unused"));
+  }
+
+ private:
+  std::weak_ptr<void> held_;
+  std::shared_ptr<std::atomic<int>> seen_;
+};
+
+TEST(QuicInboundBudget, HeldResourcesReachTheSubscriber) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto node = co_await t.create_sender_node("deliver-holding", next_port(), quic_test_options());
+    auto held = std::make_shared<int>(0);
+    auto seen = std::make_shared<std::atomic<int>>(0);
+    td::actor::send_closure(node.adnl, &tos::adnl::Adnl::subscribe, node.id, "W",
+                            std::make_unique<HeldProbeCallback>(std::weak_ptr<void>(held), seen));
+    auto table = td::actor::actor_dynamic_cast<tos::adnl::AdnlPeerTable>(node.adnl.get());
+    std::shared_ptr<void> carried = std::move(held);
+    td::actor::send_closure(table, &tos::adnl::AdnlPeerTable::deliver_holding, node.id, node.id,
+                            td::BufferSlice("W-message"), std::move(carried));
+    co_await poll_until([&] { return seen->load() != 0; }, 5.0, "message reached its subscriber");
+    // 2: what the sender held was still alive when the subscriber got the message.
+    ASSERT_EQ(2, seen->load());
+    co_return td::Unit{};
+  });
+}
+
+// A transport allocation refused while packets are being produced closes the
+// connection at once and frees what it held; a fresh connection is then
+// admitted.
+TEST(QuicTransportBudget, OutputAllocationFailureClosesTheConnection) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto transport = std::make_shared<tos::quic::QuicTransportMemoryBudget>(4 << 20);
+    auto server_options = quic_test_options();
+    server_options.transport_budget = transport;
+    auto server = co_await t.create_endpoint(server_options);
+
+    // Once armed, the client sends nothing at all, so the server's only
+    // transport work is producing output.
+    auto silent = std::make_shared<std::atomic<bool>>(false);
+    auto client_options = quic_test_options();
+    client_options.drop_outgoing_datagram = [silent](td::Slice) { return silent->load(); };
+    auto client = co_await t.create_endpoint(client_options);
+    auto [out_cid, in_cid] = co_await t.connect(client, server);
+    auto sid = co_await t.send_partial_stream(client, out_cid, 'x');
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    silent->store(true);
+
+    auto idle = transport->used();
+    ASSERT_TRUE(idle > 0);
+    auto filler = transport->limit() - idle - 2048;
+    ASSERT_TRUE(transport->try_reserve(filler));
+    td::BufferSlice answer(300000);
+    answer.as_slice().fill('a');
+    auto sent = co_await td::actor::ask(server.server, &tos::quic::QuicServer::send_stream, in_cid, sid,
+                                        std::move(answer), false)
+                    .wrap();
+    LOG_CHECK(sent.is_ok()) << sent.error();
+    // Far sooner than the 15 s idle timeout that would otherwise end it.
+    co_await poll_until([&] { return transport->used() == filler; }, 3.0,
+                        "connection that could not produce output gave back its memory");
+    ASSERT_TRUE(transport->release(filler));
+
+    auto fresh = co_await t.create_endpoint(quic_test_options());
+    co_await t.connect(fresh, server);
+    ASSERT_TRUE(transport->used() > 0);
     co_return td::Unit{};
   });
 }

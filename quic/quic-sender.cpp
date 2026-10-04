@@ -943,11 +943,12 @@ void QuicSender::on_request(std::shared_ptr<Connection> connection, QuicStreamID
 
 void QuicSender::on_request(std::shared_ptr<Connection> connection, QuicStreamID stream_id,
                             tos_api::quic_message &message, QuicInboundByteCharge &charge) {
-  // A message is consumed once the peer table has it; the charge ends with
-  // this call.
-  (void)charge;
-  td::actor::send_closure(adnl_, &adnl::AdnlPeerTable::deliver, connection->path.second, connection->path.first,
-                          std::move(message.data_));
+  // The charge travels with the message through the peer table's and the
+  // local id's mailboxes and ends once a subscriber has it, so messages a
+  // stalled consumer has not taken stay charged.
+  auto held = std::make_shared<QuicInboundByteCharge>(std::move(charge));
+  td::actor::send_closure(adnl_, &adnl::AdnlPeerTable::deliver_holding, connection->path.second, connection->path.first,
+                          std::move(message.data_), std::shared_ptr<void>(std::move(held)));
   // TODO: use unidirectional stream, so there will be no need to process result
   td::actor::send_closure(connection->server, &QuicServer::send_stream, connection->cid, stream_id, td::BufferSlice{},
                           true);

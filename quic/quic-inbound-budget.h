@@ -233,12 +233,15 @@ class QuicInboundStreamReservation {
   bool holds_slot_{false};
 };
 
-// Heap allocated by the QUIC transport for every connection of the process:
-// reassembly of data received out of order, stream state, frames awaiting
-// acknowledgement, packet and key buffers. Every transport allocation is
-// reserved here first and refused when it does not fit, which the transport
-// reports as a fatal error that closes the one connection that asked; closing
-// it frees, and gives back, everything it held.
+// Heap allocated by the QUIC transport library itself for every connection of
+// the process: reassembly of data received out of order, stream state, frames
+// awaiting acknowledgement. Every such allocation is reserved here first and
+// refused when it does not fit, which the transport reports as a fatal error
+// that closes the one connection that asked; closing it frees, and gives back,
+// everything it held. This is not a ceiling on a connection's total memory or
+// on the process's: TLS state allocated by OpenSSL, the server's own per-
+// connection bookkeeping and stream buffers outside the transport are not
+// counted here (stream buffers have the budget above).
 //
 // Default 1 GiB: the transport budget test measures 24,380 bytes held by an
 // established, idle server connection and a peak of 44,180 bytes while it was

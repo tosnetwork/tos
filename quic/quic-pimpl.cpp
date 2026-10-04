@@ -698,7 +698,8 @@ td::Status QuicConnectionPImpl::produce_egress(UdpMessageBuffer& msg_out, bool u
   finish_batch();
 
   if (n_write < 0) {
-    return td::Status::Error(PSTRING() << "ngtcp2_conn_write_aggregate_pkt2 failed: " << n_write);
+    return td::Status::Error(static_cast<int>(n_write), PSTRING()
+                                                            << "ngtcp2_conn_write_aggregate_pkt2 failed: " << n_write);
   }
 
   ngtcp2_conn_update_pkt_tx_time(conn(), ts);

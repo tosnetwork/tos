@@ -125,7 +125,8 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
                     adnl::AdnlNodeIdShort peer_id, bool is_outbound);
   // `charge` holds the payload's bytes against the inbound stream budget until
   // the payload has been consumed: an inbound query's until its handler
-  // answers, anything else until it has been handed on.
+  // answers, a message's until a subscriber has it, an answer's until it
+  // reaches its caller.
   void on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id, td::Result<td::BufferSlice> data,
                           td::MemoryTrackerToken memory_token, QuicInboundByteCharge charge);
   void on_stream_closed(QuicConnectionId cid, QuicStreamID stream_id);

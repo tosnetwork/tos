@@ -104,6 +104,13 @@ class AdnlPeerTable : public Adnl {
                                      td::Promise<AdnlDbItem> promise) = 0;
 
   virtual void deliver(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data) = 0;
+  // Like deliver, but `held` is released only once the message has reached its
+  // subscriber, so a sender can keep the message's resources charged while it
+  // waits in mailboxes on the way.
+  virtual void deliver_holding(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
+                               std::shared_ptr<void> held) {
+    deliver(src, dst, std::move(data));
+  }
   virtual void deliver_query(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
                              td::Promise<td::BufferSlice> promise) = 0;
   virtual void decrypt_message(AdnlNodeIdShort dst, td::BufferSlice data, td::Promise<td::BufferSlice> promise) = 0;

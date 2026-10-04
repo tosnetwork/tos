@@ -858,6 +858,12 @@ bool QuicServer::produce_next_egress(size_t batch_index) {
     auto status = conn->impl().produce_egress(batch, gso_enabled_, max_packets);
     if (status.is_error()) {
       LOG(WARNING) << "produce_egress failed for " << conn->remote_address << ": " << status;
+      if (ngtcp2_err_is_fatal(status.code())) {
+        // The transport cannot go on (for one, an allocation the transport
+        // memory budget refused). Tear the connection down now, which frees
+        // what it holds, instead of leaving it to its idle timeout.
+        on_connection_closed(cid);
+      }
       continue;
     }
     if (batch.storage.empty()) {
