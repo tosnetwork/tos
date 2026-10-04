@@ -13,7 +13,12 @@
                   elsewhere is refused. This holds for every symlink, every path a
                   .pth file adds, and every RPATH/RUNPATH entry with $ORIGIN
                   expanded (whether or not that directory exists yet; empty
-                  entries and other loader tokens are refused). A .pth line that
+                  entries and other loader tokens are refused). The loader takes
+                  a shared library's $ORIGIN from the path it was loaded by, which
+                  may be any alias, so a library's search path may only descend
+                  from $ORIGIN; only an executable, whose $ORIGIN is its real
+                  path, may climb with "..". A .pth file may not be a symlink,
+                  and a .pth line that
                   executes code is refused unless it is one of the reviewed lines
                   below and the module it imports is in the same directory. Every
                   ELF dependency, as the system loader (not the file's own
@@ -155,12 +160,15 @@ def loader():
     raise SystemExit("no system dynamic loader found")
 
 
-def search_path_problems(path, value, root):
+def search_path_problems(path, value, root, executable):
     origin = os.path.dirname(os.path.realpath(path))
     problems = []
     for entry in value.split(":"):
         if not entry:
             problems.append(f"{path}: empty search path entry (the working directory)")
+            continue
+        if not executable and ".." in entry.split("/"):
+            problems.append(f"{path}: library search path {entry} climbs from $ORIGIN")
             continue
         expanded = entry.replace("${ORIGIN}", origin)
         if expanded.startswith("$ORIGIN"):
@@ -184,10 +192,16 @@ def elf_problems(path, root):
     )
     if dynamic.returncode != 0:
         return [f"{path}: readelf failed: {dynamic.stderr.strip()[:200]}"]
+    headers = subprocess.run(
+        ["readelf", "-l", "-W", str(path)], capture_output=True, text=True, check=False
+    )
+    if headers.returncode != 0:
+        return [f"{path}: readelf failed: {headers.stderr.strip()[:200]}"]
+    executable = "Requesting program interpreter" in headers.stdout
     for line in dynamic.stdout.splitlines():
         if "(RPATH)" in line or "(RUNPATH)" in line:
             value = line.split("[", 1)[1].rsplit("]", 1)[0]
-            problems.extend(search_path_problems(path, value, root))
+            problems.extend(search_path_problems(path, value, root, executable))
     if "(NEEDED)" not in dynamic.stdout:
         return problems
     listed = subprocess.run(
@@ -238,6 +252,9 @@ def check_snapshot(dest):
         for name in dirs + files:
             entry = Path(directory) / name
             if entry.is_symlink():
+                if name.endswith(".pth"):
+                    problems.append(f"{entry}: a .pth file must not be a symlink")
+                    continue
                 problem = resolution_problem(entry, root)
                 if problem:
                     target = os.readlink(entry)

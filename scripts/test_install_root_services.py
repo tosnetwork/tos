@@ -249,10 +249,11 @@ def build_library(tmp_path, *flags):
 @pytest.mark.parametrize(
     ("rpath", "expected"),
     [
-        ("$ORIGIN/../../../../../../../../var/tmp/native-libs", "outside the snapshot"),
+        ("$ORIGIN/../../../../../../../../var/tmp/native-libs", "climbs from $ORIGIN"),
         ("$ORIGIN::$ORIGIN", "empty search path entry"),
         ("$ORIGIN/$LIB", "unsupported loader token"),
-        ("$ORIGIN/../lib", None),
+        ("$ORIGIN/../lib", "climbs from $ORIGIN"),
+        ("$ORIGIN/sub", None),
     ],
 )
 def test_origin_search_paths_are_expanded_and_contained(tmp_path, rpath, expected):
@@ -326,3 +327,56 @@ def test_an_elf_file_readelf_cannot_read_is_refused(tmp_path):
     result = check_snapshot(dest)
     assert result.returncode == 1
     assert "readelf failed" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+def test_a_library_loaded_through_a_shallower_alias_cannot_climb_out(tmp_path):
+    # The loader would take $ORIGIN from DEST/alias.so, so $ORIGIN/../../plugins
+    # leaves DEST, though from the physical file it would not.
+    dest = tmp_path / "snapshot"
+    (dest / "deep/a").mkdir(parents=True)
+    library = build_library(tmp_path, "-Wl,-rpath,$ORIGIN/../../plugins")
+    shutil.copy(library, dest / "deep/a/library.so")
+    (dest / "alias.so").symlink_to("deep/a/library.so")
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "climbs from $ORIGIN" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+def test_an_executable_may_climb_to_its_own_lib(tmp_path):
+    # An executable's $ORIGIN is its real path, so $ORIGIN/../lib stays inside.
+    dest = tmp_path / "snapshot"
+    (dest / "python/bin").mkdir(parents=True)
+    (dest / "python/lib").mkdir()
+    source = write(tmp_path / "main.c", "int main(void) { return 0; }\n")
+    subprocess.run(
+        ["gcc", "-o", str(dest / "python/bin/python3"), str(source), "-Wl,-rpath,$ORIGIN/../lib"],
+        check=True,
+    )
+    result = check_snapshot(dest)
+    assert result.returncode == 0, result.stderr
+    # Climbing further than the snapshot is still refused, even into a directory
+    # that does not exist yet.
+    subprocess.run(
+        [
+            "gcc",
+            "-o",
+            str(dest / "python/bin/python3"),
+            str(source),
+            "-Wl,-rpath,$ORIGIN/../../../../../../../../var/tmp/native-libs",
+        ],
+        check=True,
+    )
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "outside the snapshot" in result.stderr
+
+
+def test_a_pth_file_may_not_be_a_symlink(tmp_path):
+    site = tmp_path / "snapshot/venv/lib/site-packages"
+    write(site / "payload.txt", "import sys; sys.path.insert(0, '/var/tmp/external')\n")
+    (site / "hook.pth").symlink_to("payload.txt")
+    result = check_snapshot(tmp_path / "snapshot")
+    assert result.returncode == 1
+    assert "hook.pth: a .pth file must not be a symlink" in result.stderr
