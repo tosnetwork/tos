@@ -1859,6 +1859,8 @@ set_tests_properties(
   quic-source-share
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
+  test-http-server-limits
+  test-rldp-http-tunnel
   PROPERTIES LABELS "network-safety")
 
 add_subdirectory(test)

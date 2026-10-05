@@ -165,6 +165,10 @@ class PayloadSenderRegistry : public td::actor::Actor {
 
 class RldpTcpTunnel : public td::actor::Actor, private td::ObserverBase {
  public:
+  // At most this much application data waits in either direction. Together
+  // with tunnel admission this bounds queued data, not total process memory.
+  static constexpr std::size_t max_buffer_bytes = 64 << 10;
+
   RldpTcpTunnel(td::Bits256 transfer_id, adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort local_id,
                 td::actor::ActorId<adnl::AdnlSenderInterface> rldp, td::actor::ActorId<PayloadSenderRegistry> registry,
                 td::SocketFd fd, TunnelTimeouts timeouts, TunnelAdmission::Ticket ticket);
@@ -183,6 +187,11 @@ class RldpTcpTunnel : public td::actor::Actor, private td::ObserverBase {
   void receive_query(tl_object_ptr<tos_api::http_getNextPayloadPart> f, td::Promise<td::BufferSlice> promise);
   void got_data_from_rldp(td::Result<td::BufferSlice> R);
   void answer_query(bool allow_empty = false, bool from_timer = false);
+
+  // Actor-serialized observation used by the real-socket regression tests.
+  void get_buffered_bytes(td::Promise<std::pair<std::size_t, std::size_t>> promise) {
+    promise.set_value({fd_.input_buffer().size(), fd_.ready_for_flush_write()});
+  }
 
  private:
   void notify() override;

@@ -65,6 +65,13 @@ Example pattern:
   the backend; a CONNECT beyond either limit is answered 503 and opens nothing.
   The per-peer limit bounds one client, not a peer that creates many ADNL
   identities; the global limit bounds that.
+  Each tunnel also buffers at most 64 KiB of application data in each
+  direction. It pauses backend reads at that limit and requests another RLDP
+  part only after the preceding part has drained to the socket. Thus the
+  default 512 tunnels can queue at most 64 MiB of application data; kernel
+  socket buffers, transport state and allocator overhead are separate.
+  Normal closure drains accepted data before sending the final part. Idle
+  and lifetime deadlines still terminate a stalled drain.
 - `--tunnel-idle-timeout`: seconds a tunnel may pass without moving a byte in
   either direction before it is closed (default 600, at most 604800).
 - `--tunnel-max-lifetime`: seconds after which a tunnel is closed however busy

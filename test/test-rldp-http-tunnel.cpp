@@ -208,6 +208,15 @@ class FakeRldp : public tos::adnl::AdnlSenderInterface {
     held_count_ = static_cast<int>(held_.size());
   }
 
+  void reply_held(td::BufferSlice data, bool last) {
+    CHECK(held_.size() == 1);
+    auto promise = std::move(held_.front().second);
+    held_.clear();
+    held_count_ = 0;
+    promise.set_result(tos::create_serialize_tl_object<tos::tos_api::http_payloadPart>(
+        std::move(data), std::vector<tos::tl_object_ptr<tos::tos_api::http_header>>(), last));
+  }
+
  private:
   Mode mode_;
   std::atomic<int> &held_count_;
@@ -479,6 +488,237 @@ TEST(RldpHttpTunnel, bytes_from_the_backend_also_keep_a_tunnel_open) {
   ASSERT_TRUE(lived >= 1.1);
   ASSERT_TRUE(lived < 4.0);
   ASSERT_EQ(h.admission().active(), static_cast<std::size_t>(0));
+}
+
+namespace {
+
+// A real, deliberately small socket buffer makes stalled writes reproducible
+// without depending on a host's TCP autotuning or retaining large payloads.
+class TunnelFlowHarness {
+ public:
+  TunnelFlowHarness() : scheduler_({1}) {
+    int pair[2];
+    CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    int size = 4096;
+    CHECK(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0);
+    CHECK(::fcntl(pair[1], F_SETFL, O_NONBLOCK) == 0);
+    backend_ = pair[1];
+    auto fd = td::SocketFd::from_native_fd(td::NativeFd(pair[0])).move_as_ok();
+    scheduler_.run_in_context([&] {
+      transport_ = td::actor::create_actor<FakeRldp>("flow-rldp", FakeRldp::Mode::hold, held_);
+      registry_ = td::actor::create_actor<FakeRegistry>("flow-registry", true, false, registered_);
+      auto admission = std::make_shared<TunnelAdmission>(1, 1);
+      tunnel_ = td::actor::create_actor<RldpTcpTunnel>(td::actor::ActorOptions().with_name("flow-tunnel").with_poll(),
+                                                       random_transfer_id(), peer_id(1), peer_id(2), transport_.get(),
+                                                       registry_.get(), std::move(fd), TunnelTimeouts{10, 20},
+                                                       admission->admit(peer_id(1)).move_as_ok());
+    });
+    until([&] { return held_ == 1 && registered_ == 1; });
+  }
+  ~TunnelFlowHarness() {
+    scheduler_.run_in_context([&] {
+      tunnel_.reset();
+      transport_.reset();
+      registry_.reset();
+      td::actor::SchedulerContext::get().stop();
+    });
+    while (scheduler_.run(0.01)) {
+    }
+    ::close(backend_);
+  }
+  void pump() {
+    scheduler_.run(0.01);
+  }
+  void until(const std::function<bool()> &done) {
+    auto deadline = td::Timestamp::in(5);
+    while (!done() && !deadline.is_in_past()) {
+      pump();
+    }
+    CHECK(done());
+  }
+  std::pair<std::size_t, std::size_t> buffered() {
+    std::pair<std::size_t, std::size_t> bytes;
+    bool done = false;
+    scheduler_.run_in_context([&] {
+      td::actor::send_closure(tunnel_, &RldpTcpTunnel::get_buffered_bytes,
+                              [&](td::Result<std::pair<std::size_t, std::size_t>> result) {
+                                bytes = result.move_as_ok();
+                                done = true;
+                              });
+    });
+    until([&] { return done; });
+    return bytes;
+  }
+  void reply(std::size_t bytes, bool last = false) {
+    CHECK(held_ == 1);
+    scheduler_.run_in_context([&] {
+      td::actor::send_closure(transport_, &FakeRldp::reply_held, td::BufferSlice(std::string(bytes, 'p')), last);
+    });
+    pump();
+  }
+  void query(td::int32 bytes) {
+    CHECK(!waiting_);
+    waiting_ = true;
+    scheduler_.run_in_context([&] {
+      td::actor::send_closure(
+          tunnel_, &RldpTcpTunnel::receive_query,
+          tos::create_tl_object<tos::tos_api::http_getNextPayloadPart>(td::Bits256::zero(), seqno_++, bytes),
+          [&](td::Result<td::BufferSlice> result) {
+            auto part = tos::fetch_tl_object<tos::tos_api::http_payloadPart>(result.move_as_ok(), true).move_as_ok();
+            received_ += part->data_.as_slice().str();
+            last_ = part->last_;
+            waiting_ = false;
+          });
+    });
+    pump();
+  }
+  void reject_query(td::int32 bytes) {
+    bool rejected = false;
+    scheduler_.run_in_context([&] {
+      td::actor::send_closure(
+          tunnel_, &RldpTcpTunnel::receive_query,
+          tos::create_tl_object<tos::tos_api::http_getNextPayloadPart>(td::Bits256::zero(), seqno_, bytes),
+          [&](td::Result<td::BufferSlice> result) { rejected = result.is_error(); });
+    });
+    until([&] { return rejected; });
+  }
+  std::size_t write_backend(std::size_t count) {
+    std::string data(count, 'b');
+    auto n = ::send(backend_, data.data(), data.size(), MSG_NOSIGNAL);
+    CHECK(n >= 0 || errno == EAGAIN || errno == EWOULDBLOCK);
+    return n > 0 ? static_cast<std::size_t>(n) : 0;
+  }
+  std::string read_backend() {
+    char data[8192];
+    auto n = ::recv(backend_, data, sizeof(data), 0);
+    CHECK(n >= 0 || errno == EAGAIN || errno == EWOULDBLOCK);
+    return n > 0 ? std::string(data, static_cast<std::size_t>(n)) : std::string{};
+  }
+  void backend_eof() {
+    CHECK(::shutdown(backend_, SHUT_WR) == 0);
+    pump();
+  }
+  int held() const {
+    return held_.load();
+  }
+  bool closed() const {
+    return registered_ == 0;
+  }
+  bool waiting_ = false, last_ = false;
+  std::string received_;
+
+ private:
+  td::actor::Scheduler scheduler_;
+  int backend_ = -1;
+  std::atomic<int> held_{0}, registered_{0};
+  td::int32 seqno_ = 0;
+  td::actor::ActorOwn<FakeRldp> transport_;
+  td::actor::ActorOwn<FakeRegistry> registry_;
+  td::actor::ActorOwn<RldpTcpTunnel> tunnel_;
+};
+
+}  // namespace
+
+TEST(RldpHttpTunnel, a_peer_that_stops_reading_cannot_grow_the_backend_buffer) {
+  TunnelFlowHarness h;
+  const auto limit = RldpTcpTunnel::max_buffer_bytes;
+  std::size_t sent = 0;
+  for (int i = 0; i < 30 && sent < 4 * limit; i++) {
+    sent += h.write_backend(4 * limit - sent);
+    h.pump();
+  }
+  ASSERT_TRUE(sent > limit);
+  ASSERT_EQ(h.buffered().first, limit);
+  // Reading resumes socket consumption, even without a new readiness edge.
+  while (h.received_.size() < sent) {
+    h.query(4096);
+    h.until([&] { return !h.waiting_; });
+    ASSERT_TRUE(h.buffered().first <= limit);
+  }
+  ASSERT_EQ(h.received_, std::string(sent, 'b'));
+}
+
+TEST(RldpHttpTunnel, a_backend_that_stops_reading_stops_payload_fetches) {
+  TunnelFlowHarness h;
+  const auto limit = RldpTcpTunnel::max_buffer_bytes;
+  std::size_t sent = 0;
+  for (int i = 0; i < 10 && h.held() != 0; i++) {
+    h.reply(limit);
+    sent += limit;
+  }
+  ASSERT_TRUE(h.buffered().second > 0);
+  ASSERT_TRUE(h.buffered().second <= limit);
+  ASSERT_EQ(h.held(), 0);
+  std::string received;
+  h.until([&] {
+    received += h.read_backend();
+    return received.size() == sent && h.held() == 1;
+  });
+  ASSERT_EQ(received, std::string(sent, 'p'));
+}
+
+TEST(RldpHttpTunnel, backend_eof_is_reported_only_after_all_buffered_chunks) {
+  TunnelFlowHarness h;
+  ASSERT_EQ(h.write_backend(3072), static_cast<std::size_t>(3072));
+  h.backend_eof();
+  for (int i = 0; i < 3; i++) {
+    h.query(1024);
+    h.until([&] { return !h.waiting_; });
+    ASSERT_EQ(h.received_.size(), static_cast<std::size_t>((i + 1) * 1024));
+    ASSERT_EQ(h.last_, i == 2);
+  }
+  ASSERT_EQ(h.received_, std::string(3072, 'b'));
+}
+
+TEST(RldpHttpTunnel, the_final_peer_chunk_is_flushed_before_the_tunnel_ends) {
+  TunnelFlowHarness h;
+  const auto limit = RldpTcpTunnel::max_buffer_bytes;
+  h.reply(limit, true);
+  ASSERT_TRUE(h.buffered().second > 0);
+  h.query(1024);
+  ASSERT_TRUE(h.waiting_);
+  std::string received;
+  h.until([&] {
+    received += h.read_backend();
+    return received.size() == limit && !h.waiting_;
+  });
+  ASSERT_EQ(received, std::string(limit, 'p'));
+  ASSERT_TRUE(h.last_);
+}
+
+TEST(RldpHttpTunnel, backend_hangup_with_more_than_one_buffer_drains_the_socket) {
+  TunnelFlowHarness h;
+  const auto limit = RldpTcpTunnel::max_buffer_bytes;
+  std::size_t sent = 0;
+  for (int i = 0; i < 30 && sent < 4 * limit; i++) {
+    sent += h.write_backend(4 * limit - sent);
+    h.pump();
+  }
+  ASSERT_TRUE(sent > limit);
+  h.backend_eof();
+  while (!h.last_) {
+    h.query(4096);
+    h.until([&] { return !h.waiting_; });
+  }
+  ASSERT_EQ(h.received_.size(), sent);
+  ASSERT_EQ(h.received_, std::string(sent, 'b'));
+}
+
+TEST(RldpHttpTunnel, oversized_peer_parts_are_refused_before_buffering) {
+  TunnelFlowHarness h;
+  h.reply(RldpTcpTunnel::max_buffer_bytes + 1);
+  h.until([&] { return h.closed(); });
+  ASSERT_TRUE(h.read_backend().empty());
+}
+
+TEST(RldpHttpTunnel, nonpositive_chunk_sizes_do_not_consume_the_sequence_number) {
+  TunnelFlowHarness h;
+  h.reject_query(0);
+  h.reject_query(-1);
+  ASSERT_EQ(h.write_backend(1), static_cast<std::size_t>(1));
+  h.query(1);
+  h.until([&] { return !h.waiting_; });
+  ASSERT_EQ(h.received_, "b");
 }
 
 TEST(RldpHttpTunnel, option_values_parse_strictly_and_are_bounded) {

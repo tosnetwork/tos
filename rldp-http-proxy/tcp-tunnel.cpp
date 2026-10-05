@@ -221,7 +221,10 @@ void RldpTcpTunnel::alarm() {
 }
 
 void RldpTcpTunnel::request_data() {
-  if (finished_ || close_ || sent_request_) {
+  // One bounded part at a time. A completed RLDP response no longer consumes
+  // the transport's reassembly budget, so queued socket writes need their own
+  // backpressure before another response is admitted.
+  if (finished_ || close_ || got_last_part_ || sent_request_ || fd_.ready_for_flush_write() != 0) {
     return;
   }
   sent_request_ = true;
@@ -229,9 +232,10 @@ void RldpTcpTunnel::request_data() {
     td::actor::send_closure(SelfId, &RldpTcpTunnel::got_data_from_rldp, std::move(R));
   });
 
-  auto f = create_serialize_tl_object<tos_api::http_getNextPayloadPart>(id_, out_seqno_++, (1 << 21) - (1 << 11));
+  auto f = create_serialize_tl_object<tos_api::http_getNextPayloadPart>(id_, out_seqno_++,
+                                                                        static_cast<td::int32>(max_buffer_bytes));
   td::actor::send_closure(rldp_, &adnl::AdnlSenderInterface::send_query_ex, local_id_, src_, "payload part",
-                          std::move(P), td::Timestamp::in(60.0), std::move(f), (1 << 21) + 1024);
+                          std::move(P), td::Timestamp::in(60.0), std::move(f), max_buffer_bytes + 1024);
 }
 
 void RldpTcpTunnel::receive_query(tl_object_ptr<tos_api::http_getNextPayloadPart> f,
@@ -248,6 +252,10 @@ void RldpTcpTunnel::receive_query(tl_object_ptr<tos_api::http_getNextPayloadPart
   if (f->seqno_ != cur_seqno_) {
     LOG(INFO) << "failed to process query: seqno mismatch";
     promise.set_error(td::Status::Error("seqno mismatch"));
+    return;
+  }
+  if (f->max_chunk_size_ <= 0) {
+    promise.set_error(td::Status::Error("payload chunk size must be positive"));
     return;
   }
   LOG(INFO) << "RldpTcpTunnel: received query, seqno=" << cur_seqno_;
@@ -275,6 +283,10 @@ void RldpTcpTunnel::got_data_from_rldp(td::Result<td::BufferSlice> R) {
     return;
   }
   auto f = F.move_as_ok();
+  if (f->data_.size() > max_buffer_bytes) {
+    finish(td::Status::Error("payload part exceeds requested chunk size"));
+    return;
+  }
   if (!f->data_.empty()) {
     touch();
   }
@@ -289,17 +301,29 @@ void RldpTcpTunnel::process() {
   if (finished_) {
     return;
   }
-  if (!close_) {
-    auto status = [&] {
-      TRY_STATUS(fd_.flush_read());
-      TRY_STATUS(fd_.flush_write());
-      close_ = td::can_close(fd_);
-      return td::Status::OK();
-    }();
-    if (status.is_error()) {
-      finish(std::move(status));
-      return;
+  auto status = [&] {
+    if (!close_) {
+      auto remaining = max_buffer_bytes - fd_.input_buffer().size();
+      TRY_RESULT(read, fd_.flush_read(remaining));
+      // A hangup can arrive with unread socket data. Only mark EOF after
+      // reading less than our allowance, so a full application buffer does
+      // not discard the bytes still waiting in the kernel.
+      close_ = read < remaining && td::can_close(fd_);
+      if (read != 0) {
+        touch();
+      }
     }
+    // Even after the peer's final part, drain bytes already accepted for the
+    // backend. A temporarily unwritable socket is not a completed transfer.
+    TRY_RESULT(written, fd_.flush_write());
+    if (written != 0) {
+      touch();
+    }
+    return td::Status::OK();
+  }();
+  if (status.is_error()) {
+    finish(std::move(status));
+    return;
   }
   if (got_last_part_) {
     close_ = true;
@@ -316,7 +340,8 @@ void RldpTcpTunnel::answer_query(bool allow_empty, bool from_timer) {
     active_timer_ = false;
   }
   auto &input = fd_.input_buffer();
-  if (cur_promise_ && (!input.empty() || close_ || allow_empty)) {
+  bool writes_drained = fd_.ready_for_flush_write() == 0;
+  if (cur_promise_ && (!input.empty() || (close_ && writes_drained) || allow_empty)) {
     if (!from_timer && !close_ && !allow_empty && input.size() < http::HttpRequest::low_watermark()) {
       if (!active_timer_) {
         active_timer_ = true;
@@ -333,12 +358,13 @@ void RldpTcpTunnel::answer_query(bool allow_empty, bool from_timer) {
     td::BufferSlice data(s);
     LOG(INFO) << "RldpTcpTunnel: sending data to rldp: size=" << data.size();
     input.advance(s, td::as_mutable_slice(data));
+    bool last = close_ && input.empty() && writes_drained;
     cur_promise_.set_result(create_serialize_tl_object<tos_api::http_payloadPart>(
-        std::move(data), std::vector<tl_object_ptr<tos_api::http_header>>(), close_));
+        std::move(data), std::vector<tl_object_ptr<tos_api::http_header>>(), last));
     ++cur_seqno_;
     cur_promise_.reset();
     rearm();
-    if (close_) {
+    if (last) {
       finish(td::Status::OK());
       return;
     }

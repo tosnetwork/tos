@@ -6,7 +6,7 @@ name: Network safety ASAN
 # tests run -- and instrumented, so a use-after-free or overflow is caught. The
 # ADNL and overlay cases already run in the normal CTest pass; this workflow
 # builds a second time with AddressSanitizer and runs the whole "network-safety"
-# label, the QUIC regressions included.
+# label, including HTTP listener limits and CONNECT tunnel backpressure/drain.
 #
 # It also checks execution completeness: every expected test must be registered
 # (a removed or relabelled test fails the gate), and the run must actually
@@ -25,10 +25,14 @@ on:
       - 'adnl/**'
       - 'overlay/**'
       - 'quic/**'
+      - 'http/**'
+      - 'rldp-http-proxy/**'
       - 'tdactor/**'
       - 'test/test-adnl-peer-pair-cap.cpp'
       - 'test/test-overlay-broadcast-capacity.cpp'
       - 'test/net/test-quic-sender.cpp'
+      - 'test/test-http-server-limits.cpp'
+      - 'test/test-rldp-http-tunnel.cpp'
       - 'tdutils/td/utils/tests.*'
       - 'CMakeLists.txt'
       - '.github/workflows/network-safety-asan.yml'
@@ -87,7 +91,9 @@ jobs:
         ninja -C build-asan \
           test-quic-sender \
           test-adnl-peer-pair-cap \
-          test-overlay-broadcast-capacity
+          test-overlay-broadcast-capacity \
+          test-http-server-limits \
+          test-rldp-http-tunnel
 
     - name: Verify the expected network-safety tests are registered
       working-directory: build-asan
@@ -102,6 +108,8 @@ jobs:
             "quic-connection-count-cap",
             "test-adnl-peer-pair-cap",
             "test-overlay-broadcast-capacity",
+            "test-http-server-limits",
+            "test-rldp-http-tunnel",
         }
         got = {t["name"] for t in json.load(open("network-safety-tests.json"))["tests"]}
         missing = expected - got
