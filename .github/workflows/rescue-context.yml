@@ -66,7 +66,7 @@ jobs:
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
             --example fee-native-cost --example suite-parity --example pq-tx-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
-            --example lms_fee_cache_fixture --example v5r2_auth_encode --example v5r2_pop_encode --example v5r2_prepare_encode --example v5r2_fee_encode
+            --example lms_fee_cache_fixture --example v5r2_auth_encode --example v5r2_pop_encode --example v5r2_prepare_encode --example v5r2_fee_encode --example v5r2_genesis_encode
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule
@@ -82,6 +82,8 @@ jobs:
           cmp /tmp/v5r2-prepare-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/prepare-wire.json
           python test/wallet-v5r2/sdk_fee_vectors.py --output /tmp/v5r2-fee-vectors.json
           cmp /tmp/v5r2-fee-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/fee-wire.json
+          python test/wallet-v5r2/sdk_genesis_vectors.py --output /tmp/v5r2-genesis-vectors.json
+          cmp /tmp/v5r2-genesis-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/genesis-wire.json
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2
       - name: Wallet SDK semantic deletion controls
         if: matrix.runner == 'ubuntu-24.04'
@@ -90,6 +92,7 @@ jobs:
           python test/wallet-v5r2/sdk_auth_controls.py --pop --output artifacts/context/pop-sdk-controls
           python test/wallet-v5r2/sdk_auth_controls.py --prepare --output artifacts/context/prepare-sdk-controls
           python test/wallet-v5r2/sdk_auth_controls.py --fee --output artifacts/context/fee-sdk-controls
+          python test/wallet-v5r2/sdk_auth_controls.py --genesis --output artifacts/context/genesis-sdk-controls
       - name: Durable fee reservation deletion controls
         if: matrix.runner == 'ubuntu-24.04'
         run: |
@@ -125,9 +128,15 @@ jobs:
             --pop-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_pop_encode" \
             --preparation-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_prepare_encode" \
             --fee-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_fee_encode" \
+            --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-fee-prepare
+      - name: Receipt-bound module rent invariant
+        run: |
+          python test/wallet-v5r2/module_rent_control.py \
+            --baseline artifacts/context/r2-fee-prepare/native \
+            --output artifacts/context/r2-fee-prepare/module-rent-control.json
       - name: Preparation fee admission deletion controls
         if: matrix.runner == 'ubuntu-24.04'
         run: |

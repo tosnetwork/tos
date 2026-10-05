@@ -31,6 +31,7 @@ from test_state import fee, state  # noqa: E402
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--genesis-driver", type=Path)
     p.add_argument("--fee-driver", type=Path)
     p.add_argument("--preparation-driver", type=Path)
     p.add_argument("--output", type=Path, required=True)
@@ -169,6 +170,43 @@ def main():
         vd = vault_data(metadata=metadata, wallet=wa[1], module=root)
         vi = native.state_init(vault, vd)
         va = (0, int.from_bytes(vi.hash, "big"))
+        genesis_cells = None
+        if options.genesis_driver:
+            assert (
+                options.prepare
+                and options.recovery
+                and options.cache_driver
+                and options.credit_probe
+                and options.fault is None
+            )
+            from sdk_genesis_fixture import encode as encode_genesis
+
+            genesis_cells = encode_genesis(
+                options.genesis_driver,
+                out / "sdk-genesis.json",
+                wallet=wallet,
+                module=module,
+                vault=vault,
+                primary=signer.ml_pk.read_bytes(),
+                rescue=signer.slh_pk,
+                fee_key=pub,
+                expected=dict(
+                    module_data=md,
+                    module_init=mi,
+                    metadata=metadata,
+                    wallet_data=wd,
+                    wallet_init=native.state_init(wallet, wd),
+                    vault_data=vd,
+                    vault_init=vi,
+                ),
+            )
+            md, mi, metadata = (
+                genesis_cells[name] for name in ("module_data", "module_init", "metadata")
+            )
+            wd, vd, vi = (
+                genesis_cells[name] for name in ("wallet_data", "vault_data", "vault_init")
+            )
+
         (work / "recipient.fc").write_text(
             "() recv_internal(slice body) impure { set_data(begin_cell().store_uint(get_data().begin_parse().preload_uint(32) + 1, 32).end_cell()); }\n"
         )
@@ -462,6 +500,12 @@ def main():
         with patch.object(native, "config", return_value=make_dict(entries, 32)):
             e = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
         try:
+            genesis_accounts = None
+            if genesis_cells:
+                from sdk_genesis_fixture import deploy as deploy_genesis
+
+                genesis_accounts = deploy_genesis(e, out / "genesis-deployment", genesis_cells)
+                initial = genesis_accounts["vault"]
             paid = e.send(initial, ext)
             (out / "vault-result.json").write_text(json.dumps(paid, indent=2) + "\n")
             if options.gas_trace and paid["success"]:
@@ -779,7 +823,9 @@ def main():
                             tree=tree,
                             vault_address=va,
                             vault=initial,
-                            module=native.active_account((0, root), module, md, balance=10**12),
+                            module=genesis_accounts["module"]
+                            if genesis_accounts
+                            else native.active_account((0, root), module, md, balance=10**12),
                             root=root,
                             witness=mi,
                             metadata=metadata,
@@ -798,7 +844,9 @@ def main():
                         ),
                         wallet=SimpleNamespace(
                             address=wa,
-                            initial=native.active_account(wa, wallet, wd, balance=10**15),
+                            initial=genesis_accounts["wallet"]
+                            if genesis_accounts
+                            else native.active_account(wa, wallet, wd, balance=10**15),
                         ),
                         recipient=SimpleNamespace(
                             address=recipient,

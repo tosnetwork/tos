@@ -15,6 +15,7 @@ def main():
     modes.add_argument("--pop", action="store_true")
     modes.add_argument("--prepare", action="store_true")
     modes.add_argument("--fee", action="store_true")
+    modes.add_argument("--genesis", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -26,6 +27,9 @@ def main():
     if args.fee:
         source_path = SOURCE.with_name("wallet_v5r2_fee.rs")
         module = "wallet_v5r2_fee"
+    if args.genesis:
+        source_path = SOURCE.with_name("wallet_v5r2_genesis.rs")
+        module = "wallet_v5r2_genesis"
     source = source_path.read_text()
     cases = [
         ("parties", "binding.account != binding.module", "true", "wallet_cannot_be_its_own_module"),
@@ -166,6 +170,52 @@ def main():
                 'b.append_raw(b"TOS-RESCUE-FEE-v1", 136)?;',
                 'b.append_raw(b"BAD-RESCUE-FEE-v1", 136)?;',
                 "independent_fee_vectors",
+            ),
+        ]
+
+    if args.genesis:
+        cases = [
+            (
+                "code_pin",
+                "*code.repr_hash().as_array() == pin",
+                "true",
+                "wrong_code_and_fee_profile_refused",
+            ),
+            (
+                "ordinary_code",
+                "code.cell_type() == CellType::Ordinary && code.level() == 0",
+                "true",
+                "matching_pin_does_not_allow_exotic_code",
+            ),
+            (
+                "fee_profile",
+                "p.fee_public_key[..4] == 1u32.to_be_bytes()",
+                "true",
+                "wrong_code_and_fee_profile_refused",
+            ),
+            (
+                "classic_flag",
+                "wallet.append_bit_zero()?; // Classic signature entry is disabled.",
+                "wallet.append_bit_one()?; // Deleted disabled-classic invariant.",
+                "independent_genesis_vectors",
+            ),
+            (
+                "classic_key",
+                "wallet.append_u256(&[0; 32])?;",
+                "wallet.append_u256(&[1; 32])?;",
+                "independent_genesis_vectors",
+            ),
+            (
+                "initial_epoch",
+                "auth.append_u64(1)?;",
+                "auth.append_u64(0)?;",
+                "independent_genesis_vectors",
+            ),
+            (
+                "paired_metadata",
+                "config.checked_append_reference(metadata.clone())?;",
+                "config.checked_append_reference(module_init.clone())?;",
+                "independent_genesis_vectors",
             ),
         ]
 

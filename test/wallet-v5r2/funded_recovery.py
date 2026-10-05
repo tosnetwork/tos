@@ -14,6 +14,22 @@ from test_rescue_e2e import digest
 from test_state import state
 
 
+def preserve_module_funds(before, after, transaction):
+    """Incoming-funded work may charge prior funds only the recorded protocol rent."""
+    s = transaction.refs[2].slice()
+    assert s.uint(4) == 0, "ordinary transaction required"
+    s.uint(1)  # credit_first; storage charge below is authoritative in either order.
+    collected = 0
+    if s.uint(1):
+        collected = s.coins()
+        due = s.coins() if s.uint(1) else 0
+        assert due == 0 and s.uint(1) == 0, "module acquired storage debt or changed status"
+    assert after[0].hash == before[0].hash, "module data changed"
+    assert 0 <= collected <= before[1], "unexpected storage funding"
+    assert after[1] + collected >= before[1], "module spent prior funds beyond protocol rent"
+    return collected
+
+
 def run(e, out, **kwargs):
     original_time = getattr(e, "transaction_time", native.NOW)
     try:
@@ -47,6 +63,7 @@ def _run(
 ):
     out.mkdir(parents=True, exist_ok=True)
     results = {}
+    transactions = {}
     now = native.NOW
     epoch0 = native.NOW - 2 * 3600 - 10
     old_session = new_session = None
@@ -102,6 +119,7 @@ def _run(
                 native.account_data(from_boc(result["shard_account"]))[0].hash
                 == native.account_data(account)[0].hash
             )
+        transactions[name] = from_boc(result["transaction"])
         results[name] = details
         return from_boc(result["shard_account"]), messages
 
@@ -130,7 +148,9 @@ def _run(
         prior = native.account_data(module_state)
         module_state, messages = send(name + "-module", module_state, messages[0], outputs=outputs)
         after = native.account_data(module_state)
-        assert after[0].hash == prior[0].hash and after[1] >= prior[1]
+        results[name + "-module"]["storage_fees_collected"] = preserve_module_funds(
+            prior, after, transactions[name + "-module"]
+        )
         return vault_state, module_state, messages
 
     # Only SLH and LMS are used throughout this chain. No synthetic wallet
@@ -194,7 +214,9 @@ def _run(
     before = native.account_data(m1)
     m1, _ = send("successor-pop-module", m1, messages[0])
     after = native.account_data(m1)
-    assert after[0].hash == before[0].hash and after[1] >= before[1]
+    results["successor-pop-module"]["storage_fees_collected"] = preserve_module_funds(
+        before, after, transactions["successor-pop-module"]
+    )
 
     migration = (
         Cell().uint(0x4D494752, 32).ref(new.witness).ref(new.metadata).ref(new.vault_witness)
@@ -253,7 +275,9 @@ def _run(
     before = native.account_data(m1)
     m1, messages = send("payment-module", m1, messages[0], outputs=1)
     after = native.account_data(m1)
-    assert after[0].hash == before[0].hash and after[1] >= before[1]
+    results["payment-module"]["storage_fees_collected"] = preserve_module_funds(
+        before, after, transactions["payment-module"]
+    )
     payment_relay = messages[0]
     w, messages = send("payment-wallet", w, payment_relay, outputs=1)
     expected = state(

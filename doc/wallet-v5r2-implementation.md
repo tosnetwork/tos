@@ -242,7 +242,7 @@ not acceptance of the current PQ-only ABI; fresh evidence is recorded separately
 
 `wallet-v5r2-module.fc` now verifies actual ML-DSA/SLH submissions, rechecks global
 retirement for primary authorization, validates migration/configuration witnesses
-against MYCODE and its compiled vault dependency, and reserves its earlier balance
+against MYCODE and its compiled vault dependency, and reserves its earlier balance after protocol storage charges
 before relaying only incoming funds. Real native transactions exercise primary,
 rescue, lock and migration through the actual outgoing module message into the
 complete wallet, plus invalid primary signature and retired-primary refusal. A
@@ -441,7 +441,7 @@ vault amounts, both canonical StateInit witnesses and fee metadata. Primary or
 legacy authorization is not selected by this envelope. The module checks its own
 SLH key and same-code successor/module-to-vault pairing, including policy rules.
 
-It reserves its entire pre-message balance and emits exactly two fixed-destination
+It reserves the pre-message balance remaining after protocol storage charges and emits exactly two fixed-destination
 messages, each with the signed StateInit, signed amount, empty deposit body and
 send mode 3. It never emits wallet AUTH or updates wallet/module state. Repeating
 an unchanged valid preparation requires fresh incoming funds. Surplus incoming
@@ -790,7 +790,7 @@ restoring source and rerunning them. CI runs wire and transaction checks on both
 architectures and deletion controls on x86-64. Evidence:
 `test/wallet-v5r2/auth-sdk-20261006.json`.
 
-Genesis SDK encoding, trusted chain-view binding,
+Trusted release-code and chain-view binding,
 real custody and user-facing create/restore flows remain to be integrated.
 Default-credit admission remains a separate failed release gate.
 
@@ -876,6 +876,46 @@ using diagnostic credit 20,000. Malformed negative requests remain explicit
 fixture encodings. Evidence: `test/wallet-v5r2/fee-sdk-20261006.json`.
 
 This completes encoding coverage for the recovery messages, not production
-signer custody, verified state/receipt handling or user-facing recovery. Genesis
-construction, complete client policy validation and the default-credit release
+signer custody, verified state/receipt handling or user-facing recovery. Trusted genesis-code distribution, complete client policy validation and the default-credit release
 failure remain open alongside the other production gates.
+
+### PQ-only genesis SDK and deployment-derived recovery
+
+`contracts::wallet_v5r2_genesis` deterministically constructs module data and
+StateInit, fee metadata, wallet data/StateInit, then the paired vault data and
+StateInit. Vault caches are derived from the complete configuration, wallet,
+module and metadata; they are not caller assertions. Initial seqno/nonces and
+retired bits are zero, epoch is one, mode is two, classic signature entry is
+disabled, the inert classic key is zero and the extension dictionary is empty.
+Only fixed-size ML-DSA-44 and SLH keys and HSS L1/H20/W4 fee keys are accepted.
+READY/REQUIRED remain explicit policies.
+
+CodeBundle requires matching code hashes and ordinary level-zero code. Those
+pins must come from an independently reviewed release bundle: hashing untrusted
+code and presenting its own hashes is not authentication. The SDK neither audits
+code dependencies nor proves key possession/custody. Four independent vectors
+cover policies, wallet-id and fee-tree variation, comparing seven complete cells
+and the configuration hash. Seven semantic controls exercise code identity,
+ordinary code, fee profile, classic flag/key, epoch and metadata pairing.
+
+The real fixture suite now deploys SDK StateInit for all three initial accounts
+from absent accounts. It checks actual state and balances, then starts the
+independent linked recovery branch from those deployment results. The suite has
+65 matching native/Rust transactions (including three genesis deployments), and
+retains successor deployments, fresh POP, migration and actual recipient payment.
+These are local public-key fixture transactions, not a public-network launch.
+
+This exposed a limitation of earlier pre-created account fixtures: their storage
+usage was zero. A genuinely deployed M0 pays 3,497 units of storage rent across
+the first restore wait. Its observed balance loss equals the transaction's
+storage_fees_collected exactly, with no storage debt/status change. The funded
+module invariant now decodes actual storage rent and permits no additional loss
+of prior funds; unchanged data remains mandatory. A real-receipt control rejects
+one extra unit of loss, accepts it only after deleting the invariant, then
+rejects it again with the guard restored. No contract check or tariff changed.
+Evidence: `test/wallet-v5r2/genesis-sdk-20261006.json`.
+
+Production release-code distribution, key custody, trustworthy fresh chain views,
+challenge/transaction receipt verification, complete client policy and recovery
+UX, default-credit admission, reference-hardware/worst-case pricing, independent
+review and final-head CI remain unfinished.

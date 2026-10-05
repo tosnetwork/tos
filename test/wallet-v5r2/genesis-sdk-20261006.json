@@ -1,0 +1,102 @@
+{
+  "base_commit": "0a2d84f6d28755a874fed686415a6dd09da209bf",
+  "scope": "Deterministic PQ-only genesis with caller-supplied trusted code pins. Four independent wire vectors; actual initial module/wallet/vault StateInit deployments used to start independent linked recovery branch. Storage rent is decoded from actual receipts; no extra loss of prior module funds is permitted. Public fixture keys and diagnostic credit, not release-code authentication/custody or public-network readiness.",
+  "source_sha256": {
+    ".github/workflows/rescue-context.yml": "9fc060f1402a4adf850695eae4380b26edef8ae99d6bc645292622d382bf19c7",
+    "tosctl/src/node-control/contracts/src/lib.rs": "f5802b4a72ee6fac17f7e69a11f5962391389c9856c864887bdd6a02bcd51299",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_genesis.rs": "c83f2b3b29aee1e2994b7854a60e75a7bfcd9d69756789c7423c027ac408e117",
+    "tosctl/src/node-control/contracts/examples/v5r2_genesis_encode.rs": "a4a1239ee277198dcc18b0b2420a44355c9faa53ebca9d1b570c3765cfd89f2d",
+    "tosctl/src/node-control/contracts/tests/fixtures/v5r2/genesis-wire.json": "bfaa382f35e6045921e92387223996489f6010aa67ebfa8dc204634dd2776ec5",
+    "test/wallet-v5r2/sdk_auth_controls.py": "b7bd53e4571a933ff0ba259f45e7afc5eb60228b29b318b81f1fd48d65c9c97f",
+    "test/wallet-v5r2/sdk_auth_parity.py": "ef7bdf054cc72f5069268a6687d47b8499e50eb85e7f0eff85ebe12221f94501",
+    "test/wallet-v5r2/sdk_genesis_fixture.py": "88cc4891481ee7982ec15d262a392bcf552fa1fba76d4a47d60bdb8a3d27cbf9",
+    "test/wallet-v5r2/sdk_genesis_vectors.py": "4ab2351aca3614032e817c950205eec85ea5c7d8a96401871f8c514b3a4aaca0",
+    "test/wallet-v5r2/module_rent_control.py": "26a07ee8e1b5d95c9a5878bbb1d2276e4471e75de2c6be93e9c2ec6979feeb86",
+    "test/wallet-v5r2/funded_recovery.py": "1fb1744595ac35da69bbdb52c7c2e9a1896d2065cac638f8e35ca3150cd10f96",
+    "test/wallet-v5r2/fee_tx_parity.py": "1924d0d40a09a071874d0b6706751102e769753404452c9f5af99287566ec0b9",
+    "test/wallet-v5r2/test_fee_delivery.py": "be1da962da0d5804533a30cbde11cc8392e656bef51321043f9c4cff52f859c8"
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --locked -p contracts",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example v5r2_genesis_encode",
+    "python test/wallet-v5r2/sdk_genesis_vectors.py --output /tmp/v5r2-genesis-vectors.json",
+    "cmp /tmp/v5r2-genesis-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/genesis-wire.json",
+    "python test/wallet-v5r2/sdk_auth_parity.py --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --fee-driver tosctl/src/target/debug/examples/v5r2_fee_encode --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-genesis-sdk-final",
+    "python test/wallet-v5r2/sdk_auth_controls.py --genesis --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-genesis-sdk-final/controls",
+    "python test/wallet-v5r2/module_rent_control.py --baseline /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-genesis-sdk-final/native --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-genesis-sdk-final/rent-control.json"
+  ],
+  "final_listed_commands_exit": 0,
+  "initial_run": "Exit 1: deployed module paid 3497 protocol storage fees and violated the earlier zero-rent fixture assertion; original receipts and log retained. Fixed accounting only, no contract changes.",
+  "independent_vectors": 4,
+  "wallet_sdk_tests": 19,
+  "genesis_deployments": 3,
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 65,
+    "observed_transactions": 65,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 5,
+    "final_chain_time": 1780007190,
+    "transactions": 20,
+    "recipient_received": true,
+    "primary_signing_used": false,
+    "production_admission_passed": false
+  },
+  "rent_control": {
+    "storage_collected": 3497,
+    "actual_loss": 3497,
+    "extra_unit_rejected": true,
+    "deleted_guard_accepts_extra_loss": true,
+    "restored_guard_rejects": true
+  },
+  "semantic_controls": {
+    "code_pin": {
+      "exit": 101,
+      "semantic_witness": "wrong_code_and_fee_profile_refused"
+    },
+    "ordinary_code": {
+      "exit": 101,
+      "semantic_witness": "matching_pin_does_not_allow_exotic_code"
+    },
+    "fee_profile": {
+      "exit": 101,
+      "semantic_witness": "wrong_code_and_fee_profile_refused"
+    },
+    "classic_flag": {
+      "exit": 101,
+      "semantic_witness": "independent_genesis_vectors"
+    },
+    "classic_key": {
+      "exit": 101,
+      "semantic_witness": "independent_genesis_vectors"
+    },
+    "initial_epoch": {
+      "exit": 101,
+      "semantic_witness": "independent_genesis_vectors"
+    },
+    "paired_metadata": {
+      "exit": 101,
+      "semantic_witness": "independent_genesis_vectors"
+    }
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-genesis-sdk-final",
+    "retain_until": "2027-01-06",
+    "manifest": {
+      "sha256": "f9ca82c65c807912639b9289711f2692806d49486bf47cbeecf0589cdcd10046",
+      "bytes": 24701
+    },
+    "files": 172,
+    "total_bytes": 141037400
+  },
+  "remaining": "Trusted release bundle/code distribution; production custody and signer device recovery; fresh chain proofs and transaction/challenge receipts; complete client policy/UX; default-credit admission; worst-case resources/hardware pricing; independent review and final-head CI."
+}

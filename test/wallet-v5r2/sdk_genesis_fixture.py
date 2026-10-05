@@ -1,0 +1,77 @@
+"""Compare SDK genesis cells and actually deploy all three accounts from StateInit."""
+
+import json
+import subprocess
+
+import native
+from cells import Cell, from_boc
+
+
+def encode(driver, out, *, wallet, module, vault, primary, rescue, fee_key, expected):
+    payload = dict(
+        wallet_code=wallet.boc().hex(),
+        module_code=module.boc().hex(),
+        vault_code=vault.boc().hex(),
+        wallet_pin=wallet.hash.hex(),
+        module_pin=module.hash.hex(),
+        vault_pin=vault.hash.hex(),
+        global_id=42,
+        network=f"{123:064x}",
+        wallet_id=42,
+        primary_key=primary.hex(),
+        rescue_key=rescue.hex(),
+        policy=1,
+        fee_tree_id=f"{456:064x}",
+        fee_public_key=fee_key.hex(),
+        epoch0=native.NOW - 2 * 3600 - 10,
+    )
+    result = subprocess.run(
+        [str(driver.resolve())], input=json.dumps(payload), capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    response = json.loads(result.stdout)
+    actual = {name: from_boc(bytes.fromhex(response[name])) for name in expected}
+    for name, cell in expected.items():
+        assert actual[name].hash == cell.hash, name
+    assert (
+        response["config_hash"]
+        == f"{expected['vault_data'].slice().uint(296) & ((1 << 256) - 1):064x}"
+    )
+    out.write_text(json.dumps({"input": payload, "output": response}, indent=2) + "\n")
+    return actual
+
+
+def deploy(e, out, cells):
+    out.mkdir(parents=True, exist_ok=True)
+    accounts = {}
+    for name, value in [("module", 10**12), ("wallet", 10**15), ("vault", 10**15)]:
+        init, data = cells[name + "_init"], cells[name + "_data"]
+        address = (0, int.from_bytes(init.hash, "big"))
+        message = (
+            Cell()
+            .uint(4, 4)
+            .addr((0, 999))
+            .addr(address)
+            .coins(value)
+            .uint(0, 1)
+            .coins(0)
+            .coins(0)
+            .uint(0, 64)
+            .uint(native.NOW, 32)
+            .uint(1, 1)
+            .uint(1, 1)
+            .uint(1, 1)
+            .ref(init)
+            .ref(Cell())
+        )
+        empty = Cell().uint(0, 320).ref(Cell().uint(0, 1))
+        result = e.send(empty, message)
+        (out / f"{name}.json").write_text(json.dumps(result, indent=2) + "\n")
+        assert result["success"] and result["details"]["exit"] == 0
+        assert not result["details"]["aborted"]
+        assert not native.outgoing(from_boc(result["transaction"]))
+        account = from_boc(result["shard_account"])
+        actual, balance = native.account_data(account)
+        assert actual.hash == data.hash and 0 < balance < value
+        accounts[name] = account
+    return accounts

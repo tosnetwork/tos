@@ -20,6 +20,7 @@ from test_rescue_e2e import digest  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--genesis-driver", type=Path)
     parser.add_argument("--fee-driver", type=Path)
     parser.add_argument("--preparation-driver", type=Path)
     parser.add_argument("--pop-driver", type=Path)
@@ -88,6 +89,8 @@ def main():
         "--output",
         str(out),
     ]
+    if args.genesis_driver:
+        argv += ["--genesis-driver", str(args.genesis_driver)]
     if args.fee_driver:
         argv += ["--fee-driver", str(args.fee_driver)]
     if args.preparation_driver:
