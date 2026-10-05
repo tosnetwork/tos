@@ -1,0 +1,53 @@
+{
+  "baseline": {
+    "next_leaf": 21,
+    "gas_at_accept": 9660
+  },
+  "candidate": {
+    "next_leaf": 21,
+    "gas_at_accept": 9900
+  },
+  "receiver_locked": true,
+  "primary_rejected": 2011,
+  "digest_binding_rejected": 2006,
+  "malformed_digest_rejected": {
+    "short": 9,
+    "trailing_bit": 9,
+    "trailing_ref": 9
+  },
+  "role_mutation_admitted_primary": {
+    "next_leaf": 22,
+    "gas_at_accept": 9468
+  },
+  "binding_mutation_admitted_swapped_body": {
+    "next_leaf": 22,
+    "gas_at_accept": 9673
+  },
+  "restored": {
+    "next_leaf": 21,
+    "gas_at_accept": 9900
+  },
+  "current_budget_before_accept_exit": -14,
+  "current_budget_candidate_sha256": "e704c1462d85e18d9661aa51b661dbda3ddb5f932a42fa8125c893f964a5f725",
+  "scope": "optimized digest parser plus role only; not complete v5 admission",
+  "global_version": 16,
+  "external_credit": 10000,
+  "source_sha256": "bc2abe072edc469375316549b954e95eb0b27882eebf580ba9633d6a56f166b7",
+  "candidate_sha256": "7be6b74b7ebe91cbcb3007043e89b54f93ececb3f00f2090539c23fb6ac8c45e",
+  "base_commit": "01ac8047aa59e2a9e0d596fd40252f89f504cef3",
+  "host": "Darwin arm64",
+  "command": "python3 test/rescue-fee-gate/probe_compact_admission.py (environment as README.md)",
+  "runner_sha256": "d3e823163c59de1df460917a6904d69e3b740fb88c9afe25fde4ef474cef8027",
+  "validation": {
+    "native_probe_exit": 0,
+    "ruff_exit": 0,
+    "hosted_ci": "not run",
+    "production_acceptance": false
+  },
+  "raw_result": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/compact-admission.json",
+    "sha256": "84baec5fd79617d06a2bd31b32f71ea51cdf14ec2944cb354761ac86e7aeee71",
+    "bytes": 1043,
+    "retention": "retain with this experiment until superseded by a reproduced admission result"
+  }
+}

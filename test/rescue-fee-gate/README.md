@@ -85,6 +85,7 @@ Reproduce the probe with the signer/compiler/emulator environment above:
 
 ```sh
 python3 test/rescue-fee-gate/probe_role_budget.py
+python3 test/rescue-fee-gate/probe_compact_admission.py
 python3 test/rescue-fee-gate/version_mutations.py build /path/to/version-scenarios.tsv \
   /path/to/version-rust.tsv /path/to/native-version-mutations
 ```
@@ -94,3 +95,28 @@ from the outstanding reference-hardware, hosted-CI and production release gates.
 H20 test trees are released after each slot-vault test. The solvency bisection signs one intent
 once and submits the same bytes against independent initial-balance fixtures, so its one-nanoton
 boundary checks do not allocate a new tree for every sample or re-sign an OTS leaf.
+
+### Admission parser experiment (2026-10-05)
+
+`probe_compact_admission.py` compiles an isolated candidate from the unchanged prototype.
+It replaces the digest's separate bit/ref-length predicates with a 256-bit consuming read
+and `end_parse`, and adds the inner RESCUE role guard. The real signed lock reaches ACCEPT
+at 9,900 gas and then locks the receiving account. PRIMARY is refused before ACCEPT (2011),
+a substituted body is refused (2006), and short/trailing-bit/trailing-ref digests fail (9).
+Removing each semantic guard admits its corresponding forbidden input; restoring both
+guards restores rejection and the successful lock. These controls exercise native transaction
+execution, not just compilation.
+
+Moving the existing fee recomputation before ACCEPT and checking the fresh budget still
+exhausts the 10,000 credit (-14). Even that variant is only a lower bound on production
+solvency work, because the prototype's size/storage bounds remain unproved. Thus the
+parser optimization does not establish full v5 admission fit. No verifier tariff, external
+credit, production contract or wire format is changed by this experiment. The 100-gas
+margin is a measured fixture result, not a worst-case bound. The compact-input alternative
+that constructs the digest/context inside the contract was also tried and exhausted credit;
+it is not the candidate retained here.
+
+The bounded result receipt is `compact-admission-20261005.json`; the source transformations
+and both executable sensitivity controls are in the probe. Remaining gates include canonical
+identity/domain/class/size checks, current-config solvency, successor witnesses and POP,
+and complete cross-VM/reference-hardware worst-case measurements.
