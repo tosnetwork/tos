@@ -790,7 +790,7 @@ restoring source and rerunning them. CI runs wire and transaction checks on both
 architectures and deletion controls on x86-64. Evidence:
 `test/wallet-v5r2/auth-sdk-20261006.json`.
 
-Preparation, fee-intent and genesis SDK codecs, trusted chain-view binding,
+Fee-intent and genesis SDK codecs, trusted chain-view binding,
 real custody and user-facing create/restore flows remain to be integrated.
 Default-credit admission remains a separate failed release gate.
 
@@ -819,3 +819,29 @@ controls check challenge, party, TTL, domain and context sensitivity; AUTH
 controls also rerun after sharing the signature-framing helper. Evidence:
 `test/wallet-v5r2/pop-sdk-20261006.json`. Production custody, verified challenge
 receipts and default-credit admission remain open.
+
+### SLH-only preparation SDK encoding
+
+`contracts::wallet_v5r2_prepare` constructs PRP3 requests and FPR3 submissions,
+with no role selector and only the exact SLH signature framing. The request hash
+binds the namespace, wallet/source module, deadline, both deployment amounts,
+and all three full module/metadata/vault witness cells. The signing context is
+`TOS-RESCUE-FEE-PREP-v1`. Input amounts preserve the complete Coins range through
+u128 encoding rather than a u64 cast. Canonical serialization rejects values
+outside the 120-bit wire range; deployment amounts must be positive. The checked
+sum accessor explicitly excludes compute and forwarding fees.
+
+Encoding does not validate witness pairing or dynamic network fee floors/caps.
+Callers must still verify code/key identity and current bounds, then confirm both
+actual deployments and a fresh POP before constructing migration. Preparation
+alone grants no wallet authority and cannot be treated as recovery completion.
+
+Three independent vectors include amounts above u64 and the maximum 120-bit
+Coins value. Six semantic controls exercise distinct parties, TTL, positive
+amounts, context, witness binding and sum calculation. All ten AUTH/POP/preparation
+SDK tests pass. Real public-fixture SLH signatures are enclosed in SDK-produced
+FPR3 bytes for both the initial preparation and its retimed counterpart in the
+continuous recovery branch. The complete suite retains 62 matching native/Rust
+transactions, actual M1/V1 deployment and recipient payment, at diagnostic
+credit 20,000. Malformed negative fixtures continue to use their explicit test
+encoders. Evidence: `test/wallet-v5r2/prepare-sdk-20261006.json`.

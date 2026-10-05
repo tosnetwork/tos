@@ -20,6 +20,7 @@ from test_rescue_e2e import digest  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preparation-driver", type=Path)
     parser.add_argument("--pop-driver", type=Path)
     parser.add_argument("--pop-role", type=int, choices=(1, 2))
     parser.add_argument("--auth-driver", type=Path, required=True)
@@ -86,6 +87,9 @@ def main():
         "--output",
         str(out),
     ]
+    if args.preparation_driver:
+        assert args.pop_role is None
+        argv += ["--preparation-driver", str(args.preparation_driver)]
     argv += ["--pop-role", str(args.pop_role)] if args.pop_role else ["--prepare", "--recovery"]
     with ExitStack() as stack:
         if args.pop_driver:

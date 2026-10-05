@@ -31,6 +31,7 @@ from test_state import fee, state  # noqa: E402
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--preparation-driver", type=Path)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument(
         "--cache-driver",
@@ -250,6 +251,13 @@ def main():
             )
             req = preparation_request(root, plan, wallet=wa)
             submit = Cell().uint(0x46505233, 32).ref(req).ref(preparation_signed(signer, req))
+            if options.preparation_driver:
+                from sdk_prepare_fixture import encode as encode_preparation
+
+                submit = encode_preparation(
+                    options.preparation_driver, out / "sdk-prepare-initial.json", submit, native.NOW
+                )
+
         elif options.pop_role:
             req = pop_challenge(
                 root,
@@ -791,8 +799,15 @@ def main():
                         sign_fee=sign_fee,
                         work=work,
                         cache_driver=options.cache_driver,
-                        retime_prepare=lambda now: retime(
-                            submit, now, lambda req: preparation_signed(signer, req)
+                        retime_prepare=lambda now: (
+                            encode_preparation(
+                                options.preparation_driver,
+                                out / "sdk-prepare-retimed.json",
+                                retime(submit, now, lambda req: preparation_signed(signer, req)),
+                                now,
+                            )
+                            if options.preparation_driver
+                            else retime(submit, now, lambda req: preparation_signed(signer, req))
                         ),
                         retime_pop=lambda now: retime(
                             next_body, now, lambda req: pop_signed(next_signer, req, 2)

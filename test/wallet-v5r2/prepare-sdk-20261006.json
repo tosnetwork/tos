@@ -1,0 +1,85 @@
+{
+  "base_commit": "aab9022f14b9d3bb885a0c0ba967443a6e30d257",
+  "scope": "SLH-only preparation wire encoder, full Coins precision, exact witnessed deployment amounts. Two real public-fixture signatures wrapped in SDK FPR3 bytes, actual M1/V1 deployments and recovery/payment. Diagnostic credit and controlled fixture time; no custody, witness approval or chain-proof claim.",
+  "source_sha256": {
+    ".github/workflows/rescue-context.yml": "5868616129d464568c1594c549a2d20b8b5e99f45b6a5425a129d37a13c70316",
+    "tosctl/src/node-control/contracts/src/lib.rs": "e3d23bbce8619d14d358cd2660dfef386ae94c76c2d9bddd97c6fd0b322d258e",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_prepare.rs": "512c3b12cae0470e16dea8e2ea1577f74ae287a595447df1315d590848e405fc",
+    "tosctl/src/node-control/contracts/examples/v5r2_prepare_encode.rs": "b7fa71a2b995899b6ad263ca57d9fea82c27d6472b0b4bafb5717970317acea4",
+    "tosctl/src/node-control/contracts/tests/fixtures/v5r2/prepare-wire.json": "5b6622bd82a9db21db5e038b026634ae6bb520056c06895375b690208d5460d2",
+    "test/wallet-v5r2/sdk_auth_controls.py": "b021fb892b076eb59f30e26dda42d026335c70e31b5830ef96ef7678e3845eb3",
+    "test/wallet-v5r2/sdk_auth_parity.py": "b822c2b4014564a886c875d7725c484df753515e942faa78cd9d792d589feee4",
+    "test/wallet-v5r2/sdk_prepare_fixture.py": "12f8004600906d4a0cce95c3c1598542a8b34ba2499b3a61d3209e2b1c34f52e",
+    "test/wallet-v5r2/sdk_prepare_vectors.py": "86e6346b782fb41867e6bb7bff26b50724431662815b79cd172d9e4167dfd40b",
+    "test/wallet-v5r2/fee_tx_parity.py": "d8e06ceac9d5eab4f36f565a1cb36affb3f3651917bc81ccf9041ef1db01e906",
+    "test/wallet-v5r2/test_fee_delivery.py": "4e8f09047c6a0c404766af4c867e2e9d1750352e9a810de32c0d7851e7167798"
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python test/wallet-v5r2/sdk_prepare_vectors.py --output tosctl/src/node-control/contracts/tests/fixtures/v5r2/prepare-wire.json",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example v5r2_prepare_encode",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2",
+    "python test/wallet-v5r2/sdk_auth_parity.py --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-prepare-sdk",
+    "python test/wallet-v5r2/sdk_auth_controls.py --prepare --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-prepare-sdk/controls"
+  ],
+  "listed_commands_exit": 0,
+  "independent_vectors": 3,
+  "sdk_tests": 10,
+  "sdk_preparations": 2,
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 62,
+    "observed_transactions": 62,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 5,
+    "final_chain_time": 1780007190,
+    "transactions": 20,
+    "recipient_received": true,
+    "primary_signing_used": false,
+    "production_admission_passed": false
+  },
+  "semantic_controls": {
+    "parties": {
+      "exit": 101,
+      "semantic_witness": "distinct_parties_and_deadline"
+    },
+    "ttl": {
+      "exit": 101,
+      "semantic_witness": "distinct_parties_and_deadline"
+    },
+    "amount": {
+      "exit": 101,
+      "semantic_witness": "amount_encoding_has_no_truncation_or_zero_deployment"
+    },
+    "context": {
+      "exit": 101,
+      "semantic_witness": "independent_preparation_vectors"
+    },
+    "witness": {
+      "exit": 101,
+      "semantic_witness": "independent_preparation_vectors"
+    },
+    "sum": {
+      "exit": 101,
+      "semantic_witness": "independent_preparation_vectors"
+    }
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-prepare-sdk",
+    "retain_until": "2027-01-06",
+    "manifest": {
+      "sha256": "1de561dec85e3da848884c5eae2cc67a520ae691276b83f7e31cd722a3ffa6c5",
+      "bytes": 21634
+    },
+    "files": 150,
+    "total_bytes": 140046231
+  },
+  "remaining": "Fee-intent/genesis SDK encoding; witness and dynamic-fee validation; fresh proof/receipt verification; production custody/device recovery; default-credit admission; worst-case resource/hardware pricing; independent review and final-head CI."
+}

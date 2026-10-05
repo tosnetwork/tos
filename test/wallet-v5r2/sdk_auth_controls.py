@@ -11,12 +11,17 @@ SOURCE = ROOT / "tosctl/src/node-control/contracts/src/wallet_v5r2.rs"
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pop", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--pop", action="store_true")
+    modes.add_argument("--prepare", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     source_path = SOURCE.with_name("wallet_v5r2_pop.rs") if args.pop else SOURCE
     module = "wallet_v5r2_pop" if args.pop else "wallet_v5r2"
+    if args.prepare:
+        source_path = SOURCE.with_name("wallet_v5r2_prepare.rs")
+        module = "wallet_v5r2_prepare"
     source = source_path.read_text()
     cases = [
         ("parties", "binding.account != binding.module", "true", "wallet_cannot_be_its_own_module"),
@@ -70,6 +75,41 @@ def main():
             ),
         ]
 
+    if args.prepare:
+        cases = [
+            (
+                "parties",
+                "binding.wallet != binding.source_module",
+                "true",
+                "distinct_parties_and_deadline",
+            ),
+            ("ttl", "(1..=3600).contains(&ttl)", "true", "distinct_parties_and_deadline"),
+            (
+                "amount",
+                "plan.module_amount > 0 && plan.vault_amount > 0",
+                "true",
+                "amount_encoding_has_no_truncation_or_zero_deployment",
+            ),
+            (
+                "context",
+                'b"TOS-RESCUE-FEE-PREP-v1"\n',
+                'b"BAD-RESCUE-FEE-PREP-v1"\n',
+                "independent_preparation_vectors",
+            ),
+            (
+                "witness",
+                "targets.checked_append_reference(plan.metadata)?;",
+                "targets.checked_append_reference(plan.vault_init.clone())?;",
+                "independent_preparation_vectors",
+            ),
+            (
+                "sum",
+                ".checked_add(plan.vault_amount)",
+                ".checked_sub(plan.vault_amount)",
+                "independent_preparation_vectors",
+            ),
+        ]
+
     def test(label):
         result = subprocess.run(
             [
@@ -105,7 +145,7 @@ def main():
         code, log = test("restored")
         assert code == 0, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print(f"Five {module} SDK semantic deletion controls detected; restored tests pass")
+    print(f"{len(cases)} {module} SDK semantic deletion controls detected; restored tests pass")
 
 
 if __name__ == "__main__":
