@@ -2033,7 +2033,10 @@ tos::BlockIdExt worker_block_id(tos::BlockSeqno seqno) {
 // Leaves the process-wide index state as a fresh process would have it.
 void reset_index_singletons() {
   tos_wallet_index::set_wc0_index_marking_fault_for_testing(false);
+  tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
   tos_wallet_index::stop_wc0_index_worker();
+  tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
+  tos_wallet_index::set_wc0_index_fetch_timeout_for_testing(std::chrono::seconds(60));
   tos_wallet_index::set_wallet_index_db(nullptr);
   tos_wallet_index::set_wallet_index_unavailable("");
 }
@@ -2051,6 +2054,45 @@ using Producers = tos_wallet_index::Wc0IndexProducers;
 bool run_active(tos_wallet_index::WalletIndexDb &db) {
   return db.indexing_run_active().move_as_ok();
 }
+
+template <class F>
+bool eventually(F &&condition, std::chrono::milliseconds limit = std::chrono::milliseconds(10000)) {
+  auto deadline = std::chrono::steady_clock::now() + limit;
+  while (!condition()) {
+    if (std::chrono::steady_clock::now() > deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  return true;
+}
+
+// A fetcher whose reads the test answers, or holds unanswered.
+struct TestFetcher {
+  std::mutex mutex;
+  std::vector<std::pair<tos::BlockIdExt, std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)>>> pending;
+  std::atomic<int> calls{0};
+
+  tos_wallet_index::Wc0IndexBlockFetcher fetcher() {
+    return [this](const tos::BlockIdExt &id, bool,
+                  std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
+      std::lock_guard<std::mutex> guard(mutex);
+      pending.emplace_back(id, std::move(done));
+      calls++;
+    };
+  }
+  // Answer every read asked so far with `answer`.
+  void answer_all(const std::function<td::Result<tos_wallet_index::Wc0FetchedBlock>(const tos::BlockIdExt &)> &answer) {
+    decltype(pending) taken;
+    {
+      std::lock_guard<std::mutex> guard(mutex);
+      taken.swap(pending);
+    }
+    for (auto &p : taken) {
+      p.second(answer(p.first));
+    }
+  }
+};
 
 }  // namespace
 
@@ -2188,15 +2230,108 @@ TEST(WalletIndexWorker, AFlushWhileBlocksMayStillApplyLeavesTheRunActive) {
     ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
     ASSERT_TRUE(!tos_wallet_index::flush_wc0_index_for_exit(Producers::MayStillApply));
     ASSERT_TRUE(run_active(db));
-    // A block applied after the flush is marked before the hook returns.
+    // A block applied after the flush is still marked, by the recorder.
     tos_wallet_index::enqueue_wc0_index_block(empty_cell(), empty_cell(), worker_block_id(9));
-    ASSERT_TRUE(db.has_incomplete_block(worker_block_id(9)).move_as_ok());
+    ASSERT_TRUE(eventually([&] { return db.has_incomplete_block(worker_block_id(9)).move_as_ok(); }));
     // The next one can be neither marked nor recorded as lost.
     tos_wallet_index::set_wc0_index_marking_fault_for_testing(true);
     tos_wallet_index::enqueue_wc0_index_block(empty_cell(), empty_cell(), worker_block_id(11));
+    tos_wallet_index::stop_wc0_index_worker();
     tos_wallet_index::set_wc0_index_marking_fault_for_testing(false);
     ASSERT_TRUE(!db.has_incomplete_block(worker_block_id(11)).move_as_ok());
     ASSERT_TRUE(!backlog_stats(db).needs_rebuild);
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    auto stats = backlog_stats(db);
+    ASSERT_TRUE(stats.needs_rebuild);
+    ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// A block handed over without its data is read by the worker. A read that
+// fails, or finds nothing, leaves the block marked for recovery through a
+// clean exit.
+TEST(WalletIndexWorker, ABlockWhoseDataCouldNotBeFetchedStaysMarked) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-unreadable-block");
+  td::rmrf(path).ignore();
+  TestFetcher reads;
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_block_fetcher(reads.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, empty_cell(), worker_block_id(12));
+    ASSERT_TRUE(eventually([&] { return reads.calls.load() == 1; }));
+    reads.answer_all([](const tos::BlockIdExt &) -> td::Result<tos_wallet_index::Wc0FetchedBlock> {
+      return td::Status::Error("not found");
+    });
+    tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, empty_cell(), worker_block_id(13));
+    ASSERT_TRUE(eventually([&] { return reads.calls.load() == 2; }));
+    reads.answer_all([](const tos::BlockIdExt &) -> td::Result<tos_wallet_index::Wc0FetchedBlock> {
+      return tos_wallet_index::Wc0FetchedBlock{};
+    });
+    ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
+    tos_wallet_index::stop_wc0_index_worker();
+    ASSERT_TRUE(!run_active(db));
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(db.has_incomplete_block(worker_block_id(12)).move_as_ok());
+    ASSERT_TRUE(db.has_incomplete_block(worker_block_id(13)).move_as_ok());
+    ASSERT_TRUE(backlog_stats(db).unfinished_block);
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// The hook takes only a lock nothing holds across I/O: neither a stalled
+// recorder (its WAL sync hanging) nor an exit flush waiting on that recorder
+// holds it up.
+TEST(WalletIndexWorker, TheHookNeverWaitsForAStalledRecorderOrAWaitingFlush) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-hook-never-waits");
+  td::rmrf(path).ignore();
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(true);
+    auto handed_over_within = [](tos::BlockSeqno seqno, std::chrono::milliseconds limit) {
+      std::atomic<bool> returned{false};
+      std::thread producer([&] {
+        tos_wallet_index::enqueue_wc0_index_block(empty_cell(), empty_cell(), worker_block_id(seqno));
+        returned = true;
+      });
+      bool in_time = eventually([&] { return returned.load(); }, limit);
+      if (!in_time) {
+        // Let the stuck producer go before failing.
+        tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
+      }
+      producer.join();
+      return in_time;
+    };
+    ASSERT_TRUE(handed_over_within(20, std::chrono::milliseconds(500)));
+    std::atomic<bool> flushed{true};
+    std::thread flusher(
+        [&] { flushed = tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced, std::chrono::seconds(20)); });
+    // Let the flush take the lifecycle lock and start waiting on the stalled
+    // recorder.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ASSERT_TRUE(handed_over_within(21, std::chrono::milliseconds(500)));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
+    flusher.join();
+    // A block arrived after the queue was closed: the run is not finished.
+    ASSERT_TRUE(!flushed.load());
+    ASSERT_TRUE(eventually([&] {
+      return db.has_incomplete_block(worker_block_id(20)).move_as_ok() &&
+             db.has_incomplete_block(worker_block_id(21)).move_as_ok();
+    }));
+    ASSERT_TRUE(run_active(db));
     tos_wallet_index::stop_wc0_index_worker();
     tos_wallet_index::set_wallet_index_db(nullptr);
   }
@@ -2211,30 +2346,92 @@ TEST(WalletIndexWorker, AFlushWhileBlocksMayStillApplyLeavesTheRunActive) {
   td::rmrf(path).ignore();
 }
 
-// An applied block whose data could not be read back still reaches the index
-// as its id, and stays marked for recovery through a clean exit.
-TEST(WalletIndexWorker, ABlockWhoseDataCouldNotBeReadStaysMarked) {
+// A producer that should no longer exist hands a block over after the exit
+// flush recorded the run as finished. The hook still does not write; the
+// recorder records the run as active again, then marks the block, and the
+// next start does not report the index complete.
+TEST(WalletIndexWorker, ABlockAfterACleanFlushRecordsTheRunAsActiveAgain) {
   reset_index_singletons();
-  auto path = std::string("test-wallet-index-db-unreadable-block");
+  auto path = std::string("test-wallet-index-db-late-block");
   td::rmrf(path).ignore();
   {
     auto &db = install_db(path);
-    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
-    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
-    tos::validator::hand_stored_block_to_index(td::Status::Error("not found"), empty_cell(), worker_block_id(12));
-    tos::validator::hand_stored_block_to_index(td::Ref<vm::Cell>{}, empty_cell(), worker_block_id(13));
-    tos::validator::g_wc0_block_index_hook = nullptr;
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
     ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
-    tos_wallet_index::stop_wc0_index_worker();
     ASSERT_TRUE(!run_active(db));
+    tos_wallet_index::enqueue_wc0_index_block(empty_cell(), empty_cell(), worker_block_id(30));
+    ASSERT_TRUE(eventually([&] { return run_active(db); }));
+    ASSERT_TRUE(eventually([&] { return db.has_incomplete_block(worker_block_id(30)).move_as_ok(); }));
+    tos_wallet_index::stop_wc0_index_worker();
     tos_wallet_index::set_wallet_index_db(nullptr);
   }
   {
     auto &db = install_db(path);
-    ASSERT_TRUE(db.has_incomplete_block(worker_block_id(12)).move_as_ok());
-    ASSERT_TRUE(db.has_incomplete_block(worker_block_id(13)).move_as_ok());
-    ASSERT_TRUE(backlog_stats(db).unfinished_block);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    auto stats = backlog_stats(db);
+    ASSERT_TRUE(stats.needs_rebuild);
+    ASSERT_TRUE(stats.unfinished_block);
   }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// Blocks the worker had no room for, and the block whose read it was waiting
+// on, are all marked; a crash then (no exit flush) never leaves an index the
+// next start reports complete.
+TEST(WalletIndexWorker, ACrashWithAFullQueueNeverReportsCompleteness) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-full-queue-crash");
+  td::rmrf(path).ignore();
+  TestFetcher reads;
+  const auto total = static_cast<tos::BlockSeqno>(tos_wallet_index::kWc0IndexQueueCapacity + 4);
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_block_fetcher(reads.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    // The first block's read never answers: the worker holds it, and the
+    // queue fills behind it.
+    tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, empty_cell(), worker_block_id(1));
+    ASSERT_TRUE(eventually([&] { return reads.calls.load() == 1; }));
+    for (tos::BlockSeqno seqno = 2; seqno <= total; ++seqno) {
+      tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, empty_cell(), worker_block_id(seqno));
+    }
+    ASSERT_TRUE(eventually([&] { return db.has_incomplete_block(worker_block_id(total)).move_as_ok(); }));
+    // The process dies: no exit flush.
+    tos_wallet_index::stop_wc0_index_worker();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  {
+    auto &db = install_db(path);
+    for (tos::BlockSeqno seqno = 1; seqno <= total; ++seqno) {
+      ASSERT_TRUE(db.has_incomplete_block(worker_block_id(seqno)).move_as_ok());
+    }
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    auto stats = backlog_stats(db);
+    ASSERT_TRUE(stats.needs_rebuild);
+    ASSERT_TRUE(stats.unfinished_block);
+    ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// The run is durably recorded as active before any block can be handed over:
+// when that record cannot be written, no producer is ever accepted.
+TEST(WalletIndexWorker, NoBlockIsAcceptedBeforeTheRunIsRecorded) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-run-before-producers");
+  td::rmrf(path).ignore();
+  install_db(path);
+  tos_wallet_index::set_wc0_index_marking_fault_for_testing(true);
+  ASSERT_TRUE(!tos_wallet_index::start_wc0_index_worker(false));
+  tos_wallet_index::set_wc0_index_marking_fault_for_testing(false);
+  auto block = empty_cell();
+  tos_wallet_index::enqueue_wc0_index_block(block, empty_cell(), worker_block_id(40));
+  // Nothing took the block: no queue holds it.
+  ASSERT_EQ(block->get_refcnt(), 1);
+  ASSERT_TRUE(tos_wallet_index::wallet_index_db() == nullptr);
+  ASSERT_TRUE(!tos_wallet_index::wallet_index_unavailable_reason().empty());
   reset_index_singletons();
   td::rmrf(path).ignore();
 }

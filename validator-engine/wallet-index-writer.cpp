@@ -15,6 +15,8 @@
     Only verified facts are indexed. Best-effort and off the consensus path.
 */
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -582,8 +584,8 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
 
 void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
   auto* db = wallet_index_db();
-  // A block handed over without its data (it could not be read back) keeps
-  // the recovery mark the queue gave it, so startup recovery retries it.
+  // A block whose data could not be obtained keeps the recovery mark the
+  // queue gave it, so startup recovery retries it.
   if (db == nullptr || block_root.is_null()) {
     return;
   }
@@ -726,14 +728,42 @@ struct BlockToIndex {
   tos::BlockIdExt block_id;
 };
 
-std::unique_ptr<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>> g_index_queue;
+using IndexQueue = BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>;
+
+// Lifecycle (start, flush, stop) is serialized by g_index_queue_mutex, which
+// may be held across database writes and waits. The block-apply hook never
+// takes it: it takes only g_producer_mutex, which nothing holds across I/O or
+// a wait, so a stalled index cannot hold block application up.
+std::unique_ptr<IndexQueue> g_index_queue;
 std::mutex g_index_queue_mutex;
-// Set by flush_wc0_index_for_exit (under g_index_queue_mutex): blocks are no
-// longer handed to the queue but marked by the hook itself.
-bool g_index_closed = false;
+std::mutex g_producer_mutex;
+IndexQueue* g_producer_queue = nullptr;  // guarded by g_producer_mutex
+// Set by flush_wc0_index_for_exit (under g_producer_mutex): a block handed
+// over from now on is only recorded for recovery, never indexed in this run.
+bool g_producers_closed = false;  // guarded by g_producer_mutex
+// Blocks handed over after the exit flush closed the queue.
+std::atomic<uint64_t> g_late_blocks{0};
+// The flush recorded the run as finished. Read and written under
+// g_run_marker_mutex together with the run marker itself.
+std::mutex g_run_marker_mutex;
+std::atomic<bool> g_run_cleared{false};
+// Blocks the hook could not queue because the worker was too far behind.
+std::atomic<uint64_t> g_dropped_blocks{0};
+std::atomic<uint64_t> g_dropped_blocks_logged{0};
+
 std::atomic<bool> g_marking_fault{false};
+std::mutex g_marking_stall_mutex;
+std::condition_variable g_marking_stall_cv;
+bool g_marking_stalled = false;  // guarded by g_marking_stall_mutex
+
+// Waits while a test holds the recorder's writes, as a stalled disk would.
+void wait_while_marking_stalled() {
+  std::unique_lock<std::mutex> lock(g_marking_stall_mutex);
+  g_marking_stall_cv.wait(lock, [] { return !g_marking_stalled; });
+}
 
 td::Status mark_blocks(WalletIndexDb& db, const std::vector<tos::BlockIdExt>& block_ids) {
+  wait_while_marking_stalled();
   if (g_marking_fault.load()) {
     return td::Status::Error("injected marking fault");
   }
@@ -741,19 +771,50 @@ td::Status mark_blocks(WalletIndexDb& db, const std::vector<tos::BlockIdExt>& bl
 }
 
 td::Status record_needs_rebuild(WalletIndexDb& db) {
+  wait_while_marking_stalled();
   if (g_marking_fault.load()) {
     return td::Status::Error("injected marking fault");
   }
   return db.mark_needs_rebuild();
 }
 
+td::Status record_run_active(WalletIndexDb& db) {
+  wait_while_marking_stalled();
+  if (g_marking_fault.load()) {
+    return td::Status::Error("injected marking fault");
+  }
+  return db.begin_indexing_run();
+}
+
 // Durably mark queued blocks before any of them is indexed: a block the worker
 // never reaches (dropped, or the node stopped first) stays marked, startup
 // recovery re-indexes it, and RPC reports the index unfinished until then.
 bool mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
+  auto dropped = g_dropped_blocks.load();
+  auto logged = g_dropped_blocks_logged.exchange(dropped);
+  if (dropped > logged) {
+    LOG(WARNING) << "wc0-index: indexing fell " << kWc0IndexQueueCapacity << " blocks behind; " << dropped - logged
+                 << " block(s) left marked for re-indexing at the next start";
+  }
   auto* db = wallet_index_db();
   if (db == nullptr) {
     return false;
+  }
+  {
+    std::lock_guard<std::mutex> run_guard(g_run_marker_mutex);
+    if (g_run_cleared.load()) {
+      // A block arrived after the exit flush recorded the run as finished:
+      // the run is active again before the block is marked, so even if the
+      // mark is lost the next start does not take the index for complete.
+      LOG(ERROR) << "wc0-index: a block was handed over after the index was flushed for exit; "
+                 << "recording the run as unfinished again";
+      auto rearmed = record_run_active(*db);
+      if (rearmed.is_error()) {
+        LOG(ERROR) << "wc0-index: could not record the run as unfinished, will retry: " << rearmed.message();
+        return false;
+      }
+      g_run_cleared.store(false);
+    }
   }
   auto status = mark_blocks(*db, block_ids);
   if (status.is_error()) {
@@ -780,17 +841,124 @@ bool persist_index_degraded() {
   return true;
 }
 
+// --- Fetching block data the hook did not have ---
+
+std::mutex g_fetcher_mutex;
+Wc0IndexBlockFetcher g_fetcher;  // guarded by g_fetcher_mutex
+
+// One fetch the worker waits for. The answer may come after the worker gave
+// up on it, so it is shared with the answering callback.
+struct FetchSlot {
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool done = false;
+  td::Result<Wc0FetchedBlock> result = td::Status::Error("not answered");
+};
+
+std::mutex g_fetch_wait_mutex;
+std::shared_ptr<FetchSlot> g_fetch_in_flight;  // guarded by g_fetch_wait_mutex
+std::atomic<bool> g_fetch_abort{false};
+std::atomic<long long> g_fetch_timeout_ms{
+    std::chrono::duration_cast<std::chrono::milliseconds>(kWc0IndexFetchTimeout).count()};
+
+// Ask the installed fetcher for what the hook could not hand over, and wait
+// for the answer on the worker thread. Gives up when the worker is stopping or
+// the answer takes too long; the block then stays marked for recovery.
+td::Result<Wc0FetchedBlock> fetch_block(const tos::BlockIdExt& block_id, bool need_state) {
+  Wc0IndexBlockFetcher fetcher;
+  {
+    std::lock_guard<std::mutex> guard(g_fetcher_mutex);
+    fetcher = g_fetcher;
+  }
+  if (!fetcher) {
+    return td::Status::Error("no block fetcher is installed");
+  }
+  auto slot = std::make_shared<FetchSlot>();
+  {
+    std::lock_guard<std::mutex> guard(g_fetch_wait_mutex);
+    g_fetch_in_flight = slot;
+  }
+  try {
+    fetcher(block_id, need_state, [slot](td::Result<Wc0FetchedBlock> result) {
+      {
+        std::lock_guard<std::mutex> lock(slot->mutex);
+        if (slot->done) {
+          return;
+        }
+        slot->result = std::move(result);
+        slot->done = true;
+      }
+      slot->cv.notify_all();
+    });
+  } catch (...) {
+    std::lock_guard<std::mutex> guard(g_fetch_wait_mutex);
+    g_fetch_in_flight.reset();
+    return td::Status::Error("the block fetcher threw");
+  }
+  td::Result<Wc0FetchedBlock> result = td::Status::Error("block fetch abandoned");
+  {
+    std::unique_lock<std::mutex> lock(slot->mutex);
+    auto limit = std::chrono::milliseconds(g_fetch_timeout_ms.load());
+    bool answered = slot->cv.wait_for(lock, limit, [&] { return slot->done || g_fetch_abort.load(); });
+    if (slot->done) {
+      result = std::move(slot->result);
+    } else {
+      // Nobody will take a late answer.
+      slot->done = true;
+      result = answered ? td::Status::Error("block fetch abandoned at shutdown")
+                        : td::Status::Error("block fetch timed out");
+    }
+  }
+  std::lock_guard<std::mutex> guard(g_fetch_wait_mutex);
+  g_fetch_in_flight.reset();
+  return result;
+}
+
+void abort_block_fetch() {
+  g_fetch_abort.store(true);
+  std::shared_ptr<FetchSlot> slot;
+  {
+    std::lock_guard<std::mutex> guard(g_fetch_wait_mutex);
+    slot = g_fetch_in_flight;
+  }
+  if (slot) {
+    // Taking the slot's lock orders this with the waiter's predicate check.
+    {
+      std::lock_guard<std::mutex> lock(slot->mutex);
+    }
+    slot->cv.notify_all();
+  }
+}
+
 void index_queued_block(BlockToIndex& block) {
   try {
+    if (block.block_root.is_null()) {
+      // The hook had only the block id: read the block here, off the
+      // block-application path. The block keeps the recovery mark it was
+      // given until it is indexed, so a read that fails or never answers
+      // leaves it for startup recovery.
+      auto fetched = fetch_block(block.block_id, block.state_root.is_null());
+      if (fetched.is_error()) {
+        LOG(WARNING) << "wc0-index: block " << block.block_id.id.to_str()
+                     << " left marked for recovery: its data could not be read: " << fetched.error().message();
+        return;
+      }
+      auto data = fetched.move_as_ok();
+      if (data.block_root.is_null()) {
+        LOG(WARNING) << "wc0-index: block " << block.block_id.id.to_str()
+                     << " left marked for recovery: the read returned no block data";
+        return;
+      }
+      block.block_root = std::move(data.block_root);
+      if (block.state_root.is_null()) {
+        block.state_root = std::move(data.state_root);
+      }
+    }
     wc0_index_block(std::move(block.block_root), std::move(block.state_root), block.block_id);
   } catch (...) {
     LOG(ERROR) << "wc0-index: indexing block " << block.block_id.id.to_str() << " threw";
   }
 }
-
-}  // namespace
-
-namespace {
 
 // Leave the index closed and say why, so RPC reports it unavailable rather
 // than serving what it has as if it were complete.
@@ -803,6 +971,11 @@ bool refuse_to_index(std::string reason) {
 }
 
 }  // namespace
+
+void set_wc0_index_block_fetcher(Wc0IndexBlockFetcher fetcher) {
+  std::lock_guard<std::mutex> guard(g_fetcher_mutex);
+  g_fetcher = std::move(fetcher);
+}
 
 bool start_wc0_index_worker(bool paused) {
   std::lock_guard<std::mutex> guard(g_index_queue_mutex);
@@ -827,19 +1000,31 @@ bool start_wc0_index_worker(bool paused) {
                                        << "needs a rebuild failed: " << latched.message());
     }
   }
-  auto begun = db->begin_indexing_run();
+  // Durable (WAL-synced) before the queue exists, so before any block can be
+  // handed over: a block applied in this run is always covered by the run
+  // marker, even if the process stops before the block is marked.
+  auto begun = record_run_active(*db);
   if (begun.is_error()) {
     return refuse_to_index(PSTRING() << "could not record the indexing run: " << begun.message());
   }
-  g_index_closed = false;
-  g_index_queue = std::make_unique<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>>(
-      kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block, persist_index_degraded, 0, paused);
+  g_run_cleared.store(false);
+  g_late_blocks.store(0);
+  g_fetch_abort.store(false);
+  g_index_queue = std::make_unique<IndexQueue>(kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block,
+                                               persist_index_degraded, 0, paused);
+  std::lock_guard<std::mutex> producers(g_producer_mutex);
+  g_producers_closed = false;
+  g_producer_queue = g_index_queue.get();
   return true;
 }
 
 void resume_wc0_index_worker() {
   std::lock_guard<std::mutex> guard(g_index_queue_mutex);
-  if (g_index_queue && !g_index_closed) {
+  if (!g_index_queue) {
+    return;
+  }
+  std::lock_guard<std::mutex> producers(g_producer_mutex);
+  if (!g_producers_closed) {
     g_index_queue->resume();
   }
 }
@@ -849,7 +1034,12 @@ bool flush_wc0_index_for_exit(Wc0IndexProducers producers, std::chrono::millisec
   if (!g_index_queue) {
     return true;
   }
-  g_index_closed = true;
+  {
+    std::lock_guard<std::mutex> producer_guard(g_producer_mutex);
+    g_producers_closed = true;
+  }
+  // From here on nothing is indexed; every block handed over, before or
+  // after this point, is covered by its recovery mark.
   g_index_queue->pause();
   bool recorded = g_index_queue->wait_recorded(limit);
   if (!recorded) {
@@ -870,60 +1060,81 @@ bool flush_wc0_index_for_exit(Wc0IndexProducers producers, std::chrono::millisec
   if (db == nullptr) {
     return false;
   }
+  // Serialized with the recorder's check of g_run_cleared: a block handed
+  // over before this point is seen here and keeps the run active, and one
+  // handed over after it is recorded only after the recorder has recorded the
+  // run as active again.
+  std::lock_guard<std::mutex> run_guard(g_run_marker_mutex);
+  if (g_late_blocks.load() != 0) {
+    LOG(ERROR) << "wc0-index: blocks were handed over after the queue was closed; the run stays recorded as "
+               << "unfinished";
+    return false;
+  }
   auto ended = db->end_indexing_run();
   if (ended.is_error()) {
     LOG(ERROR) << "wc0-index: could not record the indexing run as finished: " << ended.message();
     return false;
   }
+  g_run_cleared.store(true);
   return true;
 }
 
 void stop_wc0_index_worker() {
-  std::unique_ptr<BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>> queue;
+  std::unique_ptr<IndexQueue> queue;
   {
     std::lock_guard<std::mutex> guard(g_index_queue_mutex);
+    abort_block_fetch();
+    {
+      std::lock_guard<std::mutex> producer_guard(g_producer_mutex);
+      g_producer_queue = nullptr;
+      g_producers_closed = false;
+    }
     queue = std::move(g_index_queue);
-    g_index_closed = false;
   }
-  // Joined here, outside the lock, so a hook call in flight is not blocked on it.
+  // Joined outside the lifecycle lock; the hook no longer reaches the queue.
+  // The recorder gets a last chance to mark what it holds (and, for a block
+  // that arrived after the run was recorded as finished, to record the run
+  // as active again first).
   queue.reset();
+  g_late_blocks.store(0);
+  g_run_cleared.store(false);
 }
 
 bool wc0_index_degraded() {
-  std::lock_guard<std::mutex> guard(g_index_queue_mutex);
-  return g_index_queue && g_index_queue->degraded();
+  std::lock_guard<std::mutex> guard(g_producer_mutex);
+  return g_producer_queue != nullptr && g_producer_queue->degraded();
 }
 
 void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
-  std::lock_guard<std::mutex> guard(g_index_queue_mutex);
-  if (!g_index_queue) {
+  // Runs on the block-application path: no I/O, no logging, no lock that is
+  // held across I/O or a wait anywhere else.
+  std::lock_guard<std::mutex> guard(g_producer_mutex);
+  if (g_producer_queue == nullptr) {
     return;
   }
-  if (g_index_closed) {
-    // The exit flush has already accounted for the queue; this block is marked
-    // here, before the caller goes on to persist its apply, or the index is
-    // marked as needing a rebuild.
-    auto* db = wallet_index_db();
-    if (db == nullptr) {
-      return;
-    }
-    auto marked = mark_blocks(*db, {block_id});
-    if (marked.is_error()) {
-      LOG(ERROR) << "wc0-index: block " << block_id.id.to_str()
-                 << " applied during shutdown could not be marked: " << marked.message();
-      // If this fails too, the run marker the flush left in place still makes
-      // the next start report that the index needs a rebuild.
-      auto latched = record_needs_rebuild(*db);
-      if (latched.is_error()) {
-        LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild: " << latched.message();
-      }
-    }
+  if (g_producers_closed) {
+    // The exit flush has already accounted for the queue. This block is only
+    // recorded; the recorder marks it, and the run is not recorded as
+    // finished while such a block exists.
+    g_late_blocks.fetch_add(1);
+    g_producer_queue->record(block_id);
     return;
   }
-  if (!g_index_queue->push(block_id, BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
-    LOG(WARNING) << "wc0-index: indexing is " << kWc0IndexQueueCapacity << " blocks behind; block "
-                 << block_id.id.to_str() << " left marked for re-indexing at the next start";
+  if (!g_producer_queue->push(block_id, BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
+    g_dropped_blocks.fetch_add(1);
   }
+}
+
+void set_wc0_index_marking_stall_for_testing(bool stall) {
+  {
+    std::lock_guard<std::mutex> lock(g_marking_stall_mutex);
+    g_marking_stalled = stall;
+  }
+  g_marking_stall_cv.notify_all();
+}
+
+void set_wc0_index_fetch_timeout_for_testing(std::chrono::milliseconds limit) {
+  g_fetch_timeout_ms.store(limit.count());
 }
 
 void set_wc0_index_marking_fault_for_testing(bool fail) {

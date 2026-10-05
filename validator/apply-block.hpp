@@ -71,7 +71,6 @@ class ApplyBlock : public td::actor::Actor {
   void written_next();
   void applied_prev();
   void applied_set();
-  void indexed_stored_block(td::Result<td::Ref<BlockData>> R);
   void flush_applied();
   void cleanup_and_finish();
   void schedule_external_messages_cleanup();

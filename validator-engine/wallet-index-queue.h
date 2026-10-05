@@ -87,6 +87,21 @@ class BoundedWorkQueue {
     return kept;
   }
 
+  // Returns at once. Records `id` without any work to go with it: the work
+  // is not done in this run, and the record is what keeps it findable.
+  void record(Id id) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      auto seq = next_seq_++;
+      if (to_record_.size() < record_capacity_) {
+        to_record_.emplace_back(seq, std::move(id));
+      } else {
+        latch_degraded();
+      }
+    }
+    wake_.notify_all();
+  }
+
   void pause() {
     std::lock_guard<std::mutex> lock(mutex_);
     paused_ = true;

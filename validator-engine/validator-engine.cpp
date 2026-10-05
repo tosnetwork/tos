@@ -26,7 +26,10 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <deque>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "adnl/adnl-node-id.hpp"
@@ -1302,6 +1305,100 @@ class CheckDhtServerStatusQuery : public td::actor::Actor {
   td::Promise<td::BufferSlice> promise_;
 };
 
+namespace {
+
+// Requests from the wallet-index worker for block data the block-apply hook
+// did not have. The worker is a plain thread and cannot send to an actor, so
+// it leaves requests here and the fetch actor below collects them.
+struct Wc0IndexFetchMailbox {
+  struct Request {
+    tos::BlockIdExt block_id;
+    bool need_state;
+    std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done;
+  };
+  std::mutex mutex;
+  std::deque<Request> requests;
+};
+
+// Reads the block data (and state) the wallet-index worker asks for from the
+// validator's databases. Block application never waits for these reads.
+class Wc0IndexBlockFetchActor : public td::actor::Actor {
+ public:
+  Wc0IndexBlockFetchActor(td::actor::ActorId<tos::validator::ValidatorManagerInterface> manager,
+                          std::shared_ptr<Wc0IndexFetchMailbox> mailbox)
+      : manager_(std::move(manager)), mailbox_(std::move(mailbox)) {
+  }
+
+  void start_up() override {
+    alarm_timestamp() = td::Timestamp::in(kPollInterval);
+  }
+
+  void alarm() override {
+    std::deque<Wc0IndexFetchMailbox::Request> requests;
+    {
+      std::lock_guard<std::mutex> guard(mailbox_->mutex);
+      requests.swap(mailbox_->requests);
+    }
+    for (auto &request : requests) {
+      fetch(std::move(request));
+    }
+    alarm_timestamp() = td::Timestamp::in(kPollInterval);
+  }
+
+ private:
+  static constexpr double kPollInterval = 0.01;
+
+  void fetch(Wc0IndexFetchMailbox::Request request) {
+    auto manager = manager_;
+    auto block_id = request.block_id;
+    auto need_state = request.need_state;
+    auto done = std::move(request.done);
+    td::actor::send_closure(
+        manager, &tos::validator::ValidatorManagerInterface::get_block_handle, block_id, false,
+        [manager, need_state, done = std::move(done)](td::Result<tos::validator::BlockHandle> R) mutable {
+          if (R.is_error()) {
+            done(R.move_as_error_prefix("block handle: "));
+            return;
+          }
+          auto handle = R.move_as_ok();
+          td::actor::send_closure(
+              manager, &tos::validator::ValidatorManagerInterface::get_block_data_from_db, handle,
+              [manager, handle, need_state,
+               done = std::move(done)](td::Result<td::Ref<tos::validator::BlockData>> R2) mutable {
+                if (R2.is_error()) {
+                  done(R2.move_as_error_prefix("block data: "));
+                  return;
+                }
+                if (R2.ok().is_null()) {
+                  done(td::Status::Error("block data: not found"));
+                  return;
+                }
+                tos_wallet_index::Wc0FetchedBlock fetched{R2.ok()->root_cell(), {}};
+                if (!need_state) {
+                  done(std::move(fetched));
+                  return;
+                }
+                td::actor::send_closure(
+                    manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, handle,
+                    [fetched = std::move(fetched),
+                     done = std::move(done)](td::Result<td::Ref<tos::validator::ShardState>> R3) mutable {
+                      // Without its state the block is still indexed; its
+                      // token candidates wait for a later block's state.
+                      if (R3.is_ok() && R3.ok().not_null()) {
+                        fetched.state_root = R3.ok()->root_cell();
+                      }
+                      done(std::move(fetched));
+                    });
+              });
+        });
+  }
+
+  td::actor::ActorId<tos::validator::ValidatorManagerInterface> manager_;
+  std::shared_ptr<Wc0IndexFetchMailbox> mailbox_;
+};
+
+}  // namespace
+
 #if TOS_USE_JEMALLOC
 class JemallocStatsWriter : public td::actor::Actor {
  public:
@@ -1392,9 +1489,10 @@ void ValidatorEngine::schedule_shutdown(double at) {
           LOG(WARNING) << "Shutting down as scheduled";
           // Mark every queued block for recovery before the process ends.
           // The hook stays installed: block-apply actors may still read it,
-          // and from here on it marks each block itself before returning.
-          // Blocks can still be applied until the process exits, so the run
-          // is not recorded as finished.
+          // and from here on a block it receives is only recorded for
+          // recovery, without block application waiting for that. Blocks can
+          // still be applied until the process exits, so the run is not
+          // recorded as finished.
           if (!tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::MayStillApply)) {
             LOG(ERROR) << "wc0-index: indexing did not finish cleanly before shutdown; "
                        << "the next start reports that the index needs a rebuild";
@@ -2371,9 +2469,8 @@ void ValidatorEngine::start_validator() {
   // before the validator manager exists so it is never written while
   // block-apply actors may already be reading it.
   // The hook only queues the block for a dedicated indexing worker, so block
-  // application does not wait on index processing or its WAL writes. An apply
-  // without block data in hand does wait for one block-data read before the
-  // handoff (test/integration/evidence/wc0-index-apply-readback-addendum.md).
+  // application does not wait on index processing, its WAL writes, or a read
+  // of block data it did not have: the worker fetches that itself.
   // When the index cannot be opened or made safe to index into, no worker is
   // started and no hook installed: a worker with nothing to mark into would
   // hold queued blocks forever, and the account-index RPC reports the index
@@ -2390,6 +2487,18 @@ void ValidatorEngine::start_validator() {
       validator_options_, db_root_, keyring_.get(), adnl_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
   if (json_rpc_addr_) {
+    if (tos::validator::g_wc0_block_index_hook) {
+      // Blocks the hook received without their data are read by the worker
+      // through this actor, never by block application.
+      auto mailbox = std::make_shared<Wc0IndexFetchMailbox>();
+      td::actor::create_actor<Wc0IndexBlockFetchActor>("wc0indexfetch", validator_manager_.get(), mailbox).release();
+      tos_wallet_index::set_wc0_index_block_fetcher(
+          [mailbox](const tos::BlockIdExt &block_id, bool need_state,
+                    std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
+            std::lock_guard<std::mutex> guard(mailbox->mutex);
+            mailbox->requests.push_back({block_id, need_state, std::move(done)});
+          });
+    }
     recover_wc0_index();
   }
 
@@ -7127,5 +7236,6 @@ int main(int argc, char *argv[]) {
     LOG(ERROR) << "wc0-index: indexing did not finish cleanly; the next start reports that the index needs a rebuild";
   }
   tos_wallet_index::stop_wc0_index_worker();
+  tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
   return 0;
 }

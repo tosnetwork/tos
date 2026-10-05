@@ -930,8 +930,17 @@ target_include_directories(test-adnl-ext-input-budget PRIVATE ${CMAKE_CURRENT_SO
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-adnl-ext-input-budget PRIVATE adnl dht keyring keys tl_api tdutils tdactor)
 
-# Measurement tool, not a gate: apply completion when the wallet index reads a
-# block back from the database, against the same apply with no index.
+# Block application never waits for the wallet index: real ApplyBlock with the
+# index's read, WAL sync or queue blocked.
+add_executable(test-wallet-index-apply test/test-td-main.cpp test/validator/wallet-index-apply-test.cpp
+  validator-engine/wallet-index.cpp validator-engine/wallet-index-writer.cpp)
+target_include_directories(test-wallet-index-apply PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-wallet-index-apply PRIVATE validator-disk validator-common validator-db
+                      tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
+
+# Measurement tool, not a gate: apply completion when the wallet index must
+# read a block's data itself, against the same apply with no index.
 add_executable(test-apply-block-readback-latency test/validator/apply-block-readback-latency.cpp
   validator-engine/wallet-index.cpp validator-engine/wallet-index-writer.cpp)
 target_include_directories(test-apply-block-readback-latency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1777,10 +1786,12 @@ tos_test(test-rldp2-decoder-heap)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)
+tos_test(test-wallet-index-apply)
 # Keep the security fixes exercised before merge, not only by main's full
 # CTest pass. The branch workflow also verifies this inventory is complete.
 set_tests_properties(
   test-wallet-index
+  test-wallet-index-apply
   test-candidate-data-cache
   test-shard-block-confirmations
   test-adnl-ext-input-budget

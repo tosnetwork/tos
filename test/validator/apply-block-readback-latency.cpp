@@ -1,17 +1,18 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-// How long applying a block takes when its data must be read back from the
-// database for the wallet index, against the same apply with no index.
+// How long applying a block takes when the wallet index needs the block's data
+// and ApplyBlock does not have it in hand, against the same apply with no
+// index.
 //
-// The real ApplyBlock actor runs with no block data in hand, so with the index
-// hook installed it reads the block back (get_block_data_from_db) before the
-// handle is flushed. A stand-in manager answers every other request at once and
-// answers the read after a configurable delay, as a slow database would. The
-// hook is the real one, queueing into a real wallet index database.
+// The real ApplyBlock actor runs with no block data in hand. The hook is the
+// real one, queueing into a real wallet index database; the indexing worker
+// reads the block data itself through a fetcher that answers after a
+// configurable delay, as a slow database would. A stand-in manager answers
+// every request of ApplyBlock at once; it also counts block-data reads made
+// through it, which ApplyBlock must no longer make.
 //
 // Apply completion is measured from starting the query to its promise, which
-// resolves after the handle flush. Every sample of a mode with the hook is
-// required to have read its block back exactly once, and no sample without the
-// hook may read; otherwise the run fails.
+// resolves after the handle flush. A run fails unless no sample of any mode
+// made a block-data read through the manager.
 //
 // Usage: test-apply-block-readback-latency <parent dir> [samples] [delay ms...]
 // The index is created in a new, uniquely named directory under <parent dir>,
@@ -20,9 +21,12 @@
 // erase that node's index.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "common/delay.h"
@@ -42,7 +46,21 @@ namespace {
 using namespace tos::validator;
 
 std::atomic<long> g_reads{0};
+std::atomic<long> g_worker_reads{0};
 std::atomic<long> g_read_delay_us{0};
+
+// The worker's read: answered (with a failure, so the block stays marked)
+// after the configured delay. It sleeps on the worker thread, which is where
+// a slow read would hold things up.
+void slow_worker_read(const tos::BlockIdExt &, bool,
+                      std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
+  g_worker_reads.fetch_add(1);
+  auto delay = g_read_delay_us.load();
+  if (delay > 0) {
+    std::this_thread::sleep_for(std::chrono::microseconds(delay));
+  }
+  done(td::Status::Error("block data read answered after the delay"));
+}
 
 // Answers what ApplyBlock asks of the manager for a block whose data is
 // already stored and whose state is at hand.
@@ -77,18 +95,11 @@ class StandInManager : public ValidatorManagerImpl {
   void new_block(BlockHandle, td::Ref<ShardState>, td::Promise<td::Unit> promise) override {
     promise.set_value(td::Unit());
   }
+  // ApplyBlock must not read block data for the index; any read is counted
+  // and fails the run.
   void get_block_data_from_db(ConstBlockHandle, td::Promise<td::Ref<BlockData>> promise) override {
     g_reads.fetch_add(1);
-    auto delay = static_cast<double>(g_read_delay_us.load()) * 1e-6;
-    if (delay <= 0) {
-      promise.set_error(td::Status::Error("block data read answered at once"));
-      return;
-    }
-    tos::delay_action(
-        [promise = std::move(promise)]() mutable {
-          promise.set_error(td::Status::Error("block data read answered after the delay"));
-        },
-        td::Timestamp::in(delay));
+    promise.set_error(td::Status::Error("block data read by the manager"));
   }
   void write_handle(BlockHandle handle, td::Promise<td::Unit> promise) override {
     handle->flushed_upto(handle->version());
@@ -191,6 +202,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   tos_wallet_index::set_wallet_index_db(db.move_as_ok());
+  tos_wallet_index::set_wc0_index_block_fetcher(slow_worker_read);
   if (!tos_wallet_index::start_wc0_index_worker(false)) {
     std::fprintf(stderr, "the index worker did not start\n");
     tos_wallet_index::set_wallet_index_db(nullptr);
@@ -205,7 +217,7 @@ int main(int argc, char **argv) {
   };
   std::vector<Mode> modes = {{"off", false, 0}, {"on", true, 0}};
   for (auto delay : delays_us) {
-    modes.push_back({"on-read-delay-" + std::to_string(delay / 1000) + "ms", true, delay});
+    modes.push_back({"on-worker-read-delay-" + std::to_string(delay / 1000) + "ms", true, delay});
   }
 
   td::actor::Scheduler scheduler({1});
@@ -230,6 +242,7 @@ int main(int argc, char **argv) {
                                              &tos_wallet_index::enqueue_wc0_index_block)
                                        : nullptr;
     auto reads_before = g_reads.load();
+    auto worker_reads_before = g_worker_reads.load();
     std::vector<double> durations;
     durations.reserve(samples);
     size_t failures = 0;
@@ -257,21 +270,22 @@ int main(int argc, char **argv) {
       durations.push_back(finished - started);
     }
     auto reads = g_reads.load() - reads_before;
-    auto expected_reads = mode.hook ? static_cast<long>(samples) : 0;
-    if (reads != expected_reads || failures != 0) {
+    auto worker_reads = g_worker_reads.load() - worker_reads_before;
+    if (reads != 0 || failures != 0) {
       ok = false;
     }
     auto d = distribution(durations);
     std::printf(
-        "%s{\"mode\":\"%s\",\"read_delay_us\":%ld,\"read_backs\":%ld,\"failed_applies\":%zu,\"n\":%zu,"
-        "\"p50_us\":%.1f,\"p99_us\":%.1f,\"max_us\":%.1f}",
-        m == 0 ? "" : ",", mode.name.c_str(), mode.delay_us, reads, failures, d.n, d.p50 * 1e6, d.p99 * 1e6,
-        d.max * 1e6);
+        "%s{\"mode\":\"%s\",\"worker_read_delay_us\":%ld,\"apply_read_backs\":%ld,\"worker_reads\":%ld,"
+        "\"failed_applies\":%zu,\"n\":%zu,\"p50_us\":%.1f,\"p99_us\":%.1f,\"max_us\":%.1f}",
+        m == 0 ? "" : ",", mode.name.c_str(), mode.delay_us, reads, worker_reads, failures, d.n, d.p50 * 1e6,
+        d.p99 * 1e6, d.max * 1e6);
   }
   g_wc0_block_index_hook = nullptr;
   bool flushed = tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::Quiesced);
   tos_wallet_index::stop_wc0_index_worker();
-  std::printf("],\"index_flushed_cleanly\":%s,\"read_backs_counted\":%s}\n", flushed ? "true" : "false",
+  tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
+  std::printf("],\"index_flushed_cleanly\":%s,\"no_apply_read_backs\":%s}\n", flushed ? "true" : "false",
               ok ? "true" : "false");
   scheduler.run_in_context([&] {
     manager.reset();
