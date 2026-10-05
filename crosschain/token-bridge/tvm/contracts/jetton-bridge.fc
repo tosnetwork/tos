@@ -64,6 +64,8 @@ global int c_burn_high;
 global cell c_token_data;
 global cell c_pending;
 global cell c_burns;
+;; What a vote keeps of its own value for the records it pays for.
+global int b_vote_keep;
 
 () load_data() impure inline {
     slice ds = get_data().begin_parse();
@@ -370,6 +372,12 @@ int need_p1_for(cell d) inline {
                 .end_cell(), 1);
         }
     }
+    else {
+        ;; Nothing was paid for this lock: the vote's own value pays for the
+        ;; mandatory log, never the bridge's balance.
+        b_vote_keep = allowance(2, -1);
+        throw_unless(error::underfunded, msg_value_of_in() >= get_cancel_cost());
+    }
     b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_CANCELLED, 2));
     emit_mandatory(LOG_SWAP_CANCELLED, begin_cell()
         .store_uint(b_evm_chain, 32)
@@ -401,6 +409,7 @@ int need_p1_for(cell d) inline {
 
 () execute_voting (slice oracles_address, slice voting_data, int query_id, int state_flags, int msg_value) impure {
     int op = voting_data~load_uint(8);
+    b_vote_keep = 0;
 
     throw_if(error::unknown_execute_voting_op,
         (op != op::execute_voting::swap) &
@@ -448,7 +457,13 @@ int need_p1_for(cell d) inline {
     }
 
     if (op != op::execute_voting::get_reward) {
-        send_receipt_message(oracles_address, 0x10000 + 9, query_id, 0, 0, 64); ;; thanks
+        if (b_vote_keep > 0) {
+            ;; return the rest of the vote's value, keeping what its records cost
+            raw_reserve(b_vote_keep, 4);
+            send_receipt_message(oracles_address, 0x10000 + 9, query_id, 0, 0, 128);
+        } else {
+            send_receipt_message(oracles_address, 0x10000 + 9, query_id, 0, 0, 64); ;; thanks
+        }
     }
 }
 
@@ -913,6 +928,11 @@ int get_burn_outcome(int minter, int m) method_id {
 
 ;; What the vote must carry in its recorded fee for the mint's first leg, at the
 ;; current prices, for a new holder.
+;; The least a vote cancelling an unpaid lock must carry.
+int get_cancel_cost() method_id {
+    return allowance(2, -1) + bridge_gas();
+}
+
 int get_mint_fee_floor(cell wrapped_token_data, slice recipient) method_id {
     load_data();
     (slice minter, cell state_init) = calculate_minter_address(wrapped_token_data);

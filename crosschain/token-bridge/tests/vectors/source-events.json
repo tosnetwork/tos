@@ -6,12 +6,20 @@
   "activation": {
     "generation": 1,
     "nonce": "7",
-    "tos_bridge": "0xdfcdf57288a776572cea5f1cd58dadaf4becc3ee923277a101bad3808f8c99a0",
+    "tos_bridge": "0x0af850ba51a71876552f031ceccca865f7f02626f89a4b4acfef2841923a4314",
     "tos_life": "2000000000",
     "start": "0"
   },
   "locks": [
-    {"n": "0", "to": "0x5ae4714a98d7d4be6c73d16bd83bfd45b531e3b090595ba94508b5a9f7b73f24", "amount": "1000"},
-    {"n": "1", "to": "0x5ae4714a98d7d4be6c73d16bd83bfd45b531e3b090595ba94508b5a9f7b73f24", "amount": "234"}
+    {
+      "n": "0",
+      "to": "0x5ae4714a98d7d4be6c73d16bd83bfd45b531e3b090595ba94508b5a9f7b73f24",
+      "amount": "1000"
+    },
+    {
+      "n": "1",
+      "to": "0x5ae4714a98d7d4be6c73d16bd83bfd45b531e3b090595ba94508b5a9f7b73f24",
+      "amount": "234"
+    }
   ]
 }
