@@ -822,6 +822,11 @@ const UNBOUND_ANSWERS: &[(&str, &str)] = &[
     ("method_count", "ran 1 get-methods, 2 were requested"),
     ("exit_code", "exited with 11"),
     ("stack_type", "no decoder accepts"),
+    ("context_null", "reported no execution context"),
+    ("balance", "proven balance is not a decimal"),
+    ("target_workchain", "proven target is not a masterchain block"),
+    ("state_hash", "account state hash must be 32 bytes of lowercase hex"),
+    ("future", "dated in the future of the local clock"),
 ];
 
 #[tokio::test]
@@ -846,6 +851,7 @@ async fn a_live_answer_not_bound_to_the_live_policy_yields_no_snapshot() {
         ("mode", "did a historical read"),
         ("max_age", "applied another maximum age"),
         ("missing:live", "carries no live evidence"),
+        ("age", "reported an inconsistent age"),
     ] {
         let case = Case::new();
         let result =

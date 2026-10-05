@@ -179,6 +179,18 @@ def main():
         answer["get_methods"][0]["exit_code"] = 11
     elif mutation == "stack_type":
         answer["get_methods"][0]["stack"] = [{"type": "nan"}]
+    elif mutation == "context_null":
+        answer["execution_context"] = None
+    elif mutation == "balance":
+        answer["account"]["balance"] = "-5"
+    elif mutation == "target_workchain":
+        answer["target"]["workchain"] = 0
+    elif mutation == "state_hash":
+        answer["account"]["state_hash"] = "5A" * 32
+    elif mutation == "future":
+        answer["target"]["gen_utime"] = behaviour["now"] + 3600
+    elif mutation == "age":
+        answer["live"]["age_seconds"] -= 1
     elif mutation in ("malformed", "partial", "trailing", "two_lines", "sleep", "empty"):
         pass
     else:
