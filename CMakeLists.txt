@@ -897,6 +897,12 @@ target_include_directories(test-pq-lite-forward-proof PRIVATE ${CMAKE_CURRENT_SO
 target_link_libraries(test-pq-lite-forward-proof PRIVATE lite-client-common tos_block tos_pq_consensus_signer
                       tos_pq_consensus tos_crypto tl_api tl_lite_api tl-lite-utils tdutils tdactor adnl keys dht)
 
+add_executable(test-proof-verify test/pq-native/proof-verify-test.cpp)
+target_include_directories(test-proof-verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-proof-verify PRIVATE proof-verify-core tos_pq_consensus_signer tos_pq_consensus
+                      tos_crypto)
+
 add_executable(test-adnl-ext-query-closure test/pq-native/adnl-ext-query-closure-test.cpp)
 target_include_directories(test-adnl-ext-query-closure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1745,6 +1751,19 @@ add_test(NAME pending-finality-retry-policy-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-finality-retry-policy.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pending-finality-retry-policy-source PROPERTIES LABELS "source-guard")
 tos_test(test-pq-lite-forward-proof)
+tos_test(test-proof-verify ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data)
+set(PROOF_VERIFY_REAL ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+add_test(NAME test-proof-verify-cli-verified
+  COMMAND tos-proof-verify verify --anchor ${PROOF_VERIFY_REAL}/anchor.json
+          --request ${PROOF_VERIFY_REAL}/historical-request.json --material ${PROOF_VERIFY_REAL}/historical)
+set_tests_properties(test-proof-verify-cli-verified PROPERTIES
+  PASS_REGULAR_EXPRESSION "^\\{\"status\":\"verified\",\"interface\":\"tos-proof-verify/1\"")
+add_test(NAME test-proof-verify-cli-refused
+  COMMAND tos-proof-verify verify --anchor ${PROOF_VERIFY_REAL}/anchor.json
+          --request ${PROOF_VERIFY_REAL}/wrong-target-request.json --material ${PROOF_VERIFY_REAL}/historical)
+set_tests_properties(test-proof-verify-cli-refused PROPERTIES
+  PASS_REGULAR_EXPRESSION "^\\{\"status\":\"refused\".*does not end at the exact target block")
+add_dependencies(all-tests tos-proof-verify)
 tos_test(test-adnl-ext-query-closure)
 tos_test(test-adnl-ext-query-refusal)
 tos_test(test-adnl-ext-output-backpressure)
