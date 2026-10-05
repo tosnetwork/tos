@@ -1,0 +1,29 @@
+{
+  "source_base": "dc33c12f6cf802f67dd52e5986da2722b2e8fcaf",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/proven_transactions.rs": "59a45fa71ef41bffedfb7d960e3945d398e4a0045a7d00d29c5e875e77885118",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "c67ba1349b51d597550ad8ae4df01b4d10dc063a940a6d18b1f0bb161b54b7b2",
+    "test/wallet-v5r2/receipt_controls.py": "705fa3847cdf333caec5afb449b238ac9d602df2aeb40c565cca2bb82846d8cb",
+    "tosctl/src/toscenter-rs/src/client/base.rs": "a4005ba1ee7fd49938a92041498b8dcce3318af32ac787402554362e760b8029"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-receipt-rpc",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "23493d9e442f1772392fb789d4d7806d921156bb60c9d7248728b128e1a9d265",
+  "results": {
+    "receipt_tests_passed": 9,
+    "semantic_controls_detected": 18,
+    "transport_boundary_tests_passed": 4,
+    "final_commands_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/receipt_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-receipt-rpc/controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p toscenter-rs --lib client::base::tests"
+  ],
+  "limits": [
+    "Loopback HTTP tests use actual native executor transaction cells and synthetic account proof wrappers, not live network V5R2 finality.",
+    "First mock omitted required ok response field; setup failure retained and mock corrected before final controls.",
+    "Client transport limits can refuse unusually large transactions. Exhaustion or timeout never proves absence or authorizes a replay.",
+    "Application outcome interpretation, production custody, default gas admission, independent review and final-head CI remain open."
+  ]
+}

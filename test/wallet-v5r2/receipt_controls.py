@@ -16,6 +16,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     source = SOURCE.read_text()
     guards = [
+        ("rpc_count", "receipt RPC must return one transaction", "accepted invalid RPC receipt"),
         ("fetch_budget", "invalid receipt history budget", "invalid budget invoked transport"),
         ("hash", "transaction hash mismatch", "accepted receipt substitution hash"),
         ("lt", "transaction logical time mismatch", "accepted receipt substitution lt"),
@@ -83,10 +84,18 @@ def main():
         (args.output / f"{label}.log").write_text(log)
         return result.returncode, log
 
+    marker = "let deadline = Instant::now()"
+    assert source.count(marker) == 1
+    cases.append((
+        "rpc_deadline",
+        source.replace(marker, "let timeout = Duration::from_secs(300);\n        " + marker),
+        "accepted invalid RPC receipt",
+    ))
+
     results = {}
     try:
         code, log = run("baseline")
-        assert code == 0 and "7 passed" in log, log[-3000:]
+        assert code == 0 and "9 passed" in log, log[-3000:]
         for label, mutated, reason in cases:
             SOURCE.write_text(mutated)
             code, log = run(label)
@@ -95,9 +104,9 @@ def main():
     finally:
         SOURCE.write_text(source)
         code, log = run("restored")
-        assert code == 0 and "7 passed" in log, log[-3000:]
+        assert code == 0 and "9 passed" in log, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("16 receipt/history/delivery guard controls detected; restored tests pass")
+    print("18 receipt/history/delivery guard controls detected; restored tests pass")
 
 
 if __name__ == "__main__":

@@ -1135,3 +1135,25 @@ budgets. The receipt suite now has seven tests and sixteen semantic controls.
 The fetcher is an integration boundary, not a completed RPC transport: callers
 must enforce transport deadlines, response byte limits and BOC decoding bounds.
 Live network receipt lookup and application-specific outcome checks remain open.
+
+### JSON-RPC receipt transport
+
+`find_inbound_rpc` connects bounded authenticated lookup to the existing
+`ClientJsonRpc::get_transactions` read path, requesting one transaction per
+proven hash/LT cursor. It requires exactly one returned transaction, treats RPC
+metadata as untrusted, and authenticates the decoded BOC through the account
+history chain. The transport already enforces a 1 MiB HTTP response cap and a
+30-second per-request timeout. This adapter adds a caller-selected, nonzero
+whole-lookup deadline capped at 300 seconds, checks the deadline during BOC
+reading and after authentication, limits encoded BOC input to 1 MiB, and caps
+cell depth at 1024. These client limits may reject unusually large histories or
+transactions; a bounded failure is never proof of absence or permission to
+resign/replay a request.
+
+Loopback HTTP tests serve native recovery transaction fixtures behind synthetic
+account proof metadata. They verify exact outbound RPC cursors, two-step lookup,
+ignored false RPC metadata, refusal of empty/oversized pages and substituted
+transactions, and delayed-response cancellation. The receipt suite now contains
+nine tests and eighteen semantic controls, including page cardinality and
+caller-deadline enforcement. This exercises real HTTP plumbing, not real-network
+V5R2 finality, and still does not interpret application payment/POP outcomes.

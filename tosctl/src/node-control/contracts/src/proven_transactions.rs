@@ -3,9 +3,12 @@
 //! receipts prove ledger facts, not freshness, application intent or spendable
 //! recipient balance. Account reads currently require active accounts.
 use crate::proven_getters::ProvenAccountState;
+use base64::Engine as _;
 use chain_block::{
     Cell, CellType, Deserializable, MsgAddressInt, TrComputePhase, Transaction, TransactionDescr,
 };
+use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+use std::time::{Duration, Instant};
 
 pub struct ProvenTransaction {
     root: Cell,
@@ -15,6 +18,62 @@ pub struct ProvenTransaction {
 }
 
 impl ProvenTransaction {
+    /// Read-only JSON-RPC adapter. RPC metadata is not a trust source; the BOC
+    /// must link to the proven account. One overall deadline includes failover,
+    /// history traversal and decoding. Transport has its own 1 MiB body cap.
+    pub async fn find_inbound_rpc(
+        account: &ProvenAccountState,
+        expected: &Cell,
+        maximum: u32,
+        timeout: Duration,
+        rpc: &ClientJsonRpc,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !timeout.is_zero() && timeout <= Duration::from_secs(300),
+            "invalid receipt lookup timeout"
+        );
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| anyhow::anyhow!("receipt deadline overflow"))?;
+        let lookup =
+            Self::find_inbound(account, expected, maximum, |address, lt, hash| async move {
+                let page = rpc
+                    .get_transactions(
+                        &address,
+                        lt,
+                        &base64::engine::general_purpose::STANDARD.encode(hash),
+                        1,
+                    )
+                    .await?;
+                anyhow::ensure!(
+                    page.transactions.len() == 1,
+                    "receipt RPC must return one transaction"
+                );
+                let raw = page
+                    .transactions
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("receipt RPC transaction missing"))?;
+                // Bound allocation before base64 decoding. Other RPC fields are
+                // deliberately ignored; authenticated transaction fields prevail.
+                anyhow::ensure!(raw.data.len() <= (1 << 20), "receipt BOC encoding too large");
+                let bytes = base64::engine::general_purpose::STANDARD.decode(raw.data)?;
+                let abort = || Instant::now() >= deadline;
+                let root = chain_block::BocReader::new()
+                    .set_abort(&abort)
+                    .set_max_cell_depth(1024)
+                    .read(&mut std::io::Cursor::new(bytes))?
+                    .withdraw_single_root()?;
+                anyhow::ensure!(Instant::now() < deadline, "receipt lookup deadline exceeded");
+                Ok(root)
+            });
+        let result = tokio::time::timeout(timeout, lookup)
+            .await
+            .map_err(|_| anyhow::anyhow!("receipt lookup deadline exceeded"))??;
+        anyhow::ensure!(Instant::now() < deadline, "receipt lookup deadline exceeded");
+        Ok(result)
+    }
+
     /// Fetch backwards from a proven head until the exact inbound message is
     /// found. The fetcher is untrusted: every returned cell is authenticated.
     /// A bounded miss is an error, never proof that a request was not executed.

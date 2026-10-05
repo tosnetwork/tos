@@ -1798,6 +1798,149 @@ mod transaction_receipt_tests {
         }
     }
 
+    async fn receipt_rpc_server(
+        replies: Vec<serde_json::Value>,
+        delay: std::time::Duration,
+    ) -> (String, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let mut requests = vec![];
+            for reply in replies {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = vec![];
+                let request = loop {
+                    let mut chunk = [0; 4096];
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&chunk[..count]);
+                    if let Some(at) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..at]).to_lowercase();
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse().unwrap())
+                            })
+                            .unwrap();
+                        if bytes.len() >= at + 4 + length {
+                            break serde_json::from_slice::<serde_json::Value>(
+                                &bytes[at + 4..at + 4 + length],
+                            )
+                            .unwrap();
+                        }
+                    }
+                };
+                let body = serde_json::json!({"ok":true,"jsonrpc":"2.0", "id":request["id"], "result":reply})
+                    .to_string();
+                requests.push(request);
+                tokio::time::sleep(delay).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                // Timeout tests deliberately close the client before this write.
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+            requests
+        });
+        (url, task)
+    }
+
+    fn rpc_transaction(cell: &Cell) -> serde_json::Value {
+        // Deliberately false metadata: only the authenticated BOC is evidence.
+        serde_json::json!({"lt":"1", "hash":"untrusted", "utime":0,
+            "data":base64::engine::general_purpose::STANDARD.encode(chain_block::write_boc(cell).unwrap())})
+    }
+
+    #[tokio::test]
+    async fn receipt_rpc_fetches_authenticated_history() {
+        use crate::proven_transactions::ProvenTransaction;
+        use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+        use std::time::Duration;
+        let (proof, head) = fixture("payment-wallet");
+        let (_, prior) = fixture("migrate-wallet");
+        let tx = Transaction::construct_from_cell(prior.clone()).unwrap();
+        let (url, server) = receipt_rpc_server(
+            vec![
+                serde_json::json!([rpc_transaction(&head)]),
+                serde_json::json!([rpc_transaction(&prior)]),
+            ],
+            Duration::ZERO,
+        )
+        .await;
+        let rpc = ClientJsonRpc::connect(url, None).unwrap();
+        let result = ProvenTransaction::find_inbound_rpc(
+            &proof,
+            &tx.in_msg_cell().unwrap(),
+            2,
+            Duration::from_secs(3),
+            &rpc,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.root().repr_hash(), prior.repr_hash());
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 2);
+        for (request, cell) in requests.iter().zip([head, prior]) {
+            assert_eq!(request["method"], "getTransactions");
+            assert_eq!(request["params"]["limit"], 1);
+            assert_eq!(
+                request["params"]["address"],
+                proof.account().get_addr().unwrap().to_string()
+            );
+            assert_eq!(
+                request["params"]["lt"],
+                Transaction::construct_from_cell(cell.clone()).unwrap().logical_time().to_string()
+            );
+            assert_eq!(
+                request["params"]["hash"],
+                base64::engine::general_purpose::STANDARD.encode(cell.repr_hash().as_array())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn receipt_rpc_rejects_bad_responses_and_deadline() {
+        use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+        use std::time::Duration;
+        let (proof, head) = fixture("payment-wallet");
+        let (_, wrong) = fixture("migrate-wallet");
+        let input = Transaction::construct_from_cell(head.clone()).unwrap().in_msg_cell().unwrap();
+        for (response, delay, timeout, reason) in [
+            (
+                serde_json::json!([rpc_transaction(&head), rpc_transaction(&head)]),
+                Duration::ZERO,
+                Duration::from_secs(3),
+                "one transaction",
+            ),
+            (serde_json::json!([]), Duration::ZERO, Duration::from_secs(3), "one transaction"),
+            (
+                serde_json::json!([rpc_transaction(&wrong)]),
+                Duration::ZERO,
+                Duration::from_secs(3),
+                "transaction hash mismatch",
+            ),
+            (
+                serde_json::json!([rpc_transaction(&head)]),
+                Duration::from_millis(100),
+                Duration::from_millis(20),
+                "deadline exceeded",
+            ),
+        ] {
+            let (url, server) = receipt_rpc_server(vec![response], delay).await;
+            let rpc = ClientJsonRpc::connect(url, None).unwrap();
+            let error = ProvenTransaction::find_inbound_rpc(&proof, &input, 1, timeout, &rpc)
+                .await
+                .err()
+                .expect("accepted invalid RPC receipt");
+            assert!(error.to_string().contains(reason), "{error}");
+            server.await.unwrap();
+        }
+    }
+
     fn sent_message(tx: &ProvenTransaction) -> Cell {
         let mut cells = vec![];
         tx.transaction()
