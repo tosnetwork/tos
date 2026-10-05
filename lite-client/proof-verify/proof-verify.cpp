@@ -929,7 +929,7 @@ td::Result<Verified> verify_impl(const Anchor& anchor, const Request& request, t
   {
     td::Bits256 digest;
     td::sha256(request_bytes, digest.as_slice());
-    verified.request_sha256 = digest.to_hex();
+    verified.request_sha256 = hex(digest);
   }
   if (request.mode == Mode::Historical && state) {
     return td::Status::Error("historical mode does not use live state");
@@ -1387,7 +1387,7 @@ std::string render_verified(const Verified& verified) {
   if (verified.account) {
     const auto& account = *verified.account;
     JsonObjectWriter writer;
-    writer.str("address", PSLICE() << account.address.workchain << ":" << account.address.addr.to_hex())
+    writer.str("address", PSLICE() << account.address.workchain << ":" << hex(account.address.addr))
         .raw("shard_block", block_id_json(account.shard_block))
         .boolean("exists", account.exists)
         .num("gen_utime", account.gen_utime)
