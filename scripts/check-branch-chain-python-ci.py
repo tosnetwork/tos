@@ -249,8 +249,9 @@ def main() -> int:
     )
     require(
         re.search(
+            # Either the E04 group alone or the whole commands library, which includes it.
             r"(?m)^\s*run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib "
-            r"exact_deploy_wallet_transaction_tests --locked --no-default-features\s*$",
+            r"(?:exact_deploy_wallet_transaction_tests )?--locked --no-default-features\s*$",
             rust_job.group("body"),
         )
         is not None,
