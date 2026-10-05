@@ -95,14 +95,27 @@ constexpr size_t kTokenBacklogScanPerBucket = 4 * kMaxTokenCandidatesPerBlock;
 // indeterminate (the node, not the contract, prevented an answer) goes back to
 // the end of its queue until it has used them all; then it is parked: its
 // identity is kept, the token index reports itself incomplete while any
-// candidate is parked, and a later nomination of it queues it again.
+// candidate is parked, and the indexing worker retries parked candidates
+// itself, a bounded number at a time after a pause, against the newest state
+// it has, until each reaches a definite result. A later nomination also
+// verifies it afresh.
 constexpr uint8_t kMaxTokenCandidateAttempts = 4;
-// Distinct candidates the backlog may hold, waiting and parked together. A
-// candidate already in the backlog is not added twice. A block whose
-// candidates do not all fit stops deferring at the first that does not; the
-// block stays marked unfinished with a resume point, and the indexing worker
-// resumes it once the backlog has room, so no candidate is ever dropped.
+// Distinct candidates the backlog queues may hold. A candidate already
+// waiting is not added twice. A block whose candidates do not all fit stops
+// deferring at the first that does not; the rest of its candidates are
+// persisted with the block (see put_pending_block), so the block's own data
+// is never needed again, and the block stays marked unfinished until the
+// indexing worker has verified them. Parked candidates do not take queue
+// room: they have their own bound.
 constexpr uint64_t kMaxTokenBacklogEntries = 1u << 20;
+// Parked candidates the index may hold. Past it, a candidate that exhausts
+// its attempts waits in its queue again instead, with one attempt left.
+constexpr uint64_t kMaxParkedTokenCandidates = 1u << 20;
+// Blocks whose remaining candidates the index may hold at once. While this
+// many are unfinished, the indexing worker finishes them before it indexes
+// another block; blocks applied meanwhile wait in its queue or, past that,
+// stay marked for recovery as any block the worker could not take.
+constexpr size_t kMaxPendingTokenBlocks = 1024;
 
 using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
 
@@ -415,21 +428,45 @@ class WalletIndexDb {
   td::Status process_token_candidates(
       const std::vector<ScheduledTokenCandidate>& scheduled,
       const std::function<TokenVerifyOutcome(const ScheduledTokenCandidate&, size_t remaining)>& verify);
-  // Whether the backlog, as committed, has room for another deferral.
+  // Whether the backlog queues, as committed, have room for another deferral.
   td::Result<bool> token_backlog_has_room();
+  // Start a pass that verifies candidates outside schedule_token_candidates
+  // (a pending block's or parked ones): loads the counters into the open
+  // batch. Its writes join the batch; save_token_counters() ends it.
+  td::Status begin_token_pass();
+  td::Status save_token_counters();
+  // Within such a pass: park a candidate whose attempts are used up, count
+  // one that needs another shard's state, release a parked one that reached
+  // a definite result.
+  td::Status park_token_candidate(const ScheduledTokenCandidate& scheduled);
+  void count_unverifiable_token_candidate();
+  td::Status unpark_token_candidate(const TokenCandidate& candidate);
+  // Within such a pass: up to `limit` parked candidates from the parked
+  // cursor on, wrapping round at the end; `wrapped` tells whether this pass
+  // reached the end. The cursor moves past them (into the batch).
+  td::Result<std::vector<ScheduledTokenCandidate>> next_parked_token_candidates(size_t limit, bool& wrapped);
 
   // --- Blocks whose token candidates are not all handled yet ---
   //   0x19 + workchain_be(4) + shard_be(8) + seqno_be(4) + root_hash(32) + file_hash(32)
-  //     -> kind(1) + address(32): the first candidate not yet verified or queued
-  // The block keeps its incomplete-block marker beside this record; a later
-  // pass over the block (the indexing worker, or startup recovery) handles
-  // the candidates from this one on. Writes join the open batch.
-  td::Status put_pending_block(const tos::BlockIdExt& block_id, const TokenCandidate& resume_from);
-  td::Result<td::optional<TokenCandidate>> get_pending_block(const tos::BlockIdExt& block_id);
+  //     -> version(1) = 1 + end_lt_be(8) + n * (kind(1) + address(32) + attempts(1))
+  // The block's remaining candidates themselves, so a later pass needs
+  // neither the block nor its state, however long archive pruning leaves
+  // them. The block keeps its incomplete-block marker beside this record.
+  // Writes join the open batch.
+  struct PendingBlock {
+    uint64_t end_lt = 0;
+    std::vector<ScheduledTokenCandidate> remaining;
+  };
+  td::Status put_pending_block(const tos::BlockIdExt& block_id, const PendingBlock& pending);
+  td::Result<td::optional<PendingBlock>> get_pending_block(const tos::BlockIdExt& block_id);
   td::Status delete_pending_block(const tos::BlockIdExt& block_id);
   // Calls `cb` for at most `limit` pending blocks, in key order (committed).
   td::Status for_each_pending_block(size_t limit,
-                                    std::function<td::Status(const tos::BlockIdExt&, const TokenCandidate&)> cb);
+                                    std::function<td::Status(const tos::BlockIdExt&, const PendingBlock&)> cb);
+  // The address of the first parked candidate (committed), if any.
+  td::optional<HashKey> first_parked_address();
+  // How many blocks are pending (committed).
+  td::Result<uint64_t> pending_block_count();
   // Whether a verdict on `wallet` has been recorded (committed state).
   td::Result<bool> has_jetton_wallet_record(const HashKey& wallet);
   // Backlog size and lost/unverifiable/parked counts, as committed.
@@ -438,6 +475,10 @@ class WalletIndexDb {
   // reach it without writing a million rows.
   void set_token_backlog_limit(uint64_t limit) {
     token_backlog_limit_ = limit < kMaxTokenBacklogEntries ? limit : kMaxTokenBacklogEntries;
+  }
+  // Lower the parked bound likewise.
+  void set_parked_token_limit(uint64_t limit) {
+    parked_limit_ = limit < kMaxParkedTokenCandidates ? limit : kMaxParkedTokenCandidates;
   }
   // Walk at most `limit` deferred candidates (committed state), queue by queue.
   td::Status for_each_deferred_token_candidate(size_t limit, std::function<td::Status(const TokenCandidate&)> cb);
@@ -578,6 +619,7 @@ class WalletIndexDb {
   };
   TokenBatchState token_batch_;
   uint64_t token_backlog_limit_ = kMaxTokenBacklogEntries;
+  uint64_t parked_limit_ = kMaxParkedTokenCandidates;
   td::Result<uint64_t> get_meta_u64(uint8_t sub);
   td::Status put_meta_u64(uint8_t sub, uint64_t value);
   td::Result<std::string> token_index_get(const std::string& index_key);
@@ -589,6 +631,7 @@ class WalletIndexDb {
   // the room a chosen candidate kept, so it always succeeds.
   td::Result<bool> token_enqueue(const TokenCandidate& candidate, uint8_t attempts, uint64_t lt, bool reserved);
   td::Status token_park(const ScheduledTokenCandidate& scheduled);
+  td::Status token_load_counters();
   td::Result<std::string> token_queue_value(const std::string& queue_key);
   td::Result<td::optional<uint64_t>> token_parked_lt(const std::string& parked_key);
   void token_release_reservation();

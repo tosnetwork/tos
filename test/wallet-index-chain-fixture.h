@@ -189,22 +189,29 @@ struct Contract {
   td::Ref<vm::Cell> data;
 };
 
+// An active account whose state has no code: nothing can be run on it, so
+// any verification of it is indeterminate.
+inline Contract without_code(const td::Bits256 &address) {
+  return Contract{address, td::Ref<vm::Cell>{}, vm::CellBuilder{}.store_long(3, 8).finalize()};
+}
+
 inline td::Ref<vm::Cell> account(const Contract &contract) {
   vm::CellBuilder cb;
   require(cb.store_long_bool(1, 1)  // account$1
               && cb.store_long_bool(4, 3) && cb.store_long_bool(0, 8) &&
-              cb.store_bits_bool(contract.address.bits(), 256)                 // addr
-              && cb.store_long_bool(0, 3) && cb.store_long_bool(0, 3)          // used: cells 0, bits 0
-              && cb.store_long_bool(0, 3)                                      // storage_extra_none
-              && cb.store_long_bool(0, 32)                                     // last_paid
-              && cb.store_long_bool(0, 1)                                      // due_payment: nothing
-              && cb.store_long_bool(0, 64)                                     // last_trans_lt
-              && cb.store_long_bool(0, 4) && cb.store_long_bool(0, 1)          // balance: 0, no extra
-              && cb.store_long_bool(1, 1)                                      // account_active
-              && cb.store_long_bool(0, 1) && cb.store_long_bool(0, 1)          // fixed_prefix_length, special
-              && cb.store_long_bool(1, 1) && cb.store_ref_bool(contract.code)  // code
-              && cb.store_long_bool(1, 1) && cb.store_ref_bool(contract.data)  // data
-              && cb.store_long_bool(0, 1),                                     // library
+              cb.store_bits_bool(contract.address.bits(), 256)         // addr
+              && cb.store_long_bool(0, 3) && cb.store_long_bool(0, 3)  // used: cells 0, bits 0
+              && cb.store_long_bool(0, 3)                              // storage_extra_none
+              && cb.store_long_bool(0, 32)                             // last_paid
+              && cb.store_long_bool(0, 1)                              // due_payment: nothing
+              && cb.store_long_bool(0, 64)                             // last_trans_lt
+              && cb.store_long_bool(0, 4) && cb.store_long_bool(0, 1)  // balance: 0, no extra
+              && cb.store_long_bool(1, 1)                              // account_active
+              && cb.store_long_bool(0, 1) && cb.store_long_bool(0, 1)  // fixed_prefix_length, special
+              && (contract.code.is_null() ? cb.store_long_bool(0, 1)
+                                          : cb.store_long_bool(1, 1) && cb.store_ref_bool(contract.code))  // code
+              && cb.store_long_bool(1, 1) && cb.store_ref_bool(contract.data)                              // data
+              && cb.store_long_bool(0, 1),                                                                 // library
           "account");
   return cb.finalize();
 }

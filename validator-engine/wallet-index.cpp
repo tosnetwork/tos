@@ -32,7 +32,7 @@ constexpr uint8_t kTokenQueueTag = 0x15;    // 0x15 + bucket(1) + seq_be(8) -> k
 constexpr uint8_t kTokenIndexTag = 0x16;    // 0x16 + kind(1) + address(32) -> bucket(1) + seq_be(8)
 constexpr uint8_t kJettonWalletTag = 0x17;  // 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8)
 constexpr uint8_t kJettonPairTag = 0x18;    // 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8)
-constexpr uint8_t kPendingBlockTag = 0x19;  // 0x19 + block id (as 0x1E) -> kind(1) + address(32)
+constexpr uint8_t kPendingBlockTag = 0x19;  // 0x19 + block id (as 0x1E) -> remaining candidates
 constexpr uint8_t kTokenParkedTag = 0x1A;   // 0x1A + kind(1) + address(32) -> lt_be(8)
 // Meta namespace, sorts before every data tag. 0x00 0x01 -> schema version
 // (u32_be); 0x00 0x02 -> event-retention watermark (u32_be, max gen_utime seen).
@@ -62,6 +62,10 @@ constexpr uint8_t kMetaTokenParkedSub = 0x0B;
 constexpr uint8_t kMetaLegacyJettonsSub = 0x0C;
 constexpr uint8_t kMetaLegacyCursorSub = 0x0D;
 constexpr uint8_t kMetaLegacyUndecidedSub = 0x0E;
+// 0x00 0x0F -> pending blocks (u64_be); 0x00 0x10 -> the last parked key a
+// retry pass took.
+constexpr uint8_t kMetaPendingBlocksSub = 0x0F;
+constexpr uint8_t kMetaParkedCursorSub = 0x10;
 
 // (kMaxEventsPerAccount / kMaxEventTrimPerPass are declared in the header
 // so tests can reference the exact bound.)
@@ -1351,26 +1355,6 @@ std::string token_parked_key(const TokenCandidate& candidate) {
   return key;
 }
 
-std::string encode_candidate(const TokenCandidate& candidate) {
-  std::string value(1 + 32, '\0');
-  value[0] = static_cast<char>(candidate.kind);
-  std::memcpy(&value[1], candidate.address.data(), 32);
-  return value;
-}
-
-td::Result<TokenCandidate> decode_candidate(td::Slice value) {
-  if (value.size() != 1 + 32) {
-    return td::Status::Error("wc0-index: malformed pending-block record");
-  }
-  auto kind = static_cast<uint8_t>(value[0]);
-  if (kind != static_cast<uint8_t>(TokenKind::Jetton) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
-    return td::Status::Error("wc0-index: unknown token kind in pending-block record");
-  }
-  TokenCandidate candidate{static_cast<TokenKind>(kind), HashKey{}};
-  std::memcpy(candidate.address.data(), value.data() + 1, 32);
-  return candidate;
-}
-
 uint64_t saturating_add(uint64_t a, uint64_t b) {
   return a > std::numeric_limits<uint64_t>::max() - b ? std::numeric_limits<uint64_t>::max() : a + b;
 }
@@ -1595,7 +1579,7 @@ td::Result<bool> WalletIndexDb::token_enqueue(const TokenCandidate& candidate, u
   } else if (reserved) {
     token_release_reservation();
   } else {
-    auto held = saturating_add(saturating_add(token_batch_.entries, token_batch_.parked), token_batch_.reserved);
+    auto held = saturating_add(token_batch_.entries, token_batch_.reserved);
     if (held >= token_backlog_limit_) {
       return false;
     }
@@ -1619,15 +1603,24 @@ td::Result<bool> WalletIndexDb::token_enqueue(const TokenCandidate& candidate, u
 }
 
 td::Status WalletIndexDb::token_park(const ScheduledTokenCandidate& scheduled) {
-  token_release_reservation();
   auto parked_key = token_parked_key(scheduled.candidate);
   TRY_RESULT(parked_lt, token_parked_lt(parked_key));
   uint64_t lt = scheduled.lt;
   if (parked_lt) {
     lt = std::max(lt, parked_lt.value());
+  } else if (token_batch_.parked >= parked_limit_) {
+    // No parking room: it waits in its queue again, with one attempt left,
+    // in the room its verification kept.
+    TRY_RESULT(queued, token_enqueue(scheduled.candidate, static_cast<uint8_t>(kMaxTokenCandidateAttempts - 1),
+                                     scheduled.lt, true));
+    if (!queued) {
+      return td::Status::Error("wc0-index: a candidate found no room it had kept");
+    }
+    return td::Status::OK();
   } else {
     token_batch_.parked = saturating_add(token_batch_.parked, 1);
   }
+  token_release_reservation();
   char value[8];
   put_u64_be(value, lt);
   TRY_STATUS(db_->set(td::Slice{parked_key}, td::Slice{value, sizeof(value)}));
@@ -1660,18 +1653,7 @@ td::Result<std::vector<ScheduledTokenCandidate>> WalletIndexDb::schedule_token_c
     return td::Status::Error("wc0-index: token capacity exceeds the per-block bound");
   }
   TRY_RESULT(buckets, token_shard_buckets(shard));
-  TRY_RESULT(next_seq, get_meta_u64(kMetaTokenSeqSub));
-  TRY_RESULT(entries, get_meta_u64(kMetaTokenEntriesSub));
-  TRY_RESULT(lost, get_meta_u64(kMetaTokenLostSub));
-  TRY_RESULT(unverifiable, get_meta_u64(kMetaTokenUnverifiableSub));
-  TRY_RESULT(parked, get_meta_u64(kMetaTokenParkedSub));
-  token_batch_.next_seq = next_seq;
-  token_batch_.entries = entries;
-  token_batch_.lost = lost;
-  token_batch_.unverifiable = unverifiable;
-  token_batch_.parked = parked;
-  token_batch_.reserved = 0;
-  token_batch_.first_unhandled = {};
+  TRY_STATUS(token_load_counters());
 
   std::vector<QueueEntry> backlog;
   std::vector<size_t> backlog_bucket;
@@ -1933,43 +1915,207 @@ td::Status WalletIndexDb::process_token_candidates(
 
 td::Result<bool> WalletIndexDb::token_backlog_has_room() {
   TRY_RESULT(entries, get_meta_u64(kMetaTokenEntriesSub));
-  TRY_RESULT(parked, get_meta_u64(kMetaTokenParkedSub));
-  return saturating_add(entries, parked) < token_backlog_limit_;
+  return entries < token_backlog_limit_;
 }
 
-td::Status WalletIndexDb::put_pending_block(const tos::BlockIdExt& block_id, const TokenCandidate& resume_from) {
+td::Status WalletIndexDb::token_load_counters() {
+  TRY_RESULT(next_seq, get_meta_u64(kMetaTokenSeqSub));
+  TRY_RESULT(entries, get_meta_u64(kMetaTokenEntriesSub));
+  TRY_RESULT(lost, get_meta_u64(kMetaTokenLostSub));
+  TRY_RESULT(unverifiable, get_meta_u64(kMetaTokenUnverifiableSub));
+  TRY_RESULT(parked, get_meta_u64(kMetaTokenParkedSub));
+  token_batch_.next_seq = next_seq;
+  token_batch_.entries = entries;
+  token_batch_.lost = lost;
+  token_batch_.unverifiable = unverifiable;
+  token_batch_.parked = parked;
+  token_batch_.reserved = 0;
+  token_batch_.first_unhandled = {};
+  return td::Status::OK();
+}
+
+td::Status WalletIndexDb::begin_token_pass() {
+  if (!batch_open_) {
+    return td::Status::Error("wc0-index: a token pass needs an open batch");
+  }
+  if (token_batch_.scheduled) {
+    return td::Status::Error("wc0-index: token candidates already scheduled in this batch");
+  }
+  TRY_STATUS(token_load_counters());
+  token_batch_.scheduled = true;
+  return td::Status::OK();
+}
+
+td::Status WalletIndexDb::save_token_counters() {
+  if (!batch_open_ || !token_batch_.scheduled) {
+    return td::Status::Error("wc0-index: no token pass is open");
+  }
+  return token_write_counters();
+}
+
+td::Status WalletIndexDb::park_token_candidate(const ScheduledTokenCandidate& scheduled) {
+  if (!batch_open_ || !token_batch_.scheduled) {
+    return td::Status::Error("wc0-index: no token pass is open");
+  }
+  // Room for it, as for a scheduled candidate, should parking be full.
+  token_batch_.reserved = saturating_add(token_batch_.reserved, 1);
+  return token_park(scheduled);
+}
+
+void WalletIndexDb::count_unverifiable_token_candidate() {
+  if (token_batch_.unverifiable < std::numeric_limits<uint64_t>::max()) {
+    ++token_batch_.unverifiable;
+  }
+}
+
+td::Status WalletIndexDb::unpark_token_candidate(const TokenCandidate& candidate) {
+  if (!batch_open_ || !token_batch_.scheduled) {
+    return td::Status::Error("wc0-index: no token pass is open");
+  }
+  auto parked_key = token_parked_key(candidate);
+  TRY_RESULT(parked_lt, token_parked_lt(parked_key));
+  if (!parked_lt) {
+    return td::Status::OK();
+  }
+  TRY_STATUS(db_->erase(td::Slice{parked_key}));
+  token_batch_.parked_overlay[parked_key] = std::string();
+  if (token_batch_.parked > 0) {
+    --token_batch_.parked;
+  }
+  return td::Status::OK();
+}
+
+td::Result<std::vector<ScheduledTokenCandidate>> WalletIndexDb::next_parked_token_candidates(size_t limit,
+                                                                                             bool& wrapped) {
+  if (!batch_open_ || !token_batch_.scheduled) {
+    return td::Status::Error("wc0-index: no token pass is open");
+  }
+  char cursor_key[kMetaKeyLen];
+  make_meta_key(kMetaParkedCursorSub, cursor_key);
+  std::string cursor;
+  TRY_RESULT(cursor_status, db_->get(td::Slice{cursor_key, kMetaKeyLen}, cursor));
+  const std::string all_begin(1, static_cast<char>(kTokenParkedTag));
+  const std::string all_end(1, static_cast<char>(kTokenParkedTag + 1));
+  std::string begin = all_begin;
+  if (cursor_status == td::KeyValue::GetStatus::Ok && !cursor.empty() &&
+      static_cast<uint8_t>(cursor[0]) == kTokenParkedTag) {
+    begin = key_after(cursor);
+  }
+  std::vector<ScheduledTokenCandidate> out;
+  std::string last;
+  bool limit_hit = false;
+  auto status = db_->for_each_in_range(td::Slice{begin}, td::Slice{all_end}, [&](td::Slice key, td::Slice value) {
+    if (out.size() >= limit) {
+      limit_hit = true;
+      return td::Status::Error("wc0-index: pass complete");
+    }
+    last = key.str();
+    if (key.size() != kTokenIndexKeyLen) {
+      return td::Status::OK();
+    }
+    auto kind = static_cast<uint8_t>(key[1]);
+    if (kind != static_cast<uint8_t>(TokenKind::Jetton) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
+      return td::Status::OK();
+    }
+    TokenCandidate candidate{static_cast<TokenKind>(kind), HashKey{}};
+    std::memcpy(candidate.address.data(), key.data() + 2, 32);
+    out.push_back(ScheduledTokenCandidate{candidate, 0, value.size() == 8 ? get_u64_be(value.data()) : 0});
+    return td::Status::OK();
+  });
+  if (!limit_hit) {
+    TRY_STATUS(std::move(status));
+  }
+  wrapped = !limit_hit;
+  if (wrapped) {
+    // The next pass starts again from the first parked candidate.
+    TRY_STATUS(db_->erase(td::Slice{cursor_key, kMetaKeyLen}));
+  } else if (!last.empty()) {
+    TRY_STATUS(db_->set(td::Slice{cursor_key, kMetaKeyLen}, td::Slice{last}));
+  }
+  return out;
+}
+
+namespace {
+
+constexpr uint8_t kPendingBlockVersion = 1;
+constexpr size_t kPendingEntryLen = 1 + 32 + 1;
+
+std::string encode_pending_block(const WalletIndexDb::PendingBlock& pending) {
+  std::string value(1 + 8, '\0');
+  value[0] = static_cast<char>(kPendingBlockVersion);
+  put_u64_be(&value[1], pending.end_lt);
+  for (const auto& entry : pending.remaining) {
+    char item[kPendingEntryLen];
+    item[0] = static_cast<char>(entry.candidate.kind);
+    std::memcpy(item + 1, entry.candidate.address.data(), 32);
+    item[1 + 32] = static_cast<char>(entry.attempts);
+    value.append(item, kPendingEntryLen);
+  }
+  return value;
+}
+
+td::Result<WalletIndexDb::PendingBlock> decode_pending_block(td::Slice value) {
+  if (value.size() < 1 + 8 || static_cast<uint8_t>(value[0]) != kPendingBlockVersion ||
+      (value.size() - 1 - 8) % kPendingEntryLen != 0) {
+    return td::Status::Error("wc0-index: malformed pending-block record");
+  }
+  WalletIndexDb::PendingBlock pending;
+  pending.end_lt = get_u64_be(value.data() + 1);
+  for (size_t at = 1 + 8; at < value.size(); at += kPendingEntryLen) {
+    auto kind = static_cast<uint8_t>(value[at]);
+    if (kind != static_cast<uint8_t>(TokenKind::Jetton) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
+      return td::Status::Error("wc0-index: unknown token kind in pending-block record");
+    }
+    TokenCandidate candidate{static_cast<TokenKind>(kind), HashKey{}};
+    std::memcpy(candidate.address.data(), value.data() + at + 1, 32);
+    pending.remaining.push_back(
+        ScheduledTokenCandidate{candidate, static_cast<uint8_t>(value[at + 1 + 32]), pending.end_lt});
+  }
+  return pending;
+}
+
+}  // namespace
+
+td::Status WalletIndexDb::put_pending_block(const tos::BlockIdExt& block_id, const PendingBlock& pending) {
   char key[kIncompleteBlockKeyLen];
   make_block_key(kPendingBlockTag, block_id, key);
-  auto value = encode_candidate(resume_from);
+  std::string existing;
+  TRY_RESULT(status, db_->get(td::Slice{key, kIncompleteBlockKeyLen}, existing));
+  if (status != td::KeyValue::GetStatus::Ok) {
+    TRY_RESULT(count, get_meta_u64(kMetaPendingBlocksSub));
+    TRY_STATUS(put_meta_u64(kMetaPendingBlocksSub, saturating_add(count, 1)));
+  }
+  auto value = encode_pending_block(pending);
   return db_->set(td::Slice{key, kIncompleteBlockKeyLen}, td::Slice{value});
 }
 
-td::Result<td::optional<TokenCandidate>> WalletIndexDb::get_pending_block(const tos::BlockIdExt& block_id) {
+td::Result<td::optional<WalletIndexDb::PendingBlock>> WalletIndexDb::get_pending_block(
+    const tos::BlockIdExt& block_id) {
   char key[kIncompleteBlockKeyLen];
   make_block_key(kPendingBlockTag, block_id, key);
   std::string value;
   TRY_RESULT(status, db_->get(td::Slice{key, kIncompleteBlockKeyLen}, value));
   if (status != td::KeyValue::GetStatus::Ok) {
-    return td::optional<TokenCandidate>{};
+    return td::optional<PendingBlock>{};
   }
-  auto candidate = decode_candidate(value);
-  if (candidate.is_error()) {
-    // Resume from the very start: a candidate handled twice is harmless.
-    LOG(ERROR) << "wc0-index: " << candidate.error().message() << "; resuming block " << block_id.id.to_str()
-               << " from its first candidate";
-    return td::optional<TokenCandidate>(TokenCandidate{TokenKind::Jetton, HashKey::zero()});
-  }
-  return td::optional<TokenCandidate>(candidate.move_as_ok());
+  TRY_RESULT(pending, decode_pending_block(value));
+  return td::optional<PendingBlock>(std::move(pending));
 }
 
 td::Status WalletIndexDb::delete_pending_block(const tos::BlockIdExt& block_id) {
   char key[kIncompleteBlockKeyLen];
   make_block_key(kPendingBlockTag, block_id, key);
+  std::string existing;
+  TRY_RESULT(status, db_->get(td::Slice{key, kIncompleteBlockKeyLen}, existing));
+  if (status == td::KeyValue::GetStatus::Ok) {
+    TRY_RESULT(count, get_meta_u64(kMetaPendingBlocksSub));
+    TRY_STATUS(put_meta_u64(kMetaPendingBlocksSub, count > 0 ? count - 1 : 0));
+  }
   return db_->erase(td::Slice{key, kIncompleteBlockKeyLen});
 }
 
 td::Status WalletIndexDb::for_each_pending_block(
-    size_t limit, std::function<td::Status(const tos::BlockIdExt&, const TokenCandidate&)> cb) {
+    size_t limit, std::function<td::Status(const tos::BlockIdExt&, const PendingBlock&)> cb) {
   const char begin[1] = {static_cast<char>(kPendingBlockTag)};
   const char end[1] = {static_cast<char>(kPendingBlockTag + 1)};
   size_t seen = 0;
@@ -1985,11 +2131,37 @@ td::Status WalletIndexDb::for_each_pending_block(
           LOG(WARNING) << "wc0-index: skipping a malformed pending-block key";
           return td::Status::OK();
         }
-        auto candidate = decode_candidate(value);
-        return cb(parse_block_key(key),
-                  candidate.is_ok() ? candidate.ok() : TokenCandidate{TokenKind::Jetton, HashKey::zero()});
+        auto pending = decode_pending_block(value);
+        if (pending.is_error()) {
+          // Its block keeps its incomplete marker: the index stays
+          // incomplete, and nothing is claimed about the lost candidates.
+          LOG(ERROR) << "wc0-index: " << pending.error().message();
+          return td::Status::OK();
+        }
+        return cb(parse_block_key(key), pending.ok());
       });
   return limit_reached ? td::Status::OK() : std::move(status);
+}
+
+td::optional<HashKey> WalletIndexDb::first_parked_address() {
+  const char begin[1] = {static_cast<char>(kTokenParkedTag)};
+  const char end[1] = {static_cast<char>(kTokenParkedTag + 1)};
+  td::optional<HashKey> found;
+  db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1},
+                         [&](td::Slice key, td::Slice) {
+                           if (key.size() == kTokenIndexKeyLen) {
+                             HashKey address;
+                             std::memcpy(address.data(), key.data() + 2, 32);
+                             found = address;
+                           }
+                           return td::Status::Error("wc0-index: one is enough");
+                         })
+      .ignore();
+  return found;
+}
+
+td::Result<uint64_t> WalletIndexDb::pending_block_count() {
+  return get_meta_u64(kMetaPendingBlocksSub);
 }
 
 td::Result<bool> WalletIndexDb::has_jetton_wallet_record(const HashKey& wallet) {

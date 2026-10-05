@@ -84,13 +84,15 @@ truth.
 
 - **Token candidates are never dropped for lack of room.** Candidates a block
   cannot verify at once wait in a bounded backlog (`pending`). When the
-  backlog is full, the block stays unfinished (`unfinished_block`) with the
-  point to resume from, and the indexing worker drains the backlog and
-  resumes the block by itself, also after a restart and with no new block
-  arriving. A candidate whose verification stays indeterminate through every
-  attempt is `parked`: it is kept and verified again when a block nominates
-  it. Any of these keeps `"complete": false`.
-
+  backlog is full, the rest of the block's candidates are stored with the
+  block, which stays unfinished (`unfinished_block`); the indexing worker
+  verifies them by itself, against the newest state the node has, also after
+  a restart, with no new block arriving, and however far the archive has been
+  pruned meanwhile. At most 1024 blocks can be unfinished this way; past that
+  the worker finishes them before indexing more. A candidate whose
+  verification stays indeterminate through every attempt is `parked`: it is
+  kept, retried by the worker in bounded rounds against the newest state, and
+  released only on a definite result. Any of these keeps `"complete": false`.
 - **Jetton rows from older index versions are not served until verified.**
   An index upgraded from a version that kept no pair record per jetton row
   may hold owner/master mappings that have since changed. Those rows are left

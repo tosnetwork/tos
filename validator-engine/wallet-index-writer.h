@@ -113,6 +113,19 @@ using Wc0IndexBlockFetcher = std::function<void(const tos::BlockIdExt& block_id,
 // over without its data stays marked for recovery.
 void set_wc0_index_block_fetcher(Wc0IndexBlockFetcher fetcher);
 
+// The newest state of the shard holding an address, for the indexing worker
+// to verify waiting candidates against when no block it indexed gives a new
+// enough state (after a restart, with no new block). Same contract as the
+// block fetcher.
+struct Wc0NewestState {
+  tos::BlockIdExt block_id;
+  uint64_t end_lt = 0;
+  td::Ref<vm::Cell> state_root;
+};
+using Wc0IndexStateFetcher =
+    std::function<void(const td::Bits256& address, std::function<void(td::Result<Wc0NewestState>)> done)>;
+void set_wc0_index_state_fetcher(Wc0IndexStateFetcher fetcher);
+
 // Start indexing for this run. Call once, before installing
 // enqueue_wc0_index_block as the block-apply hook, and only install it when
 // this returns true. It needs the index open (wallet_index_db()). A previous
@@ -141,9 +154,11 @@ enum class Wc0IndexProducers { MayStillApply, Quiesced };
 // nothing was lost, no block arrived after the queue was closed, and the
 // record itself was written; true is returned then. Otherwise the run stays
 // recorded as active and the next start reports that the index needs a
-// rebuild. A block that still arrives after the run was recorded as finished
-// makes the recorder (or, failing that, stop_wc0_index_worker) record the run
-// as active again.
+// rebuild. Crash safety after the run is recorded as finished rests on the
+// caller's Quiesced claim being true: no block may be applied any more. A
+// block that still arrives makes the recorder record the run as active again
+// before marking it, but that is a defence only; a crash before the recorder
+// runs leaves no trace of the block.
 bool flush_wc0_index_for_exit(Wc0IndexProducers producers,
                               std::chrono::milliseconds limit = std::chrono::milliseconds(2000));
 // Stop it: a block being fetched is abandoned, the block in hand is
@@ -168,6 +183,10 @@ void set_wc0_index_marking_fault_for_testing(bool fail);
 // Tests only: hold the recorder's writes until released, as a stalled disk
 // would.
 void set_wc0_index_marking_stall_for_testing(bool stall);
+// Tests only: how long the worker waits between rounds of parked retries.
+void set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds pause);
+// Tests only: lower how many unfinished blocks the index may hold.
+void set_wc0_index_pending_block_limit_for_testing(uint64_t limit);
 // Tests only: shorten how long the worker waits for fetched block data.
 void set_wc0_index_fetch_timeout_for_testing(std::chrono::milliseconds limit);
 

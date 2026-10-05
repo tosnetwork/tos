@@ -1316,8 +1316,13 @@ struct Wc0IndexFetchMailbox {
     bool need_state;
     std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done;
   };
+  struct StateRequest {
+    td::Bits256 address;
+    std::function<void(td::Result<tos_wallet_index::Wc0NewestState>)> done;
+  };
   std::mutex mutex;
   std::deque<Request> requests;
+  std::deque<StateRequest> state_requests;
 };
 
 // Reads the block data (and state) the wallet-index worker asks for from the
@@ -1335,12 +1340,17 @@ class Wc0IndexBlockFetchActor : public td::actor::Actor {
 
   void alarm() override {
     std::deque<Wc0IndexFetchMailbox::Request> requests;
+    std::deque<Wc0IndexFetchMailbox::StateRequest> state_requests;
     {
       std::lock_guard<std::mutex> guard(mailbox_->mutex);
       requests.swap(mailbox_->requests);
+      state_requests.swap(mailbox_->state_requests);
     }
     for (auto &request : requests) {
       fetch(std::move(request));
+    }
+    for (auto &request : state_requests) {
+      fetch_newest_state(std::move(request));
     }
     alarm_timestamp() = td::Timestamp::in(kPollInterval);
   }
@@ -1388,6 +1398,50 @@ class Wc0IndexBlockFetchActor : public td::actor::Actor {
                         fetched.state_root = R3.ok()->root_cell();
                       }
                       done(std::move(fetched));
+                    });
+              });
+        });
+  }
+
+  // The newest committed state of the basechain shard holding the address:
+  // the top block of that shard in the newest masterchain state, which the
+  // node keeps however far archive pruning has gone.
+  void fetch_newest_state(Wc0IndexFetchMailbox::StateRequest request) {
+    auto manager = manager_;
+    auto address = request.address;
+    auto done = std::move(request.done);
+    td::actor::send_closure(
+        manager, &tos::validator::ValidatorManagerInterface::get_top_masterchain_state,
+        [manager, address, done = std::move(done)](td::Result<td::Ref<tos::validator::MasterchainState>> R) mutable {
+          if (R.is_error() || R.ok().is_null()) {
+            done(td::Status::Error("no masterchain state"));
+            return;
+          }
+          // The deepest possible shard of the address; the configuration
+          // answers with the shard that holds it.
+          tos::ShardIdFull leaf{0, tos::extract_top64(address) | 1};
+          auto shard = R.ok()->get_shard_from_config(leaf, false);
+          if (shard.is_null()) {
+            done(td::Status::Error("no basechain shard holds the address"));
+            return;
+          }
+          auto top = shard->top_block_id();
+          auto end_lt = shard->end_lt();
+          td::actor::send_closure(
+              manager, &tos::validator::ValidatorManagerInterface::get_block_handle, top, false,
+              [manager, top, end_lt, done = std::move(done)](td::Result<tos::validator::BlockHandle> R2) mutable {
+                if (R2.is_error()) {
+                  done(R2.move_as_error_prefix("block handle: "));
+                  return;
+                }
+                td::actor::send_closure(
+                    manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, R2.move_as_ok(),
+                    [top, end_lt, done = std::move(done)](td::Result<td::Ref<tos::validator::ShardState>> R3) mutable {
+                      if (R3.is_error() || R3.ok().is_null()) {
+                        done(td::Status::Error("the newest shard state is not available"));
+                        return;
+                      }
+                      done(tos_wallet_index::Wc0NewestState{top, end_lt, R3.ok()->root_cell()});
                     });
               });
         });
@@ -2497,6 +2551,12 @@ void ValidatorEngine::start_validator() {
                     std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
             std::lock_guard<std::mutex> guard(mailbox->mutex);
             mailbox->requests.push_back({block_id, need_state, std::move(done)});
+          });
+      tos_wallet_index::set_wc0_index_state_fetcher(
+          [mailbox](const td::Bits256 &address,
+                    std::function<void(td::Result<tos_wallet_index::Wc0NewestState>)> done) {
+            std::lock_guard<std::mutex> guard(mailbox->mutex);
+            mailbox->state_requests.push_back({address, std::move(done)});
           });
     }
     recover_wc0_index();
@@ -7230,12 +7290,17 @@ int main(int argc, char *argv[]) {
 
   // Stop the indexing worker while the index it writes to still exists;
   // blocks it did not reach stay marked for the next start.
-  // The scheduler has stopped, so no block-apply actor runs any more.
+  // The scheduler has stopped, so no block-apply actor runs any more. This is
+  // what makes clearing the run marker crash-safe: the index relies on
+  // producers being genuinely quiesced here. Its re-recording of the run
+  // after an unexpected late block is a defence, not a substitute; a crash
+  // before the recorder gets to it would lose that block's trace.
   tos::validator::g_wc0_block_index_hook = nullptr;
   if (!tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::Quiesced)) {
     LOG(ERROR) << "wc0-index: indexing did not finish cleanly; the next start reports that the index needs a rebuild";
   }
   tos_wallet_index::stop_wc0_index_worker();
   tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
   return 0;
 }
