@@ -2212,6 +2212,49 @@ void ValidatorEngine::got_key(tos::PublicKey key) {
 }
 
 void ValidatorEngine::start() {
+  check_full_node_master_and_slave_config();
+}
+
+// The full-node master service is allowlist-only, and a slave must sign in to
+// its masters with its full-node key. Both are checked before the node starts
+// anything, so a configuration that could never be served fails at once
+// rather than after the node has started syncing.
+void ValidatorEngine::check_full_node_master_and_slave_config() {
+  if (!config_.full_node_masters.empty()) {
+    auto S = tos::validator::fullnode::FullNodeMasterLimiter::check_trusted(full_node_master_trusted_);
+    if (S.is_error()) {
+      LOG(ERROR) << "refusing to start the full-node master: " << S;
+      std::_Exit(2);
+    }
+  }
+  if (config_.full_node_slaves.empty()) {
+    start_after_config_checks();
+    return;
+  }
+  auto full_node_id = tos::adnl::AdnlNodeIdShort{config_.full_node};
+  auto S = tos::validator::fullnode::check_full_node_slave_id(full_node_id);
+  if (S.is_error()) {
+    LOG(ERROR) << "refusing to start the full-node slave: " << S;
+    std::_Exit(2);
+  }
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), full_node_id](td::Result<tos::PrivateKey> R) {
+    auto key = tos::validator::fullnode::full_node_slave_sign_in_key(full_node_id, std::move(R));
+    if (key.is_error()) {
+      LOG(ERROR) << "refusing to start the full-node slave: " << key.move_as_error();
+      std::_Exit(2);
+    }
+    td::actor::send_closure(SelfId, &ValidatorEngine::loaded_full_node_slave_key, key.move_as_ok());
+  });
+  td::actor::send_closure(keyring_, &tos::keyring::Keyring::export_private_key, full_node_id.pubkey_hash(),
+                          std::move(P));
+}
+
+void ValidatorEngine::loaded_full_node_slave_key(tos::PrivateKey key) {
+  full_node_slave_key_ = std::move(key);
+  start_after_config_checks();
+}
+
+void ValidatorEngine::start_after_config_checks() {
   set_shard_check_function();
   load_collators_list();
   load_shard_block_verifier_config();
@@ -2580,45 +2623,20 @@ void ValidatorEngine::started_validator() {
 }
 
 void ValidatorEngine::start_full_node() {
-  if (!config_.full_node.is_zero() || !config_.full_node_slaves.empty()) {
-    full_node_id_ = tos::adnl::AdnlNodeIdShort{config_.full_node};
-    if (config_.full_node_slaves.size() > 0) {
-      // A slave signs in to its masters with the full node's ADNL key, so a
-      // master can admit it as one stable authenticated identity (see
-      // --full-node-master-trusted) instead of a fresh random key per
-      // connection.
-      if (full_node_id_.is_zero()) {
-        LOG(WARNING) << "full-node slave mode without a full-node ADNL id: connections to masters are anonymous, "
-                        "so no master can admit this slave as trusted and its reserved service does not apply";
-        start_full_node_with_slave_key(tos::PrivateKey{});
-        return;
-      }
-      auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<tos::PrivateKey> R) {
-        tos::PrivateKey key;
-        if (R.is_ok()) {
-          key = R.move_as_ok();
-        } else {
-          // Falling back keeps the slave running, but anonymously: masters
-          // then treat it as a public source, without its reserved share.
-          LOG(ERROR) << "cannot load the full-node ADNL key for signing in to masters, connecting anonymously; "
-                        "masters will not admit this slave as trusted: "
-                     << R.move_as_error();
-        }
-        td::actor::send_closure(SelfId, &ValidatorEngine::start_full_node_with_slave_key, std::move(key));
-      });
-      td::actor::send_closure(keyring_, &tos::keyring::Keyring::export_private_key, full_node_id_.pubkey_hash(),
-                              std::move(P));
-      return;
-    }
-    start_full_node_with_slave_key(tos::PrivateKey{});
-  } else {
+  if (config_.full_node.is_zero() && config_.full_node_slaves.empty()) {
     started_full_node();
+    return;
   }
-}
-
-// An empty slave_key makes slave connections sign in with a fresh random key.
-void ValidatorEngine::start_full_node_with_slave_key(tos::PrivateKey slave_key) {
+  full_node_id_ = tos::adnl::AdnlNodeIdShort{config_.full_node};
   if (config_.full_node_slaves.size() > 0) {
+    // A slave signs in to its masters with the full node's ADNL key, loaded
+    // and checked at startup, so a master recognises it as one stable
+    // authenticated identity (see --full-node-master-trusted). Masters refuse
+    // anything else, so there is no anonymous fallback.
+    if (full_node_slave_key_.empty()) {
+      LOG(ERROR) << "refusing to start the full-node slave: its sign-in key was not loaded";
+      std::_Exit(2);
+    }
     std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
     for (auto &x : config_.full_node_slaves) {
       vec.emplace_back(tos::adnl::AdnlNodeIdFull{x.key}, x.addr);
@@ -2631,7 +2649,7 @@ void ValidatorEngine::start_full_node_with_slave_key(tos::PrivateKey slave_key) 
       }
     };
     full_node_client_ =
-        tos::adnl::AdnlExtMultiClient::create(std::move(vec), std::move(slave_key), std::make_unique<Cb>());
+        tos::adnl::AdnlExtMultiClient::create(std::move(vec), full_node_slave_key_, std::make_unique<Cb>());
   }
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
     R.ensure();
@@ -2771,19 +2789,16 @@ void ValidatorEngine::start_full_node_masters() {
           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
               .count());
     };
+    // An empty trusted set was already refused at startup; create() refuses
+    // it again so no path can start an open master.
     auto R = tos::validator::fullnode::FullNodeMasterLimiter::create(full_node_master_trusted_, clock);
     if (R.is_error()) {
-      LOG(ERROR) << "invalid full-node master trusted set: " << R.move_as_error();
+      LOG(ERROR) << "refusing to start the full-node master: " << R.move_as_error();
       std::_Exit(2);
     }
     full_node_master_limiter_ = std::shared_ptr<tos::validator::fullnode::FullNodeMasterLimiter>(R.move_as_ok());
-    if (full_node_master_trusted_.empty()) {
-      LOG(WARNING) << "full-node master runs without --full-node-master-trusted: every source shares the public "
-                      "request budget, so there is no Sybil-resistant availability guarantee for slaves";
-    } else {
-      LOG(INFO) << "full-node master reserves half of its request budget for " << full_node_master_trusted_.size()
-                << " trusted slave id(s)";
-    }
+    LOG(INFO) << "full-node master serves " << full_node_master_trusted_.size()
+              << " trusted slave id(s) only, each with an equal share of its request budget";
   }
   for (auto &x : config_.full_node_masters) {
     full_node_masters_.emplace(static_cast<td::uint16>(x.first),
@@ -6581,11 +6596,12 @@ int main(int argc, char *argv[]) {
       });
   p.add_checked_option(
       '\0', "full-node-master-trusted",
-      "full-node slave ADNL id (hex) for which a full-node master reserves an equal share of half its request budget; "
-      "repeatable, at most 8. Read once at startup: changing the set needs a restart. A slave is recognised only "
-      "while it signs in with the full-node ADNL key of that id; if the slave cannot load that key it connects "
-      "anonymously and gets no reserved share, and a slave whose full-node ADNL id changes must be restarted to "
-      "sign in with the new key",
+      "full-node slave ADNL id (hex) that a full-node master serves; repeatable, at most 8. The master service is "
+      "allowlist-only: it serves these ids and refuses every other source, each id gets an equal share of the "
+      "request budget, and a node configured as a master with none of these ids refuses to start. Read once at "
+      "startup: changing the set needs a restart. A slave is recognised only while it signs in with the full-node "
+      "ADNL key of that id; a slave that cannot load that key refuses to start, and a slave whose full-node ADNL id "
+      "changes must be restarted to sign in with the new key",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(id, parse_adnl_id_hex(s));
         full_node_master_trusted.insert(id);

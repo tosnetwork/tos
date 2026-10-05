@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "td/utils/tests.h"
@@ -394,11 +395,12 @@ TEST(SourceAwareRateLimiter, TrackedSourcesStayBoundedBySprayedIdentities) {
 }
 
 // ---------------------------------------------------------------------------
-// Full-node master admission with reserved capacity for trusted slaves.
+// Full-node master admission: allowlist-only, an equal share per slave.
 
 namespace {
 
 using MasterLimiter = tos::validator::fullnode::MasterIngressLimiter<int>;
+using tos::validator::fullnode::MasterAdmission;
 
 struct FakeClock {
   std::shared_ptr<td::uint64> ms = std::make_shared<td::uint64>(1000000);
@@ -416,20 +418,35 @@ std::unique_ptr<MasterLimiter> make_master(std::set<int> trusted, const FakeCloc
   return R.move_as_ok();
 }
 
+std::set<int> trusted_ids(int count) {
+  std::set<int> ids;
+  for (int i = 1; i <= count; i++) {
+    ids.insert(i);
+  }
+  return ids;
+}
+
+bool admitted(MasterLimiter &limiter, int source) {
+  return limiter.try_acquire(source) == MasterAdmission::Admitted;
+}
+
 constexpr int k_trusted = 1;
 constexpr int k_trusted_b = 2;
 constexpr int k_trusted_c = 3;
 
-// Hostile identities all ask once, ahead of anyone else at this instant: the
-// arrival order that leaves the least for an honest requester.
+// Unlisted identities all ask once, ahead of anyone else at this instant: the
+// arrival order that would leave the least for a slave if they shared its
+// budget. Every one of them must be refused as unlisted.
 size_t hostile_round(MasterLimiter &limiter, int identities) {
-  size_t admitted = 0;
+  size_t served = 0;
   for (int h = 0; h < identities; h++) {
-    if (limiter.try_acquire(10000 + h)) {
-      admitted++;
+    auto admission = limiter.try_acquire(10000 + h);
+    CHECK(admission == MasterAdmission::NotListed);
+    if (admission == MasterAdmission::Admitted) {
+      served++;
     }
   }
-  return admitted;
+  return served;
 }
 
 struct InterleaveResult {
@@ -447,7 +464,7 @@ InterleaveResult interleave(MasterLimiter &limiter, FakeClock &clock, int hostil
     r.hostile += hostile_round(limiter, hostiles);
     if (ms % period_ms == 0) {
       r.sent++;
-      if (limiter.try_acquire(requester)) {
+      if (admitted(limiter, requester)) {
         r.admitted++;
       }
     }
@@ -457,90 +474,106 @@ InterleaveResult interleave(MasterLimiter &limiter, FakeClock &clock, int hostil
   return r;
 }
 
+// Flood every listed identity, in the given order, every millisecond from
+// the start instant up to and including `ms_total` later; return what each
+// one was granted.
+std::vector<size_t> flood(MasterLimiter &limiter, FakeClock &clock, const std::vector<int> &order, td::uint64 ms_total,
+                          int hostiles) {
+  std::vector<size_t> granted(order.size(), 0);
+  for (td::uint64 ms = 0; ms <= ms_total; ms++) {
+    hostile_round(limiter, hostiles);
+    for (size_t i = 0; i < order.size(); i++) {
+      while (granted[i] < 100000 && admitted(limiter, order[i])) {
+        granted[i]++;
+      }
+    }
+    if (ms < ms_total) {
+      clock.advance(1);
+    }
+  }
+  return granted;
+}
+
 }  // namespace
+
+TEST(MasterIngressLimiter, EmptyAllowlistIsRefused) {
+  // A master with no configured slave is a configuration error, not an open
+  // service: there is no public budget to fall back to.
+  FakeClock clock;
+  auto R = MasterLimiter::create({}, clock.clock());
+  ASSERT_TRUE(R.is_error());
+  ASSERT_TRUE(R.error().message().str().find("allowlist-only") != std::string::npos);
+  ASSERT_TRUE(MasterLimiter::check_trusted({}).is_error());
+  ASSERT_TRUE(MasterLimiter::check_trusted({k_trusted}).is_ok());
+}
+
+TEST(MasterIngressLimiter, UnlistedSourcesAreRefusedWithoutBeingCharged) {
+  FakeClock clock;
+  auto limiter = make_master({k_trusted}, clock);
+  // A flood of unlisted identities at a frozen clock is refused as unlisted,
+  // not as rate limited, and leaves the slave's whole burst in place.
+  for (int round = 0; round < 100; round++) {
+    ASSERT_EQ(0u, hostile_round(*limiter, 1000));
+  }
+  size_t burst = 0;
+  while (burst < 64 && admitted(*limiter, k_trusted)) {
+    burst++;
+  }
+  ASSERT_EQ(MasterLimiter::kBurst, burst);
+  ASSERT_TRUE(limiter->try_acquire(k_trusted) == MasterAdmission::RateLimited);
+  // Still unlisted, not rate limited, once the slave's bucket is empty.
+  ASSERT_TRUE(limiter->try_acquire(10000) == MasterAdmission::NotListed);
+}
 
 TEST(MasterIngressLimiter, TrustedSlaveKeepsItsShareAgainstFourHostileIdentities) {
   FakeClock clock;
   auto limiter = make_master({k_trusted}, clock);
-  // 60 s; the trusted slave asks at exactly its reserved rate (2 per second).
-  auto r = interleave(*limiter, clock, 4, k_trusted, 500, 60000);
-  ASSERT_EQ(120u, r.sent);
+  // 60 s; the only slave asks at exactly the whole service rate (4 per second).
+  auto r = interleave(*limiter, clock, 4, k_trusted, 250, 60000);
+  ASSERT_EQ(240u, r.sent);
   ASSERT_EQ(r.sent, r.admitted);
-  // The hostile identities are held to the public half: 8 burst + 2 per second.
-  ASSERT_TRUE(r.hostile <= 8 + 2 * 60);
-  ASSERT_TRUE(r.hostile >= 2 * 60);
-  // The aggregate ceiling holds: 16 burst + 4 per second.
-  ASSERT_TRUE(r.hostile + r.admitted <= 16 + 4 * 60);
+  ASSERT_EQ(0u, r.hostile);
 }
 
 TEST(MasterIngressLimiter, TrustedSlaveKeepsItsShareAgainstManyHostileIdentities) {
   FakeClock clock;
-  auto limiter = make_master({k_trusted}, clock);
+  auto limiter = make_master({k_trusted, k_trusted_b}, clock);
+  // Two slaves: each owns 2 requests per second; this one asks at that rate.
   auto r = interleave(*limiter, clock, 64, k_trusted, 500, 30000);
+  ASSERT_EQ(60u, r.sent);
   ASSERT_EQ(r.sent, r.admitted);
-  ASSERT_TRUE(r.hostile <= 8 + 2 * 30);
-}
-
-TEST(MasterIngressLimiter, WithoutAllowlistManyIdentitiesStarveAnyoneElse) {
-  // The same traffic with no trusted set: the unprotected mode the startup
-  // warning describes. Service stays bounded but nobody is guaranteed any.
-  FakeClock clock;
-  auto limiter = make_master({}, clock);
-  auto r = interleave(*limiter, clock, 64, k_trusted, 500, 30000);
-  ASSERT_TRUE(r.admitted * 4 < r.sent);
-  ASSERT_TRUE(r.hostile + r.admitted <= 16 + 4 * 30);
+  ASSERT_EQ(0u, r.hostile);
 }
 
 TEST(MasterIngressLimiter, TrustedSlaveBurstSurvivesHostileTrafficArrivingFirst) {
   FakeClock clock;
-  auto limiter = make_master({k_trusted}, clock);
-  // Hostiles saturate the public half for ten seconds while the slave idles.
+  auto limiter = make_master({k_trusted, k_trusted_b}, clock);
+  // Unlisted identities flood for ten seconds while the slaves idle.
   for (td::uint64 ms = 0; ms < 10000; ms++) {
     hostile_round(*limiter, 4);
     clock.advance(1);
   }
   hostile_round(*limiter, 4);
   size_t burst = 0;
-  while (burst < 64 && limiter->try_acquire(k_trusted)) {
+  while (burst < 64 && admitted(*limiter, k_trusted)) {
     burst++;
   }
-  ASSERT_EQ(8u, burst);
+  ASSERT_EQ(MasterLimiter::kBurst / 2, burst);
 }
 
-TEST(MasterIngressLimiter, WithoutAllowlistPublicGetsTheWholeCeiling) {
+TEST(MasterIngressLimiter, ASlaveThatSpentItsShareHasNoFallback) {
   FakeClock clock;
-  auto limiter = make_master({}, clock);
-  ASSERT_EQ(16u, hostile_round(*limiter, 100));
-  clock.advance(1000);
-  size_t admitted = 0;
-  for (int source = 2000; source < 2100; source++) {
-    admitted += limiter->try_acquire(source) ? 1 : 0;
+  auto limiter = make_master({k_trusted, k_trusted_b}, clock);
+  for (td::uint64 i = 0; i < MasterLimiter::kBurst / 2; i++) {
+    ASSERT_TRUE(admitted(*limiter, k_trusted));
   }
-  ASSERT_EQ(4u, admitted);
-}
-
-TEST(MasterIngressLimiter, PublicSourcesShareOnlyThePublicHalf) {
-  FakeClock clock;
-  auto limiter = make_master({k_trusted}, clock);
-  ASSERT_EQ(8u, hostile_round(*limiter, 100));
-  // One public source is held to its own bucket of 1 per second.
-  clock.advance(1000);
-  ASSERT_TRUE(limiter->try_acquire(5000));
-  ASSERT_TRUE(!limiter->try_acquire(5000));
-}
-
-TEST(MasterIngressLimiter, TrustedFallbackKeepsThePerSourceLimit) {
-  FakeClock clock;
-  auto limiter = make_master({k_trusted}, clock);
-  // The slave spends its own share of 8...
-  for (int i = 0; i < 8; i++) {
-    ASSERT_TRUE(limiter->try_acquire(k_trusted));
+  // No public half to fall back to: the next request is refused although the
+  // other slave's bucket is still full.
+  ASSERT_TRUE(limiter->try_acquire(k_trusted) == MasterAdmission::RateLimited);
+  for (td::uint64 i = 0; i < MasterLimiter::kBurst / 2; i++) {
+    ASSERT_TRUE(admitted(*limiter, k_trusted_b));
   }
-  // ...then falls back to the public half like any other source: one request
-  // from its per-source bucket, although the public bucket still holds 8.
-  ASSERT_TRUE(limiter->try_acquire(k_trusted));
-  ASSERT_TRUE(!limiter->try_acquire(k_trusted));
-  ASSERT_EQ(7u, hostile_round(*limiter, 100));
+  ASSERT_TRUE(limiter->try_acquire(k_trusted_b) == MasterAdmission::RateLimited);
 }
 
 TEST(MasterIngressLimiter, OneTrustedSlaveCannotDrainAnother) {
@@ -551,134 +584,81 @@ TEST(MasterIngressLimiter, OneTrustedSlaveCannotDrainAnother) {
   for (td::uint64 ms = 0; ms < 30000; ms++) {
     hostile_round(*limiter, 4);
     // Slave A asks every millisecond, ahead of slave B.
-    limiter->try_acquire(k_trusted);
-    if (ms % 1000 == 0) {
+    admitted(*limiter, k_trusted);
+    if (ms % 500 == 0) {
       b_sent++;
-      b_ok += limiter->try_acquire(k_trusted_b) ? 1 : 0;
+      b_ok += admitted(*limiter, k_trusted_b) ? 1 : 0;
     }
     clock.advance(1);
   }
-  // B's share is 1 per second; asking at that rate it is never refused.
-  ASSERT_EQ(30u, b_sent);
+  // B's share is 2 per second; asking at that rate it is never refused.
+  ASSERT_EQ(60u, b_sent);
   ASSERT_EQ(b_sent, b_ok);
 }
 
-TEST(MasterIngressLimiter, EveryoneFloodingStaysUnderTheAggregateCeiling) {
-  FakeClock clock;
-  std::set<int> trusted;
-  for (int i = 1; i <= 8; i++) {
-    trusted.insert(i);
-  }
-  auto limiter = make_master(trusted, clock);
-  size_t admitted = 0;
-  for (td::uint64 ms = 0; ms < 20000; ms++) {
-    admitted += hostile_round(*limiter, 64);
-    for (int id : trusted) {
-      while (limiter->try_acquire(id)) {
-        admitted++;
-      }
+TEST(MasterIngressLimiter, EachIdentityGetsExactlyAnEqualShareOfTheUnchangedCeiling) {
+  // For every allowlist size, flooding identities for 60 s get exactly
+  // (burst + 60 * rate) / n requests each, whichever identity asks first, and
+  // together never more than the aggregate ceiling of 16 + 4 per second.
+  constexpr td::uint64 kSeconds = 60;
+  constexpr td::uint64 kCeiling = MasterLimiter::kBurst + MasterLimiter::kPerSecond * kSeconds;
+  static_assert(kCeiling == 256, "the aggregate ceiling is 16 burst and 4 per second");
+  for (int n = 1; n <= static_cast<int>(MasterLimiter::kMaxTrusted); n++) {
+    FakeClock clock;
+    auto limiter = make_master(trusted_ids(n), clock);
+    ASSERT_EQ(MasterLimiter::kBurst * MasterLimiter::kUnit, limiter->share_burst_units() * n);
+    ASSERT_EQ(MasterLimiter::kPerSecond * MasterLimiter::kUnit / 1000, limiter->share_per_ms_units() * n);
+    std::vector<int> order;
+    for (int id = n; id >= 1; id--) {
+      order.push_back(id);
     }
-    clock.advance(1);
+    auto granted = flood(*limiter, clock, order, kSeconds * 1000, 64);
+    size_t total = 0;
+    for (size_t g : granted) {
+      ASSERT_EQ(kCeiling / n, g);
+      total += g;
+    }
+    ASSERT_TRUE(total <= kCeiling);
+    // Only the fractional remainder of each share is left unserved.
+    ASSERT_TRUE(total + n > kCeiling);
+    if (kCeiling % n == 0) {
+      ASSERT_EQ(kCeiling, total);
+    }
   }
-  ASSERT_TRUE(admitted <= 16 + 4 * 20);
-  ASSERT_TRUE(admitted >= 4 * 20);
 }
 
 TEST(MasterIngressLimiter, SharesAreFractional) {
-  // Three trusted slaves split 8 burst and 2 per second: 8/3 burst and 2/3 per
-  // second each. Whole-token arithmetic would round that to 2 and 0.
+  // Three slaves split 16 burst and 4 per second: 16/3 burst and 4/3 per
+  // second each. Whole-token arithmetic would round that to 5 and 1.
   FakeClock clock;
   auto limiter = make_master({k_trusted, k_trusted_b, k_trusted_c}, clock);
-  // Drain the public half so only the reserved share answers.
-  for (int i = 0; i < 2000; i++) {
-    hostile_round(*limiter, 64);
-    clock.advance(1);
-  }
   std::vector<td::uint64> admitted_at;
   for (td::uint64 ms = 0; ms <= 3600; ms++) {
     hostile_round(*limiter, 64);
-    while (admitted_at.size() < 64 && limiter->try_acquire(k_trusted)) {
+    while (admitted_at.size() < 64 && admitted(*limiter, k_trusted)) {
       admitted_at.push_back(ms);
     }
     clock.advance(1);
   }
-  // Two at once from 2.67 tokens; the remaining 0.67 reaches one token after
-  // 0.5 s, and each further token takes 1.5 s.
-  ASSERT_EQ(5u, admitted_at.size());
-  ASSERT_EQ(0u, admitted_at[0]);
-  ASSERT_EQ(0u, admitted_at[1]);
-  ASSERT_EQ(500u, admitted_at[2]);
-  ASSERT_EQ(2000u, admitted_at[3]);
-  ASSERT_EQ(3500u, admitted_at[4]);
+  // Five at once from 5.33 tokens; the remaining 0.33 reaches one token after
+  // 0.5 s, and each further token takes 0.75 s.
+  ASSERT_EQ(10u, admitted_at.size());
+  for (size_t i = 0; i < 5; i++) {
+    ASSERT_EQ(0u, admitted_at[i]);
+  }
+  ASSERT_EQ(500u, admitted_at[5]);
+  ASSERT_EQ(1250u, admitted_at[6]);
+  ASSERT_EQ(2000u, admitted_at[7]);
+  ASSERT_EQ(2750u, admitted_at[8]);
+  ASSERT_EQ(3500u, admitted_at[9]);
 }
 
 TEST(MasterIngressLimiter, RefusesMoreThanEightTrustedIdentities) {
   FakeClock clock;
-  std::set<int> eight;
-  for (int i = 1; i <= 8; i++) {
-    eight.insert(i);
-  }
+  auto eight = trusted_ids(8);
   std::set<int> nine = eight;
   nine.insert(99);
   ASSERT_TRUE(MasterLimiter::create(eight, clock.clock()).is_ok());
   ASSERT_TRUE(MasterLimiter::create(nine, clock.clock()).is_error());
-  auto limiter = make_master({k_trusted}, clock);
-  ASSERT_TRUE(limiter->set_trusted(nine).is_error());
-  ASSERT_TRUE(limiter->has_trusted());
-  ASSERT_TRUE(limiter->set_trusted(eight).is_ok());
-}
-
-TEST(MasterIngressLimiter, ConfigurationChangesNeverRaiseABucket) {
-  FakeClock clock;
-  auto limiter = make_master({k_trusted}, clock);
-  // Drain the public half at this instant; the clock does not move in this
-  // test, so nothing refills.
-  ASSERT_EQ(8u, hostile_round(*limiter, 64));
-  // A holds its full reserved burst of 8. Adding B halves A's capacity: A is
-  // clamped to 4, and B starts empty.
-  ASSERT_TRUE(limiter->set_trusted({k_trusted, k_trusted_b}).is_ok());
-  size_t a = 0;
-  while (a < 64 && limiter->try_acquire(k_trusted)) {
-    a++;
-  }
-  ASSERT_EQ(4u, a);
-  ASSERT_TRUE(!limiter->try_acquire(k_trusted_b));
-  // Re-applying the configuration, or dropping and re-adding a member, does
-  // not hand out a fresh burst.
-  ASSERT_TRUE(limiter->set_trusted({k_trusted, k_trusted_b}).is_ok());
-  ASSERT_TRUE(!limiter->try_acquire(k_trusted));
-  ASSERT_TRUE(limiter->set_trusted({k_trusted_b}).is_ok());
-  ASSERT_TRUE(limiter->set_trusted({k_trusted, k_trusted_b}).is_ok());
-  ASSERT_TRUE(!limiter->try_acquire(k_trusted));
-  // Removing the allowlist widens the public bucket's capacity, not its level.
-  ASSERT_TRUE(limiter->set_trusted({}).is_ok());
-  ASSERT_TRUE(!limiter->try_acquire(7777));
-}
-
-TEST(MasterIngressLimiter, AddingAnAllowlistClampsThePublicBucket) {
-  FakeClock clock;
-  auto limiter = make_master({}, clock);
-  // The public bucket is full at 16; the allowlist halves its capacity, and
-  // the level must follow, not keep the old 16.
-  ASSERT_TRUE(limiter->set_trusted({k_trusted}).is_ok());
-  ASSERT_EQ(8u, hostile_round(*limiter, 100));
-}
-
-TEST(MasterIngressLimiter, PublicSourceTableIsBounded) {
-  FakeClock clock;
-  auto limiter = make_master({}, clock);
-  // Admit 1000 distinct sources, one every 250 ms (the public refill rate).
-  for (int source = 0; source < 1000; source++) {
-    ASSERT_TRUE(limiter->try_acquire(source));
-    clock.advance(250);
-  }
-  ASSERT_EQ(1000u, limiter->tracked_sources());
-  // The table holds only sources seen within the idle period, so a newcomer
-  // is refused even though the public bucket has tokens.
-  ASSERT_TRUE(!limiter->try_acquire(5000));
-  ASSERT_EQ(1000u, limiter->tracked_sources());
-  // Once the oldest entry has been idle long enough, it makes room for one.
-  clock.advance(MasterLimiter::kPerSourceIdleMs);
-  ASSERT_TRUE(limiter->try_acquire(5000));
-  ASSERT_EQ(1000u, limiter->tracked_sources());
+  ASSERT_TRUE(MasterLimiter::create(trusted_ids(1), nullptr).is_error());
 }

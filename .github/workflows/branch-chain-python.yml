@@ -71,7 +71,7 @@ jobs:
             test-custom-overlay-relay-dedup \
             test-wallet-index test-candidate-data-cache test-shard-block-confirmations \
             test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
-            test-rate-limiter test-full-node-shard-admission \
+            test-rate-limiter test-full-node-shard-admission test-full-node-master-admission \
             test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap
           ccache --show-stats
 
@@ -86,7 +86,8 @@ jobs:
           expected = {
               "test-wallet-index", "test-candidate-data-cache", "test-shard-block-confirmations",
               "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure",
-              "test-rate-limiter", "test-full-node-shard-admission",
+              "test-rate-limiter", "test-full-node-shard-admission", "test-full-node-master-admission",
+              "full-node-master-startup",
               "test-rldp2-inbound-budget", "test-rldp2-inbound-transfer-bound", "test-rldp2-decoder-heap",
           }
           actual = {test["name"] for test in json.load(open("security-tests.json"))["tests"]}

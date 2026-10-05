@@ -446,13 +446,22 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query,
                                        td::Promise<td::BufferSlice> promise) {
-  // Admission happens before any parsing, so malformed queries are charged
-  // like any other. The engine shares one limiter across every master, and
-  // the source id is the authenticated ADNL id (or, for an anonymous
-  // external connection, an id derived from its address).
-  if (!limiter_ || !limiter_->try_acquire(src)) {
-    promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
-    return;
+  // Admission happens before any parsing, so malformed queries from a
+  // configured slave are charged like any other. The engine shares one
+  // limiter across every master. The source id is the authenticated ADNL id,
+  // or, for an external connection that did not sign in, an id derived from
+  // its address; the service is allowlist-only, so anything but a configured
+  // slave is refused here without being charged to any slave's share.
+  auto admission = limiter_ ? limiter_->try_acquire(src) : MasterAdmission::NotListed;
+  switch (admission) {
+    case MasterAdmission::Admitted:
+      break;
+    case MasterAdmission::NotListed:
+      promise.set_error(td::Status::Error(ErrorCode::error, "not a configured full-node slave"));
+      return;
+    case MasterAdmission::RateLimited:
+      promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
+      return;
   }
   auto BX = fetch_tl_prefix<tos_api::tosNode_query>(query, true);
   if (BX.is_error()) {
