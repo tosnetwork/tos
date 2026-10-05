@@ -19,6 +19,8 @@ REQUIRED_NATIVE_TARGETS = {
     "test-pq-lite-forward-proof",
     "test-pending-finality-cache",
     "test-c04-real-state-proof",
+    "tos-proof-verify",
+    "test-proof-verify",
     "test-n5-manager-db-fixture",
     "test-consensus",
     "test-notarize-after-transient-resolve",
@@ -80,6 +82,33 @@ def main() -> int:
         "ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'" in text,
         "PQ key-block proof context behavior gate is absent",
     )
+    verifier_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^test-proof-verify(-cli-verified|-cli-refused)?$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(verifier_ctest)}\s*$", text) is not None,
+        "anchored proof verifier behavior gate is absent",
+    )
+    c09_pytest = (
+        "uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py "
+        "test/pq-native/test_x02_stage_a_capture.py"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(c09_pytest)}\s*$", text) is not None
+        and "TOS_PROOF_VERIFY: build/lite-client/proof-verify/tos-proof-verify" in text,
+        "C09 Config34 anchored-verifier behavior gate is absent",
+    )
+    cmake_text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    for registration in (
+        r"tos_test\(test-proof-verify\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data\)",
+        r"add_test\(NAME test-proof-verify-cli-verified\s",
+        r"add_test\(NAME test-proof-verify-cli-refused\s",
+    ):
+        require(
+            re.search(registration, cmake_text) is not None,
+            f"anchored proof verifier CTest registration is absent: {registration}",
+        )
     manager_ctest = "ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'"
     require(
         re.search(rf"(?m)^\s*run: {re.escape(manager_ctest)}\s*$", text) is not None,
@@ -287,6 +316,7 @@ def main() -> int:
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
         "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
+        "the anchored proof verifier, its CLI and the C09 Config34 path, "
         "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "

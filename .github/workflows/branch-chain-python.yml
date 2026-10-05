@@ -66,6 +66,7 @@ jobs:
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
+            tos-proof-verify test-proof-verify \
             test-n5-manager-db-fixture test-consensus \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup \
@@ -102,6 +103,12 @@ jobs:
       # field. This is a compiled behavior test, not a source-only guard.
       - name: Check PQ key-block proof context
         run: ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'
+
+      # The shared anchored proof verifier: real captured lite-server answers
+      # and a synthetic signed chain, plus the installed front end. Its
+      # binary is also what the C09 Config34 tests in full pytest call.
+      - name: Check the anchored proof verifier
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-proof-verify(-cli-verified|-cli-refused)?$'
 
       # This manager actor test exercises the real proof producer and pending
       # finality queue with bad evidence ahead of a valid certificate. It does
@@ -187,6 +194,14 @@ jobs:
 
       - name: Run the complete Python suite
         run: uv run pytest
+
+      # C09: X02 Config34 is accepted only through the anchored verifier built
+      # above. These production-path tests need that binary and fail without it.
+      - name: Check X02 Config34 authentication through the anchored verifier
+        env:
+          PYTHONPATH: scripts
+          TOS_PROOF_VERIFY: build/lite-client/proof-verify/tos-proof-verify
+        run: uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py test/pq-native/test_x02_stage_a_capture.py
 
       # E04's negative controls are fast source-bound tests, not a replacement
       # for the retained single-node real-chain lifecycle run.

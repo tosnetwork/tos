@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Stage A's X02 capture seams, offline: authorization retention and the Config34 proof bundle.
 
-No node runs here. The two ValidatorElectionRehearsal methods are bound to a minimal
-stand-in; JSON-RPC answers are built from retained Z01 lite bytes, which prove Config30
-only, so the bundle must be refused as Config34 after being retained exactly.
+No node runs here. The ValidatorElectionRehearsal methods are bound to a minimal
+stand-in. The lite-server answers are real retained ones from a local PQ network
+(data/proof-verify-real), and the compiled anchored verifier authenticates them in
+process, so the built verifier is required (TOS_PROOF_VERIFY or the default build).
 """
 
 import asyncio
@@ -12,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -28,12 +30,45 @@ spec.loader.exec_module(stage_a)
 Rehearsal = stage_a.ValidatorElectionRehearsal
 from x02_config34_proof import ProofRefused  # noqa: E402
 
-FIXTURES = Path(__file__).resolve().parent / "x02-config34-fixtures"
-SEQ11_ROOT = bytes.fromhex("944F0E7095C7BACB5D4CBED23785BAF9C4B30A606ED36E7B916F6865BAFF7C0C")
-SEQ11_FILE = bytes.fromhex("78099EA7E95C42FE8BEDC2CDA8F67FB0D162A67ED0F13644E6DE3D177FF839EC")
+REAL = REPO / "test/pq-native/data/proof-verify-real"
+VERIFIER = Path(
+    os.environ.get("TOS_PROOF_VERIFY", REPO / "build/lite-client/proof-verify/tos-proof-verify")
+).resolve()
+ANCHOR = json.loads((REAL / "anchor.json").read_text())
+TARGET = json.loads((REAL / "historical-request.json").read_text())["target"]
+ROOT = bytes.fromhex(TARGET["root_hash"])
+FILE = bytes.fromhex(TARGET["file_hash"])
+ELECTION = 1790945281
 
 
-def stand_in(artifacts: Path):
+def proven_param() -> bytes:
+    with tempfile.TemporaryDirectory() as work:
+        material = Path(work) / "material"
+        material.mkdir()
+        for name in ("chain-0000.tl", "config.tl"):
+            (material / name).write_bytes((REAL / "historical" / name).read_bytes())
+        request = Path(work) / "request.json"
+        request.write_text(
+            json.dumps({"mode": "historical", "target": TARGET, "config_params": [34]})
+        )
+        result = subprocess.run(
+            [
+                str(VERIFIER),
+                "verify",
+                "--anchor",
+                str(REAL / "anchor.json"),
+                "--request",
+                str(request),
+                "--material",
+                str(material),
+            ],
+            capture_output=True,
+            check=True,
+        )
+    return base64.b64decode(json.loads(result.stdout)["config_params"][0]["boc"])
+
+
+def stand_in(artifacts: Path, rows=None):
     node = SimpleNamespace(
         process_id=os.getpid(),
         transport_ports=(1, 2, 30604),
@@ -43,35 +78,58 @@ def stand_in(artifacts: Path):
         address=SimpleNamespace(hash_part=b"\x11" * 32),
         consensus=SimpleNamespace(key_id=b"\x22" * 32),
     )
+    nodes, controllers = [node] * 4, [controller] * 4
+    if rows is not None:
+        nodes = [
+            SimpleNamespace(validator_key=SimpleNamespace(id=bytes.fromhex(r["adnl_id_hex"])))
+            for r in rows
+        ]
+        controllers = [
+            SimpleNamespace(
+                address=SimpleNamespace(hash_part=bytes.fromhex(r["controller_id_hex"])),
+                consensus=SimpleNamespace(key_id=bytes.fromhex(r["consensus_key_id_hex"])),
+            )
+            for r in rows
+        ]
+    fetched = []
+
+    def fetch(verifier, anchor, block_id, material):
+        # The lite-server's answers, exactly as the verifier saves them.
+        fetched.append((anchor, block_id))
+        material.mkdir()
+        for name in ("chain-0000.tl", "config.tl"):
+            (material / name).write_bytes((REAL / "historical" / name).read_bytes())
+
     fake = SimpleNamespace(
-        nodes=[node] * 4,
-        controllers=[controller] * 4,
+        nodes=nodes,
+        controllers=controllers,
         artifacts_dir=artifacts,
         pq_authorization_records={},
         file_provenance=Rehearsal.file_provenance,
         experiment=SimpleNamespace(rpc_addresses=[f"127.0.0.1:{n}" for n in range(1, 5)]),
         experiment_current_config34_hash=0,
+        network=SimpleNamespace(),
+        install=SimpleNamespace(build_dir=VERIFIER.parents[2]),
+        zerostate_anchor=lambda verifier: dict(ANCHOR),
+        fetch_config34_material=fetch,
+        fetched=fetched,
     )
 
     async def masterchain_seqno():
-        return 11
+        return TARGET["seqno"]
 
     fake.masterchain_seqno = masterchain_seqno
     return fake
 
 
-def rpc(block_id_override=None):
-    q = {
-        k: (FIXTURES / f"z01-seq11-{k}.boc").read_bytes()
-        for k in ("param30", "state-proof", "config-proof")
-    }
+def rpc(param: bytes, block_id_override=None):
     full = {
         "@type": "tos.blockIdExt",
         "workchain": -1,
         "shard": str(-(1 << 63)),
-        "seqno": 11,
-        "root_hash": base64.b64encode(SEQ11_ROOT).decode(),
-        "file_hash": base64.b64encode(SEQ11_FILE).decode(),
+        "seqno": TARGET["seqno"],
+        "root_hash": base64.b64encode(ROOT).decode(),
+        "file_hash": base64.b64encode(FILE).decode(),
     }
 
     def call(address, method, params=None):
@@ -79,16 +137,14 @@ def rpc(block_id_override=None):
             return {"result": {"id": full}}
         assert method == "getConfigParam" and params == {
             "param": 34,
-            "seqno": 11,
+            "seqno": TARGET["seqno"],
             "with_proof": True,
         }
         return {
             "result": {
                 "@type": "configInfo",
                 "block_id": block_id_override or full,
-                "config": {"@type": "tvm.cell", "bytes": base64.b64encode(q["param30"]).decode()},
-                "state_proof": base64.b64encode(q["state-proof"]).decode(),
-                "config_proof": base64.b64encode(q["config-proof"]).decode(),
+                "config": {"@type": "tvm.cell", "bytes": base64.b64encode(param).decode()},
             }
         }
 
@@ -122,41 +178,59 @@ class AuthorizationRetention(unittest.TestCase):
 
 
 class Config34ProofCapture(unittest.TestCase):
-    def capture(self, fake):
-        return asyncio.run(Rehearsal.capture_config34_same_block_proof(fake, 1790358449))
+    @classmethod
+    def setUpClass(cls):
+        if not VERIFIER.is_file():
+            raise AssertionError(f"tos-proof-verify is not built at {VERIFIER}")
+        from pytosiq_core.boc.cell import Cell
+        from x02_config34_proof import decode_validator_set
 
-    def test_bundle_is_retained_exactly_and_a_config30_only_proof_is_refused(self):
+        cls.param = proven_param()
+        decoded = decode_validator_set(Cell.one_from_boc(cls.param))
+        cls.rows = decoded["validators"]
+        cls.cell_hash = int(decoded["cell_hash"], 16)
+
+    def capture(self, fake, election=ELECTION):
+        return asyncio.run(Rehearsal.capture_config34_same_block_proof(fake, election))
+
+    def run_with(self, call, fake, election=ELECTION):
+        original = stage_a.json_rpc_call
+        stage_a.json_rpc_call = call
+        try:
+            return self.capture(fake, election)
+        finally:
+            stage_a.json_rpc_call = original
+
+    def test_the_bundle_is_retained_exactly_and_authenticated_from_the_zerostate(self):
         with tempfile.TemporaryDirectory() as directory:
-            fake = stand_in(Path(directory))
-            original = stage_a.json_rpc_call
-            stage_a.json_rpc_call = rpc()
-            try:
-                with self.assertRaisesRegex(ProofRefused, "ConfigParam34 is not proven"):
-                    self.capture(fake)
-            finally:
-                stage_a.json_rpc_call = original
-            retained = Path(directory) / "election-1790358449-config34-proof"
+            fake = stand_in(Path(os.path.realpath(directory)), self.rows)
+            fake.experiment_current_config34_hash = self.cell_hash
+            bundle = self.run_with(rpc(self.param), fake)
+            self.assertEqual(bundle["stage_a_verdict"], "X02_CONFIG34_SAME_BLOCK_PROOF_OK")
+            self.assertEqual(fake.fetched[0][0], ANCHOR)
+            self.assertEqual(fake.fetched[0][1]["seqno"], TARGET["seqno"])
+            retained = Path(directory) / f"election-{ELECTION}-config34-proof"
             self.assertEqual(
-                sorted(p.name for p in retained.iterdir()),
-                [
-                    "config_proof.boc",
-                    "header-node1.json",
-                    "header-node2.json",
-                    "header-node3.json",
-                    "header-node4.json",
-                    "param.boc",
-                    "state_proof.boc",
-                ],
+                sorted(str(p.relative_to(retained)) for p in retained.rglob("*") if p.is_file()),
+                ["material/chain-0000.tl", "material/config.tl", "param.boc"],
             )
-            self.assertEqual(
-                hashlib.sha256((retained / "state_proof.boc").read_bytes()).hexdigest(),
-                hashlib.sha256((FIXTURES / "z01-seq11-state-proof.boc").read_bytes()).hexdigest(),
-            )
+            for name in ("chain-0000.tl", "config.tl"):
+                self.assertEqual(
+                    bundle["material"][name]["sha256"],
+                    hashlib.sha256((REAL / "historical" / name).read_bytes()).hexdigest(),
+                )
+
+    def test_a_retained_parameter_that_is_not_the_proven_cell_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake = stand_in(Path(os.path.realpath(directory)), self.rows)
+            other = next((REPO / "test/pq-native/x02-config34-fixtures").glob("config34-*.boc"))
+            with self.assertRaisesRegex(ProofRefused, "differs from the proven parameter cell"):
+                self.run_with(rpc(other.read_bytes()), fake)
 
     def test_four_nodes_disagreeing_on_the_full_id_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
-            fake = stand_in(Path(directory))
-            honest = rpc()
+            fake = stand_in(Path(directory), self.rows)
+            honest = rpc(self.param)
 
             def split(address, method, params=None):
                 reply = honest(address, method, params)
@@ -171,18 +245,13 @@ class Config34ProofCapture(unittest.TestCase):
                     }
                 return reply
 
-            original = stage_a.json_rpc_call
-            stage_a.json_rpc_call = split
-            try:
-                with self.assertRaisesRegex(AssertionError, "disagree on the full block ID"):
-                    self.capture(fake)
-            finally:
-                stage_a.json_rpc_call = original
+            with self.assertRaisesRegex(AssertionError, "disagree on the full block ID"):
+                self.run_with(split, fake)
             self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_a_reply_for_another_block_is_refused_before_anything_is_written(self):
         with tempfile.TemporaryDirectory() as directory:
-            fake = stand_in(Path(directory))
+            fake = stand_in(Path(directory), self.rows)
             other = {
                 "@type": "tos.blockIdExt",
                 "workchain": -1,
@@ -191,14 +260,28 @@ class Config34ProofCapture(unittest.TestCase):
                 "root_hash": base64.b64encode(b"\x01" * 32).decode(),
                 "file_hash": base64.b64encode(b"\x02" * 32).decode(),
             }
-            original = stage_a.json_rpc_call
-            stage_a.json_rpc_call = rpc(block_id_override=other)
-            try:
-                with self.assertRaisesRegex(AssertionError, "another full block ID"):
-                    self.capture(fake)
-            finally:
-                stage_a.json_rpc_call = original
+            with self.assertRaisesRegex(AssertionError, "another full block ID"):
+                self.run_with(rpc(self.param, block_id_override=other), fake)
             self.assertEqual(list(Path(directory).iterdir()), [])
+
+
+class ZerostateAnchor(unittest.TestCase):
+    def test_the_anchor_is_computed_from_the_local_zerostate_file(self):
+        genesis = REPO / "test/pq-native/data/c04-pq-genesis.boc"
+        result = subprocess.run(
+            [str(VERIFIER), "anchor", "--zerostate", str(genesis)], capture_output=True, check=True
+        )
+        expected = json.loads(result.stdout)
+        zero = SimpleNamespace(
+            file=genesis,
+            root_hash=bytes.fromhex(expected["root_hash"]),
+            file_hash=bytes.fromhex(expected["file_hash"]),
+        )
+        fake = SimpleNamespace(network=SimpleNamespace(zerostate=SimpleNamespace(masterchain=zero)))
+        self.assertEqual(Rehearsal.zerostate_anchor(fake, VERIFIER), expected)
+        zero.file_hash = b"\x01" * 32
+        with self.assertRaisesRegex(AssertionError, "does not give the network's anchor"):
+            Rehearsal.zerostate_anchor(fake, VERIFIER)
 
 
 if __name__ == "__main__":
