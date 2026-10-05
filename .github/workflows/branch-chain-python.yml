@@ -58,7 +58,7 @@ jobs:
           -DTOS_USE_JEMALLOC=ON
           -DTOS_PRODUCTION_BUILD=ON
 
-      - name: Build only the Python and PQ-chain fixture dependencies
+      - name: Build the chain fixtures and security regression targets
         run: |
           ccache --zero-stats
           cmake --build build --parallel 4 --target \
@@ -68,8 +68,33 @@ jobs:
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             test-n5-manager-db-fixture test-consensus \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
-            test-custom-overlay-relay-dedup
+            test-custom-overlay-relay-dedup \
+            test-wallet-index test-candidate-data-cache test-shard-block-confirmations \
+            test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
+            test-rate-limiter test-full-node-shard-admission \
+            test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap
           ccache --show-stats
+
+      # These security regressions previously ran only after merging to main.
+      # Check registration too: ctest must not silently pass a reduced set.
+      - name: Run the network and wallet-index security regressions
+        run: |
+          ctest --test-dir build --show-only=json-v1 -L security-findings > security-tests.json
+          python3 - <<'PY'
+          import json
+
+          expected = {
+              "test-wallet-index", "test-candidate-data-cache", "test-shard-block-confirmations",
+              "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure",
+              "test-rate-limiter", "test-full-node-shard-admission",
+              "test-rldp2-inbound-budget", "test-rldp2-inbound-transfer-bound", "test-rldp2-decoder-heap",
+          }
+          actual = {test["name"] for test in json.load(open("security-tests.json"))["tests"]}
+          if expected - actual:
+              raise SystemExit(f"missing security regressions: {sorted(expected - actual)}")
+          print(f"all {len(expected)} security regressions are registered")
+          PY
+          ctest --test-dir build -L security-findings --no-tests=error --output-on-failure
 
       # A virtualized key-block proof must retain every PQ finality context
       # field. This is a compiled behavior test, not a source-only guard.
@@ -192,5 +217,7 @@ jobs:
           workspaces: tosctl/src -> target
       - name: Compile every Rust workspace test target
         run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked
-      - name: Check E04 exact wallet message confirmation
-        run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib exact_deploy_wallet_transaction_tests --locked --no-default-features
+      - name: Run command tests including backup, secret input and wallet confirmation
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib --locked --no-default-features
+      - name: Exercise the real vault CLI secret import boundary
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p secrets-vault --features secrets-vault-cli --test cli_import_secret_input --locked

@@ -1777,6 +1777,20 @@ tos_test(test-rldp2-decoder-heap)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)
+# Keep the security fixes exercised before merge, not only by main's full
+# CTest pass. The branch workflow also verifies this inventory is complete.
+set_tests_properties(
+  test-wallet-index
+  test-candidate-data-cache
+  test-shard-block-confirmations
+  test-adnl-ext-input-budget
+  test-adnl-ext-output-backpressure
+  test-rate-limiter
+  test-full-node-shard-admission
+  test-rldp2-inbound-budget
+  test-rldp2-inbound-transfer-bound
+  test-rldp2-decoder-heap
+  PROPERTIES LABELS "security-findings")
 tos_test(test-quorum)
 tos_test(test-emulator)
 
