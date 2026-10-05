@@ -1,6 +1,6 @@
 # Token bridge settlement protocol (design, for review)
 
-Status: **design only, version 4.** Nothing in this document is implemented.
+Status: **design only, version 5.** Nothing in this document is implemented.
 It specifies changes to `jetton-bridge.fc`, `jetton-minter.fc`,
 `jetton-wallet.fc`, `settlement.fc`, the deployment scripts, the EVM
 `Bridge.sol` lock path and the oracle vote format. Together they make every
@@ -9,7 +9,7 @@ participant, recoverable by permissionless funded retransmission.
 
 Base: `fix/security-findings` at `6f86b5cf1`. Line references are to that
 commit. Section 18 lists the changes from versions 1 (`63afca486`), 2
-(`2390e3028`) and 3 (`7b7fb00b3`).
+(`2390e3028`), 3 (`7b7fb00b3`) and 4 (`9c5773fd3`).
 
 **Owner rulings recorded here (2026-10-05):**
 
@@ -75,8 +75,15 @@ differently:
 storage update is not committed (`settlement.fc:46`). A leg therefore
 commits its record and all its protocol messages together, or commits
 nothing. A rolled-back leg leaves its predecessor's durable record intact,
-so that request can be advanced again. Optional logs, which are every log
-except `LOG_BURN` and `LOG_SWAP_CANCELLED`, are sent in mode 2.
+so that request can be advanced again.
+
+**Logs.** Three logs are mandatory: `LOG_BURN`, `LOG_SWAP_CANCELLED` and
+`LOG_LIABILITY_STRANDED`.
+
+- Each is sent in mode 0, in the same leg as the decision it reports.
+- If one cannot be sent, the action phase fails and the whole leg rolls
+  back. The decision is then not recorded either, and stays advanceable.
+- Every other log is optional and is sent in mode 2.
 
 **No reliance on delivery order.** Every receiver deduplicates by identity,
 and no correctness argument uses arrival order. Order decides only which of
@@ -325,7 +332,8 @@ cells so that no cell has more than four references.
 
 ```
 storage#_ born_lt:uint64 evm_chain_id:uint32 evm_bridge:uint160   ;; immutable namespace
-          generation_start:uint64 generation_state:uint2   ;; 0 UNSET, 1 ACTIVE (section 11)
+          generation:uint32 generation_start:uint64 generation_state:uint2
+          ;; generation and its start are pinned by activation; state 0 UNSET, 1 ACTIVE (section 11)
           collector_address:MsgAddress jetton_minter_code:^Cell jetton_wallet_code:^Cell
           ^[ swap_watermark:uint64 swaps_above:(HashmapE 64 SwapState)
              channels:(HashmapE 256 ^TokenChannel) channels_count:uint32 ] = BridgeStorage;
@@ -360,8 +368,9 @@ storage#_ total_supply:int128 in_flight:Coins mint_reserve:Coins burn_reserve:Co
              next_notice_seq:uint64 finished_notice_floor:uint64 bridge_burn_ack:uint64
              notices:(HashmapE 64 NoticeRef)
              holders:(HashmapE 256 ^Holder) holders_count:uint32 ] = MinterStorage;
-mint_record#_ descriptor_hash:uint256 owner:uint256 wallet_life:uint64 k:uint64
-    amount:Coins status:uint3 = MintRecord;
+mint_record#_ descriptor:^MintDescriptor descriptor_hash:uint256 wallet_life:uint64
+    k:uint64 status:uint3 = MintRecord;
+    ;; the descriptor holds n, s, amount, the EVM namespace, the minter and the recipient
     ;; 0 AWAITING_OPEN, 1 RESERVED, 2 CREDITING, 3 COUNTED, 4 REFUSED, 5 STRANDED
 notice_ref#_ owner:uint256 b:uint64 = NoticeRef;
 holder#_ wallet_life:uint64 open:uint2 open_attempt:uint32   ;; 0 NEW, 1 OPENING, 2 OPEN
@@ -370,8 +379,9 @@ holder#_ wallet_life:uint64 open:uint2 open_attempt:uint32   ;; 0 NEW, 1 OPENING
     burn_watermark:uint64 burn_compaction_floor:uint64
     burns:(HashmapE 64 BurnRecord)
     old_life:(Maybe ^OldLife) = Holder;
-burn_record#_ descriptor_hash:uint256 amount:Coins m:uint64 status:uint3
+burn_record#_ descriptor:^BurnDescriptor descriptor_hash:uint256 m:uint64 status:uint3
     cancel_requested:uint1 = BurnRecord;
+    ;; the descriptor holds b, amount, destination, token, minter, owner and wallet life
     ;; 0 AWAITING_BRIDGE, 1 RECORDED, 2 REFUNDING, 3 REFUNDED, 4 ADMIT_REFUSED
 old_life#_ wallet_life:uint64 credits:(HashmapE 64 uint64)
     burns:(HashmapE 64 BurnRecord) cursor:uint64 = OldLife;
@@ -499,7 +509,7 @@ still need.
 | P1 | `prepare` | bridge -> minter (minter StateInit) | `s`, descriptor, bridge life, expected minter life or 0, `F_s` |
 | O1 | `open` | minter -> wallet (wallet StateInit) | minter life, expected wallet life or 0, `open_attempt` |
 | O2 | `opened` / `open_refused` | wallet -> minter | wallet life, echoed minter life, echoed `open_attempt` |
-| P2 | `prepared` / `refused` | minter -> bridge | `s`, minter life, echoed bridge life, minter `C` |
+| P2 | `prepared` / `refused` | minter -> bridge | `s`, minter life, echoed bridge life, minter storage floor `S` |
 | M1 | `commit` | bridge -> minter | `s`, descriptor, lives, `F_s` |
 | M2 | `credit` | minter -> wallet | `k`, `s`, descriptor, lives, the minter's finished credit floor for this holder |
 | M3 | `credit_recorded` | wallet -> minter | `k`, owner, lives, the wallet's storage floor `S` |
@@ -521,12 +531,22 @@ still need.
    10.4), then look up `s`.
    - **New, no capacity** (supply, holder limit or `CREDIT_WINDOW`): record
      REFUSED and send `refused`.
-   - **New, holder already OPEN:** record RESERVED, `mint_reserve += a`, and
-     send `prepared`.
-   - **New, holder not OPEN:** record AWAITING_OPEN with the reservation
-     made. Start or continue the opening (O1). Reply only after O2.
-   - **On O2 `opened`:** every AWAITING_OPEN `s` of that holder becomes
-     RESERVED and `prepared` is sent.
+   - **New, holder already OPEN:** assign and reserve a credit number
+     `k`, which must lie within the holder's C2 window and not be exhausted.
+     Then record RESERVED, set `mint_reserve += a`, and send `prepared`. With
+     no `k` available, the mint is REFUSED instead.
+   - **New, holder not OPEN:** record AWAITING_OPEN with the supply
+     reservation made and **no** `k`. Start or continue the opening (O1).
+     Reply only after O2.
+   - **On O2 `opened`:** promote waiting mints in ascending `s`, at most
+     `FOLD_LIMIT` per transaction (a measured bound, G1).
+     - Each promotion assigns and reserves a `k` before anything else.
+     - If the holder's C2 window has a slot, the mint becomes RESERVED and
+       `prepared` is sent.
+     - If it has none, the mint becomes **REFUSED**: `mint_reserve -= a` and
+       `refused` is sent. It never sends `prepared`.
+     - Waiting mints not reached in this transaction are promoted by
+       `advance(MINT, s)` or by the next leg on that holder.
    - **On O2 `open_refused`:** they become REFUSED, their reservations are
      released, and `refused` is sent. A wallet bound to another minter life
      sends `open_refused`.
@@ -552,8 +572,13 @@ still need.
    - The minter admits a new `k` only within the wallet's reported storage
      floor plus `CREDIT_WINDOW`.
    - The wallet's credit storage is therefore bounded per holder, whatever
-     happens to other holders' mints. A stuck early mint to another holder
-     holds back only that holder's window, never this one.
+     happens to other holders' mints.
+   - **Throughput is not isolated.** All holders of one token share C1's
+     mint window. A stuck early CREDITING mint holds `mint_watermark` back,
+     and that eventually stops new prepares for **every** holder of the
+     token until the stuck mint is advanced. This shared-window backpressure
+     is accepted. It costs liveness, never safety, and any funded advance
+     clears it.
    - A full window refuses new prepares for this holder, and the swap stays
      PAID. A funded `sync` on C2 reopens the window once the wallet has
      folded.
@@ -581,11 +606,11 @@ tokens stay usable for transfers.
 |---|---|---|---|
 | B0 | `burn` | owner -> wallet | unchanged layout |
 | B1 | `burn_admit` | wallet -> minter | burn descriptor, `cancel`, lives, `F_s` |
-| B1r | `admit_refused` | minter -> wallet | `b`, lives, `C` |
+| B1r | `admit_refused` | minter -> wallet | `b`, lives, minter storage floor `S` |
 | B2 | `burn_notice` | minter -> bridge | `m`, descriptor, `cancel`, `^token_data`, lives, `F_s` |
-| B3 | `burn_result` | bridge -> minter | `m`, outcome, lives, `C` |
-| B4 | `burn_outcome` | minter -> wallet | `b`, lives, `C` |
-| R1 | `refund` | minter -> wallet | `b`, amount, lives, `C` |
+| B3 | `burn_result` | bridge -> minter | `m`, outcome, lives, bridge storage floor `S` |
+| B4 | `burn_outcome` | minter -> wallet | `b`, lives, minter storage floor `S` |
+| R1 | `refund` | minter -> wallet | `b`, amount, lives, minter storage floor `S` |
 | R2 | `refund_recorded` | wallet -> minter | `b`, owner, lives |
 | X0 | `cancel_burn` | owner -> wallet | `b` |
 | L | `LOG_BURN` | bridge -> external | **unchanged format** |
@@ -673,7 +698,7 @@ destination, amount, recipient, outcome or life.**
 | wallet | BURN `b` | B1 with `cancel_requested` | refuse | refuse |
 | wallet | REPORT `k` | n/a | `k` below the credit watermark and at least the compaction floor, or in `credits_above`: M3 | refuse below the compaction floor (already counted) |
 | wallet | OPEN | `open_request` | - | - |
-| any | `sync(channel)` | sends `F_s`; the receiver compacts and replies with `C` | | |
+| any | `sync(channel)` | sends `F_s`; the receiver validates, folds and replies with its storage floor `S = min(W, C)` | | |
 
 **Funding, quotes and excess.**
 
@@ -1069,9 +1094,9 @@ allocation (section 3.1). `n` is checked by `lock`, and generations by
 
   Oracles must accept a logging transaction that came from an advance, and
   must keep observing retired bridges.
-- **New log** `LOG_SWAP_CANCELLED` (section 11). **New optional log**
-  `LOG_LIABILITY_STRANDED` (section 10.2), which is required in mode 0 when
-  stranding.
+- **New mandatory logs** (mode 0, rolled back with their leg; section 2):
+  - `LOG_SWAP_CANCELLED` (section 11);
+  - `LOG_LIABILITY_STRANDED` (section 10.2).
 - **Addresses.** Wallet and minter addresses change, because their code and
   initial data change, and the minter's initial data include its bridge.
 - **Interfaces kept.** The owner-facing `transfer` and `burn` layouts are
@@ -1181,13 +1206,26 @@ configuration has no ConfigParam 79. It holds ConfigParams 8, 12, 18, 20,
 **Ledger check** (after every delivered transaction, against the model):
 
 - **(I1) Token conservation.**
-  `Σ balances + Σ holds + T = total_supply + L + R_pending`.
+  `Σ balances + Σ holds + T + X = total_supply + L + R_pending`.
   - `T` counts amounts in transfers between wallets that are still in
     flight.
   - `L` counts credits and refunds that have landed but are not yet counted.
   - `R_pending` counts the holds still present at wallets whose burn the
     minter has admitted. Supply was reduced when the burn was admitted, but
     the wallet deletes the hold only when the outcome or refund reaches it.
+  - `X` is the **deletion adjustment**, which the model records itself.
+    - When the chain deletes a wallet, the model adds that wallet's balance
+      at deletion to `X`. It also adds those of the wallet's holds whose
+      burn the minter has not admitted.
+    - Holds whose burn was admitted leave `Σ holds` and `R_pending`
+      together, so they need no adjustment.
+    - `L` keeps every credit or refund that landed and was never counted,
+      including those later stranded.
+    - `X` is separate from the minter's `stranded` reservation, which
+      concerns supply capacity, not balances. A STRANDED record is **not**
+      evidence that its credit never landed. The landed amount may sit in
+      `X`, or, if it was transferred away before deletion, in a live
+      balance or in `T`.
 
   Separately, the capacity in use stays within `MAX_SUPPLY`.
 - **(I2)** `LOG_BURN` is emitted at most once per `m`, and exactly once
@@ -1267,9 +1305,11 @@ version 2, and each now runs against the model.
 | Id | Scenario | Asserts | Property |
 |---|---|---|---|
 | T-Z1 | **Source obligations after all three participants are recreated.** Generation `g`: one lock consumed, one cancelled, one stranded. Delete and recreate the bridge, minter and wallet. Then submit (a) a fresh vote and a payment for the consumed lock, (b) the same for the cancelled lock, (c) the old votes replayed, (d) the predecessor's activation vote replayed, (e) a fresh vote that names the new generation but an old nonce. Then activate `g + 1` through the EVM vote and repeat. On EVM: `refundLock` for the consumed lock fails, and for the cancelled lock succeeds exactly once. | Every TOS attempt is refused with no effect: no payment record, no prepare, no `LOG_SWAP_CANCELLED`, no mint. The model shows no second consumption of any source obligation. Covered in Hardhat and in the sandbox. | P1, P2 |
-| T-Z2 | **Compaction ahead of folding.** On each of C1, C2, C3 and C4: complete more than `FOLD_LIMIT` entries without folding. Then send a `sync` carrying a floor above `W`, followed by partial syncs. Replay every removed entry, and every entry in `[W, C)`, with original and altered descriptors. Report an invalid floor: above the highest entered number, and over an absent or non-final entry. | Every replay is non-admissible: an already-final answer or a default answer, with no effect. Each invalid floor is clamped or refused. Work stays bounded (gas measured). The storage bound I9 holds. | P2, P3, P4 |
-| T-Z3 | **Credit storage isolation.** Hold one early mint to holder X with its M2 parked indefinitely. Mints to holder Y complete repeatedly, more than `CREDIT_WINDOW` times `MINT_WINDOW`. Then fill X's credit window. | Y's wallet storage stays within `CREDIT_WINDOW`, and so does X's. X's next prepare is REFUSED (the swap stays PAID). Delivering X's parked M2 followed by a C2 `sync` reopens X's window. | P1, P2 |
-| T-Z4 | **Recreation with RESERVED and CREDITING mints.** Delete the wallet at each point: before `prepared` is sent, after it is sent and before delivery, after delivery and before `commit`, after `commit` and before `credit`, after `credit`. Drop, duplicate and reorder `mint_stranded` against `prepared` and `commit`. Strand more than `FOLD_LIMIT` old records. | Each bound mint reaches STRANDED exactly once, moving its amount from `mint_reserve` or `in_flight` into `stranded` exactly once. The bridge finalizes `s` as STRANDED in every order. No credit reaches the new life. No transaction emits more than `FOLD_LIMIT` liability logs. `advance(STRAND)` finishes the rest. | P1 (scoped), all |
+| T-Z2 | **Compaction ahead of folding.** On each of C1, C2, C3 and C4: complete more than `FOLD_LIMIT` entries without folding. Then send a `sync` carrying a floor above `W`, followed by partial syncs. Replay every removed entry, and every entry in `[W, C)`, with original and altered descriptors. Report an invalid floor: above the highest entered number, and over an absent or non-final entry. | Every replay is non-admissible: an already-final answer or a default answer, with no effect. Each invalid floor is clamped or refused. Work stays bounded (gas measured). The storage bound I9 holds. After every transaction, every sender's `A` is no greater than its receiver's actual storage floor `min(W, C)`. | P2, P3, P4 |
+| T-Z3 | **Credit storage bounds and the shared mint window.** (a) Park one early mint's M2 to holder X. Mints to holder Y continue until C1's shared mint window fills. (b) Release X's M2. (c) Run more than `CREDIT_WINDOW` further mints to Y, syncing C2 repeatedly. (d) Fill X's own credit window. | (a) Y's and X's wallet storage each stay within `CREDIT_WINDOW`, and once C1 is full, new prepares for every holder are refused with their swaps still PAID: the accepted shared backpressure. (b) Releasing X lets the minter's watermark advance. (c) Y continues to make progress, and C2 compacts repeatedly. (d) X's next prepare is REFUSED, and a C2 `sync` reopens it after folding. No independent throughput between holders is claimed. | P1, P2 |
+| T-Z4 | **Recreation with RESERVED and CREDITING mints.** Delete the wallet at each point: before `prepared` is sent, after it is sent and before delivery, after delivery and before `commit`, after `commit` and before `credit`, after `credit`. Drop, duplicate and reorder `mint_stranded` against `prepared` and `commit`. Strand more than `FOLD_LIMIT` old records. Also: a credit that **landed**, whose M3 was lost, and whose tokens were **transferred to another wallet** before deletion. Make the mandatory `LOG_LIABILITY_STRANDED` fail in the action phase. | Each bound mint reaches STRANDED exactly once, moving its amount from `mint_reserve` or `in_flight` into `stranded` exactly once. I1 holds through the deletion with the adjustment `X`, and the transferred tokens stay counted where they went. The failed log rolls the whole stranding leg back (I8), and an advance later completes it. The bridge finalizes `s` as STRANDED in every order. No credit reaches the new life. No transaction emits more than `FOLD_LIMIT` liability logs. `advance(STRAND)` finishes the rest. | P1 (scoped), all |
+| T-Z6 | **Retransmission from stored records alone.** For every unfinished state of every operation kind, discard all queued messages, then call `advance` with only the identifier and funding. | Every operation completes, and the rebuilt messages equal the originals: the descriptor hashes match the model. | all |
+| T-Z7 | **Too many waiting mints for one unopened holder.** Queue more prepares for an unopened holder than its C2 window has slots, then deliver `opened`. | At most the window's number are promoted to RESERVED, each with a `k`, and the rest become REFUSED with their supply reservations released. No REFUSED mint ever sent `prepared`. Promotion runs at most `FOLD_LIMIT` per transaction, and the remainder is advanceable. | P1 |
 | T-Z5 | **Special-account behaviour, native engine.** The bridge is listed in ConfigParam 31: storage fee zero, forwarding fee zero, size limit not applied. Then the bridge is removed from ConfigParam 31 with its state at the worst-case occupancy. | While listed, the exemptions are measured, not assumed. After removal, storage accrues, and state stays under the ordinary masterchain limit, because admission limits are sized for the non-special limit (gate G1). Every completion still executes. | all |
 
 **Mutation controls.** Each mutation is listed with the test that must fail
@@ -1300,6 +1340,13 @@ and the failure it must show:
 - RESERVED is not stranded on recreation — T-Z4, a stuck reservation or a
   rebinding;
 - the generation check is removed — T-Z1, a second consumption;
+- a sender advances `A` from `C` instead of `S` — T-Z2, `A` above the
+  storage floor;
+- a waiting mint is promoted without a `k` — T-Z7;
+- `LOG_LIABILITY_STRANDED` is sent in mode 2 — T-Z4, I8 red (stranding
+  committed without its log);
+- a record keeps only a hash — T-Z6, an advance that cannot rebuild its
+  message;
 - `cancel_lock` below the watermark is evaluated — T-Z1, a second log.
 
 **Atomic send.** Add `+2` to one protocol send, then make that send fail in
@@ -1318,6 +1365,8 @@ Implementation is not complete until these hold:
   - Admission limits are chosen from these measurements.
   - For the bridge, the limits are sized for the **non-special** masterchain
     limit, so losing ConfigParam 31 status cannot stop completions.
+  - The count includes the stored descriptors: three cells per mint record
+    and two per burn record.
   - The measurements and the commit they were taken at are recorded beside
     the constants.
 - **G2. Bounded old-life processing** (section 10.3). No transaction
@@ -1403,3 +1452,13 @@ implementation, and the network inventory (Q4).
 | 3. Wallet credit storage | Credits use a per-holder sequence `k` on C2, with its own window, finished floor and sync (sections 3.1, 5.2, 6.1, 7.1, T-Z3). |
 | 4. RESERVED mints at recreation | Every bound mint state, including RESERVED, becomes STRANDED exactly once. M5 `mint_stranded` lets the bridge finalize. Processing is bounded (sections 6.1, 10.2, 10.3, T-Z4). |
 | Gates | Section 16: measured capacity, bounded stranding, the swap channel below its watermark, native special-account tests, and the release prerequisites. |
+
+**Version 5, by item of the fourth review:**
+
+| Item | Change |
+|---|---|
+| 1. Records sufficient for `advance` | `MintRecord` and `BurnRecord` store their canonical descriptors. `BridgeStorage` stores the activated generation. G1 counts the descriptors. T-Z6. |
+| 2. Acknowledged floor | `S = min(W, C)` in P2, B1r, B3, B4, R1 and the sync reply. T-Z2 asserts `A <= min(W, C)`. |
+| 3. Waiting mints | `k` is assigned and reserved before `prepared`. A waiting mint without a slot is REFUSED and releases its reservation. Promotion is bounded and advanceable. T-Z7. |
+| 4. Isolation | Shared C1 backpressure is documented as accepted, with per-holder storage still bounded. T-Z3 rewritten. |
+| 5. Deletion accounting | Deletion adjustment `X` in I1. STRANDED is not evidence of non-landing. T-Z4 adds a landed credit transferred away before deletion. `LOG_LIABILITY_STRANDED` is mandatory, and its rollback is tested. |
