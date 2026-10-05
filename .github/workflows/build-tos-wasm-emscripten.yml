@@ -6,6 +6,7 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [master, testnet]
+    tags: ['v*']
   workflow_dispatch:
   workflow_call:
 
@@ -13,13 +14,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Install system libraries
       run: |
         sudo apt-get update
@@ -27,15 +31,11 @@ jobs:
         mkdir -p 3pp_emscripten
 
     - name: Install clang-21
-      run: |
-        # SECURITY: Pin to specific LLVM release instead of fetching script
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 clang
+      run: sudo scripts/install-llvm-toolchain.sh 21
 
     - name: Cache 3pp Emscripten
       id: cache-3pp-emscripten
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: 3pp_emscripten
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-3pp_em-${{ hashFiles('**/assembly/wasm/fift-func-wasm-build-ubuntu.sh') }}
@@ -47,7 +47,7 @@ jobs:
         ./fift-func-wasm-build-ubuntu.sh -a
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: tos-wasm
         path: artifacts

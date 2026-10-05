@@ -27,14 +27,17 @@ pub mod capability_registry;
 pub mod chain_provider;
 pub mod config_contract;
 pub mod contract_codes;
+pub mod contract_version;
 pub mod dispute;
 pub mod dns;
 pub mod elector;
 pub mod liquid_controller;
+pub mod native_registry;
 pub mod nominator;
 pub mod nominator_pool;
 pub mod prediction_market;
 pub mod proof_attestation;
+pub mod proven_getters;
 pub mod provider;
 pub mod service_actor;
 pub mod smart_contract;
@@ -57,8 +60,9 @@ pub use agent_account_custody::{
     controller_resolution_evidence_digest,
 };
 pub use attestation::{
-    domain_bound_hash, resolve_domain_hash, service_actor_terms_hash, service_respond_domain_hash,
-    settle_domain_hash,
+    DOMAIN_DISPUTE_RULING, DOMAIN_PROOF_ATTESTATION, DOMAIN_SERVICE_RESPOND, DOMAIN_TASK_RESOLVE,
+    DOMAIN_TASK_SETTLE, domain_bound_hash, resolve_domain_hash, ruling_domain_hash,
+    service_actor_terms_hash, service_respond_domain_hash, settle_domain_hash,
 };
 pub use capability_registry::{
     CapabilityRegistryContract, CapabilityRegistryData, CapabilityRegistryInit,
@@ -69,6 +73,7 @@ pub use chain_provider::{
 pub use config_contract::{
     ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposedParam,
 };
+pub use contract_version::VersionedContract;
 pub use dispute::{
     DISPUTE_STATUS_EVIDENCE_SUBMITTED, DISPUTE_STATUS_OPEN, DISPUTE_STATUS_RESOLVED,
     DisputeContract, DisputeData, DisputeInit, RULING_CLAIMANT, RULING_NONE, RULING_RESPONDENT,
@@ -78,10 +83,15 @@ pub use elector::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, Participant
 pub use liquid_controller::{
     ControllerData, ControllerWrapper, ControllerWrapperImpl, LoanBalanceRequirement,
 };
+pub use native_registry::{
+    NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE, NATIVE_REGISTRY_GAS_CEILING,
+    NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS, NativePolicy, NativePolicyController,
+};
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{
-    NominatorData, NominatorPoolData, NominatorPoolSnapshot, NominatorPoolWrapper,
-    NominatorPoolWrapperImpl, NominatorPosition, read_nominator_pool_snapshot_at,
+    NOMINATOR_POOL_SNAPSHOT_METHODS, NominatorData, NominatorPoolData, NominatorPoolSnapshot,
+    NominatorPoolSnapshotProof, NominatorPoolWrapper, NominatorPoolWrapperImpl, NominatorPosition,
+    PoolSnapshotSource, read_proven_nominator_pool_snapshot,
 };
 pub use prediction_market::{
     PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE, PredictionLiquidityRoleV1,
@@ -92,6 +102,10 @@ pub use prediction_market::{
     PredictionResolutionContextsV1, PredictionResolutionOutcomeV1,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
+pub use proven_getters::{
+    GetMethodArg, GetMethodCall, ProvenAccount, ProvenGetMethod, ProvenGetterProvider,
+    ProvenGetterResults, ReadPolicy,
+};
 pub use provider::ContractProvider;
 pub use service_actor::{
     PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,

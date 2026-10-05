@@ -519,6 +519,10 @@ fn owner_rotation_rejects_small_order_and_noncanonical_controller_keys() {
     for encoded in [
         "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        // The identity and the order-2 point with the sign bit set: x = 0, so
+        // these are non-canonical aliases whose y is in range.
+        "0100000000000000000000000000000000000000000000000000000000000080",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     ] {
         let key: [u8; 32] = hex::decode(encoded).expect("hex").try_into().expect("key");
         let mut body = BuilderData::new();
@@ -550,6 +554,7 @@ fn deploy_send_atomically_installs_exact_state_init_and_funds_task() {
         settlement_policy_hash: [0x31; 32],
         permission_hash: [0x32; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
     let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
@@ -626,14 +631,16 @@ fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
         settlement_policy_hash: [0x51; 32],
         permission_hash: [0x52; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
     let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
-    // Leave 0.25 TOS above the transfer: comfortably above the storage fee
-    // this transaction pays before the compute phase reads the balance, and
-    // still far below the masterchain forward fee of a ~2 KB StateInit plus
-    // the bounded compute reserve.
-    let value = fixture.balance() - TOS / 4;
+    // Leave 0.5 TOS above the transfer: above what this transaction pays
+    // before the compute phase reads the balance, so the pre-accept floor
+    // passes, and below the masterchain forward fee of the Task Escrow
+    // StateInit plus the bounded compute reserve. At 1/8 TOS the floor
+    // refuses it; at 1 TOS the reserve is met and the deploy goes out.
+    let value = fixture.balance() - TOS / 2;
     let action = fixture.signed_deploy(
         &fixture.controller_secret,
         0,
@@ -671,6 +678,7 @@ fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
     let result = fixture.send_external(funded).expect("funded resend");
     result.expect_success().expect_out_msgs(1);
     let gas_used = compute_gas_used(&result);
+    eprintln!("deploy send gas: {gas_used} of {AGENT_ACCOUNT_MAX_ACTION_GAS}");
     assert!(
         gas_used * 3 <= AGENT_ACCOUNT_MAX_ACTION_GAS * 2,
         "reserved compute budget must keep at least 1.5x margin over real usage ({gas_used} gas)"
@@ -704,6 +712,7 @@ fn deploy_send_is_bound_by_policy_and_cannot_be_replayed() {
         settlement_policy_hash: [0x61; 32],
         permission_hash: [0x62; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
     let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
@@ -756,6 +765,7 @@ fn deploy_send_rejects_a_state_init_for_another_destination_without_consuming_se
         settlement_policy_hash: [0x41; 32],
         permission_hash: [0x42; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
     let wrong_target = fixture.target.address().clone();
@@ -988,6 +998,7 @@ fn deploy_send_outside_the_account_workchain_is_rejected_before_acceptance() {
         settlement_policy_hash: [0x81; 32],
         permission_hash: [0x82; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let target = TaskEscrowContract::calculate_address(0, &init).expect("task address");
     let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
@@ -1042,6 +1053,7 @@ fn admission_does_not_depend_on_the_size_of_the_payload() {
             settlement_policy_hash: [0x71; 32],
             permission_hash: [0x72; 32],
             attestor_pubkey: None,
+            dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
         };
         let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
         let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
@@ -1086,6 +1098,7 @@ fn deploy_send_above_the_configured_message_limit_is_reported_not_skipped() {
         settlement_policy_hash: [0x91; 32],
         permission_hash: [0x92; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
     let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
@@ -1147,6 +1160,7 @@ fn deploy_send_rejects_unsupported_state_init_shapes_before_acceptance() {
         settlement_policy_hash: [0xa1; 32],
         permission_hash: [0xa2; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let plain = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
     let plain_cell = plain.write_to_new_cell().expect("serialize").into_cell().expect("cell");
@@ -1345,6 +1359,7 @@ fn controller_action_accepts_assigned_task_escrow() {
         settlement_policy_hash: [0x11; 32],
         permission_hash: [0x22; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let escrow = TaskEscrowContract::calculate_address(-1, &init).expect("escrow address");
     let deploy = MessageBuilder::internal(creator.address(), &escrow, 3 * TOS)
@@ -1391,6 +1406,7 @@ fn checked_contract_call_v2_rejected_by_target_bounces_without_restoring_authori
         settlement_policy_hash: [0x31; 32],
         permission_hash: [0x32; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let escrow = TaskEscrowContract::calculate_address(-1, &init).expect("escrow address");
     let deploy = MessageBuilder::internal(creator.address(), &escrow, 3 * TOS)
@@ -1598,7 +1614,7 @@ fn owner_cannot_install_a_policy_above_the_signed_action_wire_limit() {
 
 #[test]
 fn task_send_signature_is_bound_to_the_account_address_and_rejected_across_accounts() {
-    // The signed message is domain_bound_hash(account_address, payload_hash),
+    // The signed message is controller_hash_to_sign(account_address, ...),
     // not the bare payload hash -- so a signature minted for one Agent
     // Account is *not* accepted by a second, independent Agent Account that
     // happens to share the same controller key (e.g. an operator reusing

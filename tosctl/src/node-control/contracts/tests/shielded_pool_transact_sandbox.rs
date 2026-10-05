@@ -604,6 +604,7 @@ fn genesis_state(nullifier_root: Field) -> Cell {
     builder.append_u16(VERSION).unwrap();
     builder.append_raw(&EMPTY_ROOTS[DEPTH], 256).unwrap();
     builder.append_u64(0).unwrap();
+    builder.append_u32(0).unwrap(); // no recovery leaves reserved
     builder.append_raw(&nullifier_root, 256).unwrap();
     builder.append_u64(1).unwrap();
     builder.append_u32(EPOCH_NONE).unwrap();

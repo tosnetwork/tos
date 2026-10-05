@@ -228,9 +228,34 @@ counted as an independent participant.
 ## The freeze
 
 ```sh
-cargo run --manifest-path tools/shielded-pool-genesis/Cargo.toml --bin genesis -- \
-    . out/manifest.json --verifying-key vk.bin
+cargo run --release --manifest-path tools/shielded-pool-genesis/Cargo.toml --bin genesis -- \
+    . out/manifest.json <profile commit> <profile blob> \
+    --ceremony /path/to/ceremony \
+    --verifying-key vk.bin --ceremony-transcript <the announced transcript digest>
 ```
+
+The generator never falls back to the development key, and never takes a
+key on its word. `--ceremony` names the ceremony directory: the generator
+rebuilds the starting key from the committed slice, runs the same audit
+`phase2-verify` runs (the ceremony crate's `audit::audit`), refuses a ceremony
+no beacon has closed, and takes the verifying key out of that audit.
+`--verifying-key` and `--ceremony-transcript` are optional cross-checks and
+must match what the audit found byte for byte, so a different key cannot be
+presented under a real ceremony's transcript. The profile's source commit and
+blob are required as git object ids.
+
+The manifest's `key` section then records the audited ceremony -- protocol,
+`"status": "finished"`, step count, transcript, beacon digest, phase-1
+transcript and slice digest, starting-key digest, constraint and instance
+counts, final proving-key digest and verifying-key digest. Before writing,
+the generator puts the manifest through `manifest::require_production`, which
+reads it as typed JSON (unknown or misplaced fields and duplicate keys are
+refused) and holds every field against the plan the audit produced: the
+verifying key, the state hash, the ceremony section and the provenance. A
+development genesis must be asked for with `--development`; its manifest
+carries `"key": {"class": "development"}`, which that gate refuses, as it
+refuses any manifest naming the development verifying key whatever its class
+says.
 
 The key is part of the genesis state, so it fixes the state hash and therefore
 the deployment address. **No address can be published before this point**, and

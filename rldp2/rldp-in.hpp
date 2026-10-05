@@ -27,8 +27,9 @@
 #include "td/utils/List.h"
 #include "tl-utils/tl-utils.hpp"
 
-#include "rldp.hpp"
 #include "rldp-connection-limits.h"
+#include "rldp-inbound-budget.h"
+#include "rldp.hpp"
 
 namespace tos {
 
@@ -114,12 +115,21 @@ class RldpIn : public RldpImpl {
   void get_conn_ip_str(adnl::AdnlNodeIdShort l_id, adnl::AdnlNodeIdShort p_id,
                        td::Promise<td::string> promise) override;
 
-  explicit RldpIn(td::actor::ActorId<adnl::AdnlPeerTable> adnl) : adnl_(adnl) {
-  }
+  // Both out of line: a connection's type is complete only in rldp.cpp.
+  explicit RldpIn(td::actor::ActorId<adnl::AdnlPeerTable> adnl);
+  ~RldpIn() override;
 
  protected:
   void on_mtu_updated(td::optional<adnl::AdnlNodeIdShort> local_id,
                       td::optional<adnl::AdnlNodeIdShort> peer_id) override;
+
+  // An allowance lets a peer send unsolicited transfers of that size, each
+  // charged to the peer identity's share of the inbound budget. One whose
+  // largest transfer would not fit the share is refused: such transfers would
+  // be dropped part by part until they expired.
+  td::Status check_mtu(td::uint64 mtu) const override {
+    return rldp_check_transfer_allowance(mtu, RldpInboundBudget::process_default()->limits().per_identity_bytes);
+  }
 
   void alarm() override;
 

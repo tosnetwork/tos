@@ -50,8 +50,7 @@ def write(name, obj):
 
 def event(kind, **fields):
     row = {"at": time.time(), "kind": kind, **fields}
-    with (OUT / "events.jsonl").open("a") as f:
-        f.write(json.dumps(row) + "\n")
+    local.append_text(OUT / "events.jsonl", json.dumps(row) + "\n")
     print(json.dumps(row), flush=True)
 
 
@@ -67,7 +66,7 @@ async def wait(predicate, timeout=60):
 
 async def lite_int(method, *args, address=ELECTOR):
     proc = await asyncio.create_subprocess_exec(
-        "/usr/local/bin/tos-lite-client",
+        str(local.INSTALLED_LITE_CLIENT),
         "-C",
         str(DATA / "configs/node-1-lite.json"),
         "-v",
@@ -123,7 +122,9 @@ def trace_once(offsets):
     import os
 
     captured = 0
-    with (OUT / "relay-trace.jsonl").open("a") as out:
+    with os.fdopen(
+        local.open_private(OUT / "relay-trace.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a"
+    ) as out:
         for node in (1, 2, 3, 4, 7):
             for path in (DATA / f"testnet/node{node}").glob("log*"):
                 try:
@@ -197,6 +198,11 @@ async def snapshot(previous):
 
 
 async def main():
+    # Runs from a snapshot with no build tree: the lite-client is the
+    # installed one, checked before anything else is touched.
+    local.require_installed_executable(local.INSTALLED_LITE_CLIENT)
+    # Runs as root: refuse an output directory another user could redirect.
+    local.secure_output_dir(OUT)
     plan = json.loads((OUT / "plan.json").read_text())
     if plan["elected_for"] != 600 or plan["rosters"] != [list(roster(0)), list(roster(1))]:
         raise ValueError("rotation plan differs")
@@ -314,7 +320,9 @@ async def main():
                                     raise ValueError(
                                         "node stake authorization differs from candidate"
                                     )
-                                (OUT / f"authorization-{election}-{i}.json").write_bytes(raw)
+                                local.write_bytes(
+                                    OUT / f"authorization-{election}-{i}.json", raw, 0o600
+                                )
                                 body = build_pool_stake_order(
                                     query_id=query,
                                     stake_amount=11000 * NANO,

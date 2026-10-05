@@ -28,7 +28,7 @@
 //! these kinds is *always* re-decoded when it reappears in a later block,
 //! since that is exactly how a status change (accept/settle/rule/...)
 //! becomes visible.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,8 +42,8 @@ use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_for
 use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
     AgentAccountContract, CapabilityRegistryContract, ChainProvider, DisputeContract,
-    MasterchainCheckpoint, ServiceActorContract, TaskEscrowContract,
-    read_nominator_pool_snapshot_at,
+    MasterchainCheckpoint, PoolSnapshotSource, ProvenGetterProvider, ReadPolicy,
+    ServiceActorContract, TaskEscrowContract,
 };
 
 const DNS_ITEM_CODE_HASH: &str = "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78";
@@ -66,8 +66,13 @@ const MAX_BLOCKS_PER_TICK: u32 = 200;
 /// tick may spend. Reaching it is a normal yield: the pending batch resumes
 /// from durable state next tick, however deep the unindexed ancestry is.
 const MAX_SHARD_WORK_PER_TICK: usize = 4096;
-/// Published addresses refreshed per drain.
+/// Published addresses selected per drain.
 const MAX_ADDRESS_REFRESH_PER_DRAIN: usize = 4096;
+/// Successive queued heights one address may be observed at in one drain.
+const ADDRESS_REFRESH_QUANTUM: usize = 32;
+/// Observations (one address at one height) one drain may make in total,
+/// across every address it selected.
+const MAX_ADDRESS_REFRESH_WORK_PER_DRAIN: usize = 4096;
 const NOMINATOR_POOL_KIND: &str = "contract.pool.nominator";
 /// Max transactions requested per `getBlockTransactions` page.
 const TRANSACTIONS_PAGE_SIZE: u32 = 256;
@@ -161,6 +166,7 @@ pub async fn run(
     indexer_store: Arc<IndexerStore>,
 ) -> anyhow::Result<()> {
     let chain_provider = runtime_cfg.chain_provider();
+    let pool_snapshots = pool_snapshot_source(&app_config);
     let known = KnownCodeHashes::compute()?;
     let probe_budget = ProbeBudget::new();
     let mut interval = tokio::time::interval(Duration::from_secs(app_config.tick_interval));
@@ -175,6 +181,7 @@ pub async fn run(
             _ = interval.tick() => {
                 if let Err(e) = tick(
                     &chain_provider,
+                    pool_snapshots.as_ref(),
                     &indexer_store,
                     &known,
                     &probe_budget,
@@ -191,6 +198,41 @@ pub async fn run(
                 tracing::info!(target: "indexer", "cancel received");
                 return Ok(());
             }
+        }
+    }
+}
+
+/// Pool snapshots when no proof verifier is usable: there are none. Every
+/// pool refresh then stays pending rather than folding in an observation the
+/// indexer cannot prove.
+struct UnprovisionedPoolSnapshots {
+    reason: String,
+}
+
+#[async_trait::async_trait]
+impl PoolSnapshotSource for UnprovisionedPoolSnapshots {
+    async fn nominator_pool_snapshot(
+        &self,
+        _address: &MsgAddressInt,
+        _policy: &ReadPolicy,
+    ) -> anyhow::Result<contracts::NominatorPoolSnapshot> {
+        anyhow::bail!("no authoritative pool snapshot: {}", self.reason)
+    }
+}
+
+/// The only production source of pool snapshots: the locally configured
+/// proof verifier. The chain RPC endpoint is never one.
+fn pool_snapshot_source(app_config: &AppConfig) -> Arc<dyn PoolSnapshotSource> {
+    let Some(config) = &app_config.proof_verifier else {
+        return Arc::new(UnprovisionedPoolSnapshots {
+            reason: "no proof_verifier is configured".to_owned(),
+        });
+    };
+    match ProvenGetterProvider::new(config) {
+        Ok(provider) => Arc::new(provider),
+        Err(e) => {
+            tracing::error!(target: "indexer", "proof verifier unusable: {:#}", e);
+            Arc::new(UnprovisionedPoolSnapshots { reason: format!("{e:#}") })
         }
     }
 }
@@ -229,8 +271,29 @@ struct ScanLimits {
     max_batches: u32,
     /// Shard-ancestry work units per tick.
     max_shard_work: usize,
-    /// Published addresses refreshed per drain.
-    max_refresh: usize,
+    /// Bounds of one drain of the address refresh queue.
+    refresh: RefreshBudget,
+}
+
+/// Bounds of one drain of the address refresh queue.
+#[derive(Clone, Debug)]
+struct RefreshBudget {
+    /// Addresses selected from the queue.
+    addresses: usize,
+    /// Successive heights one selected address may be observed at.
+    per_address: usize,
+    /// Observations the whole drain may make.
+    work: usize,
+}
+
+impl RefreshBudget {
+    fn production() -> Self {
+        Self {
+            addresses: MAX_ADDRESS_REFRESH_PER_DRAIN,
+            per_address: ADDRESS_REFRESH_QUANTUM,
+            work: MAX_ADDRESS_REFRESH_WORK_PER_DRAIN,
+        }
+    }
 }
 
 impl ScanLimits {
@@ -238,7 +301,7 @@ impl ScanLimits {
         Self {
             max_batches: MAX_BLOCKS_PER_TICK,
             max_shard_work: MAX_SHARD_WORK_PER_TICK,
-            max_refresh: MAX_ADDRESS_REFRESH_PER_DRAIN,
+            refresh: RefreshBudget::production(),
         }
     }
 }
@@ -265,8 +328,10 @@ impl PruneState {
 
 /// One indexer tick: scan, then prune strictly below the published
 /// watermark.
+#[allow(clippy::too_many_arguments)]
 async fn tick(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
@@ -274,7 +339,8 @@ async fn tick(
     retention_blocks: u32,
     prune: &mut PruneState,
 ) -> anyhow::Result<ScanOutcome> {
-    let outcome = scan_new_blocks(chain_provider, store, known, probe_budget, limits).await?;
+    let outcome =
+        scan_new_blocks(chain_provider, pool_snapshots, store, known, probe_budget, limits).await?;
     if let Err(e) = prune_after_scan(store, retention_blocks, outcome.published_mc_seqno, prune) {
         tracing::error!(target: "indexer", "prune error: {:#}", e);
     }
@@ -309,6 +375,7 @@ fn prune_after_scan(
 
 async fn scan_new_blocks(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
@@ -361,7 +428,15 @@ async fn scan_new_blocks(
         }
     }
     // Touches published before an interruption are refreshed first.
-    drain_address_refresh(chain_provider, store, known, probe_budget, limits.max_refresh).await?;
+    drain_address_refresh(
+        chain_provider,
+        pool_snapshots,
+        store,
+        known,
+        probe_budget,
+        &limits.refresh,
+    )
+    .await?;
 
     let mut published_now = 0u32;
     let mut work_left = limits.max_shard_work;
@@ -398,10 +473,11 @@ async fn scan_new_blocks(
                 published_now = published_now.saturating_add(1);
                 drain_address_refresh(
                     chain_provider,
+                    pool_snapshots,
                     store,
                     known,
                     probe_budget,
-                    limits.max_refresh,
+                    &limits.refresh,
                 )
                 .await?;
             }
@@ -743,72 +819,124 @@ async fn scan_exact_block(
 /// touches canonical. A failure that could hide a nominator-pool
 /// observation keeps the row for another attempt; other contract kinds are
 /// best-effort, as before.
+///
+/// The queue selects each address at its lowest pending height, with rows
+/// that keep failing held to a fixed share so they cannot hold fresh work
+/// back. Selected addresses are then drained through their successive queued
+/// heights in order, in rounds: every selected address gets its next height
+/// before any gets one more, an address leaves the rotation at its first
+/// failure or once it has used `per_address` heights, and the drain stops
+/// once it has made `work` observations. A pool touched every block thus
+/// works its backlog down whenever the pass has room, and no address can
+/// take the whole pass.
 async fn drain_address_refresh(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
-    limit: usize,
+    budget: &RefreshBudget,
 ) -> anyhow::Result<()> {
-    let queue = store.address_refresh_queue(limit)?;
-    // The queue is ordered by height. An address whose earlier observation is
-    // still owed is not observed at a later height in the same pass: a pool is
-    // folded in strictly in height order, and an unreadable height keeps it
-    // (and the ledger) waiting rather than being skipped.
-    let mut waiting: HashSet<String> = HashSet::new();
-    let mut latest: HashMap<String, u32> = HashMap::new();
-    for refresh in &queue {
-        let entry = latest.entry(refresh.address.clone()).or_insert(refresh.checkpoint.seqno);
-        *entry = (*entry).max(refresh.checkpoint.seqno);
-    }
-    for refresh in queue {
-        if waiting.contains(&refresh.address) {
-            continue;
-        }
-        let kind_before = store.kind_of(&refresh.address)?;
-        let ledger_relevant = match kind_before.as_deref() {
-            None | Some("unclassified") => true,
-            Some(kind) => kind == NOMINATOR_POOL_KIND,
-        };
-        // Other contract kinds read latest state, so only their last queued
-        // height needs a visit.
-        if !ledger_relevant
-            && latest.get(&refresh.address).is_some_and(|seqno| *seqno > refresh.checkpoint.seqno)
-        {
-            store.complete_address_refresh(&refresh)?;
-            continue;
-        }
-        match visit_address(chain_provider, store, known, &refresh, probe_budget).await {
-            Ok(()) => store.complete_address_refresh(&refresh)?,
-            Err(e) => {
-                if ledger_relevant {
-                    tracing::warn!(
-                        target: "indexer",
-                        address = %refresh.address,
-                        mc_seqno = refresh.checkpoint.seqno,
-                        error = %format!("{e:#}"),
-                        "failed to index account; keeping it for another attempt"
-                    );
-                    store.defer_address_refresh(&refresh)?;
-                    waiting.insert(refresh.address.clone());
-                } else {
-                    tracing::warn!(
-                        target: "indexer",
-                        address = %refresh.address,
-                        error = %format!("{e:#}"),
-                        "failed to index account"
-                    );
-                    store.complete_address_refresh(&refresh)?;
-                }
+    let mut rotation = store.address_refresh_queue(budget.addresses)?;
+    let mut work_left = budget.work;
+    let mut round = 0usize;
+    'pass: while !rotation.is_empty() && round < budget.per_address {
+        round = round.saturating_add(1);
+        let mut next_round = Vec::with_capacity(rotation.len());
+        for refresh in rotation {
+            let Some(remaining) = work_left.checked_sub(1) else {
+                break 'pass;
+            };
+            work_left = remaining;
+            let address = refresh.address.clone();
+            if refresh_one_height(
+                chain_provider,
+                pool_snapshots,
+                store,
+                known,
+                probe_budget,
+                refresh,
+            )
+            .await?
+                == HeightOutcome::Observed
+                && let Some(next) = store.next_address_refresh(&address)?
+            {
+                next_round.push(next);
             }
         }
+        rotation = next_round;
     }
     store.settle_nominator_ledger()?;
     Ok(())
 }
 
+/// Whether a drain may move on to the address's next queued height.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeightOutcome {
+    /// The height was observed and removed; the next one may follow.
+    Observed,
+    /// The address is done for this pass: its height failed and stays
+    /// queued, or one visit stood for every height it had queued.
+    Stop,
+}
+
+/// Observes one address at one queued height.
+async fn refresh_one_height(
+    chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
+    store: &IndexerStore,
+    known: &KnownCodeHashes,
+    probe_budget: &ProbeBudget,
+    refresh: AddressRefresh,
+) -> anyhow::Result<HeightOutcome> {
+    let kind_before = store.kind_of(&refresh.address)?;
+    let ledger_relevant = match kind_before.as_deref() {
+        None | Some("unclassified") => true,
+        Some(kind) => kind == NOMINATOR_POOL_KIND,
+    };
+    // Other contract kinds keep no per-height history: visit them once, at
+    // their highest queued height (some read state at that height), and drop
+    // the heights below it.
+    if !ledger_relevant {
+        let latest = store.latest_address_refresh(&refresh.address)?.unwrap_or(refresh);
+        if let Err(e) =
+            visit_address(chain_provider, pool_snapshots, store, known, &latest, probe_budget).await
+        {
+            tracing::warn!(
+                target: "indexer",
+                address = %latest.address,
+                error = %format!("{e:#}"),
+                "failed to index account"
+            );
+        }
+        store.complete_address_refresh_through(&latest.address, latest.checkpoint.seqno)?;
+        return Ok(HeightOutcome::Stop);
+    }
+    // A pool is folded in strictly in height order: an unreadable height
+    // keeps it (and the ledger) waiting rather than being skipped.
+    match visit_address(chain_provider, pool_snapshots, store, known, &refresh, probe_budget).await
+    {
+        Ok(()) => {
+            store.complete_address_refresh(&refresh)?;
+            Ok(HeightOutcome::Observed)
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "indexer",
+                address = %refresh.address,
+                mc_seqno = refresh.checkpoint.seqno,
+                error = %format!("{e:#}"),
+                "failed to index account; keeping it for another attempt"
+            );
+            store.defer_address_refresh(&refresh)?;
+            Ok(HeightOutcome::Stop)
+        }
+    }
+}
+
 async fn visit_address(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     refresh: &AddressRefresh,
@@ -849,7 +977,7 @@ async fn visit_address(
     };
 
     if kind == NOMINATOR_POOL_KIND {
-        return refresh_nominator_pool(chain_provider, store, address, refresh).await;
+        return refresh_nominator_pool(pool_snapshots, store, address, refresh).await;
     }
     if kind == "dns_domain" {
         return decode_dns_domain(
@@ -1035,24 +1163,34 @@ async fn decode_and_store(
     }
 }
 
-/// Refreshes one nominator pool from a snapshot pinned to the exact
-/// published masterchain block its touches became canonical in, and folds
-/// that snapshot into the lifetime ledger. Any failure -- including a node
-/// that cannot serve the historical state -- leaves the refresh pending, so
-/// the ledger never advances past an observation it could not make.
+/// Refreshes one nominator pool from a proven snapshot taken explicitly at
+/// the exact published masterchain block its touches became canonical in,
+/// and folds that snapshot into the lifetime ledger. The snapshot comes only
+/// from `pool_snapshots`, which computes both get-methods locally on the
+/// pool's proven state; the chain RPC endpoint is not consulted for it at
+/// all. Any failure -- a block the verifier cannot authenticate from its
+/// anchor, missing proof material, a local execution failure -- leaves the
+/// refresh pending, so the ledger never advances past an observation it
+/// could not prove.
 async fn refresh_nominator_pool(
-    chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     address: &str,
     refresh: &AddressRefresh,
 ) -> anyhow::Result<()> {
     let address_value = address.parse::<MsgAddressInt>()?;
-    let snapshot = read_nominator_pool_snapshot_at(
-        chain_provider.as_ref(),
-        &address_value,
-        &refresh.checkpoint,
-    )
-    .await?;
+    let snapshot = pool_snapshots
+        .nominator_pool_snapshot(
+            &address_value,
+            &ReadPolicy::Historical(refresh.checkpoint.clone()),
+        )
+        .await?;
+    anyhow::ensure!(
+        snapshot.checkpoint == refresh.checkpoint,
+        "pool snapshot answers for masterchain {} instead of {}",
+        snapshot.checkpoint.seqno,
+        refresh.checkpoint.seqno
+    );
     let data = snapshot.pool;
     let nominators = snapshot.nominators;
     let nominator_stake = nominators.iter().fold(0u64, |total, position| {
@@ -1150,7 +1288,7 @@ async fn decode_dns_domain(
     anyhow::ensure!(mc_seqno > 0, "DNS observation lacks a masterchain checkpoint");
     anyhow::ensure!(checkpoint.seqno == mc_seqno, "DNS checkpoint seqno mismatch");
     let nft = chain_provider
-        .run_get_method_at(address.to_owned(), "get_nft_data", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_nft_data", vec![], checkpoint)
         .await?;
     anyhow::ensure!(nft.bool(0)?, "DNS Domain Item is not initialized");
     let index = nft.decimal_string(1)?.to_owned();
@@ -1168,7 +1306,7 @@ async fn decode_dns_domain(
     let content = nft.cell(4)?;
 
     let domain_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_domain", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_domain", vec![], checkpoint)
         .await?;
     let domain_slice = domain_stack.slice(0)?;
     anyhow::ensure!(
@@ -1203,7 +1341,7 @@ async fn decode_dns_domain(
     );
 
     let auction_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_auction_info", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_auction_info", vec![], checkpoint)
         .await?;
     let auction_end_time = auction_stack.i64(2)?;
     let max_bid_amount = auction_stack.decimal_string(1)?.parse::<u128>()?;
@@ -1216,7 +1354,12 @@ async fn decode_dns_domain(
         auction_end_time,
     });
     let fill_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_last_fill_up_time", vec![], checkpoint)
+        .run_get_method_at_unverified(
+            address.to_owned(),
+            "get_last_fill_up_time",
+            vec![],
+            checkpoint,
+        )
         .await?;
     let last_fill_up_time = fill_stack.i64(0)?;
     anyhow::ensure!(last_fill_up_time > 0, "DNS Domain Item lacks a renewal clock");
@@ -1520,6 +1663,12 @@ async fn refresh_service_request_lifecycle(
         store.set_service_scan_high_water(address, high_water)?;
     }
     Ok(())
+}
+
+/// A source that never yields a pool snapshot, for tests that index no pool.
+#[cfg(test)]
+fn no_pool_snapshots() -> UnprovisionedPoolSnapshots {
+    UnprovisionedPoolSnapshots { reason: "not provisioned in this test".to_owned() }
 }
 
 #[cfg(test)]
@@ -1847,6 +1996,9 @@ mod tests {
             permission_hash: [0; 32],
             dispute_hash: [0; 32],
             attestor_pubkey: None,
+            dispute_fallback_agent_bps:
+                contracts::TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+            dispute_deadline: 0,
         };
         let json = serde_json::to_string(&TaskEscrowRecordDto::from(&data)).unwrap();
         let dto = crate::http::agent_query_api::indexed_dto::<TaskDto>(&json, "0:aa", true);
@@ -2179,6 +2331,7 @@ mod tests {
 
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2199,6 +2352,7 @@ mod tests {
 
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2234,6 +2388,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2274,6 +2429,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider;
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2309,6 +2465,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider;
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
@@ -2338,6 +2495,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
@@ -2351,6 +2509,7 @@ mod tests {
         provider.set_masterchain_info(2, shard);
         let err = scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
@@ -2393,6 +2552,7 @@ mod tests {
         for _ in 0..4 {
             let outcome = tick(
                 &dyn_provider,
+                &no_pool_snapshots(),
                 &store,
                 &known,
                 &ProbeBudget::new(),
@@ -2433,6 +2593,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2853,10 +3014,68 @@ mod tests {
     /// arbitrary.
     struct NotFoundLifecycleProvider {
         get_method_calls: StdMutex<usize>,
+        /// Heights of checkpoint-pinned reads, which then fail.
+        pinned_reads: StdMutex<Vec<u32>>,
+    }
+
+    #[tokio::test]
+    async fn a_kind_without_height_history_is_visited_once_at_its_highest_height() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let address = "0:".to_owned() + &"ab".repeat(32);
+        store
+            .upsert(&IndexedRecord {
+                address: address.clone(),
+                kind: "dns_domain".to_owned(),
+                creator: None,
+                counterparty: None,
+                status: None,
+                deadline: None,
+                last_seqno: 1,
+                updated_at: time_format::now(),
+                dto_json: "{}".to_owned(),
+            })
+            .unwrap();
+        for height in [5, 6, 7] {
+            store.queue_address_refresh_for_test(&address, height, 0).unwrap();
+        }
+        let provider = Arc::new(NotFoundLifecycleProvider {
+            get_method_calls: StdMutex::new(0),
+            pinned_reads: StdMutex::new(Vec::new()),
+        });
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        drain_address_refresh(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+            &RefreshBudget { addresses: 10, ..RefreshBudget::production() },
+        )
+        .await
+        .unwrap();
+        // A DNS domain is read at a checkpoint: the visit that stands for all
+        // three heights reads the newest one, and only once.
+        assert_eq!(*provider.pinned_reads.lock().unwrap(), vec![7]);
+        assert!(store.address_refresh_queue(10).unwrap().is_empty());
+
+        // A height published after the visit is not dropped with the others.
+        store.queue_address_refresh_for_test(&address, 9, 0).unwrap();
+        store.complete_address_refresh_through(&address, 7).unwrap();
+        assert_eq!(store.address_refresh_queue(10).unwrap().len(), 1);
     }
 
     #[async_trait::async_trait]
     impl ChainProvider for NotFoundLifecycleProvider {
+        async fn run_get_method_at_unverified(
+            &self,
+            _address: String,
+            _method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+            checkpoint: &contracts::chain_provider::MasterchainCheckpoint,
+        ) -> anyhow::Result<TvmStackParser> {
+            self.pinned_reads.lock().unwrap().push(checkpoint.seqno);
+            anyhow::bail!("pinned read recorded")
+        }
         async fn run_get_method(
             &self,
             _address: String,
@@ -2962,7 +3181,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_hostile_next_request_id_only_materialises_a_bounded_batch_per_visit() {
-        let provider = Arc::new(NotFoundLifecycleProvider { get_method_calls: StdMutex::new(0) });
+        let provider = Arc::new(NotFoundLifecycleProvider {
+            get_method_calls: StdMutex::new(0),
+            pinned_reads: StdMutex::new(Vec::new()),
+        });
         let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
         let store = IndexerStore::open_in_memory().unwrap();
         // The counter is contract-controlled state: a deployer can report any
@@ -3033,6 +3255,293 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(*provider.get_method_calls.lock().unwrap(), cap * 4);
+    }
+}
+
+#[cfg(test)]
+mod refresh_drain_tests {
+    //! Scheduling of the address refresh drain: per-address quantum, pass
+    //! budget, rotation, and failure isolation. Addresses here are
+    //! unclassified accounts, which the drain treats like pools: each queued
+    //! height is observed in order and a failure keeps the height queued.
+    use super::*;
+    use chain_rpc_client::v2::data_models::{AccountState, TransactionId};
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Mutex as StdMutex;
+
+    /// Answers every account lookup with an uninitialized account, except
+    /// for addresses scripted to fail, and records each lookup.
+    #[derive(Default)]
+    struct ScriptedVisits {
+        visits: StdMutex<Vec<String>>,
+        always_fail: HashSet<String>,
+        /// Fail only the n-th (1-based) lookup of an address.
+        fail_on_visit: HashMap<String, usize>,
+    }
+
+    impl ScriptedVisits {
+        fn visits_of(&self, address: &str) -> usize {
+            self.visits.lock().unwrap().iter().filter(|visited| *visited == address).count()
+        }
+
+        fn total_visits(&self) -> usize {
+            self.visits.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChainProvider for ScriptedVisits {
+        async fn run_get_method(
+            &self,
+            _address: String,
+            _method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            anyhow::bail!("not exercised")
+        }
+        async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_config_param(
+            &self,
+            _param_id: u32,
+        ) -> anyhow::Result<chain_block::ConfigParamEnum> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_address_info(
+            &self,
+            address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::AddressInfo> {
+            let address = address.to_string();
+            let visit = {
+                let mut visits = self.visits.lock().unwrap();
+                visits.push(address.clone());
+                visits.iter().filter(|visited| **visited == address).count()
+            };
+            anyhow::ensure!(!self.always_fail.contains(&address), "scripted failure");
+            anyhow::ensure!(
+                self.fail_on_visit.get(&address) != Some(&visit),
+                "scripted failure on visit {visit}"
+            );
+            Ok(contracts::chain_provider::AddressInfo {
+                r#type: "raw.fullAccountState".to_owned(),
+                balance: 0,
+                code: None,
+                data: None,
+                last_transaction_id: TransactionId {
+                    r#type: "internal.transactionId".to_owned(),
+                    lt: 0,
+                    hash: vec![0; 32],
+                },
+                block_id: BlockIdExt {
+                    r#type: "tos.blockIdExt".to_owned(),
+                    workchain: -1,
+                    shard: i64::MIN,
+                    seqno: 0,
+                    root_hash: vec![0; 32],
+                    file_hash: vec![0; 32],
+                },
+                sync_utime: 0,
+                extra_currencies: Vec::new(),
+                state: AccountState::default(),
+                frozen_hash: String::new(),
+            })
+        }
+        async fn get_extended_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::ExtendedAddressInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_wallet_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_masterchain_info(
+            &self,
+        ) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_shards(
+            &self,
+            _seqno: u32,
+        ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_block_transactions_page(
+            &self,
+            _workchain: i32,
+            _shard: i64,
+            _seqno: u32,
+            _after_lt: Option<u64>,
+            _after_hash: Option<&str>,
+            _count: u32,
+        ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
+            anyhow::bail!("not exercised")
+        }
+    }
+
+    fn account(n: u8) -> String {
+        format!("0:{}", format!("{n:02x}").repeat(32))
+    }
+
+    fn budget(addresses: usize, per_address: usize, work: usize) -> RefreshBudget {
+        RefreshBudget { addresses, per_address, work }
+    }
+
+    fn queue(store: &IndexerStore, address: &str, heights: impl IntoIterator<Item = u32>) {
+        for height in heights {
+            store.queue_address_refresh_for_test(address, height, 0).unwrap();
+        }
+    }
+
+    fn heights(store: &IndexerStore, address: &str) -> Vec<u32> {
+        store.queued_heights_for_test(address).unwrap().into_iter().map(|(h, _)| h).collect()
+    }
+
+    async fn drain(provider: &Arc<ScriptedVisits>, store: &IndexerStore, budget: &RefreshBudget) {
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        drain_address_refresh(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            store,
+            &KnownCodeHashes::compute().unwrap(),
+            &ProbeBudget::new(),
+            budget,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_backlog_shrinks_while_one_new_height_arrives_each_block() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let provider = Arc::new(ScriptedVisits::default());
+        let pool = account(1);
+        let neighbours = [account(2), account(3), account(4)];
+        // Twenty heights owed from before, e.g. while the node could not
+        // serve them.
+        queue(&store, &pool, 1..=20);
+        let limits = budget(16, 4, 64);
+        let mut backlog = vec![heights(&store, &pool).len()];
+        for block in 21..=40 {
+            // The pool and its neighbours are touched in every block.
+            queue(&store, &pool, [block]);
+            for neighbour in &neighbours {
+                queue(&store, neighbour, [block]);
+            }
+            drain(&provider, &store, &limits).await;
+            backlog.push(heights(&store, &pool).len());
+        }
+        // Four heights per pass against one arriving: the backlog falls by
+        // three each block until it is gone, and stays gone.
+        assert_eq!(&backlog[..8], &[20, 17, 14, 11, 8, 5, 2, 0], "{backlog:?}");
+        assert!(backlog[8..].iter().all(|owed| *owed == 0), "{backlog:?}");
+        for neighbour in &neighbours {
+            assert!(heights(&store, neighbour).is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failing_address_cannot_block_others() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let bad = account(1);
+        let provider = Arc::new(ScriptedVisits {
+            always_fail: HashSet::from([bad.clone()]),
+            ..Default::default()
+        });
+        // The failing address owes the oldest heights, so it is selected first.
+        queue(&store, &bad, 1..=50);
+        let good = [account(2), account(3), account(4)];
+        for address in &good {
+            queue(&store, address, 10..=14);
+        }
+        let limits = budget(16, 8, 64);
+        for pass in 1..=3u32 {
+            drain(&provider, &store, &limits).await;
+            // One attempt per pass, nothing skipped, nothing dropped.
+            assert_eq!(provider.visits_of(&bad), usize::try_from(pass).unwrap());
+            let owed = store.queued_heights_for_test(&bad).unwrap();
+            assert_eq!(owed.len(), 50);
+            assert_eq!(owed[0], (1, pass));
+            for address in &good {
+                assert!(heights(&store, address).is_empty(), "pass {pass}");
+                queue(&store, address, [100 + pass]);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_drain_stops_at_the_first_failure_and_skips_no_height() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let address = account(1);
+        let provider = Arc::new(ScriptedVisits {
+            fail_on_visit: HashMap::from([(address.clone(), 2)]),
+            ..Default::default()
+        });
+        queue(&store, &address, 1..=5);
+        let limits = budget(16, 8, 64);
+        drain(&provider, &store, &limits).await;
+        assert_eq!(provider.visits_of(&address), 2, "nothing after the failed height");
+        assert_eq!(store.queued_heights_for_test(&address).unwrap()[0], (2, 1));
+        assert_eq!(heights(&store, &address), vec![2, 3, 4, 5]);
+        // The next pass resumes at the failed height and drains the rest.
+        drain(&provider, &store, &limits).await;
+        assert_eq!(provider.visits_of(&address), 6);
+        assert!(heights(&store, &address).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_quantum_bounds_one_address_in_one_pass() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let provider = Arc::new(ScriptedVisits::default());
+        let address = account(1);
+        queue(&store, &address, 1..=10);
+        drain(&provider, &store, &budget(16, 3, 100)).await;
+        assert_eq!(provider.visits_of(&address), 3);
+        assert_eq!(heights(&store, &address), (4..=10).collect::<Vec<u32>>());
+    }
+
+    #[tokio::test]
+    async fn the_pass_budget_bounds_total_work_and_rotation_shares_it() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let provider = Arc::new(ScriptedVisits::default());
+        let addresses = [account(1), account(2), account(3)];
+        for address in &addresses {
+            queue(&store, address, 1..=10);
+        }
+        drain(&provider, &store, &budget(16, 5, 7)).await;
+        assert_eq!(provider.total_visits(), 7, "the pass budget is the whole pass's work");
+        // Round by round: every address gets its next height before any gets
+        // one more, so seven observations split three, two, two.
+        let visits: Vec<usize> =
+            addresses.iter().map(|address| provider.visits_of(address)).collect();
+        assert_eq!(visits, vec![3, 2, 2]);
+        for (address, observed) in addresses.iter().zip(&visits) {
+            let next = u32::try_from(*observed).unwrap() + 1;
+            assert_eq!(heights(&store, address), (next..=10).collect::<Vec<u32>>());
+        }
+    }
+
+    #[tokio::test]
+    async fn rows_that_failed_before_still_drain_once_they_succeed() {
+        // A retried address is selected through the reserved share and,
+        // once its head succeeds, drains on like any other.
+        let store = IndexerStore::open_in_memory().unwrap();
+        let provider = Arc::new(ScriptedVisits::default());
+        let retried = account(1);
+        store.queue_address_refresh_for_test(&retried, 1, 3).unwrap();
+        queue(&store, &retried, 2..=4);
+        for n in 0..20u8 {
+            queue(&store, &account(10 + n), [100 + u32::from(n)]);
+        }
+        drain(&provider, &store, &budget(8, 4, 64)).await;
+        assert!(heights(&store, &retried).is_empty());
     }
 }
 

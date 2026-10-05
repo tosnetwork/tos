@@ -52,9 +52,12 @@ pub fn validate(phrase: &str, password: &str) -> anyhow::Result<Vec<String>> {
         anyhow::bail!("TOS mnemonics must contain exactly 12 or 24 words");
     }
     let wordlist = Language::English.word_list();
-    if let Some(unknown) = words.iter().find(|word| wordlist.binary_search(&word.as_str()).is_err())
+    // Report the position only: a misspelled word is close to the real one,
+    // so echoing it would disclose part of the secret.
+    if let Some(position) =
+        words.iter().position(|word| wordlist.binary_search(&word.as_str()).is_err())
     {
-        anyhow::bail!("Unknown mnemonic word '{unknown}'");
+        anyhow::bail!("Unknown mnemonic word at position {}", position.saturating_add(1));
     }
     if !is_basic_seed(&words, password)? {
         anyhow::bail!("Mnemonic does not satisfy the TOS basic-seed check");

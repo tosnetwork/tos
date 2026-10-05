@@ -328,6 +328,7 @@ fn genesis_state(denominations: &[u64]) -> Cell {
     builder.append_u16(VERSION).unwrap();
     builder.append_raw(&EMPTY_ROOTS[DEPTH], 256).unwrap();
     builder.append_u64(0).unwrap();
+    builder.append_u32(0).unwrap(); // no recovery leaves reserved
     builder.append_raw(&[0x5a; 32], 256).unwrap(); // the IMT genesis root; untouched here
     builder.append_u64(1).unwrap();
     builder.append_u32(EPOCH_NONE).unwrap();

@@ -149,6 +149,7 @@ impl GenerateCmd {
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
             alerts: Default::default(),
+            proof_verifier: None,
         };
 
         save_config(&config, path)?;

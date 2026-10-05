@@ -43,5 +43,12 @@ const int error::zero_destination = 397;
 ;; A mint whose fee nobody paid. pay_swap records the payment and this is the
 ;; check that spends it, so the multisig never mints out of its own balance.
 const int error::swap_not_paid = 396;
+;; Completion of mints and burns; see settlement.fc.
+const int error::credit_underfunded = 395;
+const int error::burn_underfunded = 394;
+const int error::nothing_to_retry = 393;
+const int error::mint_ids_exhausted = 391;
+const int error::burn_ids_exhausted = 390;
+const int error::supply_bound = 389;
 
 const int error::no_bridge_config = 666;

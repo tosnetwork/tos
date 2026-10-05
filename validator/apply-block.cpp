@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "adnl/utils.hpp"
+#include "db/archive-gc-floor.h"
 #include "td/actor/MultiPromise.h"
 #include "tos/tos-io.hpp"
 #include "validator/fabric.h"
@@ -30,7 +31,55 @@ namespace tos {
 
 namespace validator {
 
+namespace {
+
+// Calls the wc0 index hook and reports how long block application waited on
+// it. The hook only queues the block for the indexing worker, so this should
+// stay small however slow the index itself is.
+template <class Call>
+void call_index_hook(td::actor::ActorId<ValidatorManager> manager, const BlockIdExt &id, Call &&call) {
+  double started = td::Time::now();
+  try {
+    call();
+  } catch (...) {
+    // Indexing must never affect block application.
+  }
+  double took = td::Time::now() - started;
+  VLOG(VALIDATOR_DEBUG) << "wc0 index hook for " << id.to_str() << " took " << took << " s";
+  td::actor::send_closure(manager, &ValidatorManager::add_perf_timer_stat, "wc0indexhook", took);
+}
+
+}  // namespace
+
+// The wallet index reads a basechain block back from the archive after its
+// apply. Its package is leased from before the block is filed (at its
+// masterchain reference) until the index has taken over at the hook, so
+// archive pruning cannot admit that package's deletion in between. No I/O.
+void ApplyBlock::take_archive_lease() {
+  if (archive_lease_held_ || !g_wc0_block_index_hook || handle_->id().id.workchain != 0 || handle_->id().seqno() == 0) {
+    return;
+  }
+  BlockSeqno ref =
+      handle_->inited_masterchain_ref_block() ? handle_->masterchain_ref_block() : masterchain_block_id_.seqno();
+  if (archive_lease_acquire(ref)) {
+    archive_lease_held_ = true;
+    archive_lease_seqno_ = ref;
+  }
+}
+
+void ApplyBlock::tear_down() {
+  release_archive_lease();
+}
+
+void ApplyBlock::release_archive_lease() {
+  if (archive_lease_held_) {
+    archive_lease_release(archive_lease_seqno_);
+    archive_lease_held_ = false;
+  }
+}
+
 void ApplyBlock::abort_query(td::Status reason) {
+  release_archive_lease();
   if (promise_) {
     VLOG(VALIDATOR_WARNING) << "aborting apply block query for " << id_.to_str() << ": " << reason;
     promise_.set_error(std::move(reason));
@@ -39,7 +88,9 @@ void ApplyBlock::abort_query(td::Status reason) {
 }
 
 void ApplyBlock::finish_query() {
-  VLOG(VALIDATOR_DEBUG) << "successfully finishing apply block query in " << perf_timer_.elapsed() << " s";
+  release_archive_lease();
+  VLOG(VALIDATOR_DEBUG) << "successfully finishing apply block query for " << id_.to_str() << " in "
+                        << perf_timer_.elapsed() << " s";
   handle_->set_processed();
   handle_->set_applied_stored();
   ValidatorInvariants::check_post_apply(handle_);
@@ -77,6 +128,9 @@ void ApplyBlock::start_up() {
 void ApplyBlock::got_block_handle(BlockHandle handle) {
   VLOG(VALIDATOR_DEBUG) << "got_block_handle";
   handle_ = std::move(handle);
+  if (!handle_->is_applied()) {
+    take_archive_lease();
+  }
 
   if (handle_->is_applied() && handle_->applied_stored() &&
       (!handle_->id().is_masterchain() || handle_->processed())) {
@@ -274,34 +328,30 @@ void ApplyBlock::applied_set() {
   VLOG(VALIDATOR_DEBUG) << "applied_set";
   handle_->set_applied();
   // wc=0 wallet index hook (best-effort, installed by validator-engine). Runs
-  // here — after the block is applied — so only canonical-chain blocks are ever
+  // here, after the block is applied, so only canonical-chain blocks are ever
   // indexed; data stored for unfinalized candidates (e.g. nonfinal candidate
-  // broadcasts) must not reach the index. When the block data was already in the
-  // database before this apply (block_ is null), fetch it asynchronously; a
-  // fetch failure only degrades RPC for this block.
+  // broadcasts) must not reach the index. It runs before the handle is
+  // flushed, so a block whose apply is durable has always been handed to the
+  // index first, which is what lets the index's exit flush account for every
+  // applied block.
+  // The hook takes what this apply already holds and returns at once. When
+  // the block data is not in hand (it was in the database before this apply),
+  // only the block id and state go over: the indexing worker reads the data
+  // itself, and apply never waits for a read made for the index.
   if (g_wc0_block_index_hook && handle_->id().id.workchain == 0 && handle_->id().seqno() > 0) {
+    auto block_root = block_.not_null() ? block_->root_cell() : td::Ref<vm::Cell>{};
     auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
-    if (block_.not_null()) {
-      try {
-        g_wc0_block_index_hook(block_->root_cell(), state_root, handle_->id());
-      } catch (...) {
-        // Indexing must never affect block application.
-      }
-    } else {
-      td::actor::send_closure(
-          manager_, &ValidatorManager::get_block_data_from_db, handle_,
-          [id = handle_->id(), state_root](td::Result<td::Ref<BlockData>> R) {
-            if (R.is_error() || R.ok().is_null() || !g_wc0_block_index_hook) {
-              return;
-            }
-            try {
-              g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id);
-            } catch (...) {
-              // Indexing must never affect block application.
-            }
-          });
-    }
+    // The archive files the block under this reference; the index keeps that
+    // package from here on, and this apply's lease is no longer needed.
+    BlockSeqno ref = handle_->masterchain_ref_block();
+    call_index_hook(manager_, handle_->id(),
+                    [&] { g_wc0_block_index_hook(std::move(block_root), std::move(state_root), handle_->id(), ref); });
   }
+  release_archive_lease();
+  flush_applied();
+}
+
+void ApplyBlock::flush_applied() {
   if (handle_->id().seqno() > 0) {
     CHECK(handle_->handle_moved_to_archive());
     CHECK(handle_->moved_to_archive());

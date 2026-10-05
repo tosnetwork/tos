@@ -23,6 +23,7 @@ use crate::utils::{parse_hex_bytes, HexBytes};
 use clap::Parser;
 use colored::Colorize;
 use secrets_vault::types::algorithm::Algorithm;
+use std::path::PathBuf;
 
 #[derive(clap::Parser)]
 #[command(name = "vault")]
@@ -55,8 +56,18 @@ enum Commands {
         #[arg(long)]
         overwrite: bool,
 
-        #[arg(long, required = true, value_parser = parse_hex_bytes, action = clap::ArgAction::Set)]
-        data: HexBytes,
+        /// Read the hex-encoded secret from a file owned by you with mode 0600.
+        #[arg(long, conflicts_with = "data_fd")]
+        data_file: Option<PathBuf>,
+
+        /// Read the hex-encoded secret from an inherited file descriptor
+        /// (0 for standard input, or 3 and above).
+        #[arg(long, conflicts_with = "data_file")]
+        data_fd: Option<i32>,
+
+        /// No longer accepted; kept only to explain the replacement.
+        #[arg(long, hide = true, allow_hyphen_values = true)]
+        data: Option<String>,
     },
     Generate {
         #[arg(long, required = true)]
@@ -100,7 +111,15 @@ async fn main() {
         Commands::Init {} => init::execute().await,
         Commands::List {} => list::execute().await,
         Commands::Delete { secret_ids } => delete::execute(&secret_ids).await,
-        Commands::Import { secret_id, algorithm, extractable, overwrite, data } => {
+        Commands::Import {
+            secret_id,
+            algorithm,
+            extractable,
+            overwrite,
+            data_file,
+            data_fd,
+            data,
+        } => {
             let algo: Algorithm = match algorithm.parse() {
                 Ok(algo) => algo,
                 Err(e) => {
@@ -109,7 +128,12 @@ async fn main() {
                 }
             };
 
-            import::execute(&secret_id, data.0.as_slice(), algo, extractable, overwrite).await
+            match import::read_import_secret(data.is_some(), data_file.as_deref(), data_fd) {
+                Ok(secret) => {
+                    import::execute(&secret_id, &secret, algo, extractable, overwrite).await
+                }
+                Err(e) => Err(e),
+            }
         }
         Commands::Generate { secret_id, algorithm, extractable } => {
             let algo: Algorithm = match algorithm.parse() {

@@ -46,13 +46,11 @@ METHODS = (
 
 
 def write_private_json(path, value):
-    local.write_json(path, value)
-    path.chmod(0o600)
+    local.write_json(path, value, 0o600)
 
 
 def record(directory, row):
-    transfers.record(directory, row)
-    (directory / "status.json").chmod(0o600)
+    transfers.record(directory, row, status_mode=0o600)
 
 
 def verify_state(actual, expected):
@@ -121,7 +119,7 @@ def choose(state, rng, sequence):
 
 async def pool_state(args, address):
     return {
-        k: await asyncio.to_thread(local.get_method, args.build, args.data, address, k)
+        k: await asyncio.to_thread(local.get_method, args.lite_client, args.data, address, k)
         for k in METHODS
     }
 
@@ -147,9 +145,9 @@ async def run(args):
         "invalid interval",
     )
     require(args.count >= 0, "invalid count")
-    args.output.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(args.output, 0o700)
-    with (args.output / "run.lock").open("a") as lock:
+    args.lite_client = local.require_installed_executable(args.lite_client)
+    local.secure_output_dir(args.output)
+    with os.fdopen(local.open_private(args.output / "run.lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         wallets = []
         for i in range(3):
@@ -191,7 +189,15 @@ async def run(args):
             pool = json.loads((args.data / "shielded-pool/pool.json").read_text())
             address = pool["address"]
             network = json.loads((args.data / "network.json").read_text())
-            stderr = stack.enter_context((args.output / "generator.stderr").open("ab"))
+            stderr = stack.enter_context(
+                os.fdopen(
+                    local.open_private(
+                        args.output / "generator.stderr",
+                        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                    ),
+                    "ab",
+                )
+            )
             generator = await asyncio.create_subprocess_exec(
                 str(
                     args.generator
@@ -273,7 +279,7 @@ async def run(args):
                         return (account, found[0]) if found else None
 
                     pool_account, tx = await transfers.wait_for(included, timeout=120)
-                    (args.output / "last-pool-transaction.boc").write_bytes(tx.data)
+                    local.write_bytes(args.output / "last-pool-transaction.boc", tx.data, 0o600)
                     transfers.check_transaction(tx)
                     transfers.verify_message(
                         tx.in_msg,
@@ -410,6 +416,7 @@ def main():
     p.add_argument("--output", type=Path, default=Path("/data/privacy-transfers"))
     p.add_argument("--nodes", type=int, default=7, help="fixed full-node inventory size")
     p.add_argument("--build", type=Path, default=REPO / "build")
+    p.add_argument("--lite-client", type=Path, default=local.INSTALLED_LITE_CLIENT)
     p.add_argument(
         "--generator", type=Path,
         default=REPO / "tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic",

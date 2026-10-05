@@ -214,14 +214,18 @@ async fn resolve_public_key(
 /// sharing the same attestor key and attested hash.
 async fn sign_with_vault_key(
     name: &str,
+    global_id: i32,
     attestation_address: &MsgAddressInt,
     attested_hash: &[u8; 32],
     vault: Arc<SecretVault>,
 ) -> anyhow::Result<[u8; 64]> {
     let secret = KeyConfig::VaultKey { name: name.to_owned() }.read_secret(Some(vault)).await?;
     let keypair = secret.as_keypair()?;
-    let hash_to_sign =
-        ProofAttestationContract::attest_hash_to_sign(attestation_address, attested_hash)?;
+    let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
+        global_id,
+        attestation_address,
+        attested_hash,
+    )?;
     let raw = keypair.sign(&hash_to_sign).await?;
     raw.try_into().map_err(|_| anyhow::anyhow!("signature must be 64 bytes"))
 }
@@ -362,6 +366,12 @@ impl ProofAttestationShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_attestation_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::ProofAttestation,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack =
             provider.get_method(address.to_string(), "get_proof_attestation_data", vec![]).await?;
@@ -437,6 +447,12 @@ impl ProofAttestationSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_attestation_address(&config, &self.address, &self.name)?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &destination,
+            contracts::VersionedContract::ProofAttestation,
+        )
+        .await?;
         let wallet_config =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =
@@ -451,8 +467,15 @@ impl ProofAttestationSendCmd {
                 let signature = match (&self.signature, &self.signer_vault_key) {
                     (Some(hex), None) => parse_signature(hex)?,
                     (None, Some(name)) => {
-                        sign_with_vault_key(name, &destination, &attested_hash, vault.clone())
-                            .await?
+                        let global_id = super::utils::network_global_id(&rpc_client).await?;
+                        sign_with_vault_key(
+                            name,
+                            global_id,
+                            &destination,
+                            &attested_hash,
+                            vault.clone(),
+                        )
+                        .await?
                     }
                     _ => anyhow::bail!("provide exactly one of --signature or --signer-vault-key"),
                 };

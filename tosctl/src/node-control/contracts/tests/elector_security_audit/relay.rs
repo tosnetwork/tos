@@ -1453,10 +1453,20 @@ fn root_cannot_forge_reserved_callbacks_even_without_a_pending_request() {
 }
 
 fn credit_fixture(chain: &mut Chain, owner: &MsgAddressInt, amount: u64, drained: bool) {
+    seed_credit(chain, owner, amount, drained, false);
+}
+/// A drained boundary at which `owner` is the elector's only creditor.
+fn sole_credit_fixture(chain: &mut Chain, owner: &MsgAddressInt, amount: u64) {
+    seed_credit(chain, owner, amount, true, true);
+}
+fn seed_credit(chain: &mut Chain, owner: &MsgAddressInt, amount: u64, drained: bool, sole: bool) {
     let mut account = chain.blockchain.get_account(&chain.elector).expect("elector").clone();
     let mut cs = SliceData::load_cell(account.get_data().expect("data")).expect("data");
     let elect = next_dictionary(&mut cs, 32);
     let mut credits = next_dictionary(&mut cs, 256);
+    if sole {
+        credits = chain_block::HashmapE::with_bit_len(256);
+    }
     let key = owner.address().clone();
     let mut value = BuilderData::new();
     Coins::new(amount).write_to(&mut value).expect("credit");
@@ -1495,7 +1505,7 @@ fn recover_message(
 }
 
 #[test]
-fn recovery_tombstones_protect_later_credits_and_outstanding_receipts_block_upgrade() {
+fn recovery_tombstones_protect_later_credits_and_outstanding_receipts_do_not_block_upgrade() {
     let mut fixture = Fixture::new("paid-recovery-replay");
     let owner = fixture.operator.address().clone();
     credit_fixture(&mut fixture.chain, &owner, 50 * TOS, true);
@@ -1510,10 +1520,10 @@ fn recovery_tombstones_protect_later_credits_and_outstanding_receipts_block_upgr
         .run_get_method(&fixture.chain.elector, "upgrade_ready", vec![])
         .expect("getter");
     assert_eq!(readiness.exit_code, 0);
-    assert_eq!(
+    assert_ne!(
         readiness.stack[0].as_integer().expect("ready").to_string(),
         "0",
-        "only outstanding recovery blocks upgrade"
+        "a paid receipt awaiting its ACK does not block upgrade"
     );
     let message = recover_message(&owner, &fixture.chain.elector, 0x47657432, DOMAIN | 1);
     let (_, out) = step(&mut fixture.chain, message);
@@ -1593,6 +1603,76 @@ fn recovery_tombstones_protect_later_credits_and_outstanding_receipts_block_upgr
         receipt_book,
         "normal tick must preserve outstanding recovery metadata"
     );
+}
+
+#[test]
+fn a_real_pool_completes_its_recovery_ack_across_an_elector_upgrade() {
+    let (mut fixture, _) = served_and_unfrozen_pool("recovery-ack-across-upgrade");
+    let owner: [u8; 32] = fixture.pool.address().get_bytestring(0).try_into().expect("owner");
+    let credit = owed(&fixture.chain, &owner);
+    // Reach a drained boundary where the pool's real credit is the only liability.
+    let pool = fixture.pool.clone();
+    sole_credit_fixture(&mut fixture.chain, &pool, u64::try_from(credit).expect("credit"));
+    let mut cs = SliceData::load_cell(
+        fixture
+            .chain
+            .blockchain
+            .get_account(&fixture.chain.elector)
+            .expect("e")
+            .get_data()
+            .expect("d"),
+    )
+    .expect("data");
+    next_dictionary(&mut cs, 32);
+    assert_eq!(next_dictionary(&mut cs, 256).len().expect("credits"), 1, "only the pool is owed");
+    let command = pool_command(&fixture, 0x47657424);
+    let (tx, out) = step(&mut fixture.chain, command);
+    successful(&tx, "pool recovery request");
+    let request = only_to(out, &fixture.chain.elector);
+    let (tx, out) = step(&mut fixture.chain, request);
+    successful(&tx, "elector pays the pool");
+    let payment = only_to(out, &fixture.pool);
+    assert!(value(&payment) >= credit);
+    // The payment is still in flight and its receipt unacknowledged when the
+    // elector is upgraded.
+    let ready = fixture
+        .chain
+        .blockchain
+        .run_get_method(&fixture.chain.elector, "upgrade_ready", vec![])
+        .expect("getter");
+    assert_ne!(
+        ready.stack[0].as_integer().expect("ready").to_string(),
+        "0",
+        "an unacknowledged paid receipt must not hold the upgrade"
+    );
+    let code = fixture
+        .chain
+        .blockchain
+        .get_account(&fixture.chain.elector)
+        .expect("elector")
+        .get_code()
+        .expect("code");
+    let receipts = receipt_metadata(&fixture.chain);
+    let result = code_upgrade(&mut fixture.chain, code, true);
+    result.expect_success();
+    assert_eq!(reply(&result).0, 0xce436f64);
+    assert_eq!(receipt_metadata(&fixture.chain), receipts, "the receipt survives the upgrade");
+    let (tx, out) = step(&mut fixture.chain, payment);
+    successful(&tx, "pool settles the recovery after the upgrade");
+    assert_eq!(fixture.pool_state(), 0);
+    let ack = only_to(out, &fixture.chain.elector);
+    assert_eq!(op(&ack), 0x47656132);
+    let (tx, out) = step(&mut fixture.chain, ack);
+    successful(&tx, "upgraded elector clears the receipt");
+    let confirmation = only_to(out, &fixture.pool);
+    assert_eq!(op(&confirmation), 0x47656133);
+    let (tx, out) = step(&mut fixture.chain, confirmation);
+    successful(&tx, "pool records the confirmation");
+    assert!(out.is_empty(), "confirmation ends the exchange");
+    let mut book = SliceData::load_cell(receipt_metadata(&fixture.chain)).expect("book");
+    assert_eq!(book.get_next_u32().expect("tag"), 0x52435632);
+    assert_eq!(book.get_next_u32().expect("outstanding"), 0, "the receipt is acknowledged");
+    assert_eq!(owed(&fixture.chain, &owner), 0, "the credit was paid exactly once");
 }
 
 #[test]

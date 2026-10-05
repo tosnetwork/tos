@@ -27,6 +27,7 @@ set(RLDP_SOURCE
   BdwStats.h
   FecHelper.h
   InboundTransfer.h
+  rldp-inbound-budget.h
   LossSender.h
   LossStats.h
   OutboundTransfer.h

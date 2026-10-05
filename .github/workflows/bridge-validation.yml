@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Check out TOS branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           submodules: recursive
@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '18'
           cache: npm
@@ -103,6 +103,9 @@ jobs:
           npm ci --ignore-scripts
           npm test
 
+      - name: Every EVM token-bridge guard is held by a test
+        run: python3 scripts/token-bridge-mutations.py --evm-only
+
       - name: Compile the token-bridge contracts for Tron
         working-directory: crosschain/token-bridge/evm
         run: npm run compile-tron
@@ -118,7 +121,7 @@ jobs:
         run: bash scripts/test-coin-bridge-evm.sh
 
       - name: Upload reproducible build evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: tos-bridge-validation
           path: |

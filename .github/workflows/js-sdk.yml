@@ -1,0 +1,40 @@
+name: JS SDK
+
+# Every package's unit tests and type check. The authentication workflow runs
+# only the wallets package; this covers the rest, including the weak-key
+# predicate in @tos/crypto that every wallet constructor relies on.
+on:
+  pull_request:
+    paths:
+      - 'sdk/js/**'
+      - '.github/workflows/js-sdk.yml'
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/js/**'
+      - '.github/workflows/js-sdk.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: js-sdk-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Type check and test every package
+        working-directory: sdk/js
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm -r typecheck
+          pnpm -r test
+          git diff --exit-code

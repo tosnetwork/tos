@@ -38,7 +38,8 @@ async function main() {
 
   const client = new TosClient({ ...Networks.local, timeout: 10_000 });
   const keyPair = await mnemonicToPrivateKey(mnemonic);
-  const wallet = WalletV4R2.create({ publicKey: keyPair.publicKey, workchain: 0 });
+  const networkGlobalId = await client.getNetworkGlobalId();
+  const wallet = WalletV4R2.create({ publicKey: keyPair.publicKey, networkGlobalId, workchain: 0 });
   const adminAddr = wallet.address;
 
   console.log("Admin wallet:", adminAddr.toRawString());

@@ -398,7 +398,26 @@ fun main(): int {
 }
 )TOL";
   }
-  return R"TOL(import "@stdlib/multisig"
+  return R"TOL(// Multisig proposal scaffold.
+//
+// What it does: records a proposal under its query id when the submission is
+// signed by one of the configured signers. The signature (Ed25519, by the key
+// in `signer`) covers [multisigSubmitSigningHash]: a versioned domain tag, the
+// network's global id, this contract's address, the query id, the expiry and
+// the actions cell. Anyone may relay the message; only the signature decides
+// who is speaking.
+//
+// What it does not do: it never executes the actions, does not record which
+// signer proposed or approved, does not count approvals toward the threshold,
+// and has no way to change the signer set or remove a proposal. It is a
+// starting point, not a wallet: do not hold funds with it.
+//
+// To grow it into a wallet, store a `MultisigProposal` per query id (actions
+// and approvals), add an approve message authenticated the same way, count
+// approvals with `MultisigProposal.recordApproval`, and execute only after
+// `multisigRequireThresholdReached`, marking the proposal executed in the same
+// transaction.
+import "@stdlib/multisig"
 
 struct {{NAME}}Storage {
     config: MultisigConfig;
@@ -409,11 +428,31 @@ struct (0x4d534947) {{NAME}}Submit {
     queryId: uint64;
     validUntil: uint32;
     signer: uint256;
+    signature: bits512;
     actions: cell;
 }
 
 fun scaffoldPatternId(): int {
     return multisigPatternManifestHeader().patternId;
+}
+
+/// Returns the storage that records `msg` as a pending proposal, or throws.
+/// Network, contract address and time come from the chain, never from the
+/// message. Cheap checks run first, the signature before anything is
+/// recorded, and the actions walk only for an authenticated signer.
+fun {{NAME}}Storage.acceptSubmit(self, msg: {{NAME}}Submit): {{NAME}}Storage {
+    multisigRequireValidThreshold(self.config.threshold, self.config.signerCount);
+    multisigRequireNotExpired(msg.validUntil, blockchain.now());
+    // Membership, and refusal of a weak key anyone could sign for.
+    multisigRequireSigner(self.config.signers, msg.signer);
+    val hash = multisigSubmitSigningHash(contract.getAddress(), msg.queryId, msg.validUntil, msg.actions);
+    multisigRequireSubmitSignature(hash, msg.signature, msg.signer);
+    multisigRequireNewProposal(self.pending, msg.queryId);
+    multisigValidateActions(msg.actions, false);
+    return {{NAME}}Storage {
+        config: self.config,
+        pending: multisigAddPendingProposal(self.pending, msg.queryId),
+    };
 }
 
 contract {{NAME}} {
@@ -422,21 +461,316 @@ contract {{NAME}} {
 
     @disclaim_query_id
     receive(msg: {{NAME}}Submit) {
-        multisigRequireValidThreshold(storage.config.threshold, storage.config.signerCount);
-        multisigRequireSigner(storage.config.signers, msg.signer);
-        multisigRequireNewProposal(storage.pending, msg.queryId);
-        multisigRequireNotExpired(msg.validUntil, blockchain.now());
-        multisigValidateActions(msg.actions, false);
-        save({{NAME}}Storage {
-            config: storage.config,
-            pending: multisigAddPendingProposal(storage.pending, msg.queryId),
-        });
+        save(storage.acceptSubmit(msg));
     }
 }
 )TOL";
 }
 
 static std::string scaffold_test_template(const std::string& pattern) {
+  if (pattern == "multisig") {
+    return R"TOL(import "@stdlib/slice3-common"
+import "@stdlib/tvm-dicts"
+import "@stdlib/multisig"
+import "../src/main"
+
+// Deterministic Ed25519 fixtures: private key i = sha256("quorum-key-i"). Each
+// testSigKi() is Ki's signature of the submit hash of the base request below
+// (TEST_QUERY_ID, TEST_VALID_UNTIL, an empty actions cell) on network
+// TEST_GLOBAL_ID at the contract address testSelf(). They are test vectors
+// only: never configure these keys on a real network.
+const TEST_K1 = 0xA0E39282B780E9EF18283DD09ED1CABA55B468EB9C5014967EA5CAA3256C6795
+const TEST_K2 = 0x282D5E174AB2122F1538944E31BEA38FAFE5A622656E6BE63CFAB47D16EE57BB
+const TEST_K3 = 0xECD0DF7591957F3EDA016B66417B8B1165138154D2AFA7184E1517AA324BECE9
+const TEST_GLOBAL_ID = 42
+const TEST_NOW = 1000
+const TEST_QUERY_ID = 7
+const TEST_VALID_UNTIL = 2000
+
+fun testSigK1(): bits512 { return "3DF5140949D36ABF758E8C2BD2ADE02ACEC99A3941694A67BDE955D7332B42D7E5B257602EC752207B050593C5EAFF2F761A0E29BF907EE6EA454E048495A003".hexToSlice() as bits512; }
+fun testSigK2(): bits512 { return "78F1DBD829E7B08E1FF696817C915223B05C82A81B6BEF95AD83AF63494CB978049A421F3D9DAAC27B5B6497FF6436E786D3C66DE10D735EBBB4D057DEF9960C".hexToSlice() as bits512; }
+fun testSigK3(): bits512 { return "6AE6D6AD85500DE5A60DA16CBAA555D1143A59132F5ABD6FB91617814EBB049CDA48F827D130F313EDA42A5666D0DE2F595FCB7D3A84A7892B9405477277D706".hexToSlice() as bits512; }
+
+/// Not a well-formed action list.
+fun testBadActions(): cell {
+    return beginCell().storeUint(1, 8).endCell();
+}
+
+/// K1's signature of the base request with testBadActions() in place of the
+/// empty actions cell.
+fun testSigK1BadActions(): bits512 { return "2EC68FB68340184C91D4F40419F2D93C51E76757200C58C1E1B6D372E25E8D1A25D2E6737EF4830EAE37B046F204B0FEB3B2F2877091C95465F4D2FC3BF89608".hexToSlice() as bits512; }
+
+// The identity point spelled with the sign bit set, a weak key the signature
+// verifier accepts: R = identity, S = 0 verifies under it for every message,
+// with no secret behind it.
+const TEST_WEAK = 0x0100000000000000000000000000000000000000000000000000000000000080
+
+fun testForged(): bits512 { return "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".hexToSlice() as bits512; }
+
+fun testSelf(): address {
+    return address("0:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+fun testOther(): address {
+    return address("0:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+fun setC7(c7: array<unknown>): void
+    asm "c7 POP"
+
+/// Installs the chain context a transaction would see: the network's global
+/// id (c7[0][14][1]), the current time (c7[0][3]) and this contract's address
+/// (c7[0][8]).
+fun installChain(globalId: int, nowTs: int, own: address): void {
+    var unpacked: array<unknown> = [];
+    var i = 0;
+    while (i < 7) {
+        unpacked.push(i == 1 ? beginCell().storeInt(globalId, 32).endCell().beginParse() as unknown : null);
+        i += 1;
+    }
+    var params: array<unknown> = [];
+    i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(nowTs, 3);
+    params.set(own as unknown, 8);
+    params.set(unpacked, 14);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
+fun installBaseChain(): void {
+    installChain(TEST_GLOBAL_ID, TEST_NOW, testSelf());
+}
+
+fun testSigners(): dict {
+    var signers = createEmptyDict();
+    signers = multisigAddSigner(signers, TEST_K1);
+    signers = multisigAddSigner(signers, TEST_K2);
+    return signers;
+}
+
+fun testStorage(signers: dict): {{NAME}}Storage {
+    return {{NAME}}Storage {
+        config: MultisigConfig { threshold: 2, signerCount: 2, signers },
+        pending: createEmptyDict(),
+    };
+}
+
+fun testSubmit(signer: int, signature: bits512): {{NAME}}Submit {
+    return {{NAME}}Submit {
+        queryId: TEST_QUERY_ID,
+        validUntil: TEST_VALID_UNTIL,
+        signer,
+        signature,
+        actions: createEmptyCell(),
+    };
+}
+
+/// The code `msg` is refused with, or 0 when it is accepted.
+fun refusal(storage: {{NAME}}Storage, msg: {{NAME}}Submit): int {
+    try {
+        storage.acceptSubmit(msg);
+    } catch (code) {
+        return code;
+    }
+    return 0;
+}
+
+fun expectRefused(storage: {{NAME}}Storage, msg: {{NAME}}Submit, expected: int, failCode: int): void {
+    assert(refusal(storage, msg) == expected) throw failCode;
+}
+
+@method_id(101)
+fun test_scaffold_pattern(): int {
+    return scaffoldPatternId();
+}
+
+@method_id(102)
+fun test_fixtures_are_real(): int {
+    // Guards the fixtures themselves: if these stop verifying, every refusal
+    // below would pass for the wrong reason.
+    installBaseChain();
+    val hash = multisigSubmitSigningHash(testSelf(), TEST_QUERY_ID, TEST_VALID_UNTIL, createEmptyCell());
+    assert(isSignatureValid(hash, testSigK1() as slice, TEST_K1)) throw 201;
+    assert(isSignatureValid(hash, testSigK2() as slice, TEST_K2)) throw 202;
+    assert(isSignatureValid(hash, testSigK3() as slice, TEST_K3)) throw 203;
+    assert(isSignatureValid(hash, testForged() as slice, TEST_WEAK)) throw 204;
+    assert(!isSignatureValid(hash + 1, testSigK1() as slice, TEST_K1)) throw 205;
+    return 2;
+}
+
+@method_id(103)
+fun test_signed_submission_recorded(): int {
+    installBaseChain();
+    val storage = testStorage(testSigners());
+    assert(!multisigHasPendingProposal(storage.pending, TEST_QUERY_ID)) throw 301;
+    val next = storage.acceptSubmit(testSubmit(TEST_K1, testSigK1()));
+    assert(multisigHasPendingProposal(next.pending, TEST_QUERY_ID)) throw 302;
+    // Either configured signer can propose.
+    val viaK2 = storage.acceptSubmit(testSubmit(TEST_K2, testSigK2()));
+    assert(multisigHasPendingProposal(viaK2.pending, TEST_QUERY_ID)) throw 303;
+    return 3;
+}
+
+@method_id(104)
+fun test_unsigned_submission_refused(): int {
+    installBaseChain();
+    val storage = testStorage(testSigners());
+    val zero = beginCell().storeUint(0, 256).storeUint(0, 256).endCell().beginParse() as bits512;
+    expectRefused(storage, testSubmit(TEST_K1, zero), MULTISIG_FUNC_THROW_BAD_SIGNATURE, 401);
+    // A real signature by the right key, of something else.
+    val unrelated = "A2622A17A2AFAB596F3E424967925F73908AC39299D77CFCC462EFC9FA8A72EBF11D44355287786746C3F25431DBCC9B8E8C2EB2777FE26254AA2B6BBB512C01".hexToSlice() as bits512;
+    expectRefused(storage, testSubmit(TEST_K1, unrelated), MULTISIG_FUNC_THROW_BAD_SIGNATURE, 402);
+    return 4;
+}
+
+@method_id(105)
+fun test_signature_by_another_signer_refused(): int {
+    installBaseChain();
+    val storage = testStorage(testSigners());
+    // Both keys are configured and both signatures are real; neither speaks
+    // for the other.
+    expectRefused(storage, testSubmit(TEST_K1, testSigK2()), MULTISIG_FUNC_THROW_BAD_SIGNATURE, 501);
+    expectRefused(storage, testSubmit(TEST_K2, testSigK1()), MULTISIG_FUNC_THROW_BAD_SIGNATURE, 502);
+    return 5;
+}
+
+@method_id(106)
+fun test_signature_for_another_contract_refused(): int {
+    installChain(TEST_GLOBAL_ID, TEST_NOW, testOther());
+    expectRefused(testStorage(testSigners()), testSubmit(TEST_K1, testSigK1()), MULTISIG_FUNC_THROW_BAD_SIGNATURE, 601);
+    return 6;
+}
+
+@method_id(107)
+fun test_signature_for_another_network_refused(): int {
+    installChain(TEST_GLOBAL_ID + 1, TEST_NOW, testSelf());
+    expectRefused(testStorage(testSigners()), testSubmit(TEST_K1, testSigK1()), MULTISIG_FUNC_THROW_BAD_SIGNATURE, 701);
+    return 7;
+}
+
+@method_id(108)
+fun test_weak_signer_refused(): int {
+    installBaseChain();
+    // A signer set as it could sit in storage, never passed through
+    // multisigAddSigner.
+    var signers = testSigners();
+    signers.uDictSetBuilder(MULTISIG_SIGNER_KEY_BITS, TEST_WEAK, beginCell().storeInt(-1, 1));
+    val storage = {{NAME}}Storage {
+        config: MultisigConfig { threshold: 2, signerCount: 3, signers },
+        pending: createEmptyDict(),
+    };
+    expectRefused(storage, testSubmit(TEST_WEAK, testForged()), MULTISIG_FUNC_THROW_WEAK_SIGNER, 801);
+    // The signature check refuses the weak key on its own as well.
+    val hash = multisigSubmitSigningHash(testSelf(), TEST_QUERY_ID, TEST_VALID_UNTIL, createEmptyCell());
+    var refused = false;
+    try {
+        multisigRequireSubmitSignature(hash, testForged(), TEST_WEAK);
+    } catch (code) {
+        assert(code == MULTISIG_FUNC_THROW_WEAK_SIGNER) throw 802;
+        refused = true;
+    }
+    assert(refused) throw 803;
+    return 8;
+}
+
+@method_id(109)
+fun test_expired_submission_refused(): int {
+    val storage = testStorage(testSigners());
+    installChain(TEST_GLOBAL_ID, TEST_VALID_UNTIL - 1, testSelf());
+    expectRefused(storage, testSubmit(TEST_K1, testSigK1()), 0, 901);
+    installChain(TEST_GLOBAL_ID, TEST_VALID_UNTIL, testSelf());
+    expectRefused(storage, testSubmit(TEST_K1, testSigK1()), MULTISIG_FUNC_THROW_EXPIRED, 902);
+    installChain(TEST_GLOBAL_ID, TEST_VALID_UNTIL + 1, testSelf());
+    expectRefused(storage, testSubmit(TEST_K1, testSigK1()), MULTISIG_FUNC_THROW_EXPIRED, 903);
+    return 9;
+}
+
+@method_id(110)
+fun test_duplicate_query_id_refused(): int {
+    installBaseChain();
+    val storage = testStorage(testSigners()).acceptSubmit(testSubmit(TEST_K1, testSigK1()));
+    expectRefused(storage, testSubmit(TEST_K1, testSigK1()), MULTISIG_FUNC_THROW_PROPOSAL_REPLAY, 1001);
+    expectRefused(storage, testSubmit(TEST_K2, testSigK2()), MULTISIG_FUNC_THROW_PROPOSAL_REPLAY, 1002);
+    return 10;
+}
+
+@method_id(111)
+fun test_signed_fields_cannot_change(): int {
+    installBaseChain();
+    val storage = testStorage(testSigners());
+    var msg = testSubmit(TEST_K1, testSigK1());
+    msg.queryId = TEST_QUERY_ID + 1;
+    expectRefused(storage, msg, MULTISIG_FUNC_THROW_BAD_SIGNATURE, 1101);
+    msg = testSubmit(TEST_K1, testSigK1());
+    msg.validUntil = TEST_VALID_UNTIL + 1;
+    expectRefused(storage, msg, MULTISIG_FUNC_THROW_BAD_SIGNATURE, 1102);
+    msg = testSubmit(TEST_K1, testSigK1());
+    msg.actions = testBadActions();
+    expectRefused(storage, msg, MULTISIG_FUNC_THROW_BAD_SIGNATURE, 1103);
+    return 11;
+}
+
+@method_id(112)
+fun test_unconfigured_signer_refused(): int {
+    installBaseChain();
+    // A real signature of the right request, by a key outside the set.
+    expectRefused(testStorage(testSigners()), testSubmit(TEST_K3, testSigK3()), MULTISIG_FUNC_THROW_NOT_SIGNER, 1201);
+    return 12;
+}
+
+@method_id(113)
+fun test_submit_hash_layout(): int {
+    // Pins what an off-chain signer must reproduce: the representation hash
+    // of one cell holding tag (uint32), global id (int32), target address,
+    // query id (uint64) and valid-until (uint32), with the actions cell as its
+    // only reference. Recomputed outside the VM for the base request.
+    installBaseChain();
+    val hash = multisigSubmitSigningHash(testSelf(), TEST_QUERY_ID, TEST_VALID_UNTIL, createEmptyCell());
+    assert(hash == 0xdef505c688732e7ca2a0ed27a32fad57f02eb622a16581632cd02c4e4eb1b8cb) throw 1301;
+    return 13;
+}
+
+@method_id(114)
+fun test_actions_checked_after_authentication(): int {
+    installBaseChain();
+    val storage = testStorage(testSigners());
+    var bad = testSubmit(TEST_K1, testSigK1BadActions());
+    bad.actions = testBadActions();
+    // Authenticated, but not a well-formed action list.
+    expectRefused(storage, bad, MULTISIG_FUNC_THROW_INVALID_ACTIONS, 1401);
+    // Unauthenticated: refused before the actions are looked at.
+    var forged = bad;
+    forged.signature = testSigK2();
+    expectRefused(storage, forged, MULTISIG_FUNC_THROW_BAD_SIGNATURE, 1402);
+    // A query id already pending is refused before the actions are walked.
+    val pending = storage.acceptSubmit(testSubmit(TEST_K1, testSigK1()));
+    expectRefused(pending, bad, MULTISIG_FUNC_THROW_PROPOSAL_REPLAY, 1403);
+    return 14;
+}
+
+/**
+@testcase | 101 | | {{PATTERN_ID}}
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+@testcase | 108 | | 8
+@testcase | 109 | | 9
+@testcase | 110 | | 10
+@testcase | 111 | | 11
+@testcase | 112 | | 12
+@testcase | 113 | | 13
+@testcase | 114 | | 14
+ */
+)TOL";
+  }
   return R"TOL(import "@stdlib/slice3-common"
 import "../src/main"
 
@@ -493,11 +827,56 @@ static std::string scaffold_replay_template(const std::string& pattern, const st
 )JSON";
 }
 
+static std::string scaffold_readme_scope(const std::string& pattern) {
+  if (pattern == "multisig") {
+    return R"MD(
+## Scope
+
+This scaffold records authenticated proposals. It is not a wallet and must not
+hold funds.
+
+What it does:
+
+- accepts a submit message only with an Ed25519 signature by the key named in
+  `signer`, over `multisigSubmitSigningHash`: a versioned domain tag, the
+  network's global id, this contract's address, the query id, the expiry and
+  the actions cell. Anyone may relay the message; the signature decides who
+  is speaking;
+- refuses a signer outside the configured set, a weak signer key anyone could
+  sign for, a bad signature, an expired request, a query id already pending,
+  and an actions cell that is not a well-formed action list;
+- records the query id as pending.
+
+What it does not do:
+
+- execute the actions, or send any message;
+- record which signer proposed, or count approvals toward the threshold;
+- change the signer set or threshold, or remove a pending proposal.
+
+To grow it into a wallet, store a `MultisigProposal` per query id (actions and
+approvals), add an approve message authenticated the same way, count approvals
+with `MultisigProposal.recordApproval`, and execute only after
+`multisigRequireThresholdReached`, marking the proposal executed in the same
+transaction.
+
+## Signing
+
+The signed hash is the representation hash of one cell holding the tag
+`0x6d737631` (uint32), the global id (int32), the contract address, the query
+id (uint64) and the expiry (uint32), with the actions cell as its only
+reference. `tests/multisig-positive.tol` pins one such hash and its
+signatures.
+)MD";
+  }
+  return "";
+}
+
 static std::string scaffold_readme_template(const std::string& pattern, const std::string& name) {
   return R"MD(# {{NAME}}
 
 Generated by `tol new --pattern {{PATTERN}}`.
-
+)MD" + scaffold_readme_scope(pattern) +
+         R"MD(
 ## Build
 
 ```sh
@@ -626,6 +1005,20 @@ static std::string scaffold_error_code_map(const std::string& pattern) {
   }
   if (pattern == "payment-channel") {
     return "{\n  \"error_codes\": [\n    {\"name\": \"SLICE5_PAYMENT_THROW_SIGNATURE_FAILURE\", \"code\": 3585},\n    {\"name\": \"SLICE5_PAYMENT_THROW_SEQNO_REPLAY\", \"code\": 3586}\n  ]\n}\n";
+  }
+  if (pattern == "multisig") {
+    return R"JSON({
+  "error_codes": [
+    {"name": "MULTISIG_FUNC_THROW_BAD_THRESHOLD", "code": 1801},
+    {"name": "MULTISIG_FUNC_THROW_NOT_SIGNER", "code": 1802},
+    {"name": "MULTISIG_FUNC_THROW_PROPOSAL_REPLAY", "code": 1805},
+    {"name": "MULTISIG_FUNC_THROW_EXPIRED", "code": 1806},
+    {"name": "MULTISIG_FUNC_THROW_INVALID_ACTIONS", "code": 1807},
+    {"name": "MULTISIG_FUNC_THROW_WEAK_SIGNER", "code": 1808},
+    {"name": "MULTISIG_FUNC_THROW_BAD_SIGNATURE", "code": 1809}
+  ]
+}
+)JSON";
   }
   return "{\n  \"error_codes\": []\n}\n";
 }

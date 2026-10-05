@@ -10,9 +10,11 @@ on:
       - 'crypto/block/block.tlb'
       - 'test/test-config-transition.cpp'
       - 'tosctl/src/node-control/contracts/**'
-      - 'sdk/js/packages/wallets/src/codes.ts'
+      - 'sdk/js/packages/wallets/**'
+      - 'sdk/js/packages/client/src/client/TosClient.ts'
       - 'test/auth-extensions/**'
       - 'test/wallet-v5r2/**'
+      - 'test/weak-ed25519/**'
       - 'scripts/update-auth-contract-code.py'
       - '.github/workflows/auth-extension-validation.yml'
     types: [opened, reopened, synchronize, ready_for_review]
@@ -29,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Configure and build native contract tools
@@ -60,6 +62,18 @@ jobs:
           python3 test/wallet-v5r2/test_wallet.py --output "$RUNNER_TEMP/r2-wallet"
           build/test-config-transition
           python3 test/wallet-v5r2/policy_native_mutations.py --build build --output "$RUNNER_TEMP/auth-policy-native"
+          python3 test/auth-extensions/test_sdk_wallet_vectors.py
+          python3 test/weak-ed25519/test_native_aliases.py
+          git diff --exit-code
+      # The SDK half of the wallet vectors: the committed messages the native
+      # test above executes must still be exactly what the SDK produces.
+      - name: SDK wallet tests and network-bound vectors
+        working-directory: sdk/js
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter @tos/wallets --filter @tos/client typecheck
+          pnpm --filter @tos/wallets test
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

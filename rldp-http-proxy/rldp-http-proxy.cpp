@@ -38,6 +38,7 @@
 #include "dht/dht.h"
 #include "http/http-client.h"
 #include "http/http-server.h"
+#include "rldp-http-proxy/tcp-tunnel.h"
 #include "rldp2/rldp.h"
 #include "td/actor/MultiPromise.h"
 #include "td/utils/BufferedFd.h"
@@ -50,6 +51,7 @@
 #include "td/utils/port/signals.h"
 #include "toslib/toslib/ToslibClient.h"
 #include "toslib/toslib/ToslibClientWrapper.h"
+#include "validator-engine/json-rpc-http-policy.h"
 
 #include "DNSResolver.h"
 #include "git.h"
@@ -59,6 +61,12 @@
 #endif
 
 class RldpHttpProxy;
+
+// Default total time a forwarded request and its whole response may take
+// (--forward-timeout). It is a total, not an idle limit: a response still
+// streaming when it passes is cut off, and its body fails.
+constexpr double kDefaultHttpForwardTimeout = 60.0;
+
 class HttpRemote : public td::actor::Actor {
  public:
   struct Query {
@@ -67,7 +75,7 @@ class HttpRemote : public td::actor::Actor {
     td::Timestamp timeout;
     td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise;
   };
-  HttpRemote(td::IPAddress addr) : addr_(addr) {
+  HttpRemote(td::IPAddress addr, double forward_timeout) : addr_(addr), forward_timeout_(forward_timeout) {
   }
   void start_up() override {
     class Cb : public tos::http::HttpClient::Callback {
@@ -112,7 +120,7 @@ class HttpRemote : public td::actor::Actor {
             }
           });
       td::actor::send_closure(client_, &tos::http::HttpClient::send_request, std::move(request), std::move(payload),
-                              td::Timestamp::never(), std::move(P));
+                              td::Timestamp::in(forward_timeout_), std::move(P));
     } else {
       tos::http::answer_error(tos::http::HttpStatusCode::status_bad_request, "", std::move(promise));
     }
@@ -120,6 +128,7 @@ class HttpRemote : public td::actor::Actor {
 
  private:
   td::IPAddress addr_;
+  double forward_timeout_;
   bool ready_ = true;
   td::actor::ActorOwn<tos::http::HttpClient> client_;
 };
@@ -136,9 +145,7 @@ const std::string PROXY_VERSION_HEADER = PSTRING() << "Commit: " << GitMetadata:
 const td::uint64 CAPABILITY_RLDP2 = 1;
 const td::uint64 CAPABILITIES = CAPABILITY_RLDP2;
 
-using RegisteredPayloadSenderGuard =
-    std::unique_ptr<std::pair<td::actor::ActorId<RldpHttpProxy>, td::Bits256>,
-                    std::function<void(std::pair<td::actor::ActorId<RldpHttpProxy>, td::Bits256> *)>>;
+using tos::rldp_http::RegisteredPayloadSenderGuard;
 
 class HttpRldpPayloadReceiver : public td::actor::Actor {
  public:
@@ -243,7 +250,7 @@ class HttpRldpPayloadReceiver : public td::actor::Actor {
   void abort_query(td::Status error) {
     LOG(INFO) << "failed to receive HTTP payload: " << error;
     if (payload_) {
-      payload_->set_error();
+      payload_->fail();
     }
     stop();
   }
@@ -307,10 +314,16 @@ class HttpRldpPayloadSender : public td::actor::Actor {
     if (from_timer) {
       active_timer_ = false;
     }
-    if (!cur_query_promise_) {
+    if (payload_->is_error()) {
+      // The body failed (for example the backend missed its deadline): end
+      // the transfer now rather than when this sender's own timer fires.
+      if (cur_query_promise_) {
+        cur_query_promise_.set_error(td::Status::Error("http payload failed"));
+      }
+      stop();
       return;
     }
-    if (payload_->is_error()) {
+    if (!cur_query_promise_) {
       return;
     }
     if (payload_->parse_completed() || payload_->ready_bytes() >= tos::http::HttpRequest::low_watermark()) {
@@ -538,188 +551,6 @@ class TcpToRldpRequestSender : public td::actor::Actor {
   std::shared_ptr<tos::http::HttpPayload> response_payload_;
 };
 
-class RldpTcpTunnel : public td::actor::Actor, private td::ObserverBase {
- public:
-  RldpTcpTunnel(td::Bits256 transfer_id, tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort local_id,
-                td::actor::ActorId<tos::adnl::Adnl> adnl, td::actor::ActorId<tos::adnl::AdnlSenderInterface> rldp,
-                td::actor::ActorId<RldpHttpProxy> proxy, td::SocketFd fd)
-      : id_(transfer_id)
-      , src_(src)
-      , local_id_(local_id)
-      , adnl_(std::move(adnl))
-      , rldp_(std::move(rldp))
-      , proxy_(std::move(proxy))
-      , fd_(std::move(fd)) {
-  }
-
-  void start_up() override;
-
-  void tear_down() override {
-    LOG(INFO) << "RldpTcpTunnel: tear_down";
-    td::actor::SchedulerContext::get().get_poll().unsubscribe(fd_.get_poll_info().get_pollable_fd_ref());
-  }
-
-  void registered_sender(RegisteredPayloadSenderGuard guard) {
-    guard_ = std::move(guard);
-  }
-
-  void notify() override {
-    td::actor::send_closure(self_, &RldpTcpTunnel::process);
-  }
-
-  void request_data() {
-    if (close_ || sent_request_) {
-      return;
-    }
-    sent_request_ = true;
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-      td::actor::send_closure(SelfId, &RldpTcpTunnel::got_data_from_rldp, std::move(R));
-    });
-
-    auto f = tos::create_serialize_tl_object<tos::tos_api::http_getNextPayloadPart>(id_, out_seqno_++,
-                                                                                    (1 << 21) - (1 << 11));
-    td::actor::send_closure(rldp_, &tos::adnl::AdnlSenderInterface::send_query_ex, local_id_, src_, "payload part",
-                            std::move(P), td::Timestamp::in(60.0), std::move(f), (1 << 21) + 1024);
-  }
-
-  void receive_query(tos::tl_object_ptr<tos::tos_api::http_getNextPayloadPart> f,
-                     td::Promise<td::BufferSlice> promise) {
-    if (cur_promise_) {
-      LOG(INFO) << "failed to process query: previous query is active";
-      promise.set_error(td::Status::Error("previous query is active"));
-      return;
-    }
-    if (f->seqno_ != cur_seqno_) {
-      LOG(INFO) << "failed to process query: seqno mismatch";
-      promise.set_error(td::Status::Error("seqno mismatch"));
-      return;
-    }
-    LOG(INFO) << "RldpTcpTunnel: received query, seqno=" << cur_seqno_;
-    cur_promise_ = std::move(promise);
-    cur_max_chunk_size_ = f->max_chunk_size_;
-    alarm_timestamp() = td::Timestamp::in(50.0);
-    process();
-  }
-
-  void got_data_from_rldp(td::Result<td::BufferSlice> R) {
-    if (R.is_error()) {
-      abort(R.move_as_error());
-      return;
-    }
-    td::BufferSlice data = R.move_as_ok();
-    LOG(INFO) << "RldpTcpTunnel: received data from rldp: size=" << data.size();
-    sent_request_ = false;
-    auto F = tos::fetch_tl_object<tos::tos_api::http_payloadPart>(data, true);
-    if (F.is_error()) {
-      abort(F.move_as_error());
-      return;
-    }
-    auto f = F.move_as_ok();
-    fd_.output_buffer().append(std::move(f->data_));
-    if (f->last_) {
-      got_last_part_ = true;
-    }
-    process();
-  }
-
-  void process() {
-    if (!close_) {
-      auto status = [&] {
-        TRY_STATUS(fd_.flush_read());
-        TRY_STATUS(fd_.flush_write());
-        close_ = td::can_close(fd_);
-        return td::Status::OK();
-      }();
-      if (status.is_error()) {
-        abort(std::move(status));
-        return;
-      }
-    }
-    if (got_last_part_) {
-      close_ = true;
-    }
-    answer_query();
-    request_data();
-  }
-
-  void answer_query(bool allow_empty = false, bool from_timer = false) {
-    if (from_timer) {
-      active_timer_ = false;
-    }
-    auto &input = fd_.input_buffer();
-    if (cur_promise_ && (!input.empty() || close_ || allow_empty)) {
-      if (!from_timer && !close_ && !allow_empty && input.size() < tos::http::HttpRequest::low_watermark()) {
-        if (!active_timer_) {
-          active_timer_ = true;
-          tos::delay_action(
-              [SelfId = actor_id(this)]() {
-                td::actor::send_closure(SelfId, &RldpTcpTunnel::answer_query, false, true);
-              },
-              td::Timestamp::in(0.001));
-        }
-        return;
-      }
-      size_t s = std::min<size_t>(input.size(), cur_max_chunk_size_);
-      td::BufferSlice data(s);
-      LOG(INFO) << "RldpTcpTunnel: sending data to rldp: size=" << data.size();
-      input.advance(s, td::as_mutable_slice(data));
-      cur_promise_.set_result(tos::create_serialize_tl_object<tos::tos_api::http_payloadPart>(
-          std::move(data), std::vector<tos::tl_object_ptr<tos::tos_api::http_header>>(), close_));
-      ++cur_seqno_;
-      cur_promise_.reset();
-      alarm_timestamp() = td::Timestamp::never();
-      if (close_) {
-        stop();
-        return;
-      }
-    }
-  }
-
-  void alarm() override {
-    answer_query(true, false);
-  }
-
-  void abort(td::Status status) {
-    LOG(INFO) << "RldpTcpTunnel error: " << status;
-    if (cur_promise_) {
-      cur_promise_.set_error(status.move_as_error());
-    }
-    stop();
-  }
-
- private:
-  std::string generate_prefix() const {
-    std::string x(static_cast<size_t>(36), '\0');
-    auto S = td::MutableSlice{x};
-    CHECK(S.size() == 36);
-
-    auto id = tos::tos_api::http_getNextPayloadPart::ID;
-    S.copy_from(td::Slice(reinterpret_cast<const td::uint8 *>(&id), 4));
-    S.remove_prefix(4);
-    S.copy_from(id_.as_slice());
-    return x;
-  }
-
-  td::Bits256 id_;
-  RegisteredPayloadSenderGuard guard_;
-
-  tos::adnl::AdnlNodeIdShort src_;
-  tos::adnl::AdnlNodeIdShort local_id_;
-  td::actor::ActorId<tos::adnl::Adnl> adnl_;
-  td::actor::ActorId<tos::adnl::AdnlSenderInterface> rldp_;
-  td::actor::ActorId<RldpHttpProxy> proxy_;
-
-  td::BufferedFd<td::SocketFd> fd_;
-
-  td::actor::ActorId<RldpTcpTunnel> self_;
-
-  td::int32 cur_seqno_ = 0, cur_max_chunk_size_ = 0;
-  td::Promise<td::BufferSlice> cur_promise_;
-  td::int32 out_seqno_ = 0;
-  bool close_ = false, sent_request_ = false, got_last_part_ = false;
-  bool active_timer_ = false;
-};
-
 class RldpToTcpRequestSender : public td::actor::Actor {
  public:
   RldpToTcpRequestSender(td::Bits256 id, tos::adnl::AdnlNodeIdShort local_id, tos::adnl::AdnlNodeIdShort dst,
@@ -792,16 +623,36 @@ class RldpToTcpRequestSender : public td::actor::Actor {
   td::actor::ActorId<HttpRemote> remote_;
 };
 
-class RldpHttpProxy : public td::actor::Actor {
+class RldpHttpProxy : public tos::rldp_http::PayloadSenderRegistry {
  public:
   RldpHttpProxy() = default;
 
-  void set_port(td::uint16 port) {
-    if (port_) {
+  void set_listen_address(td::IPAddress address) {
+    if (listen_address_.is_valid()) {
       LOG(ERROR) << "duplicate listening port";
       std::_Exit(2);
     }
-    port_ = port;
+    listen_address_ = address;
+  }
+
+  void set_forward_timeout(double seconds) {
+    forward_timeout_ = seconds;
+  }
+
+  void set_max_tunnels(size_t value) {
+    max_tunnels_ = value;
+  }
+
+  void set_max_tunnels_per_peer(size_t value) {
+    max_tunnels_per_peer_ = value;
+  }
+
+  void set_tunnel_idle_timeout(double seconds) {
+    tunnel_timeouts_.idle = seconds;
+  }
+
+  void set_tunnel_max_lifetime(double seconds) {
+    tunnel_timeouts_.max_lifetime = seconds;
   }
 
   void set_global_config(std::string path) {
@@ -987,7 +838,7 @@ class RldpHttpProxy : public td::actor::Actor {
       dht_ = D.move_as_ok();
       td::actor::send_closure(adnl_, &tos::adnl::Adnl::register_dht_node, dht_.get());
     }
-    if (port_) {
+    if (listen_address_.is_valid()) {
       class Cb : public tos::http::HttpServer::Callback {
        public:
         Cb(td::actor::ActorId<RldpHttpProxy> proxy) : proxy_(proxy) {
@@ -1008,7 +859,7 @@ class RldpHttpProxy : public td::actor::Actor {
       // headroom than the library default, but still a finite bound.
       tos::http::HttpServer::Limits limits;
       limits.max_connections = 4096;
-      server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)), limits);
+      server_ = tos::http::HttpServer::create(listen_address_, std::make_shared<Cb>(actor_id(this)), limits);
     }
 
     class AdnlPayloadCb : public tos::adnl::Adnl::Callback {
@@ -1211,7 +1062,7 @@ class RldpHttpProxy : public td::actor::Actor {
     }
 
     if (server.http_remote_.empty()) {
-      server.http_remote_ = td::actor::create_actor<HttpRemote>("remote", server.remote_addr_);
+      server.http_remote_ = td::actor::create_actor<HttpRemote>("remote", server.remote_addr_, forward_timeout_);
     }
 
     auto payload = request->create_empty_payload();
@@ -1229,14 +1080,20 @@ class RldpHttpProxy : public td::actor::Actor {
 
   void start_tcp_tunnel(td::Bits256 id, tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort local_id,
                         std::string http_version, td::IPAddress ip, td::Promise<td::BufferSlice> promise) {
-    auto fd = td::SocketFd::open(ip);
-    if (fd.is_error()) {
-      promise.set_result(create_error_response(http_version, 502, "Bad Gateway"));
-      return;
+    if (!tunnel_admission_) {
+      tunnel_admission_ = std::make_shared<tos::rldp_http::TunnelAdmission>(max_tunnels_, max_tunnels_per_peer_);
     }
-    td::actor::create_actor<RldpTcpTunnel>(td::actor::ActorOptions().with_name("tunnel").with_poll(), id, src, local_id,
-                                           adnl_.get(), rldp2_.get(), actor_id(this), fd.move_as_ok())
-        .release();
+    tos::rldp_http::TunnelEnvironment env{rldp2_.get(), actor_id(this), tunnel_admission_, tunnel_timeouts_};
+    switch (tos::rldp_http::start_tcp_tunnel(env, id, src, local_id, ip)) {
+      case tos::rldp_http::TunnelStart::refused:
+        promise.set_result(create_error_response(http_version, 503, "Service Unavailable"));
+        return;
+      case tos::rldp_http::TunnelStart::unreachable:
+        promise.set_result(create_error_response(http_version, 502, "Bad Gateway"));
+        return;
+      case tos::rldp_http::TunnelStart::started:
+        break;
+    }
     std::vector<tos::tl_object_ptr<tos::tos_api::http_header>> headers;
     headers.push_back(
         tos::create_tl_object<tos::tos_api::http_header>(PROXY_SITE_VERISON_HEADER_NAME, PROXY_VERSION_HEADER));
@@ -1261,25 +1118,18 @@ class RldpHttpProxy : public td::actor::Actor {
     it->second(std::move(f), std::move(promise));
   }
 
-  void register_payload_sender(
-      td::Bits256 id,
-      std::function<void(tos::tl_object_ptr<tos::tos_api::http_getNextPayloadPart>, td::Promise<td::BufferSlice>)> f,
-      td::Promise<RegisteredPayloadSenderGuard> promise) {
+  void register_payload_sender(td::Bits256 id, tos::rldp_http::PayloadPartHandler f,
+                               td::Promise<RegisteredPayloadSenderGuard> promise) override {
     auto &f1 = payload_senders_[id];
     if (f1) {
       promise.set_error(td::Status::Error("duplicate id"));
       return;
     }
     f1 = std::move(f);
-    promise.set_result(RegisteredPayloadSenderGuard(
-        new std::pair<td::actor::ActorId<RldpHttpProxy>, td::Bits256>(actor_id(this), id),
-        [](std::pair<td::actor::ActorId<RldpHttpProxy>, td::Bits256> *x) {
-          td::actor::send_closure(x->first, &RldpHttpProxy::unregister_payload_sender, x->second);
-          delete x;
-        }));
+    promise.set_result(make_guard(id));
   }
 
-  void unregister_payload_sender(td::Bits256 id) {
+  void unregister_payload_sender(td::Bits256 id) override {
     payload_senders_.erase(id);
   }
 
@@ -1337,7 +1187,12 @@ class RldpHttpProxy : public td::actor::Actor {
     std::map<td::uint16, Server> ports_;
   };
 
-  td::uint16 port_{0};
+  td::IPAddress listen_address_;
+  double forward_timeout_ = kDefaultHttpForwardTimeout;
+  size_t max_tunnels_ = tos::rldp_http::kDefaultMaxTunnels;
+  size_t max_tunnels_per_peer_ = tos::rldp_http::kDefaultMaxTunnelsPerPeer;
+  tos::rldp_http::TunnelTimeouts tunnel_timeouts_;
+  std::shared_ptr<tos::rldp_http::TunnelAdmission> tunnel_admission_;
   td::IPAddress addr_;
   std::string global_config_;
 
@@ -1367,9 +1222,7 @@ class RldpHttpProxy : public td::actor::Actor {
   td::actor::ActorOwn<DNSResolver> dns_resolver_;
   tos::adnl::AdnlNodeIdShort storage_gateway_ = tos::adnl::AdnlNodeIdShort::zero();
 
-  std::map<td::Bits256,
-           std::function<void(tos::tl_object_ptr<tos::tos_api::http_getNextPayloadPart>, td::Promise<td::BufferSlice>)>>
-      payload_senders_;
+  std::map<td::Bits256, tos::rldp_http::PayloadPartHandler> payload_senders_;
 
   struct PeerCapabilities {
     td::uint64 capabilities = 0;
@@ -1512,26 +1365,6 @@ void HttpRldpPayloadSender::start_up() {
   alarm_timestamp() = td::Timestamp::in(is_tunnel_ ? 60.0 : 10.0);
 }
 
-void RldpTcpTunnel::start_up() {
-  self_ = actor_id(this);
-  td::actor::SchedulerContext::get().get_poll().subscribe(fd_.get_poll_info().extract_pollable_fd(this),
-                                                          td::PollFlags::ReadWrite());
-  td::actor::send_closure(
-      proxy_, &RldpHttpProxy::register_payload_sender, id_,
-      [SelfId = actor_id(this)](tos::tl_object_ptr<tos::tos_api::http_getNextPayloadPart> f,
-                                td::Promise<td::BufferSlice> promise) {
-        td::actor::send_closure(SelfId, &RldpTcpTunnel::receive_query, std::move(f), std::move(promise));
-      },
-      [SelfId = actor_id(this)](td::Result<RegisteredPayloadSenderGuard> R) {
-        if (R.is_error()) {
-          LOG(INFO) << "Failed to register request sender: " << R.move_as_error();
-          return;
-        }
-        td::actor::send_closure(SelfId, &RldpTcpTunnel::registered_sender, R.move_as_ok());
-      });
-  process();
-}
-
 int main(int argc, char *argv[]) {
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
 
@@ -1603,26 +1436,75 @@ int main(int argc, char *argv[]) {
     std::cout << sb.as_cslice().c_str();
     std::exit(2);
   });
-  p.add_checked_option('p', "port", "sets http listening port", [&](td::Slice arg) -> td::Status {
-    TRY_RESULT(port, td::to_integer_safe<td::uint16>(arg));
-    td::actor::send_closure(x, &RldpHttpProxy::set_port, port);
-    return td::Status::OK();
-  });
-  p.add_checked_option('a', "address", "local <ip>:<port> to use for adnl queries", [&](td::Slice arg) -> td::Status {
-    td::IPAddress addr;
-    TRY_STATUS(addr.init_host_port(arg.str()));
-    td::actor::send_closure(x, &RldpHttpProxy::set_addr, addr);
-    return td::Status::OK();
-  });
+  p.add_checked_option('p', "port",
+                       "http listening <port> on 127.0.0.1, or <ip>:<port> to listen elsewhere "
+                       "(0.0.0.0:<port> exposes the proxy to other hosts)",
+                       [&](td::Slice arg) -> td::Status {
+                         TRY_RESULT(address, tos::http::HttpServer::parse_listen_address(arg));
+                         td::actor::send_closure(x, &RldpHttpProxy::set_listen_address, address);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('a', "address",
+                       "<ip>:<port> to advertise for adnl queries; the UDP port is bound on all interfaces",
+                       [&](td::Slice arg) -> td::Status {
+                         td::IPAddress addr;
+                         TRY_STATUS(addr.init_host_port(arg.str()));
+                         td::actor::send_closure(x, &RldpHttpProxy::set_addr, addr);
+                         return td::Status::OK();
+                       });
   p.add_checked_option('A', "adnl", "server ADNL addr", [&](td::Slice arg) -> td::Status {
     TRY_RESULT(adnl, tos::adnl::AdnlNodeIdShort::parse(arg));
     td::actor::send_closure(x, &RldpHttpProxy::add_adnl_addr, adnl);
     return td::Status::OK();
   });
-  p.add_checked_option('c', "client-port", "local <port> to use for client adnl queries",
+  p.add_checked_option('c', "client-port", "UDP <port> for client adnl queries, bound on all interfaces",
                        [&](td::Slice arg) -> td::Status {
                          TRY_RESULT(port, td::to_integer_safe<td::uint16>(arg));
                          td::actor::send_closure(x, &RldpHttpProxy::set_client_port, port);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option(
+      '\0', "forward-timeout",
+      "seconds a request forwarded to a local HTTP server may take in total, response "
+      "included (default 60, at most 2147483); a response still streaming then is cut off",
+      [&](td::Slice arg) -> td::Status {
+        TRY_RESULT_PREFIX(seconds, tos::rldp_http::parse_positive_seconds(arg, tos::rldp_http::kMaxHttpForwardTimeout),
+                          "--forward-timeout: ");
+        td::actor::send_closure(x, &RldpHttpProxy::set_forward_timeout, seconds);
+        return td::Status::OK();
+      });
+  p.add_checked_option('\0', "max-tunnels",
+                       "CONNECT tunnels open at once from all peers (default 512, 1..65536); more are answered 503",
+                       [&](td::Slice arg) -> td::Status {
+                         TRY_RESULT_PREFIX(value, tos::rldp_http::parse_tunnel_limit(arg), "--max-tunnels: ");
+                         td::actor::send_closure(x, &RldpHttpProxy::set_max_tunnels, value);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('\0', "max-tunnels-per-peer",
+                       "CONNECT tunnels open at once from one ADNL peer (default 16, 1..65536); more are answered 503",
+                       [&](td::Slice arg) -> td::Status {
+                         TRY_RESULT_PREFIX(value, tos::rldp_http::parse_tunnel_limit(arg), "--max-tunnels-per-peer: ");
+                         td::actor::send_closure(x, &RldpHttpProxy::set_max_tunnels_per_peer, value);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option(
+      '\0', "tunnel-idle-timeout",
+      "seconds a CONNECT tunnel may pass without moving a byte before it is closed "
+      "(default 600, at most 604800)",
+      [&](td::Slice arg) -> td::Status {
+        TRY_RESULT_PREFIX(seconds, tos::rldp_http::parse_positive_seconds(arg, tos::rldp_http::kMaxTunnelIdleTimeout),
+                          "--tunnel-idle-timeout: ");
+        td::actor::send_closure(x, &RldpHttpProxy::set_tunnel_idle_timeout, seconds);
+        return td::Status::OK();
+      });
+  p.add_checked_option('\0', "tunnel-max-lifetime",
+                       "seconds after which a CONNECT tunnel is closed however busy it is "
+                       "(default 86400, at most 2147483)",
+                       [&](td::Slice arg) -> td::Status {
+                         TRY_RESULT_PREFIX(
+                             seconds, tos::rldp_http::parse_positive_seconds(arg, tos::rldp_http::kMaxTunnelLifetime),
+                             "--tunnel-max-lifetime: ");
+                         td::actor::send_closure(x, &RldpHttpProxy::set_tunnel_max_lifetime, seconds);
                          return td::Status::OK();
                        });
   p.add_option('C', "global-config", "global TOS configuration file",

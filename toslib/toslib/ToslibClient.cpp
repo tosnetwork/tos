@@ -366,6 +366,17 @@ td::Result<block::PublicKey> get_public_key(td::Slice public_key) {
   return address;
 }
 
+// The key a contract's owner signs with, for a wallet, resolver or channel
+// state this client builds, deploys or watches: refused when it is a
+// prohibited weak or non-canonical encoding (block::PublicKey).
+td::Result<block::PublicKey> get_owner_public_key(td::Slice public_key) {
+  TRY_RESULT(key, get_public_key(public_key));
+  if (key.is_forgeable_ed25519()) {
+    return ToslibError::ForgeablePublicKey();
+  }
+  return key;
+}
+
 td::Result<block::StdAddress> get_account_address(td::Slice account_address) {
   TRY_RESULT_PREFIX(address, block::StdAddress::parse(account_address), ToslibError::InvalidAccountAddress());
   return address;
@@ -377,7 +388,7 @@ td::Result<block::PublicKey> public_key_from_bytes(td::Slice bytes) {
 }
 
 td::Result<tos::WalletV3::InitData> to_init_data(const toslib_api::wallet_v3_initialAccountState& wallet_state) {
-  TRY_RESULT(key_bytes, get_public_key(wallet_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(wallet_state.public_key_));
   tos::WalletV3::InitData init_data;
   init_data.public_key = td::SecureString(key_bytes.key);
   init_data.wallet_id = static_cast<td::uint32>(wallet_state.wallet_id_);
@@ -385,7 +396,7 @@ td::Result<tos::WalletV3::InitData> to_init_data(const toslib_api::wallet_v3_ini
 }
 
 td::Result<tos::WalletV4::InitData> to_init_data(const toslib_api::wallet_v4_initialAccountState& wallet_state) {
-  TRY_RESULT(key_bytes, get_public_key(wallet_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(wallet_state.public_key_));
   tos::WalletV4::InitData init_data;
   init_data.public_key = td::SecureString(key_bytes.key);
   init_data.wallet_id = static_cast<td::uint32>(wallet_state.wallet_id_);
@@ -393,8 +404,8 @@ td::Result<tos::WalletV4::InitData> to_init_data(const toslib_api::wallet_v4_ini
 }
 
 td::Result<tos::RestrictedWallet::InitData> to_init_data(const toslib_api::rwallet_initialAccountState& rwallet_state) {
-  TRY_RESULT(init_key_bytes, get_public_key(rwallet_state.init_public_key_));
-  TRY_RESULT(key_bytes, get_public_key(rwallet_state.public_key_));
+  TRY_RESULT(init_key_bytes, get_owner_public_key(rwallet_state.init_public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(rwallet_state.public_key_));
   tos::RestrictedWallet::InitData init_data;
   init_data.init_key = td::SecureString(init_key_bytes.key);
   init_data.main_key = td::SecureString(key_bytes.key);
@@ -407,10 +418,10 @@ td::Result<tos::pchan::Config> to_pchan_config(const toslib_api::pchan_initialAc
   if (!pchan_state.config_) {
     return ToslibError::EmptyField("config");
   }
-  TRY_RESULT_PREFIX(a_key, get_public_key(pchan_state.config_->alice_public_key_),
+  TRY_RESULT_PREFIX(a_key, get_owner_public_key(pchan_state.config_->alice_public_key_),
                     ToslibError::InvalidField("alice_public_key", ""));
   config.a_key = td::SecureString(a_key.key);
-  TRY_RESULT_PREFIX(b_key, get_public_key(pchan_state.config_->bob_public_key_),
+  TRY_RESULT_PREFIX(b_key, get_owner_public_key(pchan_state.config_->bob_public_key_),
                     ToslibError::InvalidField("bob_public_key", ""));
   config.b_key = td::SecureString(b_key.key);
 
@@ -2763,22 +2774,20 @@ td::Result<block::StdAddress> get_account_address(const toslib_api::raw_initialA
 
 td::Result<block::StdAddress> get_account_address(const toslib_api::wallet_v3_initialAccountState& test_wallet_state,
                                                   td::int32 revision, tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(test_wallet_state.public_key_));
-  return tos::WalletV3::create({key_bytes.key, static_cast<td::uint32>(test_wallet_state.wallet_id_)}, revision)
-      ->get_address(workchain_id);
+  TRY_RESULT(init_data, to_init_data(test_wallet_state));
+  return tos::WalletV3::create(std::move(init_data), revision)->get_address(workchain_id);
 }
 
 td::Result<block::StdAddress> get_account_address(const toslib_api::wallet_v4_initialAccountState& test_wallet_state,
                                                   td::int32 revision, tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(test_wallet_state.public_key_));
-  return tos::WalletV4::create({key_bytes.key, static_cast<td::uint32>(test_wallet_state.wallet_id_)}, revision)
-      ->get_address(workchain_id);
+  TRY_RESULT(init_data, to_init_data(test_wallet_state));
+  return tos::WalletV4::create(std::move(init_data), revision)->get_address(workchain_id);
 }
 
 td::Result<block::StdAddress> get_account_address(
     const toslib_api::wallet_highload_v1_initialAccountState& test_wallet_state, td::int32 revision,
     tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(test_wallet_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(test_wallet_state.public_key_));
   return tos::HighloadWallet::create({key_bytes.key, static_cast<td::uint32>(test_wallet_state.wallet_id_)}, revision)
       ->get_address(workchain_id);
 }
@@ -2786,14 +2795,14 @@ td::Result<block::StdAddress> get_account_address(
 td::Result<block::StdAddress> get_account_address(
     const toslib_api::wallet_highload_v2_initialAccountState& test_wallet_state, td::int32 revision,
     tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(test_wallet_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(test_wallet_state.public_key_));
   return tos::HighloadWalletV2::create({key_bytes.key, static_cast<td::uint32>(test_wallet_state.wallet_id_)}, revision)
       ->get_address(workchain_id);
 }
 
 td::Result<block::StdAddress> get_account_address(const toslib_api::dns_initialAccountState& dns_state,
                                                   td::int32 revision, tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(dns_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(dns_state.public_key_));
   auto key = td::Ed25519::PublicKey(td::SecureString(key_bytes.key));
   return tos::ManualDns::create(key, static_cast<td::uint32>(dns_state.wallet_id_), revision)
       ->get_address(workchain_id);

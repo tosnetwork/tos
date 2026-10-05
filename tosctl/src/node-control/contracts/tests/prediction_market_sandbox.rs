@@ -2979,3 +2979,38 @@ fn both_frozen_oracle_rounds_timing_out_is_the_only_timeout_that_yields_invalid(
     assert_eq!(f.accounting()[7], 0);
     assert_eq!(f.account(&owner)[0], 10 * TOS as i128);
 }
+
+mod weak_ed25519;
+
+const ERR_BAD_KEY: i32 = 2410;
+
+/// A trading key anyone can sign for is refused at registration, in every spelling the
+/// verifier accepts -- including the identity and the order-2 point with the sign bit set,
+/// which a y range check alone misses. The SDK refuses them too, so the body is built by hand.
+#[test]
+fn registration_refuses_every_weak_trading_key() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let credited = 10 * TOS;
+    let value =
+        credited + f.init.participant_entry_fee + f.init.account_cleanup_bounty + OPERATION_BUDGET;
+    for (i, weak) in weak_ed25519::weak_keys().into_iter().enumerate() {
+        assert!(
+            PredictionMarketContractV1::register_and_deposit(2, credited, weak).is_err(),
+            "the SDK built a registration for weak key {i}"
+        );
+        let mut body = BuilderData::new();
+        body.append_u32(contracts::prediction_market::PM_REGISTER_DEPOSIT_OPCODE)
+            .unwrap()
+            .append_u64(2)
+            .unwrap();
+        chain_block::Coins::new(credited).write_to(&mut body).unwrap();
+        body.append_raw(&weak, 256).unwrap();
+        f.send(&owner, value, body.into_cell().unwrap())
+            .expect_aborted()
+            .expect_exit_code(ERR_BAD_KEY);
+    }
+    // The same registration with a real key goes through.
+    f.register(&owner, &SigningKey::from_bytes(&[0x64; 32]), 3);
+}

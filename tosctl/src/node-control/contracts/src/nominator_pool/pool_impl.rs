@@ -8,8 +8,9 @@
  */
 use super::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPosition};
 use crate::contract_codes::NOMINATOR_POOL_CODE;
+use crate::proven_getters::{GetMethodCall, ProvenGetterProvider, ProvenGetterResults, ReadPolicy};
 use crate::stack_utils::bytes_to_stack_entry;
-use crate::{ChainProvider, ContractProvider, MasterchainCheckpoint, SmartContract};
+use crate::{ContractProvider, MasterchainCheckpoint, SmartContract};
 use anyhow::Context;
 use chain_block::UnixTime;
 use chain_block::{
@@ -133,43 +134,97 @@ fn parse_pool_data(stack: &TvmStackParser) -> anyhow::Result<NominatorPoolData> 
     })
 }
 
-/// A pool's state and depositor positions as of one exact masterchain block.
+/// The two get-methods a pool snapshot is made of, run on one proven state.
+pub const NOMINATOR_POOL_SNAPSHOT_METHODS: [&str; 2] = ["get_pool_data", "list_nominators"];
+
+/// A pool's state and depositor positions, computed locally from the pool's
+/// proven account state at one authenticated masterchain block.
 #[derive(Debug, Clone)]
 pub struct NominatorPoolSnapshot {
+    /// The authenticated masterchain block the snapshot was taken at.
     pub checkpoint: MasterchainCheckpoint,
     pub pool: NominatorPoolData,
     pub nominators: Vec<NominatorPosition>,
+    /// How the snapshot is bound to the chain.
+    pub proof: NominatorPoolSnapshotProof,
 }
 
-/// Reads `get_pool_data` and `list_nominators` against the same exact
-/// masterchain block.
-///
-/// Both reads go through [`ChainProvider::run_get_method_at`], which binds
-/// the request to `checkpoint.seqno` and rejects a response whose block
-/// identity (workchain, seqno, root hash, file hash) differs from
-/// `checkpoint`. The two halves of the snapshot are therefore provably from
-/// one state: if either read resolves to another block, the whole
-/// observation fails rather than mixing two states or falling back to the
-/// latest one. Parsing reuses the wrapper's own decoders.
-pub async fn read_nominator_pool_snapshot_at(
-    chain: &dyn ChainProvider,
+/// What a snapshot was derived from, so a consumer can show or re-check it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NominatorPoolSnapshotProof {
+    /// True for a live read, false for an explicitly historical one.
+    pub live: bool,
+    pub block_gen_utime: u32,
+    /// Hash of the proven account state both get-methods ran on.
+    pub account_state_hash: String,
+    pub account_balance: String,
+    /// SHA-256 of the verifier request this snapshot answers.
+    pub request_sha256: String,
+}
+
+/// Source of authoritative pool snapshots. The production implementation is
+/// [`ProvenGetterProvider`]: both get-methods run locally on the same proven
+/// account state, never on an endpoint's report.
+#[async_trait::async_trait]
+pub trait PoolSnapshotSource: Send + Sync {
+    async fn nominator_pool_snapshot(
+        &self,
+        address: &MsgAddressInt,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<NominatorPoolSnapshot>;
+}
+
+#[async_trait::async_trait]
+impl PoolSnapshotSource for ProvenGetterProvider {
+    async fn nominator_pool_snapshot(
+        &self,
+        address: &MsgAddressInt,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<NominatorPoolSnapshot> {
+        read_proven_nominator_pool_snapshot(self, address, policy).await
+    }
+}
+
+/// Runs `get_pool_data` and `list_nominators` on the pool's proven account
+/// state at the block `policy` names, through the trusted verifier, and
+/// decodes them with the wrapper's own decoders. A missing proof, a missing
+/// execution dependency, a local execution failure or any mismatch between the
+/// verifier's answer and this request yields no snapshot.
+pub async fn read_proven_nominator_pool_snapshot(
+    provider: &ProvenGetterProvider,
     address: &MsgAddressInt,
-    checkpoint: &MasterchainCheckpoint,
+    policy: &ReadPolicy,
 ) -> anyhow::Result<NominatorPoolSnapshot> {
-    anyhow::ensure!(checkpoint.seqno > 0, "pool snapshot needs a non-zero masterchain checkpoint");
-    let address = address.to_string();
-    let pool_stack = chain
-        .run_get_method_at(address.clone(), "get_pool_data", vec![], checkpoint)
-        .await
-        .with_context(|| format!("get_pool_data at masterchain {}", checkpoint.seqno))?;
-    let nominators_stack = chain
-        .run_get_method_at(address, "list_nominators", vec![], checkpoint)
-        .await
-        .with_context(|| format!("list_nominators at masterchain {}", checkpoint.seqno))?;
+    let calls = NOMINATOR_POOL_SNAPSHOT_METHODS.map(GetMethodCall::new);
+    let proven = provider.run(address, &calls, policy).await.context("pool snapshot")?;
+    nominator_pool_snapshot_from(proven)
+}
+
+fn nominator_pool_snapshot_from(
+    proven: ProvenGetterResults,
+) -> anyhow::Result<NominatorPoolSnapshot> {
+    let [pool_stack, nominators_stack] = proven.results.as_slice() else {
+        anyhow::bail!("pool snapshot needs exactly the two pool get-methods");
+    };
+    anyhow::ensure!(
+        pool_stack.method == NOMINATOR_POOL_SNAPSHOT_METHODS[0]
+            && nominators_stack.method == NOMINATOR_POOL_SNAPSHOT_METHODS[1],
+        "pool snapshot get-methods arrived out of order"
+    );
+    let pool = parse_pool_data(&pool_stack.stack).context("decode get_pool_data")?;
+    let nominators =
+        parse_nominator_positions(&nominators_stack.stack).context("decode list_nominators")?;
     Ok(NominatorPoolSnapshot {
-        checkpoint: checkpoint.clone(),
-        pool: parse_pool_data(&pool_stack)?,
-        nominators: parse_nominator_positions(&nominators_stack)?,
+        checkpoint: proven.checkpoint,
+        pool,
+        nominators,
+        proof: NominatorPoolSnapshotProof {
+            live: proven.live,
+            block_gen_utime: proven.block_gen_utime,
+            account_state_hash: proven.account.state_hash,
+            account_balance: proven.account.balance,
+            request_sha256: proven.request_sha256,
+        },
     })
 }
 
@@ -573,278 +628,6 @@ mod tests {
         assert_eq!(parsed.validator_set_changes_count, 2);
         assert_eq!(parsed.validator_set_change_time, 1234);
         assert_eq!(parsed.stake_held_for, 3600);
-    }
-
-    // ===== checkpoint-pinned snapshot =====
-
-    use crate::chain_provider::DefaultChainProvider;
-    use chain_rpc_client::v2::{RPCStackEntry, client_json_rpc::ClientJsonRpc};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    fn checkpoint() -> MasterchainCheckpoint {
-        MasterchainCheckpoint {
-            seqno: 42,
-            root_hash: hex::encode([0x11; 32]),
-            file_hash: hex::encode([0x22; 32]),
-        }
-    }
-
-    fn block(seqno: u32, root: u8, file: u8) -> chain_rpc_client::v2::data_models::BlockIdExt {
-        chain_rpc_client::v2::data_models::BlockIdExt {
-            r#type: "tos.blockIdExt".to_owned(),
-            workchain: -1,
-            shard: i64::MIN,
-            seqno,
-            root_hash: vec![root; 32],
-            file_hash: vec![file; 32],
-        }
-    }
-
-    fn pool_data_entries() -> Vec<StackEntry> {
-        vec![
-            number("2"),
-            number("1"),
-            number("3000"),
-            number("2000"),
-            number("0xabc"),
-            number("0xdef"),
-            number("4000"),
-            number("40"),
-            number("1000"),
-            number("100"),
-            list_entry(vec![]),
-            list_entry(vec![]),
-            number("999"),
-            number("0x11"),
-            number("2"),
-            number("1234"),
-            number("3600"),
-            list_entry(vec![]),
-        ]
-    }
-
-    /// The node's wire form of `list_nominators`: one list whose elements
-    /// are typed stack entries.
-    fn nominator_stack_json() -> serde_json::Value {
-        let num = |value: &str| {
-            serde_json::json!({
-                "@type": "tvm.stackEntryNumber",
-                "number": {"@type": "tvm.numberDecimal", "number": value}
-            })
-        };
-        let position = serde_json::json!({
-            "@type": "tvm.stackEntryTuple",
-            "tuple": {
-                "@type": "tvm.tuple",
-                "elements": [num("0xabcd"), num("700"), num("50"), num("0")]
-            }
-        });
-        serde_json::json!([["list", {"@type": "tvm.list", "elements": [position]}]])
-    }
-
-    /// Serves `runGetMethodStd` over loopback, answering each get-method with
-    /// its declared stack (top-first, as the node does) and the block
-    /// identity chosen for that method.
-    async fn spawn_get_method_server(
-        identities: std::collections::HashMap<
-            &'static str,
-            chain_rpc_client::v2::data_models::BlockIdExt,
-        >,
-        requests: usize,
-    ) -> (String, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = tokio::spawn(async move {
-            let mut seen = Vec::new();
-            for _ in 0..requests {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                let mut buf = [0u8; 4096];
-                let body = loop {
-                    let n = socket.read(&mut buf).await.unwrap();
-                    request.extend_from_slice(&buf[..n]);
-                    let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
-                        continue;
-                    };
-                    let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
-                    let length = headers
-                        .lines()
-                        .find_map(|line| line.strip_prefix("content-length:"))
-                        .map(|value| value.trim().parse::<usize>().unwrap())
-                        .unwrap_or(0);
-                    if request.len() >= end + 4 + length {
-                        break request[end + 4..end + 4 + length].to_vec();
-                    }
-                };
-                let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                let method = request["params"]["method"].as_str().unwrap().to_owned();
-                let stack = match method.as_str() {
-                    "get_pool_data" => serde_json::to_value(
-                        pool_data_entries()
-                            .into_iter()
-                            .rev()
-                            .map(RPCStackEntry::from)
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap(),
-                    "list_nominators" => nominator_stack_json(),
-                    other => panic!("unexpected get-method {other}"),
-                };
-                let result = serde_json::json!({
-                    "gas_used": 0,
-                    "stack": stack,
-                    "exit_code": 0,
-                    "last_transaction_id": null,
-                    "block_id": identities.get(method.as_str()).cloned(),
-                });
-                let response = serde_json::json!({
-                    "ok": true,
-                    "jsonrpc": "2.0",
-                    "id": request["id"].clone(),
-                    "result": result,
-                })
-                .to_string();
-                let http = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                    response.len(),
-                    response
-                );
-                socket.write_all(http.as_bytes()).await.unwrap();
-                socket.shutdown().await.unwrap();
-                seen.push(request);
-            }
-            seen
-        });
-        (format!("http://{addr}"), handle)
-    }
-
-    fn pool_address() -> MsgAddressInt {
-        MsgAddressInt::from_str(&format!("-1:{}", "5".repeat(64))).unwrap()
-    }
-
-    async fn snapshot_with(
-        pool_identity: chain_rpc_client::v2::data_models::BlockIdExt,
-        nominators_identity: chain_rpc_client::v2::data_models::BlockIdExt,
-        requests: usize,
-    ) -> (anyhow::Result<NominatorPoolSnapshot>, Vec<serde_json::Value>) {
-        let identities = std::collections::HashMap::from([
-            ("get_pool_data", pool_identity),
-            ("list_nominators", nominators_identity),
-        ]);
-        let (url, server) = spawn_get_method_server(identities, requests).await;
-        let provider =
-            DefaultChainProvider::new(Arc::new(ClientJsonRpc::connect(url, None).unwrap()));
-        let result =
-            read_nominator_pool_snapshot_at(&provider, &pool_address(), &checkpoint()).await;
-        (result, server.await.unwrap())
-    }
-
-    #[tokio::test]
-    async fn a_pinned_snapshot_reads_both_get_methods_at_the_same_block() {
-        let (result, requests) =
-            snapshot_with(block(42, 0x11, 0x22), block(42, 0x11, 0x22), 2).await;
-        let snapshot = result.unwrap();
-        assert_eq!(snapshot.checkpoint, checkpoint());
-        assert_eq!(snapshot.pool.state, 2);
-        assert_eq!(snapshot.pool.stake_amount_sent, 3000);
-        assert_eq!(snapshot.nominators.len(), 1);
-        assert_eq!(snapshot.nominators[0].amount, 700);
-        assert_eq!(snapshot.nominators[0].pending_deposit, 50);
-        for request in &requests {
-            assert_eq!(request["params"]["seqno"], 42, "every read is pinned: {request}");
-        }
-    }
-
-    #[tokio::test]
-    async fn a_pool_data_read_from_another_block_rejects_the_snapshot() {
-        // Same height, different root hash: a same-seqno fork.
-        let (result, _) = snapshot_with(block(42, 0x99, 0x22), block(42, 0x11, 0x22), 1).await;
-        let error = format!("{:#}", result.unwrap_err());
-        assert!(error.contains("get_pool_data") && error.contains("another block"), "{error}");
-    }
-
-    #[tokio::test]
-    async fn a_nominator_list_read_from_another_block_rejects_the_snapshot() {
-        // Right root hash, wrong file hash on the second read only.
-        let (result, _) = snapshot_with(block(42, 0x11, 0x22), block(42, 0x11, 0x77), 2).await;
-        let error = format!("{:#}", result.unwrap_err());
-        assert!(error.contains("list_nominators") && error.contains("another block"), "{error}");
-        let (result, _) = snapshot_with(block(42, 0x11, 0x22), block(43, 0x11, 0x22), 2).await;
-        assert!(result.is_err(), "a different seqno is another block too");
-    }
-
-    /// A provider that cannot pin state must not be papered over with a
-    /// latest-state read.
-    #[tokio::test]
-    async fn a_provider_without_historical_state_yields_no_snapshot() {
-        struct LatestOnly;
-        #[async_trait::async_trait]
-        impl ChainProvider for LatestOnly {
-            async fn run_get_method(
-                &self,
-                _address: String,
-                _method: &str,
-                _stack: Vec<StackEntry>,
-            ) -> anyhow::Result<TvmStackParser> {
-                panic!("a pinned snapshot must never fall back to latest state")
-            }
-            async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
-                anyhow::bail!("unused")
-            }
-            async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
-                anyhow::bail!("unused")
-            }
-            async fn get_config_param(
-                &self,
-                _param_id: u32,
-            ) -> anyhow::Result<chain_block::ConfigParamEnum> {
-                anyhow::bail!("unused")
-            }
-            async fn get_address_info(
-                &self,
-                _address: &MsgAddressInt,
-            ) -> anyhow::Result<crate::chain_provider::AddressInfo> {
-                anyhow::bail!("unused")
-            }
-            async fn get_extended_address_info(
-                &self,
-                _address: &MsgAddressInt,
-            ) -> anyhow::Result<crate::chain_provider::ExtendedAddressInfo> {
-                anyhow::bail!("unused")
-            }
-            async fn get_wallet_info(
-                &self,
-                _address: &MsgAddressInt,
-            ) -> anyhow::Result<crate::chain_provider::WalletInfo> {
-                anyhow::bail!("unused")
-            }
-            async fn get_masterchain_info(
-                &self,
-            ) -> anyhow::Result<crate::chain_provider::MasterchainInfo> {
-                anyhow::bail!("unused")
-            }
-            async fn get_shards(
-                &self,
-                _seqno: u32,
-            ) -> anyhow::Result<crate::chain_provider::ShardsInfo> {
-                anyhow::bail!("unused")
-            }
-            async fn get_block_transactions_page(
-                &self,
-                _workchain: i32,
-                _shard: i64,
-                _seqno: u32,
-                _after_lt: Option<u64>,
-                _after_account: Option<&str>,
-                _count: u32,
-            ) -> anyhow::Result<crate::chain_provider::BlockTransactionsPage> {
-                anyhow::bail!("unused")
-            }
-        }
-        let error = read_nominator_pool_snapshot_at(&LatestOnly, &pool_address(), &checkpoint())
-            .await
-            .unwrap_err();
-        assert!(format!("{error:#}").contains("unsupported"), "{error:#}");
     }
 
     // ===== pool maintenance =====

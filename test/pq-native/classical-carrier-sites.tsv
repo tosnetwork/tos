@@ -28,6 +28,7 @@ crypto/block/signature-set.h	*	2	definition	the public classical verification bo
 lite-client/lite-client-common.cpp	*	1	reachable	the checked lite parser accepts classical history and PQ carriers; trusted carrier verification remains downstream
 sdk/js/packages/client/src/types.ts	*	2	reachable	the public client response model has only ordinary/simplex classical signature shapes; the API carrier unit owns it
 test/pq-native/c04-real-state-proof-test.cpp	cpp_fetch	2	historical	test-only proof fixture parses valid and wrong-set #13 PQ cells; generic fetch marker does not emit a classical carrier
+test/pq-native/custom-overlay-relay-dedup-test.cpp	cpp_factory	1	historical	relay dedup test builds an ordinary set only as opaque evidence content to key finality forwarding; nothing verifies or emits it
 test/pq-native/n6-microbench.cpp	cpp_fetch	2	historical	benchmark fixture parses #13 PQ cells to measure verification work; no production carrier selection
 test/pq-native/pending-finality-cache-test.cpp	cpp_fetch	2	historical	pending-finality negative fixtures parse wrong-set #13 PQ cells to exercise refusal paths
 test/pq-native/pq-block-signature-conformance-test.cpp	*	1	historical	crypto conformance exercises the explicitly test-only carried-session verifier
@@ -76,3 +77,6 @@ validator/impl/top-shard-descr.cpp	*	3	historical	TopBlockDescr cell parsing sup
 validator/manager.cpp	verify	2	historical	verify sites at lines 629 and 631 run only after the explicit !is_pq branch and admit classical carriers only for an explicitly classical validator set
 validator/validate-broadcast.cpp	*	2	historical	broadcast verification has a separate trusted-context PQ branch; these calls are the classical branch
 test/test-config-transition.cpp	raw_tag_write	1	definition	validator_set tag #12 in the canonical ConfigParam 34 test fixture; not a block-signature carrier
+test/pq-native/proof-verify-test.cpp	cpp_lite_tl	1	historical	proof-verifier negative control substitutes an ordinary classical set for the PQ carrier on a forward link and requires refusal; nothing accepts or emits it
+test/pq-native/proof-verify-test.cpp	raw_tag_write	1	historical	synthetic chain fixture writes validators_ext#12 for ConfigParam 34 in a test state; a validator-set tag, not a finality carrier
+test/proven-snapshot/pool-snapshot-fixture.cpp	raw_tag_write	1	historical	proven pool snapshot fixture writes validators_ext#12 for ConfigParam 34 in a synthetic state; a validator-set tag, not a finality carrier

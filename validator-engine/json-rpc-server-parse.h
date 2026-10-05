@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "auto/tl/lite_api.h"
+#include "td/utils/JsonBuilder.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "vm/cells.h"
@@ -40,6 +41,19 @@ namespace tos {
 // value echoed verbatim has to be checked against the grammar the reader
 // on the other side will apply, or the reply is unparseable.
 bool is_valid_json_number(const std::string &s);
+
+// Upper bound on a request id echoed back in a reply, measured on its
+// serialized JSON form (quotes and escapes included). Without it a client can
+// send an id as large as the request body limit and have the server hold, and
+// write out, a reply of that size for every request it sends.
+inline constexpr std::size_t kMaxReflectedIdBytes = 256;
+
+// The JSON literal to echo as the reply's id: "null" for a null or absent id,
+// the escaped string for a string id, the number for a number id. Fails when
+// the id is not a string, number or null, when a number id is not a valid
+// JSON number, and when the serialized literal exceeds kMaxReflectedIdBytes;
+// the caller then answers with an invalid-request error carrying id null.
+td::Result<std::string> reflected_request_id(const td::JsonValue &id);
 
 // Deserializes the serialized VM stack returned by liteServer.runSmcMethod.
 // Fails, instead of throwing, when the BOC is malformed, the root or any

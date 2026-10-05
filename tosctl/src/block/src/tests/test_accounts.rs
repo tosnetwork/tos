@@ -714,6 +714,15 @@ fn storage_usage_limit_accounting() -> Result<()> {
     root.checked_append_reference(child)?; // shared subtree must count only once
     let root = root.into_cell()?;
 
+    // Action-phase counting treats zero as a real limit; general limits
+    // retain zero-as-unlimited semantics.
+    let mut zero = StorageUsageCalc::with_cell_limit(0);
+    zero.append_cell(&root, true, &mut 0)?;
+    assert_eq!((zero.cells(), zero.bits()), (1, 8));
+    let mut action = StorageUsageCalc::with_cell_limit(1);
+    action.append_cell(&root, false, &mut 0)?;
+    assert_eq!((action.cells(), action.bits()), (2, 16));
+
     let mut exact = StorageUsageCalc::with_limits(2, 16);
     exact.append_cell(&root, false, &mut 0)?;
     assert_eq!((exact.cells(), exact.bits()), (2, 16));

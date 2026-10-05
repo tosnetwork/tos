@@ -6,3 +6,5 @@ add_executable(lite-client lite-client.cpp lite-client.h ext-client.h ext-client
 target_link_libraries(lite-client tdutils tdactor adnllite tl_api tl_lite_api tl-lite-utils terminal lite-client-common git)
 
 install(TARGETS lite-client RUNTIME DESTINATION bin)
+
+add_subdirectory(proof-verify)

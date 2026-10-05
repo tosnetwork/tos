@@ -34,6 +34,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
 use tos_vm::stack::StackItem;
 
+mod weak_ed25519;
+
 const TOS: u64 = 1_000_000_000;
 const MIN_RESPONSE_SLA: u32 = 3_600;
 const MIN_REFUND_CLAIM_WINDOW: u32 = 3_600;
@@ -925,6 +927,7 @@ fn attestor_signature_cannot_be_replayed_across_requests() {
     let request0 = f.request(0).unwrap();
     let response_hash = [0xCC; 32];
     let domain_0 = contracts::service_respond_domain_hash(
+        sandbox_global_id(&f.bc),
         &f.service,
         &request0.caller,
         0,
@@ -958,6 +961,7 @@ fn attestor_signature_cannot_be_replayed_across_requests() {
     // A freshly computed signature bound to request 1 succeeds.
     let request1 = f.request(1).unwrap();
     let domain_1 = contracts::service_respond_domain_hash(
+        sandbox_global_id(&f.bc),
         &f.service,
         &request1.caller,
         1,
@@ -989,6 +993,7 @@ fn attestor_signed_respond_matches_the_compiled_bytecode() {
     assert_eq!(request.attestor_pubkey, Some(attestor_pubkey));
     let response_hash = [0xBB; 32];
     let domain_hash = contracts::service_respond_domain_hash(
+        sandbox_global_id(&f.bc),
         &f.service,
         &request.caller,
         0,
@@ -1067,6 +1072,7 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
     // request 0 still requires the OLD attestor's signature, not the new one.
     let response_hash = [0xCC; 32];
     let domain_0 = contracts::service_respond_domain_hash(
+        sandbox_global_id(&f.bc),
         &f.service,
         &request0_after.caller,
         0,
@@ -1088,6 +1094,7 @@ fn update_policy_and_attestor_rotation_never_alter_already_snapshotted_requests(
     // request 1 requires the NEW attestor's signature.
     let request1_after = f.request(1).unwrap();
     let domain_1 = contracts::service_respond_domain_hash(
+        sandbox_global_id(&f.bc),
         &f.service,
         &request1_after.caller,
         1,
@@ -1679,4 +1686,74 @@ fn only_owner_can_call_owner_only_operations() {
     f.send_from(&outsider, ServiceActorContract::withdraw_revenue(4, TOS).unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_NOT_OWNER);
+}
+
+/// The network the sandbox runs, as GLOBALID reads it from ConfigParam 19.
+fn sandbox_global_id(bc: &Blockchain) -> i32 {
+    match bc.config_params().config(19).expect("parameter 19") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        other => panic!("parameter 19 is not the global id: {other:?}"),
+    }
+}
+
+const ERR_WEAK_ATTESTOR: i32 = 1925;
+
+/// An attestor key anyone could sign for is refused when the owner rotates to
+/// it, and refused at response when it arrived in a hand-built StateInit.
+#[test]
+fn weak_attestor_keys_are_refused_when_set_and_when_used() {
+    let mut f = Fixture::new();
+    let owner = f.owner.address().clone();
+    for weak in weak_ed25519::weak_keys() {
+        f.send_from(&owner, ServiceActorContract::rotate_attestor_key(1, weak).unwrap())
+            .expect_aborted()
+            .expect_exit_code(ERR_WEAK_ATTESTOR);
+    }
+    assert_eq!(f.data().attestor_pubkey, None, "a refused key must not be stored");
+    let strong = SigningKey::from_bytes(&[0x77; 32]).verifying_key().to_bytes();
+    f.send_from(&owner, ServiceActorContract::rotate_attestor_key(2, strong).unwrap())
+        .expect_success();
+    assert_eq!(f.data().attestor_pubkey, Some(strong));
+
+    let mut f = Fixture::with_attestor(weak_ed25519::weak_keys()[0]);
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    f.respond_signed(2, 0, [0xBB; 32], &[0u8; 64])
+        .expect_aborted()
+        .expect_exit_code(ERR_WEAK_ATTESTOR);
+    assert!(f.request(0).is_some());
+}
+
+/// A response signed for another network does not answer here.
+#[test]
+fn a_response_signed_for_another_network_is_refused() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let mut f = Fixture::with_attestor(attestor.verifying_key().to_bytes());
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    let request = f.request(0).unwrap();
+    let response_hash = [0xBB; 32];
+    let here = sandbox_global_id(&f.bc);
+    let domain = |global_id: i32| {
+        contracts::service_respond_domain_hash(
+            global_id,
+            &f.service,
+            &request.caller,
+            0,
+            &request.request_hash,
+            &response_hash,
+            &request.terms_hash,
+            request.price,
+            request.response_deadline,
+            request.refund_claim_deadline,
+        )
+        .unwrap()
+    };
+    let elsewhere = attestor.sign(&domain(here.wrapping_add(1))).to_bytes();
+    let this_network = attestor.sign(&domain(here)).to_bytes();
+    f.respond_signed(2, 0, response_hash, &elsewhere)
+        .expect_aborted()
+        .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
+    f.respond_signed(3, 0, response_hash, &this_network).expect_success();
+    assert!(f.request(0).is_none());
 }

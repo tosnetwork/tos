@@ -191,3 +191,193 @@ def test_existing_observer_is_not_overwritten(tmp_path):
     (tmp_path / "testnet/node5").mkdir()
     with pytest.raises(RuntimeError, match="already exists"):
         local.prepare_observers(tmp_path)
+
+
+def test_plan_refuses_a_symlink_planted_where_it_writes(tmp_path):
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    (tmp_path / "preparation").mkdir(mode=0o755)
+    (tmp_path / "preparation" / "topology.json").symlink_to(victim)
+    with pytest.raises(OSError):
+        local.write_plan(tmp_path)
+    assert victim.read_text() == "untouched"
+
+
+def test_plan_refuses_a_preparation_directory_that_is_a_symlink(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "preparation").symlink_to(elsewhere)
+    with pytest.raises(RuntimeError, match="symlink is refused"):
+        local.write_plan(tmp_path)
+    assert not any(elsewhere.iterdir())
+
+
+def test_output_directory_in_a_shared_writable_parent_is_refused(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    with pytest.raises(RuntimeError, match="another user"):
+        local.secure_output_dir(shared / "out")
+    assert not (shared / "out").exists()
+
+
+def test_output_directory_is_made_private(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir(mode=0o755)
+    assert local.secure_output_dir(out) == out
+    assert out.stat().st_mode & 0o777 == 0o700
+
+
+def test_plan_creates_a_missing_data_directory(tmp_path):
+    # A host that has never run setup has no /data; planning must still work.
+    data = tmp_path / "host" / "data"
+    previous = os.umask(0o077)
+    try:
+        local.write_plan(data)
+    finally:
+        os.umask(previous)
+    for directory in (tmp_path / "host", data, data / "preparation"):
+        info = directory.lstat()
+        assert info.st_uid == os.geteuid()
+        assert info.st_mode & 0o777 == 0o755, directory
+    assert (data / "preparation/topology.json").is_file()
+
+
+def test_plan_does_not_create_through_a_symlinked_ancestor(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "link").symlink_to(elsewhere)
+    with pytest.raises(RuntimeError, match="is not a directory"):
+        local.write_plan(tmp_path / "link" / "data")
+    assert not any(elsewhere.iterdir())
+
+
+def test_plan_does_not_create_under_a_shared_writable_ancestor(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    with pytest.raises(RuntimeError, match="another user"):
+        local.write_plan(shared / "data")
+    assert not any(shared.iterdir())
+
+
+def test_an_output_directory_without_its_parent_is_refused(tmp_path):
+    # The root-run drivers do not create /data; only planning does.
+    with pytest.raises(RuntimeError, match="does not exist"):
+        local.secure_output_dir(tmp_path / "missing" / "out")
+    assert not (tmp_path / "missing").exists()
+
+
+def installed(tmp_path, mode=0o755):
+    path = tmp_path / "tos-lite-client"
+    path.write_text("#!/bin/sh\n")
+    path.chmod(mode)
+    return path
+
+
+def test_an_installed_executable_is_accepted(tmp_path):
+    path = installed(tmp_path)
+    assert local.require_installed_executable(path) == path
+
+
+@pytest.mark.parametrize(
+    "case,message",
+    [
+        ("missing", "does not exist"),
+        ("relative", "not an absolute path"),
+        ("symlink", "not a regular file"),
+        ("directory", "not a regular file"),
+        ("group-writable", "another user"),
+        ("world-writable", "another user"),
+        ("not-executable", "not executable"),
+    ],
+)
+def test_an_unsafe_or_missing_executable_is_refused(tmp_path, case, message):
+    if case == "missing":
+        path = tmp_path / "absent"
+    elif case == "relative":
+        path = Path("tos-lite-client")
+    elif case == "symlink":
+        path = tmp_path / "link"
+        path.symlink_to(installed(tmp_path))
+    elif case == "directory":
+        path = tmp_path / "dir"
+        path.mkdir()
+    elif case == "group-writable":
+        path = installed(tmp_path, 0o775)
+    elif case == "world-writable":
+        path = installed(tmp_path, 0o757)
+    else:
+        path = installed(tmp_path, 0o644)
+    with pytest.raises(RuntimeError, match=message):
+        local.require_installed_executable(path)
+
+
+def test_the_installed_lite_client_path_is_explicit():
+    assert local.INSTALLED_LITE_CLIENT == Path("/usr/local/bin/tos-lite-client")
+
+
+def test_json_is_written_with_the_requested_mode_whatever_the_umask(tmp_path):
+    previous = os.umask(0o077)
+    try:
+        local.write_json(tmp_path / "status.json", {"ok": True}, 0o644)
+    finally:
+        os.umask(previous)
+    assert (tmp_path / "status.json").stat().st_mode & 0o777 == 0o644
+
+
+ROOT_RUN_DRIVERS = ("local-pq-transfers.py", "local-pq-privacy.py", "local-pq-elections.py")
+
+
+def path_writes(source):
+    """Calls that write or chmod through a path that follows a planted link."""
+    import ast
+
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        receiver = node.func.value
+        if isinstance(receiver, ast.Name) and receiver.id in ("local", "os", "f"):
+            continue
+        name = node.func.attr
+        mode = next(
+            (
+                a.value
+                for a in node.args
+                if isinstance(a, ast.Constant) and isinstance(a.value, str)
+            ),
+            "r",
+        )
+        if name in ("write_bytes", "write_text", "chmod", "touch", "copyfile", "copy") or (
+            name == "open" and any(c in mode for c in "wax+")
+        ):
+            found.append(f"line {node.lineno}: .{name}")
+    return found
+
+
+@pytest.mark.parametrize("name", ROOT_RUN_DRIVERS)
+def test_root_run_drivers_write_only_through_the_no_follow_helpers(name):
+    source = (SOURCE.parent / name).read_text()
+    assert path_writes(source) == []
+
+
+def test_the_path_write_guard_sees_each_kind_of_write():
+    source = "\n".join(
+        [
+            'p.write_bytes(b"")',
+            'p.write_text("")',
+            "p.chmod(0o644)",
+            'p.open("ab")',
+            "shutil.copyfile(a, b)",
+            'p.open("rb")',
+            'local.write_bytes(p, b"")',
+        ]
+    )
+    assert [line.split(": ")[1] for line in path_writes(source)] == [
+        ".write_bytes",
+        ".write_text",
+        ".chmod",
+        ".open",
+        ".copyfile",
+    ]

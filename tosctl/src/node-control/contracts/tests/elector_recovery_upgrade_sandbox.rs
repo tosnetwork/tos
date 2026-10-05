@@ -8,8 +8,9 @@
 //! Every recovery, ACK, upgrade and retry below executes the transaction action phase.
 
 use chain_block::{
-    BuilderData, Cell, Coins, Deserializable, HashmapE, HashmapType, IBitstring, Message,
-    MsgAddressInt, Serializable, SliceData, Transaction,
+    BuilderData, Cell, Coins, CurrencyCollection, Deserializable, HashmapE, HashmapType,
+    IBitstring, Message, MsgAddressInt, Serializable, SliceData, TrComputePhase, Transaction,
+    TransactionDescr,
 };
 use std::path::PathBuf;
 use tos_sandbox::{Blockchain, MessageBuilder, compile_func_with_stdlib, generate_zerostate_state};
@@ -178,6 +179,46 @@ impl Fixture {
         out
     }
 
+    /// Recover the seeded credit and deliver its payment, but never ACK it.
+    fn pay_without_acknowledgment(&mut self) {
+        let out = self.send(RECOVER, QUERY);
+        assert_eq!(reply(&out), (RECOVERED, QUERY));
+        assert!(principal(&out[0]) >= u128::from(50 * TOS));
+        let payment = out.into_iter().next().expect("payment");
+        assert!(!payment.int_header().expect("header").bounce);
+        let (_, onward) = self.step(payment);
+        assert!(onward.is_empty());
+        assert_eq!(self.outstanding(), Some(1), "the paid receipt awaits its owner");
+    }
+
+    /// Prepare one of the two recovery histories an upgrade must carry over.
+    fn paid(&mut self, acknowledged: bool) {
+        if acknowledged {
+            self.acknowledge_first_payment();
+        } else {
+            self.pay_without_acknowledgment();
+        }
+    }
+
+    fn outstanding(&self) -> Option<u32> {
+        let mut cs = SliceData::load_cell(self.metadata()?).expect("recovery history");
+        assert_eq!(cs.get_next_u32().expect("tag"), 0x52435632);
+        Some(cs.get_next_u32().expect("outstanding count"))
+    }
+
+    fn ready(&self) -> bool {
+        let result =
+            self.chain.run_get_method(&self.elector, "upgrade_ready", vec![]).expect("getter");
+        assert_eq!(result.exit_code, 0);
+        result.stack[0].as_integer().expect("readiness").to_string() != "0"
+    }
+
+    fn set_balance(&mut self, amount: u64) {
+        let mut account = self.chain.get_account(&self.elector).expect("elector").clone();
+        account.set_balance(CurrencyCollection::with_coins(amount));
+        self.chain.set_account(self.elector.clone(), account);
+    }
+
     fn acknowledge_first_payment(&mut self) {
         let out = self.send(RECOVER, QUERY);
         assert_eq!(reply(&out), (RECOVERED, QUERY));
@@ -210,6 +251,10 @@ impl Fixture {
             .build();
         self.step(message)
     }
+}
+
+fn principal(message: &Message) -> u128 {
+    message.int_header().expect("internal").value.coins.as_u128()
 }
 
 fn reply(out: &[Message]) -> (u32, u64) {
@@ -263,18 +308,20 @@ fn target_without_matching_recovery_format_cannot_take_over_history() {
     );
     for code in [missing, wrong] {
         for hook in [false, true] {
-            let mut f = Fixture::new("recovery-incompatible-upgrade");
-            f.acknowledge_first_payment();
-            let original_code = f.code();
-            let original_data = f.data();
-            let (tx, _) = f.upgrade(code.clone(), hook);
-            assert!(
-                tx.read_description().expect("description").is_aborted(),
-                "incompatible target must be rejected"
-            );
-            assert_eq!(f.code(), original_code);
-            assert_eq!(f.data(), original_data);
-            assert_eq!(reply(&f.send(ACK, QUERY)), (CONFIRMED, QUERY));
+            for acknowledged in [false, true] {
+                let mut f = Fixture::new("recovery-incompatible-upgrade");
+                f.paid(acknowledged);
+                let original_code = f.code();
+                let original_data = f.data();
+                let (tx, _) = f.upgrade(code.clone(), hook);
+                assert!(
+                    tx.read_description().expect("description").is_aborted(),
+                    "incompatible target must be rejected"
+                );
+                assert_eq!(f.code(), original_code);
+                assert_eq!(f.data(), original_data);
+                assert_eq!(reply(&f.send(ACK, QUERY)), (CONFIRMED, QUERY));
+            }
         }
     }
 }
@@ -286,15 +333,17 @@ fn a_declared_compatible_hook_cannot_drop_recovery_metadata() {
         "int recovery_upgrade_format() impure method_id(1667) { return 0x52435632; }\n",
         "() after_code_upgrade(slice sender, slice body, int query) impure method_id(1666) { set_data(begin_cell().end_cell()); }\n",
     ));
-    let mut f = Fixture::new("recovery-destructive-hook");
-    f.acknowledge_first_payment();
-    let original_code = f.code();
-    let original_data = f.data();
-    let (tx, _) = f.upgrade(destructive, true);
-    assert!(tx.read_description().expect("description").is_aborted());
-    assert_eq!(f.code(), original_code, "failed hook must not install its code");
-    assert_eq!(f.data(), original_data, "failed hook must not delete confirmation evidence");
-    assert_eq!(reply(&f.send(ACK, QUERY)), (CONFIRMED, QUERY));
+    for acknowledged in [false, true] {
+        let mut f = Fixture::new("recovery-destructive-hook");
+        f.paid(acknowledged);
+        let original_code = f.code();
+        let original_data = f.data();
+        let (tx, _) = f.upgrade(destructive.clone(), true);
+        assert!(tx.read_description().expect("description").is_aborted());
+        assert_eq!(f.code(), original_code, "failed hook must not install its code");
+        assert_eq!(f.data(), original_data, "failed hook must not delete confirmation evidence");
+        assert_eq!(reply(&f.send(ACK, QUERY)), (CONFIRMED, QUERY));
+    }
 }
 
 #[test]
@@ -312,17 +361,91 @@ fn never_used_empty_history_preserves_legacy_installation_boundary() {
 }
 
 #[test]
-fn outstanding_payment_receipt_still_blocks_installation() {
-    let mut f = Fixture::new("outstanding-upgrade-boundary");
+fn an_owner_who_never_acknowledges_cannot_veto_a_compatible_upgrade() {
+    for hook in [false, true] {
+        let mut f = Fixture::new("unacknowledged-upgrade-boundary");
+        f.pay_without_acknowledgment();
+        assert!(f.ready(), "a paid receipt is not a debt the upgrade must wait on");
+        let code = f.code();
+        let data = f.data();
+        let (tx, out) = f.upgrade(code.clone(), hook);
+        assert!(!tx.read_description().expect("description").is_aborted());
+        assert_eq!(reply(&out), (0xce436f64, 800), "the upgrade is installed, not refused");
+        assert_eq!(f.code(), code);
+        assert_eq!(f.data(), data, "the outstanding receipt is carried over unchanged");
+        assert_eq!(f.outstanding(), Some(1));
+
+        // The old request after the upgrade repeats the receipt, never the principal.
+        let out = f.send(RECOVER, QUERY);
+        assert_eq!(reply(&out), (RECOVERED, QUERY));
+        assert!(principal(&out[0]) <= u128::from(20 * TOS), "a repeat pays back only the call");
+        assert_eq!(f.data(), data);
+
+        // A later credit is neither consumed by the old query nor reachable by a
+        // new one until the owner acknowledges the paid receipt.
+        f.credit(70 * TOS);
+        let later_credit = f.data();
+        let out = f.send(RECOVER, QUERY);
+        assert_eq!(reply(&out), (RECOVERED, QUERY));
+        assert!(principal(&out[0]) <= u128::from(20 * TOS));
+        assert_eq!(f.data(), later_credit, "the old query must not consume the later credit");
+        let (tx, _) = f.step(f.message(RECOVER, QUERY + 1));
+        assert!(tx.read_description().expect("description").is_aborted());
+        assert_eq!(f.data(), later_credit);
+
+        // The owner can still complete the ACK flow on the upgraded code.
+        assert_eq!(reply(&f.send(ACK, QUERY)), (CONFIRMED, QUERY));
+        assert_eq!(f.outstanding(), Some(0));
+        let acknowledged = f.data();
+        assert_eq!(reply(&f.send(ACK, QUERY)), (CONFIRMED, QUERY), "a duplicate ACK confirms");
+        assert_eq!(f.data(), acknowledged, "a duplicate ACK changes nothing");
+        assert!(f.send(RECOVER, QUERY).is_empty(), "an acknowledged query pays nothing");
+        assert_eq!(f.data(), acknowledged);
+        let out = f.send(RECOVER, QUERY + 1);
+        assert_eq!(reply(&out), (RECOVERED, QUERY + 1));
+        assert!(principal(&out[0]) >= u128::from(70 * TOS), "the later credit is paid once");
+        let paid_later = f.data();
+        let (tx, out) = f.step(f.message(RECOVER, QUERY));
+        assert!(tx.read_description().expect("description").is_aborted(), "an older query");
+        assert!(out.iter().all(|m| principal(m) <= u128::from(20 * TOS)));
+        assert_eq!(f.data(), paid_later);
+    }
+}
+
+#[test]
+fn a_failed_payment_keeps_the_credit_and_still_blocks_upgrades() {
+    let mut f = Fixture::new("failed-recovery-payment");
+    // Less than the 50 TOS credit plus the 20 TOS call value can cover.
+    f.set_balance(10 * TOS);
+    let data = f.data();
+    let (tx, out) = f.step(f.message(RECOVER, QUERY));
+    match tx.read_description().expect("description") {
+        TransactionDescr::Ordinary(d) => {
+            assert!(
+                matches!(d.compute_ph, TrComputePhase::Vm(ref vm) if vm.success),
+                "the recovery itself must run"
+            );
+            let action = d.action.expect("a real action phase");
+            assert!(!action.success, "the payment action must be what fails");
+            assert!(d.aborted);
+        }
+        _ => panic!("ordinary transaction"),
+    }
+    assert!(out.iter().all(|m| principal(m) < u128::from(50 * TOS)), "no principal leaves");
+    assert_eq!(f.data(), data, "the credit stays and no receipt is written");
+    assert!(f.metadata().is_none());
+    assert!(!f.ready(), "an unpaid credit still blocks upgrades");
+    let code = f.code();
+    let (_, out) = f.upgrade(code, false);
+    assert_eq!(reply(&out), (0xffffffff, 800));
+    assert_eq!(f.data(), data);
+
+    // Once the elector can pay, the same credit is recovered exactly once.
+    f.set_balance(1_000 * TOS);
     let out = f.send(RECOVER, QUERY);
     assert_eq!(reply(&out), (RECOVERED, QUERY));
-    let code = f.code();
-    let data = f.data();
-    let (tx, out) = f.upgrade(code.clone(), false);
-    assert!(!tx.read_description().expect("description").is_aborted());
-    assert_eq!(reply(&out), (0xffffffff, 800));
-    assert_eq!(f.code(), code);
-    assert_eq!(f.data(), data);
+    assert!(principal(&out[0]) >= u128::from(50 * TOS));
+    assert_eq!(f.outstanding(), Some(1));
 }
 
 #[test]
@@ -335,9 +458,9 @@ fn matching_recovery_capability_cannot_enqueue_actions() {
         " send_raw_message(msg, 0); return 0x52435632; }\n",
         "() after_code_upgrade(slice sender, slice body, int query) impure method_id(1666) { return (); }\n",
     ));
-    for hook in [false, true] {
+    for (hook, acknowledged) in [(false, false), (false, true), (true, false), (true, true)] {
         let mut f = Fixture::new("recovery-capability-actions");
-        f.acknowledge_first_payment();
+        f.paid(acknowledged);
         let original_code = f.code();
         let original_data = f.data();
         let (tx, out) = f.upgrade(side_effect.clone(), hook);

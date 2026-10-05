@@ -46,6 +46,18 @@ struct PublicKey {
   static td::Result<PublicKey> parse(td::Slice key);
 
   std::string serialize(bool base64_url = false);
+
+  // True for the prohibited weak and non-canonical 32-byte encodings: the eight
+  // Ed25519 torsion points, the identity and order-2 point with the sign bit
+  // set, and every y >= 2^255 - 19. The same set crypto/smartcont/
+  // strong-ed25519-key.fc refuses. Signatures forged with no secret are shown
+  // for some of them; the VM refuses the all-zero key and the canonical
+  // identity itself, and they are refused here regardless. A key of any other
+  // length is not one.
+  static bool is_forgeable_ed25519(td::Slice key);
+  bool is_forgeable_ed25519() const {
+    return is_forgeable_ed25519(key);
+  }
 };
 
 struct StdAddress {

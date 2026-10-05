@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const PROOF_ATTESTATION_CODE_B64: &str = "te6ccgECBwEAAUcAART/APSkE/S88sgLAQIBYgIDA/jQMtDTAwFxsJFb4PpAMCHHAJFb4AHTH9M/Me1E0PpA0//TANMA0z/UAdDT/9P/0QLRASiCEEFUVAG64wIoghBBVFQCuuMCNAeCEEFUVAO6jiuBCDZRhccFGPL0BNFFQHFVMAHIy//L/8nIUAbPFhTL/xLLAMsAyz/Mye1UBAUGADWgGG/aiaH0gaf/pgGmAaZ/qAOhp/+n/6IFogMAohNfAzU1gQg0JcAA8vQC0/+DCNcY0fgo+kQByMoHy/9SIMv/yfkAgQg1USX5EPL0XiFxQBP4IwIByMv/y//JyFAGzxYUy/8SywDLAMs/zMntVABwE18DMjSBCDZRUscFFfL0AdP/0XBTABBGEDUQNEEwAcjL/8v/ychQBs8WFMv/EssAywDLP8zJ7VQAEOBfCIEIN/Lw";
+pub const PROOF_ATTESTATION_CODE_B64: &str = "te6cckECCQEAAiAAART/APSkE/S88sgLAQIBYgIDA/jQMtDTAwFxsJFb4PpAMCHHAJFb4AHTH9M/Me1E0PpA0//TANMA0z/UAdDT/9P/0QLRASiCEEFUVAG64wIoghBBVFQCuuMCNAeCEEFUVAO6jiuBCDZRhccFGPL0BNFFQHFVMAHIy//L/8nIUAbPFhTL/xLLAMsAyz/Mye1UBAUGADWgGG/aiaH0gaf/pgGmAaZ/qAOhp/+n/6IFogMBzBNfAzU1gQg0JcAA8vQC0/+DCNcY0YEIOCTbPPLyghBQQVQy+Cj6RPg1A8jLHxPKH8oHy/9SIMv/yfkAgQg1USX5EPL0XiFxQBP4IwIByMv/y//JyFAGzxYUy/8SywDLAMs/zMntVAcBgBNfAzI0gQg2UVLHBRXy9AHT/9GBCDgh2zzy8nBTABBGEDUQNEEwAcjL/8v/ychQBs8WFMv/EssAywDLP8zJ7VQHABDgXwiBCDfy8AHYIKv3gQDsvo4QIKsHhO+whO+6AYB/sMB/sOCDBrEghD+wIIMGvSGCMLE4AohtU/yFvbABgjBOx/13kqwD+r2wkjBw4CCDBrohgukAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAurEhCACSgvAm6JWPwrInsEXD9Iny75jw1d+sBdPGMzmxOAKIbVP8hbqxAYLwxxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA/q6sVouF5U=";
 pub const ATT_ATTEST_OPCODE: u32 = 0x4154_5401;
 pub const ATT_ROTATE_KEY_OPCODE: u32 = 0x4154_5402;
 pub const ATT_REVOKE_OPCODE: u32 = 0x4154_5403;
@@ -109,10 +109,16 @@ impl ProofAttestationContract {
     /// replayed against another Proof Attestation instance that happens to
     /// share the same attestor key and `attested_hash`.
     pub fn attest_hash_to_sign(
+        global_id: i32,
         attestation_address: &MsgAddressInt,
         attested_hash: &[u8; 32],
     ) -> anyhow::Result<[u8; 32]> {
-        crate::domain_bound_hash(attestation_address, attested_hash)
+        crate::domain_bound_hash(
+            crate::DOMAIN_PROOF_ATTESTATION,
+            global_id,
+            attestation_address,
+            attested_hash,
+        )
     }
 
     pub fn rotate_key(

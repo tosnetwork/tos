@@ -16,6 +16,7 @@
 */
 #include "block/validator-session-members.h"
 #include "common/delay.h"
+#include "validator/shard-block-subscription.h"
 
 #include "shard-block-retainer.hpp"
 
@@ -72,19 +73,9 @@ void ShardBlockRetainer::update_masterchain_state(td::Ref<MasterchainState> stat
       }
     }
     LOG(INFO) << "Updating validator set: " << validator_adnl_ids_.size() << " adnl ids";
-    for (auto it = subscribers_.begin(); it != subscribers_.end();) {
-      if (it->second.is_in_past()) {
-        LOG(INFO) << "Unsubscribed " << it->first.first << " for " << it->first.second.to_str() << " (expired)";
-        it = subscribers_.erase(it);
-        continue;
-      }
-      if (!validator_adnl_ids_.contains(it->first.first)) {
-        LOG(INFO) << "Unsubscribed " << it->first.first << " for " << it->first.second.to_str() << " (not a validator)";
-        it = subscribers_.erase(it);
-        continue;
-      }
-      ++it;
-    }
+    subscriptions_.remove_if(td::Time::now(), [&](const ShardBlockRetainerSubscriptions::Key& key) {
+      return !validator_adnl_ids_.contains(key.first);
+    });
   }
   if (!inited_) {
     delay_action(
@@ -120,8 +111,8 @@ void ShardBlockRetainer::new_shard_block_description(td::Ref<ShardTopBlockDescri
 
 void ShardBlockRetainer::process_query(adnl::AdnlNodeIdShort src, td::BufferSlice data,
                                        td::Promise<td::BufferSlice> promise) {
-  TRY_RESULT_PROMISE(promise, query, fetch_tl_object<tos_api::shardBlockVerifier_subscribe>(data, true))
-  ShardIdFull shard = create_shard_id(query->shard_);
+  TRY_RESULT_PROMISE(promise, request, ShardBlockRetainerSubscriptions::parse_request(data));
+  ShardIdFull shard = request.shard;
   if (!shard.is_valid_ext() || shard.is_masterchain()) {
     promise.set_error(td::Status::Error(PSTRING() << "invalid shard " << shard.to_str()));
     return;
@@ -130,19 +121,19 @@ void ShardBlockRetainer::process_query(adnl::AdnlNodeIdShort src, td::BufferSlic
     promise.set_error(td::Status::Error(PSTRING() << "unauthorized src " << src));
     return;
   }
-  td::Timestamp& ttl = subscribers_[{src, shard}];
-  if (!ttl) {
+  auto answer = subscriptions_.subscribe(src, shard, request.flags, td::Time::now());
+  if (answer.send_retained) {
     std::vector<BlockIdExt> blocks;
     for (const BlockIdExt& block : confirmed_blocks_) {
       if (shard_intersects(block.shard_full(), shard)) {
         blocks.push_back(block);
       }
     }
-    LOG(INFO) << "New subscriber " << src << " for " << shard.to_str() << ", sending " << blocks.size() << " blocks";
+    LOG(INFO) << "Subscription from " << src << " for " << shard.to_str() << ": sending " << blocks.size()
+              << " retained blocks";
     send_confirmations(src, std::move(blocks));
   }
-  ttl = td::Timestamp::in(SUBSCRIPTION_TTL);
-  promise.set_value(create_serialize_tl_object<tos_api::shardBlockVerifier_subscribed>(0));
+  promise.set_value(std::move(answer.reply));
 }
 
 void ShardBlockRetainer::send_confirmations(adnl::AdnlNodeIdShort dst, std::vector<BlockIdExt> blocks) {
@@ -166,18 +157,12 @@ void ShardBlockRetainer::confirm_block(BlockIdExt block_id) {
   if (is_block_outdated(block_id) || !confirmed_blocks_.insert(block_id).second) {
     return;
   }
+  const double now = td::Time::now();
+  subscriptions_.remove_if(now, [](const ShardBlockRetainerSubscriptions::Key&) { return false; });
   size_t sent = 0;
-  for (auto it = subscribers_.begin(); it != subscribers_.end();) {
-    if (it->second.is_in_past()) {
-      LOG(INFO) << "Unsubscribed " << it->first.first << " for " << it->first.second.to_str() << " (expired)";
-      it = subscribers_.erase(it);
-      continue;
-    }
-    if (shard_intersects(it->first.second, block_id.shard_full())) {
-      ++sent;
-      send_confirmations(it->first.first, {block_id});
-    }
-    ++it;
+  for (const auto& subscriber : subscriptions_.active_for(block_id.shard_full(), now)) {
+    ++sent;
+    send_confirmations(subscriber, {block_id});
   }
   LOG(INFO) << "Confirmed block " << block_id.to_str() << ", sending " << sent << " confirmations";
 }

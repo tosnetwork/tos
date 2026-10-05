@@ -14,6 +14,7 @@ on:
       - 'validator-engine/validator-engine.hpp'
       - 'CMakeLists.txt'
       - '.github/workflows/node-health-monitor.yml'
+      - '.github/actions/native-cache/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,11 +25,19 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_BUILD_PIPELINING: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - run: scripts/install-rust-toolchain.sh
       - run: python3 -m pip install jsonschema
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: node-health-monitor
+          cache-bin: false
+          workspaces: tools/node-health-monitor -> target
       - name: Check the generated input contracts
         run: |
           python3 tools/node-health-monitor/tests/generate_schemas.py
@@ -55,7 +64,7 @@ jobs:
   native:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - run: |
@@ -65,22 +74,16 @@ jobs:
           chmod +x llvm.sh
           sudo ./llvm.sh 21
       - run: python3 -m pip install jsonschema
-      - name: Date stamp
-        id: date-stamp
-        run: |
-          echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-      - name: Restore compiler cache
-        uses: actions/cache@v6
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
         with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-${{ runner.arch }}-node-health-native-ccache-${{ steps.date-stamp.outputs.timestamp }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-node-health-native-ccache
+          profile: node-health-native-debug
       - name: Build affected native boundaries
         run: |
           ccache -M 2G
           cmake -S . -B build-health -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SKIP_INSTALL_RULES=ON
-          cmake --build build-health --target test-http-server-limits test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j"$(nproc)"
+          cmake --build build-health --target test-http-server-limits test-http-listen-address test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j"$(nproc)"
           ccache -s
       - name: Run native behavior tests
         run: |
@@ -92,6 +95,7 @@ jobs:
           build-health/test-health-collector-timestamps
           build-health/test-health-collector-budget
           build-health/test-http-server-limits
+          build-health/test-http-listen-address
           build-health/test-health-core-registry
           build-health/test-health-source-policy
           build-health/test-health-publisher-bench
@@ -99,3 +103,6 @@ jobs:
           build-health/crypto/pq/test-pq-consensus
           python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
           build-health/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats

@@ -55,7 +55,19 @@ void RldpConnection::drop_limits(TransferId id, bool is_inbound) {
     return;
   }
   limits_heap_.erase(const_cast<td::HeapNode *>(static_cast<const td::HeapNode *>(&*it)));
-  limits_set_.erase(it);
+  forget_limit(*it);
+}
+
+// Takes a copy: the argument usually refers to the element being erased.
+void RldpConnection::forget_limit(Limit limit) {
+  if (limit.is_inbound && limit.solicited) {
+    if (outstanding_requests_ > 0) {
+      --outstanding_requests_;
+    } else {
+      LOG(ERROR) << "RLDP2 connection: ended more local requests than were outstanding";
+    }
+  }
+  limits_set_.erase(limit);
 }
 
 void RldpConnection::on_inbound_completed(TransferId transfer_id, td::Timestamp now) {
@@ -97,22 +109,46 @@ td::Timestamp RldpConnection::loop_limits(td::Timestamp now) {
         VLOG(RLDP_WARNING) << "Timeout on unknown transfer " << limit->transfer_id.to_hex();
       }
     }
-    limits_set_.erase(*limit);
+    forget_limit(*limit);
   }
 
   return next_limit_expires_at();
 }
 
-void RldpConnection::set_receive_limits(TransferId transfer_id, td::Timestamp timeout, td::uint64 max_size) {
+bool RldpConnection::set_receive_limits(TransferId transfer_id, td::Timestamp timeout, td::uint64 max_size) {
   CHECK(timeout);
   Limit limit;
   limit.transfer_id = transfer_id;
   limit.max_size = max_size;
   limit.is_inbound = true;
+  limit.solicited = true;
+  auto existing = limits_set_.find(limit);
+  if (existing != limits_set_.end() && existing->solicited) {
+    VLOG(RLDP_WARNING) << "Refuse local request: one is already outstanding under " << transfer_id.to_hex();
+    return false;
+  }
+  // Each outstanding request lets the peer draw on the reserve, so their
+  // number is bounded. A refused request is reported as failed, so the caller
+  // waiting on it is not left waiting.
+  if (outstanding_requests_ >= MAX_OUTSTANDING_REQUESTS) {
+    VLOG(RLDP_INFO) << "Refuse local request: " << outstanding_requests_ << " are already outstanding";
+    to_receive_.emplace_back(
+        transfer_id, td::Status::Error(ErrorCode::notready, "too many RLDP requests outstanding on connection"));
+    return false;
+  }
+  if (existing != limits_set_.end()) {
+    // The peer opened this id before the request existed, so that transfer
+    // was unsolicited and stays charged as such. Drop it; the answer is
+    // reassembled from the peer's retransmission under the request.
+    drop_limits(transfer_id, true);
+    inbound_transfers_.erase(transfer_id);
+  }
   add_limit(timeout, limit);
+  ++outstanding_requests_;
+  return true;
 }
 
-RldpConnection::RldpConnection() {
+RldpConnection::RldpConnection(const RldpPeerIdentity &peer) : peer_identity_(peer) {
   bdw_stats_.on_update(td::Timestamp::now(), 0);
 
   // Conservative initial estimates - BBR will ramp up based on measurements
@@ -338,6 +374,11 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
   if (has_limit && limit_it->max_size != 0) {
     max_size = limit_it->max_size;
   }
+  // Solicited only if a local request on this connection -- the connection to
+  // the peer the request went to -- expects exactly this id; the size is
+  // checked against that request just below. Nothing in the packet itself can
+  // make a transfer solicited.
+  auto kind = has_limit && limit_it->solicited ? RldpInboundKind::solicited : RldpInboundKind::unsolicited;
   if (total_size > max_size) {
     VLOG(RLDP_INFO) << "Drop too big rldp message: " << part.total_size_ << " > " << max_size;
     return;
@@ -360,6 +401,7 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
   }
 
   auto it = inbound_transfers_.find(transfer_id);
+  bool created = false;
   if (it == inbound_transfers_.end()) {
     if (inbound_transfers_.size() >= MAX_INBOUND_TRANSFERS) {
       // The peer already has as many transfers open as it is allowed. Dropping
@@ -373,17 +415,26 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
                       << " inbound transfers open";
       return;
     }
-    if (!has_limit) {
-      // set timeout even for small inbound queries
-      set_receive_limits(transfer_id, td::Timestamp::in(10), max_size);
+    if (part_idx != 0) {
+      // Only the first part can open a transfer's first decoder, so a later
+      // part arriving first would only create an entry with nothing in it.
+      VLOG(RLDP_INFO) << "Drop rldp message: part " << part_idx << " of a transfer not yet open";
+      return;
     }
-    it = inbound_transfers_.emplace(transfer_id, InboundTransfer{total_size}).first;
+    it = inbound_transfers_.emplace(transfer_id, InboundTransfer{total_size, inbound_budget_, kind, peer_identity_})
+             .first;
+    created = true;
   }
 
   auto &inbound = it->second;
   bool ignore = false;
+  bool refused_by_budget = false;
   auto res = [&]() -> td::Result<td::BufferSlice> {
-    TRY_RESULT(in_part, inbound.get_part(part_idx, r_fec_type.move_as_ok()));
+    TRY_RESULT(in_part, inbound.get_part(part_idx, r_fec_type.move_as_ok(), &refused_by_budget));
+    if (refused_by_budget) {
+      ignore = true;
+      return {};
+    }
     if (!in_part) {
       if (inbound.is_part_completed(part_idx)) {
         send_packet(tos::create_serialize_tl_object<tos::tos_api::rldp2_complete>(transfer_id, part_idx));
@@ -394,8 +445,12 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
     if (in_part->receiver.on_received(seqno + 1, td::Timestamp::now())) {
       TRY_STATUS_PREFIX(in_part->decoder->add_symbol({seqno, std::move(part.data_)}),
                         td::Status::Error(ErrorCode::protoviolation, "invalid symbol"));
-      if (in_part->decoder->may_try_decode()) {
+      // The solver's working memory is reserved for the attempt. If the
+      // budget cannot hold it now, the symbols stay and the next one retries.
+      auto solver = in_part->decoder->may_try_decode() ? inbound.reserve_solver(in_part->solver_bytes) : std::nullopt;
+      if (solver) {
         auto r_data = in_part->decoder->try_decode(false);
+        solver.reset();
         if (r_data.is_ok()) {
           auto decoded = std::move(r_data.move_as_ok().data);
           auto decoded_bytes = static_cast<td::uint64>(decoded.size());
@@ -412,10 +467,37 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
     return {};
   }();
 
+  if (refused_by_budget) {
+    // The process, its unsolicited half, or this peer identity's share of it
+    // holds as many decoders, or as many bytes, as it may. The part is dropped
+    // like any lost datagram; the peer retransmits. A transfer this part would
+    // have opened is not left behind, empty, to hold a slot.
+    VLOG(RLDP_INFO) << "Drop rldp message: inbound decoder budget exhausted for "
+                    << (inbound.kind() == RldpInboundKind::solicited ? "solicited" : "unsolicited") << " transfer ("
+                    << inbound_budget_->active_decoders() << " decoders, " << inbound_budget_->reserved_bytes()
+                    << " bytes reserved)";
+    if (created) {
+      inbound_transfers_.erase(it);
+    }
+    return;
+  }
+
   if (!ignore) {
     drop_limits(transfer_id, true);
     on_inbound_completed(transfer_id, td::Timestamp::now());
     to_receive_.emplace_back(transfer_id, std::move(res));
+    return;
+  }
+
+  if (created && !has_limit) {
+    // Set a timeout even for small inbound queries, so the transfer and the
+    // decoder it holds have a bounded lifetime. This is not a local request,
+    // so it makes nothing solicited.
+    Limit limit;
+    limit.transfer_id = transfer_id;
+    limit.max_size = max_size;
+    limit.is_inbound = true;
+    add_limit(td::Timestamp::in(10), limit);
   }
 }
 

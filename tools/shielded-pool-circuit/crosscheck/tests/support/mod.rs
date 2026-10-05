@@ -57,7 +57,7 @@ fn payload(seed: u8) -> Vec<u8> {
     (0..wire::OUTPUT_DATA_BYTES as u32).map(|i| (i as u8) ^ seed).collect()
 }
 
-fn deploy_destination(bc: &mut Blockchain, name: &str, source: &str) -> MsgAddressInt {
+pub fn deploy_destination(bc: &mut Blockchain, name: &str, source: &str) -> MsgAddressInt {
     // A directory of this call's own. These probes are written from several tests at
     // once, and a shared path is truncated under a concurrent `func` reading it.
     let probe_dir = tempfile::tempdir().expect("a directory for the probe");
@@ -90,7 +90,7 @@ fn account_of(addr: &MsgAddressInt) -> [u8; 32] {
 }
 
 /// One note the pool minted, with everything the prover needs to spend it.
-struct Held {
+pub struct Held {
     key: AuthKey,
     owner_nf_key: Fr,
     note_secret: Fr,
@@ -103,6 +103,9 @@ pub struct Outcome {
     pub pool_liability_before: u128,
     pub pool_liability_after: u128,
     pub commitment_next_index: String,
+    /// Recovery leaves the pool still holds back once the cascade is over:
+    /// one per withdrawal whose payout never came back.
+    pub reserved_recovery_leaves: String,
     pub nullifier_next_index: String,
     pub refused_at: Option<String>,
     pub bounced_from: Option<String>,
@@ -206,151 +209,30 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
         withdrawal.destination_source,
     );
 
-    let global_id = {
-        let probe = shielded_pool_circuit_crosscheck::wire::WireProbe::deploy()
-            .expect("deploy the wire probe");
-        probe.domain_inputs().expect("the domain inputs").0
-    };
-    let domain = wire::execution_domain(global_id, &pool.account().expect("the pool's account"));
+    let domain = execution_domain(&pool);
 
     // --- two notes, because a withdrawal has to cover its own fee ---------
     //
     // The denomination list holds one value, so two deposits are how the pool
     // comes to hold more than one of them. A withdrawal of one denomination
     // plus the configured fee cannot come out of a single note.
-    let mut held = Vec::new();
-    let mut root = frontier.empty_root();
-    for (slot, seed) in [0x31u8, 0x32].into_iter().enumerate() {
-        let key = AuthKey::generate().expect("an ML-DSA key");
-        let owner_nf_key = Fr::from(0x1000_0000u64 + slot as u64);
-        let note_secret = Fr::from(0x2000_0000u64 + slot as u64);
-        let bytes = payload(seed);
-        let data_hash = wire::output_data_hash(&bytes);
-        let owner = notes::owner_commitment(
-            notes::owner_nf_key_hash(owner_nf_key),
-            key.hash(),
-            note_secret,
-        );
-        pool.send(
-            DENOMINATION + COMPUTE_FEE,
-            Pool::deposit_body(DENOMINATION, owner, byte_chain(&bytes).expect("payload"))
-                .expect("deposit body"),
-        )
-        .expect("deposit")
-        .expect_success();
-
-        let body =
-            notes::note_body_commitment(owner, Fr::from(u128::from(DENOMINATION)), data_hash);
-        let leaf_index = slot as u64;
-        let leaf = notes::note_commitment(body, Fr::from(leaf_index));
-        let (assigned, new_root) = frontier.append(leaf).expect("append");
-        assert_eq!(assigned, leaf_index, "the contract assigned another index");
-        held.push(Held { key, owner_nf_key, note_secret, data_hash, leaf_index });
-        root = new_root;
-    }
-    assert_eq!(
-        pool.get("commitment_root").expect("commitment root"),
-        dec(root),
-        "the prover's tree and the contract's disagree after two deposits"
-    );
+    let (held, root) = deposit_notes(&mut pool, &mut frontier, &[0x31, 0x32]);
 
     // --- the withdrawal ---------------------------------------------------
-    //
-    // Two notes in, one denomination out to the refuser, the configured fee
-    // leaving with it, and the change staying inside as three output notes.
-    let change =
-        u128::from(DENOMINATION) * 2 - u128::from(withdrawal.amount) - u128::from(WITHDRAWAL_FEE);
-    let recipient_account = account_of(&destination);
-    let recipient_hash = wire::public_recipient_hash(&recipient_account);
-
-    let recovery_owner_commitment = Fr::from(0x5eedu64);
-    let recovery_payload = payload(0x77);
-    let recovery_template_hash = wire::recovery_template_hash(
-        recovery_owner_commitment,
-        wire::output_data_hash(&recovery_payload),
-    );
-
-    let now: u32 = pool.bc.now().try_into().expect("a unix time");
-    let valid_until = now + 600;
-    let output_payloads = [payload(1), payload(2), payload(3)];
-    let output_data_hash = [
-        wire::output_data_hash(&output_payloads[0]),
-        wire::output_data_hash(&output_payloads[1]),
-        wire::output_data_hash(&output_payloads[2]),
-    ];
-
-    let mut scenario = shielded_pool_circuit::scenario::Pool::new();
-    let outputs = [
-        scenario.real_output(Fr::from(change / 2)),
-        scenario.real_output(Fr::from(change - change / 2)),
-        scenario.dummy_output(),
-    ];
-
-    let inputs = |index: usize| HeldNote {
-        is_phantom: false,
-        owner_nf_key: held[index].owner_nf_key,
-        note_secret: held[index].note_secret,
-        amount: Fr::from(u128::from(DENOMINATION)),
-        output_data_hash: held[index].data_hash,
-        leaf_index: held[index].leaf_index,
-    };
-
-    let builder = TransactionBuilder {
-        execution_domain: domain,
-        valid_until,
-        intent_nonce: Fr::from(0xfeed_face_u64),
-        public_amount_out: Fr::from(u128::from(withdrawal.amount)),
-        withdrawal_fee: Fr::from(u128::from(WITHDRAWAL_FEE)),
-        public_recipient_hash: recipient_hash,
-        recovery_template_hash,
-        is_withdrawal: None,
-        input_pq_auth_key_hash: [held[0].key.hash(), held[1].key.hash()],
-        outputs,
-        output_data_hash,
-    };
-    let (public, witness) =
-        builder.build(&frontier, root, [inputs(0), inputs(1)]).expect("build the withdrawal");
-
-    let keys = groth16::development_keys(ShieldedTransactionCircuit::blank(public))
-        .expect("development keys");
-    assert_eq!(
-        groth16::canonical_verifying_key(&keys.verifying).expect("vk bytes").bytes,
-        development_vk_bytes().expect("the fixture verifying key"),
-        "the prover's verifying key is not the one the pool was deployed with"
-    );
-    let proof =
-        groth16::prove(&keys, ShieldedTransactionCircuit::new(public, witness), 3).expect("prove");
-    let canonical = groth16::CanonicalProof::from_proof(&proof).expect("canonical proof");
-
-    let digest = public.transaction_intent_digest;
-    let signatures = [
-        held[0].key.sign(digest).expect("a signature"),
-        held[1].key.sign(digest).expect("a signature"),
-    ];
-
     let mut tree = nullifiers.clone();
-    let (witness_0, after_first) = tree.witness_for(&public.nullifier_0).expect("first witness");
-    tree.apply(after_first);
-    let (witness_1, _) = tree.witness_for(&public.nullifier_1).expect("second witness");
-
-    let body = Transact {
-        public: &public,
-        proof: &canonical,
-        anchor_root: root,
+    let body = prove_withdrawal(ProvedWithdrawal {
+        pool: &pool,
+        domain,
+        frontier: &frontier,
+        root,
         anchor: Anchor::Current,
-        valid_until,
-        output_payloads: &output_payloads,
-        keys: [&held[0].key.public, &held[1].key.public],
-        signatures: &signatures,
-        witnesses: &[witness_0, witness_1],
-        public_amount_out: withdrawal.amount,
-        withdrawal_fee: WITHDRAWAL_FEE,
-        recipient: Some(Recipient(recipient_account)),
-        recovery_owner_commitment,
-        recovery_payload: Some(recovery_payload),
-    }
-    .body()
-    .expect("a transact body");
+        inputs: [&held[0], &held[1]],
+        amount: withdrawal.amount,
+        recipient: &destination,
+        intent_nonce: 0xfeed_face,
+        recovery_owner_commitment: Fr::from(0x5eedu64),
+        nullifiers: &mut tree,
+    });
 
     // --- the whole cascade, in one message -------------------------------
     let liability_before: u128 =
@@ -363,10 +245,11 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
 
     let perturb = withdrawal.before_transact;
     if let Some(age) = withdrawal.age {
-        let frontier_store = shielded_pool_circuit_crosscheck::frontier_probe::FrontierProbe::deploy()
-            .expect("frontier probe")
-            .fill(age.index)
-            .expect("a frontier");
+        let frontier_store =
+            shielded_pool_circuit_crosscheck::frontier_probe::FrontierProbe::deploy()
+                .expect("frontier probe")
+                .fill(age.index)
+                .expect("a frontier");
         let anchors = shielded_pool_circuit_crosscheck::anchor_probe::AnchorProbe::deploy()
             .expect("anchor probe")
             .fill(age.recent, age.epoch)
@@ -412,8 +295,7 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
         pool.set_balance(balance).expect("set the pool's balance");
     }
     let state_before = pool.state_snapshot().expect("the state before");
-    let result =
-        pool.send(perturb.value.unwrap_or(COMPUTE_FEE * 4), body).expect("the withdrawal");
+    let result = pool.send(perturb.value.unwrap_or(COMPUTE_FEE * 4), body).expect("the withdrawal");
 
     // The transact itself succeeded.
     let description = result.read_primary_description();
@@ -485,6 +367,9 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
         pool_liability_before: liability_before,
         pool_liability_after: liability_after,
         commitment_next_index: pool.get("commitment_next_index").expect("next index"),
+        reserved_recovery_leaves: pool
+            .get("reserved_recovery_leaves")
+            .expect("the reserved recovery leaves"),
         nullifier_next_index: pool.get("nullifier_next_index").expect("nullifier next index"),
         refused_at,
         bounced_from,
@@ -509,4 +394,178 @@ pub fn run(withdrawal: &Withdrawal) -> Outcome {
         holds: balance.balance().map(|value| value.coins.as_u128()).expect("a balance"),
         reserve: pool.get("reserve_floor").expect("reserve floor").parse().expect("a number"),
     }
+}
+
+/// The execution domain of section 8 for this pool, on this chain.
+pub fn execution_domain(pool: &Pool) -> Fr {
+    let global_id = {
+        let probe = shielded_pool_circuit_crosscheck::wire::WireProbe::deploy()
+            .expect("deploy the wire probe");
+        probe.domain_inputs().expect("the domain inputs").0
+    };
+    wire::execution_domain(global_id, &pool.account().expect("the pool's account"))
+}
+
+/// One deposit of one denomination per seed, each checked against the
+/// prover's own tree. Returns the notes and the root they leave.
+pub fn deposit_notes(
+    pool: &mut Pool,
+    frontier: &mut shielded_pool_circuit::tree::Frontier,
+    seeds: &[u8],
+) -> (Vec<Held>, Fr) {
+    let mut held = Vec::new();
+    let mut root = frontier.empty_root();
+    for seed in seeds {
+        let key = AuthKey::generate().expect("an ML-DSA key");
+        let owner_nf_key = Fr::from(0x1000_0000u64 + u64::from(*seed));
+        let note_secret = Fr::from(0x2000_0000u64 + u64::from(*seed));
+        let bytes = payload(*seed);
+        let data_hash = wire::output_data_hash(&bytes);
+        let owner = notes::owner_commitment(
+            notes::owner_nf_key_hash(owner_nf_key),
+            key.hash(),
+            note_secret,
+        );
+        pool.send(
+            DENOMINATION + COMPUTE_FEE,
+            Pool::deposit_body(DENOMINATION, owner, byte_chain(&bytes).expect("payload"))
+                .expect("deposit body"),
+        )
+        .expect("deposit")
+        .expect_success();
+
+        let body =
+            notes::note_body_commitment(owner, Fr::from(u128::from(DENOMINATION)), data_hash);
+        let leaf_index = frontier.next_index();
+        let leaf = notes::note_commitment(body, Fr::from(leaf_index));
+        let (assigned, new_root) = frontier.append(leaf).expect("append");
+        assert_eq!(assigned, leaf_index, "the prover's tree assigned another index");
+        held.push(Held { key, owner_nf_key, note_secret, data_hash, leaf_index });
+        root = new_root;
+    }
+    assert_eq!(
+        pool.get("commitment_root").expect("commitment root"),
+        dec(root),
+        "the prover's tree and the contract's disagree after the deposits"
+    );
+    (held, root)
+}
+
+/// Everything one proved withdrawal is built from.
+pub struct ProvedWithdrawal<'a> {
+    pub pool: &'a Pool,
+    pub domain: Fr,
+    pub frontier: &'a shielded_pool_circuit::tree::Frontier,
+    /// The root the proof is against, and how the pool is to find it.
+    pub root: Fr,
+    pub anchor: Anchor,
+    /// The two notes spent, each worth one denomination.
+    pub inputs: [&'a Held; 2],
+    pub amount: u64,
+    pub recipient: &'a MsgAddressInt,
+    pub intent_nonce: u64,
+    pub recovery_owner_commitment: Fr,
+    /// The nullifier tree as the pool will hold it when this arrives. Both
+    /// nullifiers are applied to it, so the next withdrawal's witnesses are
+    /// against the tree this one leaves.
+    pub nullifiers: &'a mut imt::State,
+}
+
+/// Two notes in, `amount` out to the recipient, the configured fee leaving
+/// with it, and the change staying inside as three output notes.
+pub fn prove_withdrawal(w: ProvedWithdrawal) -> Cell {
+    let change = u128::from(DENOMINATION) * 2 - u128::from(w.amount) - u128::from(WITHDRAWAL_FEE);
+    let recipient_account = account_of(w.recipient);
+    let recipient_hash = wire::public_recipient_hash(&recipient_account);
+
+    let recovery_payload = payload(0x77);
+    let recovery_template_hash = wire::recovery_template_hash(
+        w.recovery_owner_commitment,
+        wire::output_data_hash(&recovery_payload),
+    );
+
+    let now: u32 = w.pool.bc.now().try_into().expect("a unix time");
+    let valid_until = now + 600;
+    let output_payloads = [payload(1), payload(2), payload(3)];
+    let output_data_hash = [
+        wire::output_data_hash(&output_payloads[0]),
+        wire::output_data_hash(&output_payloads[1]),
+        wire::output_data_hash(&output_payloads[2]),
+    ];
+
+    let mut scenario = shielded_pool_circuit::scenario::Pool::new();
+    let outputs = [
+        scenario.real_output(Fr::from(change / 2)),
+        scenario.real_output(Fr::from(change - change / 2)),
+        scenario.dummy_output(),
+    ];
+
+    let input = |note: &Held| HeldNote {
+        is_phantom: false,
+        owner_nf_key: note.owner_nf_key,
+        note_secret: note.note_secret,
+        amount: Fr::from(u128::from(DENOMINATION)),
+        output_data_hash: note.data_hash,
+        leaf_index: note.leaf_index,
+    };
+
+    let builder = TransactionBuilder {
+        execution_domain: w.domain,
+        valid_until,
+        intent_nonce: Fr::from(w.intent_nonce),
+        public_amount_out: Fr::from(u128::from(w.amount)),
+        withdrawal_fee: Fr::from(u128::from(WITHDRAWAL_FEE)),
+        public_recipient_hash: recipient_hash,
+        recovery_template_hash,
+        is_withdrawal: None,
+        input_pq_auth_key_hash: [w.inputs[0].key.hash(), w.inputs[1].key.hash()],
+        outputs,
+        output_data_hash,
+    };
+    let (public, witness) = builder
+        .build(w.frontier, w.root, [input(w.inputs[0]), input(w.inputs[1])])
+        .expect("build the withdrawal");
+
+    let keys = groth16::development_keys(ShieldedTransactionCircuit::blank(public))
+        .expect("development keys");
+    assert_eq!(
+        groth16::canonical_verifying_key(&keys.verifying).expect("vk bytes").bytes,
+        development_vk_bytes().expect("the fixture verifying key"),
+        "the prover's verifying key is not the one the pool was deployed with"
+    );
+    let proof =
+        groth16::prove(&keys, ShieldedTransactionCircuit::new(public, witness), 3).expect("prove");
+    let canonical = groth16::CanonicalProof::from_proof(&proof).expect("canonical proof");
+
+    let digest = public.transaction_intent_digest;
+    let signatures = [
+        w.inputs[0].key.sign(digest).expect("a signature"),
+        w.inputs[1].key.sign(digest).expect("a signature"),
+    ];
+
+    let (witness_0, after_first) =
+        w.nullifiers.witness_for(&public.nullifier_0).expect("first witness");
+    w.nullifiers.apply(after_first);
+    let (witness_1, after_second) =
+        w.nullifiers.witness_for(&public.nullifier_1).expect("second witness");
+    w.nullifiers.apply(after_second);
+
+    Transact {
+        public: &public,
+        proof: &canonical,
+        anchor_root: w.root,
+        anchor: w.anchor,
+        valid_until,
+        output_payloads: &output_payloads,
+        keys: [&w.inputs[0].key.public, &w.inputs[1].key.public],
+        signatures: &signatures,
+        witnesses: &[witness_0, witness_1],
+        public_amount_out: w.amount,
+        withdrawal_fee: WITHDRAWAL_FEE,
+        recipient: Some(Recipient(recipient_account)),
+        recovery_owner_commitment: w.recovery_owner_commitment,
+        recovery_payload: Some(recovery_payload),
+    }
+    .body()
+    .expect("a transact body")
 }

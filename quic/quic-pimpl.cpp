@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <openssl/ssl.h>
@@ -62,6 +64,113 @@ static void apply_platform_pmtu_policy(ngtcp2_settings& settings) {
   // Without socket-level PMTU probe mode, stay at QUIC's safe minimum and avoid PMTUD growth.
   settings.max_tx_udp_payload_size = NGTCP2_MAX_UDP_PAYLOAD_SIZE;
   settings.no_pmtud = 1;
+}
+
+QuicTransportAllocator::QuicTransportAllocator(std::shared_ptr<QuicTransportMemoryBudget> budget,
+                                               QuicBudgetSource source)
+    : budget_(budget ? std::move(budget) : QuicTransportMemoryBudget::process_default()), source_(std::move(source)) {
+  mem_.user_data = this;
+  mem_.malloc = &QuicTransportAllocator::malloc_cb;
+  mem_.free = &QuicTransportAllocator::free_cb;
+  mem_.calloc = &QuicTransportAllocator::calloc_cb;
+  mem_.realloc = &QuicTransportAllocator::realloc_cb;
+}
+
+namespace {
+// Each block carries its size in front, so that a free gives back exactly
+// what the allocation reserved. Kept at the strictest alignment malloc gives.
+constexpr size_t kTransportBlockHeader = alignof(std::max_align_t);
+
+size_t& block_size(void* base) {
+  return *static_cast<size_t*>(base);
+}
+}  // namespace
+
+void* QuicTransportAllocator::allocate(size_t size, bool zero) {
+  if (size > std::numeric_limits<size_t>::max() - kTransportBlockHeader) {
+    return nullptr;
+  }
+  size_t total = size + kTransportBlockHeader;
+  if (!budget_->try_reserve(source_, total)) {
+    return nullptr;
+  }
+  void* base = zero ? std::calloc(1, total) : std::malloc(total);
+  if (!base) {
+    budget_->release(source_, total);
+    return nullptr;
+  }
+  block_size(base) = total;
+  held_ += total;
+  return static_cast<char*>(base) + kTransportBlockHeader;
+}
+
+void QuicTransportAllocator::release(void* ptr) {
+  if (!ptr) {
+    return;
+  }
+  void* base = static_cast<char*>(ptr) - kTransportBlockHeader;
+  size_t total = block_size(base);
+  std::free(base);
+  held_ -= std::min(held_, total);
+  if (!budget_->release(source_, total)) {
+    LOG(ERROR) << "QUIC transport budget: released more than was reserved";
+  }
+}
+
+void* QuicTransportAllocator::reallocate(void* ptr, size_t size) {
+  if (!ptr) {
+    return allocate(size, false);
+  }
+  if (size == 0) {
+    release(ptr);
+    return nullptr;
+  }
+  if (size > std::numeric_limits<size_t>::max() - kTransportBlockHeader) {
+    return nullptr;
+  }
+  void* base = static_cast<char*>(ptr) - kTransportBlockHeader;
+  size_t old_total = block_size(base);
+  size_t total = size + kTransportBlockHeader;
+  // Growth is reserved before the block grows; a shrink is given back after.
+  if (total > old_total && !budget_->try_reserve(source_, total - old_total)) {
+    return nullptr;
+  }
+  void* grown = std::realloc(base, total);
+  if (!grown) {
+    if (total > old_total) {
+      budget_->release(source_, total - old_total);
+    }
+    return nullptr;
+  }
+  block_size(grown) = total;
+  if (total > old_total) {
+    held_ += total - old_total;
+  } else {
+    held_ -= std::min(held_, old_total - total);
+    if (!budget_->release(source_, old_total - total)) {
+      LOG(ERROR) << "QUIC transport budget: released more than was reserved";
+    }
+  }
+  return static_cast<char*>(grown) + kTransportBlockHeader;
+}
+
+void* QuicTransportAllocator::malloc_cb(size_t size, void* user_data) {
+  return static_cast<QuicTransportAllocator*>(user_data)->allocate(size, false);
+}
+
+void QuicTransportAllocator::free_cb(void* ptr, void* user_data) {
+  static_cast<QuicTransportAllocator*>(user_data)->release(ptr);
+}
+
+void* QuicTransportAllocator::calloc_cb(size_t nmemb, size_t size, void* user_data) {
+  if (size != 0 && nmemb > std::numeric_limits<size_t>::max() / size) {
+    return nullptr;
+  }
+  return static_cast<QuicTransportAllocator*>(user_data)->allocate(nmemb * size, true);
+}
+
+void* QuicTransportAllocator::realloc_cb(void* ptr, size_t size, void* user_data) {
+  return static_cast<QuicTransportAllocator*>(user_data)->reallocate(ptr, size);
 }
 
 td::Result<std::unique_ptr<QuicConnectionPImpl>> QuicConnectionPImpl::create_client(
@@ -335,8 +444,10 @@ td::Status QuicConnectionPImpl::init_quic_client() {
   ngtcp2_path path = make_path();
 
   ngtcp2_conn* new_conn = nullptr;
+  // Charged to the peer's source as well as to the shared budget.
+  allocator_ = std::make_unique<QuicTransportAllocator>(options_.transport_budget, options_.transport_source);
   int rv = ngtcp2_conn_client_new(&new_conn, &dcid_raw, &scid_raw, &path, NGTCP2_PROTO_VER_V1, &callbacks, &settings,
-                                  &params, nullptr, this);
+                                  &params, allocator_->mem(), this);
 
   if (rv != 0) {
     return td::Status::Error("ngtcp2_conn_client_new failed");
@@ -368,8 +479,10 @@ td::Status QuicConnectionPImpl::init_quic_server(const ServerInitialInfo& initia
   ngtcp2_path path = make_path();
 
   ngtcp2_conn* new_conn = nullptr;
+  // Charged to the peer's source as well as to the shared budget.
+  allocator_ = std::make_unique<QuicTransportAllocator>(options_.transport_budget, options_.transport_source);
   int rv = ngtcp2_conn_server_new(&new_conn, &client_scid, &server_scid_raw, &path, initial.packet.version, &callbacks,
-                                  &settings, &params, nullptr, this);
+                                  &settings, &params, allocator_->mem(), this);
   if (rv != 0) {
     return td::Status::Error(PSTRING() << "ngtcp2_conn_server_new failed: " << rv);
   }
@@ -588,7 +701,8 @@ td::Status QuicConnectionPImpl::produce_egress(UdpMessageBuffer& msg_out, bool u
   finish_batch();
 
   if (n_write < 0) {
-    return td::Status::Error(PSTRING() << "ngtcp2_conn_write_aggregate_pkt2 failed: " << n_write);
+    return td::Status::Error(static_cast<int>(n_write), PSTRING()
+                                                            << "ngtcp2_conn_write_aggregate_pkt2 failed: " << n_write);
   }
 
   ngtcp2_conn_update_pkt_tx_time(conn(), ts);

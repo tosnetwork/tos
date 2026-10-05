@@ -216,6 +216,102 @@ fun test_expiry(): int {
     return 9;
 }
 
+// The fourteen keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
+// as loadUint(256) reads them.
+fun weakKeys(): array<int> {
+    var t: array<int> = [];
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000080);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000080);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    return t;
+}
+
+// The order-2 point (y = -1) and a signature of HASH under it that needs no
+// secret: R = the point itself, S = 0, which verifies because
+// k = H(R || A || HASH) is odd.
+const WEAK = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+
+fun forged(): slice { return "ECFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7F0000000000000000000000000000000000000000000000000000000000000000".hexToSlice(); }
+
+fun withVerifier(verifiers: dict, key: int): dict {
+    var next = verifiers;
+    next.uDictSetBuilder(QUORUM_KEY_BITS, key, beginCell());
+    return next;
+}
+
+@method_id(110)
+fun test_weak_verifiers_refused_at_admission(): int {
+    val weak = weakKeys();
+    var i = 0;
+    var rejected = 0;
+    while (i < 14) {
+        val key = weak.get(i);
+        try { quorumAddVerifier(createEmptyDict(), key); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 191); rejected += 1; }
+        // a prebuilt set that never went through quorumAddVerifier
+        val prebuilt = withVerifier(set123(), key);
+        try { quorumConfigNew(prebuilt, 2); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 192); rejected += 1; }
+        try { quorumConfigNew(set123(), 2).withVerifiers(prebuilt); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 193); rejected += 1; }
+        i += 1;
+    }
+    assert(rejected == 42) throw 194;
+    return 10;
+}
+
+@method_id(111)
+fun test_stored_weak_verifier_does_not_count(): int {
+    // The forged vector is real: CHKSIGNU accepts it with no secret behind it.
+    assert(isSignatureValid(HASH, forged(), WEAK)) throw 201;
+    // A config as a contract would load it from storage, never checked by
+    // quorumConfigNew.
+    val stored = QuorumConfig { verifiers: withVerifier(withVerifier(createEmptyDict(), K1), WEAK), verifierCount: 2, quorum: 2 };
+    var rejected = 0;
+    // K1 alone is one short of the quorum ...
+    try { stored.requireQuorum(HASH, withSig(createEmptyDict(), K1, sig1())); } catch (code) { expectThrow(code, QUORUM_THROW_INSUFFICIENT_SIGNATURES, 202); rejected += 1; }
+    // ... and the weak key's forged signature does not make up the difference.
+    try { stored.requireQuorum(HASH, withSig(withSig(createEmptyDict(), K1, sig1()), WEAK, forged())); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 203); rejected += 1; }
+    assert(rejected == 2) throw 204;
+    // The same stored shape with two strong keys still reaches its quorum.
+    val strong = QuorumConfig { verifiers: withVerifier(withVerifier(createEmptyDict(), K1), K2), verifierCount: 2, quorum: 2 };
+    strong.requireQuorum(HASH, withSig(withSig(createEmptyDict(), K1, sig1()), K2, sig2()));
+    return 11;
+}
+
+// The identity and the order-2 point spelled with the sign bit set: x = 0, so
+// these are non-canonical aliases whose y is in range. R = identity, S = 0 is a
+// signature of HASH under the first (for every message) and of HASH + 1 under
+// the second (k is even there).
+const ID_ALIAS = 0x0100000000000000000000000000000000000000000000000000000000000080
+const O2_ALIAS = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+fun forgedIdentity(): slice { return "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".hexToSlice(); }
+
+@method_id(112)
+fun test_sign_bit_aliases_do_not_count(): int {
+    // The forged vectors are real: CHKSIGNU accepts both with no secret behind them.
+    assert(isSignatureValid(HASH, forgedIdentity(), ID_ALIAS)) throw 211;
+    assert(isSignatureValid(HASH + 1, forgedIdentity(), O2_ALIAS)) throw 212;
+    var rejected = 0;
+    // A stored 2-of-2 that K1 alone cannot meet, completed by the identity alias.
+    val withId = QuorumConfig { verifiers: withVerifier(withVerifier(createEmptyDict(), K1), ID_ALIAS), verifierCount: 2, quorum: 2 };
+    try { withId.requireQuorum(HASH, withSig(withSig(createEmptyDict(), K1, sig1()), ID_ALIAS, forgedIdentity())); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 213); rejected += 1; }
+    // A stored 1-of-1 whose only verifier is the order-2 alias.
+    val withO2 = QuorumConfig { verifiers: withVerifier(createEmptyDict(), O2_ALIAS), verifierCount: 1, quorum: 1 };
+    try { withO2.requireQuorum(HASH + 1, withSig(createEmptyDict(), O2_ALIAS, forgedIdentity())); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 214); rejected += 1; }
+    assert(rejected == 2) throw 215;
+    return 12;
+}
+
 /**
 @testcase | 101 | | 1
 @testcase | 102 | | 2
@@ -226,4 +322,7 @@ fun test_expiry(): int {
 @testcase | 107 | | 7
 @testcase | 108 | | 8
 @testcase | 109 | | 9
+@testcase | 110 | | 10
+@testcase | 111 | | 11
+@testcase | 112 | | 12
  */

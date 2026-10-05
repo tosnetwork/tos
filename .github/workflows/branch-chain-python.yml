@@ -31,15 +31,15 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up repository Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
 
       - name: Restore native object cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /root/.ccache
           # A commit-specific key makes each successful push immutable; the
@@ -58,7 +58,7 @@ jobs:
           -DTOS_USE_JEMALLOC=ON
           -DTOS_PRODUCTION_BUILD=ON
 
-      - name: Build only the Python and PQ-chain fixture dependencies
+      - name: Build the chain fixtures and security regression targets
         run: |
           ccache --zero-stats
           cmake --build build --parallel 4 --target \
@@ -66,20 +66,60 @@ jobs:
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
+            tos-proof-verify test-proof-verify proof-verify-fs-shim \
             test-n5-manager-db-fixture test-consensus \
-            test-notarize-after-transient-resolve test-state-resolver-teardown
+            test-notarize-after-transient-resolve test-state-resolver-teardown \
+            test-custom-overlay-relay-dedup \
+            test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
+            test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
+            test-rate-limiter test-full-node-shard-admission test-full-node-master-admission \
+            test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap
           ccache --show-stats
+
+      # These security regressions previously ran only after merging to main.
+      # Check registration too: ctest must not silently pass a reduced set.
+      - name: Run the network and wallet-index security regressions
+        run: |
+          ctest --test-dir build --show-only=json-v1 -L security-findings > security-tests.json
+          python3 - <<'PY'
+          import json
+
+          expected = {
+              "test-wallet-index", "test-wallet-index-apply", "test-candidate-data-cache",
+              "test-shard-block-confirmations",
+              "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure",
+              "test-rate-limiter", "test-full-node-shard-admission", "test-full-node-master-admission",
+              "full-node-master-startup",
+              "test-rldp2-inbound-budget", "test-rldp2-inbound-transfer-bound", "test-rldp2-decoder-heap",
+          }
+          actual = {test["name"] for test in json.load(open("security-tests.json"))["tests"]}
+          if expected - actual:
+              raise SystemExit(f"missing security regressions: {sorted(expected - actual)}")
+          print(f"all {len(expected)} security regressions are registered")
+          PY
+          ctest --test-dir build -L security-findings --no-tests=error --output-on-failure
 
       # A virtualized key-block proof must retain every PQ finality context
       # field. This is a compiled behavior test, not a source-only guard.
       - name: Check PQ key-block proof context
         run: ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'
 
+      # The shared anchored proof verifier: real captured lite-server answers
+      # and a synthetic signed chain, plus the installed front end. Its
+      # binary is also what the C09 Config34 tests in full pytest call.
+      - name: Check the anchored proof verifier
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-proof-verify(-cli-verified|-cli-refused|-live-commit)?$'
+
       # This manager actor test exercises the real proof producer and pending
       # finality queue with bad evidence ahead of a valid certificate. It does
       # not substitute for downstream AcceptBlock integration evidence.
       - name: Check pending PQ finality proof queue
         run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
+
+      # Unverified or unbound broadcasts must never be remembered under a block
+      # id, or they would keep the genuine one from reaching custom overlays.
+      - name: Check custom overlay relay deduplication
+        run: ctest --test-dir build --output-on-failure -R '^test-custom-overlay-relay-dedup$'
 
       # C04 exercises the real Manager proof/apply path and cold RootDb
       # readback, including stale-context recovery and expiry controls.
@@ -155,6 +195,14 @@ jobs:
       - name: Run the complete Python suite
         run: uv run pytest
 
+      # C09: X02 Config34 is accepted only through the anchored verifier built
+      # above. These production-path tests need that binary and fail without it.
+      - name: Check X02 Config34 authentication through the anchored verifier
+        env:
+          PYTHONPATH: scripts
+          TOS_PROOF_VERIFY: build/lite-client/proof-verify/tos-proof-verify
+        run: uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py test/pq-native/test_x02_stage_a_capture.py
+
       # E04's negative controls are fast source-bound tests, not a replacement
       # for the retained single-node real-chain lifecycle run.
       - name: Check E04 exact cancellation and expiry controls
@@ -178,13 +226,15 @@ jobs:
   rust-workspace-tests-compile:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: tosctl/src -> target
       - name: Compile every Rust workspace test target
         run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked
-      - name: Check E04 exact wallet message confirmation
-        run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib exact_deploy_wallet_transaction_tests --locked --no-default-features
+      - name: Run command tests including backup, secret input and wallet confirmation
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib --locked --no-default-features
+      - name: Exercise the real vault CLI secret import boundary
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p secrets-vault --features secrets-vault-cli --test cli_import_secret_input --locked

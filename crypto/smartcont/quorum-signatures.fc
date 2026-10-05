@@ -19,8 +19,15 @@
 ;; FunC counterpart of the Tol `@stdlib/quorum-signatures`: same rules, same throw codes.
 ;; A config is the tuple [verifiers, verifier_count, quorum].
 ;;
+;; A verifier key anyone can sign for (strong-ed25519-key.fc) would count toward the quorum
+;; without any secret behind it. It is refused when it joins a set, when a set is admitted
+;; as a config, and again before its signature counts, so a set stored or built without
+;; passing through this library still cannot use one.
+;;
 ;; Requires stdlib.fc. Everything that can throw is `impure`: FunC deletes a call to a pure
 ;; function whose result is unused, and a check called only for its exception would vanish.
+
+#include "strong-ed25519-key.fc";
 
 const int quorum::error::invalid_config = 0x1901;
 const int quorum::error::duplicate_verifier = 0x1902;
@@ -30,6 +37,7 @@ const int quorum::error::invalid_signature = 0x1905;
 const int quorum::error::insufficient_signatures = 0x1906;
 const int quorum::error::expired = 0x1907;
 const int quorum::error::invalid_target = 0x1908;
+const int quorum::error::weak_verifier = 0x1909;
 
 const int quorum::key_bits = 256;
 const int quorum::signature_bits = 512;
@@ -63,8 +71,14 @@ int quorum::signing_hash(int domain, slice target, int nonce, int valid_until, c
   throw_if(quorum::error::expired, now() > valid_until);
 }
 
-;; Adds `public_key` to a verifier dictionary, rejecting duplicates.
+;; Throws unless `public_key` is a key someone has to hold a secret to sign for.
+() quorum::require_strong_verifier(int public_key) impure inline {
+  throw_if(quorum::error::weak_verifier, weak_ed25519_key?(public_key));
+}
+
+;; Adds `public_key` to a verifier dictionary, rejecting duplicates and weak keys.
 cell quorum::add_verifier(cell verifiers, int public_key) impure inline {
+  quorum::require_strong_verifier(public_key);
   (cell next, int added) = verifiers.udict_add_builder?(quorum::key_bits, public_key, begin_cell());
   throw_unless(quorum::error::duplicate_verifier, added);
   return next;
@@ -87,9 +101,24 @@ int quorum::count_keys(cell keys, int limit, int overflow_code) impure inline {
                (verifier_count > 0) & (verifier_count <= quorum::max_verifiers) & (quorum > 0) & (quorum <= verifier_count));
 }
 
+;; Number of verifiers in a set, refusing more than `quorum::max_verifiers` and any weak key.
+;; A prebuilt dictionary never went through `quorum::add_verifier`, so this walk is where
+;; it is checked.
+int quorum::count_verifiers(cell verifiers) impure inline {
+  int count = 0;
+  (int key, _, int found) = verifiers.udict_get_min?(quorum::key_bits);
+  while (found) {
+    count += 1;
+    throw_if(quorum::error::invalid_config, count > quorum::max_verifiers);
+    quorum::require_strong_verifier(key);
+    (key, _, found) = verifiers.udict_get_next?(quorum::key_bits, key);
+  }
+  return count;
+}
+
 ;; Builds a config, counting the set and requiring 1 <= quorum <= count.
 [cell, int, int] quorum::config(cell verifiers, int quorum) impure inline {
-  int count = quorum::count_keys(verifiers, quorum::max_verifiers, quorum::error::invalid_config);
+  int count = quorum::count_verifiers(verifiers);
   quorum::require_valid_config(count, quorum);
   return [verifiers, count, quorum];
 }
@@ -117,13 +146,15 @@ int quorum::verifier?([cell, int, int] config, int public_key) inline {
 
 ;; Verifies every entry of `signatures` (public key -> 512-bit signature of `hash`) and
 ;; returns how many there are. Throws on the first entry that is not a valid signature by a
-;; member of the set.
+;; member of the set, or that is by a weak member: a config tuple may come from storage
+;; rather than from `quorum::config`.
 int quorum::count_valid_signatures([cell, int, int] config, int hash, cell signatures) impure inline {
   int count = 0;
   (int public_key, slice signature, int found) = signatures.udict_get_min?(quorum::key_bits);
   while (found) {
     count += 1;
     throw_unless(quorum::error::unknown_signer, quorum::verifier?(config, public_key));
+    quorum::require_strong_verifier(public_key);
     throw_unless(quorum::error::malformed_signature,
                  (signature.slice_bits() == quorum::signature_bits) & (signature.slice_refs() == 0));
     throw_unless(quorum::error::invalid_signature, check_signature(hash, signature, public_key));

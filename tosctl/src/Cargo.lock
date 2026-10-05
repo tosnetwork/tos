@@ -810,6 +810,7 @@ dependencies = [
  "serde_json",
  "service",
  "sha2",
+ "tempfile",
  "tokio",
  "tracing",
  "zeroize",
@@ -860,6 +861,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chain-rpc-client",
  "chain_block",
  "common",
@@ -4083,6 +4085,7 @@ dependencies = [
  "rand_chacha 0.9.0",
  "reqwest",
  "rmp-serde",
+ "rpassword",
  "rsa",
  "scopeguard",
  "serde",

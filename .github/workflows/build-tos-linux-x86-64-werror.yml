@@ -38,7 +38,7 @@ jobs:
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Date Stamp
       shell: bash
@@ -61,7 +61,7 @@ jobs:
     # Pull requests read the newest cache saved on main (or their own earlier runs); main
     # saves after every push, so the next pull request starts from it.
     - name: Restore compile cache
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: .ccache
         key: strict-build-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
@@ -95,7 +95,7 @@ jobs:
 
     - name: Save compile cache
       if: always()
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: .ccache
         key: strict-build-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
@@ -111,7 +111,7 @@ jobs:
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         fetch-depth: 0
 
@@ -216,7 +216,7 @@ jobs:
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Prepare Python environment
       run: |

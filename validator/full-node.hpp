@@ -33,6 +33,7 @@
 
 #include "full-node-custom-overlays.hpp"
 #include "full-node-fast-sync-overlays.hpp"
+#include "full-node-relay-dedup.h"
 #include "rate-limiter.h"
 #include "validator-transport-authority.h"
 
@@ -174,13 +175,13 @@ class FullNodeImpl : public FullNode {
     std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<FullNodeCustomOverlay>> actors_;  // our local id -> actor
   };
   std::map<std::string, CustomOverlayInfo> custom_overlays_;
-  td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_broadcasts_{10000};
-  td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_finality_{10000};
-  td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_shard_block_desc_{10000};
+  CustomOverlayRelay custom_overlays_relay_{10000};
 
   void update_private_overlays();
   void update_custom_overlay(CustomOverlayInfo& overlay);
+  // What custom_overlays_relay_ decided to forward; nothing here decides.
   void send_block_broadcast_to_custom_overlays(const BlockBroadcast& broadcast);
+  void custom_relay_block_signatures_verified(BlockBroadcast broadcast);
   void send_block_finality_broadcast_to_custom_overlays(const BlockFinalityBroadcast& finality);
   void send_block_candidate_broadcast_to_custom_overlays(const BlockIdExt& block_id, CatchainSeqno cc_seqno,
                                                          td::uint32 validator_set_hash, const td::BufferSlice& data);
@@ -195,7 +196,7 @@ class FullNodeImpl : public FullNode {
   td::actor::ActorOwn<TokenManager> out_msg_queue_query_token_manager_ =
       td::actor::create_actor<TokenManager>("tokens", /* max_tokens = */ 1);
 
-  std::shared_ptr<RateLimiter<>> limiter_;
+  std::shared_ptr<FullNodeRateLimiter> limiter_;
 
   decltype(limiter_) make_limiter(const FullNodeOptions& opts);
 };

@@ -579,6 +579,26 @@ logical max 2^32 leaves
 
 Although `7^12 > 2^32`, actual leaf indices remain uint32 (`0 .. 2^32-1`). Persistent `commitment_next_index` is **uint64** so the exhausted sentinel value `2^32` is representable. The contract MUST reject append when `commitment_next_index >= 2^32`.
 
+**Recovery-leaf reservation.** A withdrawal's payout can bounce, and the recovery note of §15.4 needs a leaf
+that is still free when the bounce arrives. Every accepted withdrawal therefore reserves one leaf, counted in
+the persistent `reserved_recovery_leaves` of §13, and every operation that appends ordinary leaves MUST
+satisfy, before it mutates anything:
+
+```text
+commitment_next_index + ordinary_outputs + reserved_recovery_leaves + new_reservations <= 2^32
+
+deposit     ordinary_outputs = 1   new_reservations = 0
+transfer    ordinary_outputs = 3   new_reservations = 0
+withdrawal  ordinary_outputs = 3   new_reservations = 1
+```
+
+and refuse otherwise. A reservation is consumed **exactly once**, by the authentic bounce of §15.3 that it
+was taken for, whether or not that bounce mints a note (§15.4). It is **never** released on a timeout or on
+an assumption that the payout was delivered: a payout that is taken produces no message at all, so success
+is unobservable and the reservation is kept. A bounce that fails before or during recovery leaves it in
+place. The recovery append itself needs no room check: it spends a leaf that was already reserved, and the
+state invariant `commitment_next_index + reserved_recovery_leaves <= 2^32` guarantees the leaf exists.
+
 Empty leaf is field zero.
 
 ```text
@@ -1351,6 +1371,7 @@ version               uint16 = 1
 
 commitment_root       Fr
 commitment_next_index uint64
+reserved_recovery_leaves uint32
 
 nullifier_root        Fr
 nullifier_next_index  uint64
@@ -1372,6 +1393,10 @@ No admin key exists.
 The state root contains exactly the fields above and **4 refs**, with no trailing bits or refs.
 
 Both `*_next_index` counters are uint64 **only to represent the exhausted sentinel `2^32`**. Every actual commitment/IMT leaf index remains uint32. Any state with a next-index greater than `2^32` is invalid.
+
+`reserved_recovery_leaves` is the count of §5's recovery-leaf reservations. Any state with
+`commitment_next_index + reserved_recovery_leaves > 2^32` is invalid: it owes a bounce a leaf it does not
+have. The state root is at most 1000 data bits with both `Coins` at their widest.
 
 #### frontier_store
 
@@ -1518,6 +1543,7 @@ Zerostate generator MUST initialize:
 
 - commitment root = 7-ary depth-12 empty root;
 - `commitment_next_index:uint64 = 0`;
+- `reserved_recovery_leaves:uint32 = 0`;
 - nullifier root = the IMT genesis root containing only the head sentinel;
 - `nullifier_next_index:uint64 = 1`;
 - `last_anchor_epoch = 0xffffffff`;
@@ -1600,7 +1626,8 @@ every tree level, both nullifier orders, and both ends of the `Coins` range the 
 sum describes need not be reachable; an upper bound is not required to be attained.
 
 These four values were derived that way on 2026-09-23, against bounds of 176,694 / 1,205,003 / 186,991 / 2,480 for
-deposit / transact / bounce / top-up. An implementation MUST re-derive them, not re-measure them, whenever the
+deposit / transact / bounce / top-up, and re-derived on 2026-10-04 after the recovery-leaf reservation of §5 entered
+the handlers, against 177,395 / 1,206,163 / 187,127 / 2,480; the rule gives the same four ceilings. An implementation MUST re-derive them, not re-measure them, whenever the
 Poseidon2 tariff, the denomination list, the handler code or the basechain gas schedule moves. The rule is stated as
 an equality and MUST be read as one: below it a legal path can be cut off inside a contract whose code hash is its
 address, and above it every sender on that path is charged `get_compute_fee(ceiling)` for compute nobody spends.
@@ -1842,10 +1869,14 @@ spends, because the note commitment must be built before the transaction's own c
 costs gas -- an exact charge is circular. The ceiling is declared, derived by the section 14.1 rule, and
 computable by a wallet before it withdraws.
 
+Every authenticated recovery that reaches the post-ACCEPT phase first consumes one recovery-leaf
+reservation (§5), and MUST refuse if `reserved_recovery_leaves == 0`.
+
 If authenticated recovery reaches the post-ACCEPT phase and `msg_value <= recovery_charge`, **no recovery
 note is minted**. This is the `msg_value == 0` rule with its threshold moved off zero: below it, minting
 would hand the user a note the rest of the pool had paid for. The credited remainder stays in the balance as
-unencumbered reserve, which is where this transaction's gas comes from.
+unencumbered reserve, which is where this transaction's gas comes from. The reservation is still consumed and
+the state is saved: the bounce it was held for has arrived and cannot arrive again.
 
 Otherwise:
 
@@ -1888,6 +1919,8 @@ failed outbound. Ordinary contracts cannot manufacture a valid `bounced=1` messa
 Therefore the V1 replay boundary is:
 
 - real chain round trip exactly once;
+- each accepted withdrawal reserves one recovery leaf and each authentic recovery consumes one, so a
+  recovery is refused once no reservation is left; the count is a bound, not a per-withdrawal record;
 - duplicate synthetic bounced messages in a unit harness are **not** treated as valid consensus traces;
 - tests MUST verify normal outbound action rewrites/serializes `bounced=0` and only the protocol failure path
   creates the accepted bounce.
@@ -1903,6 +1936,7 @@ version-gated off until a bounded replay structure is added.
 2. reject nonstandard denomination / amount range;
 3. enforce `msg_value >= deposit_amount + compute_fee(DEPOSIT_GAS_CEILING)`;
 4. immediately `set_gas_limit(DEPOSIT_GAS_CEILING)` (**still no ACCEPT**);
+   then require §5's room for one ordinary leaf beside the reserved ones;
 5. canonical-hash exact output-data bytes;
 6. derive note body;
 7. ensure end-state backing invariant can hold;
@@ -1921,7 +1955,7 @@ Exact order:
 2. message-local compute funding check (**no ACCEPT**), then immediately `set_gas_limit(TRANSACT_GAS_CEILING)`;
 3. derive execution domain;
 4. parse/canonical-check all Fr, Coins, addresses and anchor metadata;
-5. validate transfer/withdraw mode, `withdrawal_fee`, recipient and `valid_until`; for withdrawal also require `public_amount_out` is exactly in the immutable denomination list;
+5. validate transfer/withdraw mode, `withdrawal_fee`, recipient and `valid_until`; for withdrawal also require `public_amount_out` is exactly in the immutable denomination list; then require §5's room for three ordinary leaves beside the reserved ones, plus one new reservation for a withdrawal;
 6. hash 3 actual output-data payloads;
 7. hash 2 full ML-DSA public keys;
 8. compute recovery-template hash or require transfer recovery fields zero;
@@ -1938,6 +1972,7 @@ Exact order:
     - set `new_liability = old - public_amount_out - withdrawal_fee`;
     - `raw_reserve(new_liability + reserve_floor, 0)`;
     - enqueue exactly one mode-17 payout with rich-bounce flags 3;
+    - `reserved_recovery_leaves += 1`;
 17. save all persistent state once.
 
 No `COMMIT` opcode is allowed before or after step 17 in V1.
@@ -1956,9 +1991,10 @@ Pre-ACCEPT:
 Then:
 
 4. `ACCEPT`;
-5. immediately `set_gas_limit(BOUNCE_GAS_CEILING)`;
+5. immediately `set_gas_limit(BOUNCE_GAS_CEILING)`, then consume one recovery-leaf reservation (§5),
+   refusing if none is left;
 6. compute `recovered_amount = msg_value`;
-7. if zero, return without minting;
+7. if zero, save the consumed reservation and return without minting;
 8. compute semantic recovery note body from **actual recovered amount**;
 9. checkpoint pre-mutation commitment root;
 10. append one final recovery note at fresh leaf index;

@@ -45,6 +45,7 @@
 #include "td/actor/PromiseFuture.h"
 #include "tos/tos-types.h"
 #include "validator/full-node-master.h"
+#include "validator/full-node-slave-key.h"
 #include "validator/full-node.h"
 #include "validator/manager.h"
 #include "validator/validator-transport-authority.h"
@@ -188,11 +189,16 @@ class ValidatorEngine : public td::actor::Actor {
   td::actor::ActorOwn<tos::overlay::Overlays> overlay_manager_;
   td::actor::ActorOwn<tos::validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<tos::adnl::AdnlExtClient> full_node_client_;
+  // The full-node ADNL key a slave signs in to its masters with; loaded and
+  // checked at startup, before anything else starts.
+  tos::PrivateKey full_node_slave_key_;
   td::actor::ActorOwn<tos::validator::fullnode::FullNode> full_node_;
   tos::adnl::AdnlNodeIdShort full_node_id_ = tos::adnl::AdnlNodeIdShort::zero();
   tos::validator::ValidatorAdnlRefCounts local_validator_adnl_ids_;
   std::set<tos::adnl::AdnlNodeIdShort> local_pq_validator_adnl_ids_;
   std::map<td::uint16, td::actor::ActorOwn<tos::validator::fullnode::FullNodeMaster>> full_node_masters_;
+  std::set<tos::adnl::AdnlNodeIdShort> full_node_master_trusted_;
+  std::shared_ptr<tos::validator::fullnode::FullNodeMasterLimiter> full_node_master_limiter_;
   td::actor::ActorOwn<tos::adnl::AdnlExtServer> control_ext_server_;
   td::actor::ActorOwn<tos::PrometheusExporter> exporter_;
   td::actor::ActorOwn<tos::JsonRpcServer> json_rpc_server_;
@@ -474,6 +480,11 @@ class ValidatorEngine : public td::actor::Actor {
   void set_ratelimit_medium(size_t count) {
     full_node_options_.ratelimit_medium_ = count;
   }
+  // Startup configuration only: the masters' shared limiter is built from this
+  // set when they start, and nothing updates it while the engine runs.
+  void set_full_node_master_trusted(std::set<tos::adnl::AdnlNodeIdShort> ids) {
+    full_node_master_trusted_ = std::move(ids);
+  }
   void add_auto_sign_adnl(tos::adnl::AdnlNodeIdShort id) {
     LOG(INFO) << "configured auto-sign shard overlay certificates for adnl=" << id;
     auto_sign_adnls_.insert(id);
@@ -504,6 +515,9 @@ class ValidatorEngine : public td::actor::Actor {
   void load_noncritical_params_overrides();
 
   void start();
+  void check_full_node_master_and_slave_config();
+  void loaded_full_node_slave_key(tos::PrivateKey key);
+  void start_after_config_checks();
 
   void start_adnl();
   void add_addr(const Config::Addr &addr, const Config::AddrCats &cats);
@@ -526,17 +540,9 @@ class ValidatorEngine : public td::actor::Actor {
   // configured, has been accepted.
   void finish_start_validator();
   void started_validator();
-  // Crash-recovery: re-index any wc=0 block left flagged incomplete by the
-  // wc0 wallet-index writer (see wallet-index.h's 0x1E marker). Fired once,
-  // right after validator_manager_ exists; a pure local-db lookup, safe to
-  // queue immediately (no network-sync dependency). Processes wc0_recovery_markers_
-  // one at a time via recover_wc0_index_step() re-sending itself a message
-  // through the actor scheduler (not a self-capturing closure) — avoids both
-  // a reference cycle and unbounded concurrent lookups.
+  // Lets the wallet-index worker run once its block fetcher is installed;
+  // it first re-indexes the blocks earlier runs left unfinished.
   void recover_wc0_index();
-  void recover_wc0_index_step();
-  std::vector<tos::BlockIdExt> wc0_recovery_markers_;
-  size_t wc0_recovery_index_ = 0;
 
   void start_full_node();
   void started_full_node();
@@ -571,6 +577,7 @@ class ValidatorEngine : public td::actor::Actor {
   void set_json_rpc_cors_origin(std::string origin);
   void set_json_rpc_readyz_threshold(td::int32 threshold);
   void set_json_rpc_request_timeout(double seconds);
+  void set_json_rpc_response_timeout(double seconds);
   void set_json_rpc_api_key(std::string key);
   void set_json_rpc_cache_ttl(td::int32 seconds);
   // M-01 hardening: opt-in honour of X-Forwarded-For / X-Real-IP

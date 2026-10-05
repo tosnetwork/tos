@@ -3,8 +3,8 @@
 
 The fixture election is built from a real retained Config34 cell: its text rows are
 what the old gate accepted. Old red/new green: the 55d3c8f5 gate accepts it without a
-same-block proof; this gate refuses it. The real proof check runs the verifier in a
-separate process on a retained Config30-only bundle, which must not pass as Config34.
+same-block proof; this gate refuses it. The process check runs only the anchored
+verifier indexed in the frozen closure.
 """
 
 import hashlib
@@ -164,9 +164,10 @@ class ElectedIdentityGate(unittest.TestCase):
                     self.report, self.base, self.rows, Ledger(), lambda *a, v=verdict: v
                 )
 
-    def test_real_proof_check_process_refuses_a_config30_only_bundle(self):
-        # Logic only: a direct launcher stands in for the U24 sandbox, which needs host bwrap
-        # and is exercised in test_x02_verifier_sandbox.py without running the verifier.
+    def test_the_process_check_refuses_a_verifier_outside_the_frozen_closure(self):
+        # The authenticated and fabricated bundles run end to end through this check in
+        # test_x02_config34_verifier.py. Here: a verifier binary that is not the one the
+        # binding indexed by digest is never run.
         allocation = json.loads(
             (self.base / "reward-election-allocation-evidence-v4.json").read_text()
         )
@@ -180,22 +181,27 @@ class ElectedIdentityGate(unittest.TestCase):
         ).strip()
         output = self.base / "out"
         output.mkdir()
+        build_root = self.base / "build"
+        verifier = build_root / proof.VERIFIER_RELATIVE
+        verifier.parent.mkdir(parents=True)
+        verifier.write_text("#!/bin/sh\nexit 0\n")
+        verifier.chmod(0o755)
+        launched = []
         check = four_node.config34_proof_check(
-            {"interpreter": sys.executable, "dependency_roots": []},
+            {
+                "interpreter": sys.executable,
+                "dependency_roots": [],
+                "build_root": str(build_root),
+                "files": {str(verifier): {"sha256": "0" * 64, "bytes": 1}},
+            },
             {"source_sha": head},
             output,
-            proof_fixture.RPCS,
-            launcher=lambda binding, out, command: command,
+            proof_fixture.ANCHOR,
+            launcher=lambda *args: launched.append(args),
         )
-        with self.assertRaisesRegex(ValueError, "verifier refused.*ConfigParam34 is not proven"):
+        with self.assertRaisesRegex(ValueError, "not the binary indexed in the frozen closure"):
             four_node.verify_elected_identity(self.report, self.base, self.rows, Ledger(), check)
-        terminal = json.loads(
-            (output / f"config34-proof-{proof_fixture.ELECTION}.terminal.json").read_text()
-        )
-        self.assertEqual(
-            (terminal["natural_exit"], terminal["timed_out"], terminal["sandbox_setup_failed"]),
-            (1, False, False),
-        )
+        self.assertEqual(launched, [])
 
 
 class LivePidIdentityGate(unittest.TestCase):

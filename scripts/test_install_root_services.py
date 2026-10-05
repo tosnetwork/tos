@@ -1,0 +1,595 @@
+"""The root-service installer snapshots everything the services run, outside the checkout,
+and refuses a snapshot or a location that would still let anyone else change it."""
+
+import ast
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+from pathlib import Path
+
+import pytest
+
+INSTALLER = Path(__file__).resolve().parent / "install-root-services.sh"
+GENERATOR = "tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic"
+HEX = "crypto/smartcont/single-nominator-pool/single-nominator-code.hex"
+MARKER = ".tos-dev-services-snapshot"
+
+# What the stand-in for uv does, selected per test through a file it reads.
+STUB = """#!/usr/bin/env python3
+import json, os, shutil, sys
+from pathlib import Path
+here = Path(__file__).resolve().parent
+Path(here, "uv-call.json").write_text(json.dumps({"argv": sys.argv[1:], "env": dict(os.environ)}))
+venv = Path(os.environ["UV_PROJECT_ENVIRONMENT"])
+python = Path(os.environ["UV_PYTHON_INSTALL_DIR"])
+(venv / "bin").mkdir(parents=True)
+(python / "lib").mkdir(parents=True)
+interpreter = venv / "bin" / "python"
+interpreter.write_text("")
+interpreter.chmod(0o777)  # left world-writable; the installer must not keep it so
+(python / "lib" / "libtcl9.0.so").write_text("tk")
+extra_file = Path(here, "uv-extra.json")
+extra = json.loads(extra_file.read_text()) if extra_file.exists() else {}
+if "escaping_link" in extra:
+    (venv / "lib").mkdir()
+    (venv / "lib" / "escape").symlink_to(extra["escaping_link"])
+if "pth" in extra:
+    (venv / "lib").mkdir(exist_ok=True)
+    (venv / "lib" / "extra.pth").write_text(extra["pth"])
+if "elf" in extra:
+    (venv / "lib").mkdir(exist_ok=True)
+    shutil.copy(extra["elf"], venv / "lib" / "native.so")
+"""
+
+
+def write(path, text="x\n", mode=0o644):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    path.chmod(mode)
+    return path
+
+
+@pytest.fixture
+def setup(tmp_path):
+    repo = tmp_path / "repo"
+    write(repo / "scripts/local-pq-elections.py", "print('driver')\n")
+    write(repo / "scripts/__pycache__/stale.pyc")
+    write(repo / "test/tostester/src/toslib/__init__.py")
+    write(repo / HEX, "b5ee9c72\n")
+    write(repo / GENERATOR, "#!/bin/sh\n", 0o755)
+    library = write(repo / "build/toslib/libtoslibjson.so.0.5", "elf\n", 0o755)
+    (repo / "build/toslib/libtoslibjson.so").symlink_to(library.name)
+    # The checker is the installer's own; run the real one from the fake checkout.
+    shutil.copy(INSTALLER.with_name("install-root-services-check.py"), repo / "scripts")
+    tools = tmp_path / "tools"
+    write(tools / "uv", STUB, 0o755)
+    base_parent = tmp_path / "opt"
+    base_parent.mkdir()
+    base_parent.chmod(0o755)
+    return repo, tools, base_parent / "services"
+
+
+def install(repo, tools, base, extra=None, env=None):
+    if extra is not None:
+        (tools / "uv-extra.json").write_text(json.dumps(extra))
+    return subprocess.run(
+        ["bash", str(INSTALLER), str(base), str(repo), str(repo / "build"), str(repo / GENERATOR)],
+        env={**os.environ, "UV": str(tools / "uv"), **(env or {})},
+        capture_output=True,
+        text=True,
+    )
+
+
+def published(base):
+    return (base / "current").exists()
+
+
+def test_the_snapshot_holds_the_services_code_in_the_checkout_layout(setup):
+    repo, tools, base = setup
+    result = install(repo, tools, base)
+    assert result.returncode == 0, result.stderr
+    dest = Path(result.stdout.strip())
+    assert (base / "current").resolve() == dest.resolve()
+    src = dest / "src"
+    for relative in ("scripts/local-pq-elections.py", "test/tostester/src/toslib/__init__.py", HEX):
+        assert (src / relative).read_bytes() == (repo / relative).read_bytes()
+    library = src / "build/toslib/libtoslibjson.so"
+    assert not library.is_symlink() and library.read_text() == "elf\n"
+    assert os.access(src / GENERATOR, os.X_OK)
+    assert not (src / "scripts/__pycache__").exists()
+    assert not (dest / "python/lib/libtcl9.0.so").exists(), "Tk bindings are not installed"
+    assert (dest / MARKER).exists()
+    for path in [dest, *dest.rglob("*")]:
+        if not path.is_symlink():
+            assert not path.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH), path
+
+
+def test_uv_runs_isolated_and_copies_into_the_snapshot(setup):
+    repo, tools, base = setup
+    caller = {"UV_INDEX_URL": "http://elsewhere", "UV_LINK_MODE": "symlink"}
+    result = install(repo, tools, base, env=caller)
+    assert result.returncode == 0, result.stderr
+    dest = Path(result.stdout.strip())
+    call = json.loads((tools / "uv-call.json").read_text())
+    assert call["argv"][:3] == ["sync", "--project", str(repo)]
+    for flag in ("--frozen", "--no-dev", "--no-install-workspace"):
+        assert flag in call["argv"]
+    env = call["env"]
+    assert "UV_INDEX_URL" not in env, "the caller's uv settings must not reach the install"
+    assert env["UV_LINK_MODE"] == "copy"
+    assert env["UV_PROJECT_ENVIRONMENT"] == str(dest / "venv")
+    assert env["UV_PYTHON_INSTALL_DIR"] == str(dest / "python")
+    assert env["UV_PYTHON_PREFERENCE"] == "only-managed"
+    assert not Path(env["UV_CACHE_DIR"]).is_relative_to(dest)
+    assert not Path(env["UV_CACHE_DIR"]).exists(), "the throwaway cache is removed"
+
+
+def test_a_new_install_replaces_only_marked_snapshots(setup):
+    repo, tools, base = setup
+    first = Path(install(repo, tools, base).stdout.strip())
+    unrelated = base / "keep-me"
+    unrelated.mkdir()
+    unmarked = base / "20200101T000000Z-1"
+    unmarked.mkdir()
+    write(repo / "scripts/local-pq-elections.py", "print('changed')\n")
+    result = install(repo, tools, base)
+    assert result.returncode == 0, result.stderr
+    second = Path(result.stdout.strip())
+    assert second != first and not first.exists()
+    assert unrelated.exists() and unmarked.exists(), "only marked snapshots are deleted"
+    assert (base / "current").resolve() == second.resolve()
+    assert "changed" in (base / "current/src/scripts/local-pq-elections.py").read_text()
+
+
+@pytest.mark.parametrize(
+    "missing", [GENERATOR, HEX, "build/toslib/libtoslibjson.so", "test/tostester/src"]
+)
+def test_a_missing_input_installs_nothing(setup, missing):
+    repo, tools, base = setup
+    target = repo / missing
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+    result = install(repo, tools, base)
+    assert result.returncode == 1
+    assert result.stderr.strip() == f"missing {repo / missing}"
+    assert not base.exists(), "nothing is created after a refused input check"
+    assert not (tools / "uv-call.json").exists()
+
+
+def test_a_symlink_in_a_copied_source_tree_is_refused(setup, tmp_path):
+    repo, tools, base = setup
+    outside = write(tmp_path / "writable/evil.py")
+    (repo / "scripts/evil.py").symlink_to(outside)
+    result = install(repo, tools, base)
+    assert result.returncode != 0
+    assert "evil.py: symlink in a copied source tree" in result.stderr
+    assert not base.exists() and not (tools / "uv-call.json").exists()
+
+
+@pytest.mark.parametrize(
+    "weakness", ["group-writable base", "group-writable ancestor", "symlinked ancestor"]
+)
+def test_a_base_others_could_change_is_refused(setup, tmp_path, weakness):
+    repo, tools, base = setup
+    if weakness == "group-writable base":
+        base.mkdir()
+        base.chmod(0o775)
+        expected = f"{base}: group-writable"
+    elif weakness == "group-writable ancestor":
+        base.parent.chmod(0o775)
+        expected = f"{base.parent}: group-writable"
+    else:
+        real = tmp_path / "real"
+        real.mkdir()
+        real.chmod(0o755)
+        link = tmp_path / "link"
+        link.symlink_to(real)
+        base = link / "services"
+        expected = f"{link}: is a symlink"
+    result = install(repo, tools, base)
+    assert result.returncode != 0
+    assert expected in result.stderr
+    assert not (tools / "uv-call.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        ({"escaping_link": "/usr/lib"}, "links outside the snapshot"),
+        ({"pth": "/opt/writable/site\n"}, "adds /opt/writable/site outside the snapshot"),
+    ],
+)
+def test_a_snapshot_reaching_outside_itself_is_not_published(setup, extra, expected):
+    repo, tools, base = setup
+    result = install(repo, tools, base, extra=extra)
+    assert result.returncode != 0
+    assert expected in result.stderr
+    assert not published(base)
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+def test_a_native_library_searching_outside_the_snapshot_is_not_published(setup, tmp_path):
+    repo, tools, base = setup
+    source = write(tmp_path / "native.c", "int native(void) { return 0; }\n")
+    library = tmp_path / "native.so"
+    build = ["gcc", "-shared", "-fPIC", "-o", str(library), str(source)]
+    subprocess.run([*build, "-Wl,-rpath,/opt/writable/lib"], check=True)
+    result = install(repo, tools, base, extra={"elf": str(library)})
+    assert result.returncode != 0
+    assert "search path /opt/writable/lib outside the snapshot" in result.stderr
+    assert not published(base)
+    # Without the outside search path the same library is accepted.
+    subprocess.run(build, check=True)
+    result = install(repo, tools, base, extra={"elf": str(library)})
+    assert result.returncode == 0, result.stderr
+
+
+CHECKER = INSTALLER.with_name("install-root-services-check.py")
+
+
+def check_snapshot(dest):
+    return subprocess.run(
+        ["/usr/bin/python3", "-I", "-S", str(CHECKER), "snapshot", str(dest)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def build_library(tmp_path, *flags):
+    source = write(tmp_path / "native.c", "int native(void) { return 0; }\n")
+    library = tmp_path / "built.so"
+    subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(library), str(source), *flags], check=True)
+    return library
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+@pytest.mark.parametrize(
+    ("rpath", "expected"),
+    [
+        ("$ORIGIN/../../../../../../../../var/tmp/native-libs", "climbs from $ORIGIN"),
+        ("$ORIGIN::$ORIGIN", "empty search path entry"),
+        ("$ORIGIN/$LIB", "unsupported loader token"),
+        ("$ORIGIN/../lib", "climbs from $ORIGIN"),
+        ("$ORIGIN/sub", None),
+    ],
+)
+def test_origin_search_paths_are_expanded_and_contained(tmp_path, rpath, expected):
+    dest = tmp_path / "snapshot"
+    (dest / "venv/lib").mkdir(parents=True)
+    library = build_library(tmp_path, f"-Wl,-rpath,{rpath}")
+    shutil.copy(library, dest / "venv/lib/native.so")
+    result = check_snapshot(dest)
+    if expected is None:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode == 1
+        assert expected in result.stderr
+
+
+def test_a_link_through_an_outside_link_is_refused_even_if_it_ends_inside(tmp_path):
+    dest = tmp_path / "snapshot"
+    write(dest / "venv/lib/real.py")
+    outside = tmp_path / "changeable"
+    outside.mkdir()
+    (outside / "hop").symlink_to(dest / "venv/lib/real.py")
+    (dest / "venv/lib/module.py").symlink_to(outside / "hop")
+    assert os.path.realpath(dest / "venv/lib/module.py") == str(dest / "venv/lib/real.py")
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "passes through" in result.stderr and "changeable" in result.stderr
+    # A link that stays inside on every step is accepted.
+    (dest / "venv/lib/module.py").unlink()
+    (dest / "venv/lib/module.py").symlink_to("real.py")
+    assert check_snapshot(dest).returncode == 0
+
+
+def test_a_link_through_a_directory_that_points_back_up_is_refused(tmp_path):
+    dest = tmp_path / "snapshot"
+    (dest / "a").mkdir(parents=True)
+    (dest / "a/up").symlink_to(".")  # resolves to dest/a itself
+    # dest/a/up/../../x is dest/x lexically from the link, but the kernel resolves
+    # up to dest/a first, so .. .. lands outside the snapshot.
+    (dest / "a/escape").symlink_to("up/../../../outside")
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "escape" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("line", "module", "expected"),
+    [
+        ("import sys; sys.path.insert(0, '/var/tmp/external')", None, "unreviewed code"),
+        ("import _virtualenv", "_virtualenv.py", None),
+        ("import _virtualenv", None, "not in the snapshot"),
+        ("../../../../../../../var/tmp/site", None, "outside the snapshot"),
+    ],
+)
+def test_pth_lines_are_contained_or_reviewed(tmp_path, line, module, expected):
+    site = tmp_path / "snapshot/venv/lib/site-packages"
+    write(site / "hook.pth", line + "\n")
+    if module:
+        write(site / module)
+    result = check_snapshot(tmp_path / "snapshot")
+    if expected is None:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode == 1
+        assert expected in result.stderr
+
+
+def test_an_elf_file_readelf_cannot_read_is_refused(tmp_path):
+    dest = tmp_path / "snapshot"
+    broken = write(dest / "venv/lib/broken.so")
+    broken.write_bytes(b"\x7fELF" + b"\x00" * 12)
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "readelf failed" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+def test_a_library_loaded_through_a_shallower_alias_cannot_climb_out(tmp_path):
+    # The loader would take $ORIGIN from DEST/alias.so, so $ORIGIN/../../plugins
+    # leaves DEST, though from the physical file it would not.
+    dest = tmp_path / "snapshot"
+    (dest / "deep/a").mkdir(parents=True)
+    library = build_library(tmp_path, "-Wl,-rpath,$ORIGIN/../../plugins")
+    shutil.copy(library, dest / "deep/a/library.so")
+    (dest / "alias.so").symlink_to("deep/a/library.so")
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "climbs from $ORIGIN" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+def test_an_executable_may_climb_to_its_own_lib(tmp_path):
+    # An executable's $ORIGIN is its real path, so $ORIGIN/../lib stays inside.
+    dest = tmp_path / "snapshot"
+    (dest / "python/bin").mkdir(parents=True)
+    (dest / "python/lib").mkdir()
+    source = write(tmp_path / "main.c", "int main(void) { return 0; }\n")
+    subprocess.run(
+        ["gcc", "-o", str(dest / "python/bin/python3"), str(source), "-Wl,-rpath,$ORIGIN/../lib"],
+        check=True,
+    )
+    result = check_snapshot(dest)
+    assert result.returncode == 0, result.stderr
+    # Climbing further than the snapshot is still refused, even into a directory
+    # that does not exist yet.
+    subprocess.run(
+        [
+            "gcc",
+            "-o",
+            str(dest / "python/bin/python3"),
+            str(source),
+            "-Wl,-rpath,$ORIGIN/../../../../../../../../var/tmp/native-libs",
+        ],
+        check=True,
+    )
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "outside the snapshot" in result.stderr
+
+
+def test_a_pth_file_may_not_be_a_symlink(tmp_path):
+    site = tmp_path / "snapshot/venv/lib/site-packages"
+    write(site / "payload.txt", "import sys; sys.path.insert(0, '/var/tmp/external')\n")
+    (site / "hook.pth").symlink_to("payload.txt")
+    result = check_snapshot(tmp_path / "snapshot")
+    assert result.returncode == 1
+    assert "hook.pth: a .pth file must not be a symlink" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="needs a C compiler to build an ELF")
+def test_a_loadable_library_with_a_program_interpreter_is_still_a_library(tmp_path):
+    # A non-PIE shared object may carry PT_INTERP and still be dlopen'ed, so it
+    # gets no executable exception: the shallow-alias escape stays refused.
+    dest = tmp_path / "snapshot"
+    (dest / "deep/a").mkdir(parents=True)
+    source = write(
+        tmp_path / "interp.c",
+        'const char interp[] __attribute__((section(".interp"))) = "/lib64/ld-linux-x86-64.so.2";\n'
+        "int native(void) { return 0; }\n",
+    )
+    library = dest / "deep/a/library.so"
+    subprocess.run(
+        [
+            "gcc",
+            "-shared",
+            "-fPIC",
+            "-o",
+            str(library),
+            str(source),
+            "-Wl,-rpath,$ORIGIN/../../plugins",
+        ],
+        check=True,
+    )
+    headers = subprocess.run(
+        ["readelf", "-l", "-h", "-d", str(library)], capture_output=True, text=True
+    )
+    assert "Requesting program interpreter" in headers.stdout, "fixture must carry PT_INTERP"
+    assert "DYN" in headers.stdout and "PIE" not in headers.stdout
+    (dest / "alias.so").symlink_to("deep/a/library.so")
+    result = check_snapshot(dest)
+    assert result.returncode == 1
+    assert "climbs from $ORIGIN" in result.stderr
+
+
+# ---- every checkout path a root driver resolves by default is in the snapshot
+#
+# The services run from BASE/current/src with the drivers' REPO-relative
+# defaults, so a default naming a checkout file the installer does not copy
+# fails only when the service starts. The drivers are read from the units
+# setup-testnet.sh writes, and the paths are found in their source:
+# REPO-relative expressions, argparse defaults joined with a further path
+# (`args.build / "toslib/..."`), and a default passed to a repository helper
+# that joins it (`local.get_method(args.build, ...)` joining
+# `build / "lite-client/lite-client"`).
+
+SCRIPTS = INSTALLER.parent
+CHECKOUT = SCRIPTS.parent
+SETUP = SCRIPTS / "setup-testnet.sh"
+
+
+def root_drivers():
+    pattern = r"ExecStart=\$SNAPSHOT/venv/bin/python \$SNAPSHOT/src/scripts/(\S+)"
+    return sorted(set(re.findall(pattern, SETUP.read_text())))
+
+
+def path_parts(node):
+    """Split `base / "a" / "b/c"` into (base node, ["a", "b/c"]), or None."""
+    parts = []
+    while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        if not (isinstance(node.right, ast.Constant) and isinstance(node.right.value, str)):
+            return None
+        parts.insert(0, node.right.value)
+        node = node.left
+    return (node, parts) if parts else None
+
+
+def repo_path(node):
+    split = path_parts(node)
+    if split and isinstance(split[0], ast.Name) and split[0].id == "REPO":
+        return "/".join(split[1])
+    return None
+
+
+def parameter_joins(tree):
+    """{function: {parameter index: [joined suffixes]}} for a helper module."""
+    joins = {}
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        params = [a.arg for a in function.args.args]
+        for node in ast.walk(function):
+            split = path_parts(node)
+            if split and isinstance(split[0], ast.Name) and split[0].id in params:
+                index = params.index(split[0].id)
+                joins.setdefault(function.name, {}).setdefault(index, []).append("/".join(split[1]))
+    return joins
+
+
+def module_aliases(tree, scripts):
+    """Driver-local names bound to repository modules, mapped to their files."""
+    aliases = {}
+    spec_files = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                if (scripts / f"{name.name}.py").exists():
+                    aliases[name.asname or name.name] = scripts / f"{name.name}.py"
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            call = node.value
+            target = node.targets[0].id if isinstance(node.targets[0], ast.Name) else None
+            func = ast.unparse(call.func)
+            if func.endswith("spec_from_file_location") and len(call.args) == 2 and target:
+                relative = repo_path(call.args[1])
+                if relative:
+                    spec_files[target] = scripts.parent / relative
+            if func.endswith("module_from_spec") and call.args and target:
+                source = ast.unparse(call.args[0])
+                if source in spec_files:
+                    aliases[target] = spec_files[source]
+    return aliases
+
+
+def resolved_checkout_paths(driver, scripts=SCRIPTS):
+    """Checkout-relative paths `driver` reaches with its default arguments."""
+    tree = ast.parse((scripts / driver).read_text())
+    found = set()
+    defaults = {}
+    for node in ast.walk(tree):
+        relative = repo_path(node)
+        if relative:
+            found.add(relative)
+        if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("add_argument"):
+            first = node.args[0] if node.args else None
+            flag = first.value if isinstance(first, ast.Constant) else None
+            for keyword in node.keywords:
+                if keyword.arg == "default" and isinstance(flag, str) and flag.startswith("--"):
+                    relative = repo_path(keyword.value)
+                    if relative:
+                        defaults[flag[2:].replace("-", "_")] = relative
+
+    def default_of(node):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "args"
+        ):
+            return defaults.get(node.attr)
+        return None
+
+    helpers = {
+        alias: parameter_joins(ast.parse(path.read_text()))
+        for alias, path in module_aliases(tree, scripts).items()
+    }
+    for node in ast.walk(tree):
+        split = path_parts(node)
+        if split and default_of(split[0]):
+            found.add("/".join([default_of(split[0]), *split[1]]))
+        if not isinstance(node, ast.Call):
+            continue
+        func, args = node.func, list(node.args)
+        if ast.unparse(func) == "asyncio.to_thread" and args:
+            func, args = args[0], args[1:]
+        if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)):
+            continue
+        joins = helpers.get(func.value.id, {}).get(func.attr, {})
+        for index, argument in enumerate(args):
+            base = default_of(argument)
+            for suffix in joins.get(index, []) if base else []:
+                found.add(f"{base}/{suffix}")
+    return found
+
+
+def test_the_root_drivers_and_their_paths_are_found():
+    # A scan that finds no driver, or no path, would let the coverage test pass.
+    drivers = root_drivers()
+    assert {"local-pq-privacy.py", "local-pq-transfers.py", "local-pq-elections.py"} <= set(drivers)
+    privacy = resolved_checkout_paths("local-pq-privacy.py")
+    assert "build/toslib/libtoslibjson.so" in privacy, "argument-default joins are resolved"
+    assert GENERATOR in privacy
+    assert HEX in resolved_checkout_paths("local-pq-elections.py")
+
+
+def test_a_default_passed_to_a_joining_helper_is_resolved(tmp_path):
+    # The shape that once sent a root driver to build/lite-client/lite-client.
+    scripts = tmp_path / "scripts"
+    write(
+        scripts / "helper_module.py",
+        'def get_method(build, data):\n    return build / "lite-client/lite-client"\n',
+    )
+    write(
+        scripts / "driver.py",
+        "import asyncio\nimport helper_module as local\n"
+        'p.add_argument("--build", type=Path, default=REPO / "build")\n'
+        "asyncio.to_thread(local.get_method, args.build, args.data)\n",
+    )
+    assert "build/lite-client/lite-client" in resolved_checkout_paths("driver.py", scripts)
+
+
+def test_every_default_path_of_a_root_driver_is_in_the_snapshot(setup):
+    repo, tools, base = setup
+    wanted = set()
+    for driver in root_drivers():
+        wanted |= resolved_checkout_paths(driver)
+    # A complete checkout holds every path a driver names; so must the snapshot.
+    for relative in sorted(wanted):
+        target = repo / relative
+        is_directory = (CHECKOUT / relative).is_dir() or any(
+            other.startswith(relative + "/") for other in wanted
+        )
+        if is_directory:
+            target.mkdir(parents=True, exist_ok=True)
+        elif not target.exists():
+            write(target)
+    result = install(repo, tools, base)
+    assert result.returncode == 0, result.stderr
+    src = Path(result.stdout.strip()) / "src"
+    missing = sorted(p for p in wanted if not (src / p).exists())
+    assert not missing, f"root drivers resolve checkout paths the snapshot lacks: {missing}"

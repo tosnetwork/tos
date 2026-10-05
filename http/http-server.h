@@ -33,12 +33,43 @@ class HttpInboundConnection;
 
 class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWrapper {
  public:
+  // The outcome of header admission: either the request may go on, or it is
+  // refused with the given answer and its body is never read.
+  struct Admission {
+    bool admitted = false;
+    std::unique_ptr<HttpResponse> response;
+    std::shared_ptr<HttpPayload> payload;
+
+    static Admission admit() {
+      Admission a;
+      a.admitted = true;
+      return a;
+    }
+    static Admission refuse(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload) {
+      Admission a;
+      a.response = std::move(response);
+      a.payload = std::move(payload);
+      return a;
+    }
+  };
+
   class Callback {
    public:
     virtual ~Callback() = default;
     virtual void receive_request(
         std::unique_ptr<HttpRequest> request, std::shared_ptr<HttpPayload> payload,
         td::Promise<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> promise) = 0;
+    // Header admission, asked once the request line and headers are complete
+    // and before any of the body is parsed, reserved or handed to
+    // receive_request. The connection holds the request, reads no further
+    // than its header read-ahead and parses nothing, until the promise is
+    // set; a request that is refused (or whose promise is dropped) is
+    // answered without its body ever being read. `request` is valid only for
+    // the duration of the call: copy what the decision needs. The default
+    // admits every request.
+    virtual void admit_request(const HttpRequest &request, td::Promise<Admission> promise) {
+      promise.set_value(Admission::admit());
+    }
   };
 
   // Limits applied to every inbound connection, so that a client which
@@ -73,6 +104,19 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
     // use a small input/output window and an independent response deadline.
     size_t io_buffer_bytes = 0;
     double response_timeout = 0;
+    // Close the connection once an answer is written if the request body was
+    // still being read when the handler answered (an early refusal, a 404, a
+    // handler error), instead of reading and buffering a body nobody will
+    // consume. Off by default: a proxy may legitimately forward an upstream
+    // answer while the client is still uploading and expect the upload to go
+    // on. Requests whose body was read keep the connection either way.
+    bool close_after_early_answer = false;
+    // Request-body capacity shared by every connection of this listener. When
+    // set, each admitted request reserves its body (see
+    // HttpRequest::body_reservation_bytes) before any of it is parsed; a
+    // request that does not fit is answered 503 and its connection closed.
+    // Null leaves bodies uncharged, as a proxy streaming uploads wants.
+    std::shared_ptr<BodyBudget> body_budget;
   };
 
   HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits);
@@ -97,6 +141,16 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
                                                 Limits limits) {
     return td::actor::create_actor<HttpServer>("httpserver", port, std::move(callback), limits);
   }
+  static td::actor::ActorOwn<HttpServer> create(td::IPAddress address, std::shared_ptr<Callback> callback,
+                                                Limits limits) {
+    return td::actor::create_actor<HttpServer>("httpserver", address, std::move(callback), limits);
+  }
+
+  // The address a listener given as "<port>", "<ipv4>:<port>" or
+  // "[<ipv6>]:<port>" binds. A bare port binds loopback only: a listener other
+  // hosts can reach has to be asked for by address. Addresses are numeric
+  // (no name lookup); the port is 1..65535 written as plain digits.
+  static td::Result<td::IPAddress> parse_listen_address(td::Slice arg);
 
   struct AllMetrics {
     metrics::AtomicGauge<size_t>::Ptr connections =

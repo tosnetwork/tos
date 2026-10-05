@@ -549,6 +549,58 @@ impl Pool {
         Ok(())
     }
 
+    /// Set how many recovery leaves the pool holds back, changing nothing
+    /// else.
+    ///
+    /// A reservation is what an accepted withdrawal leaves behind for its
+    /// payout's bounce. A test that delivers a bounce for a withdrawal it did
+    /// not send through this pool has to stand in for that half too, or the
+    /// pool rightly refuses a recovery nobody reserved room for.
+    pub fn set_reserved_recovery_leaves(&mut self, reserved: u32) -> Result<()> {
+        let mut account = self
+            .bc
+            .get_account(&self.addr)
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no account".to_string()))?
+            .clone();
+        let data = account
+            .get_data()
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no data".to_string()))?;
+        let mut slice = chain_block::SliceData::load_cell(data.clone())
+            .map_err(|error| CrossCheckError::Sandbox(format!("state slice: {error}")))?;
+        // magic, version, commitment root and leaf counter: copied. Then the
+        // reservation count, replaced.
+        let head_bits = 32 + 16 + 256 + 64;
+        let head = slice
+            .get_next_bits(head_bits)
+            .map_err(|error| CrossCheckError::Sandbox(format!("state head: {error}")))?;
+        slice
+            .get_next_int(32)
+            .map_err(|error| CrossCheckError::Sandbox(format!("reservations: {error}")))?;
+        let tail_bits = slice.remaining_bits();
+        let tail = slice
+            .get_next_bits(tail_bits)
+            .map_err(|error| CrossCheckError::Sandbox(format!("state tail: {error}")))?;
+        let mut builder = BuilderData::new();
+        builder
+            .append_raw(&head, head_bits)
+            .and_then(|b| b.append_u32(reserved))
+            .and_then(|b| b.append_raw(&tail, tail_bits))
+            .map_err(|error| CrossCheckError::Sandbox(format!("reserved state bits: {error}")))?;
+        for index in 0..data.references_count() {
+            let reference = data
+                .reference(index)
+                .map_err(|error| CrossCheckError::Sandbox(format!("state ref: {error}")))?;
+            builder
+                .checked_append_reference(reference)
+                .map_err(|error| CrossCheckError::Sandbox(format!("state ref: {error}")))?;
+        }
+        if !account.set_data(cell_of(builder)?) {
+            return Err(CrossCheckError::Sandbox("the pool refused new data".to_string()));
+        }
+        self.bc.set_account(self.addr.clone(), account);
+        Ok(())
+    }
+
     /// Move only the leaf counter, keeping the frontier and both anchor
     /// rings exactly as the pool built them.
     ///
@@ -643,6 +695,7 @@ impl Pool {
         for method in [
             "commitment_root",
             "commitment_next_index",
+            "reserved_recovery_leaves",
             "nullifier_root",
             "nullifier_next_index",
             "native_liability",

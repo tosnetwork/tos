@@ -335,6 +335,147 @@ For the next 12 months, TOS should bias toward:
 
 The first year should optimize for trust and predictability, not release aggressiveness.
 
+## Publishing Release Binaries
+
+Release binaries are published only under the tag of the commit they were
+built from, and only by one workflow per tag namespace:
+
+| Tag namespace | Example | Sole publisher | Release set |
+|---|---|---|---|
+| `v<version>` (TOS) | `v2026.10` | `.github/workflows/create-release.yml` | `full` |
+| `tol-v<version>` (Tol) | `tol-v1.4.0` | `.github/workflows/create-tol-release.yml` | `tol` |
+
+Each publisher refuses a tag outside its namespace. Releases published before
+these namespaces were introduced keep their names.
+
+No other workflow writes a release. Build workflows only upload workflow
+artifacts with read-only tokens; the publisher collects them. `scripts/check-workflow-supply-chain.py`
+enforces this: `RELEASE_WRITER_NOT_DESIGNATED` fails any other workflow that
+runs `gh release create`, `upload`, `edit`, `delete` or `delete-asset`, uses a
+release-writing action, or sends a write request to a releases API path, and
+`RELEASE_CLOBBER` fails `--clobber` anywhere.
+
+### Cutting a release
+
+1. Push the tag on the reviewed commit: `git tag v<version> <commit>` and
+   `git push origin v<version>` (for Tol, `tol-v<version>`).
+2. Wait for every build workflow the release set uses (listed in
+   `scripts/release-artifacts.json`) to succeed on that tag. `v*` tags start
+   them on push; for a `tol-v*` tag, run each of them by hand on the tag.
+3. Run the publisher (Actions, "Create release" or "Create tol release",
+   "Run workflow") with the tag.
+
+A new binary joins a release set only once a real build target exists and
+its build workflow has succeeded on a tag: then add the workflow's artifact
+to `build_workflows` and the files to the set's `assets` in
+`scripts/release-artifacts.json`. A build input that cannot succeed would make
+the publisher refuse every release of that set.
+
+The publisher then:
+
+1. **collects**, for each build input of the release set, the artifact of a
+   successful push or dispatch run whose `head_sha` is the tag commit, checks
+   the downloaded zip against the digest GitHub recorded at upload, and writes
+   `release-provenance.json` and `SHA256SUMS` (`release-artifacts.py collect`
+   and `stage`);
+2. re-resolves the tag on GitHub, peels it to a commit, compares it with the
+   commit the assets were built from, and **refuses if any release for the tag
+   already exists**, draft or published; then creates a **draft**
+   (`release-artifacts.py check-tag --release-state none`);
+3. checks the tag again and that exactly one draft exists, then **uploads
+   every asset to that draft** in one command (`--release-state draft`);
+4. checks the tag again and that the draft carries **exactly** the staged
+   files: each uploaded asset is downloaded by its id and its bytes must hash
+   to the staged SHA-256 (a digest GitHub reports must also be well formed and
+   agree; name and size alone are never accepted), then **publishes it once**
+   (`--release-state draft --assets`);
+5. checks the tag again and that the release is published and complete
+   (`--release-state published --assets`); on failure it deletes the release
+   and fails.
+
+Runs for the same tag are serialized: both publishers share the workflow
+concurrency group `publish-release-<tag>` with `cancel-in-progress: false`.
+A second run waits for the first and is then refused at step 2, because the
+release exists. An asset is never added to or replaced in an existing
+release. If a run fails after step 2 it leaves a draft behind; delete that
+draft by hand (it was never public) before running the publisher again.
+
+### Repository settings required for closure
+
+The checks above detect a moved tag; they cannot prevent one. A tag moved in
+the seconds between step 4 and publication is caught by step 5, but the
+release was public meanwhile, and a tag moved after step 5 is not noticed at
+all. Closing both gaps needs two repository settings, which only an
+administrator can apply.
+
+**Tag rulesets** (Settings, Rules, Rulesets, New ruleset, New tag ruleset).
+Two rulesets are needed because a bypass list applies to every rule in its
+ruleset.
+
+| Setting | Ruleset "release tags are immutable" | Ruleset "who may create release tags" |
+|---|---|---|
+| Enforcement status | Active | Active |
+| Target tags, include by pattern | `v*` and `tol-v*` | `v*` and `tol-v*` |
+| Bypass list | empty (no one, including administrators) | the release maintainers (a team or the Repository admin role) |
+| Restrict creations | off | **on** |
+| Restrict updates | **on** | off |
+| Restrict deletions | **on** | off |
+| Block force pushes | **on** | off |
+
+With these in place a release tag can be created once, by a release
+maintainer, and never moved or deleted afterwards.
+
+**Release immutability** (Settings, General, Releases, "Enable release
+immutability"). Once published, a release's assets cannot be added, replaced
+or deleted and its tag cannot be moved. The publisher therefore uploads
+everything to a draft, which stays editable, and publishes once.
+
+An administrator can confirm the rulesets with
+`gh api repos/<owner>/<repo>/rulesets` and inspect each with
+`gh api repos/<owner>/<repo>/rulesets/<id>`. Until both settings are applied,
+the workflow checks are the only protection.
+
+### Release smoke test
+
+Run this once after applying the settings, on a throwaway version in the
+real repository (for example `v0.0.0-smoke.1`), and keep the run URLs and
+command output as the closure record. Steps 1 to 6 should succeed; steps 7
+to 11 should be refused with the stated reason.
+
+1. As a release maintainer, push `v0.0.0-smoke.1` on a reviewed commit of
+   `main`. Wait for every build workflow the `full` set uses in
+   `scripts/release-artifacts.json` to succeed on the tag.
+2. Run "Create release" with the tag. In the publish job, confirm the first
+   check prints `its release is none` and that `gh release create ... --draft`
+   created a draft (`gh release view v0.0.0-smoke.1` reports it as a draft
+   while the upload step runs).
+3. Confirm the upload step uploaded every staged file in one command, and the
+   next check printed `its release is draft` with `--assets`.
+4. Confirm the release was published once: `gh release view v0.0.0-smoke.1
+   --json isDraft,isImmutable,assets` shows `isDraft: false`,
+   `isImmutable: true`, and exactly the files listed in the published
+   `SHA256SUMS`.
+5. Download the assets and run `sha256sum --check SHA256SUMS`; compare
+   `release-provenance.json` with the build runs it names.
+6. Confirm the final check printed `its release is published`.
+7. Run "Create release" with the same tag again. Expected: refused at the
+   first check with `a release for v0.0.0-smoke.1 already exists (published
+   release ...)`; nothing is created or uploaded.
+8. `git push --force origin <other commit>:refs/tags/v0.0.0-smoke.1` as a
+   maintainer, and again as an administrator. Expected: both rejected by the
+   ruleset.
+9. `git push --delete origin v0.0.0-smoke.1`. Expected: rejected by the
+   ruleset.
+10. `gh release upload v0.0.0-smoke.1 extra.txt` and
+    `gh release delete-asset v0.0.0-smoke.1 SHA256SUMS`. Expected: both
+    refused because the release is immutable.
+11. As an account outside the creation bypass list, push a tag `v0.0.0-smoke.2`.
+    Expected: rejected by the ruleset.
+
+Leave the smoke-test release in place; the rulesets forbid deleting its tag.
+Repeat the test with `tol-v0.0.0-smoke.1` and "Create tol release" if Tol
+releases are expected soon.
+
 ## Final Rule
 
 TOS should make it easy for ecosystem participants to know:

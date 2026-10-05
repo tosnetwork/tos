@@ -14,14 +14,25 @@
     You should have received a copy of the GNU General Public License
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include <arpa/inet.h>
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <mutex>
+#include <netinet/in.h>
 #include <optional>
+#include <set>
+#include <sys/socket.h>
+#include <thread>
+#include <unistd.h>
 #include <unordered_set>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 #include "adnl/adnl-network-manager.h"
 #include "adnl/adnl-peer-table.h"
+#include "adnl/adnl-peer-table.hpp"
 #include "adnl/adnl.h"
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.hpp"
@@ -76,12 +87,94 @@ tos::adnl::AdnlAddressList make_addr_list(td::Slice ip_str, int port) {
   return list;
 }
 
+// A stream budget whose per-source share is the whole budget, for tests of the
+// global bound that run every connection from one loopback source.
+std::shared_ptr<tos::quic::QuicInboundStreamBudget> global_stream_budget(size_t max_streams, size_t max_bytes) {
+  return std::make_shared<tos::quic::QuicInboundStreamBudget>(max_streams, max_bytes, max_streams, max_bytes);
+}
+
+// The same for the transport budget.
+std::shared_ptr<tos::quic::QuicTransportMemoryBudget> global_transport_budget(size_t limit) {
+  return std::make_shared<tos::quic::QuicTransportMemoryBudget>(limit, limit);
+}
+
 tos::quic::QuicServer::Options quic_test_options() {
   tos::quic::QuicServer::Options options;
   options.flood_control.reset();
   options.new_connection_rate_limit_capacity = 0;
   return options;
 }
+
+// A peer table whose one-way deliveries wait, unconsumed, until the test
+// releases them: a consumer deliberately paused with messages in its queue.
+struct PausedDeliveries {
+  std::mutex mutex;
+  std::vector<std::pair<td::BufferSlice, std::shared_ptr<void>>> waiting;
+  size_t count() {
+    std::lock_guard lock(mutex);
+    return waiting.size();
+  }
+  void release_all() {
+    std::vector<std::pair<td::BufferSlice, std::shared_ptr<void>>> taken;
+    {
+      std::lock_guard lock(mutex);
+      taken.swap(waiting);
+    }
+  }
+};
+
+class PausingPeerTable final : public tos::adnl::AdnlPeerTableImpl {
+ public:
+  PausingPeerTable(std::string db_root, td::actor::ActorId<tos::keyring::Keyring> keyring,
+                   std::shared_ptr<PausedDeliveries> paused)
+      : AdnlPeerTableImpl(std::move(db_root), keyring), paused_(std::move(paused)) {
+  }
+  void deliver_holding(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice data,
+                       std::shared_ptr<void> held) override {
+    std::lock_guard lock(paused_->mutex);
+    paused_->waiting.emplace_back(std::move(data), std::move(held));
+  }
+
+ private:
+  std::shared_ptr<PausedDeliveries> paused_;
+};
+
+// A query handler that answers nothing until the test releases it: a
+// downstream consumer deliberately paused.
+struct HeldQueries {
+  std::mutex mutex;
+  std::vector<std::pair<td::BufferSlice, td::Promise<td::BufferSlice>>> held;
+  size_t count() {
+    std::lock_guard lock(mutex);
+    return held.size();
+  }
+  void release_all() {
+    std::vector<std::pair<td::BufferSlice, td::Promise<td::BufferSlice>>> taken;
+    {
+      std::lock_guard lock(mutex);
+      taken.swap(held);
+    }
+    for (auto& [data, promise] : taken) {
+      promise.set_value(std::move(data));
+    }
+  }
+};
+
+class HoldingCallback : public tos::adnl::Adnl::Callback {
+ public:
+  explicit HoldingCallback(std::shared_ptr<HeldQueries> held) : held_(std::move(held)) {
+  }
+  void receive_message(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice) override {
+  }
+  void receive_query(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice data,
+                     td::Promise<td::BufferSlice> promise) override {
+    std::lock_guard lock(held_->mutex);
+    held_->held.emplace_back(std::move(data), std::move(promise));
+  }
+
+ private:
+  std::shared_ptr<HeldQueries> held_;
+};
 
 class EchoCallback : public tos::adnl::Adnl::Callback {
  public:
@@ -494,8 +587,7 @@ class RawQuicCallback final : public tos::quic::QuicServer::Callback {
   }
 
   td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString local_public_key,
-                          td::SecureString peer_public_key,
-                          bool is_outbound) override {
+                          td::SecureString peer_public_key, bool is_outbound, const std::string&) override {
     state_->remember_connection(cid, std::move(local_public_key), std::move(peer_public_key), is_outbound);
     return td::Status::OK();
   }
@@ -536,7 +628,7 @@ class PartialResponderCallback final : public tos::quic::QuicServer::Callback {
   }
 
   td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString local_public_key,
-                          td::SecureString peer_public_key, bool is_outbound) override {
+                          td::SecureString peer_public_key, bool is_outbound, const std::string&) override {
     state_->remember_connection(cid, std::move(local_public_key), std::move(peer_public_key), is_outbound);
     return td::Status::OK();
   }
@@ -642,7 +734,8 @@ class RawQuicTestRunner final : public td::actor::Actor {
   // the ServerCallback that owns the inbound-stream timeout). Mirrors the setup
   // in TestRunner::create_node; the node's QUIC server listens on
   // port + QuicSender::NODE_PORT_OFFSET.
-  td::actor::Task<TestNode> create_sender_node(std::string name, int port, tos::quic::QuicServer::Options options) {
+  td::actor::Task<TestNode> create_sender_node(std::string name, int port, tos::quic::QuicServer::Options options,
+                                               std::shared_ptr<PausedDeliveries> paused = nullptr) {
     TestNode node;
     node.ip = "127.0.0.1";
     node.port = port;
@@ -655,7 +748,12 @@ class RawQuicTestRunner final : public td::actor::Actor {
 
     node.keyring = tos::keyring::Keyring::create(db);
     node.network_manager = tos::adnl::AdnlNetworkManager::create(static_cast<td::uint16>(port));
-    node.adnl = tos::adnl::Adnl::create(db, node.keyring.get());
+    if (paused) {
+      node.adnl = td::actor::ActorOwn<tos::adnl::Adnl>(
+          td::actor::create_actor<PausingPeerTable>("PeerTable", db, node.keyring.get(), paused));
+    } else {
+      node.adnl = tos::adnl::Adnl::create(db, node.keyring.get());
+    }
     td::actor::send_closure(node.adnl, &tos::adnl::Adnl::register_network_manager, node.network_manager.get());
 
     tos::adnl::AdnlCategoryMask cat_mask;
@@ -709,6 +807,29 @@ class RawQuicTestRunner final : public td::actor::Actor {
             .wrap();
     LOG_CHECK(sent.is_ok()) << "send_stream(partial) failed for sid=" << sid << ": " << sent.error();
     co_return sid;
+  }
+
+  // Open a stream and send `size` bytes WITHOUT a FIN. Returns the stream id.
+  td::actor::Task<tos::quic::QuicStreamID> send_partial_stream_bytes(RawQuicEndpoint& endpoint,
+                                                                     tos::quic::QuicConnectionId cid, size_t size) {
+    auto sid = co_await open_stream_with_retry(endpoint, cid);
+    td::BufferSlice data(size);
+    data.as_slice().fill('b');
+    auto sent =
+        co_await td::actor::ask(endpoint.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(data), false)
+            .wrap();
+    LOG_CHECK(sent.is_ok()) << "send_stream(partial) failed for sid=" << sid << ": " << sent.error();
+    co_return sid;
+  }
+
+  // Send a FIN on a stream opened earlier, completing it.
+  td::actor::Task<td::Unit> finish_stream(RawQuicEndpoint& endpoint, tos::quic::QuicConnectionId cid,
+                                          tos::quic::QuicStreamID sid) {
+    auto sent =
+        co_await td::actor::ask(endpoint.server, &tos::quic::QuicServer::send_stream, cid, sid, td::BufferSlice{}, true)
+            .wrap();
+    LOG_CHECK(sent.is_ok()) << "send_stream(fin) failed for sid=" << sid << ": " << sent.error();
+    co_return td::Unit{};
   }
 
   td::actor::Task<std::pair<tos::quic::QuicConnectionId, tos::quic::QuicConnectionId>> connect(
@@ -2004,6 +2125,431 @@ TEST(QuicRateLimiter, CapacityOneDoesNotAllowExtraBurst) {
   expect_take(false);
 }
 
+// Polls `predicate` on the test actor until it holds or `timeout` passes.
+template <class Predicate>
+td::actor::Task<td::Unit> poll_until(Predicate&& predicate, double timeout, const char* what) {
+  auto deadline = td::Timestamp::in(timeout);
+  while (!predicate()) {
+    LOG_CHECK(!deadline.is_in_past()) << "timed out waiting: " << what;
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
+  }
+  co_return td::Unit{};
+}
+
+// Peer-initiated streams are admitted against a budget shared by every
+// connection before any state is created for them; a stream past it is reset,
+// the streams already open are untouched, and every slot comes back when its
+// stream goes away.
+TEST(QuicInboundBudget, StreamsAreBoundedAcrossConnections) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    auto budget = global_stream_budget(2, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("budget-streams", next_port(), options);
+    auto inbound_streams = [&]() -> td::actor::Task<size_t> {
+      auto stats = co_await td::actor::ask(receiver.quic_sender, &tos::quic::QuicSender::collect_stats);
+      co_return stats.inbound_streams;
+    };
+
+    auto a = co_await t.create_endpoint(quic_test_options());
+    auto b = co_await t.create_endpoint(quic_test_options());
+    auto cid_a = co_await t.connect_raw_to(a, receiver.port + kQuicPortOffset);
+    auto cid_b = co_await t.connect_raw_to(b, receiver.port + kQuicPortOffset);
+
+    co_await t.send_partial_stream(a, cid_a, 'x');
+    co_await t.send_partial_stream(b, cid_b, 'y');
+    co_await poll_until([&] { return budget->streams() == 2; }, 5.0, "two streams admitted");
+    ASSERT_EQ(2u, co_await inbound_streams());
+
+    // Both connections are far below their own stream limits; the process is
+    // at its budget. The next stream is reset without state.
+    auto refused = co_await t.send_partial_stream(a, cid_a, 'z');
+    co_await t.wait_for_stream_close(a, refused);
+    ASSERT_EQ(2u, budget->streams());
+    ASSERT_TRUE(budget->streams() <= budget->max_streams());
+    ASSERT_EQ(2u, co_await inbound_streams());
+
+    // Reaping the abandoned streams gives back every slot and byte.
+    jump_time_by(5.0);
+    co_await poll_until([&] { return budget->streams() == 0 && budget->bytes() == 0; }, 3.0,
+                        "reaped streams returned their reservations");
+
+    // The recovered capacity admits a new stream.
+    co_await t.send_partial_stream(b, cid_b, 'w');
+    co_await poll_until([&] { return budget->streams() == 1; }, 5.0, "recovered slot admitted a stream");
+    co_return td::Unit{};
+  });
+}
+
+// Bytes an inbound stream buffers are reserved before they are buffered. The
+// stream whose chunk does not fit is reset and gives back what it held; a
+// completed stream gives back its bytes at once.
+TEST(QuicInboundBudget, BufferedBytesAreBoundedAcrossConnections) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kChunk = 400;         // under the 1024-byte default peer MTU
+    auto budget = global_stream_budget(100, 2 * kChunk + 200);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("budget-bytes", next_port(), options);
+
+    auto a = co_await t.create_endpoint(quic_test_options());
+    auto b = co_await t.create_endpoint(quic_test_options());
+    auto cid_a = co_await t.connect_raw_to(a, receiver.port + kQuicPortOffset);
+    auto cid_b = co_await t.connect_raw_to(b, receiver.port + kQuicPortOffset);
+
+    auto first = co_await t.send_partial_stream_bytes(a, cid_a, kChunk);
+    co_await t.send_partial_stream_bytes(b, cid_b, kChunk);
+    co_await poll_until([&] { return budget->bytes() == 2 * kChunk; }, 5.0, "two chunks buffered");
+
+    auto refused = co_await t.send_partial_stream_bytes(a, cid_a, kChunk);
+    co_await t.wait_for_stream_close(a, refused);
+    ASSERT_EQ(2 * kChunk, budget->bytes());
+    co_await poll_until([&] { return budget->streams() == 2; }, 5.0, "refused stream returned its slot");
+
+    // Completing a stream hands its bytes on and releases them.
+    co_await t.finish_stream(a, cid_a, first);
+    co_await poll_until([&] { return budget->bytes() == kChunk; }, 5.0, "completed stream released its bytes");
+    ASSERT_TRUE(budget->bytes() <= budget->max_bytes());
+
+    jump_time_by(5.0);
+    co_await poll_until([&] { return budget->bytes() == 0; }, 3.0, "reaped stream released its bytes");
+    co_return td::Unit{};
+  });
+}
+
+// What one open, idle inbound stream holds on a live server, for the default
+// stream budget. Printed; bounded loosely so a large regression fails.
+// A client endpoint that, once `armed` is set, drops every datagram it sends
+// smaller than `kSmallDatagram`: acknowledgements, and a stream's first byte
+// sent on its own, together with every retransmission of it. Larger datagrams
+// carrying the rest of the stream still arrive, so the receiver's transport
+// holds them out of order with the first byte missing.
+constexpr size_t kSmallDatagram = 200;
+// Small enough to leave in a single datagram, so that no retransmission of the
+// withheld first byte can ride along with it.
+constexpr size_t kWithheldTail = 1000;
+
+tos::quic::QuicServer::Options withholding_client_options(std::shared_ptr<std::atomic<bool>> armed) {
+  auto options = quic_test_options();
+  options.enable_gso = false;
+  options.drop_outgoing_datagram = [armed](td::Slice datagram) {
+    return armed->load() && datagram.size() < kSmallDatagram;
+  };
+  return options;
+}
+
+// Opens a stream, withholds its first byte, and sends `size` more bytes.
+td::actor::Task<tos::quic::QuicStreamID> send_with_first_byte_withheld(RawQuicTestRunner& t, RawQuicEndpoint& client,
+                                                                       tos::quic::QuicConnectionId cid,
+                                                                       std::atomic<bool>& armed, size_t size) {
+  auto sid = co_await t.open_stream_with_retry(client, cid);
+  armed = true;
+  td::BufferSlice first(1);
+  first.as_slice()[0] = 'f';
+  auto sent =
+      co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(first), false)
+          .wrap();
+  LOG_CHECK(sent.is_ok()) << sent.error();
+  co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+  td::BufferSlice rest(size);
+  rest.as_slice().fill('r');
+  sent = co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(rest), false)
+             .wrap();
+  LOG_CHECK(sent.is_ok()) << sent.error();
+  co_return sid;
+}
+
+// Data the transport holds out of order, below the stream callback, is charged
+// to the transport budget even though no byte of it has been delivered.
+TEST(QuicTransportBudget, OutOfOrderDataIsCharged) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    auto transport = global_transport_budget(64 << 20);
+    auto streams = global_stream_budget(100, 1 << 20);
+    auto options = quic_test_options();
+    options.transport_budget = transport;
+    options.inbound_stream_budget = streams;
+    auto receiver = co_await t.create_sender_node("transport-ooo", next_port(), options);
+
+    auto armed = std::make_shared<std::atomic<bool>>(false);
+    auto client = co_await t.create_endpoint(withholding_client_options(armed));
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    auto idle = transport->used();
+    LOG(WARNING) << "QUIC_TRANSPORT_MEASURE idle_connection_bytes=" << idle << " handshake_peak=" << transport->peak();
+    ASSERT_TRUE(idle > 0);
+
+    co_await send_with_first_byte_withheld(t, client, cid, *armed, kWithheldTail);
+    co_await poll_until([&] { return transport->used() >= idle + kWithheldTail; }, 5.0,
+                        "out-of-order data charged to the transport budget");
+    // Nothing reached the stream callback: the first byte is still missing.
+    ASSERT_EQ(0u, streams->streams());
+    ASSERT_EQ(0u, streams->bytes());
+    LOG(WARNING) << "QUIC_TRANSPORT_MEASURE out_of_order_bytes=" << (transport->used() - idle);
+    co_return td::Unit{};
+  });
+}
+
+// The transport budget bounds what out-of-order data can hold: the connection
+// whose reassembly does not fit is closed, everything it held is given back,
+// and a new connection can use the freed capacity.
+TEST(QuicTransportBudget, OutOfOrderDataPastTheBudgetClosesTheConnection) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    auto transport = global_transport_budget(4 << 20);
+    auto options = quic_test_options();
+    options.transport_budget = transport;
+    auto receiver = co_await t.create_sender_node("transport-bound", next_port(), options);
+
+    auto armed = std::make_shared<std::atomic<bool>>(false);
+    auto client = co_await t.create_endpoint(withholding_client_options(armed));
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    auto idle = transport->used();
+    ASSERT_TRUE(idle > 0);
+    // Fill the budget so that the established connection keeps room for its
+    // ordinary traffic but not for reassembly, which the transport allocates
+    // in 8 KiB chunks.
+    auto filler = transport->limit() - idle - 4096;
+    ASSERT_TRUE(transport->try_reserve(filler));
+    co_await send_with_first_byte_withheld(t, client, cid, *armed, kWithheldTail);
+    // The receiver closes the connection and frees all of it.
+    co_await poll_until([&] { return transport->used() == filler; }, 5.0, "refused connection gave back its memory");
+    ASSERT_TRUE(transport->peak() <= transport->limit());
+    ASSERT_TRUE(transport->release(filler));
+
+    // A new connection fits in what was freed.
+    auto second = co_await t.create_endpoint(quic_test_options());
+    co_await t.connect_raw_to(second, receiver.port + kQuicPortOffset);
+    co_await poll_until([&] { return transport->used() > 0; }, 5.0, "new connection admitted after the close");
+    co_return td::Unit{};
+  });
+}
+
+// A completed request's bytes stay charged until its handler has consumed it,
+// not only until it leaves the stream: requests a paused handler holds count
+// against the budget, and the next one that does not fit is refused.
+TEST(QuicInboundBudget, PayloadsStayChargedUntilConsumed) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kPayload = 400;
+    auto streams = global_stream_budget(100, 1000);
+    auto options = quic_test_options();
+    options.inbound_stream_budget = streams;
+    auto receiver = co_await t.create_sender_node("budget-consumer", next_port(), options);
+    auto held = std::make_shared<HeldQueries>();
+    td::actor::send_closure(receiver.adnl, &tos::adnl::Adnl::subscribe, receiver.id, "H",
+                            std::make_unique<HoldingCallback>(held));
+
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    auto query = [&]() -> td::actor::Task<tos::quic::QuicStreamID> {
+      std::string body = "H" + std::string(kPayload - 1, 'q');
+      auto wire =
+          tos::serialize_tl_object(tos::create_tl_object<tos::tos_api::quic_query>(td::BufferSlice(body)), true);
+      auto sid = co_await t.open_stream_with_retry(client, cid);
+      auto sent =
+          co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(wire), true)
+              .wrap();
+      LOG_CHECK(sent.is_ok()) << sent.error();
+      co_return sid;
+    };
+
+    co_await query();
+    co_await poll_until([&] { return held->count() == 1; }, 5.0, "first query reached the paused handler");
+    auto one = streams->bytes();
+    ASSERT_TRUE(one >= kPayload);
+    co_await query();
+    co_await poll_until([&] { return held->count() == 2; }, 5.0, "second query reached the paused handler");
+    ASSERT_EQ(2 * one, streams->bytes());
+
+    // Both payloads are with the handler, still charged; a third does not fit.
+    auto refused = co_await query();
+    co_await t.wait_for_stream_close(client, refused);
+    ASSERT_EQ(2u, held->count());
+    ASSERT_EQ(2 * one, streams->bytes());
+
+    // The handler answers: the charges end.
+    held->release_all();
+    co_await poll_until([&] { return streams->bytes() == 0; }, 5.0, "answered queries released their bytes");
+    co_return td::Unit{};
+  });
+}
+
+// A one-way message's bytes stay charged until the peer table consumes it: with
+// that consumer paused, handed-over messages still count, and the next one that
+// does not fit is refused.
+TEST(QuicInboundBudget, MessagesStayChargedUntilDelivered) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kPayload = 400;
+    auto streams = global_stream_budget(100, 1000);
+    auto options = quic_test_options();
+    options.inbound_stream_budget = streams;
+    auto paused = std::make_shared<PausedDeliveries>();
+    auto receiver = co_await t.create_sender_node("budget-messages", next_port(), options, paused);
+
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    auto message = [&]() -> td::actor::Task<tos::quic::QuicStreamID> {
+      auto wire = tos::serialize_tl_object(
+          tos::create_tl_object<tos::tos_api::quic_message>(td::BufferSlice(std::string(kPayload, 'm'))), true);
+      auto sid = co_await t.open_stream_with_retry(client, cid);
+      auto sent =
+          co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(wire), true)
+              .wrap();
+      LOG_CHECK(sent.is_ok()) << sent.error();
+      co_return sid;
+    };
+
+    co_await message();
+    co_await poll_until([&] { return paused->count() == 1; }, 5.0, "first message handed to the peer table");
+    auto one = streams->bytes();
+    ASSERT_TRUE(one >= kPayload);
+    co_await message();
+    co_await poll_until([&] { return paused->count() == 2; }, 5.0, "second message handed to the peer table");
+    ASSERT_EQ(2 * one, streams->bytes());
+
+    // Both wait in the paused consumer, still charged; a third does not fit.
+    auto refused = co_await message();
+    co_await t.wait_for_stream_close(client, refused);
+    ASSERT_EQ(2u, paused->count());
+    ASSERT_EQ(2 * one, streams->bytes());
+
+    // The consumer takes them: the charges end.
+    paused->release_all();
+    ASSERT_EQ(0u, streams->bytes());
+    co_return td::Unit{};
+  });
+}
+
+// What a sender holds with a one-way message lives until the subscriber has
+// the message, through the peer table's and the local id's mailboxes.
+class HeldProbeCallback : public tos::adnl::Adnl::Callback {
+ public:
+  HeldProbeCallback(std::weak_ptr<void> held, std::shared_ptr<std::atomic<int>> seen)
+      : held_(std::move(held)), seen_(std::move(seen)) {
+  }
+  void receive_message(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice) override {
+    seen_->store(held_.expired() ? 1 : 2);
+  }
+  void receive_query(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort, td::BufferSlice,
+                     td::Promise<td::BufferSlice> promise) override {
+    promise.set_error(td::Status::Error("unused"));
+  }
+
+ private:
+  std::weak_ptr<void> held_;
+  std::shared_ptr<std::atomic<int>> seen_;
+};
+
+TEST(QuicInboundBudget, HeldResourcesReachTheSubscriber) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto node = co_await t.create_sender_node("deliver-holding", next_port(), quic_test_options());
+    auto held = std::make_shared<int>(0);
+    auto seen = std::make_shared<std::atomic<int>>(0);
+    td::actor::send_closure(node.adnl, &tos::adnl::Adnl::subscribe, node.id, "W",
+                            std::make_unique<HeldProbeCallback>(std::weak_ptr<void>(held), seen));
+    auto table = td::actor::actor_dynamic_cast<tos::adnl::AdnlPeerTable>(node.adnl.get());
+    std::shared_ptr<void> carried = std::move(held);
+    td::actor::send_closure(table, &tos::adnl::AdnlPeerTable::deliver_holding, node.id, node.id,
+                            td::BufferSlice("W-message"), std::move(carried));
+    co_await poll_until([&] { return seen->load() != 0; }, 5.0, "message reached its subscriber");
+    // 2: what the sender held was still alive when the subscriber got the message.
+    ASSERT_EQ(2, seen->load());
+    co_return td::Unit{};
+  });
+}
+
+// A transport allocation refused while packets are being produced closes the
+// connection at once and frees what it held; a fresh connection is then
+// admitted.
+TEST(QuicTransportBudget, OutputAllocationFailureClosesTheConnection) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto transport = global_transport_budget(4 << 20);
+    auto server_options = quic_test_options();
+    server_options.transport_budget = transport;
+    auto server = co_await t.create_endpoint(server_options);
+
+    // Once armed, the client sends nothing at all, so the server's only
+    // transport work is producing output.
+    auto silent = std::make_shared<std::atomic<bool>>(false);
+    auto client_options = quic_test_options();
+    client_options.drop_outgoing_datagram = [silent](td::Slice) { return silent->load(); };
+    auto client = co_await t.create_endpoint(client_options);
+    auto [out_cid, in_cid] = co_await t.connect(client, server);
+    auto sid = co_await t.send_partial_stream(client, out_cid, 'x');
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    silent->store(true);
+
+    auto idle = transport->used();
+    ASSERT_TRUE(idle > 0);
+    auto filler = transport->limit() - idle - 2048;
+    ASSERT_TRUE(transport->try_reserve(filler));
+    td::BufferSlice answer(300000);
+    answer.as_slice().fill('a');
+    auto sent = co_await td::actor::ask(server.server, &tos::quic::QuicServer::send_stream, in_cid, sid,
+                                        std::move(answer), false)
+                    .wrap();
+    LOG_CHECK(sent.is_ok()) << sent.error();
+    // Far sooner than the 15 s idle timeout that would otherwise end it.
+    co_await poll_until([&] { return transport->used() == filler; }, 3.0,
+                        "connection that could not produce output gave back its memory");
+    ASSERT_TRUE(transport->release(filler));
+
+    auto fresh = co_await t.create_endpoint(quic_test_options());
+    co_await t.connect(fresh, server);
+    ASSERT_TRUE(transport->used() > 0);
+    co_return td::Unit{};
+  });
+}
+
+// Bytes the process heap has in use, where the C library reports it.
+static std::optional<size_t> heap_bytes_in_use() {
+#if defined(__GLIBC__)
+  return mallinfo2().uordblks;
+#else
+  return std::nullopt;
+#endif
+}
+
+TEST(QuicInboundBudget, MeasureIdleInboundStreamCost) {
+  if (!heap_bytes_in_use()) {
+    LOG(WARNING) << "QUIC_INBOUND_STREAM_MEASURE skipped: this C library reports no heap usage";
+    return;
+  }
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kStreams = 256;
+    auto budget = global_stream_budget(kStreams, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("budget-measure", next_port(), options);
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    // Warm the connection with one stream so connection state is in the baseline.
+    co_await t.send_partial_stream(client, cid, 'w');
+    co_await poll_until([&] { return budget->streams() == 1; }, 5.0, "warm-up stream admitted");
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    auto before = heap_bytes_in_use().value_or(0);
+    for (size_t i = 1; i < kStreams; i++) {
+      co_await t.send_partial_stream(client, cid, 'm');
+    }
+    co_await poll_until([&] { return budget->streams() == kStreams; }, 10.0, "all streams admitted");
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    auto after = heap_bytes_in_use().value_or(0);
+    auto per_stream = after > before ? (after - before) / (kStreams - 1) : 0;
+    LOG(WARNING) << "QUIC_INBOUND_STREAM_MEASURE streams=" << (kStreams - 1) << " heap_bytes=" << (after - before)
+                 << " per_stream=" << per_stream << " (both endpoints in one process)";
+    ASSERT_TRUE(per_stream < (64u << 10));
+    co_return td::Unit{};
+  });
+}
+
 TEST(QuicInboundStreamTimeout, AbandonedInboundStreamIsReaped) {
   run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
     // NODE_PORT_OFFSET: a QuicSender node listens for QUIC on adnl_port + 1000.
@@ -2142,6 +2688,429 @@ TEST(QuicConnectionLimit, MaxConnectionsRejectsBeyondCap) {
     ASSERT_EQ(server.state->get_inbound_cid().value(), c1_in);
     co_return td::Unit{};
   });
+}
+
+// New-connection admission through the real inbound path. QuicServer binds
+// the wildcard address, so its clients all arrive from 127.0.0.1; to present
+// distinct sources, a real client's Initial is captured once and then sent by
+// plain UDP sockets bound to other loopback addresses. With stateless Retry on
+// (the default), an Initial without a token never creates a connection, so
+// every copy goes through admission.
+int bound_udp_socket(const std::string& ip, int port) {
+  int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+  CHECK(fd >= 0);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(static_cast<uint16_t>(port));
+  CHECK(::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) == 1);
+  CHECK(::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+  return fd;
+}
+
+int local_port(int fd) {
+  sockaddr_in addr{};
+  socklen_t len = sizeof(addr);
+  CHECK(::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0);
+  return ntohs(addr.sin_port);
+}
+
+td::actor::Task<std::string> capture_initial(RawQuicTestRunner& t) {
+  int capture = bound_udp_socket("127.0.0.1", 0);
+  auto client = co_await t.create_endpoint(quic_test_options());
+  auto started =
+      co_await td::actor::ask(client.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"),
+                              local_port(capture), clone_quic_key(client.key), td::Slice("tos"), td::Slice(""))
+          .wrap();
+  ASSERT_TRUE(started.is_ok());
+  std::string datagram(65536, '\0');
+  ssize_t n = -1;
+  for (int i = 0; i < 100 && n <= 0; i++) {
+    n = ::recv(capture, datagram.data(), datagram.size(), MSG_DONTWAIT);
+    if (n <= 0) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
+    }
+  }
+  ::close(capture);
+  ASSERT_TRUE(n > 0);
+  datagram.resize(static_cast<size_t>(n));
+  co_return datagram;
+}
+
+void send_initial_from(const std::string& source_ip, int server_port, const std::string& datagram) {
+  int fd = bound_udp_socket(source_ip, 0);
+  sockaddr_in to{};
+  to.sin_family = AF_INET;
+  to.sin_port = htons(static_cast<uint16_t>(server_port));
+  CHECK(::inet_pton(AF_INET, "127.0.0.1", &to.sin_addr) == 1);
+  auto sent = ::sendto(fd, datagram.data(), datagram.size(), 0, reinterpret_cast<sockaddr*>(&to), sizeof(to));
+  CHECK(sent == static_cast<ssize_t>(datagram.size()));
+  ::close(fd);
+}
+
+tos::quic::QuicServer::Options admission_test_options() {
+  auto options = quic_test_options();
+  options.flood_control = 100;
+  options.stateless_retry = true;
+  return options;
+}
+
+td::actor::Task<size_t> tracked_sources(RawQuicEndpoint& server) {
+  co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+  auto tracked = co_await td::actor::ask(server.server, &tos::quic::QuicServer::tracked_new_connection_sources);
+  co_return tracked;
+}
+
+TEST(QuicAdmission, SourcesRefusedByTheGlobalLimitAreNotTracked) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto initial = co_await capture_initial(t);
+    auto server_options = admission_test_options();
+    server_options.new_connection_rate_limit_capacity = 1;
+    server_options.new_connection_rate_limit_period = 3600;
+    server_options.global_new_connection_rate_limit_capacity = 2;
+    server_options.global_new_connection_rate_limit_period = 3600;
+    auto server = co_await t.create_endpoint(server_options);
+
+    // The first two sources reach admission and take the global tokens.
+    send_initial_from("127.0.0.2", server.port, initial);
+    send_initial_from("127.0.0.3", server.port, initial);
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(2));
+    // Every later source is refused by the global limit and leaves no entry.
+    for (int i = 4; i < 40; i++) {
+      send_initial_from(PSTRING() << "127.0.0." << i, server.port, initial);
+    }
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(2));
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicAdmission, AFullSourceTableAdmitsAgainOnceEntriesRefill) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto initial = co_await capture_initial(t);
+    auto server_options = admission_test_options();
+    server_options.new_connection_rate_limit_capacity = 4;
+    server_options.new_connection_rate_limit_period = 0.2;
+    server_options.max_tracked_new_connection_sources = 2;
+    auto server = co_await t.create_endpoint(server_options);
+
+    send_initial_from("127.0.0.2", server.port, initial);
+    send_initial_from("127.0.0.3", server.port, initial);
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(2));
+    // Full, and both entries still draining: more sources are refused.
+    for (int i = 4; i < 20; i++) {
+      send_initial_from(PSTRING() << "127.0.0." << i, server.port, initial);
+    }
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(2));
+    // Once the entries have refilled (and the scan budget has passed), the
+    // table makes room: they are dropped and the new source is the only one.
+    co_await td::actor::coro_sleep(td::Timestamp::in(2.0));
+    send_initial_from("127.0.0.30", server.port, initial);
+    ASSERT_EQ(co_await tracked_sources(server), static_cast<size_t>(1));
+    co_return td::Unit{};
+  });
+}
+
+// Per-source shares of the inbound budgets. Every test runs a saturating source
+// beside an unrelated one against one receiver, with small injected budgets so
+// each share is reached with a handful of streams or bytes. QUIC endpoints bind
+// the wildcard address, so every one of them sends from 127.0.0.1; the receiver
+// is told which client ports stand for the unrelated source, and every other
+// peer is keyed as production keys it.
+constexpr const char* kSaturatingSource = "v4:127.0.0.1";
+constexpr const char* kUnrelatedSource = "v4:192.0.2.2";
+
+struct UnrelatedPorts {
+  void add(int port) {
+    std::lock_guard lock(mutex);
+    ports.insert(port);
+  }
+  std::function<std::string(const td::IPAddress&)> source_key() {
+    return [self = this](const td::IPAddress& peer) {
+      std::lock_guard lock(self->mutex);
+      return self->ports.count(peer.get_port()) > 0 ? std::string(kUnrelatedSource)
+                                                    : tos::adnl::network_source_key(peer);
+    };
+  }
+  std::mutex mutex;
+  std::set<int> ports;
+};
+
+// One source's trickle streams, over several connections, take at most its
+// share of the stream slots; the stream past the share is reset though the
+// global budget has room, and the slots left are the unrelated source's. Reaped
+// streams give everything back, the ledgers forget both sources, and the
+// saturating source is admitted again after it reconnects.
+TEST(QuicSourceShare, StreamSlotsOfOneSourceLeaveOthersTheirs) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    // Four slots in all, two for any one source.
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 1 << 20, 2, 1 << 20);
+    auto unrelated = std::make_shared<UnrelatedPorts>();
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_budget = budget;
+    options.source_key_for_test = unrelated->source_key();
+    auto receiver = co_await t.create_sender_node("share-streams", next_port(), options);
+    auto port = receiver.port + kQuicPortOffset;
+
+    auto hog_a = co_await t.create_endpoint(quic_test_options());
+    auto hog_b = co_await t.create_endpoint(quic_test_options());
+    auto cid_a = co_await t.connect_raw_to(hog_a, port);
+    auto cid_b = co_await t.connect_raw_to(hog_b, port);
+    co_await t.send_partial_stream(hog_a, cid_a, 'a');
+    co_await t.send_partial_stream(hog_b, cid_b, 'b');
+    co_await poll_until([&] { return budget->source_streams(kSaturatingSource) == 2; }, 5.0,
+                        "saturating source holds its share");
+
+    // The same source's next stream, on either connection, is reset.
+    auto refused = co_await t.send_partial_stream(hog_a, cid_a, 'c');
+    co_await t.wait_for_stream_close(hog_a, refused);
+    ASSERT_EQ(2u, budget->streams());
+    ASSERT_EQ(2u, budget->source_streams(kSaturatingSource));
+
+    // The unrelated source opens streams in the slots that are left.
+    auto other = co_await t.create_endpoint(quic_test_options());
+    unrelated->add(other.port);
+    auto cid_o = co_await t.connect_raw_to(other, port);
+    auto other_x = co_await t.send_partial_stream(other, cid_o, 'x');
+    auto other_y = co_await t.send_partial_stream(other, cid_o, 'y');
+    co_await poll_until([&] { return budget->source_streams(kUnrelatedSource) == 2; }, 5.0,
+                        "unrelated source admitted beside the saturating one");
+    ASSERT_EQ(4u, budget->streams());
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    ASSERT_TRUE(!other.state->has_closed_stream(other_x) && !other.state->has_closed_stream(other_y));
+
+    // Reaping the abandoned streams gives back every slot, and no source is
+    // left in either ledger.
+    jump_time_by(5.0);
+    co_await poll_until(
+        [&] { return budget->streams() == 0 && budget->bytes() == 0 && budget->tracked_sources() == 0; }, 3.0,
+        "reaped streams returned their reservations and source entries");
+
+    // The saturating source reconnects and is admitted again.
+    auto hog_c = co_await t.create_endpoint(quic_test_options());
+    auto cid_c = co_await t.connect_raw_to(hog_c, port);
+    co_await t.send_partial_stream(hog_c, cid_c, 'r');
+    co_await poll_until([&] { return budget->source_streams(kSaturatingSource) == 1; }, 5.0,
+                        "reconnected source admitted");
+    co_return td::Unit{};
+  });
+}
+
+// One source's buffered stream bytes are capped at its share: the chunk past it
+// resets its stream though the global budget has room, and the unrelated source
+// buffers what is left. Completed and reaped streams give back everything.
+TEST(QuicSourceShare, BufferedBytesOfOneSourceLeaveOthersTheirs) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kChunk = 400;         // under the 1024-byte default peer MTU
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(100, 2 * kChunk + 200, 100, kChunk + 100);
+    auto unrelated = std::make_shared<UnrelatedPorts>();
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_budget = budget;
+    options.source_key_for_test = unrelated->source_key();
+    auto receiver = co_await t.create_sender_node("share-bytes", next_port(), options);
+    auto port = receiver.port + kQuicPortOffset;
+
+    auto hog = co_await t.create_endpoint(quic_test_options());
+    auto cid_h = co_await t.connect_raw_to(hog, port);
+    auto first = co_await t.send_partial_stream_bytes(hog, cid_h, kChunk);
+    co_await poll_until([&] { return budget->source_bytes(kSaturatingSource) == kChunk; }, 5.0,
+                        "saturating source's chunk buffered");
+    auto refused = co_await t.send_partial_stream_bytes(hog, cid_h, kChunk);
+    co_await t.wait_for_stream_close(hog, refused);
+    ASSERT_EQ(kChunk, budget->bytes());
+
+    auto other = co_await t.create_endpoint(quic_test_options());
+    unrelated->add(other.port);
+    auto cid_o = co_await t.connect_raw_to(other, port);
+    auto kept = co_await t.send_partial_stream_bytes(other, cid_o, kChunk);
+    co_await poll_until([&] { return budget->source_bytes(kUnrelatedSource) == kChunk; }, 5.0,
+                        "unrelated source buffered beside the saturating one");
+    ASSERT_EQ(2 * kChunk, budget->bytes());
+    ASSERT_TRUE(!other.state->has_closed_stream(kept));
+
+    // Completing the saturating source's stream hands its bytes on and frees them.
+    co_await t.finish_stream(hog, cid_h, first);
+    co_await poll_until([&] { return budget->source_bytes(kSaturatingSource) == 0; }, 5.0,
+                        "completed stream released its source bytes");
+    // The unrelated source's abandoned stream is reaped. (The completed stream
+    // keeps its slot until the transport closes it, so only bytes are checked.)
+    jump_time_by(5.0);
+    co_await poll_until(
+        [&] {
+          return budget->bytes() == 0 && budget->source_bytes(kSaturatingSource) == 0 &&
+                 budget->source_bytes(kUnrelatedSource) == 0;
+        },
+        3.0, "reaped stream released its bytes");
+
+    // The saturating source reconnects and buffers again.
+    auto again = co_await t.create_endpoint(quic_test_options());
+    auto cid_r = co_await t.connect_raw_to(again, port);
+    co_await t.send_partial_stream_bytes(again, cid_r, kChunk);
+    co_await poll_until([&] { return budget->source_bytes(kSaturatingSource) == kChunk; }, 5.0,
+                        "reconnected source buffered again");
+    co_return td::Unit{};
+  });
+}
+
+// Transport memory is charged to the connection's source as well as to the
+// shared budget. With the saturating source's share all but spent, its
+// connection's out-of-order data closes that connection and gives everything
+// back, though the shared budget is mostly free; the unrelated source's
+// connection holds the same out-of-order data and stays open.
+TEST(QuicSourceShare, TransportMemoryOfOneSourceIsCapped) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    constexpr size_t kShare = 1 << 20;
+    auto transport = std::make_shared<tos::quic::QuicTransportMemoryBudget>(64 << 20, kShare);
+    auto unrelated = std::make_shared<UnrelatedPorts>();
+    auto options = quic_test_options();
+    options.transport_budget = transport;
+    options.source_key_for_test = unrelated->source_key();
+    auto receiver = co_await t.create_sender_node("share-transport", next_port(), options);
+    auto port = receiver.port + kQuicPortOffset;
+
+    auto hog_armed = std::make_shared<std::atomic<bool>>(false);
+    auto hog = co_await t.create_endpoint(withholding_client_options(hog_armed));
+    auto cid_h = co_await t.connect_raw_to(hog, port);
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    auto idle = transport->source_used(kSaturatingSource);
+    ASSERT_TRUE(idle > 0);
+    ASSERT_EQ(transport->used(), idle);
+    // The rest of the source's share, but for room for ordinary traffic and
+    // not for reassembly, is held as if by the source's other connections.
+    auto filler = kShare - idle - 4096;
+    ASSERT_TRUE(transport->try_reserve(kSaturatingSource, filler));
+    co_await send_with_first_byte_withheld(t, hog, cid_h, *hog_armed, kWithheldTail);
+    co_await poll_until([&] { return transport->source_used(kSaturatingSource) == filler; }, 5.0,
+                        "connection past its source's share closed and gave back its memory");
+    ASSERT_TRUE(transport->used() < transport->limit() / 2);
+
+    // The unrelated source holds the same out-of-order data and is kept.
+    auto other_armed = std::make_shared<std::atomic<bool>>(false);
+    auto other = co_await t.create_endpoint(withholding_client_options(other_armed));
+    unrelated->add(other.port);
+    auto cid_o = co_await t.connect_raw_to(other, port);
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    auto other_idle = transport->source_used(kUnrelatedSource);
+    ASSERT_TRUE(other_idle > 0);
+    co_await send_with_first_byte_withheld(t, other, cid_o, *other_armed, kWithheldTail);
+    co_await poll_until([&] { return transport->source_used(kUnrelatedSource) >= other_idle + kWithheldTail; }, 5.0,
+                        "unrelated source's out-of-order data charged to its own share");
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.3));
+    ASSERT_TRUE(transport->source_used(kUnrelatedSource) >= other_idle + kWithheldTail);
+    ASSERT_EQ(transport->used(), filler + transport->source_used(kUnrelatedSource));
+
+    // The saturating source lets go and reconnects: it is admitted again.
+    ASSERT_TRUE(transport->release(kSaturatingSource, filler));
+    ASSERT_EQ(0u, transport->source_used(kSaturatingSource));
+    auto again = co_await t.create_endpoint(quic_test_options());
+    co_await t.connect_raw_to(again, port);
+    co_await poll_until([&] { return transport->source_used(kSaturatingSource) > 0; }, 5.0,
+                        "reconnected source admitted");
+    co_return td::Unit{};
+  });
+}
+
+td::actor::Task<size_t> inbound_connections_from(RawQuicEndpoint& server, std::string source) {
+  auto counts =
+      co_await td::actor::ask(server.server, &tos::quic::QuicServer::inbound_connections_by_source, std::move(source));
+  co_return counts.first;
+}
+
+td::actor::Task<td::Unit> wait_inbound_connections(RawQuicEndpoint& server, std::string source, size_t expected,
+                                                   const char* what) {
+  auto deadline = td::Timestamp::in(10.0);
+  while (co_await inbound_connections_from(server, source) != expected) {
+    LOG_CHECK(!deadline.is_in_past()) << "timed out waiting: " << what;
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
+  }
+  co_return td::Unit{};
+}
+
+// One source holds at most its share of the server's inbound connections,
+// whether or not flood control is on; a connection past it is refused while the
+// table has room, and an unrelated source still connects. When the source's
+// connections go away, it connects again.
+TEST(QuicSourceShare, InboundConnectionsOfOneSourceAreCapped) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto unrelated = std::make_shared<UnrelatedPorts>();
+    auto server_options = quic_test_options();
+    ASSERT_TRUE(!server_options.flood_control.has_value());
+    server_options.max_connections_per_source = 2;
+    server_options.source_key_for_test = unrelated->source_key();
+    auto server = co_await t.create_endpoint(server_options);
+
+    auto hog_a = co_await t.create_endpoint(quic_test_options());
+    auto hog_b = co_await t.create_endpoint(quic_test_options());
+    auto hog_c = co_await t.create_endpoint(quic_test_options());
+    co_await t.connect(hog_a, server);
+    co_await t.connect(hog_b, server);
+    co_await wait_inbound_connections(server, kSaturatingSource, 2, "saturating source holds its share");
+
+    // The third connection from the same source is never admitted.
+    auto started = co_await td::actor::ask(hog_c.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"),
+                                           server.port, clone_quic_key(hog_c.key), td::Slice("tos"), td::Slice(""))
+                       .wrap();
+    ASSERT_TRUE(started.is_ok());
+    co_await td::actor::coro_sleep(td::Timestamp::in(1.0));
+    ASSERT_EQ(2u, co_await inbound_connections_from(server, kSaturatingSource));
+    ASSERT_TRUE(!hog_c.state->get_outbound_cid().has_value());
+
+    // An unrelated source connects beside it.
+    auto other = co_await t.create_endpoint(quic_test_options());
+    unrelated->add(other.port);
+    co_await t.connect(other, server);
+    co_await wait_inbound_connections(server, kUnrelatedSource, 1, "unrelated source admitted");
+    ASSERT_EQ(2u, co_await inbound_connections_from(server, kSaturatingSource));
+
+    // Once every connection has idled out, no source is counted, and the
+    // saturating source connects again.
+    jump_time_by(30.0);
+    co_await wait_inbound_connections(server, kSaturatingSource, 0, "idle connections released their source slots");
+    auto counts = co_await td::actor::ask(server.server, &tos::quic::QuicServer::inbound_connections_by_source,
+                                          std::string(kSaturatingSource));
+    ASSERT_EQ(0u, counts.second);
+    auto again = co_await t.create_endpoint(quic_test_options());
+    co_await t.connect(again, server);
+    co_await wait_inbound_connections(server, kSaturatingSource, 1, "reconnected source admitted");
+    co_return td::Unit{};
+  });
+}
+
+// Defaults: every per-source share is one eighth of the global ceiling it divides.
+TEST(QuicSourceShare, DefaultSharesAreOneEighth) {
+  auto streams = tos::quic::QuicInboundStreamBudget::process_default();
+  ASSERT_EQ(streams->max_streams() / 8, streams->max_streams_per_source());
+  ASSERT_EQ(streams->max_bytes() / 8, streams->max_bytes_per_source());
+  auto transport = tos::quic::QuicTransportMemoryBudget::process_default();
+  ASSERT_EQ(transport->limit() / 8, transport->per_source_limit());
+
+  // Reservations are all or nothing across share and global budget, and a
+  // refusal by either leaves both unchanged.
+  tos::quic::QuicInboundStreamBudget budget(4, 100, 2, 60);
+  ASSERT_TRUE(budget.try_reserve_bytes("a", 60));
+  ASSERT_TRUE(!budget.try_reserve_bytes("a", 1));
+  ASSERT_TRUE(budget.try_reserve_bytes("b", 40));
+  ASSERT_TRUE(!budget.try_reserve_bytes("c", 1));
+  ASSERT_EQ(0u, budget.source_bytes("c"));
+  ASSERT_EQ(100u, budget.bytes());
+  ASSERT_TRUE(budget.release_bytes("a", 60) && budget.release_bytes("b", 40));
+  ASSERT_EQ(0u, budget.tracked_sources());
+  // What this side asked for is charged globally only.
+  ASSERT_TRUE(budget.try_reserve_bytes("", 100));
+  ASSERT_EQ(0u, budget.tracked_sources());
+  ASSERT_TRUE(budget.release_bytes("", 100));
+
+  tos::quic::QuicTransportMemoryBudget memory(100, 30);
+  ASSERT_TRUE(memory.try_reserve("a", 30));
+  ASSERT_TRUE(!memory.try_reserve("a", 1));
+  ASSERT_TRUE(memory.try_reserve(70));
+  ASSERT_TRUE(!memory.try_reserve("b", 1));
+  ASSERT_EQ(0u, memory.source_used("b"));
+  ASSERT_TRUE(memory.release("a", 30) && memory.release(70));
+  ASSERT_EQ(0u, memory.tracked_sources());
 }
 
 int main(int argc, char* argv[]) {

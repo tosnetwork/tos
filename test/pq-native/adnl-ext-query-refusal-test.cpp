@@ -10,11 +10,13 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -673,12 +675,65 @@ void unit_checks() {
   require(limits.tracked_ips() <= 2, "tracked addresses exceeded their bound");
 
   adnl::ExtServerQueryLimits server(1, 1);
-  require(server.try_acquire("192.0.2.1") == adnl::ExtAdmission::Acquired, "server admission failed");
-  require(server.try_acquire("192.0.2.2") == adnl::ExtAdmission::ServerInflightLimited,
+  auto key = [](const char* host) {
+    td::IPAddress address;
+    require(address.init_ipv4_port(td::CSlice(host), 4000).is_ok(), "bad test address");
+    return adnl::ExtSourceKey(address);
+  };
+  require(server.try_acquire(key("192.0.2.1")) == adnl::ExtAdmission::Acquired, "server admission failed");
+  require(server.try_acquire(key("192.0.2.2")) == adnl::ExtAdmission::ServerInflightLimited,
           "server-wide in-flight cap not reported as such");
-  server.release("192.0.2.1");
+  server.release(key("192.0.2.1"));
   require(server.inflight() == 0, "server in-flight counter did not return to zero");
-  std::printf("B64_CASE unit lite_encoder_bounded=true reply_limits=true server_limit_reason=true\n");
+
+  // Output bound: the frame of the largest legal payload, and two of them, fit;
+  // one byte more queued than that does not, and no input wraps around.
+  const size_t max_payload = adnl::adnl_ext_max_packet_bytes - adnl::adnl_ext_packet_framing_bytes;
+  const size_t max_frame = max_payload + 4 + 32 + 32;
+  require(max_frame == adnl::adnl_ext_max_frame_bytes, "largest legal frame differs from the declared frame bound");
+  require(adnl::adnl_ext_output_fits(0, max_frame), "a maximal reply does not fit an empty queue");
+  require(adnl::adnl_ext_output_fits(max_frame, max_frame), "a maximal reply cannot queue behind one in flight");
+  require(!adnl::adnl_ext_output_fits(max_frame + 1, max_frame), "output bound not enforced");
+  require(!adnl::adnl_ext_output_fits(0, adnl::adnl_ext_max_pending_output_bytes + 1),
+          "a frame larger than the whole bound fits");
+  require(!adnl::adnl_ext_output_fits(std::numeric_limits<size_t>::max(), 1), "pending size wrapped around");
+  require(!adnl::adnl_ext_output_fits(1, std::numeric_limits<size_t>::max()), "frame size wrapped around");
+
+  // Server-wide budget: reservations are all or nothing, never past the limit,
+  // and only what was reserved can be given back.
+  {
+    adnl::AdnlExtOutputBudget budget(100);
+    require(budget.try_reserve(60) && budget.try_reserve(40), "reservations up to the limit refused");
+    require(!budget.try_reserve(1), "reservation past the limit accepted");
+    require(budget.release(40) && budget.used() == 60, "release did not return the bytes");
+    require(!budget.release(61) && budget.used() == 60, "over-release changed the budget");
+    require(!budget.try_reserve(std::numeric_limits<size_t>::max()), "huge reservation wrapped around");
+  }
+  // Many threads race for the last frame's worth of budget: at most one wins.
+  for (int round = 0; round < 50; round++) {
+    adnl::AdnlExtOutputBudget budget(1000);
+    require(budget.try_reserve(900), "setup reservation refused");
+    std::atomic<int> winners{0};
+    std::atomic<bool> go{false};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 8; i++) {
+      threads.emplace_back([&] {
+        while (!go.load()) {
+        }
+        if (budget.try_reserve(100)) {
+          winners++;
+        }
+      });
+    }
+    go = true;
+    for (auto& thread : threads) {
+      thread.join();
+    }
+    require(winners.load() == 1 && budget.used() == 1000, "concurrent reservations passed the budget");
+  }
+  require(adnl::adnl_ext_max_server_pending_output_bytes < 1024 * adnl::adnl_ext_max_pending_output_bytes,
+          "server bound is no tighter than the per-connection bound times the connection limit");
+  std::printf("B64_CASE unit lite_encoder_bounded=true reply_limits=true server_limit_reason=true output_bound=true\n");
 }
 
 }  // namespace

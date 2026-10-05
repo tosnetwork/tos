@@ -504,6 +504,7 @@ mod tests {
             log: None,
             bookmarks: HashMap::new(),
             alerts: Default::default(),
+            proof_verifier: None,
         }
     }
 

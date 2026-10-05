@@ -224,8 +224,10 @@ tosctl key add -n "control-client-secret" -e
 Import an existing private key instead of generating a new one:
 
 ```bash
-tosctl key import -n "my-key" -k "<base64-encoded-private-key>" -e
+tosctl key import -n "my-key" --private-key-file my-key.b64 -e
 ```
+
+The key file must be a regular file you own with mode `0600`. `--private-key-fd 0` reads it from a pipe on standard input instead, and with neither option the command prompts without echo. The key is never passed as a command-line value; the former `-k`/`--private-key` option is refused.
 
 List all secrets in the vault:
 

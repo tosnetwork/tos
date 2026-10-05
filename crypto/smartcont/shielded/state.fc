@@ -8,7 +8,8 @@
 ;; Exit codes 180-199.
 ;;   180 the magic or the version is not this contract's
 ;;   181 the state root is not the frozen field and reference shape
-;;   182 a next index is above the 2^32 sentinel
+;;   182 a next index is above the 2^32 sentinel, or the commitment leaves
+;;       already used and already reserved for recovery exceed it
 ;;   183 the config store is not the frozen shape
 ;;   184 the withdrawal fee is not positive and below 2^120
 ;;   185 the denomination count is zero or above sixteen
@@ -16,6 +17,9 @@
 ;;   187 a denomination is not a positive amount
 ;;   188 the denominations are not strictly increasing
 ;;   189 the verifying key is not the canonical 1248-byte chain
+;;   190 the commitment tree has no room for this operation's leaves next to
+;;       the leaves reserved for recoveries still in flight
+;;   191 a recovery arrived with no reservation left to consume
 ;;
 ;; Requires anchors.fc for the genesis store.
 
@@ -27,6 +31,35 @@ int state_version() asm "1 PUSHINT";
 int index_sentinel() asm "4294967296 PUSHINT";
 
 int max_denominations() asm "16 PUSHINT";
+
+;; --- recovery-leaf reservations ---------------------------------------------
+
+;; A withdrawal that is accepted may come back. When its payout bounces, the
+;; recovery note needs one commitment leaf, and a leaf that is not there when
+;; the bounce arrives turns an authentic refund into money nobody can spend.
+;; So every accepted withdrawal reserves that leaf at the moment it is
+;; accepted, and nothing else may be appended into the reserved space:
+;;
+;;   next_index + ordinary_outputs + reserved + new_reservations <= 2^32
+;;
+;; A reservation is consumed by exactly one thing, the authentic bounce of the
+;; payout it was taken for. It is never released because time passed or
+;; because the payout looks delivered: a payout that is taken produces no
+;; message at all, so success cannot be observed and the reservation is kept.
+;; That costs one leaf of four billion per withdrawal that was paid out, which
+;; is the price of never having to guess.
+() commitment_room_require(int next_index, int reserved, int ordinary_outputs,
+                           int new_reservations) impure inline {
+  throw_unless(190,
+    next_index + ordinary_outputs + reserved + new_reservations <= index_sentinel());
+}
+
+;; One reservation consumed by one authentic recovery. A recovery with nothing
+;; reserved for it is not a recovery this pool accepted a withdrawal for.
+int recovery_reservation_consume(int reserved) impure inline {
+  throw_unless(191, reserved > 0);
+  return reserved - 1;
+}
 
 int vk_stream_bytes() asm "1248 PUSHINT";
 int vk_chunk_bytes() asm "127 PUSHINT";
@@ -59,7 +92,7 @@ cell frontier_store_parse(cell store) impure inline {
 
 ;; --- the state root ---------------------------------------------------------
 
-(int, int, int, int, int, int, int, cell, cell, cell, cell) state_parse(cell state) impure inline_ref {
+(int, int, int, int, int, int, int, int, cell, cell, cell, cell) state_parse(cell state) impure inline_ref {
   slice s = state.begin_parse();
   throw_unless(181, s.slice_refs() == 4);
   throw_unless(180, s~load_uint(32) == state_magic());
@@ -67,6 +100,7 @@ cell frontier_store_parse(cell store) impure inline {
 
   int commitment_root = s~load_uint(256);
   int commitment_next_index = s~load_uint(64);
+  int reserved_recovery_leaves = s~load_uint(32);
   int nullifier_root = s~load_uint(256);
   int nullifier_next_index = s~load_uint(64);
   int last_anchor_epoch = s~load_uint(32);
@@ -81,25 +115,32 @@ cell frontier_store_parse(cell store) impure inline {
   ;; else is a different state cell with the same prefix.
   throw_unless(181, s.slice_empty?());
 
-  throw_unless(182, commitment_next_index <= index_sentinel());
+  ;; The reservations are leaves the tree still owes, so the bound is on the
+  ;; counter and the debt together. A state that owes more than it has left
+  ;; is a state in which some authentic bounce cannot be recovered, so it is
+  ;; not a state this contract can have written. A count cannot be negative,
+  ;; so this is also the counter's own bound.
+  throw_unless(182, commitment_next_index + reserved_recovery_leaves <= index_sentinel());
   throw_unless(182, nullifier_next_index <= index_sentinel());
 
-  return (commitment_root, commitment_next_index, nullifier_root, nullifier_next_index,
+  return (commitment_root, commitment_next_index, reserved_recovery_leaves,
+          nullifier_root, nullifier_next_index,
           last_anchor_epoch, native_liability, reserve_floor,
           frontier, anchors, config, vk);
 }
 
 cell state_build(int commitment_root, int commitment_next_index,
-                 int nullifier_root, int nullifier_next_index,
+                 int reserved_recovery_leaves, int nullifier_root, int nullifier_next_index,
                  int last_anchor_epoch, int native_liability, int reserve_floor,
                  cell frontier, cell anchors, cell config, cell vk) inline_ref {
-  throw_unless(182, commitment_next_index <= index_sentinel());
+  throw_unless(182, commitment_next_index + reserved_recovery_leaves <= index_sentinel());
   throw_unless(182, nullifier_next_index <= index_sentinel());
   return begin_cell()
     .store_uint(state_magic(), 32)
     .store_uint(state_version(), 16)
     .store_uint(commitment_root, 256)
     .store_uint(commitment_next_index, 64)
+    .store_uint(reserved_recovery_leaves, 32)
     .store_uint(nullifier_root, 256)
     .store_uint(nullifier_next_index, 64)
     .store_uint(last_anchor_epoch, 32)
@@ -212,7 +253,7 @@ cell state_genesis(int commitment_empty_root, int nullifier_genesis_root,
   config_parse(config);
   vk_require_canonical(vk);
   return state_build(
-    commitment_empty_root, 0,
+    commitment_empty_root, 0, 0,
     nullifier_genesis_root, 1,
     anchor_epoch_none(), 0, reserve_floor,
     frontier_genesis(), anchors_empty(), config, vk);

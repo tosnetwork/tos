@@ -16,7 +16,7 @@ class QuicTester : public td::actor::Actor {
     }
 
     td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString, td::SecureString public_key,
-                            bool is_outbound) override {
+                            bool is_outbound, const std::string&) override {
       auto public_key_b64 = td::base64_encode(public_key.as_slice());
       LOG(INFO) << "connected";
       LOG(INFO) << "server public key: " << public_key_b64;

@@ -53,7 +53,7 @@ export interface OutMessage {
 export interface CreateTransferArgs {
   /** Current sequence number of the wallet. */
   seqno: number;
-  /** List of outgoing messages (up to 4 for standard wallets, 254 for highload). */
+  /** List of outgoing messages (up to 4 for V3R2/V4R2, 255 for V5R1). */
   messages: OutMessage[];
   /** UNIX timestamp after which the message expires. Defaults to now + 60s. */
   validUntil?: number;

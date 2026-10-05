@@ -29,14 +29,53 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
     mapping(address => uint256) public lastDisableTokenNonce;
     bool public allowLock;
 
+    // Source generations. The history of which locks a TOS bridge may act on
+    // must outlive the TOS contracts, which the TOS chain may delete; it lives
+    // here. Each generation names one TOS bridge life and starts above every
+    // lock already allocated, so a recreated TOS bridge can never act on a
+    // lock of an earlier generation.
+    struct Generation {
+        bytes32 tosBridge; // account hash of the TOS bridge
+        uint64 tosLife; // logical time of that bridge's first transaction
+        uint64 start; // first lock nonce of the generation
+    }
+
+    uint32 public generation;
+    mapping(uint32 => Generation) public generations;
+    uint256 public lastGenerationNonce;
+
+    // Every lock is numbered densely: the TOS bridge identifies a swap by
+    // (chain id, this contract, generation, n) and folds a watermark over n.
+    // n = 2^64 - 1 is never allocated; the TOS side reserves it.
+    uint64 public constant MAX_LOCK_NONCE = type(uint64).max - 1;
+    uint64 public lockNonce;
+
+    uint8 public constant LOCK_NONE = 0;
+    uint8 public constant LOCK_OPEN = 1;
+    uint8 public constant LOCK_REFUNDED = 2;
+
+    struct LockRecord {
+        address locker;
+        address token;
+        uint256 amount;
+        uint32 generation;
+        uint8 status;
+    }
+
+    mapping(uint64 => LockRecord) public locks;
+
     event Lock(
         address indexed from,
         address indexed token,
         bytes32 indexed to_addr_hash,
         uint256 value,
         uint256 new_bridge_balance,
-        uint8 decimals
+        uint8 decimals,
+        uint64 nonce,
+        uint32 generation
     );
+    event LockRefunded(uint64 indexed nonce, address indexed locker, address indexed token, uint256 value);
+    event NewGeneration(uint32 indexed generation, bytes32 tosBridge, uint64 tosLife, uint64 start);
     event Unlock(
         address indexed token,
         bytes32 tos_address_hash,
@@ -88,6 +127,8 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
         bytes32 to_address_hash
     ) external nonReentrant {
         require(allowLock, "Lock is currently disabled");
+        require(generation != 0, "No active generation");
+        require(lockNonce <= MAX_LOCK_NONCE, "Lock nonces exhausted");
         require(!disabledTokens[token], "lock: disabled token");
         require(!checkTokenIsWrappedJetton(token), "lock wrapped jetton");
 
@@ -101,14 +142,59 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
 
         require(newBalance <= 2 ** 120 - 1, "Max jetton totalSupply 2 ** 120 - 1");
 
+        uint64 n = lockNonce;
+        lockNonce = n + 1;
+        uint256 received = newBalance - oldBalance;
+        locks[n] = LockRecord(msg.sender, token, received, generation, LOCK_OPEN);
+
         emit Lock(
             msg.sender,
             token,
             to_address_hash,
-            newBalance - oldBalance,
+            received,
             newBalance,
-            getDecimals(token)
+            getDecimals(token),
+            n,
+            generation
         );
+    }
+
+    // Returns lock n to its locker. Oracles sign this only after observing the
+    // TOS bridge of the lock's generation cancel n, which is terminal there: a
+    // cancelled lock can never be consumed, so a refund never doubles a mint.
+    function refundLock(uint64 n, Signature[] calldata signatures)
+        external nonReentrant
+    {
+        LockRecord storage record = locks[n];
+        require(record.status == LOCK_OPEN, "Lock is not refundable");
+        bytes32 _id = getRefundLockId(n, record.generation, record.locker, record.token, record.amount);
+        _generalVote(_id, signatures);
+        finishedVotings[_id] = true;
+        record.status = LOCK_REFUNDED;
+        IERC20(record.token).safeTransfer(record.locker, record.amount);
+        emit LockRefunded(n, record.locker, record.token, record.amount);
+    }
+
+    // Makes newGeneration current, bound to one TOS bridge life. It starts at
+    // the next lock nonce, above every lock already allocated.
+    function voteForNewGeneration(
+        uint32 newGeneration,
+        bytes32 tosBridge,
+        uint64 tosLife,
+        uint256 nonce,
+        Signature[] calldata signatures
+    ) external {
+        bytes32 _id = getNewGenerationId(newGeneration, tosBridge, tosLife, nonce);
+        _generalVote(_id, signatures);
+        require(nonce > lastGenerationNonce, "Stale generation nonce");
+        require(generation < type(uint32).max, "Generations exhausted");
+        require(newGeneration == generation + 1, "Generation must follow the current one");
+        require(tosBridge != bytes32(0) && tosLife != 0, "Generation names no TOS bridge");
+        lastGenerationNonce = nonce;
+        finishedVotings[_id] = true;
+        generation = newGeneration;
+        generations[newGeneration] = Generation(tosBridge, tosLife, lockNonce);
+        emit NewGeneration(newGeneration, tosBridge, tosLife, lockNonce);
     }
 
     function unlock(SwapData calldata data, Signature[] calldata signatures)

@@ -1,0 +1,211 @@
+{
+  "parents": [
+    "01f5c5c21c9983ad65ee2ceca50e4f6531a1b271",
+    "6f4dbdad748f3ab38a05066ee5b86f750ac8f9c9"
+  ],
+  "scope": "Local merge validation only; current-head remote CI and production admission remain unpassed. No rewrite of prior source-bound evidence.",
+  "resolutions": [
+    "Retain R2 and upstream weak-key/SDK authentication CI tests.",
+    "Retain auth-policy and upstream config code dependencies.",
+    "Union independent classical-carrier inventory entries.",
+    "Preserve zero-as-limit action counter and checked overflow with general zero-as-unlimited counters."
+  ],
+  "checks": {
+    "native_release_rebuild": "func fift emulator test-config-transition passed",
+    "frozen_contracts": "update-auth-contract-code.py --check passed",
+    "native_regressions": [
+      "test_auth.py",
+      "test-config-transition",
+      "test_fee_gas_config.py",
+      "test_auth_policy.py",
+      "test_receiver_auth.py",
+      "test_wallet.py (269 cases)"
+    ],
+    "storage_usage_tests": 2,
+    "zero_limit_mutant": "Disabled count_past_limit; semantic failure: observed (3,24), required (1,8); restored tests pass.",
+    "classical_inventory": "93 entries / 290 sites match",
+    "rust_format": "make -C tosctl/src fmt-check passed",
+    "fee_routes": {
+      "auth": {
+        "default_credit": 10000,
+        "minimum_accept_credit": 12289,
+        "production_admission_passed": false,
+        "downstream_diagnostic_credit": 20000
+      },
+      "pop1": {
+        "default_credit": 10000,
+        "minimum_accept_credit": 12652,
+        "production_admission_passed": false,
+        "downstream_diagnostic_credit": 20000
+      },
+      "pop2": {
+        "default_credit": 10000,
+        "minimum_accept_credit": 12652,
+        "production_admission_passed": false,
+        "downstream_diagnostic_credit": 20000
+      }
+    },
+    "whitespace": "Resolved files pass; inherited upstream crosschain/token-bridge/SETTLEMENT-PROTOCOL.md line 1589 has an EOF blank line, unchanged."
+  },
+  "reproduce": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cmake --build build --target func fift emulator test-config-transition -j4",
+    "cargo test --manifest-path tosctl/src/Cargo.toml -p chain_block storage_usage_limit --lib --locked",
+    "Run named Python tests with the test venv; R2 suites take --output OUT. Fee paths use --credit-probe and --pop-role 1/2 as applicable."
+  ],
+  "retention": "Keep raw local artifacts through release review and at least 2027-01-06. Paths require access to this machine; hashes alone are not independent evidence.",
+  "resolved_sources": [
+    {
+      "path": ".github/workflows/auth-extension-validation.yml",
+      "bytes": 4747,
+      "sha256": "46ae95993fbef7b3be9b58025000d37545b41ab36c5a5f37c437dd7c82680408"
+    },
+    {
+      "path": "crypto/CMakeLists.txt",
+      "bytes": 27430,
+      "sha256": "8311785336d4dc843a5275b3b167b324f405fc2e85e633c51257dd10c88f4e70"
+    },
+    {
+      "path": "test/pq-native/classical-carrier-sites.tsv",
+      "bytes": 10248,
+      "sha256": "3f9396cc53185dadcfa121ab640cdc22a81af2de7d126b67d2c02a22243a5d5f"
+    },
+    {
+      "path": "tosctl/src/block/src/accounts.rs",
+      "bytes": 46415,
+      "sha256": "1def726e6acec3dac8e8ee88920eff1b7ed41b8f25fde4dc93ca22a96a4f6480"
+    },
+    {
+      "path": "tosctl/src/block/src/tests/test_accounts.rs",
+      "bytes": 25313,
+      "sha256": "310933e9645c418e01a70ac15bfda5bcc7f241d83b7382a48af8afac42050cfd"
+    }
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/test_auth_policy.log",
+      "bytes": 1149,
+      "sha256": "8bfe7c1111feefb6e58be9a8fa2fe661f3337e2bcd00345ea9b846f5fb301972"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/test_receiver_auth.log",
+      "bytes": 895,
+      "sha256": "812bc4c4aa08199ba2ba0c4a290f61ceaf1162e2c028eae8a470dcb8dcc3a3fb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/legacy.log",
+      "bytes": 2116,
+      "sha256": "563b7981084ec04b98cc3706ac98d947d6afddc9852b99f4cd4fdb461c9d2cde"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/v5r2-main-native-build.log",
+      "bytes": 11865,
+      "sha256": "b847e7acb1078971b01dca3e0c5601076e076177ac6a13a09d03a50bd322d934"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/frozen.log",
+      "bytes": 369,
+      "sha256": "c033d33ffce290dfb94cf63bfad1ecc85692f4270572c4fb475b9df459eb0308"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/config-transition.log",
+      "bytes": 9467,
+      "sha256": "45b10f576ff85417ff748fb0c8007881ffca01b8988904e89ca6defa326625fc"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/v5r2-merge-zero-limit-mutant.log",
+      "bytes": 1528,
+      "sha256": "f8ba6c36de37fec6b775b27cb00249a0621703bd25cf658a80cbaef095de6311"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/v5r2-merge-storage-tests.log",
+      "bytes": 1124,
+      "sha256": "cdd280a452b5139edaf39d589b79f04bba49a25b96bc0b214c515ae6e21004e5"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/test_fee_gas_config.log",
+      "bytes": 79,
+      "sha256": "7f6ba333125f17c26335f69b10fca2b8b35cdfb3047542cebd9887d743210765"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/test_wallet.log",
+      "bytes": 35,
+      "sha256": "0d7e52f4b6723747f6262fae0b440702db97ca1bcf063750b8575ee6aaa20b8e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/auth/credit-probe.json",
+      "bytes": 145,
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/auth/bounce-return.json",
+      "bytes": 2274,
+      "sha256": "7cdd21bab2c318376de2060787960c33ff4d247e080407b51fb3ac8d4029c724"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/auth/bounce-replay.json",
+      "bytes": 2247,
+      "sha256": "f13318e7ea5787840f0afc87a0c58b7f305660799879e2410f2674b1b713c397"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/auth/module-rejection.json",
+      "bytes": 30402,
+      "sha256": "a0c4a21fa140c46a3c75f7fbd0ca594837af1c4385e3b89df5f05b37e2bc5c54"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/auth/run.log",
+      "bytes": 3005,
+      "sha256": "13bf103a964dddbe6a916ee028864999db49ec707849b2fe1b27aa0a4fce10ba"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop1/credit-probe.json",
+      "bytes": 145,
+      "sha256": "960461cd3236b9bdbff8eff50b7cbd8cb4869e9a435a1bd5b9da1ceda85b8908"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop1/bounce-return.json",
+      "bytes": 2280,
+      "sha256": "397763615755725b8d11084880374065ae5b00b5dcda625535b8ab8de8042428"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop1/bounce-replay.json",
+      "bytes": 2247,
+      "sha256": "90e1b8a238477d672e43bb67b829dc601a300fecfd918d9250bf52baee410a33"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop1/module-rejection.json",
+      "bytes": 23294,
+      "sha256": "21f3ad3c0dbcc01efafe4246a4fa33a451427fe1591a963e373c9b3221a93296"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop1/run.log",
+      "bytes": 2658,
+      "sha256": "1b033d3fff306ed7761b12c6db1ffc7ad387293c84ecb198d0d19fd1f4cc9f88"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop2/credit-probe.json",
+      "bytes": 145,
+      "sha256": "960461cd3236b9bdbff8eff50b7cbd8cb4869e9a435a1bd5b9da1ceda85b8908"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop2/bounce-return.json",
+      "bytes": 2276,
+      "sha256": "f6ac9d822d366256de1ab5b3ccbebb0bb09ce31853ab73e61d03181b6c97eaa1"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop2/bounce-replay.json",
+      "bytes": 2247,
+      "sha256": "0c37a1d13cf222d4b176d50744e624c57a99d44e70933a550ac06c470b9de819"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop2/module-rejection.json",
+      "bytes": 30820,
+      "sha256": "7014c670f0cc078c50ebe8683cbf744fcc9fdad75bf4b0e32709f1021d25745f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-main-merge/pop2/run.log",
+      "bytes": 2659,
+      "sha256": "016be1979a1eebe81d3ce94c90a8fcfc19ce85bd1cfd65a2d2d354413370797c"
+    }
+  ]
+}

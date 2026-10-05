@@ -27,6 +27,8 @@ matches="$(git -C "$root" ls-files -z -- \
     ':(exclude)scripts/test-coin-bridge-evm.sh' \
     ':(exclude)scripts/test-token-bridge-tvm.sh' \
     ':(exclude)scripts/test-token-bridge-tron.sh' \
+    ':(exclude)scripts/token-bridge-mutations.py' \
+    ':(exclude)tosctl/src/node-control/contracts/tests/token_bridge/source.rs' \
     ':(exclude).github/workflows/bridge-validation.yml' \
     ':(exclude)scripts/check-no-removed-execution-domains.sh' \
     ':(exclude).github/workflows/no-removed-execution-domains-scan.yml' \

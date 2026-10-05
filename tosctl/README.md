@@ -532,8 +532,13 @@ tosctl service -c tosctl-config.json
 tosctl wallet create --name wallet0
 tosctl wallet ls
 
-# Generate a recoverable TVM identity, then recover it into the vault
+# Generate a recoverable TVM identity, then recover it into the vault.
+# --mnemonic-file (like --private-key-file and the vault's --data-file) must be
+# a regular file, not a symlink, owned by you with no group or other
+# permissions (chmod 600); anything else is refused. --mnemonic-fd reads an
+# inherited descriptor instead, and with neither the mnemonic is prompted for.
 tosctl wallet mnemonic-generate --words 24 --version V3R2 --workchain 0 --subwallet-id 0
+chmod 600 mnemonic.txt
 tosctl wallet mnemonic-import --name wallet1 --mnemonic-file mnemonic.txt --workchain 0 --subwallet-id 0
 
 # Generate actual signed test identities instead of placeholder key material
@@ -697,10 +702,24 @@ Optional runtime flags on the validator-engine side:
 
 | Flag | Purpose |
 |------|---------|
-| `--json-rpc-address` | Bind address for the JSON-RPC server |
+| `--json-rpc-address` | Bind address for the JSON-RPC server (loopback only unless `--json-rpc-readonly`) |
 | `--json-rpc-readonly` | Disable `sendBoc` and other write methods |
 | `--json-rpc-cors-origin` | Set allowed CORS origin |
 | `--json-rpc-readyz-threshold` | Sync lag seconds before readyz fails |
+
+The native JSON-RPC listener speaks plaintext HTTP. While write methods are
+enabled, the engine refuses to start unless `--json-rpc-address` is a loopback
+address (`127.0.0.1`, any `127.0.0.0/8` address, or `[::1]`). An API key does
+not lift this restriction: on a plaintext connection anyone who can observe the
+traffic can read the `X-API-Key` header and replay it.
+
+To accept writes from other hosts, keep the listener on loopback and put an
+authenticated TLS reverse proxy in front of it on the same host. The proxy
+terminates TLS, authenticates the client itself (for example with client
+certificates or its own credential check) and forwards to the loopback
+listener. The node does not read `X-Forwarded-Proto` or any other header to
+decide whether a request arrived encrypted. Only a read-only listener
+(`--json-rpc-readonly`) may bind a non-loopback address.
 
 ## Alert System
 

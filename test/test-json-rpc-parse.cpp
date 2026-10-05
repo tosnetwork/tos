@@ -200,3 +200,44 @@ TEST(JsonRpcParse, json_number_grammar_rejects_malformed) {
     ASSERT_TRUE(!tos::is_valid_json_number(s));
   }
 }
+
+namespace {
+td::Result<std::string> reflect(std::string json) {
+  auto parsed = td::json_decode(td::MutableSlice(json));
+  CHECK(parsed.is_ok());
+  auto value = parsed.move_as_ok();
+  return tos::reflected_request_id(value);
+}
+}  // namespace
+
+TEST(JsonRpcParse, reflected_id_is_bounded_on_its_serialized_form) {
+  ASSERT_EQ(reflect("null").move_as_ok(), "null");
+  ASSERT_EQ(reflect("\"abc\"").move_as_ok(), "\"abc\"");
+  ASSERT_EQ(reflect("-12.5e3").move_as_ok(), "-12.5e3");
+
+  // Plain string: 254 characters serialize to exactly 256 bytes.
+  std::string at_bound = "\"" + std::string(254, 'a') + "\"";
+  ASSERT_EQ(reflect(at_bound).move_as_ok(), at_bound);
+  ASSERT_TRUE(reflect("\"" + std::string(255, 'a') + "\"").is_error());
+
+  // Escaping counts: 127 quotes serialize to 2 + 2 * 127 = 256 bytes, 128 do
+  // not fit although the raw string is only 128 bytes.
+  std::string quotes_127, quotes_128;
+  for (int i = 0; i < 127; i++) {
+    quotes_127 += "\\\"";
+  }
+  quotes_128 = quotes_127 + "\\\"";
+  auto r127 = reflect("\"" + quotes_127 + "\"");
+  ASSERT_TRUE(r127.is_ok());
+  ASSERT_EQ(r127.ok().size(), tos::kMaxReflectedIdBytes);
+  ASSERT_TRUE(reflect("\"" + quotes_128 + "\"").is_error());
+
+  // Numbers: 256 digits fit, 257 do not.
+  ASSERT_EQ(reflect("1" + std::string(255, '0')).move_as_ok().size(), tos::kMaxReflectedIdBytes);
+  ASSERT_TRUE(reflect("1" + std::string(256, '0')).is_error());
+
+  // Not a string, number or null, or a number outside the JSON grammar.
+  for (auto bad : {"true", "false", "[1]", "{\"a\":1}", "1e+-.3"}) {
+    ASSERT_TRUE(reflect(bad).is_error());
+  }
+}

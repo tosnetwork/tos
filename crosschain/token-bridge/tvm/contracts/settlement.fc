@@ -1,0 +1,473 @@
+;; Settlement of mints and burns across the bridge, the minter and the wallets.
+;;
+;; Every operation is a numbered request on a channel between two contracts. The
+;; sender keeps the request until its result comes back and can send it again at
+;; any time; the receiver applies a number's effect once and answers every later
+;; copy from its record. Nothing is inferred from a bounce, a timeout or a
+;; balance. crosschain/token-bridge/SETTLEMENT-PROTOCOL.md is the specification.
+;;
+;; Channels (sender -> receiver, numbered by):
+;;   C1 bridge -> minter   s, per minter       prepare, commit
+;;   C2 minter -> wallet   k, per holder life  credit
+;;   C3 wallet -> minter   b, per wallet life  burn admission
+;;   C4 minter -> bridge   m, per minter       burn notice
+
+;; ---- opcodes --------------------------------------------------------------
+
+const int op::prepare = 40;            ;; bridge -> minter
+const int op::prepared = 41;           ;; minter -> bridge
+const int op::refused = 42;            ;; minter -> bridge
+const int op::commit = 43;             ;; bridge -> minter
+const int op::credit = 44;             ;; minter -> wallet
+const int op::credit_recorded = 45;    ;; wallet -> minter
+const int op::mint_completed = 46;     ;; minter -> bridge
+const int op::mint_stranded = 47;      ;; minter -> bridge
+const int op::open = 48;               ;; minter -> wallet
+const int op::opened = 49;             ;; wallet -> minter
+const int op::open_refused = 50;       ;; wallet -> minter: bound to another minter life
+const int op::open_request = 51;       ;; wallet -> minter
+const int op::open_denied = 52;        ;; minter -> wallet
+const int op::burn_admit = 53;         ;; wallet -> minter
+const int op::admit_refused = 54;      ;; minter -> wallet
+const int op::burn_notice = 55;        ;; minter -> bridge
+const int op::burn_result = 56;        ;; bridge -> minter
+const int op::burn_outcome = 57;       ;; minter -> wallet
+const int op::refund = 58;             ;; minter -> wallet
+const int op::refund_recorded = 59;    ;; wallet -> minter
+const int op::advance = 60;            ;; anyone -> any participant
+const int op::sync_floor = 61;         ;; channel sender -> receiver
+const int op::sync_ack = 62;           ;; channel receiver -> sender
+const int op::cancel_burn = 63;        ;; owner -> wallet
+
+;; Oracle votes on the bridge.
+const int op::execute_voting::activate_generation = 8;
+const int op::execute_voting::cancel_lock = 9;
+
+;; advance kinds
+const int advance::mint = 1;
+const int advance::burn = 2;
+const int advance::burn_result = 3;
+const int advance::strand = 4;
+const int advance::open = 5;
+const int advance::report = 6;
+const int advance::sync = 7;
+
+;; channel kinds carried by sync messages
+const int channel::c1 = 1;
+const int channel::c2 = 2;
+const int channel::c3 = 3;
+const int channel::c4 = 4;
+
+;; ---- statuses -------------------------------------------------------------
+
+;; Minter, per mint s.
+const int MINT_AWAITING_OPEN = 0;
+const int MINT_RESERVED = 1;
+const int MINT_CREDITING = 2;
+const int MINT_COUNTED = 3;
+const int MINT_REFUSED = 4;
+const int MINT_STRANDED = 5;
+
+;; Minter, per burn b of a holder life.
+const int BURN_AWAITING_BRIDGE = 0;
+const int BURN_RECORDED = 1;
+const int BURN_REFUNDING = 2;
+const int BURN_REFUNDED = 3;
+const int BURN_ADMIT_REFUSED = 4;
+const int BURN_STRANDED = 5;
+
+;; Minter, per holder.
+const int HOLDER_NEW = 0;
+const int HOLDER_OPENING = 1;
+const int HOLDER_OPEN = 2;
+
+;; Bridge, per pending mint.
+const int PENDING_PREPARING = 0;
+const int PENDING_COMMITTED = 1;
+
+;; Bridge, per swap n.
+const int SWAP_PAID = 0;
+const int SWAP_PREPARING = 1;
+const int SWAP_CONSUMED = 2;
+const int SWAP_CANCELLED = 3;
+
+;; Bridge, per burn m.
+const int OUTCOME_RECORDED = 0;
+const int OUTCOME_CANCELLED = 1;
+
+;; open_denied reasons
+const int DENIED_CAPACITY = 1;
+const int DENIED_RETRY = 2;
+
+;; ---- limits ---------------------------------------------------------------
+
+;; Allocatable numbers are 0 .. 2^64 - 2. 2^64 - 1 means exhausted: a watermark
+;; of 64 bits can always pass the last allocated number.
+const int MAX_SEQ = 0xfffffffffffffffe;
+const int MAX_ATTEMPT = 0xfffffffe;
+
+;; The largest amount Coins can hold, bounding supply plus every reservation.
+const int MAX_SUPPLY = 0xffffffffffffffffffffffffffffff;
+
+;; Work per transaction on folds, compaction, promotions and stranding. It is
+;; smaller than the C1 and C4 windows, so a backlog can outgrow one
+;; transaction; the rest is folded by later transactions and by `sync`.
+const int FOLD_LIMIT = 4;
+
+;; Window sizes per channel, and admission limits. The account cell limit is
+;; checked against the measured worst case at every admission: the token-bridge
+;; sandbox fills every window and limit and fails if the measured state of a
+;; contract exceeds its constant below.
+const int MINT_WINDOW = 8;           ;; C1, per minter
+const int CREDIT_WINDOW = 4;         ;; C2, per holder
+const int HOLDER_BURN_WINDOW = 4;    ;; C3, per wallet
+const int BURN_WINDOW = 8;           ;; C4, per minter
+const int SWAP_WINDOW = 16;          ;; EVM locks the bridge may hold at once
+const int CHANNEL_LIMIT = 8;         ;; minters one bridge serves
+const int HOLDER_LIMIT = 1000;       ;; holders one minter serves
+
+;; Worst-case state sizes, measured by the sandbox's T-G test on the compiled
+;; contracts with every window full, every record at its largest, an old life
+;; held in full and no cell shared between records:
+;;   wallet 115 cells; bridge 897 cells at 8 channels (58 per channel), under
+;;   the 2048-cell non-special masterchain limit; minter 347 cells plus 63 per
+;;   holder, 63347 at 1000 holders, under the 65536-cell basechain limit.
+;; Measured at commit 1f99ccdbe by the sandbox test
+;; t_g_worst_case_cells_fit_the_declared_bound_and_the_account_limit, which
+;; fails if a later state exceeds these constants.
+;; HOLDER_LIMIT is the largest round number of holders that fits.
+const int BRIDGE_WORST_CELLS = 1000;
+const int MINTER_WORST_CELLS = 64000;
+const int WALLET_WORST_CELLS = 128;
+
+;; Balances each contract keeps for its own storage.
+const int WALLET_RESERVE = 50000000;      ;; 0.05
+const int MINTER_RESERVE = 100000000;     ;; 0.1
+const int BRIDGE_RESERVE = 1000000000;    ;; 1
+
+;; Gas each step may use. Every budget is priced from these at the network's
+;; current prices; the sandbox measures every step on contracts filled to their
+;; limits and fails if one exceeds its declaration.
+const int WALLET_STEP_GAS = 40000;
+;; A minter step reads and rewrites its holder's record in the holders
+;; dictionary, keyed by the owner's address hash, which a swap's recipient
+;; makes anyone's choice: the record can sit under a fork at every one of the
+;; 256 bits. The sandbox measures every step on that shape (token_bridge/deep.rs).
+const int MINTER_STEP_GAS = 300000;
+const int BRIDGE_STEP_GAS = 70000;
+;; An oracle vote at the bridge: a swap vote that deploys a minter computes
+;; its state's forwarding fee, the dearest bridge step (69698 gas at most
+;; in the sandbox suite). The oracles' message pays for it.
+const int BRIDGE_VOTE_GAS = 100000;
+;; A minter step that also promotes or strands FOLD_LIMIT records.
+const int MINTER_BATCH_GAS = 400000;
+
+;; Seconds of storage a quote sets aside.
+const int STORAGE_QUOTE_HORIZON = 86400;
+
+;; ---- errors ---------------------------------------------------------------
+
+const int error::operation_mismatch = 380;
+const int error::life_mismatch = 381;
+const int error::window_full = 382;
+const int error::sequence_exhausted = 383;
+const int error::underfunded = 384;
+const int error::not_admissible = 385;
+const int error::terminal = 386;
+const int error::nothing_to_advance = 387;
+const int error::wrong_generation = 388;
+const int error::cell_limit = 379;
+const int error::not_open = 378;
+const int error::bad_floor = 377;
+const int error::not_owner = 376;
+const int error::wrong_namespace = 375;
+
+;; ---- logs -----------------------------------------------------------------
+
+const int LOG_SWAP_CANCELLED = 0xc0aa0ccf;
+const int LOG_LIABILITY_STRANDED = 0xc0bb0ccf;
+const int LOG_CHANNEL_TERMINAL = 0xc0cc0ccf;
+const int LOG_GENERATION_ACTIVATED = 0xc0dd0ccf;
+
+;; ---- pricing --------------------------------------------------------------
+
+int gas_fee(int gas, int is_mc) asm "GETGASFEE";
+int forward_fee(int cells, int bits, int is_mc) asm "GETFORWARDFEE";
+int storage_fee(int cells, int bits, int seconds, int is_mc) asm "GETSTORAGEFEE";
+int msg_value_of_in() asm "INMSG_VALUE";
+
+;; What forwarding `msg` costs, counting every cell including the root, which the
+;; network does not charge for: never less than the real fee.
+int fee_of(cell msg, int is_mc) inline {
+    (int cells, int bits, _) = compute_data_size(msg, 8192);
+    return forward_fee(cells, bits, is_mc);
+}
+
+;; Every message the settlement sends fits one of these allowances; the sandbox
+;; checks each message at its largest against its allowance.
+const int SMALL_CELLS = 1;           ;; a header and up to 1023 bits of body
+const int DESCRIBED_CELLS = 6;       ;; a body with a descriptor (3 cells) or token data
+int allowance(int cells, int is_mc) inline {
+    return forward_fee(cells, cells * 1023, is_mc);
+}
+int small_fee(int is_mc) inline { return allowance(SMALL_CELLS, is_mc); }
+int described_fee(int is_mc) inline { return allowance(DESCRIBED_CELLS, is_mc); }
+
+;; ---- path needs -----------------------------------------------------------
+;;
+;; What a message must carry so that its receiver's step and everything after it
+;; can run at the current prices. Each leg checks its own need before applying
+;; anything and passes the rest on.
+
+int wallet_gas() inline { return gas_fee(WALLET_STEP_GAS, 0); }
+int minter_gas() inline { return gas_fee(MINTER_STEP_GAS, 0); }
+int minter_batch_gas() inline { return gas_fee(MINTER_BATCH_GAS, 0); }
+int bridge_gas() inline { return gas_fee(BRIDGE_STEP_GAS, -1); }
+int vote_gas() inline { return gas_fee(BRIDGE_VOTE_GAS, -1); }
+
+;; mint: bridge <- M4/M5 <- minter <- M3 <- wallet <- M2 <- minter <- M1 <- bridge <- P2 <- minter <- P1
+int need_m4() inline { return bridge_gas(); }
+int need_m3() inline { return minter_gas() + small_fee(-1) + need_m4(); }
+int need_m2() inline { return wallet_gas() + small_fee(0) + need_m3(); }
+int need_m1() inline { return minter_gas() + described_fee(0) + need_m2(); }
+int need_p2() inline { return bridge_gas() + described_fee(-1) + need_m1(); }
+;; What a waiting mint keeps aside for its own `prepared`.
+int escrow_p2() inline { return small_fee(-1) + need_p2(); }
+;; The opening exchange: the wallet's step and reserve, its answer, and the
+;; minter's promotion of the waiting mints.
+int need_o2() inline { return minter_batch_gas(); }
+int need_o1() inline { return WALLET_RESERVE + wallet_gas() + small_fee(0) + need_o2(); }
+;; P1 at a minter whose holder is open, and at one that must first open it.
+int need_p1_open() inline { return minter_gas() + small_fee(-1) + need_p2(); }
+int need_p1_opening(int open_fee) inline {
+    return minter_gas() + escrow_p2() + open_fee + need_o1();
+}
+
+;; burn: wallet <- B4/R1 ... minter <- B3 <- bridge <- B2 <- minter <- B1 <- wallet
+int need_b4() inline { return wallet_gas(); }
+int need_r2() inline { return minter_gas(); }
+int need_r1() inline { return wallet_gas() + small_fee(0) + need_r2(); }
+int need_b3() inline { return minter_gas() + max(small_fee(0) + need_b4(), small_fee(0) + need_r1()); }
+;; LOG_BURN is one external message of a header and a 704-bit body cell.
+int burn_log_fee() inline { return allowance(2, -1); }
+int need_b2() inline { return bridge_gas() + burn_log_fee() + small_fee(-1) + need_b3(); }
+int need_b1r() inline { return wallet_gas(); }
+int need_b1() inline { return minter_gas() + max(described_fee(-1) + need_b2(), small_fee(0) + need_b1r()); }
+int need_b0() inline { return wallet_gas() + described_fee(0) + need_b1(); }
+
+;; synchronization: sender -> sync_floor -> receiver -> sync_ack -> sender
+int need_sync_ack(int is_mc_sender) inline {
+    return is_mc_sender ? bridge_gas() : max(minter_gas(), wallet_gas());
+}
+int need_sync_floor(int receiver_mc, int sender_mc) inline {
+    return (receiver_mc ? bridge_gas() : max(minter_gas(), wallet_gas()))
+        + small_fee(receiver_mc | sender_mc) + need_sync_ack(sender_mc);
+}
+
+;; stranding: each stranded mint reports to the bridge
+int need_strand_batch() inline {
+    return minter_batch_gas() + FOLD_LIMIT * (allowance(DESCRIBED_CELLS, 0) + small_fee(-1) + need_m4());
+}
+
+;; What this leg may spend: the incoming value, but never the contract's own
+;; reserve. With a non-bounceable message the value is credited before storage
+;; is collected, so it first pays any storage debt and restores the reserve.
+int available(int msg_value, int reserve) inline {
+    int spare = pair_first(get_balance()) - reserve;
+    return min(msg_value, spare);
+}
+
+;; ---- descriptors ----------------------------------------------------------
+
+const int MINT_TAG = 0x4d494e54;   ;; "MINT"
+const int BURN_TAG = 0x4255524e;   ;; "BURN"
+
+cell mint_descriptor(int n, int s, int amount, slice bridge, int evm_bridge, int evm_chain_id, slice minter, slice recipient) inline {
+    return begin_cell()
+        .store_uint(MINT_TAG, 32)
+        .store_uint(n, 64)
+        .store_uint(s, 64)
+        .store_coins(amount)
+        .store_ref(begin_cell().store_slice(bridge).store_uint(evm_bridge, 160).store_uint(evm_chain_id, 32).end_cell())
+        .store_ref(begin_cell().store_slice(minter).store_slice(recipient).end_cell())
+        .end_cell();
+}
+
+;; n, s, amount, bridge, evm_bridge, evm_chain_id, minter, recipient
+(int, int, int, slice, int, int, slice, slice) parse_mint_descriptor(cell d) inline {
+    slice ds = d.begin_parse();
+    throw_unless(error::operation_mismatch, ds~load_uint(32) == MINT_TAG);
+    int n = ds~load_uint(64);
+    int s = ds~load_uint(64);
+    int amount = ds~load_coins();
+    slice r1 = ds~load_ref().begin_parse();
+    slice r2 = ds~load_ref().begin_parse();
+    ds.end_parse();
+    slice bridge = r1~load_msg_addr();
+    int evm_bridge = r1~load_uint(160);
+    int evm_chain_id = r1~load_uint(32);
+    r1.end_parse();
+    slice minter = r2~load_msg_addr();
+    slice recipient = r2~load_msg_addr();
+    r2.end_parse();
+    return (n, s, amount, bridge, evm_bridge, evm_chain_id, minter, recipient);
+}
+
+cell burn_descriptor(int b, int amount, int destination, slice minter, slice owner, int wallet_life) inline {
+    return begin_cell()
+        .store_uint(BURN_TAG, 32)
+        .store_uint(b, 64)
+        .store_coins(amount)
+        .store_uint(destination, 160)
+        .store_ref(begin_cell().store_slice(minter).store_slice(owner).store_uint(wallet_life, 64).end_cell())
+        .end_cell();
+}
+
+;; b, amount, destination, minter, owner, wallet_life
+(int, int, int, slice, slice, int) parse_burn_descriptor(cell d) inline {
+    slice ds = d.begin_parse();
+    throw_unless(error::operation_mismatch, ds~load_uint(32) == BURN_TAG);
+    int b = ds~load_uint(64);
+    int amount = ds~load_coins();
+    int destination = ds~load_uint(160);
+    slice r = ds~load_ref().begin_parse();
+    ds.end_parse();
+    slice minter = r~load_msg_addr();
+    slice owner = r~load_msg_addr();
+    int wallet_life = r~load_uint(64);
+    r.end_parse();
+    return (b, amount, destination, minter, owner, wallet_life);
+}
+
+;; ---- messages -------------------------------------------------------------
+
+;; Every settlement message is non-bounceable: no state depends on a bounce. It
+;; carries a fixed value and pays forwarding on top (mode 1), and any failure
+;; to send it fails the action phase, which rolls the whole leg back.
+() send_settlement(slice to, int value, builder body) impure inline {
+    send_raw_message(begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(to)
+        .store_coins(value)
+        .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .store_ref(body.end_cell())
+        .end_cell(), 1);
+}
+
+() send_settlement_with_init(slice to, int value, cell state_init, builder body) impure inline {
+    send_raw_message(begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(to)
+        .store_coins(value)
+        .store_uint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .store_ref(state_init)
+        .store_ref(body.end_cell())
+        .end_cell(), 1);
+}
+
+builder header(int op) inline {
+    return begin_cell().store_uint(op, 32).store_uint(0, 64);
+}
+
+;; A log whose emission is part of the decision it reports: sent with mode 0, so
+;; a log that cannot be sent rolls the leg back with the decision.
+() emit_mandatory(int topic, cell data) impure inline {
+    send_raw_message(begin_cell()
+        .store_uint(12, 4)
+        .store_uint(1, 2)
+        .store_uint(256, 9)
+        .store_uint(topic, 256)
+        .store_uint(1, 64 + 32 + 2)
+        .store_ref(data)
+        .end_cell(), 0);
+}
+
+;; A record for observers only: skipped when the balance cannot pay for it.
+() emit_optional(int topic, cell data) impure inline {
+    send_raw_message(begin_cell()
+        .store_uint(12, 4)
+        .store_uint(1, 2)
+        .store_uint(256, 9)
+        .store_uint(topic, 256)
+        .store_uint(1, 64 + 32 + 2)
+        .store_ref(data)
+        .end_cell(), 2);
+}
+
+;; ---- lives ----------------------------------------------------------------
+
+;; A participant's life is the logical time of the first transaction it
+;; committed. Unfreezing restores it with the data; a redeployment after
+;; deletion starts a strictly later one.
+int life_or_now(int born_lt) inline {
+    return born_lt ? born_lt : cur_lt();
+}
+
+;; ---- the account cell limit ----------------------------------------------
+
+;; Admission stops while the network's account cell limit is below the
+;; contract's measured worst case. Reading ConfigParam 43 is new business; no
+;; completion depends on it.
+int cell_limit(int is_mc) inline {
+    cell p = config_param(43);
+    int limit = 65536;
+    int mc_limit = 2048;
+    if (~ p.null?()) {
+        slice cs = p.begin_parse();
+        int tag = cs~load_uint(8);
+        if ((tag == 2) | (tag == 3)) {
+            cs~skip_bits(32 + 32 + 32 + 16 + 32 + 16);
+            limit = cs~load_uint(32);
+            mc_limit = cs~load_uint(32);
+        }
+    }
+    if (is_mc) {
+        cell v = config_param(8);
+        int version = 0;
+        if (~ v.null?()) {
+            slice vs = v.begin_parse();
+            vs~skip_bits(8);
+            version = vs~load_uint(32);
+        }
+        if (version >= 12) {
+            return min(limit, mc_limit);
+        }
+    }
+    return limit;
+}
+
+() require_cell_capacity(int worst, int is_mc) impure inline {
+    throw_unless(error::cell_limit, worst <= cell_limit(is_mc));
+}
+
+;; ---- windows --------------------------------------------------------------
+
+;; A sender allocates `next` only below the acknowledged floor plus its window,
+;; and never the exhausted sentinel.
+() require_window(int next, int ack, int window) impure inline {
+    throw_unless(error::sequence_exhausted, next <= MAX_SEQ);
+    throw_unless(error::window_full, next < ack + window);
+}
+
+;; The finished floor of a sender: its smallest unfinished number, or its next.
+int finished_floor(cell pending, int next) inline {
+    (int k, _, int found) = pending.udict_get_min?(64);
+    return found ? k : next;
+}
+
+;; A receiver's storage floor: the lowest number it may still hold.
+int storage_floor(cell entries, int watermark, int compaction) inline {
+    int floor = min(watermark, compaction);
+    (int k, _, int found) = entries.udict_get_min?(64);
+    if (found) {
+        floor = min(floor, k);
+    }
+    return floor;
+}
+
+;; One past the highest number a receiver has ever entered: everything below its
+;; watermark, and every entry it still holds.
+int entered_high(cell entries, int watermark) inline {
+    (int k, _, int found) = entries.udict_get_max?(64);
+    return found ? max(watermark, k + 1) : watermark;
+}

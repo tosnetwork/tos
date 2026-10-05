@@ -15,8 +15,15 @@
 // contract must also call [quorumRequireNotExpired] and consume the nonce
 // (for example with `@stdlib/ordered-delivery` or `@stdlib/replay-guard`) in
 // the same transaction.
+//
+// A verifier key anyone can sign for (`@stdlib/strong-ed25519-key`) would
+// count toward the quorum without any secret behind it. It is refused when it
+// joins a set, when a set is admitted as a config, and again before its
+// signature counts, so a set stored or built without passing through this
+// library still cannot use one.
 tol 1.3
 
+import "@stdlib/strong-ed25519-key"
 import "@stdlib/tvm-dicts"
 
 const QUORUM_THROW_INVALID_CONFIG = 0x1901
@@ -26,6 +33,7 @@ const QUORUM_THROW_MALFORMED_SIGNATURE = 0x1904
 const QUORUM_THROW_INVALID_SIGNATURE = 0x1905
 const QUORUM_THROW_INSUFFICIENT_SIGNATURES = 0x1906
 const QUORUM_THROW_EXPIRED = 0x1907
+const QUORUM_THROW_WEAK_VERIFIER = 0x1909
 
 const QUORUM_KEY_BITS = 256
 const QUORUM_SIGNATURE_BITS = 512
@@ -65,8 +73,17 @@ fun quorumRequireNotExpired(validUntil: int): void {
     }
 }
 
-/// Adds `publicKey` to a verifier dictionary, rejecting duplicates.
+/// Throws unless `publicKey` is a key someone has to hold a secret to sign for.
+fun quorumRequireStrongVerifier(publicKey: int): void {
+    if (ed25519IsWeakKey(publicKey)) {
+        throw QUORUM_THROW_WEAK_VERIFIER;
+    }
+}
+
+/// Adds `publicKey` to a verifier dictionary, rejecting duplicates and weak
+/// keys.
 fun quorumAddVerifier(verifiers: dict, publicKey: uint256): dict {
+    quorumRequireStrongVerifier(publicKey);
     var next = verifiers;
     if (!next.uDictSetBuilderIfNotExists(QUORUM_KEY_BITS, publicKey, beginCell())) {
         throw QUORUM_THROW_DUPLICATE_VERIFIER;
@@ -95,9 +112,26 @@ fun quorumRequireValidConfig(verifierCount: int, quorum: int): void {
     }
 }
 
+/// Number of verifiers in a set, refusing more than `QUORUM_MAX_VERIFIERS`
+/// and any weak key. A prebuilt dictionary never went through
+/// [quorumAddVerifier], so this walk is where it is checked.
+fun quorumCountVerifiers(verifiers: dict): int {
+    var count = 0;
+    var (key, _, found) = verifiers.uDictGetFirst(QUORUM_KEY_BITS);
+    while (found) {
+        count += 1;
+        if (count > QUORUM_MAX_VERIFIERS) {
+            throw QUORUM_THROW_INVALID_CONFIG;
+        }
+        quorumRequireStrongVerifier(key!);
+        (key, _, found) = verifiers.uDictGetNext(QUORUM_KEY_BITS, key!);
+    }
+    return count;
+}
+
 /// Builds a config, counting the set and requiring 1 <= quorum <= count.
 fun quorumConfigNew(verifiers: dict, quorum: int): QuorumConfig {
-    val count = quorumCountKeys(verifiers, QUORUM_MAX_VERIFIERS, QUORUM_THROW_INVALID_CONFIG);
+    val count = quorumCountVerifiers(verifiers);
     quorumRequireValidConfig(count, quorum);
     return QuorumConfig { verifiers, verifierCount: count, quorum };
 }
@@ -122,7 +156,8 @@ fun QuorumConfig.isVerifier(self, publicKey: uint256): bool {
 
 /// Verifies every entry of `signatures` (public key -> 512-bit signature of
 /// `hash`) and returns how many there are. Throws on the first entry that is
-/// not a valid signature by a member of the set.
+/// not a valid signature by a member of the set, or that is by a weak member:
+/// a config may come from storage rather than from [quorumConfigNew].
 fun QuorumConfig.countValidSignatures(self, hash: int, signatures: dict): int {
     var count = 0;
     var (key, value, found) = signatures.uDictGetFirst(QUORUM_KEY_BITS);
@@ -132,6 +167,7 @@ fun QuorumConfig.countValidSignatures(self, hash: int, signatures: dict): int {
         if (!self.isVerifier(publicKey)) {
             throw QUORUM_THROW_UNKNOWN_SIGNER;
         }
+        quorumRequireStrongVerifier(publicKey);
         val signature = value!;
         if (signature.remainingBitsCount() != QUORUM_SIGNATURE_BITS || signature.remainingRefsCount() != 0) {
             throw QUORUM_THROW_MALFORMED_SIGNATURE;

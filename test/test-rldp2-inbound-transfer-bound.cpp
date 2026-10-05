@@ -62,7 +62,7 @@ td::BufferSlice payload(size_t size) {
 
 // Hand one transfer to a fresh sender and return the datagrams it produces.
 std::vector<td::BufferSlice> datagrams_for(TransferId id, size_t size) {
-  RldpConnection sender;
+  RldpConnection sender{RldpPeerIdentity{}};
   Sink sink;
   sender.send(id, payload(size), td::Timestamp::in(60.0));
   for (int i = 0; i < 64 && sink.outbox.empty(); i++) {
@@ -94,7 +94,7 @@ void deliver_whole_transfer(RldpConnection &receiver, Sink &sink, TransferId id)
 }
 
 TEST(Rldp2InboundTransferBound, ATransferCompletesWhenTheConnectionHasRoom) {
-  RldpConnection receiver;
+  RldpConnection receiver{RldpPeerIdentity{}};
   Sink sink;
   // The control: with nothing else open, a whole transfer arrives. Without
   // this the test below could pass because delivery never works at all.
@@ -104,7 +104,7 @@ TEST(Rldp2InboundTransferBound, ATransferCompletesWhenTheConnectionHasRoom) {
 }
 
 TEST(Rldp2InboundTransferBound, TransfersPastTheLimitAreRefusedNotAllocated) {
-  RldpConnection receiver;
+  RldpConnection receiver{RldpPeerIdentity{}};
   Sink sink;
 
   // Fill the connection with transfers the peer opens and never finishes,
@@ -130,7 +130,7 @@ TEST(Rldp2InboundTransferBound, TransfersPastTheLimitAreRefusedNotAllocated) {
 // duplicate suppression: how long an id is kept is fixed, how many arrive is
 // the peer's to choose. So that set has a ceiling of its own.
 TEST(Rldp2InboundTransferBound, FinishedTransferIdsDoNotAccumulateWithoutLimit) {
-  RldpConnection receiver;
+  RldpConnection receiver{RldpPeerIdentity{}};
   Sink sink;
 
   // Every one of these completes immediately, so nothing is ever concurrent.
@@ -153,7 +153,7 @@ TEST(Rldp2InboundTransferBound, FinishedTransferIdsDoNotAccumulateWithoutLimit) 
 // held: asking is cheap, and the timeout bounds each answer's age, not how
 // many exist at once.
 TEST(Rldp2InboundTransferBound, AnswersAwaitingAcknowledgementAreBounded) {
-  RldpConnection connection;
+  RldpConnection connection{RldpPeerIdentity{}};
   Sink sink;
 
   // Every one of these is an answer the node is sending out and nothing ever

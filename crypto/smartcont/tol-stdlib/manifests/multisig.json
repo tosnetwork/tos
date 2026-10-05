@@ -41,6 +41,16 @@
       "name": "MULTISIG_FUNC_THROW_INVALID_ACTIONS",
       "value": 1807,
       "class": "Protocol"
+    },
+    {
+      "name": "MULTISIG_FUNC_THROW_WEAK_SIGNER",
+      "value": 1808,
+      "class": "Authorization"
+    },
+    {
+      "name": "MULTISIG_FUNC_THROW_BAD_SIGNATURE",
+      "value": 1809,
+      "class": "Authorization"
     }
   ],
   "public_errors": [
@@ -50,7 +60,9 @@
     "MULTISIG_STDLIB_ERROR_INSUFFICIENT_SIGNATURES",
     "MULTISIG_STDLIB_ERROR_PROPOSAL_REPLAY",
     "MULTISIG_STDLIB_ERROR_EXPIRED",
-    "MULTISIG_STDLIB_ERROR_INVALID_ACTIONS"
+    "MULTISIG_STDLIB_ERROR_INVALID_ACTIONS",
+    "MULTISIG_STDLIB_ERROR_WEAK_SIGNER",
+    "MULTISIG_STDLIB_ERROR_BAD_SIGNATURE"
   ],
   "storage_fields": [
     {

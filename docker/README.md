@@ -18,7 +18,26 @@ It is recommended to everyone to read Docker chapter first in order to get a bet
 ## Docker
 
 ### Installation
-```docker pull ghcr.io/tosnetwork/tos:latest```
+Release images are published under their release tag and referenced by digest.
+Each run of the release image workflow publishes an `image-release` artifact
+whose `image-release.json` records the image digest, the release tag, the
+source commit and the run that built it, and the image's build provenance is
+attested in the registry. Pull the digest from that record:
+```
+docker pull ghcr.io/tosnetwork/tos@sha256:<digest from image-release.json>
+gh attestation verify oci://ghcr.io/tosnetwork/tos@sha256:<digest> --repo tosnetwork/tos
+```
+There is no `latest` tag: a deployment that follows a moving tag runs whatever
+was pushed last, not the release it was reviewed against. In the commands below
+`<IMAGE>` stands for `ghcr.io/tosnetwork/tos@sha256:<digest>`.
+
+The Kubernetes manifests in this directory reference the image by digest too.
+In the repository they carry an all-zero placeholder digest, which cannot be
+pulled, until a release pins them: use the manifests from the release's
+`image-release` artifact, or pin a checkout yourself with
+`scripts/pin-image-digest.py --record image-release.json docker/tos-*.yaml`,
+which also records the release tag, source commit and build run above the
+image line.
 
 ### Configuration
 TOS validator-engine supports number of command line parameters,
@@ -29,7 +48,11 @@ Below is the list of supported arguments and their default values:
 |:------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------:|:-------------------------------------------------------:|
 | PUBLIC_IP         | This will be a public IP address of your TOS node. Normally it is the same IP address as your server's external IP. This also can be your proxy server or load balancer IP address.       |    yes     |                                                         |
 | GLOBAL_CONFIG_URL | TOS global configuration file. Mainnet - https://tos.network/global-config.json, Testnet - https://tos.network/testnet-global.config.json                                                         |     no     | https://tos.network/global-config.json |
-| DUMP_URL          | URL to TOS dump. Specify dump from https://dump.tos.network. If you are using testnet dump, make sure to download global config for testnet.                                                  |     no     |                                                         |
+| SNAPSHOT_IMPORT   | Set to 1 to import a database snapshot into a new node. Import is off unless set; see [Database snapshots](#database-snapshots).                                                  |     no     |                                                         |
+| DUMP_URL          | https:// URL of the snapshot archive (.tar.lz). Requires SNAPSHOT_IMPORT, DUMP_SHA256 and DUMP_ZEROSTATE_ROOT_HASH; the container refuses to start otherwise.                       |     no     |                                                         |
+| DUMP_SHA256       | SHA-256 of the snapshot archive. It is the only thing that authenticates the archive, and only if you obtained it independently of the snapshot download. A checksum downloaded from the same place as the archive does not authenticate it. |     no     |                                                         |
+| DUMP_ZEROSTATE_ROOT_HASH | `validator.zero_state.root_hash` of the network the snapshot belongs to; must match the node's global config. This is a consistency check, not authentication of either value. |     no     |                                                         |
+| SNAPSHOT_STAGING_DIR | Directory, outside the database directory, where the archive is downloaded and unpacked before it is moved into place.                                                         |     no     |             /var/tos-work/snapshot-staging              |
 | VALIDATOR_PORT    | UDP port that must be available from the outside. Used for communication with other nodes.                                                                                                |     no     |                          30001                          |
 | CONSOLE_PORT      | This TCP port is used to access validator's console. Not necessarily to be opened for external access.                                                                                    |     no     |                          30002                          |
 | LITE_PORT         | Lite-server's TCP port. Used by lite-client.                                                                                                                                              |     no     |                          30003                          |
@@ -59,9 +82,8 @@ and replace it in the command below:
 docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
 -e "LITESERVER=true" \
--e "DUMP_URL=https://dump.tos.network/dumps/latest.tar.lz" \
 --network host \
--it ghcr.io/tosnetwork/tos
+-it <IMAGE>
 ```
 If you don't need Lite-server, then remove -e "LITESERVER=true".
 
@@ -72,7 +94,6 @@ This is ideal for running multiple containers with isolated networks on the same
 ```
 docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
--e "DUMP_URL=https://dump.tos.network/dumps/latest.tar.lz" \
 -e "VALIDATOR_PORT=443" \
 -e "CONSOLE_PORT=88" \
 -e "LITE_PORT=443" \
@@ -80,10 +101,83 @@ docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 -p 443:443/udp \
 -p 88:88/tcp \
 -p 443:443/tcp \
--it ghcr.io/tosnetwork/tos
+-it <IMAGE>
 ```
 Adjust ports per your need.
 Check your firewall configuration and make sure that customized ports (443/udp, 88/tcp and 443/tcp in this example) are publicly available.
+
+### Database snapshots
+A new node can start from a database snapshot instead of synchronizing from
+scratch. The snapshot replaces chain state the node would otherwise check for
+itself, so the container imports one only when the operator asks for it and
+names its content:
+
+```
+-e "SNAPSHOT_IMPORT=1" \
+-e "DUMP_URL=https://<snapshot host>/<archive>.tar.lz" \
+-e "DUMP_SHA256=<SHA-256 of the archive>" \
+-e "DUMP_ZEROSTATE_ROOT_HASH=<validator.zero_state.root_hash of the network>" \
+-v /data/snapshot-staging:/var/tos-work/snapshot-staging \
+```
+
+`DUMP_SHA256` is the trust anchor. It authenticates the archive only if you
+obtained it independently of the snapshot download, for example from a
+release announcement you verified, rather than from the server, page or
+mirror that serves the archive. HTTPS only proves which server answered, and a
+checksum served next to the archive proves nothing more.
+
+`DUMP_ZEROSTATE_ROOT_HASH` must equal the zero state in the node's global
+config. That is a consistency check between two of your own settings: it stops
+a digest meant for one network from being used on a node configured for
+another. It does not authenticate the global config; the node trusts that
+config as configured.
+
+**Prerequisite: the import must be the database's only writer.** Stop the
+validator and any other importer before the import, and make sure no other
+container mounts the database volume read-write until it ends; in Kubernetes,
+run one replica per volume. The script checks the database again immediately
+before installing, which detects a write that happened while the archive was
+staged and refuses. That check does not make the installation atomic against
+a writer that is still running, and nothing recovers an installation
+interrupted by a crash: start again from a new database.
+
+The import script (`docker/import-snapshot.sh`) then:
+
+- refuses to start when `DUMP_URL` is set without `SNAPSHOT_IMPORT=1`, or when
+  the digest or the network binding is missing or does not match;
+- imports only into a new database: before downloading, and again immediately
+  before installing, the database directory may hold nothing but the node's
+  `config.json`, `keyring/` and `tos-global.config`, the empty error log
+  `validator-engine` creates when it initializes a database (`error/` holding
+  only an empty `files/` and an empty `log.txt`), and an empty `lost+found`.
+  Any other content, even with names the snapshot does not use, is refused.
+  `init.sh` runs the import before `validator-engine` initializes the
+  database, so on a first start the database holds only the global config;
+- downloads into `SNAPSHOT_STAGING_DIR`, which must be outside the database
+  directory (mount it on the same filesystem as the database so the final step
+  is a rename), and checks the SHA-256 before anything is unpacked;
+- accepts only regular files and directories with relative names, never `..`,
+  and never a top-level name the database already reserves (`config.json`,
+  `keyring`, `tos-global.config`, `error`, `lost+found`, `config.json.tmp`,
+  the import markers), however
+  the name is spelled (`././keyring`, `.//keyring` and `keyring/` are all
+  `keyring`);
+- checks the unpacked tree itself again before installing it: its real
+  top-level names, and nothing but regular, singly linked files and
+  directories anywhere in it;
+- moves the verified entries into place, and only then writes the
+  `.snapshot-imported` marker.
+
+Any refusal or failure stops the container before the node starts. A refusal
+during validation, which covers everything up to and including the final
+check of the database immediately before installation, leaves the database as
+it was. A failure during installation itself (moving the checked entries into
+place) can leave it partially installed and without the `.snapshot-imported`
+marker; the next start then refuses it as not new. Delete the database
+directory's contents except `config.json`, `keyring/` and `tos-global.config`,
+or start from a new database, before trying again. A database imported by an
+earlier image without verification (it carries a `dump_downloaded` marker) is
+refused; start from an empty database.
 
 ### Verify if TOS node is operating correctly
 After executing above command check the log files:
@@ -180,7 +274,7 @@ kubectl describe node <NODE_NAME> | grep IPv4Address
 ```
 Double check if your Kubernetes node's external IP coincides with the host's IP address:
 ```
-kubectl run --image=ghcr.io/tosnetwork/tos:latest validator-engine-pod --env="HOST_IP=1.1.1.1" --env="PUBLIC_IP=1.1.1.1"
+kubectl run --image=ghcr.io/tosnetwork/tos@sha256:<digest> validator-engine-pod --env="HOST_IP=1.1.1.1" --env="PUBLIC_IP=1.1.1.1"
 kubectl exec -it validator-engine-pod -- curl -4 ifconfig.me
 kubectl delete pod validator-engine-pod
 ```
@@ -374,7 +468,7 @@ docker run -it -v /data/db:/var/tos-work/db \
 -p 43678:43678/tcp \
 -p 43679:43679/tcp \
 --entrypoint /bin/bash \
-ghcr.io/tosnetwork/tos
+<IMAGE>
 ```
 identify your PUBLIC_IP:
 ```

@@ -931,6 +931,7 @@ mod tests {
             log: None,
             bookmarks: Default::default(),
             alerts: Default::default(),
+            proof_verifier: None,
         })
     }
 
@@ -1145,6 +1146,7 @@ mod tests {
                 settlement_policy_hash: [0x33; 32],
                 permission_hash: [0x77; 32],
                 attestor_pubkey: None,
+                dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
             };
             let address = TaskEscrowContract::calculate_address(-1, &init).expect("address");
             let state_init = TaskEscrowContract::build_state_init(&init).expect("state init");

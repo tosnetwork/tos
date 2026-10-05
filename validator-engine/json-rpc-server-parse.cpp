@@ -61,6 +61,47 @@ bool is_valid_json_number(const std::string &s) {
   return i == s.size();
 }
 
+td::Result<std::string> reflected_request_id(const td::JsonValue& id) {
+  switch (id.type()) {
+    case td::JsonValue::Type::Null:
+      return std::string("null");
+    case td::JsonValue::Type::String: {
+      const auto& raw = id.get_string();
+      // The serialized form adds two quotes to at least every raw byte, so a
+      // raw string this long cannot fit; refuse it without escaping it.
+      if (raw.size() > kMaxReflectedIdBytes) {
+        return td::Status::Error("request id is too long");
+      }
+      td::StringBuilder sb;
+      sb << td::JsonString(td::Slice(raw));
+      if (sb.is_error()) {
+        return td::Status::Error("request id cannot be serialized");
+      }
+      auto literal = sb.as_cslice().str();
+      if (literal.size() > kMaxReflectedIdBytes) {
+        return td::Status::Error("request id is too long");
+      }
+      return literal;
+    }
+    case td::JsonValue::Type::Number: {
+      const auto& raw = id.get_number();
+      if (raw.size() > kMaxReflectedIdBytes) {
+        return td::Status::Error("request id is too long");
+      }
+      auto literal = raw.str();
+      if (!is_valid_json_number(literal)) {
+        return td::Status::Error("request id is not a valid JSON number");
+      }
+      return literal;
+    }
+    case td::JsonValue::Type::Boolean:
+    case td::JsonValue::Type::Array:
+    case td::JsonValue::Type::Object:
+      return td::Status::Error("request id must be a string, a number or null");
+  }
+  return td::Status::Error("request id has an unknown type");
+}
+
 namespace {
 
 // Runs `f` and converts every VM-level exception into a td::Status so that

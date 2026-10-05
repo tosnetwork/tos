@@ -75,11 +75,12 @@ int c_check(cell anchors, int kind, int id, int root, int commitment_root, int n
 ;; Section 13's state cell, written and read back. Every path does both once.
 ;; The liability and the floor are Coins, which is a variable-length encoding,
 ;; so whether a pool holding a thousand nanotos and one holding the supply
-;; cost the same to write down is a question and not an assumption.
+;; cost the same to write down is a question and not an assumption. The
+;; reservation count is a fixed-width uint32, so its value moves no cost.
 int c_state_round_trip(int liability, int floor, int index,
                        cell frontier, cell anchors, cell config, cell vk) method_id {
-  cell state = state_build(0, index, 0, 1, 0, liability, floor, frontier, anchors, config, vk);
-  (_, _, _, _, _, int read_liability, int read_floor, _, _, _, _) = state_parse(state);
+  cell state = state_build(0, index, 0, 0, 1, 0, liability, floor, frontier, anchors, config, vk);
+  (_, _, _, _, _, _, int read_liability, int read_floor, _, _, _, _) = state_parse(state);
   return read_liability + read_floor;
 }
 
@@ -174,10 +175,8 @@ impl ComponentProbe {
     /// What walking the denomination list to `amount` costs, against the
     /// configuration a pool is actually deployed with.
     pub fn denomination_gas(&self, config: &Cell, amount: u64) -> Result<i64> {
-        let (stack, gas, exit) = self.call(
-            "c_denomination",
-            vec![StackItem::cell(config.clone()), Self::number(amount)?],
-        )?;
+        let (stack, gas, exit) = self
+            .call("c_denomination", vec![StackItem::cell(config.clone()), Self::number(amount)?])?;
         if exit != 0 {
             return Err(CrossCheckError::Vm(format!("c_denomination exited {exit}")));
         }

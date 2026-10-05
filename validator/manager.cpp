@@ -76,6 +76,7 @@
 #include "fabric.h"
 #include "finality-cache-policy.h"
 #include "full-node-serializer.hpp"
+#include "full-node.h"
 #include "get-next-key-blocks.h"
 #include "import-db-slice-local.hpp"
 #include "import-db-slice.hpp"
@@ -675,17 +676,30 @@ td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt
 
   if (opts_->nonfinal_ls_queries_enabled() && shard_client_handle_ &&
       shard_client_handle_->unix_time() > (UnixTime)td::Clocks::system() - 60) {
-    auto handle = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::get_block_handle, block_id, true);
-    Ref<BlockData> block = co_await create_block(block_id, std::move(data));
-    co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::set_block_data, handle, std::move(block));
-    co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state, handle, 0, td::Timestamp::in(60.0),
-                            true);
-    VLOG(VALIDATOR_DEBUG) << "Processed candidate broadcast " << block_id.to_str();
-    if (is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
-      NonfinalGroupInfo &info = nonfinal_info_[{block_id.shard_full(), cc_seqno}];
-      if (!info.last_accepted.is_valid() || info.last_accepted.seqno() < block_id.seqno()) {
-        if (!info.last_candidate.is_valid() || info.last_candidate.seqno() < block_id.seqno()) {
-          info.last_candidate = block_id;
+    // Applying a candidate ahead of finality keeps its data alive until the
+    // state is computed, so only a bounded number run at once.
+    using StartResult = BoundedActiveOperations<BlockIdExt>::StartResult;
+    auto admission = active_candidate_broadcasts_.try_start(block_id);
+    if (admission != StartResult::Started) {
+      VLOG(VALIDATOR_DEBUG) << "not applying candidate broadcast " << block_id.to_str() << ": "
+                            << (admission == StartResult::AlreadyActive ? "already being applied"
+                                                                        : "too many being applied");
+    } else {
+      SCOPE_EXIT {
+        active_candidate_broadcasts_.finish(block_id);
+      };
+      auto handle = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::get_block_handle, block_id, true);
+      Ref<BlockData> block = co_await create_block(block_id, std::move(data));
+      co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::set_block_data, handle, std::move(block));
+      co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state, handle, 0,
+                              td::Timestamp::in(60.0), true);
+      VLOG(VALIDATOR_DEBUG) << "Processed candidate broadcast " << block_id.to_str();
+      if (is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+        NonfinalGroupInfo &info = nonfinal_info_[{block_id.shard_full(), cc_seqno}];
+        if (!info.last_accepted.is_valid() || info.last_accepted.seqno() < block_id.seqno()) {
+          if (!info.last_candidate.is_valid() || info.last_candidate.seqno() < block_id.seqno()) {
+            info.last_candidate = block_id;
+          }
         }
       }
     }
@@ -1010,20 +1024,38 @@ void ValidatorManagerImpl::set_shard_block_description_ready(td::Ref<ShardTopBlo
 }
 
 void ValidatorManagerImpl::add_cached_block_data(BlockIdExt block_id, td::BufferSlice data) {
+  static_assert(kMaxCandidateDataSize == fullnode::FullNode::max_block_size(),
+                "the candidate data caches must admit every block the node accepts");
+  auto &cache = block_id.is_masterchain() ? cached_masterchain_block_candidates_ : cached_block_data_;
+  auto stored = cache.put(block_id, data);
+  data = {};
+  if (stored == CandidateDataCache<BlockIdExt>::PutResult::TooLarge) {
+    VLOG(VALIDATOR_WARNING) << "not caching block data for " << block_id.to_str() << ": larger than "
+                            << kMaxCandidateDataSize << " bytes";
+    return;
+  }
+  if (stored == CandidateDataCache<BlockIdExt>::PutResult::Full) {
+    // Allocations still held by asynchronous work fill the cache's budget.
+    // Not caching is never a verdict on the block: every reader of these
+    // caches falls back to the normal path on a miss (download_block,
+    // download_block_proof_link, the candidate DB), and pending finality
+    // evidence waits within its own deadline for the data to arrive.
+    VLOG(VALIDATOR_DEBUG) << "not caching block data for " << block_id.to_str()
+                          << ": cached data still held by pending work fills the budget";
+    return;
+  }
+  if (stored != CandidateDataCache<BlockIdExt>::PutResult::Stored) {
+    return;
+  }
   if (block_id.is_masterchain()) {
-    td::BufferSlice &block_data = cached_masterchain_block_candidates_.get(block_id);
-    if (!block_data.empty()) {
-      return;
-    }
-    block_data = std::move(data);
     try_process_pending_block_finality(block_id);
     return;
   }
-  td::BufferSlice &block_data = cached_block_data_.get(block_id);
-  if (!block_data.empty()) {
+  const td::BufferSlice *cached = cached_block_data_.get(block_id, false);
+  if (cached == nullptr) {
     return;
   }
-  block_data = std::move(data);
+  td::BufferSlice block_data = cached->clone();
   {
     auto it = wait_block_data_.find(block_id);
     if (it != wait_block_data_.end()) {
@@ -1055,8 +1087,8 @@ void ValidatorManagerImpl::add_cached_block_data(BlockIdExt block_id, td::Buffer
 }
 
 void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_id) {
-  auto candidate = block_id.is_masterchain() ? cached_masterchain_block_candidates_.get_if_exists(block_id)
-                                             : cached_block_data_.get_if_exists(block_id);
+  auto candidate =
+      block_id.is_masterchain() ? cached_masterchain_block_candidates_.get(block_id) : cached_block_data_.get(block_id);
   auto pending = pending_block_finality_.get_if_exists(block_id);
   if (candidate == nullptr || pending == nullptr || pending->empty() || pending->processing() ||
       last_masterchain_state_.is_null()) {
@@ -1780,7 +1812,7 @@ void ValidatorManagerImpl::get_block_candidate_from_db(ValidatorId source, Block
 }
 
 void ValidatorManagerImpl::get_candidate_data_by_block_id_from_db(BlockIdExt id, td::Promise<td::BufferSlice> promise) {
-  if (auto cached = cached_block_data_.get_if_exists(id, false)) {
+  if (auto cached = cached_block_data_.get(id, false)) {
     promise.set_result(cached->clone());
     return;
   }
@@ -2457,7 +2489,7 @@ void ValidatorManagerImpl::get_node_consensus_status(td::Promise<NodeConsensusSt
 
 void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 priority,
                                                   td::Promise<ReceivedBlock> promise) {
-  if (auto cached = cached_block_data_.get_if_exists(id, false)) {
+  if (auto cached = cached_block_data_.get(id, false)) {
     LOG(DEBUG) << "send_get_block_request: got result from block data cache for " << id.to_str();
     return promise.set_value(ReceivedBlock{id, cached->clone()});
   }
@@ -2484,7 +2516,7 @@ void ValidatorManagerImpl::send_get_block_proof_request(BlockIdExt block_id, td:
 void ValidatorManagerImpl::send_get_block_proof_link_request(BlockIdExt block_id, td::uint32 priority,
                                                              td::Promise<td::BufferSlice> promise) {
   if (!block_id.is_masterchain()) {
-    if (auto cached = cached_block_data_.get_if_exists(block_id, false)) {
+    if (auto cached = cached_block_data_.get(block_id, false)) {
       // Proof link can be created from the cached block data
       LOG(DEBUG) << "send_get_block_proof_link_request: creating proof link from cached block data for "
                  << block_id.to_str();

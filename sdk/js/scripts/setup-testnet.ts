@@ -136,7 +136,8 @@ async function main() {
   }
 
   const keyPair = await mnemonicToPrivateKey(mnemonic);
-  const wallet = WalletV4R2.create({ publicKey: keyPair.publicKey, workchain: 0 });
+  const networkGlobalId = await client.getNetworkGlobalId();
+  const wallet = WalletV4R2.create({ publicKey: keyPair.publicKey, networkGlobalId, workchain: 0 });
   const walletAddr = wallet.address;
   console.log("      Wallet address:", walletAddr.toRawString());
 
