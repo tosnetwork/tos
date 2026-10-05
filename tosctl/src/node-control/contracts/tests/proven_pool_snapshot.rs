@@ -964,3 +964,219 @@ async fn a_live_read_from_a_real_lite_server() {
         pool.as_ref().map(|s| &s.checkpoint).map_err(|e| format!("{e:#}"))
     );
 }
+
+// ───── a current-code pool, through the real verifier ─────
+//
+// `fixtures/proven-reads/synthetic-pool` is written by `test-proven-pool-fixture`
+// (test/proven-snapshot/pool-snapshot-fixture.cpp): a genuinely signed chain
+// from a key-block anchor through a validator-set rotation to a block whose
+// state holds a pool running the current compiled pool code, and a second pool
+// whose code is only a library reference to that code.
+
+const SYNTHETIC_POOL: &str = "-1:7777777777777777777777777777777777777777777777777777777777777777";
+const SYNTHETIC_LIBRARY_POOL: &str =
+    "-1:7878787878787878787878787878787878787878787878787878787878787878";
+const ALICE: [u8; 32] = [0xA1; 32];
+const BOB: [u8; 32] = [0xB0; 32];
+
+fn synthetic(name: &str) -> Vec<u8> {
+    fixture(&format!("synthetic-pool/{name}"))
+}
+
+fn synthetic_target() -> MasterchainCheckpoint {
+    let target: serde_json::Value = serde_json::from_slice(&synthetic("target.json")).unwrap();
+    MasterchainCheckpoint {
+        seqno: u32::try_from(target["seqno"].as_u64().unwrap()).unwrap(),
+        root_hash: target["root_hash"].as_str().unwrap().to_owned(),
+        file_hash: target["file_hash"].as_str().unwrap().to_owned(),
+    }
+}
+
+fn synthetic_provider(case: &Case, account: &str, libraries: Option<&str>) -> ProvenGetterProvider {
+    let mut files = vec![
+        ("chain-0000.tl", synthetic("chain-0000.tl")),
+        ("exec-config.tl", synthetic("exec-config.tl")),
+        ("account.tl", synthetic(account)),
+    ];
+    if let Some(libraries) = libraries {
+        files.push(("libraries.tl", synthetic(libraries)));
+    }
+    let mut config = case.config(verifier(), case.material(&files), false);
+    config.anchor_file = fixtures().join("synthetic-pool/anchor.json");
+    ProvenGetterProvider::new(&config).unwrap()
+}
+
+/// The pool's storage, built here from the pool's storage layout, independent
+/// of the generator that wrote the state and of the decoders that read it.
+fn expected_pool_data_hash() -> String {
+    use chain_block::{BuilderData, Coins, HashmapE, IBitstring, SliceData};
+    let key = |byte: u8| {
+        SliceData::load_builder(BuilderData::with_raw(vec![byte; 32], 256).unwrap()).unwrap()
+    };
+    let mut config = BuilderData::new();
+    config.append_raw(&[0xAB; 32], 256).unwrap();
+    config.append_raw(&[0xCD; 32], 256).unwrap();
+    config.append_u16(4000).unwrap();
+    config.append_u16(40).unwrap();
+    Coins::new(100_000_000_000).write_to(&mut config).unwrap();
+    Coins::new(10_000_000_000).write_to(&mut config).unwrap();
+    let mut nominators = HashmapE::with_bit_len(256);
+    let mut withdraw_requests = HashmapE::with_bit_len(256);
+    for (who, amount, pending, withdraw) in
+        [(0xA1u8, 1_000_000_000_000u64, 0u64, false), (0xB0, 250_000_000_000, 5_000_000_000, true)]
+    {
+        let mut entry = BuilderData::new();
+        Coins::new(amount).write_to(&mut entry).unwrap();
+        Coins::new(pending).write_to(&mut entry).unwrap();
+        nominators.set_builder(key(who), &entry).unwrap();
+        if withdraw {
+            withdraw_requests.set_builder(key(who), &BuilderData::new()).unwrap();
+        }
+    }
+    let mut data = BuilderData::new();
+    data.append_u8(1).unwrap();
+    data.append_u16(2).unwrap();
+    Coins::new(3_000_000_000_000).write_to(&mut data).unwrap();
+    Coins::new(500_000_000_000).write_to(&mut data).unwrap();
+    data.checked_append_reference(config.into_cell().unwrap()).unwrap();
+    nominators.write_to(&mut data).unwrap();
+    withdraw_requests.write_to(&mut data).unwrap();
+    data.append_u32(1_700_000_000).unwrap();
+    data.append_raw(&[0x11; 32], 256).unwrap();
+    data.append_u8(1).unwrap();
+    data.append_u32(1_700_000_100).unwrap();
+    data.append_u32(65_536).unwrap();
+    data.append_bit_zero().unwrap();
+    hex::encode(data.into_cell().unwrap().repr_hash().as_slice())
+}
+
+fn assert_expected_pool(snapshot: &contracts::NominatorPoolSnapshot) {
+    let pool = &snapshot.pool;
+    assert_eq!(pool.state, 1);
+    assert_eq!(pool.nominators_count, 2);
+    assert_eq!(pool.stake_amount_sent, 3_000_000_000_000);
+    assert_eq!(pool.validator_amount, 500_000_000_000);
+    assert_eq!(pool.validator_address, [0xAB; 32]);
+    assert_eq!(pool.controller_address, [0xCD; 32]);
+    assert_eq!(pool.validator_reward_share, 4000);
+    assert_eq!(pool.max_nominators_count, 40);
+    assert_eq!(pool.min_validator_stake, 100_000_000_000);
+    assert_eq!(pool.min_nominator_stake, 10_000_000_000);
+    assert_eq!(pool.stake_at, 1_700_000_000);
+    assert_eq!(pool.saved_validator_set_hash, [0x11; 32]);
+    assert_eq!(pool.validator_set_changes_count, 1);
+    assert_eq!(pool.validator_set_change_time, 1_700_000_100);
+    assert_eq!(pool.stake_held_for, 65_536);
+    let position = |key: [u8; 32]| {
+        let address = format!("0:{}", hex::encode(key));
+        snapshot
+            .nominators
+            .iter()
+            .find(|position| position.address == address)
+            .unwrap_or_else(|| panic!("{address} is not in {:?}", snapshot.nominators))
+            .clone()
+    };
+    assert_eq!(snapshot.nominators.len(), 2);
+    let alice = position(ALICE);
+    assert_eq!(
+        (alice.amount, alice.pending_deposit, alice.withdraw_requested),
+        (1_000_000_000_000, 0, false)
+    );
+    let bob = position(BOB);
+    assert_eq!(
+        (bob.amount, bob.pending_deposit, bob.withdraw_requested),
+        (250_000_000_000, 5_000_000_000, true)
+    );
+    assert_eq!(snapshot.checkpoint, synthetic_target());
+    assert!(!snapshot.proof.live);
+}
+
+#[tokio::test]
+async fn a_current_code_pool_snapshot_is_computed_from_its_proven_state() {
+    let case = Case::new();
+    let provider = synthetic_provider(&case, "pool-account.tl", None);
+    let policy = ReadPolicy::Historical(synthetic_target());
+    let snapshot =
+        read_proven_nominator_pool_snapshot(&provider, &address(SYNTHETIC_POOL), &policy)
+            .await
+            .unwrap();
+    assert_expected_pool(&snapshot);
+    // Both getters ran on the one proven state, which holds exactly the
+    // storage built here and the current pool code.
+    let proven = provider
+        .run(
+            &address(SYNTHETIC_POOL),
+            &contracts::NOMINATOR_POOL_SNAPSHOT_METHODS.map(GetMethodCall::new),
+            &policy,
+        )
+        .await
+        .unwrap();
+    assert_eq!(proven.account.data_hash, expected_pool_data_hash());
+    let code =
+        read_single_root_boc(hex::decode(contracts::contract_codes::NOMINATOR_POOL_CODE).unwrap())
+            .unwrap();
+    assert_eq!(proven.account.code_hash, hex::encode(code.repr_hash().as_slice()));
+    assert_eq!(snapshot.proof.account_state_hash, proven.account.state_hash);
+}
+
+#[tokio::test]
+async fn a_pool_whose_code_is_a_library_is_read_through_the_proven_library() {
+    let case = Case::new();
+    let provider = synthetic_provider(&case, "library-pool-account.tl", Some("libraries.tl"));
+    let policy = ReadPolicy::Historical(synthetic_target());
+    let snapshot =
+        read_proven_nominator_pool_snapshot(&provider, &address(SYNTHETIC_LIBRARY_POOL), &policy)
+            .await
+            .unwrap();
+    assert_expected_pool(&snapshot);
+    let proven = provider
+        .run(&address(SYNTHETIC_LIBRARY_POOL), &[GetMethodCall::new("get_pool_data")], &policy)
+        .await
+        .unwrap();
+    let code =
+        read_single_root_boc(hex::decode(contracts::contract_codes::NOMINATOR_POOL_CODE).unwrap())
+            .unwrap();
+    assert_ne!(
+        proven.account.code_hash,
+        hex::encode(code.repr_hash().as_slice()),
+        "the account's own code is the library reference, not the pool code"
+    );
+}
+
+#[tokio::test]
+async fn a_library_pool_without_its_library_proof_has_no_snapshot() {
+    let case = Case::new();
+    let provider = synthetic_provider(&case, "library-pool-account.tl", None);
+    let policy = ReadPolicy::Historical(synthetic_target());
+    assert_refused(
+        read_proven_nominator_pool_snapshot(&provider, &address(SYNTHETIC_LIBRARY_POOL), &policy)
+            .await,
+        "a required library is referenced but no library proof was supplied",
+    );
+}
+
+#[tokio::test]
+async fn substituted_library_content_is_refused() {
+    let case = Case::new();
+    let provider =
+        synthetic_provider(&case, "library-pool-account.tl", Some("libraries-substituted.tl"));
+    let policy = ReadPolicy::Historical(synthetic_target());
+    assert_refused(
+        read_proven_nominator_pool_snapshot(&provider, &address(SYNTHETIC_LIBRARY_POOL), &policy)
+            .await,
+        "library content differs from the proven library",
+    );
+}
+
+#[tokio::test]
+async fn a_library_proof_from_another_block_is_refused() {
+    let case = Case::new();
+    let provider =
+        synthetic_provider(&case, "library-pool-account.tl", Some("libraries-other-block.tl"));
+    let policy = ReadPolicy::Historical(synthetic_target());
+    assert_refused(
+        read_proven_nominator_pool_snapshot(&provider, &address(SYNTHETIC_LIBRARY_POOL), &policy)
+            .await,
+        "library proof answers for another block",
+    );
+}

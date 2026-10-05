@@ -20,6 +20,8 @@ on:
       - "lite-client/proof-verify/**"
       - "lite-client/lite-client-common.*"
       - "tosctl/src/node-control/common/src/app_config.rs"
+      - "tosctl/src/node-control/service/src/indexer/**"
+      - "test/proven-snapshot/**"
       - "tosctl/src/sandbox/**"
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
@@ -68,6 +70,8 @@ on:
       - "lite-client/proof-verify/**"
       - "lite-client/lite-client-common.*"
       - "tosctl/src/node-control/common/src/app_config.rs"
+      - "tosctl/src/node-control/service/src/indexer/**"
+      - "test/proven-snapshot/**"
       - "tosctl/src/sandbox/**"
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
@@ -234,7 +238,7 @@ jobs:
       # the real verifier, so the verifier is built here; the suite fails, not
       # skips, without it.
       - name: Build the proof verifier the snapshot suite drives
-        run: cmake --build build --target tos-proof-verify -j2
+        run: cmake --build build --target tos-proof-verify test-proven-pool-fixture -j2
 
       # Runs every file under contracts/tests/, which is where the sandbox
       # suites live. Do not narrow this to a single --test target: the point
@@ -265,6 +269,19 @@ jobs:
         # that broke four deploy sandbox tests showed up here as three stale
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
+
+      # The indexer folds a pool snapshot the real verifier proved from a signed
+      # chain while the endpoint reports different stacks. It is ignored in the
+      # service job, which has no native build, so it is run here by name and
+      # must actually run.
+      - name: Indexer takes pool snapshots only from the proof verifier
+        env:
+          TOS_PROOF_VERIFY: ${{ github.workspace }}/build/lite-client/proof-verify/tos-proof-verify
+        run: |
+          cargo test --manifest-path tosctl/src/Cargo.toml -p service --lib --locked \
+            the_indexer_folds_a_current_code_pool_snapshot_proven_by_the_real_verifier -- --ignored \
+            2>&1 | tee "$RUNNER_TEMP/proven-indexer.log"
+          grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/proven-indexer.log"
 
       # The action phase refuses an outbound message over max_msg_cells or
       # max_msg_bits, or over the cells the sender can be fined for, as the

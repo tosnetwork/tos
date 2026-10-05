@@ -903,6 +903,14 @@ target_include_directories(test-proof-verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(test-proof-verify PRIVATE proof-verify-core tos_pq_consensus_signer tos_pq_consensus
                       tos_crypto)
 
+# Writes signed, provable material for a current-code nominator pool; the
+# proven pool snapshot tests in the contracts crate re-verify it.
+add_executable(test-proven-pool-fixture test/proven-snapshot/pool-snapshot-fixture.cpp)
+target_include_directories(test-proven-pool-fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-proven-pool-fixture PRIVATE proof-verify-core tos_pq_consensus_signer tos_pq_consensus
+                      tos_crypto)
+
 add_executable(test-adnl-ext-query-closure test/pq-native/adnl-ext-query-closure-test.cpp)
 target_include_directories(test-adnl-ext-query-closure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)

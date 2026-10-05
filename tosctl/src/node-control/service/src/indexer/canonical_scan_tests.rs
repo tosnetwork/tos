@@ -116,7 +116,14 @@ impl FakeChain {
 
     /// Masterchain block `seqno` on `fork`, referencing `heads`.
     pub(super) fn add_master(&self, seqno: u32, fork: u8, heads: &[&BlockIdExt]) -> BlockIdExt {
-        let id = self.add_block(-1, MC, seqno, fork);
+        self.add_master_with_id(block_id(-1, MC, seqno, fork), heads)
+    }
+
+    /// A masterchain block with an exact identity, such as one a proof
+    /// verifier can authenticate.
+    pub(super) fn add_master_with_id(&self, id: BlockIdExt, heads: &[&BlockIdExt]) -> BlockIdExt {
+        let seqno = id.seqno;
+        self.with(|s| s.blocks.insert(key(&id), (id.clone(), Vec::new())));
         let heads = heads.iter().map(|h| (*h).clone()).collect();
         self.with(|s| {
             s.shards.insert(seqno, heads);
@@ -1594,4 +1601,82 @@ async fn an_unbound_verifier_answer_leaves_the_pool_pending_without_fallback() {
     assert!(store.nominator_ledger_entries(&nominator(ALICE_KEY)).unwrap().is_empty());
     assert_eq!(store.address_refresh_queue(10).unwrap().len(), 1, "the observation is retried");
     assert_eq!(chain.with(|s| s.endpoint_pool_reads), 0, "no fallback to the endpoint");
+}
+
+/// The real proof verifier, with the signed synthetic chain whose target block
+/// holds a pool running the current pool code. The scripted chain carries
+/// that exact block at height 3 and a dishonest endpoint that reports the
+/// pool's positions a thousand times larger.
+#[tokio::test]
+#[ignore = "needs the proof verifier: set TOS_PROOF_VERIFY (the contract-sandboxes job runs it)"]
+async fn the_indexer_folds_a_current_code_pool_snapshot_proven_by_the_real_verifier() {
+    let verifier = std::path::PathBuf::from(
+        std::env::var_os("TOS_PROOF_VERIFY").expect("TOS_PROOF_VERIFY names the proof verifier"),
+    );
+    let fixtures = fake_verifier_fixtures().join("synthetic-pool");
+    let target: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixtures.join("target.json")).unwrap()).unwrap();
+    let hash = |field: &str| hex::decode(target[field].as_str().unwrap()).unwrap();
+    const PROVEN_POOL_HEX: &str =
+        "7777777777777777777777777777777777777777777777777777777777777777";
+    let pool = format!("-1:{PROVEN_POOL_HEX}");
+
+    let chain = FakeChain::new();
+    chain.add_master(1, 0, &[]);
+    chain.add_master(2, 0, &[]);
+    let master = chain.add_master_with_id(
+        BlockIdExt {
+            r#type: "tos.blockIdExt".to_owned(),
+            workchain: -1,
+            shard: MC,
+            seqno: 3,
+            root_hash: hash("root_hash"),
+            file_hash: hash("file_hash"),
+        },
+        &[],
+    );
+    chain.add_tx(&master, PROVEN_POOL_HEX, "tx-proven-pool");
+    // What the endpoint believes; it reports a thousand times these.
+    chain.with(|s| {
+        s.pools.entry(pool.clone()).or_default().insert(
+            3,
+            PoolFixture { state: 1, nominators: vec![(ALICE_KEY, 7, 0), (BOB_KEY, 9, 0)] },
+        )
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let material = dir.path().join("material");
+    std::fs::create_dir_all(&material).unwrap();
+    for (from, to) in [
+        ("chain-0000.tl", "chain-0000.tl"),
+        ("exec-config.tl", "exec-config.tl"),
+        ("pool-account.tl", "account.tl"),
+    ] {
+        std::fs::copy(fixtures.join(from), material.join(to)).unwrap();
+    }
+    let provider = contracts::ProvenGetterProvider::new(&common::app_config::ProofVerifierConfig {
+        executable: verifier,
+        anchor_file: fixtures.join("anchor.json"),
+        liteserver_config: None,
+        material_dir: Some(material),
+        live_state_file: None,
+        live_max_age_seconds: None,
+        timeout_seconds: 60,
+        min_interval_ms: 0,
+    })
+    .unwrap();
+    let store = IndexerStore::open_in_memory().unwrap();
+    for _ in 0..3 {
+        run_tick_with(&chain, &provider, &store, &limits(10, 100)).await.unwrap();
+    }
+    assert_eq!(chain.with(|s| s.endpoint_pool_reads), 0, "no endpoint stack was read");
+    let alice = api(&store, ALICE_KEY);
+    record_response("ledger-proven-current-code-pool", &alice);
+    assert_eq!(alice.0, 200, "{}", alice.1);
+    assert_eq!(alice.1["result"][0]["amount"], "1000000000000", "{}", alice.1);
+    assert_eq!(alice.1["as_of_mc_seqno"], 3);
+    assert_eq!(alice.1["as_of_mc_root_hash"], target["root_hash"]);
+    let bob = api(&store, BOB_KEY);
+    assert_eq!(bob.1["result"][0]["amount"], "250000000000", "{}", bob.1);
+    assert_eq!(bob.1["result"][0]["pending_deposit"], "5000000000", "{}", bob.1);
 }

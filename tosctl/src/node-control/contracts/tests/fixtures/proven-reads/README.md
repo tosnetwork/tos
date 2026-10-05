@@ -50,3 +50,29 @@ e18af8bf00d60a54ea69989ab264bfcb0f08cb608d4d4f7b0ca110aa00dcfcfa  live-638326/ma
 That network has no pool running the current pool code, so no recording here
 yields a successful pool snapshot; the elector stands in for successful proven
 reads, and the pool account shows that a getter failing locally yields none.
+
+## `synthetic-pool/`: a current-code pool, signed and proven
+
+Written by `test-proven-pool-fixture` (`test/proven-snapshot/pool-snapshot-fixture.cpp`):
+
+```
+test-proven-pool-fixture <zerostate file> <current pool code BOC> <out dir>
+```
+
+with the same zerostate as above and the pool code from `NOMINATOR_POOL_CODE`
+(code hash `adda03fa…a2be`). The chain is synthetic but genuinely signed with
+ML-DSA-44 keys: key-block anchor `anchor.json` (seqno 1), a key block rotating
+from authority A to authority B (seqno 2), and the target `target.json`
+(seqno 3), whose header commits by Merkle update to the zerostate extended
+with:
+
+* `-1:7777…7777`, a pool running the current pool code, holding two
+  nominators (`0:a1…a1`: 1000 TOS; `0:b0…b0`: 250 TOS, 5 TOS pending, withdraw
+  requested), written from the pool's storage layout;
+* `-1:7878…7878`, the same pool whose code is only a library reference, with
+  the pool code published in the state's library dictionary;
+* previous-block and last-key-block records for the get-method context.
+
+Answers are built as the lite-server builds them. `libraries-substituted.tl`
+carries other content under the library's hash; `libraries-other-block.tl`
+answers for a different block over the same state.
