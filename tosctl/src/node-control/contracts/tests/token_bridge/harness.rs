@@ -397,6 +397,7 @@ pub fn succeeded(tx: &Transaction) {
 
 /// What one delivered transaction did.
 pub struct Delivery {
+    pub balance_before: u128,
     pub addr: MsgAddressInt,
     pub msg: Message,
     pub tx: Transaction,
@@ -680,11 +681,13 @@ impl Net {
             }
         }
         let after = self.model.snapshot(self, &addr);
-        let delivery = Delivery { addr, msg, tx, outs };
+        let balance_before = account.balance().map(|b| b.coins.as_u128()).unwrap_or(0);
+        let delivery = Delivery { balance_before, addr, msg, tx, outs };
         let mut model = std::mem::take(&mut self.model);
         model.observe(self, &delivery, before, after);
         self.model = model;
         self.delivered.push(Delivery {
+            balance_before: delivery.balance_before,
             addr: delivery.addr.clone(),
             msg: delivery.msg.clone(),
             tx: delivery.tx.clone(),
@@ -1076,10 +1079,10 @@ impl Net {
 
     pub fn start_swap_token(&mut self, recipient: &MsgAddressInt, amount: u128, token: u8) -> u64 {
         let n = self.next_nonce;
-        self.next_nonce += 1;
+        self.next_nonce = self.next_nonce.saturating_add(1);
         succeeded(&self.pay(n));
         let voting = self.swap_voting(GENERATION, n, recipient, amount, token);
-        let vote = self.vote(n + 100, voting);
+        let vote = self.vote(n.wrapping_add(100), voting);
         self.queue.push_back(vote);
         n
     }
@@ -1452,4 +1455,25 @@ pub fn stopped_for_funds(tx: &Transaction) {
         "stopped for another reason: {:?}",
         o.exit_code
     );
+}
+
+/// What forwarding `msg` costs as the network charges it: every cell but the
+/// root, at the masterchain's prices when `masterchain`.
+pub fn forward_fee_of(net: &Net, msg: &Message, masterchain: bool) -> u128 {
+    fn visit(c: &Cell, seen: &mut std::collections::HashSet<UInt256>, cells: &mut u128, bits: &mut u128) {
+        for i in 0..c.references_count() {
+            let child = c.reference(i).expect("a reference");
+            if seen.insert(child.repr_hash()) {
+                *cells += 1;
+                *bits += child.bit_length() as u128;
+                visit(&child, seen, cells, bits);
+            }
+        }
+    }
+    let root = msg.serialize().expect("a message cell");
+    let (mut cells, mut bits) = (0u128, 0u128);
+    visit(&root, &mut std::collections::HashSet::new(), &mut cells, &mut bits);
+    let prices = net.bc.config_params().fwd_prices(masterchain).expect("forward prices");
+    u128::from(prices.lump_price)
+        + ((u128::from(prices.bit_price) * bits + u128::from(prices.cell_price) * cells + 0xffff) >> 16)
 }

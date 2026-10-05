@@ -24,3 +24,7 @@ mod model;
 mod mint;
 #[path = "token_bridge/burn.rs"]
 mod burn;
+#[path = "token_bridge/state.rs"]
+mod state;
+#[path = "token_bridge/extended.rs"]
+mod extended;

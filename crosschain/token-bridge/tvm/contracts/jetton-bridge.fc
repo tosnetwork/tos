@@ -276,8 +276,10 @@ int need_p1_for(cell d) inline {
     throw_unless(error::wrong_generation, (b_gen_state == GEN_ACTIVE) & (generation == b_generation));
 }
 
-;; A swap number the bridge may still hold: within the generation and the window.
+;; A swap number the bridge may still hold: within the generation and the window,
+;; and never the exhausted sentinel, which the watermark could not fold past.
 () require_open_swap(int n) impure inline {
+    throw_unless(error::sequence_exhausted, n <= MAX_SEQ);
     throw_unless(error::not_admissible, n >= b_swap_wm);
     throw_unless(error::window_full, n < b_swap_wm + SWAP_WINDOW);
 }

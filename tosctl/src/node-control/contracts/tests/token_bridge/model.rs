@@ -48,6 +48,8 @@ pub struct MinterSnap {
     pub mint_wm: u64,
     /// owner -> burn watermark of the current life
     pub burn_wm: BTreeMap<Vec<u8>, u64>,
+    /// s -> escrow held for a waiting mint
+    pub escrows: BTreeMap<u64, i128>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -64,6 +66,8 @@ pub struct BridgeSnap {
     /// minter -> (burn watermark, compaction floor)
     pub burn_bounds: BTreeMap<Vec<u8>, (u64, u64)>,
     pub swap_wm: u64,
+    /// n -> recorded fee of a paid or preparing lock
+    pub fees: BTreeMap<u64, i128>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,6 +116,9 @@ pub struct Model {
     /// When set, an atomic-send failure is recorded instead of failing the test.
     pub tolerate_atomic: bool,
     pub enabled: bool,
+    /// Set by tests that patch a counter next to exhaustion, where a sender's
+    /// acknowledged floor and a receiver's storage are made inconsistent on purpose.
+    pub skip_window_checks: bool,
 }
 
 fn key(addr: &MsgAddressInt) -> Vec<u8> {
@@ -237,12 +244,115 @@ impl Model {
             }
             _ => {}
         }
+        self.check_funded(net, d, &before, &after);
         if o.aborted && before != Snap::None {
             // A failed deployment is left as an empty account by one engine and
             // not created by the other; neither carries any state.
             assert_eq!(before, after, "an aborted transaction changed the state it reports");
         }
         self.check_conservation(net);
+        if !self.skip_window_checks {
+            self.check_windows(net);
+        }
+    }
+
+    /// I7: a protocol leg spends its incoming value and nothing of the
+    /// contract's own balance, beyond storage; the exceptions spend only what
+    /// they recorded earlier: a vote or a cancellation spends a lock's fee, a
+    /// promotion spends a waiting mint's escrow.
+    fn check_funded(&self, net: &Net, d: &Delivery, before: &Snap, after: &Snap) {
+        let op = body_op(&d.msg);
+        let bounced = d.msg.int_header().map(|h| h.bounced).unwrap_or(false);
+        let protocol = !bounced && op.is_some_and(|o| (40..=63).contains(&o) || o == OP_BURN || o == OP_EXECUTE_VOTING);
+        if !protocol {
+            return;
+        }
+        if op == Some(OP_EXECUTE_VOTING) {
+            // Of the votes, only a swap and a lock cancellation are settlement.
+            let mut b = d.msg.body().unwrap().clone();
+            b.get_next_u32().unwrap();
+            b.get_next_u64().unwrap();
+            let sub = b.get_next_byte().unwrap();
+            if sub != 0 && sub != 9 {
+                return;
+            }
+        }
+        // Optional records are paid from the contract's balance, by design.
+        let mut allowed: i128 = d
+            .outs
+            .iter()
+            .filter(|m| !m.is_internal())
+            .filter(|m| {
+                let t = ext_topic(m);
+                t != Some(LOG_BURN)
+                    && t != Some(declared("LOG_SWAP_CANCELLED") as u32)
+                    && t != Some(declared("LOG_LIABILITY_STRANDED") as u32)
+            })
+            .map(|m| forward_fee_of(net, m, d.addr.workchain_id() == -1) as i128)
+            .sum();
+        match (before, after) {
+            (Snap::Minter(b), Snap::Minter(a)) => {
+                for (s, e) in &b.escrows {
+                    let was = b.mints.get(s).map(|x| x.0);
+                    let now = a.mints.get(s).map(|x| x.0);
+                    if was == Some(mint_status::AWAITING_OPEN) && now != Some(mint_status::AWAITING_OPEN) {
+                        allowed += e;
+                    }
+                }
+            }
+            (Snap::Bridge(b), Snap::Bridge(a)) => {
+                for (n, fee) in &b.fees {
+                    if b.swaps.get(n) == Some(&swap_state::PAID) && a.swaps.get(n) != Some(&swap_state::PAID) {
+                        allowed += fee;
+                    }
+                }
+            }
+            _ => {}
+        }
+        let o = outcome(&d.tx);
+        let value = value_of(&d.msg) as i128;
+        let after_balance = net.balance(&d.addr) as i128;
+        let before_balance = d.balance_before as i128;
+        let spent = before_balance + value - o.storage_fees as i128 - after_balance;
+        assert!(
+            spent <= value + allowed,
+            "I7: op {op:?} spent {spent} of an incoming {value} (allowed beyond it: {allowed})"
+        );
+    }
+
+    /// I9 and the acknowledged floors: no receiver holds more than its window
+    /// per channel, and no sender's acknowledged floor exceeds what its
+    /// receiver actually still stores.
+    pub fn check_windows(&self, net: &Net) {
+        if kind_of(net, &net.bridge) != Some("bridge") {
+            return; // not deployed yet
+        }
+        let minter = net.minter();
+        let Some(ch) = net.try_get(&minter, "get_channels", vec![]) else { return };
+        let mint_count = net.get(&minter, "get_mint_count", vec![]).int_at(0);
+        assert!(mint_count <= declared("MINT_WINDOW"), "I9: the minter stores {mint_count} mints");
+        if let Some(c) = net.try_get(&net.bridge, "get_channel", vec![addr_arg(&minter)]) {
+            if c.int_at(0) != 0 {
+                assert!(c.int_at(4) <= ch.int_at(6), "C1: the bridge's acknowledged floor {} exceeds the minter's storage floor {}", c.int_at(4), ch.int_at(6));
+                assert!(ch.int_at(8) <= c.int_at(9), "C4: the minter's acknowledged floor {} exceeds the bridge's storage floor {}", ch.int_at(8), c.int_at(9));
+            }
+        }
+        for owner in known_owners(net) {
+            let h = net.get(&minter, "get_holder", vec![addr_arg(&owner)]);
+            if h.int_at(0) == 0 || h.int_at(2) != holder_state::OPEN {
+                continue;
+            }
+            assert!(h.int_at(14) <= declared("HOLDER_BURN_WINDOW"), "I9: a holder stores {} burns", h.int_at(14));
+            let wallet = net.wallet_of(&owner);
+            let Some(st) = net.try_get(&wallet, "get_settlement_state", vec![]) else { continue };
+            if st.int_at(0) != h.int_at(1) {
+                continue; // another life of this wallet
+            }
+            assert!(h.int_at(6) <= st.int_at(8), "C2: the minter's acknowledged floor {} exceeds the wallet's storage floor {}", h.int_at(6), st.int_at(8));
+            assert!(st.int_at(7) <= h.int_at(11), "C3: the wallet's acknowledged floor {} exceeds the holder's storage floor {}", st.int_at(7), h.int_at(11));
+            let above = net.get(&wallet, "get_credits_above_count", vec![]).int_at(0);
+            assert!(above <= declared("CREDIT_WINDOW"), "I9: a wallet stores {above} credits");
+        }
     }
 
     fn atomic(&mut self, ok: bool, what: String) {
@@ -635,10 +745,12 @@ pub fn minter_snap(net: &Net, addr: &MsgAddressInt) -> MinterSnap {
     let floor = ch.int_at(6).min(ch.int_at(3)) as u64;
     let high = ch.int_at(5) as u64;
     let mut mints = BTreeMap::new();
+    let mut escrows = BTreeMap::new();
     for s in floor..high {
         let r = net.get(addr, "get_mint", vec![int_arg(s)]);
         if r.int_at(0) >= 0 {
             mints.insert(s, (r.int_at(0), r.int_at(1), r.int_at(2), r.int_at(5)));
+            escrows.insert(s, r.int_at(3));
         }
     }
     let mint_entries = net.get(addr, "get_mint_count", vec![]).int_at(0);
@@ -660,7 +772,7 @@ pub fn minter_snap(net: &Net, addr: &MsgAddressInt) -> MinterSnap {
         }
         // the old life's burns are numbered from 0 in their own life
         if h.int_at(12) != 0 {
-            for b in 0..to.max(8) {
+            for b in 0..8 {
                 let r = net.get(addr, "get_burn", vec![addr_arg(&owner), int_arg(b)]);
                 if r.int_at(0) == 2 {
                     burns.insert((account_hash(&owner), b), (r.int_at(0), r.int_at(1), r.int_at(4)));
@@ -677,6 +789,7 @@ pub fn minter_snap(net: &Net, addr: &MsgAddressInt) -> MinterSnap {
         }
     }
     MinterSnap {
+        escrows,
         mint_wm,
         burn_wm,
         born,
@@ -704,11 +817,13 @@ pub fn bridge_snap(net: &Net, addr: &MsgAddressInt) -> BridgeSnap {
     let wm = st.int_at(6) as u64;
     let window = declared("SWAP_WINDOW") as u64;
     let mut swaps = BTreeMap::new();
+    let mut fees = BTreeMap::new();
     let mut stored = 0;
-    for n in wm.saturating_sub(1)..wm + window + 1 {
+    for n in wm.saturating_sub(1)..wm.saturating_add(window + 1) {
         let r = net.get(addr, "get_swap", vec![int_arg(n)]);
         if r.int_at(0) >= 0 {
             swaps.insert(n, r.int_at(0));
+            fees.insert(n, r.int_at(1));
             stored += 1;
         }
     }
@@ -735,5 +850,5 @@ pub fn bridge_snap(net: &Net, addr: &MsgAddressInt) -> BridgeSnap {
         burns_stored.insert(account_hash(&minter), n);
         burn_bounds.insert(account_hash(&minter), (c.int_at(6) as u64, c.int_at(7) as u64));
     }
-    BridgeSnap { born, swaps, outcomes, pending, burns_stored, swaps_stored: stored, burn_bounds, swap_wm: wm }
+    BridgeSnap { born, swaps, outcomes, pending, burns_stored, swaps_stored: stored, burn_bounds, swap_wm: wm, fees }
 }
