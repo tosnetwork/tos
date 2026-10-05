@@ -424,6 +424,10 @@ impl Net {
     fn set_data_of(&mut self, addr: &MsgAddressInt, data: Cell) {
         let mut account = self.bc.get_account(addr).expect("deployed").clone();
         assert!(account.set_data(data), "the data is replaced");
+        // the account's recorded usage follows its state, as after a
+        // transaction: rent and the size limit see the patched state
+        let min = self.bc.config_params().size_limits_config().expect("limits").acc_state_cells_for_storage_dict;
+        account.update_storage_stat(min).expect("the usage is recomputed");
         self.bc.set_account(addr.clone(), account);
     }
 

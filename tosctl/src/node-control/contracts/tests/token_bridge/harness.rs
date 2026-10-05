@@ -625,6 +625,17 @@ impl Net {
         self.bc.set_config(config).expect("the chain adopts it");
     }
 
+    /// ConfigParam 8: the global version, keeping the capabilities.
+    pub fn set_global_version(&mut self, version: u32) {
+        let mut config = self.bc.config_params().clone();
+        let mut gv = config.get_global_version().expect("param 8");
+        gv.version = version;
+        config
+            .set_config(ConfigParamEnum::ConfigParam8(chain_block::ConfigParam8 { global_version: gv }))
+            .expect("param 8");
+        self.bc.set_config(config).expect("the chain adopts it");
+    }
+
     pub fn set_gas_price(&mut self, masterchain: bool, gas_price: u64) {
         let mut config = self.bc.config_params().clone();
         let mut prices = config.gas_prices(masterchain).expect("gas prices");

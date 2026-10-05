@@ -309,7 +309,11 @@ impl Model {
             _ => {}
         }
         self.check_funded(net, d, &before, &after);
-        if o.aborted && before != Snap::None && before != Snap::Other {
+        // The storage phase may freeze or delete the account even when the
+        // rest of the transaction is aborted; its data is then out of reach,
+        // which lifecycle() has accounted for.
+        let gone = after == Snap::Other || after == Snap::None;
+        if o.aborted && before != Snap::None && before != Snap::Other && !gone {
             // A failed deployment is left as an empty account by one engine and
             // not created by the other; neither carries any state.
             assert_eq!(before, after, "an aborted transaction changed the state it reports");
@@ -396,7 +400,10 @@ impl Model {
         let mint_count = net.get(&minter, "get_mint_count", vec![]).int_at(0);
         assert!(mint_count <= declared("MINT_WINDOW"), "I9: the minter stores {mint_count} mints");
         if let Some(c) = net.try_get(&net.bridge, "get_channel", vec![addr_arg(&minter)]) {
-            if c.int_at(0) != 0 {
+            // floors bind one pair of lives; a recreated minter starts a new
+            // relationship the bridge treats as terminal
+            let same_lives = c.int_at(2) == ch.int_at(0) && ch.int_at(1) == net.bridge_life() as i128;
+            if c.int_at(0) != 0 && same_lives {
                 assert!(c.int_at(4) <= ch.int_at(6), "C1: the bridge's acknowledged floor {} exceeds the minter's storage floor {}", c.int_at(4), ch.int_at(6));
                 assert!(ch.int_at(8) <= c.int_at(9), "C4: the minter's acknowledged floor {} exceeds the bridge's storage floor {}", ch.int_at(8), c.int_at(9));
             }

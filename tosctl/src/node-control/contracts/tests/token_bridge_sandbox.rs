@@ -38,3 +38,7 @@ mod lifecycle;
 mod source;
 #[path = "token_bridge/gauge.rs"]
 mod gauge;
+#[path = "token_bridge/storage.rs"]
+mod storage;
+#[path = "token_bridge/limits.rs"]
+mod limits;

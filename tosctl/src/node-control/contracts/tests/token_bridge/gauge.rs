@@ -361,3 +361,21 @@ fn sample_ref(dict: &Option<Cell>) -> Cell {
     let mut v = sample(dict, 256);
     v.checked_drain_reference().expect("a record reference")
 }
+
+/// Fills the bridge to its channel limit with full clones of a worst-case
+/// channel beside the real ones.
+pub fn fill_channels(net: &mut Net) {
+    let s = samples();
+    let full = worst(&s, 1, 1);
+    let clone = sample_ref(&BridgeData::parse(&full.bridge.0).channels);
+    let limit = window("CHANNEL_LIMIT");
+    net.patch_bridge(|b| {
+        let mut d = HashmapE::with_hashmap(256, b.channels.clone());
+        let real = b.channels_count as u64;
+        for i in 0..limit - real {
+            d.setref(key256(i), clone.clone()).unwrap();
+        }
+        b.channels = d.data().cloned();
+        b.channels_count = limit as u32;
+    });
+}
