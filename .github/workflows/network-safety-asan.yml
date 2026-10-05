@@ -93,6 +93,7 @@ jobs:
           test-adnl-peer-pair-cap \
           test-overlay-broadcast-capacity \
           test-http-server-limits \
+          test-json-rpc-transport \
           test-rldp-http-tunnel
 
     - name: Verify the expected network-safety tests are registered
@@ -109,6 +110,7 @@ jobs:
             "test-adnl-peer-pair-cap",
             "test-overlay-broadcast-capacity",
             "test-http-server-limits",
+            "test-json-rpc-transport",
             "test-rldp-http-tunnel",
         }
         got = {t["name"] for t in json.load(open("network-safety-tests.json"))["tests"]}
