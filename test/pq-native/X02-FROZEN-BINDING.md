@@ -35,7 +35,7 @@ and the binding passed. It passed again at `0229eb17d`, after the control runs.
   (same bytes).
 - `pq_pool_stake_order` was built on the Ubuntu 22.04 host
   (`cargo build --release --locked -p contracts --example pq_pool_stake_order`),
-  not in the U24 builder. It needs only libc.
+  not in the U24 builder. Its ELF dependencies are libc, libssl, libcrypto, libgcc_s and libm, all present in the frozen rootfs; a startup probe inside the frozen runtime reached its input parser, which is not a complete stake-order run.
 - The rootfs gained an empty `/datax` directory, so that bwrap can mount its
   tmpfs there.
 - Build, runtime and rootfs are read-only after freezing.
