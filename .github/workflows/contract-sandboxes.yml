@@ -34,9 +34,10 @@ on:
       - "crypto/pq/**"
       - "test/regression-tests.ans"
       - "scripts/check-regression-db.sh"
-      # Retired escrow v1 and the escrow deployment policy.
-      - "scripts/check-retired-escrow-v1.py"
-      - "scripts/test_check_retired_escrow_v1.py"
+      # The removed escrow v1 guard and the escrow deployment policy.
+      - "scripts/check-no-legacy-escrow.py"
+      - "scripts/test_check_no_legacy_escrow.py"
+      - "scripts/test_tos_service_escrow_deploy_policy.py"
       - "scripts/tos_service_escrow_deploy_policy.py"
       - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
@@ -70,9 +71,10 @@ on:
       - "crypto/pq/**"
       - "test/regression-tests.ans"
       - "scripts/check-regression-db.sh"
-      # Retired escrow v1 and the escrow deployment policy.
-      - "scripts/check-retired-escrow-v1.py"
-      - "scripts/test_check_retired_escrow_v1.py"
+      # The removed escrow v1 guard and the escrow deployment policy.
+      - "scripts/check-no-legacy-escrow.py"
+      - "scripts/test_check_no_legacy_escrow.py"
+      - "scripts/test_tos_service_escrow_deploy_policy.py"
       - "scripts/tos_service_escrow_deploy_policy.py"
       - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
@@ -267,14 +269,15 @@ jobs:
       - name: No removed validator-authority path has returned
         run: ./scripts/check-removed-validator-authority.sh .
 
-      # Escrow v1 was retired by deleting it, and escrow v2 may be deployed only
-      # for non-production use. The test first shows the check can fail (planted
-      # v1 artifacts, a deploy script that stops applying the policy); the check
-      # then holds the tree.
-      - name: No supported tooling can deploy the retired escrow v1
+      # Escrow v1 was removed outright, and escrow v2 may be deployed only for
+      # non-production use. The tests first show both checks can fail (each kind
+      # of planted v1 fingerprint; a deploy script that stops applying the
+      # policy); the guard then holds the tree.
+      - name: Escrow v1 stays removed and escrow v2 stays non-production
         run: |
-          python3 scripts/test_check_retired_escrow_v1.py
-          python3 scripts/check-retired-escrow-v1.py .
+          python3 scripts/test_check_no_legacy_escrow.py
+          python3 scripts/test_tos_service_escrow_deploy_policy.py
+          python3 scripts/check-no-legacy-escrow.py .
 
       - name: Frozen BOCs match their sources
         run: git diff --exit-code
