@@ -1028,3 +1028,33 @@ Seven semantic controls remove or substitute the relevant bindings. This proves
 adapter ordering/binding, not cryptographic validity or real-network V5R2 proofs.
 Inner action authorization, live fee/admission bounds, production key custody,
 preparation/POP/payment receipts and cross-device ownership remain separate gates.
+
+### Current wallet/module observation binding
+
+`ProvenWalletState` binds a live wallet observation and a module observation at
+exactly the same authenticated masterchain checkpoint. The module can be fetched
+historically at that pinned target; both account shard times and the masterchain
+time must satisfy the local freshness policy. Enrollment fixes the wallet's
+original address/code/id and the intended installed module/fee tuple. Successor
+binding preserves the original wallet identity and module code family/namespace.
+The deployed module's data must equal the enrolled immutable module data.
+
+The decoder requires the exact PQ-only wallet storage shape, disabled classical
+entry/key, no legacy extensions, AUTH version 4/mode 2 and the complete installed
+tuple. It exposes the proven counters and retirement bits. `rescue_request`
+rechecks freshness and the local deadline before deriving the SLH AUTH binding
+from these fields. Execution checks both rescue nonce and seqno exhaustion;
+configure checks epoch and seqno; lock/migration check epoch without blocking
+recovery merely because execution counters are exhausted. Action validation,
+POP/delivery and actual signing are not implied by constructing this request.
+
+`primary_locally_enabled` explicitly reports local eligibility only. There is
+no proven PRIMARY request constructor yet: authenticated ConfigParam 48 policy
+must also be bound and checked before that path can be offered. This remains a
+release gate rather than treating absent global policy as approval.
+
+Five synthetic-account tests exercise current counters, stale/mismatched proofs,
+installed successor state, PQ-only entry and independent counter exhaustion.
+Eleven semantic guard controls require erroneous acceptance to be detected.
+These are SDK binding tests, not live V5R2 finality/receipt evidence. The existing
+raw-account proof suite separately covers the cryptographic account-read boundary.

@@ -926,6 +926,286 @@ mod fee_state_tests {
         (genesis, state)
     }
 
+    fn account_proof(mut proof: ProvenAccountState, init: &Cell) -> ProvenAccountState {
+        let address = format!("0:{}", init.repr_hash().to_hex_string());
+        proof.account = Account::active(
+            address.parse().unwrap(),
+            CurrencyCollection::with_coins(100),
+            0,
+            4600,
+            StateInit::construct_from_cell(init.clone()).unwrap(),
+            0,
+        )
+        .unwrap();
+        proof.evidence.account.address = address;
+        refresh_proof_data(&mut proof);
+        proof
+    }
+    fn refresh_proof_data(proof: &mut ProvenAccountState) {
+        proof.root = proof.account.serialize().unwrap();
+        proof.evidence.account.state_hash = proof.root.repr_hash().to_hex_string();
+        proof.evidence.account.data_hash = proof.account.get_data_hash().unwrap().to_hex_string();
+        proof.evidence.account.code_hash = proof.account.get_code_hash().unwrap().to_hex_string();
+    }
+    fn wallet_pair() -> (WalletGenesis, ProvenAccountState, ProvenAccountState) {
+        let (g, proof) = fixture();
+        let wallet = account_proof(proof, g.wallet_init());
+        let (_, proof) = fixture();
+        let mut module = account_proof(proof, g.module_init());
+        module.evidence.live = false; // Historical at the wallet's live checkpoint.
+        (g, wallet, module)
+    }
+    fn set_wallet_counters(
+        g: &WalletGenesis,
+        wallet: &mut ProvenAccountState,
+        seqno: u32,
+        epoch: u64,
+        primary: u64,
+        rescue: u64,
+    ) {
+        let mut a = BuilderData::new();
+        a.append_u8(4).unwrap();
+        a.append_raw(&[0x80], 2).unwrap();
+        a.append_u16(0).unwrap();
+        a.append_u64(epoch).unwrap();
+        a.append_u64(primary).unwrap();
+        a.append_u64(rescue).unwrap();
+        a.checked_append_reference(g.module_init().clone()).unwrap();
+        a.checked_append_reference(g.metadata().clone()).unwrap();
+        let mut w = BuilderData::new();
+        w.append_bit_zero().unwrap();
+        w.append_u32(seqno).unwrap();
+        w.append_u32(42).unwrap();
+        w.append_u256(&[0; 32]).unwrap();
+        w.append_bit_zero().unwrap();
+        w.checked_append_reference(a.into_cell().unwrap()).unwrap();
+        assert!(wallet.account.set_data(w.into_cell().unwrap()));
+        refresh_proof_data(wallet);
+    }
+    #[test]
+    fn proven_wallet_snapshot_binds_rescue_request() {
+        use crate::wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole};
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        let (g, mut w, m) = wallet_pair();
+        set_wallet_counters(&g, &mut w, 7, 9, 10, 11);
+        let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
+        assert_eq!(
+            (
+                view.seqno(),
+                view.wallet_id(),
+                view.epoch(),
+                view.primary_nonce(),
+                view.rescue_nonce()
+            ),
+            (7, 42, 9, 10, 11)
+        );
+        assert_eq!(view.retired(), 0);
+        assert!(!view.primary_locally_enabled()); // REQUIRED policy in fixture.
+        let actual = view.rescue_request(4620, 4700, AuthAction::LockPrimary).unwrap();
+        let expected = AuthRequest::new(
+            AuthBinding {
+                global_id: 42,
+                network: [1; 32],
+                account: *g.wallet_init().repr_hash().as_array(),
+                module: *g.module_init().repr_hash().as_array(),
+                epoch: 9,
+                nonce: 11,
+                valid_until: 4700,
+            },
+            AuthRole::Rescue,
+            AuthAction::LockPrimary,
+            4600,
+        )
+        .unwrap();
+        assert_eq!(actual.digest(), expected.digest(), "wallet counters/parties not bound");
+        assert!(view.rescue_request(4631, 4700, AuthAction::LockPrimary).is_err());
+        assert!(view.rescue_request(4620, 4620, AuthAction::LockPrimary).is_err());
+    }
+    #[test]
+    fn proven_wallet_rejects_unbound_observations() {
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        for case in [
+            "live",
+            "checkpoint",
+            "wallet_address",
+            "module_address",
+            "code",
+            "module_data",
+            "stale_module",
+            "stale_wallet",
+            "classic",
+        ] {
+            let (g, mut w, mut m) = wallet_pair();
+            let reason = match case {
+                "live" => {
+                    w.evidence.live = false;
+                    "live proof"
+                }
+                "checkpoint" => {
+                    m.evidence.checkpoint.seqno += 1;
+                    "checkpoints"
+                }
+                "wallet_address" => {
+                    w.evidence.account.address = format!("0:{}", "ab".repeat(32));
+                    "wallet address"
+                }
+                "module_address" => {
+                    m.evidence.account.address = format!("0:{}", "ab".repeat(32));
+                    "module address"
+                }
+                "code" => {
+                    w.evidence.account.code_hash = "ab".repeat(32);
+                    "code mismatch"
+                }
+                "module_data" => {
+                    m.evidence.account.data_hash = "ab".repeat(32);
+                    "module data"
+                }
+                "stale_module" => {
+                    m.evidence.account.gen_utime = 4500;
+                    "stale"
+                }
+                "stale_wallet" => {
+                    w.evidence.account.gen_utime = 4500;
+                    "stale"
+                }
+                _ => {
+                    let mut rest =
+                        chain_block::SliceData::load_cell(g.wallet_data().clone()).unwrap();
+                    rest.move_by(1).unwrap();
+                    let mut b = BuilderData::new();
+                    b.append_bit_one().unwrap();
+                    b.append_builder(&rest.as_builder().unwrap()).unwrap();
+                    assert!(w.account.set_data(b.into_cell().unwrap()));
+                    refresh_proof_data(&mut w);
+                    "classic authorization"
+                }
+            };
+            match ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30) {
+                Ok(_) => panic!("accepted bad wallet observation {case}"),
+                Err(e) => assert!(e.to_string().contains(reason), "{case}: {e}"),
+            }
+        }
+    }
+    #[test]
+    fn proven_wallet_control_operations_survive_execute_exhaustion() {
+        use crate::wallet_v5r2::AuthAction;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        let (g, mut w, m) = wallet_pair();
+        set_wallet_counters(&g, &mut w, u32::MAX, 9, u64::MAX, u64::MAX);
+        let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
+        assert!(
+            view.rescue_request(4620, 4700, AuthAction::Execute { actions: Cell::default() })
+                .is_err()
+        );
+        assert!(
+            view.rescue_request(4620, 4700, AuthAction::Configure { fee_replacement: None })
+                .is_err()
+        );
+        assert!(
+            view.rescue_request(4620, 4700, AuthAction::LockPrimary).is_ok(),
+            "lock must survive execute exhaustion"
+        );
+        assert!(
+            view.rescue_request(
+                4620,
+                4700,
+                AuthAction::Migrate {
+                    module_init: g.module_init().clone(),
+                    metadata: g.metadata().clone(),
+                    vault_init: g.vault_init().clone()
+                }
+            )
+            .is_ok()
+        );
+        set_wallet_counters(&g, &mut w, 0, u64::MAX, 0, 0);
+        let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
+        assert!(
+            view.rescue_request(4620, 4700, AuthAction::Execute { actions: Cell::default() })
+                .is_ok()
+        );
+        assert!(view.rescue_request(4620, 4700, AuthAction::LockPrimary).is_err());
+    }
+
+    #[test]
+    fn proven_wallet_requires_installed_successor() {
+        use crate::wallet_v5r2_genesis::SuccessorDeployment;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        let (g, mut wallet, old_module) = wallet_pair();
+        let code = Cell::default();
+        let hash = *code.repr_hash().as_array();
+        let bundle = CodeBundle::new(
+            code.clone(),
+            code.clone(),
+            code,
+            CodeHashes { wallet: hash, module: hash, vault: hash },
+        )
+        .unwrap();
+        let mut key = [0; 60];
+        key[..4].copy_from_slice(&1u32.to_be_bytes());
+        key[4..8].copy_from_slice(&8u32.to_be_bytes());
+        key[8..12].copy_from_slice(&3u32.to_be_bytes());
+        let template = WalletGenesis::new(
+            bundle,
+            GenesisParameters {
+                global_id: 42,
+                network: [1; 32],
+                wallet_id: 42,
+                primary_key: [8; 1312],
+                rescue_key: [9; 32],
+                policy: RescuePolicy::Required,
+                fee_tree_id: [7; 32],
+                fee_public_key: key,
+                epoch0: 1000,
+            },
+        )
+        .unwrap();
+        let successor =
+            SuccessorDeployment::new(template, *g.wallet_init().repr_hash().as_array()).unwrap();
+        let module = account_proof(old_module, successor.module_init());
+        match ProvenWalletState::bind_successor(&wallet, &module, &g, &successor, 4620, 30) {
+            Ok(_) => panic!("accepted uninstalled successor"),
+            Err(e) => assert!(e.to_string().contains("installed module/fee tuple"), "{e}"),
+        }
+        set_wallet_counters(&g, &mut wallet, 0, 2, 0, 0);
+        let mut ws = chain_block::SliceData::load_cell(wallet.account.get_data().unwrap()).unwrap();
+        let bits = ws.get_next_bits(322).unwrap();
+        let mut auth =
+            chain_block::SliceData::load_cell(ws.checked_drain_reference().unwrap()).unwrap();
+        let mut a = BuilderData::new();
+        a.append_raw(&auth.get_next_bits(218).unwrap(), 218).unwrap();
+        a.checked_append_reference(successor.module_init().clone()).unwrap();
+        a.checked_append_reference(successor.metadata().clone()).unwrap();
+        let mut w = BuilderData::new();
+        w.append_raw(&bits, 322).unwrap();
+        w.checked_append_reference(a.into_cell().unwrap()).unwrap();
+        assert!(wallet.account.set_data(w.into_cell().unwrap()));
+        refresh_proof_data(&mut wallet);
+        let view =
+            ProvenWalletState::bind_successor(&wallet, &module, &g, &successor, 4620, 30).unwrap();
+        assert_eq!(view.epoch(), 2);
+        assert!(ProvenWalletState::bind_initial(&wallet, &module, &g, 4620, 30).is_err());
+    }
+
+    #[test]
+    fn proven_wallet_execute_exhaustion_is_independent() {
+        use crate::wallet_v5r2::AuthAction;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        for (seq, nonce, reason) in
+            [(0, u64::MAX, "nonce exhausted"), (u32::MAX, 0, "seqno exhausted")]
+        {
+            let (g, mut w, m) = wallet_pair();
+            set_wallet_counters(&g, &mut w, seq, 9, 0, nonce);
+            let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
+            match view.rescue_request(4620, 4700, AuthAction::Execute { actions: Cell::default() })
+            {
+                Ok(_) => panic!("accepted exhausted execute counter"),
+                Err(e) => assert!(e.to_string().contains(reason), "{e}"),
+            }
+            assert!(view.rescue_request(4620, 4700, AuthAction::LockPrimary).is_ok());
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn proven_fee_signing_uses_journal_and_bound_key() {

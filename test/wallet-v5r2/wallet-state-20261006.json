@@ -1,0 +1,31 @@
+{
+  "source_base": "54b80b310bdf23e7adf0c9baf648c33799ff9312",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs": "9d3d91b77f9a6c40d8f0a6bc9aef07a43a3e5d5b19144446dc8f5d75d791128d",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "392549cdd2c571af2fb07c66a2fbef1fbab289d90f92018a87ad2c03c7b13884",
+    "test/wallet-v5r2/wallet_state_controls.py": "52d5d325af59205917732077752c125891a9385bdb3f1369d772a9a7ec729869"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-state",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "16de1e80ed68365036923f62c335b38ec3308269d3319ea8ee2f2308ee468999",
+  "results": {
+    "wallet_state_tests": 5,
+    "semantic_controls": 11,
+    "related_regression_passed": 29,
+    "ignored": 1,
+    "ignored_note": "Existing child-process helper invoked by parent journal tests.",
+    "regression_exit": 0,
+    "controls_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/wallet_state_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-state/controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --lib fee_"
+  ],
+  "limits": [
+    "Synthetic proven account objects; real V5R2 finality/receipt integration remains open.",
+    "No proven primary request constructor until authenticated ConfigParam 48 policy is bound.",
+    "Action approval, receipt verification, production signer/custody, fee admission and final-head CI remain open.",
+    "No contract bytecode, gas credit or pricing changes."
+  ]
+}
