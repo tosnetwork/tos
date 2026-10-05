@@ -38,7 +38,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use base64::Engine as _;
-use chain_block::MsgAddressInt;
+use chain_block::{Account, Cell, Deserializable, MsgAddressInt, read_single_root_boc};
 use common::app_config::{PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS, ProofVerifierConfig};
 use common::tvm_stack_parser::TvmStackParser;
 use serde::Deserialize;
@@ -146,6 +146,27 @@ pub struct ProvenGetterResults {
     pub request_sha256: String,
 }
 
+/// Raw account state authenticated by the configured local proof verifier.
+/// Fields are private so unverified RPC data cannot construct this capability.
+/// A historical read proves no freshness; live freshness is bounded by policy.
+pub struct ProvenAccountState {
+    evidence: ProvenGetterResults,
+    root: Cell,
+    account: Account,
+}
+
+impl ProvenAccountState {
+    pub fn evidence(&self) -> &ProvenGetterResults {
+        &self.evidence
+    }
+    pub fn root(&self) -> &Cell {
+        &self.root
+    }
+    pub fn account(&self) -> &Account {
+        &self.account
+    }
+}
+
 /// The local clock, in Unix seconds.
 pub type LocalClock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
@@ -231,10 +252,52 @@ impl ProvenGetterProvider {
         calls: &[GetMethodCall],
         policy: &ReadPolicy,
     ) -> anyhow::Result<ProvenGetterResults> {
+        anyhow::ensure!(!calls.is_empty(), "a proven read needs at least one get-method");
         let account = canonical_address(address)?;
         let request = Request::build(&account, calls, policy, &self.config)?;
         let output = self.invoke(&request.bytes, policy).await?;
         check_verified(&output, &request, &self.anchor, (self.clock)())
+    }
+
+    /// Authenticate raw state without executing a get-method. The material
+    /// directory must contain account/chain proofs only, without execution config.
+    pub async fn read_account(
+        &self,
+        address: &MsgAddressInt,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<ProvenAccountState> {
+        let address = canonical_address(address)?;
+        let request = Request::build(&address, &[], policy, &self.config)?;
+        let output = self.invoke(&request.bytes, policy).await?;
+        let evidence = check_verified(&output, &request, &self.anchor, (self.clock)())?;
+        let wire: VerifiedOutput = serde_json::from_slice(&output)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(wire.account.state_boc.context("proof verifier omitted raw account state")?)
+            .context("invalid account state base64")?;
+        let root = read_single_root_boc(&bytes).context("invalid account state BOC")?;
+        anyhow::ensure!(
+            root.repr_hash().to_hex_string() == evidence.account.state_hash,
+            "raw account state hash mismatch"
+        );
+        let account = Account::construct_from_cell(root.clone())?;
+        anyhow::ensure!(
+            canonical_address(account.get_addr().context("raw account has no address")?)?
+                == address,
+            "raw account address mismatch"
+        );
+        anyhow::ensure!(
+            account.get_code_hash().context("raw account has no code")?.to_hex_string()
+                == evidence.account.code_hash
+                && account.get_data_hash().context("raw account has no data")?.to_hex_string()
+                    == evidence.account.data_hash,
+            "raw account code/data mismatch"
+        );
+        anyhow::ensure!(
+            account.get_balance().context("raw account has no balance")?.coins.to_string()
+                == evidence.account.balance,
+            "raw account balance mismatch"
+        );
+        Ok(ProvenAccountState { evidence, root, account })
     }
 
     async fn invoke(&self, request: &[u8], policy: &ReadPolicy) -> anyhow::Result<Vec<u8>> {
@@ -397,7 +460,6 @@ impl Request {
         policy: &ReadPolicy,
         config: &ProofVerifierConfig,
     ) -> anyhow::Result<Self> {
-        anyhow::ensure!(!calls.is_empty(), "a proven read needs at least one get-method");
         anyhow::ensure!(calls.len() <= MAX_GET_METHODS, "at most {MAX_GET_METHODS} get-methods");
         let mut methods = Vec::with_capacity(calls.len());
         let mut rendered_calls = Vec::with_capacity(calls.len());
@@ -420,7 +482,9 @@ impl Request {
         }
         let mut request = serde_json::Map::new();
         request.insert("account".to_owned(), account.into());
-        request.insert("get_methods".to_owned(), rendered_calls.into());
+        if !calls.is_empty() {
+            request.insert("get_methods".to_owned(), rendered_calls.into());
+        }
         let max_age_seconds = match policy {
             ReadPolicy::Historical(checkpoint) => {
                 anyhow::ensure!(checkpoint.seqno > 0, "a historical read needs a non-zero block");
@@ -478,7 +542,9 @@ struct VerifiedOutput {
     live: Option<LiveOutput>,
     request_sha256: String,
     account: AccountOutput,
+    #[serde(default)]
     execution_context: serde_json::Value,
+    #[serde(default)]
     get_methods: Vec<MethodOutput>,
 }
 
@@ -510,6 +576,8 @@ struct LiveOutput {
 
 #[derive(Deserialize)]
 struct AccountOutput {
+    #[serde(default)]
+    state_boc: Option<String>,
     address: String,
     shard_block: BlockId,
     exists: bool,
@@ -555,8 +623,16 @@ fn check_verified(
     let text = std::str::from_utf8(output).context("proof verifier answer is not UTF-8")?;
     let body = text.strip_suffix('\n').context("proof verifier answer is not one line")?;
     anyhow::ensure!(!body.contains('\n'), "proof verifier answer is not one JSON object");
-    let verified: VerifiedOutput =
+    let value: serde_json::Value =
         serde_json::from_str(body).context("proof verifier answer is malformed or incomplete")?;
+    if !request.methods.is_empty() {
+        anyhow::ensure!(
+            value.get("get_methods").is_some() && value.get("execution_context").is_some(),
+            "proof verifier answer is malformed or incomplete"
+        );
+    }
+    let verified: VerifiedOutput = serde_json::from_value(value)
+        .context("proof verifier answer is malformed or incomplete")?;
 
     anyhow::ensure!(verified.status == "verified", "proof verifier did not verify the read");
     anyhow::ensure!(
@@ -646,7 +722,7 @@ fn check_verified(
         "proven balance is not a decimal"
     );
     anyhow::ensure!(
-        verified.execution_context.is_object(),
+        request.methods.is_empty() || verified.execution_context.is_object(),
         "proof verifier reported no execution context"
     );
 

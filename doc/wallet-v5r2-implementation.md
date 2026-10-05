@@ -919,3 +919,28 @@ Production release-code distribution, key custody, trustworthy fresh chain views
 challenge/transaction receipt verification, complete client policy and recovery
 UX, default-credit admission, reference-hardware/worst-case pricing, independent
 review and final-head CI remain unfinished.
+
+### Raw authenticated account reads for signer integration
+
+`ProvenGetterProvider::read_account` uses the existing local proof verifier's
+account-only request: it omits `get_methods` rather than sending an empty array.
+The existing getter API still refuses empty method lists. Raw reads retain the
+same provisioned anchor, target/request binding and historical/live policy.
+The returned `ProvenAccountState` has private fields and no public constructor;
+its read-only accessors expose the authenticated Account and its evidence.
+The raw BOC root hash, embedded address, code/data hashes and native balance
+must match that evidence before the object is returned.
+
+Eight focused tests include a recorded real finality/account proof, a modified
+account rejected by the real verifier, and a positive wrapper plus five corrupted
+verifier-output cases. The latter exercise the Rust response boundary, not a
+cryptographic proof. Five independent guard deletions must produce the explicit
+"accepted corrupted" test failure; restoration must pass all eight tests.
+The existing contract-sandbox CI runs these tests and the deletion controls.
+
+This is account-read plumbing, not a complete V5R2 signing authorization.
+Historical reads do not prove freshness. Live masterchain freshness does not by
+itself establish a sufficiently recent shard time for fee-leaf scheduling.
+Vault code/configuration pairing, shard-time policy, receipt binding and actual
+custody integration remain required before these reads can authorize signing.
+The recorded account is an elector, not a deployed V5R2 wallet.

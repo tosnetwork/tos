@@ -1,0 +1,30 @@
+{
+  "source_base": "f02805ba317bb135ce8f1c72b49bc53ec9c25d74",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "984d624a6336a8fa699b28e803dd1a4e1da32a0004d1d570debe712dd46d8d67",
+    "tosctl/src/node-control/contracts/tests/proven_pool_snapshot.rs": "4ad52b7639af365b1264b59433399109783b4cef8c51a242159e27023462cb61",
+    "test/wallet-v5r2/raw_account_controls.py": "b9c963858f11d664c078487d3c1a26c41a460656955c1ee600acdd478fab92b7"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-raw-account-proof",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "e53974937a4641bd4f3e78eaaa0cf142af641ac123fd04689c17fc72678e0140",
+  "results": {
+    "raw_account_tests": 8,
+    "guard_deletion_controls": 5,
+    "selected_regression_tests": 29,
+    "regression_exit": 0,
+    "controls_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cmake --build build --target tos-proof-verify -j 4",
+    "python3 test/wallet-v5r2/raw_account_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-raw-account-proof/controls-final",
+    "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --test proven_pool_snapshot -- --skip live --skip a_current_code_pool --skip a_pool_whose_code_is_a_library --skip a_library_pool --skip substituted_library --skip a_library_proof"
+  ],
+  "limits": [
+    "Recorded elector proof, not V5R2 deployment proof.",
+    "Selected macOS regression excludes live-clock and synthetic library/pool suites; full Linux CI remains required.",
+    "Initial regression exposed changed missing-field diagnostics; strict getter requirements restored; original failure retained.",
+    "Not yet bound to vault configuration, shard freshness, custody or transaction receipts."
+  ]
+}

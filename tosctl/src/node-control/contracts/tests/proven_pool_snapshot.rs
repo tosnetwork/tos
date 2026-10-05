@@ -1180,3 +1180,133 @@ async fn a_library_proof_from_another_block_is_refused() {
         "library proof answers for another block",
     );
 }
+
+/// This uses recorded finality/account proofs, not the stand-in verifier.
+#[tokio::test]
+async fn raw_account_read_from_recorded_proof() {
+    let case = Case::new();
+    let mut files = historical_material();
+    files.retain(|(name, _)| *name != "exec-config.tl");
+    let config = case.config(verifier(), case.material(&files), false);
+    let provider = ProvenGetterProvider::new(&config).unwrap();
+    let state = provider.read_account(&address(ELECTOR), &historical()).await.unwrap();
+    assert!(!state.evidence().live);
+    assert!(state.evidence().results.is_empty());
+    assert_eq!(state.evidence().checkpoint, target());
+    assert_eq!(
+        state.root().repr_hash().to_hex_string(),
+        "7d5d8d3096cfcdddf75fd2516c7ae610c7f041decb61c9afa04e728bc4c284bc"
+    );
+    assert_eq!(state.account().get_addr(), Some(&address(ELECTOR)));
+}
+
+// These tests deliberately corrupt the trusted verifier's output to exercise
+// the Rust response-binding boundary. They are not cryptographic proof tests.
+async fn raw_account_response_binding(mutation: &str, expected: Option<&str>) {
+    use base64::Engine as _;
+    let case = Case::new();
+    let mut files = historical_material();
+    files.retain(|(name, _)| *name != "exec-config.tl");
+    let mut changes = serde_json::json!({});
+    match mutation {
+        "none" => {}
+        "state_hash" | "code_hash" | "data_hash" => changes[mutation] = "ab".repeat(32).into(),
+        "balance" => changes[mutation] = "1".into(),
+        "address" => {
+            let mut account = Account::construct_from_cell(
+                read_single_root_boc(
+                    &AccountAnswer::parse(&fixture("elector-account-638197.tl")).state,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            account.set_addr(address(POOL));
+            let root = account.serialize().unwrap();
+            changes["state_boc"] =
+                base64::engine::general_purpose::STANDARD.encode(write_boc(&root).unwrap()).into();
+            changes["state_hash"] = root.repr_hash().to_hex_string().into();
+        }
+        _ => panic!("unknown mutation"),
+    }
+    let script = case.path("corrupt-response.py");
+    std::fs::write(&script, format!(
+        "import json,subprocess,sys\np=subprocess.run([{}]+sys.argv[1:],capture_output=True)\nif p.returncode: sys.stdout.buffer.write(p.stdout); sys.exit(p.returncode)\na=json.loads(p.stdout)\na['account'].update(json.loads({}))\nprint(json.dumps(a))\n",
+        serde_json::to_string(&verifier().to_string_lossy()).unwrap(),
+        serde_json::to_string(&changes.to_string()).unwrap(),
+    )).unwrap();
+    let wrapper = case.path("corrupt-verifier");
+    write_executable(
+        &wrapper,
+        &format!(
+            "#!/bin/sh\nexec '{}' '{}' \"$@\"\n",
+            find_on_path("python3").display(),
+            script.display()
+        ),
+    );
+    let config = case.config(wrapper, case.material(&files), false);
+    let result = ProvenGetterProvider::new(&config)
+        .unwrap()
+        .read_account(&address(ELECTOR), &historical())
+        .await;
+    match expected {
+        None => {
+            assert!(result.is_ok(), "positive wrapper control failed");
+        }
+        Some(reason) => match result {
+            Ok(_) => panic!("accepted corrupted {mutation}"),
+            Err(error) => {
+                assert!(format!("{error:#}").contains(reason), "wrong refusal: {error:#}")
+            }
+        },
+    }
+}
+
+#[tokio::test]
+async fn raw_binding_positive_control() {
+    raw_account_response_binding("none", None).await;
+}
+#[tokio::test]
+async fn raw_binding_state_hash() {
+    raw_account_response_binding("state_hash", Some("raw account state hash mismatch")).await;
+}
+#[tokio::test]
+async fn raw_binding_address() {
+    raw_account_response_binding("address", Some("raw account address mismatch")).await;
+}
+#[tokio::test]
+async fn raw_binding_code() {
+    raw_account_response_binding("code_hash", Some("raw account code/data mismatch")).await;
+}
+#[tokio::test]
+async fn raw_binding_data() {
+    raw_account_response_binding("data_hash", Some("raw account code/data mismatch")).await;
+}
+#[tokio::test]
+async fn raw_binding_balance() {
+    raw_account_response_binding("balance", Some("raw account balance mismatch")).await;
+}
+
+#[tokio::test]
+async fn raw_account_tampered_proof_is_refused() {
+    let case = Case::new();
+    let mut files = with_file(
+        historical_material(),
+        "account.tl",
+        elector_with_account(|a| {
+            a.set_balance(CurrencyCollection::with_coins(1));
+        }),
+    );
+    files.retain(|(name, _)| *name != "exec-config.tl");
+    let config = case.config(verifier(), case.material(&files), false);
+    match ProvenGetterProvider::new(&config)
+        .unwrap()
+        .read_account(&address(ELECTOR), &historical())
+        .await
+    {
+        Ok(_) => panic!("accepted altered account without a matching proof"),
+        Err(error) => assert!(
+            format!("{error:#}").contains("account is not proven at the target"),
+            "wrong refusal: {error:#}"
+        ),
+    }
+}

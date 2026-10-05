@@ -111,8 +111,8 @@ pub use prediction_market::{
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use proven_getters::{
-    GetMethodArg, GetMethodCall, ProvenAccount, ProvenGetMethod, ProvenGetterProvider,
-    ProvenGetterResults, ReadPolicy,
+    GetMethodArg, GetMethodCall, ProvenAccount, ProvenAccountState, ProvenGetMethod,
+    ProvenGetterProvider, ProvenGetterResults, ReadPolicy,
 };
 pub use provider::ContractProvider;
 pub use service_actor::{
