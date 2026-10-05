@@ -97,7 +97,7 @@ What remains:
 ## Mandatory pre-mainnet work
 
 - [x] Durable, authenticated, idempotent settlement at every participant, with permissionless funded retransmission (see Completion of mints and burns).
-- [ ] A deployment inventory of every operated network before activation: the history of ConfigParams 79 and 81 to 83 since genesis, and a code-hash search for every built bridge, minter and wallet.
+- [ ] A deployment inventory of every operated network before activation: the history of ConfigParams 79 and 81 to 83 since genesis, and a code-hash search for every built bridge, minter and wallet. (Development stage: satisfied for the local development network under the owner-approved revision recorded in `SETTLEMENT-PROTOCOL.md` section 16; still required in full for the first public network.)
 - [ ] The bridge listed in ConfigParam 31 on each network, and minter monitoring in operation, before activation.
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.

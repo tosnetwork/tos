@@ -1414,6 +1414,16 @@ Implementation is not complete until these hold:
   ConfigParams 79 and 81 to 83 since genesis, a code-hash search for every
   built bridge, minter and wallet, and the balances and pending records of
   any match.
+
+  **Owner-approved revision for the development stage (2026-10-05).** The
+  only network ever operated is the local development network, which will
+  be reset before any public network exists. For this branch, R1 is
+  satisfied by: the zerostate; masterchain blocks 1 to 564,500, whose only
+  transacting accounts are 14 known system accounts; ConfigParams 79 and 81
+  to 83 empty at masterchain block 619,026; and a root-validated inventory
+  of the current state at masterchain block 610,667 that contains no
+  bridge, minter or wallet code. The full since-genesis inventory is still
+  required for the first public network, before its bridge is activated.
 - **R2.** The owner-approved stranding scope (section 10.2), restated in
   `SECURITY.md` beside the closing condition it narrows.
 - **R3.** The EVM generation activation procedure, and the order of
@@ -1429,7 +1439,7 @@ Implementation is not complete until these hold:
 | Q1 / D2: EVM counter | Approved by the owner. Namespace, gaps and exhaustion are handled in section 11. This is the chosen architecture. Sharded record contracts, authenticated external history, and bounded operation generations would also have preserved replay history. |
 | Q2: cancellation | Kept (section 7.4). |
 | Q3: pinned bridge | Section 4. |
-| Q4: inventory | A prerequisite before merge, not done here (section 12). |
+| Q4: inventory | Owner-approved development-stage revision of R1 (section 16). |
 | Q5: excess | Section 8. |
 | Q6 / D1: lifecycle | Owner chose option Y (section 10). |
 | Q7: constants | Set by measurement (T-G), section 19. |
@@ -1439,7 +1449,7 @@ Implementation is not complete until these hold:
 | D3: opening before burn | Approved. Opening is permissionless, funded, retryable and independent of ConfigParam 79, and it reserves the holder's burn window (section 7.2). |
 | D4: limits | Measured worst cases. Admission stops when limits fall, and completions then depend on the limit being restored (section 6.2). |
 
-**Still open:** the network inventory (Q4, release prerequisite R1).
+**Still open:** none for this branch. R1 is satisfied under the owner-approved development-stage revision in section 16; the full since-genesis inventory remains required before the first public network activates its bridge.
 
 ## 18. Changes from earlier versions
 
