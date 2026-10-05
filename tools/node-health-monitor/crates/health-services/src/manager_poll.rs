@@ -314,6 +314,35 @@ pub fn quic_backlog_bytes(openmetrics: &str) -> Option<u64> {
     Some(total as u64)
 }
 
+/// Gauge facts from an edge `/metrics` body, admitted only when the body is
+/// the exact OpenMetrics document the sampled native record committed to.
+/// The edge serves whatever generation it holds at request time, so a body
+/// fetched after a newer generation completed would otherwise travel under
+/// the older record's generation; the manager quarantines a generation that
+/// arrives twice with different content. An empty result means the body
+/// carried neither catalog gauge.
+pub fn paired_gauge_facts(
+    record: &tos_health_core::native::NativeRecord,
+    body: &[u8],
+) -> Result<Vec<Fact>, String> {
+    let text = std::str::from_utf8(body).map_err(|_| "edge metrics body not UTF-8")?;
+    record.paired(
+        record.node_id(),
+        record.network_id(),
+        &record.generation().0.to_string(),
+        record.process_epoch(),
+        text,
+    )?;
+    let mut facts = Vec::with_capacity(2);
+    if let Some(backlog) = quic_backlog_bytes(text) {
+        facts.push(Fact { id: FactId::QuicBacklogBytes, value: U64(backlog) });
+    }
+    if let Some(stopped) = storage_write_stopped(text) {
+        facts.push(Fact { id: FactId::RocksdbWriteStopped, value: U64(stopped) });
+    }
+    Ok(facts)
+}
+
 /// Deterministic start offset inside the 15-second period, from the node alias.
 pub fn stagger_ms(node_id: &str) -> u64 {
     let hash = node_id.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
@@ -474,21 +503,12 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
         match client.get(&metrics_url).bearer_auth(&edge).send().await {
             Ok(response) if response.status().is_success() => {
                 match crate::bounded_body(response, 2_097_152).await {
-                    Ok(body) => {
-                        let text = String::from_utf8_lossy(&body);
-                        let mut facts = Vec::with_capacity(2);
-                        if let Some(backlog) = quic_backlog_bytes(&text) {
-                            facts.push(Fact { id: FactId::QuicBacklogBytes, value: U64(backlog) });
-                        }
-                        if let Some(stopped) = storage_write_stopped(&text) {
-                            facts.push(Fact {
-                                id: FactId::RocksdbWriteStopped,
-                                value: U64(stopped),
-                            });
-                        }
-                        if facts.is_empty() {
+                    Ok(body) => match paired_gauge_facts(&record, &body) {
+                        Err(e) => eprintln!("native poll: gauges skipped: {e}"),
+                        Ok(facts) if facts.is_empty() => {
                             eprintln!("native poll: gauges skipped: no catalog gauge line in edge metrics");
-                        } else {
+                        }
+                        Ok(facts) => {
                             // Both catalog gauges present = complete; an engine
                             // without the storage gauge yields an incomplete frame.
                             let complete = facts.len() == 2;
@@ -501,7 +521,7 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
                             post_frame(&manager_client, &config.manager_url, &manager, &gauges)
                                 .await;
                         }
-                    }
+                    },
                     Err(e) => eprintln!("native poll: gauges skipped: edge metrics body: {e}"),
                 }
             }
