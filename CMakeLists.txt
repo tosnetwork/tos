@@ -1764,6 +1764,12 @@ add_test(NAME test-proof-verify-cli-refused
 set_tests_properties(test-proof-verify-cli-refused PROPERTIES
   PASS_REGULAR_EXPRESSION "^\\{\"status\":\"refused\".*does not end at the exact target block")
 add_dependencies(all-tests tos-proof-verify)
+add_library(proof-verify-fs-shim SHARED test/pq-native/proof-verify-fs-shim.cpp)
+target_link_libraries(proof-verify-fs-shim PRIVATE ${CMAKE_DL_LIBS})
+add_test(NAME test-proof-verify-live-commit
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/proof-verify-live-commit-test.py
+          $<TARGET_FILE:tos-proof-verify> $<TARGET_FILE:test-proof-verify> $<TARGET_FILE:proof-verify-fs-shim>)
+add_dependencies(all-tests proof-verify-fs-shim)
 tos_test(test-adnl-ext-query-closure)
 tos_test(test-adnl-ext-query-refusal)
 tos_test(test-adnl-ext-output-backpressure)

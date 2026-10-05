@@ -404,6 +404,11 @@ td::Result<ChainOutcome> verify_forward_chain(const tos::BlockIdExt& start, cons
   auto current = start;
   for (std::size_t index = 0; index < responses.size(); ++index) {
     TRY_RESULT(object, fetch<tos::lite_api::liteServer_partialBlockProof>(responses[index], "proof chain response"));
+    // Bound the link count before any link is converted. outcome.links never
+    // exceeds kMaxChainLinks, so the remaining budget cannot underflow.
+    if (object->steps_.size() > kMaxChainLinks - outcome.links) {
+      return td::Status::Error("proof chain has too many links");
+    }
     TRY_RESULT_PREFIX(chain, liteclient::deserialize_proof_chain(std::move(object)), "proof chain is malformed: ");
     if (chain->from != current) {
       return td::Status::Error("proof chain does not start at the authenticated block");
@@ -428,9 +433,6 @@ td::Result<ChainOutcome> verify_forward_chain(const tos::BlockIdExt& start, cons
     }
     if (last && chain->to != target) {
       return td::Status::Error("proof chain does not end at the exact target block");
-    }
-    if (outcome.links > kMaxChainLinks - chain->link_count()) {
-      return td::Status::Error("proof chain has too many links");
     }
     auto status = chain->validate();
     if (status.is_error()) {
@@ -459,6 +461,9 @@ td::Status verify_descent(const tos::BlockIdExt& target, const tos::BlockIdExt& 
     return td::Status::Error("descent from the verified head needs exactly one backward proof");
   }
   TRY_RESULT(object, fetch<tos::lite_api::liteServer_partialBlockProof>(responses[0], "descent proof"));
+  if (object->steps_.size() > kMaxDescentLinks) {
+    return td::Status::Error("descent proof has too many links");
+  }
   TRY_RESULT_PREFIX(chain, liteclient::deserialize_proof_chain(std::move(object)), "descent proof is malformed: ");
   if (chain->from != target || chain->to != head || !chain->complete || !chain->link_count()) {
     return td::Status::Error("descent proof does not connect the target to the verified head");

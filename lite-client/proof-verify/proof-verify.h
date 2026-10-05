@@ -30,6 +30,7 @@ inline constexpr const char* kStateInterface = "tos-proof-verify-state/1";
 inline constexpr std::size_t kMaxFileBytes = 64u << 20;
 inline constexpr std::size_t kMaxChainResponses = 1024;
 inline constexpr std::size_t kMaxChainLinks = 16384;
+inline constexpr std::size_t kMaxDescentLinks = 16;
 inline constexpr std::size_t kMaxConfigParams = 64;
 inline constexpr std::size_t kMaxGetMethods = 16;
 inline constexpr std::size_t kMaxGetMethodArgs = 64;

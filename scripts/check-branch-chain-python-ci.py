@@ -21,6 +21,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-c04-real-state-proof",
     "tos-proof-verify",
     "test-proof-verify",
+    "proof-verify-fs-shim",
     "test-n5-manager-db-fixture",
     "test-consensus",
     "test-notarize-after-transient-resolve",
@@ -84,7 +85,7 @@ def main() -> int:
     )
     verifier_ctest = (
         "ctest --test-dir build --output-on-failure --no-tests=error "
-        "-R '^test-proof-verify(-cli-verified|-cli-refused)?$'"
+        "-R '^test-proof-verify(-cli-verified|-cli-refused|-live-commit)?$'"
     )
     require(
         re.search(rf"(?m)^\s*run: {re.escape(verifier_ctest)}\s*$", text) is not None,
@@ -104,6 +105,7 @@ def main() -> int:
         r"tos_test\(test-proof-verify\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data\)",
         r"add_test\(NAME test-proof-verify-cli-verified\s",
         r"add_test\(NAME test-proof-verify-cli-refused\s",
+        r"add_test\(NAME test-proof-verify-live-commit\s",
     ):
         require(
             re.search(registration, cmake_text) is not None,

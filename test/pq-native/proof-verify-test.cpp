@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <functional>
 #include <string>
 #include <vector>
@@ -29,6 +30,8 @@
 #include "lite-client/proof-verify/material.h"
 #include "lite-client/proof-verify/proof-verify.h"
 #include "td/utils/crypto.h"
+#include "td/utils/filesystem.h"
+#include "td/utils/port/path.h"
 #include "test/pq-native/pq-block-signature-test-common.h"
 #include "tl-utils/lite-utils.hpp"
 #include "tos/lite-tl.hpp"
@@ -264,6 +267,26 @@ std::vector<std::string> print_rotation_evidence(const RealFixture& fixture) {
   return governing;
 }
 
+// A link that cannot be converted or validated: any refusal other than the
+// count check would come from trying to.
+tl_object_ptr<lite_api::liteServer_BlockLink> unconvertible_link(const BlockIdExt& from, const BlockIdExt& to) {
+  return create_tl_object<lite_api::liteServer_blockLinkForward>(
+      false, create_tl_lite_block_id(from), create_tl_lite_block_id(to), td::BufferSlice(), td::BufferSlice(),
+      create_tl_object<lite_api::liteServer_signatureSet_simplexPq>(
+          0, 0, std::vector<tl_object_ptr<lite_api::liteServer_pqSignature>>{}, td::Bits256::zero(), 0,
+          td::BufferSlice()));
+}
+
+td::BufferSlice oversized_chain(const BlockIdExt& from, const BlockIdExt& to, bool complete, std::size_t links) {
+  std::vector<tl_object_ptr<lite_api::liteServer_BlockLink>> steps;
+  steps.reserve(links);
+  for (std::size_t i = 0; i < links; ++i) {
+    steps.push_back(unconvertible_link(from, to));
+  }
+  return create_serialize_tl_object<lite_api::liteServer_partialBlockProof>(
+      complete, create_tl_lite_block_id(from), create_tl_lite_block_id(to), std::move(steps));
+}
+
 void real_cases(const RealFixture& fixture, const pv::Anchor& foreign_anchor, const td::BufferSlice& foreign_chain) {
   if (selected("real-historical-baseline")) {
     // The real chain must cross a membership/key rotation for this baseline to
@@ -473,6 +496,14 @@ void real_cases(const RealFixture& fixture, const pv::Anchor& foreign_anchor, co
                    verify_live(fixture, material, fixture.live_state, kLiveTargetUtime + 2),
                    "needs exactly one backward proof");
   }
+  if (selected("real-live-oversized-descent")) {
+    auto material = clone(fixture.live);
+    const auto target = fixture.live_request.target ? *fixture.live_request.target : fixture.live_state.head->id;
+    material.descent[0] = oversized_chain(target, fixture.live_state.head->id, true, pv::kMaxDescentLinks + 1);
+    expect_refused("real-live-oversized-descent",
+                   verify_live(fixture, material, fixture.live_state, kLiveTargetUtime + 2),
+                   "descent proof has too many links");
+  }
   if (selected("real-live-other-head")) {
     auto state = fixture.live_state;
     state.head->id.root_hash.as_slice()[0] ^= 1;
@@ -618,9 +649,13 @@ struct BlockFixture {
   block::gen::BlockInfo::Record info;
 };
 
+// Generation time of synthetic blocks: fixed for the unit cases, the current
+// time for the live fixture written for the CLI commit test.
+td::uint32 block_time_base = 1000;
+
 BlockFixture make_block(td::int32 global_id, BlockSeqno seqno, const BlockIdExt& previous, td::uint32 catchain_seqno,
                         td::uint32 validator_set_hash, BlockSeqno previous_key_block_seqno,
-                        td::Ref<vm::Cell> next_config) {
+                        td::Ref<vm::Cell> next_config, td::uint32 utime_extra = 0) {
   block::gen::BlockInfo::Record info;
   info.version = 0;
   info.not_master = false;
@@ -634,7 +669,7 @@ BlockFixture make_block(td::int32 global_id, BlockSeqno seqno, const BlockIdExt&
   vm::CellBuilder shard;
   block::ShardId{ShardIdFull{masterchainId}}.serialize(shard);
   info.shard = shard.as_cellslice_ref();
-  info.gen_utime = 1000 + seqno;
+  info.gen_utime = block_time_base + seqno + utime_extra;
   info.start_lt = seqno * 1000ULL;
   info.end_lt = info.start_lt + 1;
   info.gen_validator_list_hash_short = validator_set_hash;
@@ -876,6 +911,20 @@ void synthetic_cases(const Synthetic& s, const pv::Anchor& real_anchor) {
     expect_refused("synthetic-gap-between-responses", s.run(std::move(responses)),
                    "does not start at the authenticated block");
   }
+  // Link-count bounds hold before any link is converted or validated.
+  if (selected("synthetic-oversized-single-response")) {
+    expect_refused("synthetic-oversized-single-response",
+                   s.run(one(oversized_chain(s.k0.id, s.t.id, true, pv::kMaxChainLinks + 1))),
+                   "proof chain has too many links");
+  }
+  if (selected("synthetic-cumulative-link-overflow")) {
+    std::vector<td::BufferSlice> responses;
+    std::vector<LinkSpec> first;
+    first.push_back({&s.k0, &s.k1, s.good_k1()});
+    responses.push_back(chain_wire(s.k0.id, s.k1.id, false, std::move(first)));
+    responses.push_back(oversized_chain(s.k1.id, s.t.id, true, pv::kMaxChainLinks));
+    expect_refused("synthetic-cumulative-link-overflow", s.run(std::move(responses)), "proof chain has too many links");
+  }
   if (selected("synthetic-real-anchor")) {
     expect_refused("synthetic-real-anchor", s.run(one(s.chain(s.good_k1(), s.good_t())), &real_anchor),
                    "does not start at the authenticated block");
@@ -993,8 +1042,43 @@ void synthetic_cases(const Synthetic& s, const pv::Anchor& real_anchor) {
 
 }  // namespace
 
+void write_file(const std::string& path, td::Slice data) {
+  must(td::write_file(path, data), "write " + path);
+}
+
+std::string live_request(const BlockIdExt& target) {
+  return "{\"mode\":\"live\",\"max_age_seconds\":3600,\"target\":" + pv::block_id_json(target) + "}";
+}
+
+// Writes current-time synthetic material for the CLI live-state commit test:
+// T (verified first, becomes the head), K1 (below the head) and T2 (another
+// block at the head's height, authenticated by the same incoming set).
+int write_live_fixture(const std::string& directory) {
+  block_time_base = static_cast<td::uint32>(std::time(nullptr)) - 20;
+  Synthetic s;
+  auto t2 =
+      make_block(s.global_id, 3, s.k1.id, s.set_b->get_catchain_seqno(), s.set_b->get_validator_set_hash(), 2, {}, 1);
+  auto session_t2 = session_for(s.global_id, s.config_b, s.set_b, t2);
+  for (const auto* name : {"material-t", "material-k1", "material-t2"}) {
+    must(td::mkdir(directory + "/" + name), "mkdir");
+  }
+  write_file(directory + "/anchor.json", pv::render_anchor(s.anchor));
+  write_file(directory + "/request-t.json", live_request(s.t.id));
+  write_file(directory + "/material-t/chain-0000.tl", s.chain(s.good_k1(), s.good_t()));
+  write_file(directory + "/request-k1.json", live_request(s.k1.id));
+  write_file(directory + "/request-t2.json", live_request(t2.id));
+  std::vector<LinkSpec> links;
+  links.push_back({&s.k1, &t2, sign(s.b, s.set_b, t2, session_t2, 2003)->tl_lite()});
+  write_file(directory + "/material-t2/chain-0000.tl", chain_wire(s.k1.id, t2.id, true, std::move(links)));
+  std::printf("PROOF_VERIFY_LIVE_FIXTURE head=%u conflict_root=%s\n", s.t.id.seqno(), t2.id.root_hash.to_hex().c_str());
+  return 0;
+}
+
 int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(FATAL));
+  if (argc == 3 && std::string(argv[1]) == "--write-live-fixture") {
+    return write_live_fixture(argv[2]);
+  }
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--case" && i + 1 < argc) {

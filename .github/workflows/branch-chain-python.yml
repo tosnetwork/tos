@@ -66,7 +66,7 @@ jobs:
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
-            tos-proof-verify test-proof-verify \
+            tos-proof-verify test-proof-verify proof-verify-fs-shim \
             test-n5-manager-db-fixture test-consensus \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup \
@@ -108,7 +108,7 @@ jobs:
       # and a synthetic signed chain, plus the installed front end. Its
       # binary is also what the C09 Config34 tests in full pytest call.
       - name: Check the anchored proof verifier
-        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-proof-verify(-cli-verified|-cli-refused)?$'
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-proof-verify(-cli-verified|-cli-refused|-live-commit)?$'
 
       # This manager actor test exercises the real proof producer and pending
       # finality queue with bad evidence ahead of a valid certificate. It does

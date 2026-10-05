@@ -21,6 +21,7 @@ REPO = Path(__file__).resolve().parents[2]
 VERIFY = "lite-client/proof-verify/proof-verify.cpp"
 CHECK = "crypto/block/check-proof.cpp"
 SIGNATURES = "crypto/block/signature-set.cpp"
+MAIN = "lite-client/proof-verify/main.cpp"
 
 UNKNOWN = 'return td::Status::Error("pq signatures: unknown validator_id");'
 QUORUM = "if (weight < tos::quorum_threshold(vset->get_total_weight())) {"
@@ -213,6 +214,54 @@ MUTATIONS = [
         ["real-config-other-block-answer"],
     ),
     (
+        "chain-link-budget",
+        "11 (bounds)",
+        [
+            (
+                VERIFY,
+                "if (object->steps_.size() > kMaxChainLinks - outcome.links) {",
+                "if (false) {",
+            )
+        ],
+        ["synthetic-oversized-single-response", "synthetic-cumulative-link-overflow"],
+    ),
+    (
+        "descent-link-bound",
+        "11 (bounds)",
+        [(VERIFY, "if (object->steps_.size() > kMaxDescentLinks) {", "if (false) {")],
+        ["real-live-oversized-descent"],
+    ),
+    (
+        "directory-sync-dropped",
+        "10 (durable head)",
+        [(MAIN, "return sync_directory_of(path);", "return td::Status::OK();")],
+        ["live-commit:ordering"],
+    ),
+    (
+        "directory-sync-failure-ignored",
+        "10 (durable head)",
+        [
+            (
+                MAIN,
+                "  if (!synced) {\n    return td::Status::PosixError(sync_errno",
+                "  if (false) {\n    return td::Status::PosixError(sync_errno",
+            )
+        ],
+        ["live-commit:directory-sync-failure"],
+    ),
+    (
+        "committed-state-not-reopened",
+        "10 (reopened record)",
+        [
+            (
+                MAIN,
+                "  TRY_RESULT(state, parse_state(text));\n",
+                "  TRY_RESULT(state, parse_state(text));\n  state.head.reset();\n",
+            )
+        ],
+        ["live-commit:reopened-rollback"],
+    ),
+    (
         "rollback",
         "10",
         [
@@ -277,13 +326,43 @@ MUTATIONS = [
 
 def build(build_dir: Path) -> None:
     subprocess.run(
-        ["cmake", "--build", str(build_dir), "-j48", "--target", "test-proof-verify"],
+        [
+            "cmake",
+            "--build",
+            str(build_dir),
+            "-j48",
+            "--target",
+            "test-proof-verify",
+            "tos-proof-verify",
+            "proof-verify-fs-shim",
+        ],
         check=True,
         stdout=subprocess.DEVNULL,
     )
 
 
+def run_live_commit(build_dir: Path, case: str) -> str:
+    """The CLI commit test stops at its first failing control and names it."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "test/pq-native/proof-verify-live-commit-test.py"),
+            str(build_dir / "lite-client/proof-verify/tos-proof-verify"),
+            str(build_dir / "test-proof-verify"),
+            str(build_dir / "libproof-verify-fs-shim.so"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    passed = f"PROOF_VERIFY_LIVE_COMMIT_CASE {case} PASS" in result.stdout
+    failure = [line for line in result.stdout.splitlines() if "FAILURE" in line]
+    detail = failure[-1] if failure else f"exit={result.returncode}"
+    return f"PROOF_VERIFY_CASE live-commit:{case} {'PASS' if passed else 'FAIL'} {detail}"
+
+
 def run_case(build_dir: Path, case: str) -> str:
+    if case.startswith("live-commit:"):
+        return run_live_commit(build_dir, case.split(":", 1)[1])
     result = subprocess.run(
         [str(build_dir / "test-proof-verify"), str(REPO / "test/pq-native/data"), "--case", case],
         capture_output=True,
@@ -337,6 +416,10 @@ def main() -> int:
     ]
     print(f"RESTORED exit={final.returncode} {summary[-1] if summary else 'no summary'}")
     if final.returncode != 0:
+        failures += 1
+    commit = run_live_commit(build_dir, "directory-sync-failure")
+    print(f"RESTORED live-commit {commit.split(' ', 2)[2][:4]}")
+    if " PASS" not in commit:
         failures += 1
     print(f"MUTATION_SUMMARY not_red={failures}")
     return 0 if failures == 0 else 1
