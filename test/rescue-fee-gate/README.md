@@ -164,3 +164,61 @@ included in future worst-case hardware measurements. Native transaction evidence
 is recorded in `layout-admission-20261005.json`; Rust execution of this contract,
 reference-hardware pricing and hosted CI have not been run. The original prototype
 and its earlier receipts are unchanged.
+
+### Bounded SUB1 admission: measured credit blocker
+
+`rescue-fee-vault-bounded.fc` adds pinned identity commitments and actual cell
+counting to the layout experiment. It is **not deployable under the current
+10,000 external credit**: its real signed lock is rejected before ACCEPT with
+exit -14. The harness changes only its local emulator's credit to 30,000 to
+measure and test the candidate. No VM implementation, verifier tariff, network
+configuration, or existing prototype is changed.
+
+The incompatible experimental intent is `FEE2:uint32 global_id:int32
+vault:MsgAddressInt leaf:uint32 deadline:uint32 value:Coins class:uint8
+payload:^Cell header:^Cell`. Class 1 admits only exact `SUB1` submissions. The
+header commits to the bytes `TOS-RESCUE-FEE-v1`, global id, 256-bit network tag,
+8-bit suite profile, SHA-256 of the canonical public-key bytes as the experimental
+tree identity, and a referenced pair of canonical wallet/module addresses. The
+outer intent checks the actual vault against `my_address()`; the stored header
+does not contain its own vault address, avoiding a StateInit address fixed point.
+The data adds header and 843-bit AUTH-prefix references after the fee public key.
+The pinned AUTH prefix binds constructor/global id/network/wallet/module; the
+candidate also checks RESCUE role, supported kind and exact envelope endings.
+
+The full external message is limited to 128 distinct cells, and the forwarded
+payload to 72. Counting the full message includes its wrapper and any StateInit,
+not just the signed intent. The measured legal payload has 65 cells; the complete
+external message has 95. A 78-cell signed payload is refused. Lowering only the
+input counter's bound to 95 accepts the legal fixture; 94 rejects it with exit 8;
+removing that check admits it. All stated rejections occur before ACCEPT.
+
+At diagnostic credit the valid lock reaches ACCEPT at **20,387 gas**, uses
+**22,500 total compute gas**, and locks the actual receiving account. An explicitly
+unsafe cost-control variant removing both size scans still needs **11,188 gas**
+before ACCEPT. Neither measurement proves a worst case or that every possible
+encoding must exceed credit. They do show that this implementation cannot be
+promoted on the earlier 9,978-gas fixture result. Its compute reserve has been
+raised from the now-insufficient 20,000 to an experimental 40,000; that is a fee
+estimate, not increased admission credit or a proven global bound.
+
+```sh
+python3 test/rescue-fee-gate/probe_bounded_admission.py
+```
+
+The harness tests domain/network/wallet/module/profile/tree mismatches, AUTH
+identity mismatches, constructor/class/kind/role restrictions, trailing fields,
+and size bounds. Ten executable mutation/boundary controls demonstrate that the
+checks reject their intended inputs; compiler errors do not count. Restoring
+the original configuration again rejects the valid request at 10,000 credit.
+The result index is `bounded-admission-20261005.json`.
+
+This remains a partial SUB1 candidate. Deployment/factory validation must prove
+the header, AUTH prefix, target, key and canonical data agree; the harness builds
+consistent initial states but does not implement that production factory. POP,
+preparation and successor witnesses, downstream minimum funding, proven storage
+and compute bounds, complete malformed/exotic-cell behavior, Rust contract
+execution and reference-hardware measurements remain open. The next architecture
+work must address the measured admission cost while retaining these checks.
+This diagnostic experiment does not establish that raising protocol credit or
+reducing verifier prices is an acceptable solution.

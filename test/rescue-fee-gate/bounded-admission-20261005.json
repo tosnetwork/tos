@@ -1,0 +1,129 @@
+{
+  "normal_credit": 10000,
+  "normal_credit_valid_exit": -14,
+  "diagnostic_credit_only": 30000,
+  "diagnostic_valid": {
+    "next_leaf": 21,
+    "gas_at_accept": 20387,
+    "total_compute_gas": 22500
+  },
+  "diagnostic_receiver_locked": true,
+  "header_rejections": {
+    "domain": 2013,
+    "network": 2013,
+    "wallet": 2013,
+    "module": 2013,
+    "profile": 2013,
+    "tree": 2013
+  },
+  "auth_identity_rejections": {
+    "network": 2014,
+    "wallet": 2014,
+    "module": 2014
+  },
+  "unsupported_class": 2012,
+  "wrong_constructor": 2012,
+  "unsupported_kind": 2012,
+  "primary_rejected": 2011,
+  "trailing_submission": 9,
+  "trailing_request": 9,
+  "oversized_payload": 8,
+  "valid_payload_cells": 65,
+  "oversized_payload_cells": 78,
+  "valid_external_cells": 95,
+  "compiled_code_cells": 6,
+  "exact_input_cell_bound": {
+    "next_leaf": 21,
+    "gas_at_accept": 20387,
+    "total_compute_gas": 22500
+  },
+  "one_cell_below_input_bound": 8,
+  "input_bound_mutation_admitted": {
+    "next_leaf": 21,
+    "gas_at_accept": 17634,
+    "total_compute_gas": 19747
+  },
+  "mutation_admitted": {
+    "header": {
+      "next_leaf": 22,
+      "gas_at_accept": 20247,
+      "total_compute_gas": 22360
+    },
+    "auth_identity": {
+      "next_leaf": 29,
+      "gas_at_accept": 20173,
+      "total_compute_gas": 22286
+    },
+    "payload_size": {
+      "next_leaf": 37,
+      "gas_at_accept": 19866,
+      "total_compute_gas": 21979
+    },
+    "class": {
+      "next_leaf": 31,
+      "gas_at_accept": 20327,
+      "total_compute_gas": 22440
+    },
+    "constructor": {
+      "next_leaf": 32,
+      "gas_at_accept": 20312,
+      "total_compute_gas": 22425
+    },
+    "kind": {
+      "next_leaf": 33,
+      "gas_at_accept": 20123,
+      "total_compute_gas": 22236
+    },
+    "role": {
+      "next_leaf": 34,
+      "gas_at_accept": 20327,
+      "total_compute_gas": 22440
+    },
+    "submission_shape": {
+      "next_leaf": 35,
+      "gas_at_accept": 20315,
+      "total_compute_gas": 22428
+    },
+    "request_shape": {
+      "next_leaf": 36,
+      "gas_at_accept": 20333,
+      "total_compute_gas": 22446
+    }
+  },
+  "unsafe_no_sizes_cost_control": {
+    "next_leaf": 21,
+    "gas_at_accept": 11188,
+    "total_compute_gas": 13301
+  },
+  "diagnostic_restored": {
+    "next_leaf": 21,
+    "gas_at_accept": 20387,
+    "total_compute_gas": 22500
+  },
+  "restored_normal_credit_valid_exit": -14,
+  "source_sha256": "206d2f1d919bd1316b95922ee89a2946f1fcc43d018b9f3b70cd1fb360d80249",
+  "scope": "bounded SUB1 experiment, diagnostic credit only; not production admission",
+  "base_commit": "74f5e698b5fe4f2d56393167ce9ebb29cc0a6d7c",
+  "host": "Darwin arm64",
+  "command": "python3 test/rescue-fee-gate/probe_bounded_admission.py (environment as README.md)",
+  "runner_sha256": "65c3e96bdce88f586a911a5bb01b2a34334577d814800357c07e5a58b79ff4ff",
+  "native_build_sha256": {
+    "build/crypto/func": "b6649c82021046d10f3126b0c68fdedb97b4c7557264f112504920b90f7a3485",
+    "build/emulator/libemulator.dylib": "8fce62c08e8dcef22338714d7c2e2a38eff99fbd1965804529543f45fcffbef8"
+  },
+  "validation": {
+    "native_probe_exit": 0,
+    "ruff_exit": 0,
+    "mutation_and_boundary_controls": 10,
+    "normal_credit_fit": false,
+    "rust_contract_execution": "not run",
+    "hosted_ci": "not run",
+    "production_acceptance": false
+  },
+  "raw_result": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/bounded-admission.json",
+    "sha256": "3ea835bd363a1af38473b8b4b35d3787ed41212669bfb78ddb8764f21830b018",
+    "bytes": 2569,
+    "retention": "retain with this experiment until superseded by a reproduced admission result"
+  }
+}
