@@ -1,0 +1,619 @@
+{
+  "base_commit": "440fd2163e296176a9151dce25ca9f508729970b",
+  "release_gate": "FAILED: current default-credit external admission exceeds 10000 gas. Diagnostic increased-credit execution is not release evidence.",
+  "credit_probe": {
+    "default_credit": 10000,
+    "minimum_accept_credit": 12413,
+    "production_admission_passed": false,
+    "downstream_diagnostic_credit": 20000
+  },
+  "diagnostic_outcomes": {
+    "vault": {
+      "exit": 0,
+      "gas": 14564,
+      "gas_limit": 0,
+      "compute_success": true,
+      "aborted": false,
+      "action": {
+        "success": true,
+        "code": 0
+      }
+    },
+    "module": {
+      "exit": 0,
+      "gas": 785883,
+      "gas_limit": 1000000,
+      "compute_success": true,
+      "aborted": false,
+      "action": {
+        "success": true,
+        "code": 0
+      }
+    },
+    "wallet": {
+      "exit": 0,
+      "gas": 208118,
+      "gas_limit": 1000000,
+      "compute_success": true,
+      "aborted": false,
+      "action": {
+        "success": true,
+        "code": 0
+      }
+    },
+    "recipient": {
+      "exit": 0,
+      "gas": 993,
+      "gas_limit": 1000000,
+      "compute_success": true,
+      "aborted": false,
+      "action": {
+        "success": true,
+        "code": 0
+      }
+    },
+    "replay_exit": 2004,
+    "failure_exits": {
+      "invalid_fee_signature": 2007,
+      "insufficient_reserve": 2008
+    },
+    "addresses": {
+      "wallet": "0xcb9f4097842823c6b82dd941f1ba2100295997656a8cfa908ba4cc199f402a5b",
+      "module": "0x990199b72d077bd4dcb1fb12227a13e41b0f9c8a03892a7802629935e92a8e33",
+      "vault": "0x70bfbd5a841afd12e1acf8dff7649950570ed463e1de728ebe15424b63a5066e",
+      "recipient": "0x114d3483b862ebb68b9323b7e2ef9116bde2488e44c1033a27bcf1207fc1fba2"
+    }
+  },
+  "regressions": [
+    "23 storage cases",
+    "15 canonical fee identity cases",
+    "269 complete receiver cases",
+    "9 real PQ module deliveries",
+    "19 POP cases and two guard-deletion controls"
+  ],
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "sha256": "74bfc9ba87dcbf521410faf161d0d59381fb7e71092a2556683d78ee7ec75a72",
+      "bytes": 4667
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-identity.fc",
+      "sha256": "78889a4e42080b052a687198f4fbe54990be4e1c0694de66cabfc47eb6d796dc",
+      "bytes": 3056
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-rescue.tlb",
+      "sha256": "8462732e4ce69e5ef77f22b1f5ee93f0d42339f66f43998d347512673892d352",
+      "bytes": 11569
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-module.fc",
+      "sha256": "94a56c978d6d68d57462c0cb76c898464e285f0049b44a19363e993bbeda4738",
+      "bytes": 5018
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-code.fc",
+      "sha256": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f",
+      "bytes": 4499
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "sha256": "01fb91d82c3900a5c75525ebdbda5eadfe5fad9b3c043cec73078f30d18e827c",
+      "bytes": 12016
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_identity.py",
+      "sha256": "40f00d95f436f7c42338bde525aa928751f833dbb81da8d6e83c466795e1b1b7",
+      "bytes": 6126
+    },
+    {
+      "path": "test/wallet-v5r2/test_state.py",
+      "sha256": "1eb2bdfa1f70370f95fdb13c92ccfef33e792f6651dde77d1d643cb2b6d41989",
+      "bytes": 7012
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/PUBLIC-TEST-ONLY-lms-tree",
+      "sha256": "2ff622ca4346594180539a2d95f040f383a9f6d30d97de7f25477dfb9e5a1332",
+      "bytes": 67108864
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/credit-probe.json",
+      "sha256": "864080db5302e18fa93bac9b311e9064f085403b26e45dbd8cca71248f917c2c",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/default-credit-result.json",
+      "sha256": "edc608c456cdaa12296de69caa80456794ded19be374cda0042d1f79660361e0",
+      "bytes": 4582
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/failure-results.json",
+      "sha256": "c9b0e1daee1e38c7adfdff192f8132da5782da8c850243b20001ac7fad6fb491",
+      "bytes": 9181
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/fee_identity.log",
+      "sha256": "3ae91227349675a6800969d1a6ae757125f1fcaba06b9882c6e4363695e238ec",
+      "bytes": 36
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module-result.json",
+      "sha256": "e1be7f2e847ccc384bc48fa0ba35b6d14d95fe887c188e2db327555b97b9c850",
+      "bytes": 31919
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module.boc",
+      "sha256": "0ebb049c01ff2aca7e0996b2f00bdc785fc35df0e10733c2a30fffd74bb3cfca",
+      "bytes": 2511
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module.fif",
+      "sha256": "b4928675f5e4b14675e5dcf2f01c05ed7834cdea4fc2e89723b2d722b754a2f9",
+      "bytes": 75562
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module.run.fif",
+      "sha256": "db9d541b32f7a49c4c0d77bfd67ac6fcd898de2b5e4f1388b54baba65966217a",
+      "bytes": 190
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module_delivery.log",
+      "sha256": "b70993b4976939c1c5243417928ea83b85f8c703cf48ec8c097e1ffd69ab5f73",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/pop.log",
+      "sha256": "710760dbe93d5a5f6f471d1bbc498484445195df96afda30de395a9b37d7844d",
+      "bytes": 46
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/recipient-result.json",
+      "sha256": "856f4fdebf03047f6cd60cc0fdcb388a43dee3f36191d7d6c16fa51b41530abe",
+      "bytes": 1341
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/recipient.boc",
+      "sha256": "8aa073a00d8909367042081f63c020dbb04b7dea272fd874a0a6c71d244e5203",
+      "bytes": 45
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/recipient.fif",
+      "sha256": "9c7fd23fd26ea5a17fd2d67de7369287314a5e4f7d856c89f9b98f16d1a2d4d2",
+      "bytes": 417
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/recipient.run.fif",
+      "sha256": "ef1daf5053ea7d927056029a37e45d18190cee300bbeaa8dfaddeb4f5ca7e919",
+      "bytes": 196
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/pairing-mutant.boc",
+      "sha256": "60797f072dee5c1fe72135a136e9e5ef710dbb75c6ab82381315a0d14d609162",
+      "bytes": 687
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/pairing-mutant.fif",
+      "sha256": "34febe369b6cc67adcfa703bdd15dd9d870850c9ede1fd2e309648bd3b384b91",
+      "bytes": 23158
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/pairing-mutant.run.fif",
+      "sha256": "d3c8cf1f2b6b3bd50b8f7f7fc20c078db3d4d6163c874c476b83c86da64124d7",
+      "bytes": 254
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/pairing.boc",
+      "sha256": "dc663717eed5980b2d7c1201f654a2f23d3ff86c746d70e6d943c26a5f93a0b4",
+      "bytes": 697
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/pairing.fif",
+      "sha256": "5e2cc71975a229429450f951ad6f0c2225d0b7623129b9b03c135fd27607855b",
+      "bytes": 23281
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/pairing.run.fif",
+      "sha256": "9f2ac567d0ed753c76aaab3ef353e91a1cbc0377a2ced358adb8e7d126ba7fde",
+      "bytes": 240
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/results.json",
+      "sha256": "6f49bc6e4562ca0c68c6dc6090d2deb659b59c8492dcc6c70da183e7f5b12ef4",
+      "bytes": 3032
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/vault-fixture.fif",
+      "sha256": "87dfa1f9b1a5f914a9e52e110610a4b7804a33dec7968477147cf3b17bc5bb98",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-fee_identity/vault-fixture.run.fif",
+      "sha256": "5ab10e2def349b034db6bd0368c335a70e35f1eb05762710de5d594f2cb3475e",
+      "bytes": 252
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/module.boc",
+      "sha256": "65a284fcdeb4e459e22713363bb5b6813922830b15e9d56da05be9c4a7d2377f",
+      "bytes": 1982
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/module.fif",
+      "sha256": "4f4a4f0bfa949d2f6ed885601e81f1ceb4f292974a85d220c328d7559724227c",
+      "bytes": 74502
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/module.run.fif",
+      "sha256": "e0c35cfda2911421484881954cfdf012af1c9d56b6b3d602f5363389a6095711",
+      "bytes": 244
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/restored-module.boc",
+      "sha256": "65a284fcdeb4e459e22713363bb5b6813922830b15e9d56da05be9c4a7d2377f",
+      "bytes": 1982
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/restored-module.fif",
+      "sha256": "4f4a4f0bfa949d2f6ed885601e81f1ceb4f292974a85d220c328d7559724227c",
+      "bytes": 74502
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/restored-module.run.fif",
+      "sha256": "42c24761acf5ece25b2f401ffa43f62d9c3d166c56c98f40c5ef943fda54d5bc",
+      "bytes": 262
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/results.json",
+      "sha256": "2c1cb99a574ab6f01726b94dccee784dd818b2f7afccbb82e3ace503c4e41abb",
+      "bytes": 3301
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/signature-mutant.boc",
+      "sha256": "2cd0aaeb0aaded950afb7441b9d3b1ff9634d36300383a0cf2a5251e230006bd",
+      "bytes": 1946
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/signature-mutant.fif",
+      "sha256": "cc0588f573d512782e6fd7c3ffdf3c8f1c62f55c9821bf46a5f4abf17dac0c17",
+      "bytes": 72947
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/signature-mutant.run.fif",
+      "sha256": "0521fdae8a89e8268c9c9cc7e7d8b585388bf01e5d1831bc63cf0a4755e216c8",
+      "bytes": 264
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/vault-fixture.fif",
+      "sha256": "68924cb47f8d2fbbb7615cdf0cd164b732e98ded9d8a0971928ed2a922b31729",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/vault-fixture.run.fif",
+      "sha256": "1e9f45a3d1719a3951c71430d92789fcd21baebae2a259c9ea7b262888b2a2df",
+      "bytes": 258
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/wallet.boc",
+      "sha256": "cd5a4dbcf45626bcb3e813aa1ddb9d062865039b34c1fe7a207382fa4ce97bdd",
+      "bytes": 2429
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/wallet.fif",
+      "sha256": "2fbd8f4144a093cdd296ac9776ef54295a2d6b38902b29eb04450891372b48a7",
+      "bytes": 63988
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-module_delivery/wallet.run.fif",
+      "sha256": "7d8de578e2c12994d7a6807866ecc29ceed659d84d3cd6a63418a0de479692bf",
+      "bytes": 244
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/module.boc",
+      "sha256": "d6fd385b3cfccc1ff6c17edc38514ff534542195a5e785ce155da5008b248d45",
+      "bytes": 1962
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/module.fif",
+      "sha256": "c219462664a3273e0e78699948f01b85ab98c6564a1bd71fbd28525e164a49a9",
+      "bytes": 74449
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/module.run.fif",
+      "sha256": "89cacfdea53f9aa7370334fdee88c465ec7a890f08b148f5a885f2e7da589dc4",
+      "bytes": 220
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/mutant-1.boc",
+      "sha256": "005f45c3bff23686137503ac49f505e67d826dc3203ca4e03e75781efc0a417e",
+      "bytes": 1952
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/mutant-1.fif",
+      "sha256": "8d01367b414b6de0e5519d414fc03b25f05cf8e0bf09861facb2f788b2a89396",
+      "bytes": 73816
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/mutant-1.run.fif",
+      "sha256": "65498bc3e85ccdd9dca20fd7a4419893b80c9c2d02f962e24c83ed5e5d3d2dba",
+      "bytes": 224
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/mutant-2.boc",
+      "sha256": "514f3d3747f530ac6ff49f4c733e338de4d946d36d344ed47423ff658fb5c755",
+      "bytes": 1948
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/mutant-2.fif",
+      "sha256": "c93c8487065b8c495f7c7b91c9579411c1c25478fd83e6fb3e58f4d7ff1c23c1",
+      "bytes": 73853
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/mutant-2.run.fif",
+      "sha256": "95cd705cd4589e18fe42f5fa016cc2d0cf82b95bb68ba6f478520131cbc3c09a",
+      "bytes": 224
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/restored.boc",
+      "sha256": "d6fd385b3cfccc1ff6c17edc38514ff534542195a5e785ce155da5008b248d45",
+      "bytes": 1962
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/restored.fif",
+      "sha256": "c219462664a3273e0e78699948f01b85ab98c6564a1bd71fbd28525e164a49a9",
+      "bytes": 74449
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/restored.run.fif",
+      "sha256": "213a6c3608e93c71c55d177b8fc1107f6aad51a11967ac77f8a997bdd6a188f0",
+      "bytes": 224
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-pop/results.json",
+      "sha256": "cccf10258145f4a1a777a5e58053d09d723d953c6928a2899fe0b25d341c4f58",
+      "bytes": 3657
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/fee_profile.boc",
+      "sha256": "100c688e5f5e51bb9f93efb909998ea8a3eafd9efc0782b7b8d988123993fd0f",
+      "bytes": 621
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/fee_profile.fif",
+      "sha256": "03ebd19b2992b0a9d23ec26e7c7c96566b7b5beb6f3401a6fa9f284dcb084e8b",
+      "bytes": 16056
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/fee_profile.run.fif",
+      "sha256": "0f346b085d4726600303e51252c4dd05c6429055f510c98d19ae2015a3bba7fd",
+      "bytes": 234
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/module.boc",
+      "sha256": "b31e38d5e3e427e1fcc69fee75ae5ccaefac52bda2f3662edcc2a2906f959abf",
+      "bytes": 493
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/module.fif",
+      "sha256": "2646bb500fd3f62f26accdddc8441d491152ff08088ed1ad8fa30df4afd89d45",
+      "bytes": 15786
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/module.run.fif",
+      "sha256": "fc60415bf298beed33cb5ee278189a7df6e90deb07a716b57cec216de2634768",
+      "bytes": 224
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/results.json",
+      "sha256": "56303e8e1245926d73249a875892e6c4d78c8c87baa0bfe2362b756c8102d5e9",
+      "bytes": 4302
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/state.boc",
+      "sha256": "e394e4024d7dfffa73e65450d211fe35ef138cdc028febe3a5e5ce346b95922e",
+      "bytes": 626
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/state.fif",
+      "sha256": "a37c36742045eddd0f80f344dfe99c09da0136eb6e5391c6a3d384419b1e1cf7",
+      "bytes": 16101
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/state.run.fif",
+      "sha256": "157f478b92c39d62d2e97844226f2174ff23c61594334a0239947c0e9d18667f",
+      "bytes": 222
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/strict_mode.boc",
+      "sha256": "d22795eb8da6cce16b5c92f6b1cfde53a6a37bf26edecbbb3715c34d09d78e4b",
+      "bytes": 620
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/strict_mode.fif",
+      "sha256": "1248e1a1d6f9fe04e3d7f9e51b0c558268ff840b0b0dd8c6000e4a20b5407d79",
+      "bytes": 15929
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-state/strict_mode.run.fif",
+      "sha256": "ff5d7402901af897c3ed9979aaae8aaaaccd843a4db62cf4dc1810d979316f78",
+      "bytes": 234
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/module-fixture.boc",
+      "sha256": "b31e38d5e3e427e1fcc69fee75ae5ccaefac52bda2f3662edcc2a2906f959abf",
+      "bytes": 493
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/module-fixture.fif",
+      "sha256": "2646bb500fd3f62f26accdddc8441d491152ff08088ed1ad8fa30df4afd89d45",
+      "bytes": 15786
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/module-fixture.run.fif",
+      "sha256": "27a225535a581b79cbfdeff3d47830c74a9337238fca55a442a5587e3136ac2c",
+      "bytes": 242
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/restored.boc",
+      "sha256": "ff491d448ab569da20b4940751b63dbf1e63fda6e8ed589debd3050a094b7196",
+      "bytes": 2429
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/restored.fif",
+      "sha256": "36cefee0f50c91579a202d20ab5d2f17cce07645130afaa5d853c2b840d8cf2e",
+      "bytes": 63988
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/restored.run.fif",
+      "sha256": "4667c55edc56cad7dfb5d55617b13abe4c0101d6cc7545dca9b5f6230a10600f",
+      "bytes": 230
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/results.json",
+      "sha256": "14d590b5e593ac83b1c80421c0f52358bf5d1440d06a950b248f566fd196eaac",
+      "bytes": 406
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/retired-bits-mutant.boc",
+      "sha256": "b58c6994f48a2a73aacfdc349f7ea62e6776c82eb31c4438e56e7881c2bb9767",
+      "bytes": 2441
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/retired-bits-mutant.fif",
+      "sha256": "3381e1776d0509888bac4d511f10358c8c8df850d30ff5849eaa22c620486d3e",
+      "bytes": 63856
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/retired-bits-mutant.run.fif",
+      "sha256": "c9842ffe7ad9c38c2f1931899ae28352074c9493db2c607ac56fe3275c7ca03c",
+      "bytes": 252
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/retirement-mutant.boc",
+      "sha256": "ac1a6d9e2d0a23887b7f4d18fda394b919e4711c752f15723e2935644898cae5",
+      "bytes": 2423
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/retirement-mutant.fif",
+      "sha256": "76c200cbff9b776530e140a28da39e571faaf8a79297a0dfb54b6f1567f30a46",
+      "bytes": 63804
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/retirement-mutant.run.fif",
+      "sha256": "98d5e8039db7bbcc5234bc9a20a0bed994202f6c97a796f5c6c8dec1c5f4ec3c",
+      "bytes": 248
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/vault-fixture.fif",
+      "sha256": "22a7eacd381a5669de020bd5a00f04517f2b1283222e5fee6bbcfea505bfe673",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/vault-fixture.run.fif",
+      "sha256": "53cb635d4fa51ae7dc3c46da401fcfbd5b8dc283bfed2b2fb4e455737f735d56",
+      "bytes": 240
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/wallet.boc",
+      "sha256": "ff491d448ab569da20b4940751b63dbf1e63fda6e8ed589debd3050a094b7196",
+      "bytes": 2429
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/wallet.fif",
+      "sha256": "36cefee0f50c91579a202d20ab5d2f17cce07645130afaa5d853c2b840d8cf2e",
+      "bytes": 63988
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/regression-wallet/wallet.run.fif",
+      "sha256": "b525c3d4417c314e2333aa1d6cab5f88e5db5634d82f2eb817500e40e18c8e21",
+      "bytes": 226
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/replay-result.json",
+      "sha256": "2035aa1057e5d5dc4d083d53fa30e20316fd1030118c61e7734fd9fc71e8ca9c",
+      "bytes": 1907
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/results.json",
+      "sha256": "87582f24200ae9fbd8671f1b689ea60d956ee5dae0ff7643fb959450f5de6800",
+      "bytes": 1507
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/state.log",
+      "sha256": "ef8fb4e5a60f02d7bc0cba77d0595f9d2844fb076f073a490e1f380f78e5f34d",
+      "bytes": 37
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/vault-result.json",
+      "sha256": "3b629c02b29ca4285e067745893d4d911fdec92b7178f43b26f33cabc70927d6",
+      "bytes": 33319
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/vault.boc",
+      "sha256": "2f36b143279e329813bdbcbecc030a46ae8cefcee5d4de0ee7c1e49ee4087cd4",
+      "bytes": 562
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/vault.fif",
+      "sha256": "aecf5c330737d281a3a6555d0c15b6281bcfbf15fe39fa2997138d1b0429556e",
+      "bytes": 21413
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/vault.run.fif",
+      "sha256": "fc2be6eb5d4fff4b10c998118b8ba27e9c361bd68d89179f97133d17535a5579",
+      "bytes": 188
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet-result.json",
+      "sha256": "e0e460914d5a875fcc38a49e29022e5fbc993a9f9b09b6be6dbc605fcca29862",
+      "bytes": 179613
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet.boc",
+      "sha256": "21bd2b2d918a70978c3cd28dbda029fda340383a6589029bc1f9da84102508b7",
+      "bytes": 2958
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet.fif",
+      "sha256": "3f689dd6567659f2b978f419fb61ec6c0a7ef23dd83f6d22dad6ba90c7b19127",
+      "bytes": 65050
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet.log",
+      "sha256": "0d7e52f4b6723747f6262fae0b440702db97ca1bcf063750b8575ee6aaa20b8e",
+      "bytes": 35
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet.run.fif",
+      "sha256": "fd8ada03aeeafea3a2fb39bb718e708abcac053fc61431647303209894aff539",
+      "bytes": 190
+    }
+  ],
+  "retention": "Retain locally through PR review and release acceptance. Public deterministic LMS test tree remains outside Git; never use this tree or its seed for custody.",
+  "commands": [
+    "python test/wallet-v5r2/test_fee_delivery.py --credit-probe --output /path/to/retained-results"
+  ],
+  "remaining": [
+    "default-credit admission",
+    "native/Rust parity",
+    "fee class and malformed-input sensitivity coverage",
+    "worst-case class limits and reference pricing",
+    "fee-funded preparation and restore/client readiness"
+  ]
+}

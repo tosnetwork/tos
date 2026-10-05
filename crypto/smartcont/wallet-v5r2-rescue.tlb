@@ -103,7 +103,18 @@ wallet_v5r2_data$_ signature_allowed:Bool seqno:uint32 wallet_id:uint32
 // policy; current account balance is not a genesis identity input.
 paired_vault_config_v1#01 global_id:int32 network_tag:bits256
   wallet:MsgAddressInt module:MsgAddressInt metadata:^FeeMetadata = PairedVaultConfig;
-paired_vault_data_v2#02 next_leaf:uint32 config:^PairedVaultConfig = PairedVaultData;
+// v3 caches are derived from PairedVaultConfig, never independently supplied.
+// config_hash binds the full config; auth_prefix is canonical AU2R through role=RESCUE.
+// POP parties hash binds account/module. Profile fixes 3600-second slots and k=4.
+paired_vault_data_v3#03 next_leaf:uint32 config_hash:bits256 epoch0:uint32
+  module:MsgAddressInt pop_parties_hash:bits256 public_key:^Cell auth_prefix:^Cell
+  = PairedVaultData;
+// Fee-vault candidate only: admission currently exceeds the 10,000-gas credit.
+// The domain is the 136-bit ASCII string "TOS-RESCUE-FEE-v1".
+paired_fee_intent_v4#46454534 domain:bits136 class:FeeClass vault:MsgAddressInt
+  config_hash:bits256 leaf:uint32 valid_until:uint32 value:Tomis payload:^Cell
+  = PairedFeeIntent;
+paired_fee_external$_ intent:^PairedFeeIntent signature:^Cell = PairedFeeExternal;
 // Canonical deployment requires next_leaf=0; wallet/module are standard wc0.
 
 // ---- Fee vault (immutable code; data mutates only in next_leaf, budget and diagnostics)

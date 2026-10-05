@@ -29,7 +29,17 @@ def address(value, wc=0):
 def vault_data(metadata=None, wallet=100, module=200, network=123, global_id=42, leaf=0):
     config = Cell().uint(1, 8).sint(global_id, 32).uint(network, 256).ref(metadata or fee())
     config.bits += address(wallet).bits + address(module).bits
-    return Cell().uint(2, 8).uint(leaf, 32).ref(config)
+    metadata = metadata or fee()
+    ms = metadata.slice()
+    ms.uint(16 + 256)
+    epoch0 = ms.uint(32)
+    prefix = Cell().uint(0x41553252, 32).sint(global_id, 32).uint(network, 256)
+    prefix.bits += address(wallet).bits
+    prefix.uint(module, 256).uint(2, 8)
+    parties = Cell(bits=address(wallet).bits).uint(module, 256)
+    result = Cell().uint(3, 8).uint(leaf, 32).raw(config.hash).uint(epoch0, 32)
+    result.bits += address(module).bits
+    return result.raw(parties.hash).ref(metadata.refs[0]).ref(prefix)
 
 
 def run(code, pinned, witness, expected, wallet=None, module=None, claimed=None):

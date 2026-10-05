@@ -277,3 +277,33 @@ readiness enforcement and both-VM acceptance remain open.
 ```sh
 python test/wallet-v5r2/test_pop.py --output /path/to/r2-pop
 ```
+
+## Paired fee-vault admission gap (not a release pass)
+
+`wallet-v5r2-fee-vault.fc` is an incomplete candidate using the actual LMS verifier,
+SUB3/PPS3 allowlist, exact signed destination/config/body/value, monotonic time-slot
+leaf, fee-relative amount limits and current-price solvency checks before ACCEPT.
+The v3 paired data caches the config hash, canonical rescue request prefix and POP
+parties hash derived by `r2pair_data`; wallet/module witness validation compares the
+whole reconstructed data hash. Arbitrary caches cannot be installed as a paired
+route. The public tree id and full metadata remain committed by the config hash.
+
+The measured SUB3 path requires **12,413 gas to reach ACCEPT**, exceeding the
+unchanged default **10,000**. This is a failed release gate. No credit or tariff
+change is made to production configuration and no check is moved after ACCEPT.
+The 1024-cell envelope, compute/storage bounds and class limits are provisional
+and still require worst-case pricing/coverage; preparation is not yet admitted.
+
+`test_fee_delivery.py` defaults to requiring actual admission. Its explicit
+`--credit-probe` option changes only the emulator's copied fee configuration to
+binary-search the required credit, records `production_admission_passed: false`,
+and diagnoses downstream behavior. At 20,000 diagnostic credit, actual derived StateInit
+addresses form vault -> module -> wallet -> recipient transactions, the recipient
+state/balance changes, the vault consumes leaf 8 to 9, and exact replay is refused.
+These observations are **not** evidence that the default-credit fee route works.
+The H20 key in this test is deterministic public test material, never a usable
+custody key. Its 64 MiB tree stays outside Git.
+
+Resolve the credit gap while retaining fail-closed signature, class, identity,
+value and solvency checks, then test all classes, failure paths and both VMs before
+freezing the dependency identities or publishing any code artifact.

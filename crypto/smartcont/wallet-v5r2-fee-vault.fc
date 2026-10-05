@@ -1,0 +1,103 @@
+;; NOT RELEASE READY: the measured SUB3 path exceeds 10,000 external gas credit.
+;; Complete R2 paired-vault candidate. Immutable parties/metadata, mutable leaf.
+;; No wallet authority. SUB3 (RESCUE only) and non-authorizing PPS3 are admitted.
+;; Preparation is not admitted until its bounded funding path is integrated.
+;; Release pricing and worst-case envelope limits still require acceptance.
+#include "pq.fc";
+int r2fee_cells() asm "18 GETPARAMLONG" "2 INDEX";
+int r2fee_global() asm "GLOBALID";
+(slice, int) r2fee_raw(cell c) asm "XCTOS";
+int r2fee_level(cell c) asm "CLEVEL";
+slice r2fee_ordinary(cell c) impure inline {
+  (slice s, int special) = r2fee_raw(c);
+  throw_unless(2012, (special == 0) & (r2fee_level(c) == 0));
+  return s;
+}
+(slice, ()) r2fee_intent_prefix(slice s) asm "x{46454534544f532d5245534355452d4645452d7631} SDBEGINS";
+(slice, ()) r2fee_prefix(slice s, slice prefix) asm "SDBEGINSX";
+const int r2fee::max_cells = 1024;
+const int r2fee::max_bits = 1024 * 1023;
+const int r2fee::compute_bound = 65536;
+const int r2fee::state_cells = 128;
+const int r2fee::state_bits = 128 * 1023;
+const int r2fee::storage_horizon = 33554432;
+
+() r2fee_address(slice s) impure inline {
+  throw_unless(2016, s.preload_uint(11) == 1024);
+}
+() recv_internal(slice body) impure { } ;; deposit/bounce only; no leaf rollback
+
+() recv_external(int balance, int value_in, cell full, slice body) impure {
+  throw_unless(2015, r2fee_cells() <= r2fee::max_cells);
+  cell intent = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+  slice ds = r2fee_ordinary(get_data());
+  throw_unless(2016, ds~load_uint(8) == 3);
+  int next_leaf = ds~load_uint(32);
+  slice immutable = ds;
+  int expected_header = ds~load_uint(256);
+  int epoch0 = ds~load_uint(32);
+  slice module = ds~load_msg_addr();
+  int pop_parties = ds~load_uint(256);
+  cell key = ds~load_ref();
+  slice prefix = r2fee_ordinary(ds~load_ref());
+  ds.end_parse();
+  slice is = r2fee_ordinary(intent);
+  is~r2fee_intent_prefix();
+  int kind = is~load_uint(8);
+  throw_unless(2012, (kind == 1) | (kind == 2));
+  r2fee_address(my_address());
+  throw_unless(2002, equal_slice_bits(is~load_msg_addr(), my_address()));
+  throw_unless(2013, is~load_uint(256) == expected_header);
+  int leaf = is~load_uint(32);
+  int deadline = is~load_uint(32);
+  int amount = is~load_coins();
+  cell payload = is~load_ref();
+  is.end_parse();
+  ;; Fixed digest domain, distinct from AUTH/POP/preparation signatures.
+  throw_unless(2004, (leaf >= next_leaf) & (leaf < 1048576));
+  throw_unless(2003, (deadline > now()) & (deadline <= now() + 3600));
+  int slot = (now() - epoch0) / 3600;
+  throw_if(2009, (slot - (leaf / 4)) >> 1);
+  slice ps = r2fee_ordinary(payload);
+  throw_unless(2012, ps~load_uint(32) == (kind == 1 ? 0x53554233 : 0x50505333));
+  slice request = r2fee_ordinary(ps~load_ref());
+  ps~load_ref(); ;; module verifies the inner PQ signature
+  ps.end_parse();
+  if (kind == 1) {
+    request~r2fee_prefix(prefix);
+    request~skip_bits(64 + 64 + 32);
+    int operation = request~load_uint(8);
+    throw_unless(2012, (1 << operation) & 0x1b);
+    request~load_ref();
+  } else {
+    throw_unless(2012, request~load_uint(32) == 0x504f5033);
+    slice namespace = prefix.skip_bits(32).preload_bits(288);
+    request~r2fee_prefix(namespace);
+    int role = request~load_uint(8);
+    throw_unless(2012, (role == 1) | (role == 2));
+    request~skip_bits(256 + 32);
+    throw_unless(2013, cell_hash(request~load_ref()) == pop_parties);
+    request~load_ref();
+  }
+  request.end_parse();
+  r2fee_address(module);
+  throw_unless(2016, prefix.skip_bits(32).preload_int(32) == r2fee_global());
+  ;; Fee-relative class bounds: one maximum-gas hop for POP, two for wallet AUTH.
+  ;; They are provisional profile bounds, not measured production fee quotes.
+  int forward_bound = get_forward_fee(0, r2fee::max_bits, r2fee::max_cells);
+  int floor = get_compute_fee(0, kind == 1 ? 2000000 : 1000000)
+      + 2 * forward_bound;
+  throw_unless(2010, (amount >= floor) & (amount <= 4 * floor));
+  int reserve = get_compute_fee(0, r2fee::compute_bound)
+      + 2 * forward_bound
+      + get_storage_fee(0, r2fee::storage_horizon, r2fee::state_bits, r2fee::state_cells);
+  throw_unless(2008, amount + reserve <= balance);
+  throw_unless(2007, lms_check_fee_hash(cell_hash(intent), leaf, signature, key));
+  accept_message();
+  set_data(begin_cell().store_uint(3, 8).store_uint(leaf + 1, 32).store_slice(immutable).end_cell());
+  commit();
+  send_raw_message(begin_cell().store_uint(0x18, 6).store_slice(module).store_coins(amount)
+      .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1).store_ref(payload).end_cell(), 3);
+}

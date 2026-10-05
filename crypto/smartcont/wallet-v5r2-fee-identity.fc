@@ -23,7 +23,18 @@ cell r2pair_data(int global_id, int network, slice wallet, slice module, cell me
   r2state_fee(metadata);
   cell config = begin_cell().store_uint(1, 8).store_int(global_id, 32).store_uint(network, 256)
       .store_slice(wallet).store_slice(module).store_ref(metadata).end_cell();
-  return begin_cell().store_uint(2, 8).store_uint(0, 32).store_ref(config).end_cell();
+  slice m = metadata.begin_parse().skip_bits(16 + 256);
+  int epoch0 = m~load_uint(32);
+  cell key = m~load_ref();
+  int root = r2pair_basechain(module);
+  cell prefix = begin_cell().store_uint(0x41553252, 32).store_int(global_id, 32)
+      .store_uint(network, 256).store_slice(wallet).store_uint(root, 256).store_uint(2, 8).end_cell();
+  int pop_parties = cell_hash(begin_cell().store_slice(wallet).store_uint(root, 256).end_cell());
+  ;; Canonical caches avoid reparsing the metadata graph within external credit.
+  ;; The whole expected data hash is checked when the wallet/module pairs a vault.
+  return begin_cell().store_uint(3, 8).store_uint(0, 32).store_uint(cell_hash(config), 256)
+      .store_uint(epoch0, 32).store_slice(module).store_uint(pop_parties, 256)
+      .store_ref(key).store_ref(prefix).end_cell();
 }
 
 cell r2pair_init(cell vault_code, int global_id, int network, slice wallet, slice module,
