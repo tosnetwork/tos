@@ -1,0 +1,349 @@
+{
+  "source_commit": "083944e3c",
+  "command": "python3 scripts/token-bridge-mutations.py --results <file>",
+  "exit_status": 0,
+  "summary": {
+    "controls": 41,
+    "red": 39,
+    "recorded_survivors": 2,
+    "unexpected": 0
+  },
+  "positive_controls": "every named test passed unmutated before the mutations ran",
+  "raw_log": {
+    "sha256": "d5b1d713bca0b35411d485dffd8de551bd4b10ecda889c093fc80d445c23aa9d",
+    "bytes": 9322,
+    "retained": "not retained durably; regenerate with the command above at source_commit"
+  },
+  "controls": [
+    {
+      "id": "M01",
+      "guard": "the wallet ignores its floor and its set",
+      "test": "t_m4_",
+      "verdict": "red",
+      "required_failure": "credit",
+      "observed": "thread 'mint::t_m4_duplicate_and_old_mint_messages_repeat_no_effect' (1883701) panicked at node-control/contracts/tests/token_bridge/model.rs:505:21:"
+    },
+    {
+      "id": "M02",
+      "guard": "the minter counts a COUNTED s",
+      "test": "t_m4_",
+      "verdict": "red",
+      "required_failure": "I",
+      "observed": "thread 'mint::t_m4_duplicate_and_old_mint_messages_repeat_no_effect' (1896241) panicked at node-control/contracts/tests/token_bridge/mint.rs:178:5:"
+    },
+    {
+      "id": "M03",
+      "guard": "the bridge ignores its burn watermark",
+      "test": "t_b6_",
+      "verdict": "red",
+      "required_failure": "LOG_BURN emitted twice",
+      "observed": "thread 'burn::t_b6_old_burn_messages_repeat_no_effect' (1906795) panicked at node-control/contracts/tests/token_bridge/model.rs:750:13:"
+    },
+    {
+      "id": "M04",
+      "guard": "the bridge honours a second cancellation flag",
+      "test": "t_b5_",
+      "verdict": "red",
+      "required_failure": "I",
+      "observed": "thread 'burn::t_b5_recorded_or_cancelled_once_never_both' (1912600) panicked at node-control/contracts/tests/token_bridge/model.rs:735:21:"
+    },
+    {
+      "id": "M05",
+      "guard": "a bounce triggers a refund",
+      "test": "t_b7_",
+      "verdict": "red",
+      "required_failure": "I1:",
+      "observed": "thread 'burn::t_b7_bounces_cannot_refund' (1935688) panicked at node-control/contracts/tests/token_bridge/model.rs:905:9:"
+    },
+    {
+      "id": "M06",
+      "guard": "a settlement handler reads ConfigParam 79",
+      "test": "t_m7_",
+      "verdict": "red",
+      "required_failure": "failed",
+      "observed": "thread 'mint::t_m7_mints_complete_without_and_despite_configparam_79' (1941899) panicked at node-control/contracts/tests/token_bridge/harness.rs:852:13:"
+    },
+    {
+      "id": "M07",
+      "guard": "the wallet's descriptor hash comparison is removed",
+      "test": "t_m6_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'mint::t_m6_a_reused_identity_with_other_fields_is_refused' (1946098) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M08",
+      "guard": "the minter's burn descriptor hash comparison is removed",
+      "test": "t_b8_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'burn::t_b8_a_reused_admission_with_other_fields_is_refused_by_the_minter' (1953139) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M09",
+      "guard": "burn_reserve is not counted",
+      "test": "t_x1_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'extended::t_x1_the_refund_of_an_undecided_burn_always_fits' (1959020) panicked at node-control/contracts/tests/token_bridge/extended.rs:67:9:"
+    },
+    {
+      "id": "M10",
+      "guard": "an exception is dropped without the sender's floor",
+      "test": "t_x3_a_refusal",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'windows::t_x3_a_refusal_outlives_the_watermark_until_the_bridge_acknowledges_it' (1963998) panicked at node-control/contracts/tests/token_bridge/windows.rs:396:5:"
+    },
+    {
+      "id": "M11",
+      "guard": "ADMIT_REFUSED is not stored",
+      "test": "t_y1_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'burn::t_b2_t_y1_a_refused_admission_stays_refused_after_capacity_returns' (1969014) panicked at node-control/contracts/tests/token_bridge/burn.rs:145:5:"
+    },
+    {
+      "id": "M12",
+      "guard": "the sender window ignores its acknowledged floor",
+      "test": "t_y4_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'windows::t_y4_sync_alone_reopens_every_window' (1980784) panicked at node-control/contracts/tests/token_bridge/windows.rs:112:21:"
+    },
+    {
+      "id": "M13",
+      "guard": "the wallet's life check is removed",
+      "test": "t_x4_an_old_life",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'lifecycle::t_x4_an_old_life_credit_never_lands_in_the_new_life' (1988004) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M14",
+      "guard": "a newer hub life is treated as a recreated wallet",
+      "test": "t_y6_a_newer",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'lifecycle::t_y6_a_newer_minter_life_is_terminal_at_the_wallet' (1995278) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:478:5:"
+    },
+    {
+      "id": "M15",
+      "guard": "cancel_lock accepts a PREPARING lock",
+      "test": "t_y5_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (2000917) panicked at node-control/contracts/tests/token_bridge/harness.rs:391:5:"
+    },
+    {
+      "id": "M16",
+      "guard": "an advance takes a field from its body",
+      "test": "t_m9_",
+      "verdict": "red",
+      "required_failure": "extra fields",
+      "observed": "thread 'mint::t_m9_advances_take_nothing_from_the_caller_but_the_identifier' (2006635) panicked at node-control/contracts/tests/token_bridge/mint.rs:390:5:"
+    },
+    {
+      "id": "M17",
+      "guard": "admission tests only W, not max(W, C)",
+      "test": "t_z2_",
+      "verdict": "survives",
+      "required_failure": "panicked",
+      "why_it_cannot_go_red": "redundant by construction: no entry at or above W is ever deleted (folding removes an entry only after W passes it, compaction only below min(W, C)), so a number in [W, C) always finds its own entry before the admission bound is consulted",
+      "observed": ""
+    },
+    {
+      "id": "M18",
+      "guard": "a reported floor is accepted without validation",
+      "test": "t_z2_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'windows::t_z2_compaction_ahead_of_folding_never_admits_an_old_number' (2038247) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M19",
+      "guard": "credits are bounded by the global window instead of the holder's k",
+      "test": "t_z3_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'windows::t_z3_a_full_holder_credit_window_refuses_the_next_prepare' (2066253) panicked at node-control/contracts/tests/token_bridge/windows.rs:462:5:"
+    },
+    {
+      "id": "M20",
+      "guard": "RESERVED is not stranded on recreation",
+      "test": "t_z4_a_wallet_deleted",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'lifecycle::t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once' (2094691) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:218:13:"
+    },
+    {
+      "id": "M21",
+      "guard": "the generation check is removed",
+      "test": "t_z1_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'lifecycle::t_z1_old_locks_stay_ineligible_after_all_three_are_recreated' (2109019) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M22",
+      "guard": "a sender advances its floor from C instead of S",
+      "test": "t_z2_",
+      "verdict": "survives",
+      "required_failure": "panicked",
+      "why_it_cannot_go_red": "equivalent at the current constants: a reply is always computed after a fold of up to FOLD_LIMIT numbers, and the unfolded backlog never exceeds MINT_WINDOW - FOLD_LIMIT = FOLD_LIMIT, so W has caught up with C and S = min(W, C) = C whenever a reply is sent",
+      "observed": ""
+    },
+    {
+      "id": "M23",
+      "guard": "a waiting mint is promoted past the holder's credit window",
+      "test": "t_z7_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'windows::t_z7_waiting_mints_beyond_the_credit_window_are_refused_not_prepared' (2148626) panicked at node-control/contracts/tests/token_bridge/windows.rs:365:5:"
+    },
+    {
+      "id": "M24",
+      "guard": "LOG_LIABILITY_STRANDED is sent in mode 2",
+      "test": "t_z4_stranding",
+      "verdict": "red",
+      "required_failure": "the action phase failed",
+      "observed": "thread 'lifecycle::t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log' (2161267) panicked at node-control/contracts/tests/token_bridge/lifecycle.rs:326:5:"
+    },
+    {
+      "id": "M25",
+      "guard": "a record keeps only a hash",
+      "test": "t_z6_a_mint",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'recovery::t_z6_a_mint_is_rebuilt_from_records_alone_at_every_point' (2175209) panicked at sandbox/src/result.rs:122:9:"
+    },
+    {
+      "id": "M26",
+      "guard": "cancel_lock below the watermark is evaluated",
+      "test": "t_z1_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'lifecycle::t_z1_old_locks_stay_ineligible_after_all_three_are_recreated' (2178936) panicked at node-control/contracts/tests/token_bridge/model.rs:846:9:"
+    },
+    {
+      "id": "M27",
+      "guard": "atomic send: +2 on the cancellation refund",
+      "test": "t_x7_",
+      "verdict": "red",
+      "required_failure": "I8 atomic send",
+      "observed": "thread 'storage::t_x7_a_send_above_the_balance_rolls_the_leg_back_whole' (2187967) panicked at node-control/contracts/tests/token_bridge/model.rs:472:17:"
+    },
+    {
+      "id": "M28",
+      "guard": "the vote's namespace check is removed",
+      "test": "t_x8_votes",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'extended::t_x8_votes_outside_the_namespace_and_burns_to_nowhere_are_refused' (2192688) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M29",
+      "guard": "the zero-destination check is removed",
+      "test": "t_x8_votes",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'extended::t_x8_votes_outside_the_namespace_and_burns_to_nowhere_are_refused' (2197054) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M30",
+      "guard": "the bridge's capacity check is removed",
+      "test": "t_y8_a_lowered",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'limits::t_y8_a_lowered_cell_limit_stops_admission_before_any_effect' (2202580) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M31",
+      "guard": "an unpaid cancellation's funding check is removed",
+      "test": "t_y5_",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (2207610) panicked at node-control/contracts/tests/token_bridge/harness.rs:390:5:"
+    },
+    {
+      "id": "M32",
+      "guard": "a vote returns all its value, leaving the log to the bridge",
+      "test": "t_y5_",
+      "verdict": "red",
+      "required_failure": "I7",
+      "observed": "thread 'source::t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled' (2212834) panicked at node-control/contracts/tests/token_bridge/model.rs:398:9:"
+    },
+    {
+      "id": "M33",
+      "guard": "a stranded report rewrites a committed swap",
+      "test": "t_z4_a_wallet_deleted",
+      "verdict": "red",
+      "required_failure": "panicked",
+      "observed": "thread 'lifecycle::t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once' (2218336) panicked at node-control/contracts/tests/token_bridge/model.rs:799:17:"
+    },
+    {
+      "id": "M34",
+      "guard": "a step's declared gas is below what it uses",
+      "test": "t_m1_",
+      "verdict": "red",
+      "required_failure": "over its declared",
+      "observed": "thread 'mint::t_m1_a_mint_to_a_new_holder_completes_in_one_pass' (2224762) panicked at node-control/contracts/tests/token_bridge/harness.rs:800:9:"
+    },
+    {
+      "id": "M35",
+      "guard": "stranding exceeds FOLD_LIMIT per transaction",
+      "test": "t_z4_stranding",
+      "verdict": "red",
+      "required_failure": "strand",
+      "observed": "thread 'lifecycle::t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log' (2228399) panicked at node-control/contracts/tests/token_bridge/harness.rs:734:9:"
+    },
+    {
+      "id": "E01",
+      "guard": "lock without an active generation",
+      "test": "refuses every lock until a generation is active",
+      "verdict": "red",
+      "required_failure": "failing",
+      "observed": "\u001b[0m\u001b[31m     AssertionError: expected a refusal: No active generation\u001b[0m\u001b[90m"
+    },
+    {
+      "id": "E02",
+      "guard": "lock nonce exhaustion is not checked",
+      "test": "allocates the last nonce and then refuses, never wrapping",
+      "verdict": "red",
+      "required_failure": "failing",
+      "observed": "\u001b[0m\u001b[31m     AssertionError: expected 'Error: VM Exception while processing \u2026' to contain 'Lock nonces exhausted'\u001b[0m\u001b[90m"
+    },
+    {
+      "id": "E03",
+      "guard": "a refund does not check the lock's status",
+      "test": "refunds a cancelled lock once",
+      "verdict": "red",
+      "required_failure": "failing",
+      "observed": "\u001b[0m\u001b[31m     AssertionError: expected 'Error: VM Exception while processing \u2026' to contain 'Lock is not refundable'\u001b[0m\u001b[90m"
+    },
+    {
+      "id": "E04",
+      "guard": "the refund digest omits the amount",
+      "test": "refunds a cancelled lock once",
+      "verdict": "red",
+      "required_failure": "failing",
+      "observed": ""
+    },
+    {
+      "id": "E05",
+      "guard": "a generation need not follow the current one",
+      "test": "starts each generation above every allocated lock",
+      "verdict": "red",
+      "required_failure": "failing",
+      "observed": "\u001b[0m\u001b[31m     AssertionError: expected a refusal: Generation must follow the current one\u001b[0m\u001b[90m"
+    },
+    {
+      "id": "E06",
+      "guard": "a stale generation nonce is accepted",
+      "test": "starts each generation above every allocated lock",
+      "verdict": "red",
+      "required_failure": "failing",
+      "observed": "\u001b[0m\u001b[31m     AssertionError: expected a refusal: Stale generation nonce\u001b[0m\u001b[90m"
+    }
+  ]
+}
