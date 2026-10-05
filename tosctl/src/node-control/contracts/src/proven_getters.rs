@@ -926,6 +926,204 @@ mod fee_state_tests {
         (genesis, state)
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn proven_fee_signing_uses_journal_and_bound_key() {
+        use crate::lms_fee_journal::FeeJournal;
+        use crate::wallet_v5r2::AuthRole;
+        use crate::wallet_v5r2_fee::{FeeBinding, FeeClass, FeeIntent, FeePayload};
+        use crate::wallet_v5r2_pop::{PopBinding, PopRequest};
+        use std::os::unix::fs::PermissionsExt;
+        // Framing-only backend: this tests ordering/binding, not LMS crypto.
+        fn signature(leaf: u32) -> Vec<u8> {
+            let mut bytes = vec![0; 2832];
+            bytes[4..8].copy_from_slice(&leaf.to_be_bytes());
+            bytes[8..12].copy_from_slice(&3u32.to_be_bytes());
+            bytes[2188..2192].copy_from_slice(&8u32.to_be_bytes());
+            bytes
+        }
+        fn payload(g: &WalletGenesis) -> FeePayload {
+            let pop = PopRequest::new(
+                PopBinding {
+                    global_id: 42,
+                    network: [1; 32],
+                    account: *g.wallet_init().repr_hash().as_array(),
+                    module: *g.module_init().repr_hash().as_array(),
+                    challenge: [6; 32],
+                    valid_until: 8300,
+                },
+                AuthRole::Rescue,
+                RescuePolicy::Required,
+                [2; 32],
+                [3; 32],
+                8200,
+            )
+            .unwrap();
+            FeePayload::from_submission(
+                FeeClass::Pop,
+                pop.encode_submission(&vec![0; 7856]).unwrap(),
+            )
+            .unwrap()
+        }
+        let (g, mut state) = fixture();
+        let initial = ProvenInitialFeeVault::bind(&state, &g, 4620, 30).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut journal = FeeJournal::open_proven(dir.path(), &initial, 4620).unwrap();
+        assert!(
+            journal
+                .sign_proven_fee(
+                    &initial,
+                    4620,
+                    4700,
+                    100,
+                    payload(&g),
+                    |_, _| panic!("restore barrier bypassed"),
+                    |_, _, _, _| panic!("unexpected verification")
+                )
+                .is_err()
+        );
+        state.evidence.block_gen_utime = 8210;
+        state.evidence.account.gen_utime = 8200;
+        let view = ProvenInitialFeeVault::bind(&state, &g, 8220, 30).unwrap();
+        let key = view.fee_public_key();
+        assert_eq!(&key[..12], &[0, 0, 0, 1, 0, 0, 0, 8, 0, 0, 0, 3]);
+        let verifies = std::cell::Cell::new(0);
+        let signed = journal
+            .sign_proven_fee(
+                &view,
+                8220,
+                8300,
+                100,
+                payload(&g),
+                |leaf, digest| {
+                    let record = std::fs::read(dir.path().join("fee-reservations")).unwrap();
+                    assert_eq!(record.len(), 112 + 72, "signer ran before reservation");
+                    assert_eq!(&record[120..152], digest, "reservation digest mismatch");
+                    assert_eq!(leaf, 8);
+                    Ok(signature(leaf))
+                },
+                |bound, leaf, _, bytes| {
+                    assert_eq!(bound, key, "verification key substitution");
+                    assert_eq!(bytes, signature(leaf));
+                    verifies.set(verifies.get() + 1);
+                    Ok(true)
+                },
+            )
+            .unwrap();
+        assert_eq!(verifies.get(), 2, "cache was not reverified before export");
+        assert_eq!(signed.vault(), &view.route().vault);
+        assert_eq!(signed.intent().leaf(), 8);
+        let expected_intent = FeeIntent::new(
+            FeeBinding {
+                vault: view.route().vault,
+                config_hash: *view.config_hash(),
+                epoch0: view.route().epoch0,
+                leaf: 8,
+                valid_until: 8300,
+                value: 100,
+            },
+            payload(&g),
+            8200,
+        )
+        .unwrap();
+        assert_eq!(
+            signed.intent().digest(),
+            expected_intent.digest(),
+            "proven fee intent mismatch"
+        );
+        assert_eq!(
+            signed.body().repr_hash(),
+            signed.intent().encode_external(&signature(8)).unwrap().repr_hash()
+        );
+        assert_eq!(journal.cached_signature(8, *signed.intent().digest()).unwrap(), signature(8));
+        for (now, deadline, reason) in [(8231, 8300, "stale"), (8220, 8220, "expired")] {
+            match journal.sign_proven_fee(
+                &view,
+                now,
+                deadline,
+                100,
+                payload(&g),
+                |_, _| panic!("preflight invoked signer"),
+                |_, _, _, _| panic!("preflight invoked verifier"),
+            ) {
+                Ok(_) => panic!("accepted invalid preflight"),
+                Err(error) => assert!(error.to_string().contains(reason), "{error}"),
+            }
+        }
+        assert!(
+            journal
+                .sign_proven_fee(
+                    &view,
+                    8220,
+                    8300,
+                    100,
+                    payload(&g),
+                    |leaf, _| Ok(signature(leaf)),
+                    |_, _, _, _| Ok(false)
+                )
+                .is_err()
+        );
+        assert_eq!(journal.preview(8200, 0).unwrap().leaf, 10, "failed verification released leaf");
+        let mut checks = 0;
+        match journal.sign_proven_fee(
+            &view,
+            8220,
+            8300,
+            100,
+            payload(&g),
+            |leaf, _| Ok(signature(leaf)),
+            |_, _, _, _| {
+                checks += 1;
+                Ok(checks == 1)
+            },
+        ) {
+            Ok(_) => panic!("exported bytes after failed cache verification"),
+            Err(error) => assert!(error.to_string().contains("export verification"), "{error}"),
+        }
+        assert_eq!(journal.preview(8200, 0).unwrap().leaf, 11);
+        let mut suffix = chain_block::SliceData::load_cell(g.vault_data().clone()).unwrap();
+        suffix.move_by(40).unwrap();
+        let mut ahead = BuilderData::new();
+        ahead.append_u8(3).unwrap();
+        ahead.append_u32(12).unwrap();
+        ahead.append_builder(&suffix.as_builder().unwrap()).unwrap();
+        assert!(state.account.set_data(ahead.into_cell().unwrap()));
+        state.root = state.account.serialize().unwrap();
+        state.evidence.account.state_hash = state.root.repr_hash().to_hex_string();
+        state.evidence.account.data_hash = state.account.get_data_hash().unwrap().to_hex_string();
+        let ahead_view = ProvenInitialFeeVault::bind(&state, &g, 8220, 30).unwrap();
+        match journal.sign_proven_fee(
+            &ahead_view,
+            8220,
+            8300,
+            100,
+            payload(&g),
+            |_, _| panic!("chain counter ignored"),
+            |_, _, _, _| panic!("chain counter ignored"),
+        ) {
+            Ok(_) => panic!("accepted future chain counter"),
+            Err(error) => assert!(error.to_string().contains("WaitUntil"), "{error}"),
+        }
+        let other = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(other.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut wrong_route = view.route();
+        wrong_route.tree_id = [9; 32];
+        let mut wrong = FeeJournal::open(other.path(), wrong_route, 4600).unwrap();
+        match wrong.sign_proven_fee(
+            &view,
+            8220,
+            8300,
+            100,
+            payload(&g),
+            |_, _| panic!("wrong route invoked signer"),
+            |_, _, _, _| panic!("wrong route invoked verifier"),
+        ) {
+            Ok(_) => panic!("accepted wrong journal route"),
+            Err(error) => assert!(error.to_string().contains("route mismatch"), "{error}"),
+        }
+    }
+
     #[test]
     fn successor_fee_state_binding() {
         use crate::wallet_v5r2_genesis::SuccessorDeployment;

@@ -278,6 +278,9 @@ jobs:
       - name: Initial fee vault state binding guard controls
         run: python3 test/wallet-v5r2/fee_state_controls.py --output "$RUNNER_TEMP/fee-state-controls"
 
+      - name: Proven fee signing adapter guard controls
+        run: python3 test/wallet-v5r2/proven_fee_sign_controls.py --output "$RUNNER_TEMP/proven-fee-sign-controls"
+
       # The indexer folds a pool snapshot the real verifier proved from a signed
       # chain while the endpoint reports different stacks. It is ignored in the
       # service job, which has no native build, so it is run here by name and

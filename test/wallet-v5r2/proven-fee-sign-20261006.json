@@ -1,0 +1,30 @@
+{
+  "source_base": "cda3630eca7124b594041daa823a782518506c7d",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/lms_fee_journal.rs": "096e096109c2cb062e321f5c0e8a0203aa2b59028e828ce7fe519ccb186f05a5",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs": "99b6806c118ead9665db3652627e6ec4063163aaff5c0a32e7c3e2fa0f0f8dbf",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "11a8909a85fa3b7034dffe8a040b28848df7b5f64501aee251d425e93580ec67",
+    "test/wallet-v5r2/proven_fee_sign_controls.py": "4ef7aba9f0a82fa1dd9d0ab4884128f557010b4dfecbd876ed1b3f10da54018a"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-fee-sign",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "34d4af81bba40319079cd2a1b6d61cf46cdde2fe81efa54539f2b1e3e3afe5d9",
+  "results": {
+    "regression_passed": 24,
+    "ignored": 1,
+    "ignored_note": "Existing child-process helper invoked by parent journal tests.",
+    "semantic_controls": 7,
+    "regression_exit": 0,
+    "controls_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/proven_fee_sign_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-fee-sign/controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --lib fee_"
+  ],
+  "limits": [
+    "Synthetic proven-state fixture and framing-only backend; test validates binding/order rather than cryptographic validity.",
+    "Actual backend and live proof/receipt integration, current wallet authority, network fee admission and production custody remain open.",
+    "No contract, gas credit or tariff changes."
+  ]
+}

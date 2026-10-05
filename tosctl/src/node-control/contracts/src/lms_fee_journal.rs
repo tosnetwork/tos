@@ -47,6 +47,25 @@ impl ReservedLeaf {
     }
 }
 
+/// Cached and reverified fee body. Broadcasting still requires current expiry,
+/// admission/fee checks and an authenticated transaction receipt afterward.
+pub struct SignedFeeMessage {
+    vault: [u8; 32],
+    intent: crate::wallet_v5r2_fee::FeeIntent,
+    body: chain_block::Cell,
+}
+impl SignedFeeMessage {
+    pub fn vault(&self) -> &[u8; 32] {
+        &self.vault
+    }
+    pub fn intent(&self) -> &crate::wallet_v5r2_fee::FeeIntent {
+        &self.intent
+    }
+    pub fn body(&self) -> &chain_block::Cell {
+        &self.body
+    }
+}
+
 pub struct FeeJournal {
     file: File,
     directory: File,
@@ -166,6 +185,68 @@ impl FeeJournal {
             hash,
             poisoned: false,
         })
+    }
+
+    /// Open using a fresh authenticated vault observation. Reopening still
+    /// enforces the next-slot restore barrier; a proof does not erase it.
+    pub fn open_proven(
+        directory: &Path,
+        vault: &crate::wallet_v5r2_state::ProvenFeeVault,
+        now: u32,
+    ) -> anyhow::Result<Self> {
+        vault.validate_freshness(now)?;
+        Self::open(directory, vault.route(), vault.proven_time())
+    }
+
+    /// Build and sign one fee envelope using the exact authenticated route,
+    /// counter, configuration and public key. Inner action authorization and
+    /// network fee affordability must be verified separately. The callbacks
+    /// must be trusted cryptographic implementations, never endpoint verdicts.
+    pub fn sign_proven_fee<S, V>(
+        &mut self,
+        vault: &crate::wallet_v5r2_state::ProvenFeeVault,
+        now: u32,
+        valid_until: u32,
+        value: u128,
+        payload: crate::wallet_v5r2_fee::FeePayload,
+        signer: S,
+        mut verify: V,
+    ) -> anyhow::Result<SignedFeeMessage>
+    where
+        S: FnOnce(u32, &[u8; 32]) -> anyhow::Result<Vec<u8>>,
+        V: FnMut(&[u8; 60], u32, &[u8; 32], &[u8]) -> anyhow::Result<bool>,
+    {
+        use crate::wallet_v5r2_fee::{FeeBinding, FeeIntent};
+        vault.validate_freshness(now)?;
+        anyhow::ensure!(self.route == vault.route(), "proven vault and journal route mismatch");
+        anyhow::ensure!(valid_until > now, "fee deadline already expired by local clock");
+        let plan = self.preview(vault.proven_time(), vault.next_leaf())?;
+        let intent = FeeIntent::new(
+            FeeBinding {
+                vault: vault.route().vault,
+                config_hash: *vault.config_hash(),
+                epoch0: vault.route().epoch0,
+                leaf: plan.leaf,
+                valid_until,
+                value,
+            },
+            payload,
+            vault.proven_time(),
+        )?;
+        let signature = self.sign_once(
+            vault.proven_time(),
+            vault.next_leaf(),
+            plan.leaf,
+            *intent.digest(),
+            signer,
+            |leaf, digest, bytes| verify(vault.fee_public_key(), leaf, digest, bytes),
+        )?;
+        anyhow::ensure!(
+            verify(vault.fee_public_key(), plan.leaf, intent.digest(), &signature)?,
+            "cached LMS output failed export verification"
+        );
+        let body = intent.encode_external(&signature)?;
+        Ok(SignedFeeMessage { vault: vault.route().vault, intent, body })
     }
 
     pub fn preview(

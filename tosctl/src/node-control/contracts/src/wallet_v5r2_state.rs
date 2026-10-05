@@ -20,6 +20,7 @@ pub struct ProvenFeeVault {
     config_hash: [u8; 32],
     master_time: u32,
     max_age: u32,
+    fee_public_key: [u8; 60],
 }
 
 /// Compatibility name for callers binding initial enrollment.
@@ -111,6 +112,10 @@ impl ProvenFeeVault {
         metadata.move_by(16)?;
         let tree_id = *metadata.get_next_hash()?.as_array();
         let epoch0 = metadata.get_next_u32()?;
+        let key = metadata.checked_drain_reference()?;
+        let mut key = SliceData::load_cell(key)?;
+        let mut fee_public_key = [0; 60];
+        key.get_next_bytes_to_slice(&mut fee_public_key)?;
         check_time(evidence.block_gen_utime, evidence.account.gen_utime, now, max_age, epoch0)?;
         Ok(Self {
             route: FeeRoute { global_id, network, vault, tree_id, epoch0 },
@@ -119,6 +124,7 @@ impl ProvenFeeVault {
             config_hash: *genesis.config_hash,
             master_time: evidence.block_gen_utime,
             max_age,
+            fee_public_key,
         })
     }
 
@@ -135,10 +141,18 @@ impl ProvenFeeVault {
         &self.config_hash
     }
 
+    pub fn fee_public_key(&self) -> &[u8; 60] {
+        &self.fee_public_key
+    }
+
+    pub(crate) fn validate_freshness(&self, now: u32) -> anyhow::Result<()> {
+        check_time(self.master_time, self.proven_time, now, self.max_age, self.route.epoch0)
+    }
+
     /// Read-only proposal. The custody journal must still durably reserve the
     /// leaf before invoking a signing backend, including after failed sends.
     pub fn plan(&self, now: u32, continuity: Continuity) -> anyhow::Result<ReservationPlan> {
-        check_time(self.master_time, self.proven_time, now, self.max_age, self.route.epoch0)?;
+        self.validate_freshness(now)?;
         plan_reservation(self.route, self.proven_time, self.next_leaf, continuity)
             .map_err(|error| anyhow::anyhow!("fee reservation: {error:?}"))
     }

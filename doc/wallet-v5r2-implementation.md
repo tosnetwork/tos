@@ -1002,3 +1002,29 @@ they are not cryptographic proof or live-network evidence. Evidence index:
 Fresh authenticated recovery receipts, authorization from current wallet state,
 production signer custody, reference hardware/pricing and final-head CI remain
 open. Default-credit admission remains a failed release gate.
+
+### Proven fee observation to durable signing adapter
+
+The Unix journal now offers `open_proven` and `sign_proven_fee`. Opening requires
+fresh authenticated enrollment-bound vault state and retains the existing
+next-slot restore barrier. Signing checks freshness again, requires the complete
+journal route to match, and refuses a deadline already expired by local time.
+It derives the current leaf from both journal state and the proven chain counter,
+then builds the exact FEE4 intent from that vault/config/epoch. The caller cannot
+supply a separate route, leaf, configuration hash or digest to this entry point.
+
+The existing reserve-sign-verify-cache sequence fsyncs the reservation before
+calling the backend. Verification receives the public key from the bound vault
+metadata. After reading the immutable cache, the adapter verifies those bytes
+again before returning the destination, intent and external body. Failure burns
+the reserved leaf; it never permits re-signing. Callback implementations remain
+trusted local cryptographic primitives, not remote verification assertions.
+
+A synthetic proven-account test with a framing-only backend checks durable
+record/digest presence before signing, both verification calls with the bound
+key, exact intent construction, cache retry bytes, restore waits, expiry,
+wrong-route rejection, chain high-water and leaf consumption on failed checks.
+Seven semantic controls remove or substitute the relevant bindings. This proves
+adapter ordering/binding, not cryptographic validity or real-network V5R2 proofs.
+Inner action authorization, live fee/admission bounds, production key custody,
+preparation/POP/payment receipts and cross-device ownership remain separate gates.
