@@ -564,10 +564,8 @@ fn check_verified(
         "proof verifier speaks another interface"
     );
     anyhow::ensure!(verified.anchor == *anchor, "proof verifier started from another anchor");
-    // The same digest whatever the case of its hex digits.
     anyhow::ensure!(
-        verified.request_sha256.len() == 64
-            && verified.request_sha256.eq_ignore_ascii_case(&request.sha256),
+        verified.request_sha256 == request.sha256,
         "proof verifier answered another request"
     );
 
