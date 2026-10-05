@@ -293,6 +293,9 @@ jobs:
       - name: POP receipt guard controls
         run: python3 test/wallet-v5r2/pop_receipt_controls.py --output "$RUNNER_TEMP/pop-receipt-controls"
 
+      - name: Admission experiment output preservation
+        run: python3 test/wallet-v5r2/test_admission_output.py
+
       - name: Complete payment route guard controls
         run: python3 test/wallet-v5r2/payment_route_controls.py --output "$RUNNER_TEMP/payment-route-controls"
 

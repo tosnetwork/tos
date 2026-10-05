@@ -41,5 +41,12 @@
     "total_bytes": 411898123
   },
   "production_source_unchanged": true,
-  "production_admission_passed": false
+  "production_admission_passed": false,
+  "artifact_integrity_notice": {
+    "date": "2026-10-06",
+    "scope": "46 prepare/ raw files were overwritten by an accidental repeat run at source base 4e73f162422c3b6e993c0d0973f4c18f4229d648. Original overwritten bytes are unavailable; the original MANIFEST.json remains intact but no longer authenticates those paths. All auth/ and pop/ manifest entries were verified unchanged.",
+    "correction_index": "test/wallet-v5r2/admission-output-audit-20261006.json",
+    "repeat_minimum_prepare_credit": 13453,
+    "original_overwritten_artifacts_recovered": false
+  }
 }

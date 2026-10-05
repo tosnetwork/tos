@@ -760,6 +760,16 @@ but total vault execution gas increased. This variant is not adopted: it moves
 failure. The official contract remains unchanged. Exact totals, source hashes
 and reproduction are in `test/wallet-v5r2/admission-late-send-20261006.json`.
 
+Artifact integrity correction: a later repeat of the preparation experiment
+accidentally reused its retained directory and replaced 46 raw files. The
+original manifest is preserved, but the overwritten original bytes are not
+available and its hashes no longer authenticate those paths. AUTH/POP artifacts
+were verified unchanged. The repeat still measured 13,453 minimum credit and
+failed default admission. `admission-output-audit-20261006.json` records original
+versus current hashes, the repeat output and this limitation. The experiment
+runner now refuses nonempty output directories before writing or linking files;
+its preservation tests include a semantic guard-deletion control.
+
 ### PQ-only AUTH SDK encoding
 
 `contracts::wallet_v5r2` provides typed AUTH construction for execution,

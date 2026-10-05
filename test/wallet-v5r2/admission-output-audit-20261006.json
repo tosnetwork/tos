@@ -1,0 +1,53 @@
+{
+  "source_base": "4e73f162422c3b6e993c0d0973f4c18f4229d648",
+  "scope": "Artifact preservation correction and repeat preparation diagnostic; not new admission optimization evidence.",
+  "source_sha256": {
+    "crypto/smartcont/wallet-v5r2-fee-vault.fc": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a",
+    "test/wallet-v5r2/probe_admission_helpers.py": "e3c644de99c4c5781ef831da86bd5f4974f76d9e1dc30883f0fe98d2fc3fdc18",
+    "test/wallet-v5r2/test_admission_output.py": "d359168c68adf1f3a89d462594a37a794bc2f91f7afd0203e1db5e8760bfa719"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-output-audit",
+  "retention_until": "2027-01-06",
+  "original_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-late-send",
+  "original_manifest": {
+    "sha256": "cec213954e16935e8702151371257a61a829ca8be43296f3e0f2d5e5a5c79b70",
+    "bytes": 20866
+  },
+  "retained_audit_files": {
+    "changed-artifacts.json": {
+      "sha256": "a6f046c62d302f660d6cca77ffd70c4744d7eacf49503ae63f209a3fa151c7ad",
+      "bytes": 13977
+    },
+    "observed-current-manifest.json": {
+      "sha256": "174c9e9dbec1f6b2392b83919bbe0df18abc186bc04e0774057d076a8008bd21",
+      "bytes": 20866
+    },
+    "output-guard-tests.log": {
+      "sha256": "edb4e2159c923ea45a32656078835cdf531c3d7b414c670dd786978875cb0678",
+      "bytes": 101
+    },
+    "repeat-prepare.log": {
+      "sha256": "201fbf58c71aa7fc2927ac89abeef0d7b031d79bfeefd87897b8cb23fc5c6493",
+      "bytes": 4128
+    }
+  },
+  "results": {
+    "overwritten_prepare_files": 46,
+    "auth_pop_original_manifest_unchanged": true,
+    "original_overwritten_bytes_available": false,
+    "repeat_prepare_minimum_credit": 13453,
+    "production_source_unchanged": true,
+    "production_admission_passed": false,
+    "output_guard_tests_passed": 3,
+    "semantic_deletion_controls": 1
+  },
+  "reproduction": [
+    "python3 test/wallet-v5r2/test_admission_output.py",
+    "python3 test/wallet-v5r2/probe_admission_helpers.py --variant late-send --route prepare --trees <public-test-trees> --output <new-directory>"
+  ],
+  "limits": [
+    "Original hashes alone do not recover overwritten raw artifacts. The repeat run must not be presented as the original run.",
+    "Default credit remains 10000 and the late-send candidate remains unadopted.",
+    "Output guard protects this compiler-experiment runner; other runners still require unique retained output paths."
+  ]
+}

@@ -48,6 +48,13 @@ def transform(source, variant):
     return source[:position] + helper + source[position:]
 
 
+def prepare_output(output):
+    # Retained evidence must never be silently replaced by a repeat experiment.
+    if output.exists() and (not output.is_dir() or any(output.iterdir())):
+        raise FileExistsError("admission experiment requires a new or empty output directory")
+    output.mkdir(parents=True, exist_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -57,7 +64,7 @@ def main():
     parser.add_argument("--trees", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
+    prepare_output(args.output)
     for tree in ("PUBLIC-TEST-ONLY-lms-tree", "PUBLIC-TEST-ONLY-successor-tree"):
         if not (args.output / tree).exists():
             os.link(args.trees / tree, args.output / tree)
