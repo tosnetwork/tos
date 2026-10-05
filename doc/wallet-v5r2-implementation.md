@@ -288,7 +288,7 @@ parties hash derived by `r2pair_data`; wallet/module witness validation compares
 whole reconstructed data hash. Arbitrary caches cannot be installed as a paired
 route. The public tree id and full metadata remain committed by the config hash.
 
-The measured SUB3 path requires **12,413 gas to reach ACCEPT**, exceeding the
+The measured SUB3 path requires **12,225 gas to reach ACCEPT**, exceeding the
 unchanged default **10,000**. This is a failed release gate. No credit or tariff
 change is made to production configuration and no check is moved after ACCEPT.
 The 1024-cell envelope, compute/storage bounds and class limits are provisional
@@ -307,3 +307,13 @@ custody key. Its 64 MiB tree stays outside Git.
 Resolve the credit gap while retaining fail-closed signature, class, identity,
 value and solvency checks, then test all classes, failure paths and both VMs before
 freezing the dependency identities or publishing any code artifact.
+
+The 2026-10-06 equivalent ordinary-cell predicate reduces this measured admission
+cost by 188 gas. Both exotic and nonzero-level cells remain disallowed. The new
+`test_fee_cells.py` exercises the actual helper with ordinary and exotic library
+cells; deleting its guard produces unsafe acceptance, proving sensitivity for the
+exotic-cell rejection. This does not yet establish nonzero-level fixture coverage.
+`--gas-trace` records native instruction costs: 6,135 gas for LMSCHECKFEEHASH,
+6,064 for the remaining pre-ACCEPT execution, and 26 for ACCEPT itself. The native
+opcode includes byte-chain parsing and cryptographic work; this measurement is
+not a hardware repricing justification. See `test/wallet-v5r2/fee-optimization-20261006.json`.

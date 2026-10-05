@@ -142,7 +142,7 @@ def outgoing(transaction):
 
 
 class Emulator:
-    def __init__(self, global_version=6, max_msg_cells=None):
+    def __init__(self, global_version=6, max_msg_cells=None, vm_log_verbosity=1):
         self.lib = ctypes.CDLL(os.environ['EMULATOR_PATH'])
         self.lib.transaction_emulator_create.argtypes = [ctypes.c_char_p, ctypes.c_int]
         self.lib.transaction_emulator_create.restype = ctypes.c_void_p
@@ -155,7 +155,7 @@ class Emulator:
         self.lib.transaction_emulator_set_ignore_chksig.argtypes = [ctypes.c_void_p, ctypes.c_bool]
         self.lib.emulator_set_verbosity_level(0)
         self.ptr = self.lib.transaction_emulator_create(
-            config(global_version, max_msg_cells).b64(), 1)
+            config(global_version, max_msg_cells).b64(), vm_log_verbosity)
         assert self.ptr, 'native emulator must load the test configuration'
         self.lib.transaction_emulator_set_unixtime(self.ptr, NOW)
         self.lib.transaction_emulator_set_ignore_chksig(self.ptr, False)

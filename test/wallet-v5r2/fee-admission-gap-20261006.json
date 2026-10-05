@@ -122,17 +122,20 @@
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/credit-probe.json",
       "sha256": "864080db5302e18fa93bac9b311e9064f085403b26e45dbd8cca71248f917c2c",
-      "bytes": 145
+      "bytes": 145,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/default-credit-result.json",
       "sha256": "edc608c456cdaa12296de69caa80456794ded19be374cda0042d1f79660361e0",
-      "bytes": 4582
+      "bytes": 4582,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/failure-results.json",
       "sha256": "c9b0e1daee1e38c7adfdff192f8132da5782da8c850243b20001ac7fad6fb491",
-      "bytes": 9181
+      "bytes": 9181,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/fee_identity.log",
@@ -142,17 +145,20 @@
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module-result.json",
       "sha256": "e1be7f2e847ccc384bc48fa0ba35b6d14d95fe887c188e2db327555b97b9c850",
-      "bytes": 31919
+      "bytes": 31919,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module.boc",
       "sha256": "0ebb049c01ff2aca7e0996b2f00bdc785fc35df0e10733c2a30fffd74bb3cfca",
-      "bytes": 2511
+      "bytes": 2511,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module.fif",
       "sha256": "b4928675f5e4b14675e5dcf2f01c05ed7834cdea4fc2e89723b2d722b754a2f9",
-      "bytes": 75562
+      "bytes": 75562,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/module.run.fif",
@@ -172,7 +178,8 @@
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/recipient-result.json",
       "sha256": "856f4fdebf03047f6cd60cc0fdcb388a43dee3f36191d7d6c16fa51b41530abe",
-      "bytes": 1341
+      "bytes": 1341,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/recipient.boc",
@@ -182,7 +189,8 @@
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/recipient.fif",
       "sha256": "9c7fd23fd26ea5a17fd2d67de7369287314a5e4f7d856c89f9b98f16d1a2d4d2",
-      "bytes": 417
+      "bytes": 417,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/recipient.run.fif",
@@ -547,12 +555,14 @@
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/replay-result.json",
       "sha256": "2035aa1057e5d5dc4d083d53fa30e20316fd1030118c61e7734fd9fc71e8ca9c",
-      "bytes": 1907
+      "bytes": 1907,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/results.json",
       "sha256": "87582f24200ae9fbd8671f1b689ea60d956ee5dae0ff7643fb959450f5de6800",
-      "bytes": 1507
+      "bytes": 1507,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/state.log",
@@ -562,17 +572,20 @@
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/vault-result.json",
       "sha256": "3b629c02b29ca4285e067745893d4d911fdec92b7178f43b26f33cabc70927d6",
-      "bytes": 33319
+      "bytes": 33319,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/vault.boc",
       "sha256": "2f36b143279e329813bdbcbecc030a46ae8cefcee5d4de0ee7c1e49ee4087cd4",
-      "bytes": 562
+      "bytes": 562,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/vault.fif",
       "sha256": "aecf5c330737d281a3a6555d0c15b6281bcfbf15fe39fa2997138d1b0429556e",
-      "bytes": 21413
+      "bytes": 21413,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/vault.run.fif",
@@ -582,17 +595,20 @@
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet-result.json",
       "sha256": "e0e460914d5a875fcc38a49e29022e5fbc993a9f9b09b6be6dbc605fcca29862",
-      "bytes": 179613
+      "bytes": 179613,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet.boc",
       "sha256": "21bd2b2d918a70978c3cd28dbda029fda340383a6589029bc1f9da84102508b7",
-      "bytes": 2958
+      "bytes": 2958,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet.fif",
       "sha256": "3f689dd6567659f2b978f419fb61ec6c0a7ef23dd83f6d22dad6ba90c7b19127",
-      "bytes": 65050
+      "bytes": 65050,
+      "availability": "Historical raw bytes unavailable: output path was reused by the 2026-10-06 optimization probe. Do not use current path contents to verify this historical hash."
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-vault/wallet.log",
@@ -615,5 +631,6 @@
     "fee class and malformed-input sensitivity coverage",
     "worst-case class limits and reference pricing",
     "fee-funded preparation and restore/client readiness"
-  ]
+  ],
+  "retention_correction": "Exploratory rerun reused top-level outputs; affected entries explicitly marked unavailable. Regression subdirectories retained. New optimization evidence uses a separate directory and index."
 }

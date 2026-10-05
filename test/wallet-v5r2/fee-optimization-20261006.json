@@ -1,0 +1,178 @@
+{
+  "base_commit": "5f9cfa5b9870698af057c2c8abb586bc3461684a",
+  "release_gate": "FAILED: 12225 required versus unchanged default 10000",
+  "credit_probe": {
+    "default_credit": 10000,
+    "minimum_accept_credit": 12225,
+    "production_admission_passed": false,
+    "downstream_diagnostic_credit": 20000
+  },
+  "gas_profile": {
+    "before_accept": 12199,
+    "lms_opcode": 6135,
+    "other_admission": 6064,
+    "instruction_totals": {
+      "LMSCHECKFEEHASH": 6135,
+      "XCTOS": 630,
+      "THROWIFNOT": 510,
+      "XCHG": 360,
+      "implicit": 345,
+      "PUSHINT": 318,
+      "LDU": 286,
+      "DICTIGETJMPZ": 226,
+      "PUSHPOW2": 208,
+      "THROWIF": 204,
+      "PUSH": 170,
+      "EQINT": 156,
+      "LDREF": 144,
+      "SWAP": 144,
+      "CLEVEL": 130,
+      "IFREFELSEREF": 126,
+      "DUP": 108,
+      "OR": 108,
+      "ENDS": 90,
+      "EQUAL": 90,
+      "ADD": 90,
+      "PUSHCONT": 88,
+      "PUXC": 78,
+      "NOW": 78,
+      "LSHIFT": 78,
+      "LEQ": 72,
+      "AND": 72,
+      "PLDU": 68,
+      "OVER": 54,
+      "LDMSGADDR": 52,
+      "MYADDR": 52,
+      "XCHG2": 52,
+      "RSHIFT": 52,
+      "SDSKIPFIRST": 52,
+      "GETGASFEE": 52,
+      "GEQ": 36,
+      "SUB": 36,
+      "IFELSE": 36,
+      "NIP": 36,
+      "DICTPUSHCONST": 34,
+      "GETPARAMLONG": 34,
+      "PLDI": 34,
+      "PUXC2": 34,
+      "SDBEGINS": 31,
+      "SETCP": 26,
+      "BLKDROP2": 26,
+      "INDEX": 26,
+      "SDEQ": 26,
+      "LDTOMIS": 26,
+      "DIV/MOD": 26,
+      "XCPU": 26,
+      "SDBEGINSX": 26,
+      "GLOBALID": 26,
+      "GETFORWARDFEE": 26,
+      "PUSH2": 26,
+      "GETSTORAGEFEE": 26,
+      "HASHCU": 26,
+      "LESS": 18,
+      "GREATER": 18,
+      "POP": 18,
+      "POW2": 18
+    }
+  },
+  "checks": [
+    "Real four-hop delivery at diagnostic credit only; recipient state and balance verified",
+    "Replay, invalid LMS signature and insufficient reserve rejected",
+    "Four helper cases; deleted exotic-cell guard causes unsafe acceptance"
+  ],
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "sha256": "98dc6be90ec5754b92e4ef50c22088f9c34fa4f59ed21f243436fd9647d5a1e7",
+      "bytes": 4649
+    },
+    {
+      "path": "test/auth-extensions/native.py",
+      "sha256": "ab29b8dbd3b301c312dfe17b4a5b602f57bafae8fe7baf5f75207e41ca66531c",
+      "bytes": 7096
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "sha256": "5571ca415bfc6c255e304af4419007cc1869c8ce352185c87e22692f5cb92e5f",
+      "bytes": 13717
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_cells.py",
+      "sha256": "324368e7fc4565a50cb37248ae1c3254b92ee78b0317044ea9932d678bafa9d3",
+      "bytes": 3027
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/credit-probe.json",
+      "sha256": "4e9c917b85544b5b72aa9bebaf2a2e8ac2bbe7b409e77581435645eb94748f28",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/gas-profile.json",
+      "sha256": "7bada090db99509b958ab6f52a61878077031fd1fcaf3e844cb99dfe0f6c8c00",
+      "bytes": 1241
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/default-credit-result.json",
+      "sha256": "b2f28c74a4756d8a8b639eff045d115e91df6e73fb7eba6d4b403f940378961d",
+      "bytes": 29082
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/vault-result.json",
+      "sha256": "fbd11b492e436a626dd007e65f0d5dd345464cb905fba2056d8c657a2dd5596f",
+      "bytes": 61069
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/module-result.json",
+      "sha256": "c99fc2302f6b31f4881a20287db276d3826ed7492dcb122b52247c97809bbd28",
+      "bytes": 110340
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/wallet-result.json",
+      "sha256": "d780ebb4e4bc5f927f0a5d484b6440ec2ac33c60947125d6506722119fdc9e2f",
+      "bytes": 1083296
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/recipient-result.json",
+      "sha256": "f6219bb2bd3aa14048bd959e9efbb4924f3066010486ebfa2d6a7dd312e2b783",
+      "bytes": 2755
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/failure-results.json",
+      "sha256": "237b9312a2022a4a0e4db72cf6e0480d6aee638a975504f63cc55775a622e127",
+      "bytes": 58190
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/results.json",
+      "sha256": "e76bd78d309ede7997c025cc139a279ce3aa110948005905e26ba3cc55fc5401",
+      "bytes": 1507
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/cells/results.json",
+      "sha256": "b193332ccdacb17151274c239acaa85ae5b41b3b64d0b5e8fee48f40df429736",
+      "bytes": 787
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/cells/production_guard-library.json",
+      "sha256": "922872271ce258c58859274d5a1121ce2d1115c3a63874b69e802d801604c3c4",
+      "bytes": 1314
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-optimization/cells/deleted_guard-library.json",
+      "sha256": "ce9c151c06396f8c9c61bc0c1b84c26d391eea37345de0a60a940621d5e6055b",
+      "bytes": 1412
+    }
+  ],
+  "commands": [
+    "python test/wallet-v5r2/test_fee_cells.py --output <output>/cells",
+    "python test/wallet-v5r2/test_fee_delivery.py --credit-probe --gas-trace --output <output>"
+  ],
+  "retention": "Local artifacts retained through PR review and release acceptance; deterministic test tree outside Git. These receipts do not prove release readiness.",
+  "remaining": [
+    "Default-credit admission",
+    "Nonzero-level cell fixture and full fee-envelope mutations",
+    "Class 2 delivery and class 3 preparation",
+    "Dual-VM/reference hardware gates and complete client lifecycle"
+  ]
+}

@@ -10,7 +10,7 @@ int r2fee_global() asm "GLOBALID";
 int r2fee_level(cell c) asm "CLEVEL";
 slice r2fee_ordinary(cell c) impure inline {
   (slice s, int special) = r2fee_raw(c);
-  throw_unless(2012, (special == 0) & (r2fee_level(c) == 0));
+  throw_if(2012, special | r2fee_level(c));
   return s;
 }
 (slice, ()) r2fee_intent_prefix(slice s) asm "x{46454534544f532d5245534355452d4645452d7631} SDBEGINS";

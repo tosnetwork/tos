@@ -31,6 +31,7 @@ def main():
         action="store_true",
         help="Measure required credit without changing protocol defaults",
     )
+    p.add_argument("--gas-trace", action="store_true", help="Retain instruction gas accounting")
     options = p.parse_args()
     out = options.output
     out.mkdir(parents=True, exist_ok=True)
@@ -125,7 +126,7 @@ def main():
             offset = 336
             assert int(original.bits[offset : offset + 64], 2) == 10000
             with patch.object(native, "config", return_value=make_dict(entries, 32)):
-                baseline = native.Emulator(17)
+                baseline = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
             try:
                 default_result = baseline.send(initial, ext)
             finally:
@@ -144,7 +145,7 @@ def main():
                 )
                 entries[21] = Cell().ref(changed)
                 with patch.object(native, "config", return_value=make_dict(entries, 32)):
-                    probe = native.Emulator(17)
+                    probe = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
                 try:
                     result = probe.send(initial, ext)
                 finally:
@@ -174,10 +175,35 @@ def main():
             (out / "credit-probe.json").write_text(json.dumps(credit_probe, indent=2) + "\n")
             print(json.dumps(credit_probe), flush=True)
         with patch.object(native, "config", return_value=make_dict(entries, 32)):
-            e = native.Emulator(17)
+            e = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
         try:
             paid = e.send(native.active_account(va, vault, vd, balance=10**15), ext)
             (out / "vault-result.json").write_text(json.dumps(paid, indent=2) + "\n")
+            if options.gas_trace and paid["success"]:
+                initial_credit = (
+                    credit_probe["downstream_diagnostic_credit"] if credit_probe else 10000
+                )
+                remaining = initial_credit
+                costs = {}
+                instruction = None
+                for line in paid["vm_log"].splitlines():
+                    if line.startswith("execute "):
+                        instruction = line.removeprefix("execute ").split()[0]
+                        if instruction == "ACCEPT":
+                            break
+                    if line.startswith("gas remaining:"):
+                        current = int(line.split(":", 1)[1])
+                        assert instruction is not None and current <= remaining
+                        costs[instruction] = costs.get(instruction, 0) + remaining - current
+                        remaining = current
+                assert instruction == "ACCEPT", "trace omitted admission or was truncated"
+                profile = {
+                    "before_accept": initial_credit - remaining,
+                    "lms_opcode": costs["LMSCHECKFEEHASH"],
+                    "other_admission": initial_credit - remaining - costs["LMSCHECKFEEHASH"],
+                    "instruction_totals": dict(sorted(costs.items(), key=lambda item: -item[1])),
+                }
+                (out / "gas-profile.json").write_text(json.dumps(profile, indent=2) + "\n")
             assert paid["success"], paid
             assert paid["details"]["exit"] == 0 and not paid["details"]["aborted"], paid
             failures = {}
