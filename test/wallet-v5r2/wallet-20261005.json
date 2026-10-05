@@ -1,0 +1,170 @@
+{
+  "base_commit": "452ab76d2325782d1c321d4904b84b0eef447804",
+  "scope": "Complete receiver entry points with compiled fixture dependencies, not signed PQ delivery.",
+  "cases": 269,
+  "mutations": {
+    "successor_retirement": "expected exit 1813, got 0",
+    "preserve_retired_bits": "mutant successful migration lost retirement bits; canonical state assertion fails"
+  },
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-code.fc",
+      "sha256": "398151124362decf82d978e9e4f2d8891f3f97678c661c12780f568d0bf6ede1",
+      "bytes": 4593
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-auth.fc",
+      "sha256": "55904dcb4f7ed18c4a86eb18c218180abcf53e17e8b927154f4fbc55609020df",
+      "bytes": 5604
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-identity.fc",
+      "sha256": "9338d13e56394e1f5636d7a6a08239f090eb61c8f024c1bd2da4db9ab454ebd4",
+      "bytes": 2320
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-state.fc",
+      "sha256": "b103b2ef825ece297098792e9e68061fccb5f6078ca49002439c1ba9ca885372",
+      "bytes": 3254
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-identity.fc",
+      "sha256": "b6eeb0d91a46522f892c3e66a4ce37ebe0b2b242d5560e0dbe73c59561f5cbeb",
+      "bytes": 2471
+    },
+    {
+      "path": "crypto/smartcont/auth-extension.fc",
+      "sha256": "1f3c3c99eb6b26191f86c100052ee3747a5f5aa520fb2f8dfed31b13ef24ff74",
+      "bytes": 7714
+    },
+    {
+      "path": "crypto/smartcont/auth-policy.fc",
+      "sha256": "8cbe92ade5089e39785292cdc7643246c6e17a4001773366e7d5c3f260769e10",
+      "bytes": 3347
+    },
+    {
+      "path": "crypto/smartcont/pq-bytes.fc",
+      "sha256": "0ef93769adb8db5c2665e9e9a78d239683a0a975e2ffc0034f9f58cb5f9fd011",
+      "bytes": 6817
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5-action-list.fc",
+      "sha256": "86d23a7f6548bc4c69106f255df271baaab0a51559e9c179cdb629b633ddec83",
+      "bytes": 2227
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-rescue.tlb",
+      "sha256": "688321c97c8c65273ce92568c9a806c1149418f632483ce6efe0986ccd1b3b04",
+      "bytes": 9516
+    },
+    {
+      "path": "test/wallet-v5r2/test_wallet.py",
+      "sha256": "c26efe3536de3bda0bc9ba514cc0889c16f8864b788f3556a5703ec503f8b6c8",
+      "bytes": 9826
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/module-fixture.boc",
+      "sha256": "b31e38d5e3e427e1fcc69fee75ae5ccaefac52bda2f3662edcc2a2906f959abf",
+      "bytes": 493
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/module-fixture.fif",
+      "sha256": "2646bb500fd3f62f26accdddc8441d491152ff08088ed1ad8fa30df4afd89d45",
+      "bytes": 15786
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/module-fixture.run.fif",
+      "sha256": "04e023134042712e8cb5af84ba4a62839ca5f68ea81f43eef140d68f8120068b",
+      "bytes": 208
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/restored.boc",
+      "sha256": "1e4186dd588e07fc025100e082814c7191c4f9ad39a0b32ce5ea874dc91ccd82",
+      "bytes": 2720
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/restored.fif",
+      "sha256": "d514cb698ca1985b6b0ad78a679d5ead05ce3792407c54ca536b58f1bdaca7a6",
+      "bytes": 82554
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/restored.run.fif",
+      "sha256": "cc747fe1c8ce090e02eaebaa51767a370c4f4acdebbda7f48e9f0c3420810ddd",
+      "bytes": 196
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/results.json",
+      "sha256": "31c0ad98fa1903a2a7ed00a45312c7fd64a323d6ccbabf9e130231681783b591",
+      "bytes": 406
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/retired-bits-mutant.boc",
+      "sha256": "522efc9a223e5741c38df771bb4f23c722e6b9e08e7272b53afe8d7282706d51",
+      "bytes": 2723
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/retired-bits-mutant.fif",
+      "sha256": "dfe1433bd07df5f36f7ceac341e1d87536d91d39d0942edfd370e1ce9583c550",
+      "bytes": 82320
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/retired-bits-mutant.run.fif",
+      "sha256": "264bbcae4c959328c335a091b8cc96cffdd1647e1e1eac70c5dcbf459c95bcd7",
+      "bytes": 218
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/retirement-mutant.boc",
+      "sha256": "90304efdc81e1dafd604ff70c07d9911852584979e79602276d0c1680c4dd4a3",
+      "bytes": 2714
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/retirement-mutant.fif",
+      "sha256": "092299957cbe514d9f161a0c87d951bc8684e43a5c6d1e4b63644c52d5098d9c",
+      "bytes": 82370
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/retirement-mutant.run.fif",
+      "sha256": "59b3593daa5ac697b2b82dc907f21c9d86c89857f3b196d877b39e94f7eab888",
+      "bytes": 214
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/vault-fixture.fif",
+      "sha256": "ed871dae88bacceb1bb7ecc0076044db1ecc6d77ff08c13d547e3925ca934503",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/vault-fixture.run.fif",
+      "sha256": "561a3bcda6856c27624189a669bfdeeb593b9c69997759a89c1dfbf30db52e0f",
+      "bytes": 206
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/wallet.boc",
+      "sha256": "1e4186dd588e07fc025100e082814c7191c4f9ad39a0b32ce5ea874dc91ccd82",
+      "bytes": 2720
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/wallet.fif",
+      "sha256": "d514cb698ca1985b6b0ad78a679d5ead05ce3792407c54ca536b58f1bdaca7a6",
+      "bytes": 82554
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-wallet/wallet.run.fif",
+      "sha256": "6ab66c7b4c88dd75e66c4266409d27c77dcdc02f0cdfdbf3926eb658770f15b9",
+      "bytes": 192
+    }
+  ],
+  "retention": "Local artifacts retained through PR review and release acceptance; CI retention 14 days. Fixture wallet artifacts are not release artifacts.",
+  "commands": [
+    "python test/wallet-v5r2/test_wallet.py --output /path/to/r2-wallet",
+    "build/crypto/tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb",
+    "python scripts/update-auth-contract-code.py --check"
+  ],
+  "v5r1_unchanged_hash": "086a86aa9913c0ec52277adbb7e4b5695964dbb8c817ad0c305cdd345bbfac69"
+}

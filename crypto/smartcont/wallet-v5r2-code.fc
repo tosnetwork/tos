@@ -1,0 +1,93 @@
+;; Complete R2 receiver candidate. Build with compiled dependency definitions
+;; for these functions; never obtain code identities from mutable wallet data.
+;; Final module/vault implementations and release acceptance remain required.
+int r2wallet_network();
+int r2wallet_module_hash();
+cell r2wallet_vault_code();
+#include "wallet-v5r2-auth.fc";
+#include "wallet-v5r2-fee-identity.fc";
+#include "wallet-v5-action-list.fc";
+
+() r2wallet_successor(cell module, cell metadata, cell vault, int retired) impure inline_ref {
+  var (policy, _, _) = r2id_module(module, r2wallet_module_hash(), cell_hash(module),
+      auth_global_id(), r2wallet_network());
+  if (policy == 1) {
+    throw_if(auth_policy::retired, retired & 2);
+    auth_policy_require_primary(r2wallet_network(), 1);
+  }
+  r2pair_validate(vault, cell_hash(r2wallet_vault_code()), cell_hash(vault),
+      auth_global_id(), r2wallet_network(), my_address(), r2pair_address(cell_hash(module)), metadata);
+}
+
+() recv_external(slice body) impure { throw(auth::legacy_disabled); }
+
+() recv_internal(int balance, int value, cell full, slice body) impure {
+  slice message = full.begin_parse();
+  if (message~load_uint(4) & 1) { return (); }
+  slice sender = message~load_msg_addr();
+  r2pair_basechain(my_address());
+  var (seqno, id, key, mode, retired, epoch, primary, rescue, module, fee) =
+      r2state_load(get_data(), r2wallet_module_hash(), auth_global_id(), r2wallet_network());
+  ;; Empty transfers are deposits only; any nonempty body must be exact AUTH v2.
+  if (body.slice_empty?()) { return (); }
+  var (policy, _, _) = r2id_module(module, r2wallet_module_hash(), cell_hash(module),
+      auth_global_id(), r2wallet_network());
+  cell vault = r2pair_init(r2wallet_vault_code(), auth_global_id(), r2wallet_network(),
+      my_address(), r2pair_address(cell_hash(module)), fee);
+  var (role, kind, payload) = r2_validate_request(mode, cell_hash(module), r2wallet_network(),
+      1, policy, retired, epoch, primary, rescue, key, cell_hash(vault), sender, body);
+  slice ps = payload.begin_parse().skip_bits(32);
+  cell actions = null();
+  if (kind == r2::execute) {
+    actions = verify_auth_actions(ps~load_ref());
+    ps.end_parse();
+  } elseif (kind == r2::lock) {
+    throw_unless(r2::bad_payload, ps~load_uint(8) == 1);
+    ps.end_parse();
+    retired |= 2;
+  } elseif (kind == r2::configure) {
+    int next_mode = ps~load_uint(2);
+    cell replacement = ps~load_maybe_ref();
+    ps.end_parse();
+    throw_unless(auth::bad_mode, (next_mode == 2) | (next_mode == 3));
+    if (next_mode == 3) { auth_require_strong_classical_key(key); }
+    ifnot (cell_null?(replacement)) {
+      slice fs = r2id_ordinary(replacement);
+      cell next_fee = fs~load_ref();
+      cell next_vault = fs~load_ref();
+      fs.end_parse();
+      r2wallet_successor(module, next_fee, next_vault, retired);
+      fee = next_fee;
+    }
+    mode = next_mode;
+  } else {
+    ;; Entire signed witnesses replace the tuple atomically. POP/readiness runs
+    ;; separately; this does not claim another account's live balance or keys.
+    cell next_module = ps~load_ref();
+    cell next_fee = ps~load_ref();
+    cell next_vault = ps~load_ref();
+    ps.end_parse();
+    r2wallet_successor(next_module, next_fee, next_vault, retired);
+    module = next_module;
+    fee = next_fee;
+    mode = 2;
+  }
+  (epoch, primary, rescue, seqno) = r2_advance_counters(role, kind, epoch, primary, rescue, seqno);
+  set_data(r2state_store(seqno, id, key, mode, retired, epoch, primary, rescue, module, fee));
+  ifnot (cell_null?(actions)) { set_c5_actions(actions); }
+}
+
+int is_signature_allowed() method_id { return 0; }
+int seqno() method_id { return get_data().begin_parse().skip_bits(1).preload_uint(32); }
+int get_subwallet_id() method_id { return get_data().begin_parse().skip_bits(33).preload_uint(32); }
+int get_public_key() method_id { return get_data().begin_parse().skip_bits(65).preload_uint(256); }
+cell get_extensions() method_id { return null(); }
+(int, int, int, int, int, int, int, int) get_auth_state() method_id {
+  var (_, _, _, mode, retired, epoch, primary, rescue, module, fee) =
+      r2state_load(get_data(), r2wallet_module_hash(), auth_global_id(), r2wallet_network());
+  var (policy, _, _) = r2id_module(module, r2wallet_module_hash(), cell_hash(module),
+      auth_global_id(), r2wallet_network());
+  cell vault = r2pair_init(r2wallet_vault_code(), auth_global_id(), r2wallet_network(),
+      my_address(), r2pair_address(cell_hash(module)), fee);
+  return (mode, epoch, primary, rescue, cell_hash(module), retired, policy, cell_hash(vault));
+}

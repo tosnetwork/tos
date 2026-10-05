@@ -54,6 +54,7 @@ jobs:
           python3 test/wallet-v5r2/test_identity.py --output "$RUNNER_TEMP/r2-identity"
           python3 test/wallet-v5r2/test_state.py --output "$RUNNER_TEMP/r2-state"
           python3 test/wallet-v5r2/test_fee_identity.py --output "$RUNNER_TEMP/r2-fee-identity"
+          python3 test/wallet-v5r2/test_wallet.py --output "$RUNNER_TEMP/r2-wallet"
           build/test-config-transition
           python3 test/wallet-v5r2/policy_native_mutations.py --build build --output "$RUNNER_TEMP/auth-policy-native"
           git diff --exit-code
@@ -80,4 +81,5 @@ jobs:
             ${{ runner.temp }}/r2-identity/
             ${{ runner.temp }}/r2-state/
             ${{ runner.temp }}/r2-fee-identity/
+            ${{ runner.temp }}/r2-wallet/
           retention-days: 14

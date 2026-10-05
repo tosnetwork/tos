@@ -42,12 +42,14 @@ auth_request_v2#41553252
 
 // Payloads, selected by kind; the module and the account both check the match.
 auth_execute_v2#45584543 actions:^Cell = AuthPayload;          // "EXEC": V5 action list
-auth_configure_v2#434f4e46 new_mode:(## 2) fee_route:(Maybe ^FeeRoute)
+auth_configure_v2#434f4e46 new_mode:(## 2) fee_replacement:(Maybe ^FeeReplacement)
   = AuthPayload;                                                // "CONF": mode 2 or 3 only
 auth_lock_primary#4c4f434b suite:DailySuite = AuthPayload;     // "LOCK": no successor, no value
+// Full signed witnesses commit to both whole StateInit hashes and all fields.
+// Policy, daily suite and addresses are derived, not duplicated assertions.
+fee_replacement$_ metadata:^FeeMetadata vault_init:^StateInit = FeeReplacement;
 auth_recover_migrate#4d494752
-  module:bits256 module_init_hash:bits256 policy:RescuePolicy daily:DailySuite
-  vault_init_hash:bits256 fee_route:^FeeRoute
+  module_init:^StateInit metadata:^FeeMetadata vault_init:^StateInit
   = AuthPayload;                                                // "MIGR": no value
 
 // ---- Messages

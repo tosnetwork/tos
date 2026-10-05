@@ -18,7 +18,7 @@ The R2 implementation must use that shared full action engine. It must not repla
 OutList with an ad-hoc one-message operation, accept arbitrary send modes, omit
 hybrid cosignatures, or substitute a fee credential for wallet authority.
 `rescue-v5r2-account.fc` remains a historical research receiver; its gas/lock results
-are not acceptance of a complete V5R2 wallet. The future full receiver has a separate
+are not acceptance of a complete V5R2 wallet. The complete receiver candidate has a separate
 implementation and test boundary. No default template or SDK code is switched here.
 
 Equal strictness does not mean restoring legacy bypasses that the accepted R2
@@ -187,4 +187,39 @@ the required tree id. Both runners are included in authentication CI.
 
 ```sh
 python test/wallet-v5r2/test_fee_identity.py --output /path/to/r2-fee-identity
+```
+
+## Complete receiver candidate
+
+`wallet-v5r2-code.fc` now joins strict storage, AUTH v2, the shared full V5 action
+engine and canonical paired-vault validation in actual internal/external wallet
+entry points. Deployment must provide compiled definitions for the network,
+module code hash and vault code; no mutable allowlist or witness-selected code
+is used. There is not yet a release dependency bundle. The test compiles the
+receiver with a research module and a non-paying vault stub as explicit fixtures.
+
+Execute processes the complete V5 OutList. Configure uses ordinary hybrid
+cosigning and an optional validated fee replacement. Lock preserves mode and
+sets retirement irreversibly. Migration validates the complete successor module,
+metadata and vault before writing any state, enters mode 2, advances epoch,
+resets nonces/seqno and preserves all retirement bits. READY successors are
+refused under local or current global retirement. Migration emits no value;
+subsequent rescue execution is a separate transaction. Signed migration payloads
+now carry the actual witnesses so identity assertions cannot diverge from them.
+
+The receiver exposes ordinary V5 getters plus an R2 AUTH tuple getter and refuses
+external legacy signatures. Empty internal transfers are deposits only. The
+native integration runner covers all 256 send modes, action counts 0/1/254/255/256,
+hybrid configure, lock, saturated migration, old-module rejection, successor
+rescue execution and failed successor pairing without partial installation.
+Two mutations cover successor retirement and retirement-bit preservation.
+
+These 269 cases validate actual receiver transactions with fixture module senders;
+they do not establish real PQ module delivery, recipient-account execution,
+production vault payments, getters via client APIs, both-VM parity or final gas
+pricing. Those remain required before release. The compiled fixture wallet must
+never be published as a production code artifact.
+
+```sh
+python test/wallet-v5r2/test_wallet.py --output /path/to/r2-wallet
 ```
