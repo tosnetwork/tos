@@ -19,9 +19,12 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends sudo python3-pip python3-venv \
         jq unzip zip xz-utils file ca-certificates iproute2 net-tools procps psmisc \
-        lsof tmux netcat-openbsd && \
+        lsof tmux netcat-openbsd clang && \
     rm -rf /var/lib/apt/lists/*
 
+# `clang` above is the distribution compiler the hosted image calls plain
+# `clang` (18 on 24.04); the builder image only has clang-21.
+#
 # Pre-warm what the lint and native jobs install themselves, so their own
 # install steps are quick no-ops instead of a multi-minute download per job.
 RUN wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && \

@@ -10,6 +10,9 @@
 set -euo pipefail
 
 say() { printf 'local-ci docker shim: %s\n' "$*" >&2; }
+# Exit status for "this needs real Docker"; the replay reports the step as
+# skipped (not run) rather than as a product failure.
+REFUSE=78
 is_builder() { [[ "$1" == *"-builder:"* || "$1" == *"/tos-builder:"* ]]; }
 
 cmd="${1:-}"
@@ -27,7 +30,7 @@ case "$cmd" in
       say "pull of $image replaced by the local builder image this job runs in"
     else
       say "refusing: pull of $image is not replayed"
-      exit 1
+      exit "$REFUSE"
     fi
     ;;
   run)
@@ -41,7 +44,7 @@ case "$cmd" in
         -e|--env) envs+=("$2"); shift 2 ;;
         -v|--volume) mounts+=("$2"); shift 2 ;;
         -w|--workdir) workdir="$2"; shift 2 ;;
-        -*) say "refusing: unsupported docker run option $1"; exit 1 ;;
+        -*) say "refusing: unsupported docker run option $1"; exit "$REFUSE" ;;
         *) break ;;
       esac
     done
@@ -49,7 +52,7 @@ case "$cmd" in
     shift || true
     if ! is_builder "$image"; then
       say "refusing: docker run of $image is not replayed"
-      exit 1
+      exit "$REFUSE"
     fi
     for m in "${mounts[@]}"; do
       src="${m%%:*}"
@@ -70,6 +73,6 @@ case "$cmd" in
     ;;
   *)
     say "refusing: docker $cmd is not replayed"
-    exit 1
+    exit "$REFUSE"
     ;;
 esac

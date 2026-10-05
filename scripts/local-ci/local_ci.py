@@ -1217,9 +1217,30 @@ fi
                     wd = step.get("working-directory") or defaults.get("working-directory")
                     wd = interpolate_str(wd, ev) if wd else None
                     sr.script = script
-                    rc, note, outputs = self.exec_script(
-                        state, num, script, shell, wd, step_env, logfile, display
-                    )
+                    rounds = self.repeat_count(f"{wf_name}:{label}:{display}")
+                    round_notes = []
+                    for rnd in range(1, rounds + 1):
+                        rlog = (
+                            logfile
+                            if rounds == 1
+                            else logfile.with_name(f"{logfile.stem}.round{rnd}.log")
+                        )
+                        rc, note, outputs = self.exec_script(
+                            state, num, script, shell, wd, step_env, rlog, display
+                        )
+                        round_notes.append(f"round {rnd}: exit {rc}")
+                        if rc != 0:
+                            break
+                    if rounds > 1:
+                        note = (
+                            (note + "; " if note else "")
+                            + f"repeated {rounds}x ("
+                            + ", ".join(round_notes)
+                            + ")"
+                        )
+                        sr.log = str(
+                            logfile.with_name(f"{logfile.stem}.round1.log").relative_to(self.out)
+                        )
             except (ExprError, ValueError, TypeError, KeyError) as exc:
                 # A harness defect is a failure, never a pass.
                 rc, note, outputs = 1, f"harness could not evaluate the step: {exc}", {}
@@ -1254,6 +1275,13 @@ fi
                 }
             jr.steps.append(sr)
             log(f"  {sr.status:4} {wf_name}:{label}: {display} ({sr.seconds:.0f}s)")
+
+    def repeat_count(self, key: str) -> int:
+        for item in self.args.repeat_step or []:
+            pattern, _, count = item.rpartition(":")
+            if pattern and re.search(pattern, key):
+                return max(1, int(count))
+        return 1
 
     def rewrite_parallelism(self, script: str) -> tuple[str, list[str]]:
         n = self.args.jobs
@@ -1372,6 +1400,8 @@ fi
                 stderr=subprocess.STDOUT,
             ).returncode
             fh.write(f"\n# exit status: {rc}\n")
+        if rc == 78 and "local-ci docker shim: refusing" in logfile.read_text(errors="replace"):
+            return None, "needs real Docker inside the job, which this replay does not provide", {}
         outputs = parse_kv_file(out_file)
         for k, v in parse_kv_file(env_file).items():
             state.env[k] = v
@@ -1749,6 +1779,12 @@ def main() -> int:
     ap.add_argument("--parallel", type=int, default=2, help="jobs to run at once")
     ap.add_argument(
         "--min-free-gb", type=int, default=30, help="do not start a job below this free disk"
+    )
+    ap.add_argument(
+        "--repeat-step",
+        action="append",
+        help="REGEX:N - run steps whose 'workflow:job:step' matches N times; any failing round fails the step "
+        "(for suites with randomized inputs)",
     )
     ap.add_argument(
         "--keep-going",
