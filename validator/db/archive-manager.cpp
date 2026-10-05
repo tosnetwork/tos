@@ -1143,10 +1143,13 @@ void ArchiveManager::run_gc(td::Ref<MasterchainState> shard_client_state, UnixTi
   to_delete.clear();
 
   if (archive_ttl > 0) {
+    // Each candidate with the id of the package after it in the archive: the
+    // package holds the blocks whose masterchain reference lies between the
+    // two ids (get_package_id), which is what retention is checked against.
     std::vector<PackageId> candidates;
-    std::vector<double> first_ts;
-    for (auto &f : files_) {
-      auto &desc = f.second;
+    std::vector<ArchivePackage> packages;
+    for (auto f = files_.begin(); f != files_.end(); ++f) {
+      auto &desc = f->second;
       if (desc.deleted) {
         continue;
       }
@@ -1154,13 +1157,15 @@ void ArchiveManager::run_gc(td::Ref<MasterchainState> shard_client_state, UnixTi
       if (it == desc.first_blocks.end()) {
         continue;
       }
-      candidates.push_back(f.first);
-      first_ts.push_back((double)it->second.ts);
+      auto next = std::next(f);
+      candidates.push_back(f->first);
+      packages.push_back(ArchivePackage{
+          (double)it->second.ts, next == files_.end() ? kNoArchiveGcFloor : static_cast<uint32_t>(next->first.id)});
     }
-    // A reader that still needs older blocks (the wallet index) holds pruning
-    // back to the earliest of them; each deletion is admitted against it
-    // under the retention lock (see archive-gc-floor.h).
-    prune_archive_packages(first_ts, (double)gc_ts, archive_ttl, [&](size_t index) {
+    // Pruning never takes a package a reader (the wallet index), an applying
+    // block or a block not yet applied may still need; each deletion is
+    // admitted under the retention lock (see archive-gc-floor.h).
+    prune_archive_packages(packages, (double)gc_ts, archive_ttl, shard_client_state->get_seqno(), [&](size_t index) {
       auto &x = candidates[index];
       LOG(ERROR) << "WARNING: deleting package " << x.id;
       delete_package(x, [](td::Result<>) {});

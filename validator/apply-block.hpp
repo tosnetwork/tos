@@ -62,6 +62,7 @@ class ApplyBlock : public td::actor::Actor {
   void alarm() override;
 
   void start_up() override;
+  void tear_down() override;
   void got_block_handle(BlockHandle handle);
   void got_block_data(td::Ref<BlockData> block);
   void written_block_data();
@@ -87,6 +88,13 @@ class ApplyBlock : public td::actor::Actor {
   td::Ref<ShardState> state_;
 
   td::PerfWarningTimer perf_timer_;
+
+  // The archive lease taken for the wallet index while this block is applied
+  // (its masterchain reference seqno), if any.
+  bool archive_lease_held_ = false;
+  BlockSeqno archive_lease_seqno_ = 0;
+  void take_archive_lease();
+  void release_archive_lease();
 };
 
 }  // namespace validator

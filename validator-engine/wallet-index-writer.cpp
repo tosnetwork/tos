@@ -783,16 +783,10 @@ std::atomic<uint64_t> g_pending_block_limit{kMaxPendingTokenBlocks};
 // Tests only: block commits still to fail.
 std::atomic<int> g_commit_faults{0};
 
-// Archive blocks the index may still need to read: those marked but whose
-// candidates it has not extracted. The floor handed to archive pruning sits
-// this far before the earliest of them, as slack for packages filed by
-// masterchain time.
-constexpr uint32_t kArchiveFloorMargin = 3600;
+// Archive packages the index may still need to read: those holding blocks
+// marked but whose candidates it has not extracted, named by the blocks'
+// masterchain reference seqnos (the archive's own filing key).
 std::mutex g_floor_mutex;
-
-uint32_t floor_for(uint32_t gen_utime) {
-  return gen_utime > kArchiveFloorMargin ? gen_utime - kArchiveFloorMargin : 0;
-}
 
 // Blocks handed over but not yet durably marked, so their markers cannot yet
 // keep them in the archive. Bounded however many are handed over: up to
@@ -820,14 +814,17 @@ uint32_t inflight_floor_locked() {
 }
 
 // The block-apply hook, before it hands a block over: from here on archive
-// pruning keeps the block, unless pruning had already given up a package
-// that may hold it (then false). No I/O; both locks it takes are held for a
-// few comparisons. Fills in the block's hand-over order.
+// pruning keeps the block's package. ApplyBlock has held a lease on that
+// package since before the block was filed, so pruning cannot have given it
+// up and this succeeds; false would mean a block applied with a reference
+// below the shard client, which pruning's admission does not cover (see
+// archive_admit_deletion). No I/O; both locks it takes are held for a few
+// comparisons. Fills in the block's hand-over order.
 bool protect_handed_over_block(MarkedBlock& block) {
   std::lock_guard<std::mutex> guard(g_inflight_mutex);
   block.handover_seq = g_next_handover_seq++;
-  auto value = floor_for(block.gen_utime);
-  if (!tos::validator::archive_retain(value, block.gen_utime)) {
+  auto value = block.mc_seqno;
+  if (!tos::validator::archive_retain(value)) {
     return false;
   }
   if (g_tracked.size() < g_tracking_capacity.load()) {
@@ -872,15 +869,15 @@ void publish_archive_floor(WalletIndexDb& db) {
     LOG(WARNING) << "wc0-index: could not read the archive floor: " << floor.error().message();
     return;
   }
-  auto value = floor.ok() ? floor_for(floor.ok().value()) : tos::validator::kNoArchiveGcFloor;
+  auto value = floor.ok() ? floor.ok().value() : tos::validator::kNoArchiveGcFloor;
   std::lock_guard<std::mutex> guard(g_inflight_mutex);
   tos::validator::archive_set_floor(std::min(value, inflight_floor_locked()));
 }
 
 // After a block's candidates were extracted: when it may have been the one
 // holding the floor down, recompute it.
-void refresh_archive_floor(WalletIndexDb& db, uint32_t gen_utime) {
-  if (floor_for(gen_utime) <= tos::validator::archive_floor()) {
+void refresh_archive_floor(WalletIndexDb& db, uint32_t mc_seqno) {
+  if (mc_seqno <= tos::validator::archive_floor()) {
     publish_archive_floor(db);
   }
 }
@@ -1191,12 +1188,19 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
   if (pending_count.is_error() || pending_count.ok() >= g_pending_block_limit.load()) {
     return Wc0IndexResult::AtPendingCap;
   }
-  uint32_t header_utime = 0;
+  // The masterchain block this block's header refers to: it was filed under a
+  // reference at or after it, so this keeps its package (or an earlier one).
+  uint32_t header_mc_seqno = 0;
   {
     block::gen::Block::Record header_blk;
     block::gen::BlockInfo::Record header_info;
-    if (tlb::unpack_cell(block_root, header_blk) && tlb::unpack_cell(header_blk.info, header_info)) {
-      header_utime = header_info.gen_utime;
+    if (tlb::unpack_cell(block_root, header_blk) && tlb::unpack_cell(header_blk.info, header_info) &&
+        header_info.not_master && header_info.master_ref.not_null()) {
+      auto master_ref = vm::load_cell_slice(header_info.master_ref);
+      unsigned long long master_seqno = 0;
+      if (master_ref.skip_first(64) && master_ref.fetch_ulong_bool(32, master_seqno)) {
+        header_mc_seqno = static_cast<uint32_t>(master_seqno);
+      }
     }
   }
   // Crash recovery: durably mark the block in-progress before indexing; the
@@ -1208,7 +1212,7 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
   // the right one. If this write fails there is no safety net for a crash
   // during the indexing below, so the pass is skipped; the block keeps the
   // mark the recorder gave it when it was queued.
-  auto marker_status = db->put_incomplete_block(block_id, header_utime);
+  auto marker_status = db->put_incomplete_block(block_id, header_mc_seqno);
   if (marker_status.is_error()) {
     LOG(ERROR) << "wc0-index: failed to durably mark block seqno=" << seqno
                << " in-progress, skipping indexing this pass: " << marker_status.message();
@@ -1355,7 +1359,7 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
   }
   // Its candidates are extracted now (indexed, or persisted with it): the
   // archive need not keep it any longer.
-  refresh_archive_floor(*db, header_utime);
+  refresh_archive_floor(*db, header_mc_seqno);
   return Wc0IndexResult::Done;
 }
 
@@ -1932,7 +1936,7 @@ bool wc0_index_degraded() {
 }
 
 void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
-                             uint32_t gen_utime) {
+                             uint32_t mc_seqno) {
   // Runs on the block-application path: no I/O, no logging, no lock that is
   // held across I/O or a wait anywhere else.
   std::lock_guard<std::mutex> guard(g_producer_mutex);
@@ -1944,7 +1948,7 @@ void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> sta
     // recorded; the recorder marks it, and the run is not recorded as
     // finished while such a block exists.
     g_late_blocks.fetch_add(1);
-    MarkedBlock late{block_id, gen_utime, 0};
+    MarkedBlock late{block_id, mc_seqno, 0};
     if (!protect_handed_over_block(late)) {
       // Not recorded for a later read: it could not be read back.
       g_producer_queue->latch_lost();
@@ -1953,18 +1957,13 @@ void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> sta
     g_producer_queue->record(late);
     return;
   }
-  MarkedBlock marked{block_id, gen_utime, 0};
+  MarkedBlock marked{block_id, mc_seqno, 0};
   if (!protect_handed_over_block(marked)) {
-    // Archive pruning already gave up a package that may hold this block, so
-    // it cannot be read back later: it is indexed from what the hook holds
-    // now, which the queue keeps even past its capacity (within a bound).
-    // Without the block's data, or past that bound, it is lost beyond
-    // recovery and the index is recorded as needing a rebuild.
-    if (block_root.is_null() ||
-        !g_producer_queue->push(marked, BlockToIndex{std::move(block_root), std::move(state_root), block_id}, true,
-                                kWc0IndexPinnedExtra)) {
-      g_producer_queue->latch_lost();
-    }
+    // Its package may already be given up, so it could not be read back
+    // later: the index records that it needs a rebuild instead of claiming
+    // completeness. Unreachable while every apply leases its package (see
+    // protect_handed_over_block).
+    g_producer_queue->latch_lost();
     return;
   }
   if (!g_producer_queue->push(marked, BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {

@@ -99,10 +99,10 @@ truth.
   block applied but not yet indexed (still queued, or only marked because
   the indexer was behind) is kept by the archive, past `--archive-ttl` if
   need be, until its token candidates are indexed or stored with it. On the
-  next start the indexer reads such blocks back and indexes them first. If
-  pruning had already committed to deleting a block's package when the block
-  was handed over, the indexer works from the copy it holds; if it holds
-  none, it reports `"needs_rebuild": true` rather than claiming completeness.
+  next start the indexer reads such blocks back and indexes them first.
+  Pruning also never deletes a package that may hold a block still being
+  applied or not yet applied (one referenced at or after the shard client's
+  masterchain block).
 - **An index written by another schema version is reset.** When the node
   opens an index database of any other layout, it empties it and starts a
   fresh, forward-only index from the blocks applied from then on. Nothing of

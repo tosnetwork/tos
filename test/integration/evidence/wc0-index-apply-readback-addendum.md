@@ -24,9 +24,12 @@ kept as the record of its own run at `b8a3f5350`.
 - The hook is a bounded, non-waiting enqueue. Besides the producer lock it
   takes two small locks to keep the block in the archive until its marker
   exists: one around a bounded list of handed-over blocks, and the archive's
-  retention lock, which pruning holds only to admit a deletion, never across
-  the deletion's I/O. Nothing holds any of them across I/O or a wait. The
-  hook does not log, mark, or sync.
+  retention lock, which pruning holds only for a constant-size admission
+  check, never across the deletion's I/O. ApplyBlock itself takes the same
+  retention lock once when it starts a basechain block, to lease the archive
+  package the block will be filed in until the hook has run. Nothing holds
+  any of these locks across I/O or a wait. The hook does not log, mark, or
+  sync.
 - The recorder thread durably marks every handed-over block id before the
   worker may index it. A block the worker never finishes stays marked, and
   startup recovery re-indexes it.

@@ -239,7 +239,7 @@ int main(int argc, char **argv) {
     const auto &mode = modes[m];
     g_read_delay_us.store(mode.delay_us);
     g_wc0_block_index_hook =
-        mode.hook ? std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, tos::BlockIdExt, tos::UnixTime)>(
+        mode.hook ? std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, tos::BlockIdExt, tos::BlockSeqno)>(
                         &tos_wallet_index::enqueue_wc0_index_block)
                   : nullptr;
     auto reads_before = g_reads.load();

@@ -84,7 +84,7 @@ constexpr size_t kEventAgeKeyLen = 1 + 4 + 32 + 8;
 constexpr size_t kMetaKeyLen = 2;
 constexpr size_t kSingleHashKeyLen = 1 + 32;
 constexpr size_t kIncompleteBlockKeyLen = 1 + 4 + 8 + 4 + 32 + 32;
-constexpr size_t kIncompleteBlockValueLen = 1 + 4;  // sentinel(1) + gen_utime_be(4)
+constexpr size_t kIncompleteBlockValueLen = 1 + 4;  // sentinel(1) + mc_seqno_be(4)
 constexpr size_t kTokenQueueKeyLen = 1 + 1 + 8;
 constexpr size_t kTokenQueueValueLen = 1 + 32 + 1 + 8;
 constexpr size_t kTokenIndexKeyLen = 1 + 1 + 32;
@@ -992,11 +992,11 @@ td::Result<bool> WalletIndexDb::get_nft_owner(const HashKey& nft, HashKey& owner
 
 // --- crash-recovery markers ---
 
-td::Status WalletIndexDb::put_incomplete_block(const tos::BlockIdExt& block_id, uint32_t gen_utime) {
+td::Status WalletIndexDb::put_incomplete_block(const tos::BlockIdExt& block_id, uint32_t mc_seqno) {
   char key[kIncompleteBlockKeyLen];
   make_incomplete_block_key(block_id, key);
   char val[kIncompleteBlockValueLen] = {0};
-  put_u32_be(val + 1, gen_utime);
+  put_u32_be(val + 1, mc_seqno);
   auto s = db_->set(td::Slice{key, kIncompleteBlockKeyLen}, td::Slice{val, kIncompleteBlockValueLen});
   if (s.is_error()) return s;
   // The marker must be durable before the block's entries: a marker that survives
@@ -1014,7 +1014,7 @@ td::Status WalletIndexDb::mark_blocks_incomplete(const std::vector<MarkedBlock>&
     char key[kIncompleteBlockKeyLen];
     make_incomplete_block_key(block.id, key);
     char val[kIncompleteBlockValueLen] = {0};
-    put_u32_be(val + 1, block.gen_utime);
+    put_u32_be(val + 1, block.mc_seqno);
     TRY_STATUS(marker_db_->set(td::Slice{key, kIncompleteBlockKeyLen}, td::Slice{val, kIncompleteBlockValueLen}));
   }
   return marker_db_->flush_wal(true);
@@ -1035,9 +1035,9 @@ td::Status WalletIndexDb::for_each_marked_block(std::function<td::Status(const M
     if (key.size() != kIncompleteBlockKeyLen) {
       return td::Status::OK();
     }
-    // A malformed value names no time: keep everything for it.
-    uint32_t gen_utime = value.size() == kIncompleteBlockValueLen ? get_u32_be(value.data() + 1) : 0;
-    return cb(MarkedBlock{parse_block_key(key), gen_utime});
+    // A malformed value names no package: keep everything for it.
+    uint32_t mc_seqno = value.size() == kIncompleteBlockValueLen ? get_u32_be(value.data() + 1) : 0;
+    return cb(MarkedBlock{parse_block_key(key), mc_seqno});
   });
 }
 
@@ -1051,8 +1051,8 @@ td::Result<td::optional<uint32_t>> WalletIndexDb::unextracted_block_floor() {
     if (status == td::KeyValue::GetStatus::Ok) {
       return td::Status::OK();  // its candidates are persisted
     }
-    if (!floor || block.gen_utime < floor.value()) {
-      floor = block.gen_utime;
+    if (!floor || block.mc_seqno < floor.value()) {
+      floor = block.mc_seqno;
     }
     return td::Status::OK();
   }));

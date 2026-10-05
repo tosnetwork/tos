@@ -115,7 +115,9 @@ using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
 // An applied block the index has not finished, with its generation time.
 struct MarkedBlock {
   tos::BlockIdExt id;
-  uint32_t gen_utime = 0;
+  // The masterchain reference seqno the archive files the block under (0 when
+  // not known, which keeps every package).
+  uint32_t mc_seqno = 0;
   // Order of hand-over in this run (0 when not handed over by the hook).
   uint64_t handover_seq = 0;
 };
@@ -463,23 +465,22 @@ class WalletIndexDb {
   // the wrong shard's block.
   // put_incomplete_block is durable on return (WAL-synced); delete_incomplete_block
   // joins the open write batch when one is active.
-  // The marker's value keeps the block's generation time: until the block's
-  // token candidates are extracted (indexed, or persisted with the block), the
-  // archive must keep the block, and the generation time tells archive
-  // pruning how far back to keep (see unextracted_block_floor). 0 means
-  // unknown, which keeps everything.
-  td::Status put_incomplete_block(const tos::BlockIdExt& block_id, uint32_t gen_utime = 0);
+  // The marker's value keeps the block's masterchain reference seqno: until
+  // the block's token candidates are extracted (indexed, or persisted with
+  // it), the archive must keep the package that holds it, and that seqno
+  // names the package (see unextracted_block_floor). 0 keeps everything.
+  td::Status put_incomplete_block(const tos::BlockIdExt& block_id, uint32_t mc_seqno = 0);
   // Mark several blocks in progress with one WAL sync. Writes through a
   // separate handle, so it neither joins nor waits for a write batch another
   // thread has open; safe to call without write_mutex().
   td::Status mark_blocks_incomplete(const std::vector<MarkedBlock>& blocks);
   td::Status mark_blocks_incomplete(const std::vector<tos::BlockIdExt>& block_ids);
-  // The earliest generation time among marked blocks whose candidates are not
-  // yet extracted (no pending record beside the marker), or nothing when
-  // there is none (committed state). Archive pruning must keep every block
-  // generated at or after it.
+  // The lowest masterchain reference among marked blocks whose candidates
+  // are not yet extracted (no pending record beside the marker), or nothing
+  // when there is none (committed state). Archive pruning must keep every
+  // package holding blocks referenced at or after it.
   td::Result<td::optional<uint32_t>> unextracted_block_floor();
-  // Every marker with its generation time (0 when unknown), committed state.
+  // Every marker with its masterchain reference seqno, committed state.
   td::Status for_each_marked_block(std::function<td::Status(const MarkedBlock&)> cb);
   // Durably record that the index may be missing a block nothing can recover
   // (same separate handle; no write_mutex needed). Cleared only by rebuilding.

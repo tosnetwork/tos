@@ -25,6 +25,7 @@
 #include "validator-engine/wallet-index-writer.h"
 #include "validator-engine/wallet-index.h"
 #include "validator/block-handle.hpp"
+#include "validator/db/archive-gc-floor.h"
 #include "validator/fabric.h"
 #include "validator/manager-disk.hpp"
 #include "validator/wc0-block-hook.h"
@@ -64,7 +65,21 @@ class StandInManager : public ValidatorManagerImpl {
     promise.set_value(td::Unit());
   }
   void new_block(BlockHandle, td::Ref<ShardState>, td::Promise<td::Unit> promise) override {
+    if (hold_new_block_) {
+      held_new_blocks_.push_back(std::move(promise));
+      return;
+    }
     promise.set_value(td::Unit());
+  }
+  // Holds the next applies before they are filed into the archive.
+  void hold_new_blocks(bool hold) {
+    hold_new_block_ = hold;
+    if (!hold) {
+      for (auto &promise : held_new_blocks_) {
+        promise.set_value(td::Unit());
+      }
+      held_new_blocks_.clear();
+    }
   }
   // A read of block data never answers: an apply that waits for one hangs.
   void get_block_data_from_db(ConstBlockHandle, td::Promise<td::Ref<BlockData>> promise) override {
@@ -83,6 +98,8 @@ class StandInManager : public ValidatorManagerImpl {
  private:
   std::map<tos::BlockIdExt, BlockHandle> handles_;
   std::vector<td::Promise<td::Ref<BlockData>>> held_reads_;
+  bool hold_new_block_ = false;
+  std::vector<td::Promise<td::Unit>> held_new_blocks_;
 };
 
 tos::BlockIdExt basechain_id(tos::BlockSeqno seqno) {
@@ -195,6 +212,28 @@ class ApplyHarness {
 
   // Applies the next block, with no block data in hand. True when the apply
   // completed successfully within `limit`.
+  // Starts applying the next block, filed under masterchain reference
+  // `mc_seqno`, without waiting for it.
+  void start_next(tos::BlockSeqno mc_seqno, std::atomic<bool> &done) {
+    auto seqno = next_seqno_++;
+    auto handle = stored_block(seqno, basechain_id(seqno - 1));
+    scheduler_.run_in_context([&, handle] {
+      td::actor::send_closure(manager_, &StandInManager::add_handle, handle);
+      tos::BlockIdExt mc{tos::masterchainId, tos::shardIdAll, mc_seqno, td::Bits256::zero(), td::Bits256::zero()};
+      run_apply_block_query(handle->id(), td::Ref<BlockData>{}, mc, manager_.get(), td::Timestamp::in(60.0),
+                            [&done](td::Result<td::Unit> R) { done = R.is_ok(); });
+    });
+  }
+  void run_for(double seconds) {
+    auto deadline = td::Timestamp::in(seconds);
+    while (!deadline.is_in_past()) {
+      scheduler_.run(0.001);
+    }
+  }
+  void hold_new_blocks(bool hold) {
+    scheduler_.run_in_context([&] { td::actor::send_closure(manager_, &StandInManager::hold_new_blocks, hold); });
+  }
+
   bool apply_next(double limit = 5.0) {
     auto seqno = next_seqno_++;
     auto handle = stored_block(seqno, basechain_id(seqno - 1));
@@ -289,4 +328,40 @@ TEST(WalletIndexApply, ApplyCompletesWithAFullQueue) {
   ASSERT_TRUE(
       eventually([&] { return harness.db().has_incomplete_block(basechain_id(harness.last_seqno())).move_as_ok(); }));
   reads.release();
+}
+
+namespace {
+
+bool no_leases() {
+  std::lock_guard<std::mutex> guard(tos::validator::g_archive_retention.mutex);
+  return tos::validator::g_archive_retention.leases.empty();
+}
+
+}  // namespace
+
+// While a basechain block is being applied, before it is filed, archive
+// pruning cannot admit deleting the package it will be filed in: ApplyBlock
+// holds a lease on its masterchain reference until the index has taken over.
+TEST(WalletIndexApply, ApplyLeasesTheBlocksPackageUntilTheIndexTakesOver) {
+  tos::validator::reset_archive_retention_for_testing();
+  BlockedFetcher reads;
+  reads.install();
+  ApplyHarness harness("lease");
+  ASSERT_TRUE(harness.start_index());
+  harness.hold_new_blocks(true);
+  std::atomic<bool> done{false};
+  harness.start_next(77, done);
+  harness.run_for(0.2);
+  ASSERT_TRUE(!done.load());
+  // The package holding references 70..77 may not go; one ending at 77 may.
+  ASSERT_TRUE(!tos::validator::archive_admit_deletion(78, tos::validator::kNoArchiveGcFloor));
+  ASSERT_TRUE(!no_leases());
+  harness.hold_new_blocks(false);
+  harness.run_for(0.2);
+  ASSERT_TRUE(done.load());
+  // The index holds it now, and the apply's lease is gone.
+  ASSERT_TRUE(no_leases());
+  ASSERT_TRUE(!tos::validator::archive_admit_deletion(78, tos::validator::kNoArchiveGcFloor));
+  reads.release();
+  tos::validator::reset_archive_retention_for_testing();
 }

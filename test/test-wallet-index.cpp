@@ -2805,38 +2805,41 @@ struct HalvesState {
 };
 
 // An archive of blocks, each with its generation time, pruned the way the
-// node's archive is: by archive_packages_to_delete, honouring the floor the
+// node's archive is: by archive_packages_by_ttl and admission, honouring what
 // index publishes.
 struct FakeArchive {
   struct Stored {
     td::Ref<vm::Cell> root;
-    uint32_t gen_utime;
+    uint32_t mc_seqno;
   };
   std::mutex mutex;
   std::map<tos::BlockIdExt, Stored> blocks;
-  void add(const tos::BlockIdExt &id, td::Ref<vm::Cell> root, uint32_t gen_utime) {
+  void add(const tos::BlockIdExt &id, td::Ref<vm::Cell> root, uint32_t mc_seqno) {
     std::lock_guard<std::mutex> lock(mutex);
-    blocks[id] = Stored{std::move(root), gen_utime};
+    blocks[id] = Stored{std::move(root), mc_seqno};
   }
   // Prunes as at `gc_ts` with `ttl`, through the node's own admission;
   // returns how many blocks went. `after_admission` runs once, after the
   // first deletion is admitted and before it is carried out; `before_admission`
   // before each admission.
   size_t prune(double gc_ts, double ttl, uint32_t floor, std::function<void()> after_admission = nullptr,
-               std::function<void()> before_admission = nullptr) {
+               std::function<void()> before_admission = nullptr,
+               uint32_t shard_client_seqno = tos::validator::kNoArchiveGcFloor) {
     std::unique_lock<std::mutex> lock(mutex);
     std::vector<std::pair<uint32_t, tos::BlockIdExt>> order;
     for (auto &entry : blocks) {
-      order.emplace_back(entry.second.gen_utime, entry.first);
+      order.emplace_back(entry.second.mc_seqno, entry.first);
     }
     std::sort(order.begin(), order.end());
-    std::vector<double> first_ts;
-    for (auto &entry : order) {
-      first_ts.push_back(entry.first);
+    // Each block is its own package, filed under its masterchain reference.
+    std::vector<tos::validator::ArchivePackage> packages;
+    for (size_t i = 0; i < order.size(); ++i) {
+      packages.push_back({static_cast<double>(order[i].first),
+                          i + 1 < order.size() ? order[i + 1].first : tos::validator::kNoArchiveGcFloor});
     }
     (void)floor;
     return tos::validator::prune_archive_packages(
-        first_ts, gc_ts, ttl,
+        packages, gc_ts, ttl, shard_client_seqno,
         [&](size_t index) {
           if (after_admission) {
             lock.unlock();
@@ -2891,14 +2894,26 @@ bool is_complete(tos_wallet_index::WalletIndexDb &db) {
 }  // namespace
 
 TEST(WalletIndex, ArchivePruningHonoursTheIndexFloor) {
-  using tos::validator::archive_packages_to_delete;
+  using tos::validator::ArchivePackage;
   using tos::validator::kNoArchiveGcFloor;
-  std::vector<double> first_ts = {100, 200, 300, 400, 500};
-  // TTL alone: everything before 450 qualifies; the newest of those stays.
-  ASSERT_EQ(archive_packages_to_delete(first_ts, 550, 100, kNoArchiveGcFloor), (std::vector<size_t>{0, 1, 2}));
-  // A floor at 250 keeps every package that may hold a block from 250 on.
-  ASSERT_EQ(archive_packages_to_delete(first_ts, 550, 100, 250), (std::vector<size_t>{0}));
-  ASSERT_TRUE(archive_packages_to_delete(first_ts, 550, 100, 150).empty());
+  tos::validator::reset_archive_retention_for_testing();
+  // Packages 100..500, each followed by the next; all old enough for the TTL.
+  std::vector<ArchivePackage> packages = {{1, 200}, {2, 300}, {3, 400}, {4, 500}, {5, kNoArchiveGcFloor}};
+  auto prune = [&](uint32_t shard_client) {
+    std::vector<size_t> deleted;
+    tos::validator::prune_archive_packages(packages, 100, 10, shard_client,
+                                           [&](size_t index) { deleted.push_back(index); });
+    return deleted;
+  };
+  // A reader keeps references from 300 on: package 200 (references 200..299)
+  // may go, package 300 may not.
+  ASSERT_TRUE(tos::validator::archive_retain(300));
+  ASSERT_EQ(prune(kNoArchiveGcFloor), (std::vector<size_t>{0, 1}));
+  // The shard client bounds it too: blocks not yet applied reference at or
+  // after it.
+  tos::validator::reset_archive_retention_for_testing();
+  ASSERT_EQ(prune(200), (std::vector<size_t>{0}));
+  tos::validator::reset_archive_retention_for_testing();
 }
 
 // A jetton wallet whose master, and an NFT item whose collection, live in the
@@ -3252,9 +3267,14 @@ TEST(WalletIndexWorker, BlocksWaitingAtTheBoundSurvivePruning) {
     ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
     // The archive is pruned as the node would, with the index's floor.
     auto floor = tos::validator::archive_floor();
-    ASSERT_TRUE(floor <= base);
-    ASSERT_EQ(archive.prune(base + 1000000.0, 1000.0, floor), static_cast<size_t>(1));
+    ASSERT_EQ(floor, base + 1);
+    // The old blocks go, and so does the first block's package: its remaining
+    // candidates are stored with it. Every block still to be read stays.
+    ASSERT_EQ(archive.prune(base + 1000000.0, 1000.0, floor), static_cast<size_t>(3));
     ASSERT_TRUE(!archive.has(old_id));
+    for (auto &b : later) {
+      ASSERT_TRUE(archive.has(b.id));
+    }
     tos_wallet_index::stop_wc0_index_worker();
     tos_wallet_index::set_wallet_index_db(nullptr);
   }
@@ -3283,28 +3303,33 @@ TEST(WalletIndexWorker, BlocksWaitingAtTheBoundSurvivePruning) {
   td::rmrf(path).ignore();
 }
 
-// A floor lowered after pruning selected its packages, but before it admits
-// a deletion, saves a package it now covers.
-TEST(WalletIndex, ArchivePruningAdmitsEachDeletionAgainstTheCurrentFloor) {
+// Admission is checked package by package under the retention lock: a lease
+// taken after pruning chose its packages, but before it admits a deletion,
+// saves the package; what pruning admitted is refused to later leases.
+TEST(WalletIndex, ArchivePruningAdmitsEachDeletionAgainstLeasesAndTheFloor) {
+  using tos::validator::ArchivePackage;
+  using tos::validator::kNoArchiveGcFloor;
   tos::validator::reset_archive_retention_for_testing();
-  std::vector<double> first_ts = {100, 200, 300, 400, 500};
+  std::vector<ArchivePackage> packages = {{1, 200}, {2, 300}, {3, 400}, {4, 500}, {5, kNoArchiveGcFloor}};
   std::vector<size_t> deleted;
-  bool lowered = false;
+  bool leased = false;
   auto removed = tos::validator::prune_archive_packages(
-      first_ts, 550, 100, [&](size_t index) { deleted.push_back(index); },
+      packages, 100, 10, kNoArchiveGcFloor, [&](size_t index) { deleted.push_back(index); },
       [&](size_t) {
-        // A reader retains from 250 on, between the selection and the first
-        // admission.
-        if (!lowered) {
-          ASSERT_TRUE(tos::validator::archive_retain(250, 3600 + 250));
-          lowered = true;
+        if (!leased) {
+          // A block with reference 250 starts being applied.
+          ASSERT_TRUE(tos::validator::archive_lease_acquire(250));
+          leased = true;
         }
       });
   ASSERT_EQ(removed, static_cast<size_t>(1));
   ASSERT_EQ(deleted, (std::vector<size_t>{0}));
-  // What pruning gave up is now refused to a later reader.
-  ASSERT_TRUE(!tos::validator::archive_retain(150, 3600 + 150));
-  ASSERT_TRUE(tos::validator::archive_retain(200, 3600 + 200));
+  // References below 200 may be gone now: a lease or retention there is
+  // refused; one at 200 or later is not.
+  ASSERT_TRUE(!tos::validator::archive_lease_acquire(150));
+  ASSERT_TRUE(!tos::validator::archive_retain(199));
+  ASSERT_TRUE(tos::validator::archive_retain(200));
+  tos::validator::archive_lease_release(250);
   tos::validator::reset_archive_retention_for_testing();
 }
 
@@ -3655,40 +3680,129 @@ TEST(WalletIndex, AJettonRowWithoutItsPairRecordIsNeverServed) {
   td::rmrf(path).ignore();
 }
 
-// Pruning has admitted the deletion of a package (it read the floor for the
-// last time and recorded the package as given up) but not yet carried it out
-// when a block from that package is handed over. The index is refused
-// retention for it, so it never relies on the archive for that block: with
-// the block's data in hand, it indexes the block from memory; without it, it
-// records that the index needs a rebuild instead of claiming completeness.
-TEST(WalletIndexWorker, ABlockHandedOverAfterItsPackageWasGivenUpNeverReliesOnIt) {
+namespace {
+
+// Many small blocks, each filed under its own masterchain reference from
+// `first_ref` on, all in `archive`.
+std::vector<OverflowingBlock> archived_blocks(FakeArchive &archive, size_t count, tos::BlockSeqno first_seqno,
+                                              uint32_t first_ref) {
+  std::vector<OverflowingBlock> blocks;
+  for (size_t i = 0; i < count; ++i) {
+    blocks.push_back(overflowing_block(static_cast<tos::BlockSeqno>(first_seqno + i), 1,
+                                       static_cast<uint32_t>(20000 + 10 * i), 5000 + i));
+    archive.add(blocks.back().id, blocks.back().root, static_cast<uint32_t>(first_ref + i));
+  }
+  return blocks;
+}
+
+bool all_processed(tos_wallet_index::WalletIndexDb &db, const std::vector<OverflowingBlock> &blocks) {
+  for (auto &b : blocks) {
+    if (processed_count(db, b) != b.wallets.size() || db.has_incomplete_block(b.id).move_as_ok()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
+// Pruning has chosen its packages when more blocks than the pinned allowance
+// of earlier designs start being applied, by id alone. Each apply leases its
+// package before it is filed, so pruning's admission refuses those packages;
+// the worker then reads every block back and verifies every candidate.
+TEST(WalletIndexWorker, ApplyLeasesKeepPackagesFromRacingPruning) {
   reset_index_singletons();
-  auto path = std::string("test-wallet-index-db-after-admission");
+  auto path = std::string("test-wallet-index-db-apply-leases");
   td::rmrf(path).ignore();
-  const uint32_t base = 5000000;
-  auto in_hand = overflowing_block(81, 3, 0, 5000);
-  auto without_data = overflowing_block(82, 3, 100, 5001);
+  const uint32_t base = 10000;
   FakeArchive archive;
-  archive.add(in_hand.id, in_hand.root, base);
-  archive.add(without_data.id, without_data.root, base + 1);
-  archive.add(worker_block_id(83), wallet_index_fixture::block(83, 5002, base + 100000, {}), base + 100000);
-  archive.add(worker_block_id(84), wallet_index_fixture::block(84, 5003, base + 200000, {}), base + 200000);
+  archive.add(worker_block_id(5), wallet_index_fixture::block(5, 100, 1, {}), base - 200);
+  archive.add(worker_block_id(6), wallet_index_fixture::block(6, 101, 1, {}), base - 100);
+  auto blocks = archived_blocks(archive, 100, 1000, base);
+  NewestState newest;
+  newest.set(900, 9000, wallet_index_fixture::shard_state({}));
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    archive.prune(1e9, 1, 0, nullptr, [&] {
+      // Between pruning's choice and its first admission, the applies start.
+      for (size_t i = 0; i < blocks.size(); ++i) {
+        ASSERT_TRUE(tos::validator::archive_lease_acquire(static_cast<uint32_t>(base + i)));
+      }
+    });
+    ASSERT_TRUE(!archive.has(worker_block_id(5)));
+    for (auto &b : blocks) {
+      ASSERT_TRUE(archive.has(b.id));
+    }
+    // Each apply hands its block over by id alone, then drops its lease.
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, td::Ref<vm::Cell>{}, blocks[i].id,
+                                                static_cast<uint32_t>(base + i));
+      tos::validator::archive_lease_release(static_cast<uint32_t>(base + i));
+    }
+    // Pruning again changes nothing the index still needs.
+    archive.prune(1e9, 1, 0);
+    ASSERT_TRUE(eventually([&] { return all_processed(db, blocks); }, std::chrono::seconds(60)));
+    ASSERT_TRUE(!backlog_stats(db).needs_rebuild);
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// Blocks not yet applied reference at or after the shard client's seqno, so
+// pruning never admits their packages, before any lease exists.
+TEST(WalletIndexWorker, PackagesOfBlocksNotYetAppliedAreNeverAdmitted) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-shard-client-bound");
+  td::rmrf(path).ignore();
+  const uint32_t base = 20000;
+  FakeArchive archive;
+  archive.add(worker_block_id(5), wallet_index_fixture::block(5, 100, 1, {}), base - 200);
+  archive.add(worker_block_id(6), wallet_index_fixture::block(6, 101, 1, {}), base - 100);
+  auto blocks = archived_blocks(archive, 80, 2000, base);
+  NewestState newest;
+  newest.set(900, 9000, wallet_index_fixture::shard_state({}));
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    // The shard client is at `base`: nothing is leased or retained yet.
+    archive.prune(1e9, 1, 0, nullptr, nullptr, base);
+    ASSERT_TRUE(!archive.has(worker_block_id(5)));
+    for (auto &b : blocks) {
+      ASSERT_TRUE(archive.has(b.id));
+    }
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      ASSERT_TRUE(tos::validator::archive_lease_acquire(static_cast<uint32_t>(base + i)));
+      tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, td::Ref<vm::Cell>{}, blocks[i].id,
+                                                static_cast<uint32_t>(base + i));
+      tos::validator::archive_lease_release(static_cast<uint32_t>(base + i));
+    }
+    ASSERT_TRUE(eventually([&] { return all_processed(db, blocks); }, std::chrono::seconds(60)));
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// Should a block ever be handed over whose package pruning already gave up
+// (an apply with a reference below the shard client, which no caller makes),
+// the index does not pretend: it records that it needs a rebuild.
+TEST(WalletIndexWorker, ABlockBelowWhatPruningGaveUpIsReportedNotSilentlyLost) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-below-given-up");
+  td::rmrf(path).ignore();
+  FakeArchive archive;
+  auto blocks = archived_blocks(archive, 4, 3000, 100);
   {
     auto &db = install_db(path);
     tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
     ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
-    archive.prune(base + 1000000.0, 1000.0, 0, [&] {
-      // The first package is admitted for deletion, not yet deleted.
-      tos_wallet_index::enqueue_wc0_index_block(in_hand.root, in_hand.state, in_hand.id, base);
-      tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, without_data.state, without_data.id, base + 1);
-    });
-    ASSERT_TRUE(!archive.has(in_hand.id));
-    // Indexed from what the hook held.
-    ASSERT_TRUE(eventually([&] {
-      return processed_count(db, in_hand) == in_hand.wallets.size() &&
-             !db.has_incomplete_block(in_hand.id).move_as_ok();
-    }));
-    // The other could not be kept anywhere: the index says so.
+    archive.prune(1e9, 1, 0);
+    ASSERT_TRUE(!archive.has(blocks[0].id));
+    tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, td::Ref<vm::Cell>{}, blocks[0].id, 100);
     ASSERT_TRUE(eventually([&] { return backlog_stats(db).needs_rebuild; }));
     ASSERT_TRUE(!is_complete(db));
   }
@@ -3777,7 +3891,8 @@ TEST(WalletIndexWorker, RetentionBookkeepingIsBoundedWhileRecordingStalls) {
     tos_wallet_index::resume_wc0_index_worker();
     ASSERT_TRUE(eventually([&] { return !db.has_incomplete_block(earlier.id).move_as_ok(); }));
     ASSERT_TRUE(tos::validator::archive_floor() <= base);
-    ASSERT_EQ(archive.prune(base + 1000000.0, 1000.0, 0), static_cast<size_t>(2));
+    // The two old packages and the earlier block's (indexed now) go.
+    ASSERT_EQ(archive.prune(base + 1000000.0, 1000.0, 0), static_cast<size_t>(3));
     for (auto &b : blocks) {
       ASSERT_TRUE(archive.has(b.id));
     }

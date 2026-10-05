@@ -88,9 +88,6 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
 
 // Blocks waiting to be indexed at most. Each holds its block and state cells.
 constexpr size_t kWc0IndexQueueCapacity = 256;
-// Blocks the queue keeps beyond its capacity when they cannot be read back
-// later (archive pruning already gave up their package).
-constexpr size_t kWc0IndexPinnedExtra = 64;
 // How long the worker waits for block data it asked the fetcher for. A block
 // whose data does not come in time stays marked for recovery.
 constexpr std::chrono::seconds kWc0IndexFetchTimeout{60};
@@ -174,13 +171,13 @@ bool wc0_index_degraded();
 // kWc0IndexQueueCapacity blocks behind, the block is not indexed now; it is
 // marked incomplete instead, and the startup recovery re-indexes marked
 // blocks.
-// `gen_utime` is the block's generation time (0 when unknown). Before the
-// block is handed over, archive pruning is told to keep it (an in-memory
-// floor, lowered atomically; pruning re-reads it before each deletion), and
-// it stays kept until its marker is durable, after which the marker keeps it
-// until its candidates are extracted.
+// `mc_seqno` is the masterchain reference seqno the archive files the block
+// under (0 when unknown). Before the block is handed over, archive pruning is
+// told to keep its package (an in-memory floor taken under the archive's
+// retention lock), and it stays kept until its marker is durable, after which
+// the marker keeps it until its candidates are extracted.
 void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
-                             uint32_t gen_utime = 0);
+                             uint32_t mc_seqno = 0);
 
 // Tests only: make the recorder's writes (marking blocks for recovery, and
 // recording that the index needs a rebuild) fail, as a failing disk would.
