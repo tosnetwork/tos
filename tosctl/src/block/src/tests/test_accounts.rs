@@ -702,3 +702,51 @@ fn test_non_usage_update() {
     account.update_storage_stat(DICT_HASH_MIN_CELLS).unwrap();
     assert_eq!(visited, usage_tree.build_visited_set());
 }
+
+#[test]
+fn storage_usage_limit_accounting() -> Result<()> {
+    let leaf = BuilderData::with_raw(vec![1], 8)?.into_cell()?;
+    let mut child = BuilderData::with_raw(vec![2], 8)?;
+    child.checked_append_reference(leaf)?;
+    let child = child.into_cell()?;
+    let mut root = BuilderData::with_raw(vec![3], 8)?;
+    root.checked_append_reference(child.clone())?;
+    root.checked_append_reference(child)?; // shared subtree must count only once
+    let root = root.into_cell()?;
+
+    let mut exact = StorageUsageCalc::with_limits(2, 16);
+    exact.append_cell(&root, false, &mut 0)?;
+    assert_eq!((exact.cells(), exact.bits()), (2, 16));
+    let mut unlimited = StorageUsageCalc::with_limits(0, 0);
+    unlimited.append_cell(&root, true, &mut 0)?;
+    assert_eq!((unlimited.cells(), unlimited.bits()), (3, 24));
+
+    // These are the rejection predicates used by external import and send-action
+    // processing. A truncated count equal to the limit must not pass them.
+    let mut cells = StorageUsageCalc::with_limits(1, 0);
+    cells.append_cell(&root, false, &mut 0)?;
+    assert!(cells.cells() > 1, "cell overflow must remain visible to the caller");
+    let stopped = (cells.cells(), cells.bits());
+    cells.append_cell(&root, true, &mut 0)?;
+    assert_eq!((cells.cells(), cells.bits()), stopped, "stop counting after the first excess");
+    let mut bits = StorageUsageCalc::with_limits(0, 15);
+    bits.append_cell(&root, false, &mut 0)?;
+    assert!(bits.bits() > 15, "bit overflow must remain visible to the caller");
+    let mut builder_bits = StorageUsageCalc::with_limits(0, 7);
+    builder_bits.append_builder(&BuilderData::with_raw(vec![4], 8)?, true, &mut 0)?;
+    assert!(builder_bits.bits() > 7, "builder overflow must remain visible");
+    Ok(())
+}
+
+#[test]
+fn storage_usage_limit_checked_overflow() -> Result<()> {
+    let mut cells = StorageUsageCalc::with_limits(0, 0);
+    cells.cells = u64::MAX;
+    assert!(cells.add_checked(1, 0).is_err());
+    assert_eq!((cells.cells(), cells.bits()), (u64::MAX, 0));
+    let mut bits = StorageUsageCalc::with_limits(0, 0);
+    bits.bits = u64::MAX;
+    assert!(bits.add_checked(1, 1).is_err());
+    assert_eq!((bits.cells(), bits.bits()), (0, u64::MAX));
+    Ok(())
+}
