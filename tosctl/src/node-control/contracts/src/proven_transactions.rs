@@ -15,6 +15,51 @@ pub struct ProvenTransaction {
 }
 
 impl ProvenTransaction {
+    /// Fetch backwards from a proven head until the exact inbound message is
+    /// found. The fetcher is untrusted: every returned cell is authenticated.
+    /// A bounded miss is an error, never proof that a request was not executed.
+    /// The caller must also bound transport time, response bytes and BOC decode
+    /// resources. This operation does not broadcast or approve any message.
+    pub async fn find_inbound<F, Fut>(
+        account: &ProvenAccountState,
+        expected: &Cell,
+        maximum: u32,
+        mut fetch: F,
+    ) -> anyhow::Result<Self>
+    where
+        F: FnMut(MsgAddressInt, u64, [u8; 32]) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<Cell>>,
+    {
+        anyhow::ensure!((1..=1024).contains(&maximum), "invalid receipt history budget");
+        let address = account
+            .account()
+            .get_addr()
+            .ok_or_else(|| anyhow::anyhow!("proven account has no address"))?
+            .clone();
+        let mut lt = account.evidence().account.last_trans_lt;
+        let mut hash = *account.last_transaction_hash();
+        let mut current: Option<Self> = None;
+        for _ in 0..maximum {
+            anyhow::ensure!(lt > 0 && hash != [0; 32], "receipt history ended without message");
+            let root = fetch(address.clone(), lt, hash).await?;
+            let next = match current.as_ref() {
+                Some(previous) => previous.previous(root)?,
+                None => Self::latest(account, root)?,
+            };
+            if next
+                .transaction
+                .in_msg_cell()
+                .is_some_and(|cell| cell.repr_hash() == expected.repr_hash())
+            {
+                return Ok(next);
+            }
+            lt = next.transaction.prev_trans_lt();
+            hash = *next.transaction.prev_trans_hash().as_array();
+            current = Some(next);
+        }
+        anyhow::bail!("receipt history budget exhausted without message")
+    }
+
     /// Bind the latest transaction to the ShardAccount hash/LT proven by the
     /// native verifier, and its post-state to the proven raw Account root.
     pub fn latest(account: &ProvenAccountState, root: Cell) -> anyhow::Result<Self> {

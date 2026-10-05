@@ -1118,3 +1118,20 @@ transaction proofs, application-specific payment amounts and state effects,
 POP challenge interpretation, live transport/fetch orchestration and production
 key custody remain open. This layer does not turn phase flags into proof of an
 application's intended outcome, nor clear default-credit admission.
+
+### Bounded authenticated receipt lookup
+
+`ProvenTransaction::find_inbound` starts from an opaque proven account head and
+passes the exact account, transaction LT and hash to an asynchronous fetcher.
+Every response is checked by `latest` or `previous` before matching the original
+inbound message hash. It retains only the current transaction and accepts a
+caller budget of 1..=1024 transactions. Exhaustion, history termination and
+transport errors are errors, never evidence of non-execution. Finding an
+included transaction remains separate from checking execution and delivery.
+
+The native recovery fixtures exercise two-step migration lookup, cursor binding,
+a one-step budget miss, a matching but unauthenticated transaction and invalid
+budgets. The receipt suite now has seven tests and sixteen semantic controls.
+The fetcher is an integration boundary, not a completed RPC transport: callers
+must enforce transport deadlines, response byte limits and BOC decoding bounds.
+Live network receipt lookup and application-specific outcome checks remain open.

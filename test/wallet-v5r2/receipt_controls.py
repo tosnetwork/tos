@@ -16,6 +16,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     source = SOURCE.read_text()
     guards = [
+        ("fetch_budget", "invalid receipt history budget", "invalid budget invoked transport"),
         ("hash", "transaction hash mismatch", "accepted receipt substitution hash"),
         ("lt", "transaction logical time mismatch", "accepted receipt substitution lt"),
         ("account", "transaction account mismatch", "accepted receipt substitution account"),
@@ -51,6 +52,7 @@ def main():
         assert start >= 0
         cases.append((label, source[:start] + source[end:], reason))
     for label, old, reason in [
+        ("fetch_limit", "for _ in 0..maximum", "accepted an over-budget history"),
         (
             "exit",
             "(compute.exit_code == 0 || compute.exit_code == 1)",
@@ -59,7 +61,7 @@ def main():
         ("skipped", "action.skipped_actions == 0", "accepted incomplete execution skipped"),
     ]:
         assert source.count(old) == 1
-        cases.append((label, source.replace(old, "true"), reason))
+        cases.append((label, source.replace(old, "for _ in 0..=maximum" if label == "fetch_limit" else "true"), reason))
 
     def run(label):
         result = subprocess.run(
@@ -84,7 +86,7 @@ def main():
     results = {}
     try:
         code, log = run("baseline")
-        assert code == 0 and "6 passed" in log, log[-3000:]
+        assert code == 0 and "7 passed" in log, log[-3000:]
         for label, mutated, reason in cases:
             SOURCE.write_text(mutated)
             code, log = run(label)
@@ -93,9 +95,9 @@ def main():
     finally:
         SOURCE.write_text(source)
         code, log = run("restored")
-        assert code == 0 and "6 passed" in log, log[-3000:]
+        assert code == 0 and "7 passed" in log, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("14 receipt/history/delivery guard controls detected; restored tests pass")
+    print("16 receipt/history/delivery guard controls detected; restored tests pass")
 
 
 if __name__ == "__main__":

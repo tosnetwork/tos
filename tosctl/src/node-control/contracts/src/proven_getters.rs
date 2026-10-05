@@ -1746,6 +1746,58 @@ mod transaction_receipt_tests {
         };
         (proof, root)
     }
+    #[tokio::test]
+    async fn bounded_history_fetch_authenticates_each_step() {
+        let (proof, head) = fixture("payment-wallet");
+        let (_, prior) = fixture("migrate-wallet");
+        let prior_tx = Transaction::construct_from_cell(prior.clone()).unwrap();
+        let expected = prior_tx.in_msg_cell().unwrap();
+        let mut calls = 0;
+        let receipt = ProvenTransaction::find_inbound(&proof, &expected, 2, |addr, lt, hash| {
+            calls += 1;
+            assert_eq!(&addr, proof.account().get_addr().unwrap());
+            let cell = if calls == 1 { head.clone() } else { prior.clone() };
+            let tx = Transaction::construct_from_cell(cell.clone()).unwrap();
+            assert_eq!(lt, tx.logical_time());
+            assert_eq!(&hash, cell.repr_hash().as_array());
+            std::future::ready(Ok(cell))
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(receipt.root().repr_hash(), prior.repr_hash());
+        // Finding a transaction is separate from interpreting execution success.
+        receipt.require_complete_execution().unwrap();
+        let mut calls = 0;
+        let error = ProvenTransaction::find_inbound(&proof, &expected, 1, |_, _, _| {
+            calls += 1;
+            std::future::ready(Ok(if calls == 1 { head.clone() } else { prior.clone() }))
+        })
+        .await
+        .err()
+        .expect("accepted an over-budget history");
+        assert_eq!(calls, 1);
+        assert!(error.to_string().contains("budget exhausted"));
+        let error = ProvenTransaction::find_inbound(&proof, &expected, 2, |_, _, _| {
+            std::future::ready(Ok(prior.clone()))
+        })
+        .await
+        .err()
+        .expect("accepted unauthenticated matching transaction");
+        assert!(error.to_string().contains("transaction hash mismatch"));
+        for maximum in [1025, 0] {
+            let error = ProvenTransaction::find_inbound(&proof, &expected, maximum, |_, _, _| {
+                panic!("invalid budget invoked transport");
+                #[allow(unreachable_code)]
+                std::future::ready(Ok(head.clone()))
+            })
+            .await
+            .err()
+            .expect("accepted invalid history budget");
+            assert!(error.to_string().contains("invalid receipt history budget"));
+        }
+    }
+
     fn sent_message(tx: &ProvenTransaction) -> Cell {
         let mut cells = vec![];
         tx.transaction()

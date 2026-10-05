@@ -1,0 +1,23 @@
+{
+  "source_base": "dd3a86ca5819711dac28d07155f933917c61d276",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/proven_transactions.rs": "bd311e0bf40eb919376ed30b8fa14e4a2d57a58ddba9cdc3ddf1fff681dd39ff",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "748bf79ce604078d6b8261b2e232a637a03c950ae435441c1544f1a792658ac3",
+    "test/wallet-v5r2/receipt_controls.py": "0701607e4218e55c92f525fe48f92e425b74b84f95dc3a38bf4bba9fd2854b9c"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-receipt-fetch",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "e541bc07d1d41207cc563edc72a2f38780bfff08e02ae03ede08cf50497c959e",
+  "results": {
+    "receipt_tests_passed": 7,
+    "semantic_controls_detected": 16,
+    "restored_exit": 0
+  },
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh && python3 test/wallet-v5r2/receipt_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-receipt-fetch/controls-final",
+  "limits": [
+    "Native execution fixtures have synthetic account proof wrappers; no live network claim.",
+    "Lookup uses an async fetch callback; RPC wiring and application outcome interpretation remain open.",
+    "Initial budget deletion control stopped on zero budget diagnostic before exercising unauthorized transport. Reordered to exercise excessive budget first; retained initial failed logs.",
+    "Default-credit admission, production custody, independent review and final-head CI remain release gates."
+  ]
+}
