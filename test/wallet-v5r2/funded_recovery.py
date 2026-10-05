@@ -3,8 +3,10 @@
 import json
 import os
 import subprocess
+from contextlib import ExitStack
 
 import native
+from cached_fee_session import CachedFeeSession
 from cells import Cell, from_boc
 from test_identity import chain
 from test_receiver_auth import request
@@ -12,7 +14,17 @@ from test_rescue_e2e import digest
 from test_state import state
 
 
-def run(
+def run(e, out, **kwargs):
+    original_time = getattr(e, "transaction_time", native.NOW)
+    try:
+        with ExitStack() as stack:
+            return _run(e, out, stack=stack, **kwargs)
+    finally:
+        e.lib.transaction_emulator_set_unixtime(e.ptr, original_time)
+        e.transaction_time = original_time
+
+
+def _run(
     e,
     out,
     *,
@@ -27,9 +39,40 @@ def run(
     fee_intent,
     sign_fee,
     work,
+    stack,
+    cache_driver=None,
+    retime_prepare=None,
+    retime_pop=None,
 ):
     out.mkdir(parents=True, exist_ok=True)
     results = {}
+    now = native.NOW
+    epoch0 = native.NOW - 2 * 3600 - 10
+    old_session = new_session = None
+
+    def advance(time):
+        nonlocal now
+        assert time >= now
+        now = time
+        assert e.lib.transaction_emulator_set_unixtime(e.ptr, now)
+        e.transaction_time = now
+
+    if cache_driver:
+        old_session = stack.enter_context(
+            CachedFeeSession(
+                cache_driver,
+                out / "sdk-old",
+                tree=old.tree,
+                key=old.key,
+                vault=old.vault_address,
+                epoch0=epoch0,
+                opened_time=now,
+            )
+        )
+        old_session.wait_required(now)
+        old_session.wait_required(epoch0 + 3 * 3600 - 1)
+        advance(epoch0 + 3 * 3600)
+        prepare = retime_prepare(now)
 
     def send(name, account, message, exit_code=0, outputs=0):
         result = e.send(account, message)
@@ -50,13 +93,26 @@ def run(
         return from_boc(result["shard_account"]), messages
 
     def auth(root, epoch, kind, body=None, signer=sign_old):
-        req = request(root=root, account=wallet.address, role=2, epoch=epoch, kind=kind, body=body)
+        req = request(
+            root=root,
+            account=wallet.address,
+            role=2,
+            epoch=epoch,
+            kind=kind,
+            body=body,
+            deadline=now + 600,
+        )
         return Cell().uint(0x53554233, 32).ref(req).ref(chain(signer(digest(req))))
 
     def old_hop(
         name, vault_state, module_state, leaf, payload, kind=1, value=5_000_000_000, outputs=1
     ):
-        external = sign_fee(fee_intent(kind=kind, leaf=leaf, payload=payload, value=value), leaf)
+        intent = fee_intent(kind=kind, leaf=leaf, payload=payload, value=value, deadline=now + 600)
+        if old_session:
+            signature = old_session.signature(intent, now, leaf)
+            external = native.external(old.vault_address, Cell().ref(intent).ref(chain(signature)))
+        else:
+            external = sign_fee(intent, leaf)
         vault_state, messages = send(name + "-fee", vault_state, external, outputs=1)
         prior = native.account_data(module_state)
         module_state, messages = send(name + "-module", module_state, messages[0], outputs=outputs)
@@ -67,7 +123,7 @@ def run(
     # Only SLH and LMS are used throughout this chain. No synthetic wallet
     # state transitions or balance top-ups are inserted between transactions.
     v0, m0, w = old.vault, old.module, wallet.initial
-    v0, m0, messages = old_hop("lock", v0, m0, 8, auth(old.root, 1, 3))
+    v0, m0, messages = old_hop("lock", v0, m0, 12 if cache_driver else 8, auth(old.root, 1, 3))
     lock_relay = messages[0]
     w, _ = send("lock-wallet", w, lock_relay)
     expected = state(
@@ -77,7 +133,14 @@ def run(
     send("lock-replay", w, lock_relay, exit_code=1803)
 
     v0, m0, messages = old_hop(
-        "prepare", v0, m0, 9, prepare, kind=3, value=50_000_000_000, outputs=2
+        "prepare",
+        v0,
+        m0,
+        13 if cache_driver else 9,
+        prepare,
+        kind=3,
+        value=50_000_000_000,
+        outputs=2,
     )
     deployed = []
     for name, message, data in zip(("module", "vault"), messages, (new.data, new.vault_data)):
@@ -87,6 +150,33 @@ def run(
         assert actual.hash == data.hash and balance > 0
         deployed.append(account)
     m1, v1 = deployed
+    if cache_driver:
+        new_session = stack.enter_context(
+            CachedFeeSession(
+                cache_driver,
+                out / "sdk-new",
+                tree=new.tree,
+                key=new.key,
+                vault=new.vault_address,
+                epoch0=epoch0,
+                opened_time=now,
+                successor=True,
+            )
+        )
+        new_session.wait_required(now)
+        new_session.wait_required(epoch0 + 4 * 3600 - 1)
+        advance(epoch0 + 4 * 3600)
+        intent = fee_intent(
+            kind=2,
+            target=new.vault_address,
+            config_hash=new.header,
+            leaf=16,
+            deadline=now + 600,
+            value=5_000_000_000,
+            payload=retime_pop(now),
+        )
+        signature = new_session.signature(intent, now, 16)
+        pop_external = native.external(new.vault_address, Cell().ref(intent).ref(chain(signature)))
     v1, messages = send("successor-pop-fee", v1, pop_external, outputs=1)
     before = native.account_data(m1)
     m1, _ = send("successor-pop-module", m1, messages[0])
@@ -96,7 +186,9 @@ def run(
     migration = (
         Cell().uint(0x4D494752, 32).ref(new.witness).ref(new.metadata).ref(new.vault_witness)
     )
-    v0, m0, messages = old_hop("migrate", v0, m0, 10, auth(old.root, 2, 4, migration))
+    v0, m0, messages = old_hop(
+        "migrate", v0, m0, 16 if cache_driver else 10, auth(old.root, 2, 4, migration)
+    )
     migration_relay = messages[0]
     w, _ = send("migrate-wallet", w, migration_relay)
     expected = state(
@@ -114,29 +206,36 @@ def run(
         kind=1,
         target=new.vault_address,
         config_hash=new.header,
-        leaf=9,
+        leaf=17 if cache_driver else 9,
+        deadline=now + 600,
         value=5_000_000_000,
         payload=payload,
     )
-    msg, sig = work / "recovery-fee-message", work / "recovery-fee-signature"
-    msg.write_bytes(intent.hash)
-    subprocess.run(
-        [
-            os.environ["LMS_TOOL"],
-            "sign",
-            "77" * 32,
-            "88" * 16,
-            "20",
-            str(new.tree),
-            "9",
-            str(msg),
-            "66" * 32,
-            str(sig),
-        ],
-        check=True,
-        capture_output=True,
-    )
-    external = native.external(new.vault_address, Cell().ref(intent).ref(chain(sig.read_bytes())))
+    if new_session:
+        signature = new_session.signature(intent, now, 17)
+        external = native.external(new.vault_address, Cell().ref(intent).ref(chain(signature)))
+    else:
+        msg, sig = work / "recovery-fee-message", work / "recovery-fee-signature"
+        msg.write_bytes(intent.hash)
+        subprocess.run(
+            [
+                os.environ["LMS_TOOL"],
+                "sign",
+                "77" * 32,
+                "88" * 16,
+                "20",
+                str(new.tree),
+                "9",
+                str(msg),
+                "66" * 32,
+                str(sig),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        external = native.external(
+            new.vault_address, Cell().ref(intent).ref(chain(sig.read_bytes()))
+        )
     v1, messages = send("payment-fee", v1, external, outputs=1)
     before = native.account_data(m1)
     m1, messages = send("payment-module", m1, messages[0], outputs=1)
@@ -156,11 +255,13 @@ def run(
     replay = e.send(v1, external)
     (out / "fee-replay.json").write_text(json.dumps(replay, indent=2) + "\n")
     assert not replay["success"] and replay.get("vm_exit_code") == 2004
-    for account, leaf in ((v0, 11), (v1, 10)):
+    for account, leaf in ((v0, 17 if cache_driver else 11), (v1, 18 if cache_driver else 10)):
         data = native.account_data(account)[0].slice()
         assert data.uint(8) == 3 and data.uint(32) == leaf
     (out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     return {
+        "sdk_cached_signatures": 5 if cache_driver else 0,
+        "final_chain_time": now,
         "transactions": len(results) + 1,
         "recipient_received": True,
         "primary_signing_used": False,

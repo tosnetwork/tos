@@ -4,7 +4,12 @@
 use chain_block::{BuilderData, Cell};
 use contracts::{lms_fee_journal::FeeJournal, lms_fee_schedule::FeeRoute};
 use serde::Deserialize;
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{
+    env, fs,
+    io::{BufRead, Write},
+    path::PathBuf,
+    process::Command,
+};
 use tos_vm::{
     executor::{Engine, gas::gas_state::Gas},
     stack::{Stack, StackItem, integer::IntegerData, savelist::SaveList},
@@ -23,6 +28,8 @@ struct Input {
     opened_time: u32,
     proven_time: u32,
     leaf: u32,
+    #[serde(default)]
+    successor: bool,
 }
 
 fn chain(bytes: &[u8]) -> anyhow::Result<Cell> {
@@ -61,13 +68,10 @@ fn verify(leaf: u32, digest: &[u8; 32], signature: &[u8], key: &[u8]) -> anyhow:
     Ok(vm.stack().get(0)?.as_integer_value(-1..=0)? == -1)
 }
 
-fn main() -> anyhow::Result<()> {
-    let args: Vec<_> = env::args().collect();
-    anyhow::ensure!(
-        args.len() == 3,
-        "usage: lms_fee_cache_fixture input.json output.json (PUBLIC TEST KEY ONLY)"
-    );
-    let input: Input = serde_json::from_slice(&fs::read(&args[1])?)?;
+fn execute(
+    input: Input,
+    session: &mut Option<(FeeRoute, Vec<u8>, FeeJournal)>,
+) -> anyhow::Result<serde_json::Value> {
     let digest: [u8; 32] =
         hex::decode(&input.digest)?.try_into().map_err(|_| anyhow::anyhow!("digest width"))?;
     let vault: [u8; 32] =
@@ -76,9 +80,22 @@ fn main() -> anyhow::Result<()> {
     let mut network = [0; 32];
     network[31] = 123;
     let mut tree_id = [0; 32];
-    tree_id[30..].copy_from_slice(&456u16.to_be_bytes());
+    tree_id[30..].copy_from_slice(&(if input.successor { 457u16 } else { 456u16 }).to_be_bytes());
     let route = FeeRoute { global_id: 42, network, vault, tree_id, epoch0: input.epoch0 };
-    let mut journal = FeeJournal::open(&input.directory, route, input.opened_time)?;
+    if session.is_none() {
+        *session = Some((
+            route,
+            public_key.clone(),
+            FeeJournal::open(&input.directory, route, input.opened_time)?,
+        ));
+    }
+    let (bound_route, bound_key, journal) =
+        session.as_mut().ok_or_else(|| anyhow::anyhow!("missing session"))?;
+    anyhow::ensure!(*bound_route == route && *bound_key == public_key, "session route/key changed");
+    if input.mode == "preview" {
+        let plan = journal.preview(input.proven_time, 0)?;
+        return Ok(serde_json::json!({"leaf": plan.leaf, "backend_calls": 0}));
+    }
     let calls = std::cell::Cell::new(0u32);
     let result = match input.mode.as_str() {
         "sign" | "corrupt" => journal.sign_once(
@@ -99,8 +116,8 @@ fn main() -> anyhow::Result<()> {
                 fs::write(&msg, message)?;
                 let output = Command::new(&input.backend)
                     .arg("sign")
-                    .arg("44".repeat(32))
-                    .arg("55".repeat(16))
+                    .arg((if input.successor { "77" } else { "44" }).repeat(32))
+                    .arg((if input.successor { "88" } else { "55" }).repeat(16))
                     .arg("20")
                     .arg(&input.tree)
                     .arg(leaf.to_string())
@@ -142,6 +159,31 @@ fn main() -> anyhow::Result<()> {
         );
         serde_json::json!({"signature": hex::encode(signature), "backend_calls": calls.get(), "verified": true})
     };
-    fs::write(&args[2], serde_json::to_vec_pretty(&report)?)?;
+    Ok(report)
+}
+
+fn main() -> anyhow::Result<()> {
+    let args: Vec<_> = env::args().collect();
+    let mut session = None;
+    if args.len() == 2 && args[1] == "--serve-public-fixture" {
+        let stdin = std::io::stdin();
+        let mut stdout = std::io::stdout().lock();
+        for line in stdin.lock().lines() {
+            let request: Input = serde_json::from_str(&line?)?;
+            let response = match execute(request, &mut session) {
+                Ok(result) => result,
+                Err(error) => serde_json::json!({"error": format!("{error:#}")}),
+            };
+            writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
+            stdout.flush()?;
+        }
+        return Ok(());
+    }
+    anyhow::ensure!(
+        args.len() == 3,
+        "usage: lms_fee_cache_fixture input.json output.json (PUBLIC TEST KEY ONLY)"
+    );
+    let input: Input = serde_json::from_slice(&fs::read(&args[1])?)?;
+    fs::write(&args[2], serde_json::to_vec_pretty(&execute(input, &mut session)?)?)?;
     Ok(())
 }

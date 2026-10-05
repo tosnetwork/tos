@@ -82,7 +82,7 @@ def main():
                     "\t".join(
                         [
                             name,
-                            str(native.NOW),
+                            str(getattr(self, "transaction_time", native.NOW)),
                             str(self.lt),
                             shard.refs[0].boc().hex(),
                             message.boc().hex(),

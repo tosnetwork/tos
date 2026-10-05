@@ -741,10 +741,20 @@ def main():
                 if options.recovery:
                     from funded_recovery import run as run_recovery
 
+                    def retime(envelope, now, sign):
+                        original = envelope.refs[0]
+                        fresh = Cell(bits=original.bits[:-32], refs=original.refs).uint(
+                            now + 600, 32
+                        )
+                        return Cell(bits=envelope.bits).ref(fresh).ref(sign(fresh))
+
                     recovery = run_recovery(
                         e,
                         out / "recovery",
                         old=SimpleNamespace(
+                            key=pub,
+                            tree=tree,
+                            vault_address=va,
                             vault=initial,
                             module=native.active_account((0, root), module, md, balance=10**12),
                             root=root,
@@ -761,6 +771,7 @@ def main():
                             vault_address=next_address,
                             header=next_header,
                             tree=successor_tree,
+                            key=successor_key,
                         ),
                         wallet=SimpleNamespace(
                             address=wa,
@@ -779,6 +790,13 @@ def main():
                         fee_intent=make_intent,
                         sign_fee=sign_fee,
                         work=work,
+                        cache_driver=options.cache_driver,
+                        retime_prepare=lambda now: retime(
+                            submit, now, lambda req: preparation_signed(signer, req)
+                        ),
+                        retime_pop=lambda now: retime(
+                            next_body, now, lambda req: pop_signed(next_signer, req, 2)
+                        ),
                     )
                     (out / "recovery-summary.json").write_text(
                         json.dumps(recovery, indent=2) + "\n"

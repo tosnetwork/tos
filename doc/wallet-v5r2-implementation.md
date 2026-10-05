@@ -708,11 +708,11 @@ refused; rejected output burns the reservation and leaves no usable cache.
 initial positive external fee request in AUTH, primary POP, rescue POP and
 preparation runs. The actual native transactions verify the LMS signature, and
 the AUTH route reaches an executed recipient account. The preparation/recovery
-suite retains its full linked wallet handoff. Across all four runs, 136 native
-and Rust transactions match. **Only the four initial positive fee requests use
-the SDK cache**; adversarial fixtures and the additional continuous-recovery
-requests still use their explicit public test signer. This is not a claim that
-the complete recovery client has been integrated with production custody.
+suite retains its full linked wallet handoff. The initial four-suite evidence
+records 136 matching native/Rust transactions, with only four initial requests
+using the SDK cache. The subsequent session integration below extends cache
+coverage to all five linked recovery fee requests. Adversarial fixtures retain
+explicit public test signing; production custody is not integrated.
 
 Deleting the example's verification-result check makes a cached signature pass
 under a wrong public key; the fixture detects that semantic failure. Restoring
@@ -725,3 +725,29 @@ fixture times. It must not be used for live funds. A production signer backend,
 key isolation, proof-checked current chain state, device revocation and client
 integration remain unimplemented. Transaction runs still use diagnostic credit
 20,000; default-credit admission and final-head CI remain release gates.
+
+### Persistent signing sessions across recovery slots
+
+`funded_recovery.py` now uses two persistent SDK fixture sessions when
+`--cache-driver` is present. V0 opens at fixture time 1780000000 and refuses
+preview both immediately and one second before the next slot. At 1780003590,
+lock and preparation reserve leaves 12 and 13. M1/V1 are actually deployed;
+V1 opens its journal at deployment time and likewise refuses signing until
+1780007190. Fresh POP uses V1 leaf 16, migration uses V0 leaf 16, and the
+recipient payment uses V1 leaf 17. Expired V0 leaves 14 and 15 are skipped.
+Each of the five signatures is verified, cached, and exported again with an
+unavailable signing backend; the exported bytes must match exactly.
+
+AUTH, preparation and POP deadlines are rebuilt and signed at the advanced
+chain time. The parity recorder exports that same time per transaction. The
+linked chain remains monotonic; the emulator time is restored only when leaving
+this independent fixture branch. Final on-chain next-leaf values must be 17
+for V0 and 18 for V1, with the existing wallet state, replay rejection, prior
+module balance and actual recipient-account assertions preserved.
+
+The preparation suite has 62 matching native/Rust transactions, including the
+20-transaction linked recovery. This is controlled-time public-key fixture
+evidence, not a verified chain-proof client or a production signer: backend
+keys are public, chain time is supplied by the harness, and chain next-leaf
+inputs remain fixture assumptions. The default 10,000 gas release failure is
+unchanged. Evidence: `test/wallet-v5r2/session-chain-20261006.json`.
