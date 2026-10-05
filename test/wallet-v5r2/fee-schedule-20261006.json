@@ -1,0 +1,71 @@
+{
+  "base_commit": "aff849be581495d422567064d11d3b3183525a6d",
+  "scope": "Read-only Rust SDK fee reservation planning; not signing, durable storage, proven-time verification, device exclusion or production custody.",
+  "tests": {
+    "cargo_contracts_filtered": {
+      "passed": 4,
+      "failed": 0,
+      "exit": 0
+    },
+    "all_h20_leaves": 1048576,
+    "deletion_controls": {
+      "production": {
+        "exit": 0,
+        "semantic_witness": null
+      },
+      "local_reservation": {
+        "exit": 101,
+        "semantic_witness": "exported_but_unbroadcast_and_reorged_leaves_stay_burned"
+      },
+      "restore_wait": {
+        "exit": 101,
+        "semantic_witness": "restore_waits_even_at_exact_boundary_and_ignores_old_counter"
+      },
+      "calendar_burn": {
+        "exit": 101,
+        "semantic_witness": "exported_but_unbroadcast_and_reorged_leaves_stay_burned"
+      },
+      "restored": {
+        "exit": 0,
+        "semantic_witness": null
+      }
+    },
+    "format": "passed",
+    "workflow_supply_chain": "passed"
+  },
+  "sources": [
+    {
+      "path": "tosctl/src/node-control/contracts/src/lms_fee_schedule.rs",
+      "bytes": 9440,
+      "sha256": "a17e1e230aee1ad9ef895980593af5073fcadb56909f0c6172a922164ea817ee"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/lib.rs",
+      "bytes": 5108,
+      "sha256": "db7b887e0661074ca0ce73fb44401d73a674cf011103db487a97f998b4363ed7"
+    },
+    {
+      "path": "test/wallet-v5r2/fee_schedule_controls.py",
+      "bytes": 2694,
+      "sha256": "d6c995931599a9e3325047de0f537328ccfbff26ec6d342f57904da823483534"
+    },
+    {
+      "path": ".github/workflows/rescue-context.yml",
+      "bytes": 7440,
+      "sha256": "244302bbd4fcfd3c72cea2d0b7c253a0f87e4dc88a920a20dd5021258bb102d6"
+    }
+  ],
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_schedule -- --nocapture",
+    "python3 test/wallet-v5r2/fee_schedule_controls.py --output <artifacts>"
+  ],
+  "raw_artifacts": {
+    "root": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-schedule",
+    "manifest": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-schedule/MANIFEST.json",
+      "bytes": 3099,
+      "sha256": "7cd079add3747f67be8afabed9529f0e12db2230c4dae3ca9a793988af7b6329"
+    },
+    "retention": "Through review and at least 2027-01-06. Local artifacts require host access; CI replays the controls separately."
+  }
+}

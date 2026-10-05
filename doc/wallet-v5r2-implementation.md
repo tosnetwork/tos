@@ -583,3 +583,36 @@ runner's private compiler directory and asserts that production source remains
 unchanged. These results narrow the optimization search; they do not prove that
 all safe compiler/contract optimizations are exhausted. The retained index is
 `test/wallet-v5r2/admission-helper-experiments-20261006.json`.
+
+
+## Client fee-leaf scheduling boundary
+
+The Rust SDK `contracts::lms_fee_schedule` provides read-only reservation planning
+for H20, four leaves per 3,600-second slot. It binds continuity state to network,
+global id, vault, tree id and epoch. Given proof-checked chain time/counter and
+intact protected local state, the proposal takes the highest of the current slot
+start, accepted chain counter and local reservation high water. It never selects
+a previous-slot or future-slot leaf. Lower chain counters cannot reclaim exported
+but unbroadcast or forked-out reservations; stale proven times are refused.
+
+When continuity is lost, an opaque restore barrier fixes the next slot boundary
+from the observed proven time, even when restoration occurs exactly at a boundary.
+The recovered writer must observe that boundary on chain before planning a leaf.
+Calendar exhaustion, counter overflow and route changes fail closed. All arithmetic
+on slot boundaries and counters uses checked operations.
+
+Four crate tests cover all 1,048,576 leaf positions plus restore, stale-time,
+identity, exhaustion and overflow boundaries. Three independent source deletions
+remove local reservation protection, restore waiting and expired-slot burning;
+all fail semantic assertions, and restored source passes. `contract-sandboxes`
+CI covers actual crate integration, while rescue-context CI runs the source's
+standalone tests and deletion controls on both architectures. Local evidence is
+`test/wallet-v5r2/fee-schedule-20261006.json`.
+
+A `ReservationPlan` is not permission to sign. The caller still needs a finalized
+proof verifier, atomic durable reservation before signature generation/export,
+a protected high water, identical-byte retry caching and exclusive device custody.
+A restored snapshot cannot be supplied as `IntactState`; a restore must revoke the
+old writer. This module has no signing API and is not yet connected to a production
+fee signer, wallet creation, CLI or mobile restore. Those integrations remain
+required before release; a filesystem mutex alone cannot prove rollback safety.

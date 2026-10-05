@@ -32,6 +32,7 @@ pub mod dispute;
 pub mod dns;
 pub mod elector;
 pub mod liquid_controller;
+pub mod lms_fee_schedule;
 pub mod native_registry;
 pub mod nominator;
 pub mod nominator_pool;

@@ -65,6 +65,9 @@ jobs:
           sh test/rescue-fee-gate/tools/build.sh build-signers
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
             --example fee-native-cost --example suite-parity --example pq-tx-parity
+      - name: Fee signer scheduling boundaries and deletion controls
+        run: |
+          python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule
       - name: PQ-only complete receiver delivery
         run: |
           python -m pip install cryptography==46.0.4
