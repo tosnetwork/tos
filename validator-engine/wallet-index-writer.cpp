@@ -800,6 +800,120 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
 
 namespace {
 
+// After a sweep that left legacy rows undecided, wait this long before the
+// next one, so rows that cannot be verified here do not keep the worker busy.
+constexpr auto kLegacySweepPause = std::chrono::seconds(30);
+std::mutex g_legacy_mutex;
+std::chrono::steady_clock::time_point g_legacy_not_before{};  // guarded by g_legacy_mutex
+
+}  // namespace
+
+bool reconstruct_legacy_jetton_rows(size_t row_limit) {
+  auto* db = wallet_index_db();
+  if (db == nullptr) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> guard(g_legacy_mutex);
+    if (std::chrono::steady_clock::now() < g_legacy_not_before) {
+      return false;
+    }
+  }
+  auto context_r = current_context();
+  if (!context_r) {
+    // Nothing to verify against yet: the rows stay unpublished.
+    return false;
+  }
+  auto context = context_r.value();
+  std::lock_guard<std::mutex> guard(db->write_mutex());
+  auto pending = db->legacy_jettons_pending();
+  if (pending.is_error() || !pending.ok()) {
+    return false;
+  }
+  if (!db->begin_batch().is_ok()) {
+    return false;
+  }
+  tos::ShardIdFull shard{context.block_id.id.workchain, context.block_id.id.shard};
+  StateAccounts state{context.state_root, shard};
+  uint64_t undecided = 0;
+  size_t decided = 0;
+  bool published = false;
+  bool reached_end = false;
+  auto pass = [&]() -> td::Status {
+    TRY_RESULT(rows, db->legacy_jetton_rows(row_limit));
+    reached_end = rows.reached_end;
+    WalletIndexVerificationBudget budget;
+    size_t remaining = rows.rows.size();
+    for (const auto& row : rows.rows) {
+      budget.begin_candidate(remaining--);
+      if (!row.has_wallet) {
+        // An unreadable row names no wallet to verify.
+        ++undecided;
+        continue;
+      }
+      TRY_RESULT(known, db->jetton_wallet_state(row.wallet));
+      WalletIndexDb::JettonVerdict verdict{false, HashKey::zero(), HashKey::zero(), {}};
+      uint64_t lt = context.end_lt;
+      if (known && known.value().lt >= context.end_lt) {
+        // A block at least as new as this state already decided the wallet;
+        // its verified record decides the row.
+        lt = known.value().lt;
+        if (known.value().present) {
+          verdict = {true, known.value().owner, known.value().master, make_jetton_value(row.wallet, lt)};
+        }
+      } else if (row.lt > context.end_lt || !state.ok()) {
+        // This state is older than the row, or unusable: it cannot say.
+        ++undecided;
+        continue;
+      } else {
+        td::Bits256 owner = td::Bits256::zero();
+        td::Bits256 master = td::Bits256::zero();
+        auto checked = verify_jetton_wallet(state, row.wallet, owner, master, budget);
+        if (checked == JettonVerification::Indeterminate || checked == JettonVerification::OtherShard) {
+          ++undecided;
+          continue;
+        }
+        if (checked == JettonVerification::Verified) {
+          verdict = {true, owner, master, make_jetton_value(row.wallet, lt)};
+        }
+      }
+      TRY_RESULT(done, db->decide_legacy_jetton(row, verdict, lt));
+      if (done) {
+        ++decided;
+      } else {
+        ++undecided;
+      }
+    }
+    TRY_RESULT(finished, db->finish_legacy_jetton_pass(rows, undecided));
+    published = finished;
+    return td::Status::OK();
+  };
+  td::Status status;
+  try {
+    status = pass();
+  } catch (...) {
+    status = td::Status::Error("legacy reconstruction threw");
+  }
+  if (status.is_error()) {
+    LOG(WARNING) << "wc0-index: legacy jetton reconstruction pass failed: " << status.message();
+    db->abort_batch();
+    return false;
+  }
+  auto committed = db->commit_batch();
+  if (committed.is_error()) {
+    LOG(WARNING) << "wc0-index: legacy jetton reconstruction commit failed: " << committed.message();
+    return false;
+  }
+  if (reached_end && !published) {
+    std::lock_guard<std::mutex> legacy_guard(g_legacy_mutex);
+    g_legacy_not_before = std::chrono::steady_clock::now() + kLegacySweepPause;
+    return decided > 0;
+  }
+  return true;
+}
+
+namespace {
+
 // One bounded backlog pass against `context`'s state: candidates nominated no
 // later than that state are verified, as a new block of the shard would.
 // Returns whether any candidate was taken.
@@ -1099,6 +1213,9 @@ bool index_idle_step() {
       progress = drain_backlog_once(db, context.value());
     }
   }
+  if (context && reconstruct_legacy_jetton_rows(kLegacyJettonRowsPerPass)) {
+    progress = true;
+  }
   if (resuming_held_off()) {
     return progress;
   }
@@ -1235,6 +1352,10 @@ bool start_wc0_index_worker(bool paused) {
   {
     std::lock_guard<std::mutex> resume_guard(g_resume_mutex);
     g_resume_not_before = {};
+  }
+  {
+    std::lock_guard<std::mutex> legacy_guard(g_legacy_mutex);
+    g_legacy_not_before = {};
   }
   g_index_queue = std::make_unique<IndexQueue>(kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block,
                                                persist_index_degraded, 0, paused, index_idle_step);

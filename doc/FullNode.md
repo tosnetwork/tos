@@ -91,6 +91,14 @@ truth.
   attempt is `parked`: it is kept and verified again when a block nominates
   it. Any of these keeps `"complete": false`.
 
+- **Jetton rows from older index versions are not served until verified.**
+  An index upgraded from a version that kept no pair record per jetton row
+  may hold owner/master mappings that have since changed. Those rows are left
+  out of `getAccountJettons` (`"legacy_unverified": true`) while the indexing
+  worker verifies each row's wallet against chain state, removes the stale
+  ones, and records the rest; the verified rows are published together once
+  none is left undecided. A row that cannot be verified on this node keeps
+  them all unpublished and the index incomplete.
 - **Stopping the node marks the index as incomplete.** Only an exit that
   happens after block application has stopped records the indexing run as
   finished. `systemctl stop` (SIGTERM), a crash, an out-of-memory kill and a

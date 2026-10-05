@@ -65,10 +65,15 @@ constexpr size_t kEventPruneDrainPerBlock = 256;
 // wc0-index on-disk schema version, bumped when a key layout changes so open()
 // can migrate. Version 1 introduces the event-age index (0x14) and global
 // retention; a database with no version key predates this and is treated as
-// version 0. Version 2 introduces the jetton wallet record (0x17); jetton rows
-// written before it have no record to retract them by, so a database upgraded
-// from an earlier version with any jetton row is marked as needing a rebuild.
-constexpr uint32_t kWalletIndexSchemaVersion = 2;
+// version 0. Version 2 introduces the jetton wallet record (0x17). Version 3
+// suppresses jetton rows written without a pair record (0x18): a database
+// upgraded from an earlier version with any jetton row records that its
+// legacy jetton rows await reconstruction, and no RPC serves them until the
+// reconstruction has verified each against chain state and published the
+// result (see reconstruct_legacy_jetton_rows).
+constexpr uint32_t kWalletIndexSchemaVersion = 3;
+// Legacy jetton rows examined per reconstruction pass.
+constexpr size_t kLegacyJettonRowsPerPass = 256;
 
 // Bound the TVM verification work a single block can demand: token candidates
 // verified per block, the block's own and deferred ones together. Candidates
@@ -147,6 +152,9 @@ struct TokenBacklogStats {
   // Candidates whose verification stayed indeterminate through every
   // attempt. Their identities are kept; a later nomination retries them.
   uint64_t parked = 0;
+  // Jetton rows from before pair records existed are not yet all verified
+  // and published; until they are, they are left out of every answer.
+  bool legacy_unverified = false;
 };
 
 // Completeness of the token index as RPC answers report it: a JSON object
@@ -155,12 +163,13 @@ struct TokenBacklogStats {
 // verified; only rebuilding the index clears lost and unverifiable.
 inline std::string format_token_index_state(const TokenBacklogStats& stats) {
   bool complete = stats.entries == 0 && stats.lost == 0 && stats.unverifiable == 0 && !stats.unfinished_block &&
-                  !stats.needs_rebuild && stats.parked == 0;
+                  !stats.needs_rebuild && stats.parked == 0 && !stats.legacy_unverified;
   return "{\"complete\":" + std::string(complete ? "true" : "false") + ",\"pending\":" + std::to_string(stats.entries) +
          ",\"lost\":" + std::to_string(stats.lost) + ",\"unverifiable\":" + std::to_string(stats.unverifiable) +
          ",\"unfinished_block\":" + std::string(stats.unfinished_block ? "true" : "false") +
          ",\"needs_rebuild\":" + std::string(stats.needs_rebuild ? "true" : "false") +
-         ",\"parked\":" + std::to_string(stats.parked) + "}";
+         ",\"parked\":" + std::to_string(stats.parked) +
+         ",\"legacy_unverified\":" + std::string(stats.legacy_unverified ? "true" : "false") + "}";
 }
 
 // What became of one scheduled candidate's verification.
@@ -185,8 +194,9 @@ class WalletIndexDb {
   // --- Jetton ownership: 0x10 + owner(32) + master(32) -> value cell ---
   td::Status put_jetton(const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value);
   td::Status erase_jetton(const HashKey& owner, const HashKey& master);
-  // Walk at most `limit` jetton masters held by `owner`. Callback receives
-  // (master, value cell).
+  // Walk at most `limit` jetton rows of `owner`, as stored: legacy and
+  // unpublished rows included. Answers use for_each_current_jetton instead.
+  // Callback receives (master, value cell).
   td::Status for_each_jetton(
       const HashKey& owner, size_t limit,
       std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
@@ -211,12 +221,73 @@ class WalletIndexDb {
   // pair's record is not from a later block, and a release only while the
   // pair still names this wallet. Call it only with a definite verdict; a
   // verification that could not complete must leave the record as it is.
-  td::Status apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt);
+  // `reconstructed`: the verdict comes from reconstructing legacy rows; a
+  // pair it claims that had no pair record stays out of answers until the
+  // reconstruction is published.
+  td::Status apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt,
+                                  bool reconstructed = false);
   // Returns true and fills `owner` and `master` if the wallet's last verdict
   // found it present.
   td::Result<bool> get_jetton_wallet(const HashKey& wallet, HashKey& owner, HashKey& master);
 
-  // --- Jetton pair record: 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8) ---
+  // The wallet's last recorded verdict, as the open batch leaves it.
+  struct JettonWalletState {
+    bool present = false;
+    HashKey owner = HashKey::zero();
+    HashKey master = HashKey::zero();
+    uint64_t lt = 0;
+  };
+  td::Result<td::optional<JettonWalletState>> jetton_wallet_state(const HashKey& wallet);
+
+  // Walk at most `limit` jetton masters held by `owner` that are current: a
+  // row whose pair record names it, and, for a row reconstructed from legacy
+  // data, only once the reconstruction is published. Rows written before pair
+  // records existed are never returned. Callback receives (master, value).
+  td::Status for_each_current_jetton(const HashKey& owner, size_t limit,
+                                     std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
+
+  // --- Legacy jetton reconstruction ---
+  // A jetton row (0x10) with no pair record was written by a binary that kept
+  // no reverse record for it: its owner/master mapping may be stale and
+  // nothing could retract it. Reconstruction verifies each such row's wallet
+  // against chain state and records the verdict (wallet and pair records),
+  // pass by pass from a durable cursor; reconstructed pairs stay out of
+  // answers until a full sweep finds no legacy row left, which publishes
+  // them all at once. A row that cannot be verified (its wallet unreadable,
+  // or its verification needs a state this node does not have) keeps the
+  // reconstruction unpublished and the index explicitly incomplete.
+  //   meta 0x0C -> 1 while reconstruction is pending
+  //   meta 0x0D -> the last 0x10 key examined in the current sweep
+  //   meta 0x0E -> legacy rows left undecided earlier in the current sweep
+  struct LegacyJettonRow {
+    HashKey owner;
+    HashKey master;
+    bool has_wallet = false;  // false when the row's value cannot be read
+    HashKey wallet = HashKey::zero();
+    uint64_t lt = 0;
+  };
+  struct LegacyJettonRows {
+    std::vector<LegacyJettonRow> rows;
+    std::string last_key;      // last 0x10 key examined
+    bool reached_end = false;  // the sweep has examined every row
+  };
+  td::Result<bool> legacy_jettons_pending();
+  // The legacy rows among the next `limit` jetton rows after the cursor
+  // (committed state). Requires an open batch.
+  td::Result<LegacyJettonRows> legacy_jetton_rows(size_t limit);
+  // Decide one legacy row by a verdict on its wallet as of `lt` (into the
+  // open batch): the row is kept, with a pair record, when the verdict names
+  // its owner and master, and removed otherwise. True when the row is
+  // decided; false when a later decision already covers its pair and wallet
+  // in a way that leaves it undecided.
+  td::Result<bool> decide_legacy_jetton(const LegacyJettonRow& row, const JettonVerdict& verdict, uint64_t lt);
+  // Record the pass (into the open batch): move the cursor, and at the end
+  // of a sweep either publish (no legacy row was left undecided) or start a
+  // new sweep. Returns true when this published the reconstruction.
+  td::Result<bool> finish_legacy_jetton_pass(const LegacyJettonRows& pass, uint64_t undecided);
+
+  // --- Jetton pair record: 0x18 + owner(32) + master(32) -> flags(1) + wallet(32) + lt_be(8) ---
+  // flags: bit 0 present, bit 1 reconstructed from a legacy row.
   // The last decision on the (owner, master) 0x10 entry, shared by every
   // wallet that has claimed the pair: which wallet it names, or that it was
   // removed, and the logical time of the block that decided it. An older
@@ -454,6 +525,8 @@ class WalletIndexDb {
   // and lt. `known` is false when the pair has neither.
   struct JettonPairDecision {
     bool known = false;
+    bool has_record = false;  // decided by a pair record, not by a legacy row
+    bool reconstructed = false;
     bool present = false;
     HashKey wallet = HashKey::zero();
     uint64_t lt = 0;
@@ -469,7 +542,7 @@ class WalletIndexDb {
   // record is from a later block; a release is also ignored while the pair
   // names another wallet.
   td::Status claim_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
-                               td::Ref<vm::Cell> value, uint64_t end_lt);
+                               td::Ref<vm::Cell> value, uint64_t end_lt, bool reconstructed);
   td::Status release_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet, uint64_t end_lt);
 
   std::unique_ptr<td::RocksDb> db_;
@@ -532,13 +605,13 @@ class WalletIndexSnapshot {
   td::Result<TokenBacklogStats> token_backlog_stats() {
     return view_->token_backlog_stats();
   }
-  td::Status for_each_jetton(const HashKey& owner, size_t limit,
-                             std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb) {
-    return view_->for_each_jetton(owner, limit, std::move(cb));
-  }
   td::Status for_each_nft(const HashKey& owner, size_t limit,
                           std::function<td::Status(const HashKey& nft, td::Ref<vm::Cell>)> cb) {
     return view_->for_each_nft(owner, limit, std::move(cb));
+  }
+  td::Status for_each_current_jetton(const HashKey& owner, size_t limit,
+                                     std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb) {
+    return view_->for_each_current_jetton(owner, limit, std::move(cb));
   }
   td::Result<bool> has_jetton_wallet_record(const HashKey& wallet) {
     return view_->has_jetton_wallet_record(wallet);

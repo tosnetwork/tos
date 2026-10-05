@@ -1059,24 +1059,29 @@ TEST(WalletIndex, TokenIndexStateSaysWhenItIsIncomplete) {
   using tos_wallet_index::format_token_index_state;
   ASSERT_EQ(format_token_index_state({0, 0, 0, false}),
             std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0}"));
+                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
   ASSERT_EQ(format_token_index_state({3, 0, 0, false}),
             std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0}"));
+                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
   ASSERT_EQ(format_token_index_state({0, 1, 0, false}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0}"));
+                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
   ASSERT_EQ(format_token_index_state({0, 0, 2, false}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0}"));
+                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
   tos_wallet_index::TokenBacklogStats parked{0, 0, 0, false};
   parked.parked = 2;
   ASSERT_EQ(format_token_index_state(parked),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":2}"));
+                        "\"needs_rebuild\":false,\"parked\":2,\"legacy_unverified\":false}"));
+  tos_wallet_index::TokenBacklogStats legacy{0, 0, 0, false};
+  legacy.legacy_unverified = true;
+  ASSERT_EQ(format_token_index_state(legacy),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
+                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":true}"));
   ASSERT_EQ(format_token_index_state({0, 0, 0, true}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":true,"
-                        "\"needs_rebuild\":false,\"parked\":0}"));
+                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
 }
 
 TEST(WalletIndex, ABlockWhoseIndexingDidNotCommitLeavesTheIndexIncomplete) {
@@ -1105,22 +1110,26 @@ TEST(WalletIndex, AReadSnapshotIgnoresLaterCommits) {
   ASSERT_TRUE(schedule_block(*db, token_candidates(0, 5), kWholeBasechain, 0).empty());
   auto owner = token_address(1, 0x40);
   auto master = token_address(2, 0x40);
+  auto wallet = token_address(3, 0x40);
   vm::CellBuilder cb;
-  cb.store_long(1, 8);
-  db->put_jetton(owner, master, cb.finalize()).ensure();
+  cb.store_bits(wallet.bits(), 256);
+  cb.store_long(500, 64);
+  db->begin_batch().ensure();
+  db->apply_jetton_verdict(wallet, {true, owner, master, cb.finalize()}, 500).ensure();
+  db->commit_batch().ensure();
   ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(5));
   // The view still answers as of when it was taken, for the state and the list alike.
   ASSERT_EQ(view.token_backlog_stats().move_as_ok().entries, static_cast<uint64_t>(0));
   size_t listed = 0;
-  view.for_each_jetton(owner, 16,
-                       [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
-                         ++listed;
-                         return td::Status::OK();
-                       })
+  view.for_each_current_jetton(owner, 16,
+                               [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+                                 ++listed;
+                                 return td::Status::OK();
+                               })
       .ensure();
   ASSERT_EQ(listed, static_cast<size_t>(0));
   size_t live = 0;
-  db->for_each_jetton(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+  db->for_each_current_jetton(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
       ++live;
       return td::Status::OK();
     }).ensure();
@@ -1934,13 +1943,13 @@ TEST(WalletIndex, AnInconclusiveJettonCheckIsNotADisappearance) {
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, UpgradingJettonRowsWithoutWalletRecordsNeedsARebuild) {
-  auto write_v1 = [](const std::string &path, bool with_jetton) {
+TEST(WalletIndex, UpgradingJettonRowsLeavesThemUnpublishedUntilReconstructed) {
+  auto write_old = [](const std::string &path, char version, bool with_jetton) {
     td::rmrf(path).ignore();
     auto raw = td::RocksDb::open(path).move_as_ok();
     const char version_key[2] = {0x00, 0x01};
-    const char v1[4] = {0, 0, 0, 1};
-    raw.set(td::Slice{version_key, 2}, td::Slice{v1, 4}).ensure();
+    const char old_version[4] = {0, 0, 0, version};
+    raw.set(td::Slice{version_key, 2}, td::Slice{old_version, 4}).ensure();
     if (with_jetton) {
       std::string key(65, '\x01');
       key[0] = 0x10;
@@ -1948,15 +1957,20 @@ TEST(WalletIndex, UpgradingJettonRowsWithoutWalletRecordsNeedsARebuild) {
     }
   };
   auto path = std::string("test-wallet-index-db-jetton-upgrade");
-  write_v1(path, true);
-  {
-    auto db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
-    ASSERT_TRUE(backlog_stats(*db).needs_rebuild);
-  }
-  write_v1(path, false);
-  {
-    auto db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
-    ASSERT_TRUE(!backlog_stats(*db).needs_rebuild);
+  for (char version : {char(1), char(2)}) {
+    write_old(path, version, true);
+    {
+      auto db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+      auto stats = backlog_stats(*db);
+      ASSERT_TRUE(stats.legacy_unverified);
+      ASSERT_TRUE(!stats.needs_rebuild);
+      ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
+    }
+    write_old(path, version, false);
+    {
+      auto db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+      ASSERT_TRUE(!backlog_stats(*db).legacy_unverified);
+    }
   }
   td::rmrf(path).ignore();
 }
@@ -2697,5 +2711,255 @@ TEST(WalletIndex, AnOlderStateNeverTakesANewerNomination) {
   auto newer = schedule_block(*db, {}, kWholeBasechain, kMaxTokenCandidatesPerBlock, 2000);
   ASSERT_EQ(candidates_of(newer), std::set<TokenCandidate>(block.begin(), block.end()));
   ASSERT_EQ(backlog_size(*db), static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+// A database exactly as a binary before pair records left it: schema version
+// 1 and bare jetton rows (owner, master) -> (wallet, lt), with no wallet or
+// pair record beside them.
+struct LegacyRow {
+  td::Bits256 owner;
+  td::Bits256 master;
+  td::Bits256 wallet;
+  uint64_t lt;
+};
+
+void write_legacy_database(const std::string &path, const std::vector<LegacyRow> &rows) {
+  td::rmrf(path).ignore();
+  auto raw = td::RocksDb::open(path).move_as_ok();
+  const char version_key[2] = {0x00, 0x01};
+  const char v1[4] = {0, 0, 0, 1};
+  raw.set(td::Slice{version_key, 2}, td::Slice{v1, 4}).ensure();
+  for (const auto &row : rows) {
+    std::string key(65, '\0');
+    key[0] = 0x10;
+    std::memcpy(&key[1], row.owner.data(), 32);
+    std::memcpy(&key[33], row.master.data(), 32);
+    vm::CellBuilder cb;
+    cb.store_bits(row.wallet.bits(), 256);
+    cb.store_long(static_cast<long long>(row.lt), 64);
+    auto value = vm::std_boc_serialize(cb.finalize()).move_as_ok();
+    raw.set(key, value.as_slice()).ensure();
+  }
+}
+
+// What getAccountJettons lists for `owner`: master -> wallet, read through a
+// snapshot as the RPC does.
+std::map<td::Bits256, td::Bits256> current_jettons(tos_wallet_index::WalletIndexDb &db, const td::Bits256 &owner) {
+  auto view = tos_wallet_index::WalletIndexSnapshot::of(db).move_as_ok();
+  std::map<td::Bits256, td::Bits256> out;
+  view.for_each_current_jetton(owner, 64,
+                               [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
+                                 td::Bits256 wallet;
+                                 vm::CellSlice cs = vm::load_cell_slice(value);
+                                 CHECK(cs.prefetch_bits_to(wallet.bits(), 256));
+                                 out[master] = wallet;
+                                 return td::Status::OK();
+                               })
+      .ensure();
+  return out;
+}
+
+size_t stored_jetton_rows(tos_wallet_index::WalletIndexDb &db, const td::Bits256 &owner) {
+  size_t n = 0;
+  db.for_each_jetton(owner, 64, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+      ++n;
+      return td::Status::OK();
+    }).ensure();
+  return n;
+}
+
+bool legacy_unverified(tos_wallet_index::WalletIndexDb &db) {
+  return backlog_stats(db).legacy_unverified;
+}
+
+// Index an empty block of `shard` ending at `end_lt` with `state` as its
+// post-state, synchronously, as startup recovery does: the state becomes the
+// one reconstruction verifies against.
+void index_state(tos::BlockSeqno seqno, uint64_t end_lt, td::Ref<vm::Cell> state,
+                 tos::ShardId shard = tos::shardIdAll) {
+  auto root = wallet_index_fixture::block(seqno, end_lt, 2000, {});
+  tos_wallet_index::wc0_index_block(root, std::move(state), make_test_block_id(0, shard, seqno, 0x71, 0x72));
+}
+
+// Run reconstruction passes of `rows` rows until it publishes or `passes`
+// run out.
+bool reconstruct_until_published(tos_wallet_index::WalletIndexDb &db, size_t rows, int passes) {
+  for (int i = 0; i < passes && legacy_unverified(db); ++i) {
+    tos_wallet_index::reconstruct_legacy_jetton_rows(rows);
+  }
+  return !legacy_unverified(db);
+}
+
+struct LegacyWorld {
+  td::Bits256 owner_a = token_address(1, 0x20);
+  td::Bits256 owner_b = token_address(2, 0x20);
+  td::Bits256 master_1 = token_address(11, 0x21);
+  td::Bits256 master_2 = token_address(12, 0x21);
+  td::Bits256 master_3 = token_address(13, 0x21);
+  td::Bits256 wallet_1 = token_address(21, 0x22);
+  td::Bits256 wallet_2 = token_address(22, 0x22);
+  td::Bits256 wallet_3 = token_address(23, 0x22);
+};
+
+}  // namespace
+
+// A legacy database maps owner A to three wallets. Since then wallet 2 moved
+// to owner B and wallet 3 was deleted. No answer shows any legacy row before
+// it is verified, none shows a reconstructed one before the whole
+// reconstruction is published, a restart in between resumes it, and verdicts
+// from older blocks arriving afterwards change nothing.
+TEST(WalletIndexWorker, LegacyJettonRowsAreServedOnlyAfterVerifiedReconstruction) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-legacy-reconstruction");
+  LegacyWorld w;
+  write_legacy_database(path, {{w.owner_a, w.master_1, w.wallet_1, 100},
+                               {w.owner_a, w.master_2, w.wallet_2, 100},
+                               {w.owner_a, w.master_3, w.wallet_3, 100}});
+  auto state =
+      wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(w.wallet_1, w.owner_a, w.master_1),
+                                         wallet_index_fixture::jetton_master(w.master_1, w.wallet_1),
+                                         wallet_index_fixture::jetton_wallet(w.wallet_2, w.owner_b, w.master_2),
+                                         wallet_index_fixture::jetton_master(w.master_2, w.wallet_2)});
+  {
+    auto &db = install_db(path);
+    // Before: the stale rows are stored, and none is served.
+    ASSERT_EQ(stored_jetton_rows(db, w.owner_a), static_cast<size_t>(3));
+    ASSERT_TRUE(current_jettons(db, w.owner_a).empty());
+    ASSERT_TRUE(legacy_unverified(db));
+    ASSERT_TRUE(tos_wallet_index::format_token_index_state(backlog_stats(db)).find("\"complete\":false") !=
+                std::string::npos);
+    // Without a state to verify against, reconstruction does nothing.
+    ASSERT_TRUE(!tos_wallet_index::reconstruct_legacy_jetton_rows(1));
+    index_state(7, 5000, state);
+    // During: the first row is verified and recorded, but nothing is served
+    // until the reconstruction is published.
+    ASSERT_TRUE(tos_wallet_index::reconstruct_legacy_jetton_rows(1));
+    ASSERT_TRUE(legacy_unverified(db));
+    ASSERT_TRUE(current_jettons(db, w.owner_a).empty());
+    ASSERT_TRUE(current_jettons(db, w.owner_b).empty());
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  // The node restarts mid-reconstruction.
+  reset_index_singletons();
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(legacy_unverified(db));
+    ASSERT_TRUE(current_jettons(db, w.owner_a).empty());
+    index_state(8, 6000, state);
+    ASSERT_TRUE(reconstruct_until_published(db, 1, 10));
+    // After: wallet 1 is still A's; wallet 2 is now B's; wallet 3 is gone.
+    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}}));
+    ASSERT_EQ(current_jettons(db, w.owner_b), (std::map<td::Bits256, td::Bits256>{{w.master_2, w.wallet_2}}));
+    ASSERT_EQ(stored_jetton_rows(db, w.owner_a), static_cast<size_t>(1));
+    ASSERT_TRUE(!legacy_unverified(db));
+    // Verdicts from blocks older than the reconstruction change nothing.
+    db.begin_batch().ensure();
+    db.apply_jetton_verdict(w.wallet_2, jetton_present(w.wallet_2, w.owner_a, w.master_2, 200), 200).ensure();
+    db.apply_jetton_verdict(w.wallet_3, jetton_present(w.wallet_3, w.owner_a, w.master_3, 300), 300).ensure();
+    db.apply_jetton_verdict(w.wallet_1, jetton_absent(), 300).ensure();
+    db.commit_batch().ensure();
+    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}}));
+    ASSERT_EQ(current_jettons(db, w.owner_b), (std::map<td::Bits256, td::Bits256>{{w.master_2, w.wallet_2}}));
+    // A newer block's verdict is served at once.
+    db.begin_batch().ensure();
+    db.apply_jetton_verdict(w.wallet_2, jetton_present(w.wallet_2, w.owner_a, w.master_2, 9000), 9000).ensure();
+    db.commit_batch().ensure();
+    ASSERT_EQ(current_jettons(db, w.owner_a),
+              (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}, {w.master_2, w.wallet_2}}));
+    ASSERT_TRUE(current_jettons(db, w.owner_b).empty());
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// Blocks newer than the reconstruction's state decided two legacy rows'
+// wallets first: wallet 1 was found gone, wallet 3 was claimed afresh. The
+// reconstruction follows those newer verdicts, not its older state, and an
+// older verdict arriving afterwards does not restore the removed row.
+TEST(WalletIndexWorker, LegacyReconstructionDefersToNewerVerdicts) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-legacy-newer");
+  LegacyWorld w;
+  write_legacy_database(path, {{w.owner_a, w.master_1, w.wallet_1, 100}, {w.owner_a, w.master_3, w.wallet_3, 100}});
+  // The reconstruction's (older) state still shows wallet 1 as A's.
+  auto state =
+      wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(w.wallet_1, w.owner_a, w.master_1),
+                                         wallet_index_fixture::jetton_master(w.master_1, w.wallet_1)});
+  {
+    auto &db = install_db(path);
+    db.begin_batch().ensure();
+    db.apply_jetton_verdict(w.wallet_1, jetton_absent(), 7000).ensure();
+    db.apply_jetton_verdict(w.wallet_3, jetton_present(w.wallet_3, w.owner_a, w.master_3, 7000), 7000).ensure();
+    db.commit_batch().ensure();
+    // The fresh claim is served at once; the legacy row of wallet 1 is not.
+    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_3, w.wallet_3}}));
+    index_state(9, 5000, state);
+    ASSERT_TRUE(reconstruct_until_published(db, 1, 10));
+    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_3, w.wallet_3}}));
+    ASSERT_EQ(stored_jetton_rows(db, w.owner_a), static_cast<size_t>(1));
+    db.begin_batch().ensure();
+    db.apply_jetton_verdict(w.wallet_1, jetton_present(w.wallet_1, w.owner_a, w.master_1, 6000), 6000).ensure();
+    db.commit_batch().ensure();
+    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_3, w.wallet_3}}));
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// A legacy row that cannot be verified here (its wallet is outside the shard
+// whose state the node has, or its value is unreadable) keeps the
+// reconstruction unpublished: every legacy row stays out of answers and the
+// index stays explicitly incomplete, sweep after sweep.
+TEST(WalletIndexWorker, ALegacyRowThatCannotBeVerifiedKeepsReconstructionUnpublished) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-legacy-unavailable");
+  LegacyWorld w;
+  const tos::ShardId left = 0x4000000000000000ULL;
+  auto far_wallet = token_address(30, 0xC0);  // in the right half
+  write_legacy_database(path, {{w.owner_a, w.master_1, w.wallet_1, 100}, {w.owner_a, w.master_2, far_wallet, 100}});
+  auto state =
+      wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(w.wallet_1, w.owner_a, w.master_1),
+                                         wallet_index_fixture::jetton_master(w.master_1, w.wallet_1)});
+  {
+    install_db(path);
+    index_state(10, 5000, state, left);
+    for (int sweep = 0; sweep < 3; ++sweep) {
+      ASSERT_TRUE(!reconstruct_until_published(*tos_wallet_index::wallet_index_db(), 16, 4));
+      reset_index_singletons();
+      tos_wallet_index::set_wallet_index_db(tos_wallet_index::WalletIndexDb::open(path).move_as_ok());
+      index_state(static_cast<tos::BlockSeqno>(11 + sweep), 5000, state, left);
+    }
+    auto &reopened = *tos_wallet_index::wallet_index_db();
+    ASSERT_TRUE(legacy_unverified(reopened));
+    ASSERT_TRUE(current_jettons(reopened, w.owner_a).empty());
+    ASSERT_TRUE(tos_wallet_index::format_token_index_state(backlog_stats(reopened)).find("\"complete\":false") !=
+                std::string::npos);
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// The indexing worker reconstructs legacy rows by itself once it has indexed
+// a block, with no further block arriving.
+TEST(WalletIndexWorker, TheWorkerReconstructsLegacyRowsInTheBackground) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-legacy-worker");
+  LegacyWorld w;
+  write_legacy_database(path, {{w.owner_a, w.master_1, w.wallet_1, 100}, {w.owner_a, w.master_3, w.wallet_3, 100}});
+  auto state =
+      wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(w.wallet_1, w.owner_a, w.master_1),
+                                         wallet_index_fixture::jetton_master(w.master_1, w.wallet_1)});
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    auto root = wallet_index_fixture::block(12, 5000, 2000, {});
+    tos_wallet_index::enqueue_wc0_index_block(root, state, worker_block_id(12));
+    ASSERT_TRUE(eventually([&] { return !legacy_unverified(db); }));
+    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}}));
+  }
+  reset_index_singletons();
   td::rmrf(path).ignore();
 }

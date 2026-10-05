@@ -81,6 +81,15 @@ class WalletIndexVerificationBudget {
 // unique across a shard split/merge.
 void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
 
+// One pass of legacy jetton reconstruction (see WalletIndexDb): verify up to
+// `row_limit` jetton rows written before pair records existed against the
+// newest state the index has indexed a block with, record each verdict, and
+// publish the reconstructed rows once a full sweep leaves none undecided.
+// Without such a state nothing is verified and the rows stay unpublished.
+// The indexing worker runs it in the background; it returns whether the pass
+// moved anything.
+bool reconstruct_legacy_jetton_rows(size_t row_limit);
+
 // Blocks waiting to be indexed at most. Each holds its block and state cells.
 constexpr size_t kWc0IndexQueueCapacity = 256;
 // How long the worker waits for block data it asked the fetcher for. A block

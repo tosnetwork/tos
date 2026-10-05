@@ -209,6 +209,29 @@ inline td::Ref<vm::Cell> account(const Contract &contract) {
   return cb.finalize();
 }
 
+// A jetton wallet whose get_wallet_data answers (0, owner, master, code),
+// whatever it is asked.
+inline Contract jetton_wallet(const td::Bits256 &address, const td::Bits256 &owner, const td::Bits256 &master) {
+  vm::CellBuilder code;
+  // DROP (the method id), PUSHINT 0, PUSHREFSLICE owner, PUSHREFSLICE master, PUSHREF code
+  require(code.store_long_bool(0x30, 8) && code.store_long_bool(0x70, 8) && code.store_long_bool(0x89, 8) &&
+              code.store_long_bool(0x89, 8) && code.store_long_bool(0x88, 8) &&
+              code.store_ref_bool(address_cell(owner)) && code.store_ref_bool(address_cell(master)) &&
+              code.store_ref_bool(vm::CellBuilder{}.finalize()),
+          "wallet code");
+  return Contract{address, code.finalize(), vm::CellBuilder{}.store_long(1, 8).finalize()};
+}
+
+// A jetton master whose get_wallet_address answers `wallet` for any owner.
+inline Contract jetton_master(const td::Bits256 &address, const td::Bits256 &wallet) {
+  vm::CellBuilder code;
+  // DROP (the method id), DROP (the owner), PUSHREFSLICE wallet
+  require(code.store_long_bool(0x30, 8) && code.store_long_bool(0x30, 8) && code.store_long_bool(0x89, 8) &&
+              code.store_ref_bool(address_cell(wallet)),
+          "master code");
+  return Contract{address, code.finalize(), vm::CellBuilder{}.store_long(2, 8).finalize()};
+}
+
 // The post-apply state of the whole basechain holding `contracts`.
 inline td::Ref<vm::Cell> shard_state(const std::vector<Contract> &contracts) {
   vm::AugmentedDictionary accounts{256, block::tlb::aug_ShardAccounts};
