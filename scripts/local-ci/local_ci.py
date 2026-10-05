@@ -1035,6 +1035,12 @@ class Run:
             "SYS_PTRACE",
             "--ulimit",
             "nofile=65536:65536",
+            # A new network namespace starts with the kernel default of 10
+            # queued datagrams per Unix socket; systemd hosts, including the
+            # hosted runner VM, raise it to 512. Tests that burst datagrams
+            # over a Unix socket drop events at 10.
+            "--sysctl",
+            "net.unix.max_dgram_qlen=512",
             "-v",
             f"{self.src}:/__src:ro",
             "-v",

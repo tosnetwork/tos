@@ -54,6 +54,8 @@ unsupported runner, an action that is not replayed, or an exclusion flag.
 | `--cpuset 0-95` | CPUs given to every job container (`nproc` inside reports this many) |
 | `--parallel K` | jobs at once (default 2) |
 | `--min-free-gb G` | do not start a job while less than G GiB is free (default 30) |
+| `--repeat-step REGEX:N` | run matching steps N times, failing on any round (randomized suites); each round has its own log |
+| `--base COMMIT` | base for path filters and changed-file checks; use `<merge>^1` to replay a merged pull request on the base branch |
 | `--keep-going` | run a job's later steps after a failure; GitHub would not, and such steps are annotated |
 | `--no-cache` | do not emulate `actions/cache` (cold compiler caches) |
 | `--base-branch`, `--head-branch`, `--pr` | values for the `github` context |
@@ -65,6 +67,13 @@ Example, the full PR set on 96 cores:
 ```
 scripts/local-ci/run.sh 92722f4bd --pr 135 --head-branch fix/security-findings \
   --jobs 96 --cpuset 0-95 --parallel 3 --keep-going
+```
+
+Post-merge, on the merge commit, with the randomized command suite run three times:
+
+```
+scripts/local-ci/run.sh <merge-commit> --base <merge-commit>^1 --jobs 96 --parallel 3 --keep-going \
+  --repeat-step 'Run command tests including backup:3'
 ```
 
 Only the fast source checks:
@@ -88,6 +97,12 @@ scripts/local-ci/run.sh HEAD --workflow source-guards --workflow build-tos-linux
 | local composite actions (`./.github/actions/*`) | executed step by step |
 | anything else | skipped, with the action named |
 
+`docker` inside a hosted-runner job is a stand-in (`shim/docker`): pulling and
+running the repository builder image runs the command in the job container,
+which is built from the same Dockerfile target; any other use (a detached
+service container, another image) is reported as `skip` because the step
+cannot run here.
+
 ## Differences from GitHub that remain
 
 - The commit itself is tested, not GitHub's merge commit with the base branch.
@@ -95,12 +110,16 @@ scripts/local-ci/run.sh HEAD --workflow source-guards --workflow build-tos-linux
   a workflow does not pin (Node.js, stable Rust, the runner's preinstalled
   packages) can differ. Jobs that ask for `ubuntu-22.04` run on the 24.04
   image, and the summary says so.
+- Job containers get `net.unix.max_dgram_qlen=512`, the value a systemd host
+  (and the hosted runner VM) sets; a fresh Docker network namespace has 10,
+  which makes bursts over Unix datagram sockets drop.
 - With `--jobs`, build parallelism differs from the workflow's `-j2`; test
   invocations are not changed.
 - `timeout-minutes` and `concurrency` are not enforced.
 - Not replayed, because they need GitHub itself: jobs on arm64, macOS or
   Windows runners; reusable workflow calls; artifact downloads between
-  workflows; registry logins and image pushes; jobs gated on
+  workflows, including jobs that compare results across architectures;
+  steps that need real Docker; registry logins and image pushes; jobs gated on
   `workflow_dispatch` or `push` (they are reported as skipped by their `if:`).
 
 ## Disk and cleanup
