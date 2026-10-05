@@ -151,6 +151,129 @@ static auto sync_send = [](auto &client, auto query) {
   }
 };
 
+// The fourteen encodings of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs:
+// the eight torsion points, y >= 2^255 - 19 with either sign bit, and the identity and
+// order-2 point with the sign bit set: the prohibited weak and non-canonical set.
+static const char *const forgeable_ed25519_keys[] = {
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+};
+
+static std::string serialized_public_key(td::Slice raw) {
+  block::PublicKey key;
+  key.key = raw.str();
+  return key.serialize(true);
+}
+
+TEST(Toslib, ForgeableEd25519Keys) {
+  for (auto hex : forgeable_ed25519_keys) {
+    auto raw = td::hex_decode(td::Slice(hex)).move_as_ok();
+    CHECK(block::PublicKey::is_forgeable_ed25519(raw));
+  }
+  // Real keys, including ones whose first byte starts a weak encoding.
+  int shared_first_byte = 0;
+  for (int n = 0; n < 2048; n++) {
+    td::SecureString seed(32);
+    seed.as_mutable_slice().fill(0);
+    seed.as_mutable_slice()[0] = static_cast<char>(n & 0xff);
+    seed.as_mutable_slice()[1] = static_cast<char>(n >> 8);
+    auto key = td::Ed25519::PrivateKey(std::move(seed)).get_public_key().move_as_ok().as_octet_string();
+    CHECK(!block::PublicKey::is_forgeable_ed25519(key));
+    auto first = static_cast<unsigned char>(key[0]);
+    shared_first_byte += first <= 0x01 || first == 0x26 || first == 0xc7 || first >= 0xec;
+  }
+  CHECK(shared_first_byte > 20);
+  // Neighbours: one bit away inside the comparison, and just below the range.
+  auto neighbour = td::hex_decode("26e8958fc2b227b045c3f489f2ef98f0d4dfac05d3c63339b13802886d53fc85").move_as_ok();
+  CHECK(!block::PublicKey::is_forgeable_ed25519(neighbour));
+  auto below = td::hex_decode("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7e").move_as_ok();
+  CHECK(!block::PublicKey::is_forgeable_ed25519(below));
+  auto gap = td::hex_decode("edfffffffffffffffffffffffffffffffffffffffffffffffffffffffeffff7f").move_as_ok();
+  CHECK(!block::PublicKey::is_forgeable_ed25519(gap));
+  CHECK(!block::PublicKey::is_forgeable_ed25519(td::Slice("short")));
+}
+
+// Every client entry point that turns a raw public key into an owned contract's
+// address refuses a weak or non-canonical key, and still works for a real key.
+TEST(Toslib, RefusesForgeableOwnerKeys) {
+  using toslib_api::make_object;
+  auto address_of = [](toslib_api::object_ptr<toslib_api::InitialAccountState> state) {
+    return toslib::ToslibClient::static_request(make_object<toslib_api::getAccountAddress>(std::move(state), 0, 0));
+  };
+  auto is_forgeable_error = [](const toslib_api::object_ptr<toslib_api::Object> &result) {
+    if (result->get_id() != toslib_api::error::ID) {
+      return false;
+    }
+    // A payment-channel key is reported under its field name, with this cause.
+    auto &error = static_cast<const toslib_api::error &>(*result);
+    return error.message_.find("FORGEABLE_PUBLIC_KEY") != std::string::npos;
+  };
+  auto strong = serialized_public_key(
+      td::Ed25519::PrivateKey(td::SecureString(32, 'k')).get_public_key().move_as_ok().as_octet_string());
+  auto pchan = [&](const std::string &alice, const std::string &bob) {
+    auto addr = [] {
+      return make_object<toslib_api::accountAddress>("Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX");
+    };
+    return make_object<toslib_api::pchan_initialAccountState>(
+        make_object<toslib_api::pchan_config>(alice, addr(), bob, addr(), 10, 20, 1));
+  };
+  auto states = [&](const std::string &key) {
+    std::vector<toslib_api::object_ptr<toslib_api::InitialAccountState>> v;
+    v.push_back(make_object<toslib_api::wallet_v3_initialAccountState>(key, 1));
+    v.push_back(make_object<toslib_api::wallet_v4_initialAccountState>(key, 1));
+    v.push_back(make_object<toslib_api::wallet_highload_v1_initialAccountState>(key, 1));
+    v.push_back(make_object<toslib_api::wallet_highload_v2_initialAccountState>(key, 1));
+    v.push_back(make_object<toslib_api::dns_initialAccountState>(key, 1));
+    v.push_back(make_object<toslib_api::rwallet_initialAccountState>(strong, key, 1));
+    v.push_back(make_object<toslib_api::rwallet_initialAccountState>(key, strong, 1));
+    v.push_back(pchan(key, strong));
+    v.push_back(pchan(strong, key));
+    return v;
+  };
+  for (auto &state : states(strong)) {
+    auto result = address_of(std::move(state));
+    CHECK(result->get_id() == toslib_api::accountAddress::ID);
+  }
+  int refused = 0;
+  for (auto hex : forgeable_ed25519_keys) {
+    auto weak = serialized_public_key(td::hex_decode(td::Slice(hex)).move_as_ok());
+    for (auto &state : states(weak)) {
+      auto result = address_of(std::move(state));
+      CHECK(is_forgeable_error(result));
+      refused++;
+    }
+  }
+  CHECK(refused == 14 * 9);
+
+  // guessAccount builds restricted, v3 and v4 wallets from the one key it is given.
+  Client client;
+  auto dir = td::mkdtemp(td::CSlice("."), "toslib-weak-keys").move_as_ok();
+  SCOPE_EXIT {
+    td::rmrf(dir).ignore();
+  };
+  sync_send(client, make_object<toslib_api::init>(
+                        make_object<toslib_api::options>(nullptr, make_object<toslib_api::keyStoreTypeDirectory>(dir))))
+      .ensure();
+  for (auto hex : forgeable_ed25519_keys) {
+    auto weak = serialized_public_key(td::hex_decode(td::Slice(hex)).move_as_ok());
+    auto r = sync_send(client, make_object<toslib_api::guessAccount>(weak, strong));
+    CHECK(r.is_error());
+    CHECK(td::begins_with(r.error().message(), "FORGEABLE_PUBLIC_KEY"));
+  }
+}
+
 TEST(Toslib, InitClose) {
   using toslib_api::make_object;
   auto cfg = [](auto str) { return make_object<toslib_api::config>(str, "", false, false); };

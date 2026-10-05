@@ -67,6 +67,15 @@ class Rldp : public adnl::AdnlSenderEx {
   // remembered.
   static constexpr size_t MAX_PENDING_QUERIES = 8192;
 
+  // Queries awaiting an answer on one connection. Each entitles that peer to
+  // a solicited answer transfer, which may draw on the half of the inbound
+  // reassembly budget kept from unsolicited transfers, so their number per
+  // peer is bounded as well as their total. Matches the connection's own
+  // bound, RldpConnection::MAX_OUTSTANDING_REQUESTS, so a query beyond it
+  // fails here, before it is sent. The bound is a count: one peer answering
+  // its queries at their declared sizes can still use that half up.
+  static constexpr size_t MAX_PENDING_QUERIES_PER_CONNECTION = 256;
+
   static constexpr td::uint64 default_mtu() {
     return 7680;  // See RldpConnection::DEFAULT_MTU
   }

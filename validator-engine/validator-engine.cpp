@@ -26,7 +26,10 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <deque>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "adnl/adnl-node-id.hpp"
@@ -81,6 +84,7 @@
 #include <unistd.h>
 #endif
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -1301,6 +1305,154 @@ class CheckDhtServerStatusQuery : public td::actor::Actor {
   td::Promise<td::BufferSlice> promise_;
 };
 
+namespace {
+
+// Requests from the wallet-index worker for block data the block-apply hook
+// did not have. The worker is a plain thread and cannot send to an actor, so
+// it leaves requests here and the fetch actor below collects them.
+struct Wc0IndexFetchMailbox {
+  struct Request {
+    tos::BlockIdExt block_id;
+    bool need_state;
+    std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done;
+  };
+  struct StateRequest {
+    td::Bits256 address;
+    std::function<void(td::Result<tos_wallet_index::Wc0NewestState>)> done;
+  };
+  std::mutex mutex;
+  std::deque<Request> requests;
+  std::deque<StateRequest> state_requests;
+};
+
+// Reads the block data (and state) the wallet-index worker asks for from the
+// validator's databases. Block application never waits for these reads.
+class Wc0IndexBlockFetchActor : public td::actor::Actor {
+ public:
+  Wc0IndexBlockFetchActor(td::actor::ActorId<tos::validator::ValidatorManagerInterface> manager,
+                          std::shared_ptr<Wc0IndexFetchMailbox> mailbox)
+      : manager_(std::move(manager)), mailbox_(std::move(mailbox)) {
+  }
+
+  void start_up() override {
+    alarm_timestamp() = td::Timestamp::in(kPollInterval);
+  }
+
+  void alarm() override {
+    std::deque<Wc0IndexFetchMailbox::Request> requests;
+    std::deque<Wc0IndexFetchMailbox::StateRequest> state_requests;
+    {
+      std::lock_guard<std::mutex> guard(mailbox_->mutex);
+      requests.swap(mailbox_->requests);
+      state_requests.swap(mailbox_->state_requests);
+    }
+    for (auto &request : requests) {
+      fetch(std::move(request));
+    }
+    for (auto &request : state_requests) {
+      fetch_newest_state(std::move(request));
+    }
+    alarm_timestamp() = td::Timestamp::in(kPollInterval);
+  }
+
+ private:
+  static constexpr double kPollInterval = 0.01;
+
+  void fetch(Wc0IndexFetchMailbox::Request request) {
+    auto manager = manager_;
+    auto block_id = request.block_id;
+    auto need_state = request.need_state;
+    auto done = std::move(request.done);
+    td::actor::send_closure(
+        manager, &tos::validator::ValidatorManagerInterface::get_block_handle, block_id, false,
+        [manager, need_state, done = std::move(done)](td::Result<tos::validator::BlockHandle> R) mutable {
+          if (R.is_error()) {
+            done(R.move_as_error_prefix("block handle: "));
+            return;
+          }
+          auto handle = R.move_as_ok();
+          td::actor::send_closure(
+              manager, &tos::validator::ValidatorManagerInterface::get_block_data_from_db, handle,
+              [manager, handle, need_state,
+               done = std::move(done)](td::Result<td::Ref<tos::validator::BlockData>> R2) mutable {
+                if (R2.is_error()) {
+                  done(R2.move_as_error_prefix("block data: "));
+                  return;
+                }
+                if (R2.ok().is_null()) {
+                  done(td::Status::Error("block data: not found"));
+                  return;
+                }
+                tos_wallet_index::Wc0FetchedBlock fetched{R2.ok()->root_cell(), {}};
+                if (!need_state) {
+                  done(std::move(fetched));
+                  return;
+                }
+                td::actor::send_closure(
+                    manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, handle,
+                    [fetched = std::move(fetched),
+                     done = std::move(done)](td::Result<td::Ref<tos::validator::ShardState>> R3) mutable {
+                      // Without its state the block is still indexed; its
+                      // token candidates wait for a later block's state.
+                      if (R3.is_ok() && R3.ok().not_null()) {
+                        fetched.state_root = R3.ok()->root_cell();
+                      }
+                      done(std::move(fetched));
+                    });
+              });
+        });
+  }
+
+  // The newest committed state of the basechain shard holding the address:
+  // the top block of that shard in the newest masterchain state, which the
+  // node keeps however far archive pruning has gone.
+  void fetch_newest_state(Wc0IndexFetchMailbox::StateRequest request) {
+    auto manager = manager_;
+    auto address = request.address;
+    auto done = std::move(request.done);
+    td::actor::send_closure(
+        manager, &tos::validator::ValidatorManagerInterface::get_top_masterchain_state,
+        [manager, address, done = std::move(done)](td::Result<td::Ref<tos::validator::MasterchainState>> R) mutable {
+          if (R.is_error() || R.ok().is_null()) {
+            done(td::Status::Error("no masterchain state"));
+            return;
+          }
+          // The deepest possible shard of the address; the configuration
+          // answers with the shard that holds it.
+          tos::ShardIdFull leaf{0, tos::extract_top64(address) | 1};
+          auto shard = R.ok()->get_shard_from_config(leaf, false);
+          if (shard.is_null()) {
+            done(td::Status::Error("no basechain shard holds the address"));
+            return;
+          }
+          auto top = shard->top_block_id();
+          auto end_lt = shard->end_lt();
+          td::actor::send_closure(
+              manager, &tos::validator::ValidatorManagerInterface::get_block_handle, top, false,
+              [manager, top, end_lt, done = std::move(done)](td::Result<tos::validator::BlockHandle> R2) mutable {
+                if (R2.is_error()) {
+                  done(R2.move_as_error_prefix("block handle: "));
+                  return;
+                }
+                td::actor::send_closure(
+                    manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, R2.move_as_ok(),
+                    [top, end_lt, done = std::move(done)](td::Result<td::Ref<tos::validator::ShardState>> R3) mutable {
+                      if (R3.is_error() || R3.ok().is_null()) {
+                        done(td::Status::Error("the newest shard state is not available"));
+                        return;
+                      }
+                      done(tos_wallet_index::Wc0NewestState{top, end_lt, R3.ok()->root_cell()});
+                    });
+              });
+        });
+  }
+
+  td::actor::ActorId<tos::validator::ValidatorManagerInterface> manager_;
+  std::shared_ptr<Wc0IndexFetchMailbox> mailbox_;
+};
+
+}  // namespace
+
 #if TOS_USE_JEMALLOC
 class JemallocStatsWriter : public td::actor::Actor {
  public:
@@ -1389,6 +1541,16 @@ void ValidatorEngine::schedule_shutdown(double at) {
     tos::delay_action(
         []() {
           LOG(WARNING) << "Shutting down as scheduled";
+          // Mark every queued block for recovery before the process ends.
+          // The hook stays installed: block-apply actors may still read it,
+          // and from here on a block it receives is only recorded for
+          // recovery, without block application waiting for that. Blocks can
+          // still be applied until the process exits, so the run is not
+          // recorded as finished.
+          if (!tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::MayStillApply)) {
+            LOG(ERROR) << "wc0-index: indexing did not finish cleanly before shutdown; "
+                       << "the next start reports that the index needs a rebuild";
+          }
           std::_Exit(0);
         },
         ts);
@@ -2202,6 +2364,49 @@ void ValidatorEngine::got_key(tos::PublicKey key) {
 }
 
 void ValidatorEngine::start() {
+  check_full_node_master_and_slave_config();
+}
+
+// The full-node master service is allowlist-only, and a slave must sign in to
+// its masters with its full-node key. Both are checked before the node starts
+// anything, so a configuration that could never be served fails at once
+// rather than after the node has started syncing.
+void ValidatorEngine::check_full_node_master_and_slave_config() {
+  if (!config_.full_node_masters.empty()) {
+    auto S = tos::validator::fullnode::FullNodeMasterLimiter::check_trusted(full_node_master_trusted_);
+    if (S.is_error()) {
+      LOG(ERROR) << "refusing to start the full-node master: " << S;
+      std::_Exit(2);
+    }
+  }
+  if (config_.full_node_slaves.empty()) {
+    start_after_config_checks();
+    return;
+  }
+  auto full_node_id = tos::adnl::AdnlNodeIdShort{config_.full_node};
+  auto S = tos::validator::fullnode::check_full_node_slave_id(full_node_id);
+  if (S.is_error()) {
+    LOG(ERROR) << "refusing to start the full-node slave: " << S;
+    std::_Exit(2);
+  }
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), full_node_id](td::Result<tos::PrivateKey> R) {
+    auto key = tos::validator::fullnode::full_node_slave_sign_in_key(full_node_id, std::move(R));
+    if (key.is_error()) {
+      LOG(ERROR) << "refusing to start the full-node slave: " << key.move_as_error();
+      std::_Exit(2);
+    }
+    td::actor::send_closure(SelfId, &ValidatorEngine::loaded_full_node_slave_key, key.move_as_ok());
+  });
+  td::actor::send_closure(keyring_, &tos::keyring::Keyring::export_private_key, full_node_id.pubkey_hash(),
+                          std::move(P));
+}
+
+void ValidatorEngine::loaded_full_node_slave_key(tos::PrivateKey key) {
+  full_node_slave_key_ = std::move(key);
+  start_after_config_checks();
+}
+
+void ValidatorEngine::start_after_config_checks() {
   set_shard_check_function();
   load_collators_list();
   load_shard_block_verifier_config();
@@ -2360,17 +2565,40 @@ void ValidatorEngine::start_validator() {
   // would report the index as disabled. When enabled, the hook is installed
   // before the validator manager exists so it is never written while
   // block-apply actors may already be reading it.
-  // Note: on RPC nodes the hook still runs synchronously on the block-apply
-  // path; moving it off that path is a separate change.
-  if (json_rpc_addr_) {
-    tos_wallet_index::open_wallet_index_db(db_root_);
-    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::wc0_index_block;
+  // The hook only queues the block for a dedicated indexing worker, so block
+  // application does not wait on index processing, its WAL writes, or a read
+  // of block data it did not have: the worker fetches that itself.
+  // When the index cannot be opened or made safe to index into, no worker is
+  // started and no hook installed: a worker with nothing to mark into would
+  // hold queued blocks forever, and the account-index RPC reports the index
+  // unavailable instead.
+  if (json_rpc_addr_ && tos_wallet_index::open_wallet_index_db(db_root_) &&
+      tos_wallet_index::start_wc0_index_worker(true)) {
+    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
   }
 
   validator_manager_ = tos::validator::ValidatorManagerFactory::create(
       validator_options_, db_root_, keyring_.get(), adnl_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
   if (json_rpc_addr_) {
+    if (tos::validator::g_wc0_block_index_hook) {
+      // Blocks the hook received without their data are read by the worker
+      // through this actor, never by block application.
+      auto mailbox = std::make_shared<Wc0IndexFetchMailbox>();
+      td::actor::create_actor<Wc0IndexBlockFetchActor>("wc0indexfetch", validator_manager_.get(), mailbox).release();
+      tos_wallet_index::set_wc0_index_block_fetcher(
+          [mailbox](const tos::BlockIdExt &block_id, bool need_state,
+                    std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
+            std::lock_guard<std::mutex> guard(mailbox->mutex);
+            mailbox->requests.push_back({block_id, need_state, std::move(done)});
+          });
+      tos_wallet_index::set_wc0_index_state_fetcher(
+          [mailbox](const td::Bits256 &address,
+                    std::function<void(td::Result<tos_wallet_index::Wc0NewestState>)> done) {
+            std::lock_guard<std::mutex> guard(mailbox->mutex);
+            mailbox->state_requests.push_back({address, std::move(done)});
+          });
+    }
     recover_wc0_index();
   }
 
@@ -2457,97 +2685,9 @@ void ValidatorEngine::finish_start_validator() {
 }
 
 void ValidatorEngine::recover_wc0_index() {
-  auto *db = tos_wallet_index::wallet_index_db();
-  if (!db) {
-    return;
-  }
-  wc0_recovery_markers_.clear();
-  auto scan_status = db->for_each_incomplete_block([this](const tos::BlockIdExt &id) -> td::Status {
-    wc0_recovery_markers_.push_back(id);
-    return td::Status::OK();
-  });
-  if (scan_status.is_error()) {
-    LOG(ERROR) << "wc0-index: recovery: failed to scan incomplete-block markers: " << scan_status.message();
-  }
-  if (wc0_recovery_markers_.empty()) {
-    return;
-  }
-  LOG(WARNING) << "wc0-index: recovering " << wc0_recovery_markers_.size()
-              << " block(s) left incomplete by a previous crash/parse-failure";
-  wc0_recovery_index_ = 0;
-  recover_wc0_index_step();
-}
-
-// Continuation for recover_wc0_index(), one marker at a time. Deliberately
-// implemented as re-sending a message to this actor's own ActorId (via
-// wc0_recovery_markers_/wc0_recovery_index_ members) rather than a
-// shared_ptr<std::function<void()>> that captures itself — the latter is a
-// reference cycle (the closure stored *inside* the shared_ptr held a strong
-// copy of that same shared_ptr) that never gets freed. Re-sending to self
-// through the actor scheduler also means a destroyed ValidatorEngine simply
-// drops any in-flight continuation safely, with no lifetime bookkeeping
-// needed here at all.
-void ValidatorEngine::recover_wc0_index_step() {
-  if (wc0_recovery_index_ >= wc0_recovery_markers_.size()) {
-    wc0_recovery_markers_.clear();
-    wc0_recovery_markers_.shrink_to_fit();
-    return;
-  }
-  auto block_id = wc0_recovery_markers_[wc0_recovery_index_++];
-  auto manager = validator_manager_.get();
-  auto SelfId = actor_id(this);
-  // Exact lookup by full block id — deliberately not get_block_by_seqno_from_db
-  // (an account/shard-prefix search): after a shard split/merge, a different
-  // shard can reuse the same seqno, and a prefix search over the current
-  // shard layout is not guaranteed to land back on the one specific block
-  // this marker was written for.
-  td::actor::send_closure(
-      manager, &tos::validator::ValidatorManagerInterface::get_block_handle, block_id, false,
-      [SelfId, manager, block_id](td::Result<tos::validator::BlockHandle> R) {
-        if (R.is_error() || !R.ok()->is_applied()) {
-          LOG(WARNING) << "wc0-index: recovery: block " << block_id.id.to_str() << " not found/applied: "
-                      << (R.is_error() ? R.error().message().str() : "not yet applied");
-          td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-          return;
-        }
-        auto handle = R.move_as_ok();
-        td::actor::send_closure(
-            manager, &tos::validator::ValidatorManagerInterface::get_block_data_from_db, handle,
-            [SelfId, manager, handle, block_id](td::Result<td::Ref<tos::validator::BlockData>> R2) {
-              if (R2.is_error() || R2.ok().is_null()) {
-                LOG(WARNING) << "wc0-index: recovery: block data for " << block_id.id.to_str()
-                            << " unavailable: "
-                            << (R2.is_error() ? R2.error().message().str() : "null result");
-                td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                return;
-              }
-              auto block_root = R2.ok()->root_cell();
-              td::actor::send_closure(
-                  manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, handle,
-                  [SelfId, block_id, block_root](td::Result<td::Ref<tos::validator::ShardState>> R3) {
-                    if (R3.is_error() || R3.ok().is_null()) {
-                      // Do NOT call wc0_index_block() here: it would index
-                      // events-only (no token verification) and then delete
-                      // the marker on that partial success, permanently
-                      // losing the chance to backfill this block's jetton/NFT
-                      // data. Leave the marker so a later restart can retry
-                      // once state is available again.
-                      LOG(WARNING) << "wc0-index: recovery: state for " << block_id.id.to_str()
-                                  << " unavailable, leaving marker for a later attempt";
-                      td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                      return;
-                    }
-                    auto state_root = R3.ok()->root_cell();
-                    // wc0_index_block deletes the marker itself, atomically
-                    // with the block's entries, on success — and deliberately
-                    // leaves it if indexing fails again, so a repeated failure
-                    // stays visible instead of being masked here. Don't
-                    // duplicate or second-guess that decision.
-                    tos_wallet_index::wc0_index_block(block_root, state_root, block_id);
-                    td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                  });
-            });
-      });
+  // The worker indexes the blocks earlier runs left unfinished first, reading
+  // them back through the fetcher installed above, then this run's blocks.
+  tos_wallet_index::resume_wc0_index_worker();
 }
 
 void ValidatorEngine::started_validator() {
@@ -2555,57 +2695,66 @@ void ValidatorEngine::started_validator() {
 }
 
 void ValidatorEngine::start_full_node() {
-  if (!config_.full_node.is_zero() || !config_.full_node_slaves.empty()) {
-    full_node_id_ = tos::adnl::AdnlNodeIdShort{config_.full_node};
-    if (config_.full_node_slaves.size() > 0) {
-      std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
-      for (auto &x : config_.full_node_slaves) {
-        vec.emplace_back(tos::adnl::AdnlNodeIdFull{x.key}, x.addr);
-      }
-      class Cb : public tos::adnl::AdnlExtClient::Callback {
-       public:
-        void on_ready() override {
-        }
-        void on_stop_ready() override {
-        }
-      };
-      full_node_client_ = tos::adnl::AdnlExtMultiClient::create(std::move(vec), std::make_unique<Cb>());
-    }
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
-      R.ensure();
-      td::actor::send_closure(SelfId, &ValidatorEngine::started_full_node);
-    });
-    tos::validator::fullnode::FullNodeOptions full_node_options = full_node_options_;
-    full_node_options.config_ = config_.full_node_config;
-    full_node_ = tos::validator::fullnode::FullNode::create(
-        full_node_id_, validator_options_->zero_block_id().file_hash, full_node_options, keyring_.get(), adnl_.get(),
-        rldp2_.get(), quic_.get(),
-        default_dht_node_.is_zero() ? td::actor::ActorId<tos::dht::Dht>{} : dht_nodes_[default_dht_node_].get(),
-        overlay_manager_.get(), validator_manager_.get(), full_node_client_.get(), db_root_, std::move(P));
-    for (const auto &[id, references] : local_validator_adnl_ids_) {
-      for (std::size_t i = 0; i < references; ++i) {
-        td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_validator_adnl_id, id);
-      }
-    }
-    for (auto &[c, shards] : config_.collators) {
-      for (auto &_ : shards) {
-        td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_collator_adnl_id, c);
-      }
-    }
-    for (auto &x : config_.fast_sync_member_certificates) {
-      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::import_fast_sync_member_certificate,
-                              x.first, x.second);
-    }
-    if (!validator_telemetry_filename_.empty()) {
-      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::set_validator_telemetry_filename,
-                              validator_telemetry_filename_);
-    }
-    load_custom_overlays_config();
-    register_fast_sync_certificate_callback();
-    register_shard_overlay_certificate_callback();
-  } else {
+  if (config_.full_node.is_zero() && config_.full_node_slaves.empty()) {
     started_full_node();
+    return;
   }
+  full_node_id_ = tos::adnl::AdnlNodeIdShort{config_.full_node};
+  if (config_.full_node_slaves.size() > 0) {
+    // A slave signs in to its masters with the full node's ADNL key, loaded
+    // and checked at startup, so a master recognises it as one stable
+    // authenticated identity (see --full-node-master-trusted). Masters refuse
+    // anything else, so there is no anonymous fallback.
+    if (full_node_slave_key_.empty()) {
+      LOG(ERROR) << "refusing to start the full-node slave: its sign-in key was not loaded";
+      std::_Exit(2);
+    }
+    std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
+    for (auto &x : config_.full_node_slaves) {
+      vec.emplace_back(tos::adnl::AdnlNodeIdFull{x.key}, x.addr);
+    }
+    class Cb : public tos::adnl::AdnlExtClient::Callback {
+     public:
+      void on_ready() override {
+      }
+      void on_stop_ready() override {
+      }
+    };
+    full_node_client_ =
+        tos::adnl::AdnlExtMultiClient::create(std::move(vec), full_node_slave_key_, std::make_unique<Cb>());
+  }
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
+    R.ensure();
+    td::actor::send_closure(SelfId, &ValidatorEngine::started_full_node);
+  });
+  tos::validator::fullnode::FullNodeOptions full_node_options = full_node_options_;
+  full_node_options.config_ = config_.full_node_config;
+  full_node_ = tos::validator::fullnode::FullNode::create(
+      full_node_id_, validator_options_->zero_block_id().file_hash, full_node_options, keyring_.get(), adnl_.get(),
+      rldp2_.get(), quic_.get(),
+      default_dht_node_.is_zero() ? td::actor::ActorId<tos::dht::Dht>{} : dht_nodes_[default_dht_node_].get(),
+      overlay_manager_.get(), validator_manager_.get(), full_node_client_.get(), db_root_, std::move(P));
+  for (const auto &[id, references] : local_validator_adnl_ids_) {
+    for (std::size_t i = 0; i < references; ++i) {
+      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_validator_adnl_id, id);
+    }
+  }
+  for (auto &[c, shards] : config_.collators) {
+    for (auto &_ : shards) {
+      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_collator_adnl_id, c);
+    }
+  }
+  for (auto &x : config_.fast_sync_member_certificates) {
+    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::import_fast_sync_member_certificate,
+                            x.first, x.second);
+  }
+  if (!validator_telemetry_filename_.empty()) {
+    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::set_validator_telemetry_filename,
+                            validator_telemetry_filename_);
+  }
+  load_custom_overlays_config();
+  register_fast_sync_certificate_callback();
+  register_shard_overlay_certificate_callback();
 }
 
 void ValidatorEngine::started_full_node() {
@@ -2706,12 +2855,29 @@ void ValidatorEngine::started_control_interface(td::actor::ActorOwn<tos::adnl::A
 }
 
 void ValidatorEngine::start_full_node_masters() {
+  if (!config_.full_node_masters.empty() && !full_node_master_limiter_) {
+    auto clock = []() -> td::uint64 {
+      return static_cast<td::uint64>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+              .count());
+    };
+    // An empty trusted set was already refused at startup; create() refuses
+    // it again so no path can start an open master.
+    auto R = tos::validator::fullnode::FullNodeMasterLimiter::create(full_node_master_trusted_, clock);
+    if (R.is_error()) {
+      LOG(ERROR) << "refusing to start the full-node master: " << R.move_as_error();
+      std::_Exit(2);
+    }
+    full_node_master_limiter_ = std::shared_ptr<tos::validator::fullnode::FullNodeMasterLimiter>(R.move_as_ok());
+    LOG(INFO) << "full-node master serves " << full_node_master_trusted_.size()
+              << " trusted slave id(s) only, each with an equal share of its request budget";
+  }
   for (auto &x : config_.full_node_masters) {
-    full_node_masters_.emplace(
-        static_cast<td::uint16>(x.first),
-        tos::validator::fullnode::FullNodeMaster::create(
-            tos::adnl::AdnlNodeIdShort{x.second}, static_cast<td::uint16>(x.first),
-            validator_options_->zero_block_id().file_hash, keyring_.get(), adnl_.get(), validator_manager_.get()));
+    full_node_masters_.emplace(static_cast<td::uint16>(x.first),
+                               tos::validator::fullnode::FullNodeMaster::create(
+                                   tos::adnl::AdnlNodeIdShort{x.second}, static_cast<td::uint16>(x.first),
+                                   validator_options_->zero_block_id().file_hash, keyring_.get(), adnl_.get(),
+                                   validator_manager_.get(), full_node_master_limiter_));
   }
   started_full_node_masters();
 }
@@ -5894,6 +6060,10 @@ void ValidatorEngine::set_json_rpc_request_timeout(double seconds) {
   json_rpc_opts_.request_timeout = seconds;
 }
 
+void ValidatorEngine::set_json_rpc_response_timeout(double seconds) {
+  json_rpc_opts_.response_timeout = seconds;
+}
+
 void ValidatorEngine::set_json_rpc_api_key(std::string key) {
   json_rpc_opts_.api_key = std::move(key);
 }
@@ -6063,8 +6233,14 @@ int main(int argc, char *argv[]) {
   LOG_STATUS(td::change_maximize_rlimit(td::RlimitType::nofile, 1572864));
 
   std::vector<std::function<void()>> acts;
+  std::set<tos::adnl::AdnlNodeIdShort> full_node_master_trusted;
+  // The full-node rate limits as the options set them, checked once parsing
+  // is complete.
+  tos::validator::fullnode::FullNodeOptions ratelimit_options;
   std::string measurement_jsonl;
   std::string measurement_node_id;
+  std::optional<td::IPAddress> json_rpc_bind_address;
+  bool json_rpc_readonly = false;
 
   td::OptionParser p;
   p.set_description("validator or full node for TOS network");
@@ -6462,6 +6638,7 @@ int main(int argc, char *argv[]) {
         if (v < 0) {
           return td::Status::Error("ratelimit-window-size should be non-negative");
         }
+        ratelimit_options.ratelimit_window_size_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_window_size, v); });
         return td::Status::OK();
       });
@@ -6469,6 +6646,7 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-global", "ratelimit for all kind of requests (in request-cost units per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_global_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_global, v); });
         return td::Status::OK();
       });
@@ -6476,6 +6654,7 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-heavy", "ratelimit for heavy requests (in 2 MiB request-cost units per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_heavy_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_heavy, v); });
         return td::Status::OK();
       });
@@ -6483,7 +6662,26 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-medium", "ratelimit for medium requests (in counts per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_medium_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_medium, v); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "full-node-master-trusted",
+      "full-node slave ADNL id (hex) that a full-node master serves; repeatable, at most 8. The master service is "
+      "allowlist-only: it serves these ids and refuses every other source, each id gets an equal share of the "
+      "request budget, and a node configured as a master with none of these ids refuses to start. Read once at "
+      "startup: changing the set needs a restart. A slave is recognised only while it signs in with the full-node "
+      "ADNL key of that id; a slave that cannot load that key refuses to start, and a slave whose full-node ADNL id "
+      "changes must be restarted to sign in with the new key",
+      [&](td::Slice s) -> td::Status {
+        TRY_RESULT(id, parse_adnl_id_hex(s));
+        full_node_master_trusted.insert(id);
+        if (full_node_master_trusted.size() > tos::validator::fullnode::FullNodeMasterLimiter::kMaxTrusted) {
+          return td::Status::Error(PSLICE()
+                                   << "at most " << tos::validator::fullnode::FullNodeMasterLimiter::kMaxTrusted
+                                   << " --full-node-master-trusted ids are supported");
+        }
         return td::Status::OK();
       });
   p.add_checked_option(
@@ -6593,14 +6791,19 @@ int main(int argc, char *argv[]) {
     acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::export_metrics, addr); });
     return td::Status::OK();
   });
-  p.add_checked_option('\0', "json-rpc-address", "address to bind for JSON-RPC HTTP server", [&](td::Slice arg) {
-    td::BufferSlice buff{arg};
-    td::IPAddress addr;
-    TRY_STATUS(addr.init_host_port(td::CSlice{buff.as_slice()}));
-    acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::serve_json_rpc, addr); });
-    return td::Status::OK();
-  });
+  p.add_checked_option(
+      '\0', "json-rpc-address",
+      "address to bind for the plaintext JSON-RPC HTTP server; loopback only unless --json-rpc-readonly",
+      [&](td::Slice arg) {
+        td::BufferSlice buff{arg};
+        td::IPAddress addr;
+        TRY_STATUS(addr.init_host_port(td::CSlice{buff.as_slice()}));
+        json_rpc_bind_address = addr;
+        acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::serve_json_rpc, addr); });
+        return td::Status::OK();
+      });
   p.add_option('\0', "json-rpc-readonly", "disable write methods (sendBoc, sendQuery) on JSON-RPC server", [&]() {
+    json_rpc_readonly = true;
     acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readonly, true); });
   });
   p.add_option('\0', "json-rpc-expose-consensus-status",
@@ -6608,46 +6811,58 @@ int main(int argc, char *argv[]) {
                "validator-set membership). Default off. This flag does NOT enforce a loopback-only listener: "
                "restricting access is the operator's responsibility (bind --json-rpc-address to loopback).",
                [&]() {
-    acts.push_back(
-        [&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_expose_consensus_status, true); });
-  });
+                 acts.push_back([&x] {
+                   td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_expose_consensus_status, true);
+                 });
+               });
   p.add_checked_option('\0', "json-rpc-cors-origin",
                        "CORS origin for the JSON-RPC server (default: unset, no CORS header is sent)",
                        [&](td::Slice arg) {
-    std::string origin{arg.data(), arg.size()};
-    acts.push_back([&x, origin] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cors_origin, origin); });
-    return td::Status::OK();
-  });
+                         std::string origin{arg.data(), arg.size()};
+                         acts.push_back([&x, origin] {
+                           td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cors_origin, origin);
+                         });
+                         return td::Status::OK();
+                       });
   p.add_checked_option('\0', "json-rpc-readyz-threshold", "sync lag threshold in seconds for /readyz (default: 60)", [&](td::Slice arg) {
     TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
     acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readyz_threshold, v); });
     return td::Status::OK();
   });
-  p.add_checked_option('\0', "json-rpc-request-timeout",
+  p.add_checked_option(
+      '\0', "json-rpc-request-timeout",
       "per-request timeout in seconds for JSON-RPC liteserver queries (default: 30, 0 = no timeout)",
       [&](td::Slice arg) {
-    auto v = td::to_double(arg);
-    if (v < 0) {
-      return td::Status::Error("timeout must be >= 0");
-    }
-    acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_request_timeout, v); });
-    return td::Status::OK();
-  });
-  p.add_checked_option('\0', "json-rpc-api-key", "require API key for JSON-RPC access", [&](td::Slice arg) {
-    std::string key{arg.data(), arg.size()};
-    acts.push_back([&x, key] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_api_key, key); });
-    return td::Status::OK();
-  });
-  p.add_checked_option('\0', "json-rpc-cache-ttl",
-      "cache TTL in seconds for read-only JSON-RPC methods (default: 0 = disabled)",
+        TRY_RESULT(v, tos::json_rpc::parse_timeout_seconds(arg));
+        acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_request_timeout, v); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "json-rpc-response-timeout",
+      "total seconds to write a JSON-RPC response to the client before the connection is closed "
+      "(default: 60; must be greater than 0 and at most 86400)",
       [&](td::Slice arg) {
-    TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
-    if (v < 0) {
-      return td::Status::Error("cache TTL must be >= 0");
-    }
-    acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
-    return td::Status::OK();
-  });
+        TRY_RESULT(v, tos::json_rpc::parse_response_timeout_seconds(arg));
+        acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_response_timeout, v); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "json-rpc-api-key",
+      "require API key for JSON-RPC access (it does not permit a non-loopback write listener)", [&](td::Slice arg) {
+        std::string key{arg.data(), arg.size()};
+        acts.push_back([&x, key] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_api_key, key); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "json-rpc-cache-ttl", "cache TTL in seconds for read-only JSON-RPC methods (default: 0 = disabled)",
+      [&](td::Slice arg) {
+        TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
+        if (v < 0) {
+          return td::Status::Error("cache TTL must be >= 0");
+        }
+        acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
+        return td::Status::OK();
+      });
   // M-01 hardening: control whether the JSON-RPC server honours
   // X-Forwarded-For / X-Real-IP headers when attributing a request to
   // a per-IP rate-limit bucket. Default off — direct public listeners
@@ -6869,6 +7084,23 @@ int main(int argc, char *argv[]) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
     std::_Exit(2);
   }
+  if (json_rpc_bind_address) {
+    auto admission = tos::json_rpc::check_listen_admission(json_rpc_bind_address.value(), json_rpc_readonly);
+    if (admission.is_error()) {
+      LOG(ERROR) << admission.message();
+      std::_Exit(2);
+    }
+  }
+  auto ratelimits_ok = tos::validator::fullnode::FullNode::check_rate_limits(ratelimit_options);
+  if (ratelimits_ok.is_error()) {
+    LOG(ERROR) << "full-node rate limits would refuse a mandatory request from every peer: " << ratelimits_ok;
+    std::_Exit(2);
+  }
+  if (!full_node_master_trusted.empty()) {
+    acts.push_back([&x, ids = full_node_master_trusted]() mutable {
+      td::actor::send_closure(x, &ValidatorEngine::set_full_node_master_trusted, std::move(ids));
+    });
+  }
   if (!measurement_jsonl.empty() || !measurement_node_id.empty()) {
     if (measurement_jsonl.empty() || measurement_node_id.empty()) {
       LOG(ERROR) << "--measurement-jsonl and --measurement-node-id must be supplied together";
@@ -6975,5 +7207,19 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Stop the indexing worker while the index it writes to still exists;
+  // blocks it did not reach stay marked for the next start.
+  // The scheduler has stopped, so no block-apply actor runs any more. This is
+  // what makes clearing the run marker crash-safe: the index relies on
+  // producers being genuinely quiesced here. Its re-recording of the run
+  // after an unexpected late block is a defence, not a substitute; a crash
+  // before the recorder gets to it would lose that block's trace.
+  tos::validator::g_wc0_block_index_hook = nullptr;
+  if (!tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::Quiesced)) {
+    LOG(ERROR) << "wc0-index: indexing did not finish cleanly; the next start reports that the index needs a rebuild";
+  }
+  tos_wallet_index::stop_wc0_index_worker();
+  tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
   return 0;
 }

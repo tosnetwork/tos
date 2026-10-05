@@ -91,6 +91,7 @@ from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
 )
 from x01_window_evidence import validate as validate_x01_window  # noqa: E402
+from x02_config34_proof import VERIFIER_RELATIVE as ANCHORED_VERIFIER  # noqa: E402
 from x02_config34_proof import verify_bundle as verify_config34_bundle  # noqa: E402
 
 NANO = 1_000_000_000
@@ -1148,6 +1149,13 @@ class ValidatorElectionRehearsal:
             shutil.copy2(source, target)
             binaries[relative] = self.file_provenance(target)
         if self.pq_election:
+            # The anchored verifier that authenticates every Config34 proof block.
+            binary_paths.append(ANCHORED_VERIFIER)
+            source = self.original_build_dir / ANCHORED_VERIFIER
+            target = snapshot_build / ANCHORED_VERIFIER
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            binaries[ANCHORED_VERIFIER] = self.file_provenance(target)
             relative = "tosctl/pq_pool_stake_order"
             source = (
                 self.pq_pool_stake_order_binary
@@ -3488,16 +3496,19 @@ class ValidatorElectionRehearsal:
         return provenance
 
     async def capture_config34_same_block_proof(self, election_id: int) -> dict[str, Any]:
-        """Retain lite bytes proving the active Config34 from one exact masterchain block.
+        """Retain lite answers proving the active Config34 from the network's zerostate.
 
-        The reply's full ID must equal the header's; the bundle is verified here and again,
-        independently, by the X02 coordinator from the retained files.
+        The anchor is the masterchain zerostate this harness created, read from its local
+        file; the four nodes' agreement on the full block ID is only a consistency check.
+        The compiled anchored verifier fetches the proof chain and the Config34 proof from
+        node 1's lite-server and authenticates the block; the bundle is verified here and
+        again, independently, by the X02 coordinator from the retained files.
         """
-        assert self.experiment is not None
+        assert self.experiment is not None and self.network is not None
+        verifier = self.install.build_dir / ANCHORED_VERIFIER
+        anchor = await asyncio.to_thread(self.zerostate_anchor, verifier)
         seqno = await self.masterchain_seqno()
         address = self.experiment.rpc_addresses[0]
-        # The proof binds the block root; no raw block BOC is served over JSON-RPC, so the
-        # file hash is bound by all four nodes answering the same full ID for this height.
         headers = [
             (
                 await asyncio.to_thread(
@@ -3514,6 +3525,13 @@ class ValidatorElectionRehearsal:
             raise AssertionError(
                 "the four nodes disagree on the full block ID at the Config34 proof height"
             )
+        block_id = {
+            "workchain": full["workchain"],
+            "shard": "8000000000000000",
+            "seqno": full["seqno"],
+            "root_hash": base64.b64decode(full["root_hash"], validate=True).hex(),
+            "file_hash": base64.b64decode(full["file_hash"], validate=True).hex(),
+        }
         reply = (
             await asyncio.to_thread(
                 json_rpc_call,
@@ -3522,44 +3540,32 @@ class ValidatorElectionRehearsal:
                 {"param": 34, "seqno": seqno, "with_proof": True},
             )
         )["result"]
+        # A consistency check only: the authentication is the anchored verifier's.
         if reply.get("@type") != "configInfo" or reply.get("block_id") != full:
-            raise AssertionError("Config34 proof resolved to another full block ID")
+            raise AssertionError("Config34 reply resolved to another full block ID")
         directory = self.artifacts_dir / f"election-{election_id}-config34-proof"
         directory.mkdir()
-        files = {
-            "param": base64.b64decode(reply["config"]["bytes"], validate=True),
-            "state_proof": base64.b64decode(reply["state_proof"], validate=True),
-            "config_proof": base64.b64decode(reply["config_proof"], validate=True),
-        }
+        await asyncio.to_thread(
+            self.fetch_config34_material, verifier, anchor, block_id, directory / "material"
+        )
+        param = base64.b64decode(reply["config"]["bytes"], validate=True)
+        with (directory / "param.boc").open("xb") as stream:
+            stream.write(param)
         bundle: dict[str, Any] = {
-            "block_id": {
-                "workchain": full["workchain"],
-                "shard": full["shard"],
-                "seqno": full["seqno"],
-                "root_hash": base64.b64decode(full["root_hash"], validate=True).hex(),
-                "file_hash": base64.b64decode(full["file_hash"], validate=True).hex(),
-            },
+            "block_id": block_id,
+            "anchor": anchor,
             "source_rpc": address,
-            "headers": [],
+            "material": {},
+            "param": {
+                "path": f"{directory.name}/param.boc",
+                "sha256": hashlib.sha256(param).hexdigest(),
+                "bytes": len(param),
+            },
         }
-        for index, (rpc, header) in enumerate(zip(self.experiment.rpc_addresses, headers), 1):
-            raw_header = json.dumps(header, sort_keys=True).encode()
-            path = directory / f"header-node{index}.json"
-            with path.open("xb") as stream:
-                stream.write(raw_header)
-            bundle["headers"].append(
-                {
-                    "rpc": rpc,
-                    "path": f"{directory.name}/{path.name}",
-                    "sha256": hashlib.sha256(raw_header).hexdigest(),
-                }
-            )
-        for name, raw in files.items():
-            path = directory / f"{name}.boc"
-            with path.open("xb") as stream:
-                stream.write(raw)
-            bundle[name] = {
-                "path": f"{directory.name}/{name}.boc",
+        for path in sorted((directory / "material").iterdir()):
+            raw = path.read_bytes()
+            bundle["material"][path.name] = {
+                "path": f"{directory.name}/material/{path.name}",
                 "sha256": hashlib.sha256(raw).hexdigest(),
                 "bytes": len(raw),
             }
@@ -3572,17 +3578,72 @@ class ValidatorElectionRehearsal:
             for controller, node in zip(self.controllers, self.nodes)
         ]
         verdict = verify_config34_bundle(
-            bundle,
+            {key: bundle[key] for key in ("block_id", "material", "param")},
             self.artifacts_dir.resolve(strict=True),
             rows,
             election_id,
-            list(self.experiment.rpc_addresses),
+            anchor,
+            verifier,
         )
         if int(verdict["config34_cell_hash"], 16) != self.experiment_current_config34_hash:
             raise AssertionError("proven Config34 cell differs from the active Config34")
         bundle["stage_a_verdict"] = verdict["verdict"]
         bundle["config34_cell_hash_hex"] = verdict["config34_cell_hash"]
         return bundle
+
+    def zerostate_anchor(self, verifier: Path) -> dict[str, Any]:
+        """The anchor from this network's own zerostate file, never from a node."""
+        assert self.network is not None
+        zero = self.network.zerostate.masterchain
+        result = subprocess.run(
+            [str(verifier), "anchor", "--zerostate", str(zero.file)],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        anchor = json.loads(result.stdout)
+        if (
+            result.returncode != 0
+            or anchor.get("root_hash") != zero.root_hash.hex()
+            or anchor.get("file_hash") != zero.file_hash.hex()
+        ):
+            raise AssertionError("local zerostate file does not give the network's anchor")
+        return anchor
+
+    def fetch_config34_material(
+        self, verifier: Path, anchor: dict[str, Any], block_id: dict[str, Any], material: Path
+    ) -> None:
+        """Fetch and authenticate the proof chain and Config34 proof over the lite API."""
+        work = material.parent
+        (work / "anchor.json").write_text(json.dumps(anchor, sort_keys=True))
+        request = {"mode": "historical", "target": block_id, "config_params": [34]}
+        (work / "request.json").write_text(json.dumps(request, sort_keys=True))
+        result = subprocess.run(
+            [
+                str(verifier),
+                "verify",
+                "--anchor",
+                str(work / "anchor.json"),
+                "--request",
+                str(work / "request.json"),
+                "--liteserver",
+                str(self.lite_config),
+                "--save-material",
+                str(material),
+            ],
+            capture_output=True,
+            timeout=300,
+            check=False,
+        )
+        (work / "fetch-verdict.json").write_bytes(result.stdout)
+        if result.returncode != 0:
+            raise AssertionError(
+                "anchored verifier refused the Config34 block: "
+                + result.stdout.decode(errors="replace")[:400]
+            )
+        (work / "anchor.json").unlink()
+        (work / "request.json").unlink()
+        (work / "fetch-verdict.json").unlink()
 
     async def request_pq_authorization(
         self,

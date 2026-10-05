@@ -998,6 +998,106 @@ pub enum AlertRule {
     BalanceLow { address: String, threshold_tos: f64 },
 }
 
+/// Local provisioning for reads that must be proven rather than reported.
+///
+/// Every field is chosen by the operator in local configuration. No endpoint
+/// answer can select the verifier executable, the anchor it starts from, or the
+/// age a live read may have: an endpoint only ever supplies proof material,
+/// which the verifier checks from the anchor.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProofVerifierConfig {
+    /// Absolute path of the trusted `tos-proof-verify` executable.
+    pub executable: PathBuf,
+    /// Absolute path of the anchor file, produced locally by
+    /// `tos-proof-verify anchor --zerostate FILE` from an independently
+    /// obtained zerostate (or an explicitly provisioned trusted key block).
+    pub anchor_file: PathBuf,
+    /// Lite-server global config the verifier fetches proof material through.
+    /// Exactly one of this and `material_dir` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liteserver_config: Option<PathBuf>,
+    /// Directory of previously recorded proof material, for offline
+    /// re-verification. Material carries no authority of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_dir: Option<PathBuf>,
+    /// The verifier's record of the newest block it authenticated. Required
+    /// for live reads, which refuse a rollback or a conflicting block against it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_state_file: Option<PathBuf>,
+    /// Oldest a live read's block may be, by the local clock. Required for
+    /// live reads; there is no unbounded live read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_max_age_seconds: Option<u32>,
+    /// Wall-clock limit on one verifier run, after which it is killed and the
+    /// read refused.
+    #[serde(default = "default_proof_verifier_timeout_seconds")]
+    pub timeout_seconds: u32,
+    /// Minimum spacing of the verifier's lite-server queries.
+    #[serde(default = "default_proof_verifier_min_interval_ms")]
+    pub min_interval_ms: u32,
+}
+
+/// Upper bound the verifier itself enforces on a live read's maximum age.
+pub const PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS: u32 = 7 * 24 * 3600;
+
+fn default_proof_verifier_timeout_seconds() -> u32 {
+    300
+}
+
+fn default_proof_verifier_min_interval_ms() -> u32 {
+    200
+}
+
+impl ProofVerifierConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.executable.is_absolute(),
+            "proof_verifier.executable must be an absolute path"
+        );
+        anyhow::ensure!(
+            self.anchor_file.is_absolute(),
+            "proof_verifier.anchor_file must be an absolute path"
+        );
+        anyhow::ensure!(
+            self.liteserver_config.is_some() != self.material_dir.is_some(),
+            "proof_verifier needs exactly one of liteserver_config and material_dir"
+        );
+        for (name, path) in [
+            ("liteserver_config", &self.liteserver_config),
+            ("material_dir", &self.material_dir),
+            ("live_state_file", &self.live_state_file),
+        ] {
+            if let Some(path) = path {
+                anyhow::ensure!(
+                    path.is_absolute(),
+                    "proof_verifier.{name} must be an absolute path"
+                );
+            }
+        }
+        if let Some(age) = self.live_max_age_seconds {
+            anyhow::ensure!(
+                (1..=PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS).contains(&age),
+                "proof_verifier.live_max_age_seconds must be between 1 and {}",
+                PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS
+            );
+        }
+        anyhow::ensure!(
+            self.live_max_age_seconds.is_some() == self.live_state_file.is_some(),
+            "proof_verifier live reads need both live_state_file and live_max_age_seconds"
+        );
+        anyhow::ensure!(
+            (1..=3600).contains(&self.timeout_seconds),
+            "proof_verifier.timeout_seconds must be between 1 and 3600"
+        );
+        anyhow::ensure!(
+            self.min_interval_ms <= 60_000,
+            "proof_verifier.min_interval_ms must be at most 60000"
+        );
+        Ok(())
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct AppConfig {
     pub nodes: HashMap<String, AdnlConfig>,
@@ -1043,6 +1143,9 @@ pub struct AppConfig {
     pub bookmarks: HashMap<String, String>,
     #[serde(default)]
     pub alerts: AlertsConfig,
+    /// Proven reads (pool snapshots). Without it no snapshot is produced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_verifier: Option<ProofVerifierConfig>,
 }
 
 impl AppConfig {
@@ -1107,6 +1210,7 @@ impl AppConfig {
     fn validate(&self) -> anyhow::Result<()> {
         self.elections.as_ref().map(|e| e.validate()).transpose()?;
         self.http.auth.as_ref().map(|a| a.validate()).transpose()?;
+        self.proof_verifier.as_ref().map(|v| v.validate()).transpose()?;
         Ok(())
     }
 }
@@ -1114,6 +1218,53 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn proof_verifier() -> ProofVerifierConfig {
+        ProofVerifierConfig {
+            executable: PathBuf::from("/opt/tos/bin/tos-proof-verify"),
+            anchor_file: PathBuf::from("/etc/tos/anchor.json"),
+            liteserver_config: Some(PathBuf::from("/etc/tos/liteserver.json")),
+            material_dir: None,
+            live_state_file: Some(PathBuf::from("/var/lib/tos/proof-state.json")),
+            live_max_age_seconds: Some(600),
+            timeout_seconds: 300,
+            min_interval_ms: 200,
+        }
+    }
+
+    #[test]
+    fn proof_verifier_config_is_local_absolute_and_bounded() {
+        assert!(proof_verifier().validate().is_ok());
+        let refused = |edit: &dyn Fn(&mut ProofVerifierConfig)| {
+            let mut config = proof_verifier();
+            edit(&mut config);
+            config.validate().is_err()
+        };
+        assert!(refused(&|c| c.executable = PathBuf::from("tos-proof-verify")));
+        assert!(refused(&|c| c.anchor_file = PathBuf::from("anchor.json")));
+        assert!(refused(&|c| c.material_dir = Some(PathBuf::from("/tmp/material"))));
+        assert!(refused(&|c| c.liteserver_config = None));
+        assert!(refused(&|c| c.live_state_file = Some(PathBuf::from("state.json"))));
+        assert!(refused(&|c| c.live_max_age_seconds = Some(0)));
+        assert!(refused(&|c| {
+            c.live_max_age_seconds = Some(PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS + 1)
+        }));
+        assert!(refused(&|c| c.live_max_age_seconds = None));
+        assert!(refused(&|c| c.live_state_file = None));
+        assert!(refused(&|c| c.timeout_seconds = 0));
+        // Historical-only provisioning needs neither live field.
+        let mut historical = proof_verifier();
+        historical.live_state_file = None;
+        historical.live_max_age_seconds = None;
+        assert!(historical.validate().is_ok());
+    }
+
+    #[test]
+    fn unknown_proof_verifier_fields_are_refused() {
+        let text = r#"{"executable":"/a","anchor_file":"/b","liteserver_config":"/c",
+                       "trust_endpoint":true}"#;
+        assert!(serde_json::from_str::<ProofVerifierConfig>(text).is_err());
+    }
 
     #[test]
     fn auth_config_rejects_an_unbounded_token_ttl() {

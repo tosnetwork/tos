@@ -14,6 +14,22 @@
 ;; Custom ASM instructions                                                   ;;
 ;;===========================================================================;;
 
+#include "strong-ed25519-key.fc";
+
+;; A weak or non-canonical owner key (strong-ed25519-key.fc): refused as the
+;; stored key before its signature is checked, and as the new key of an OSet
+;; before acceptance.
+const int err::weak_owner_key = 46;
+
+;; Expired query ids forgotten per accepted message.
+const int query_cleanup_limit = 16;
+
+() require_strong_key(int public_key) impure inline {
+  if (ed25519_key_may_be_weak?(public_key)) {
+    throw_if(err::weak_owner_key, weak_ed25519_key?(public_key));
+  }
+}
+
 cell udict_get_ref_(cell dict, int key_len, int index) asm(index dict key_len) "DICTUGETOPTREF";
 
 (cell, ()) pfxdict_set_ref(cell dict, int key_len, slice key, cell value) {
@@ -228,20 +244,29 @@ cell process_ops(cell root, slice ops) inline_ref {
   (_, var found?) = old_queries.udict_get?(64, query_id);
   throw_if(32, found?);
   throw_unless(34, contract_id == query_contract);
+  require_strong_key(public_key);
   throw_unless(35, check_signature(shash, signature, public_key));
-  accept_message(); ;; message is signed by owner, sanity not guaranteed yet
-
+  ;; Refused before acceptance: a refusal after it would roll back the stored
+  ;; query id and leave the signed message replayable at the contract's cost.
   int op = in_msg.preload_uint(6);
   if (op == 51) {
-    in_msg~skip_bits(6);
-    public_key = in_msg~load_uint(256);
-  } else {
-    root = process_ops(root, in_msg);
+    require_strong_key(in_msg.skip_bits(6).preload_uint(256));
   }
+  accept_message(); ;; message is signed by owner, sanity not guaranteed yet
 
-  bound -= (64 << 32);   ;; clean up records expired more than 64 seconds ago
+  ;; Spend the query id before anything that can fail: an operation that
+  ;; throws, or cleanup that runs out of gas, rolls back to this commit, so the
+  ;; accepted message stays recorded and a resubmission is refused as a replay
+  ;; before acceptance instead of charging the contract again.
   old_queries~udict_set_builder(64, query_id, begin_cell());
-  var queries = old_queries;
+  store_data(contract_id, last_cleaned, public_key, root, old_queries);
+  commit();
+
+  ;; Forget query ids expired more than 64 seconds ago, at most
+  ;; query_cleanup_limit of them per message: a large backlog drains over
+  ;; successive messages instead of taking every message's gas.
+  bound -= (64 << 32);
+  int budget = query_cleanup_limit;
   do {
     var (old_queries', i, _, f) = old_queries.udict_delete_get_min(64);
     f~touch();
@@ -251,8 +276,17 @@ cell process_ops(cell root, slice ops) inline_ref {
     if (f) {
       old_queries = old_queries';
       last_cleaned = i;
+      budget -= 1;
+      f = budget > 0;
     }
   } until (~ f);
+
+  if (op == 51) {
+    in_msg~skip_bits(6);
+    public_key = in_msg~load_uint(256);
+  } else {
+    root = process_ops(root, in_msg);
+  }
 
   store_data(contract_id, last_cleaned, public_key, root, old_queries);
 }

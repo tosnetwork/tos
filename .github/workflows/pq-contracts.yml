@@ -20,6 +20,7 @@ on:
       - 'test/pq-contracts/**'
       - 'doc/pq-quorum-and-highload.md'
       - '.github/workflows/pq-contracts.yml'
+      - '.github/actions/native-cache/**'
 permissions:
   contents: read
 concurrency:
@@ -38,6 +39,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: pq-contracts-release
+
       - name: Build the contract tools, the transaction emulator and the generated code
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -111,6 +118,9 @@ jobs:
           python3 test/pq-contracts/mutations.py --build build \
             --signer build-pq-signer/test-pq-contracts-sign
           git diff --exit-code
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats
   # Surface the exact failing assertion in job metadata as well as logs/summary.
   # This remains readable when a client's redirected job-log download is unavailable.
   # Read-only permissions; no PR comments, tokens or repository writes from test code.

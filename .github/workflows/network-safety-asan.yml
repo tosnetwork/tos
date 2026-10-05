@@ -6,7 +6,7 @@ name: Network safety ASAN
 # tests run -- and instrumented, so a use-after-free or overflow is caught. The
 # ADNL and overlay cases already run in the normal CTest pass; this workflow
 # builds a second time with AddressSanitizer and runs the whole "network-safety"
-# label, the QUIC regressions included.
+# label, including HTTP listener limits and CONNECT tunnel backpressure/drain.
 #
 # It also checks execution completeness: every expected test must be registered
 # (a removed or relabelled test fails the gate), and the run must actually
@@ -25,10 +25,14 @@ on:
       - 'adnl/**'
       - 'overlay/**'
       - 'quic/**'
+      - 'http/**'
+      - 'rldp-http-proxy/**'
       - 'tdactor/**'
       - 'test/test-adnl-peer-pair-cap.cpp'
       - 'test/test-overlay-broadcast-capacity.cpp'
       - 'test/net/test-quic-sender.cpp'
+      - 'test/test-http-server-limits.cpp'
+      - 'test/test-rldp-http-tunnel.cpp'
       - 'tdutils/td/utils/tests.*'
       - 'CMakeLists.txt'
       - '.github/workflows/network-safety-asan.yml'
@@ -45,12 +49,15 @@ env:
   # detecting them globally would surface unrelated pre-existing reports.
   ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
 
+permissions:
+  contents: read
+
 jobs:
   network-safety:
     name: instrumented network-safety tests
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install system libraries
       run: |
@@ -84,7 +91,10 @@ jobs:
         ninja -C build-asan \
           test-quic-sender \
           test-adnl-peer-pair-cap \
-          test-overlay-broadcast-capacity
+          test-overlay-broadcast-capacity \
+          test-http-server-limits \
+          test-json-rpc-transport \
+          test-rldp-http-tunnel
 
     - name: Verify the expected network-safety tests are registered
       working-directory: build-asan
@@ -99,6 +109,9 @@ jobs:
             "quic-connection-count-cap",
             "test-adnl-peer-pair-cap",
             "test-overlay-broadcast-capacity",
+            "test-http-server-limits",
+            "test-json-rpc-transport",
+            "test-rldp-http-tunnel",
         }
         got = {t["name"] for t in json.load(open("network-safety-tests.json"))["tests"]}
         missing = expected - got

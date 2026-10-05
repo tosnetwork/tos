@@ -19,21 +19,24 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
+#include <list>
+#include <mutex>
 #include <optional>
+#include <set>
+#include <unordered_map>
 
+#include "block/block.h"
 #include "http/http-server.h"
-#include "json-rpc-rate-gate.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Time.h"
 #include "validator/validator.h"
-#include "block/block.h"
 
-#include <list>
-#include <mutex>
-#include <set>
-#include <unordered_map>
+#include "json-rpc-http-policy.h"
+#include "json-rpc-listen-policy.h"
+#include "json-rpc-rate-gate.h"
 
 namespace tos {
 
@@ -196,6 +199,16 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     std::size_t max_connections = 1024;    // simultaneously open HTTP connections (0 = unlimited)
     double request_header_timeout = 30.0;  // seconds to deliver request headers (0 = no deadline)
     double request_body_timeout = 120.0;   // seconds to deliver a declared request body
+    // Seconds to finish writing a response; mandatory, greater than 0. See
+    // json-rpc-http-policy.h for why the listener needs one.
+    double response_timeout = json_rpc::kDefaultResponseTimeout;
+    // Request-body capacity of the listener; null gives it its own
+    // json_rpc::kListenerBodyBudgetBytes budget.
+    std::shared_ptr<http::BodyBudget> body_budget;
+    // Test seam, null in production: when set, each request body is drained
+    // (and its reservation taken over) as usual, then handed to this hook,
+    // and the request is processed only once the hook's promise is set.
+    std::function<void(td::Promise<td::Unit>)> body_drained_hook;
     std::string api_key;             // empty = no auth required
     td::int32 cache_ttl = 0;        // seconds, 0 = disabled
     std::size_t cache_max_entries = 1024;
@@ -234,6 +247,14 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // table is keyed by remote input, so it needs its own ceiling; past
     // it the least recently seen entry is reclaimed.
     std::size_t per_ip_rate_max_sources = 4096;
+    // Per-source HTTP request budget, spent at header admission: every
+    // request that reaches it spends one unit before any of its body is
+    // reserved or read, and a source with nothing left is answered 429 from
+    // its headers. The per-call budget above is still spent per dispatched
+    // call once a body is parsed. Sized like that budget, so a client within
+    // it never meets this one first. A zero window or budget disables it.
+    double per_ip_ingress_window = 10.0;
+    td::uint64 per_ip_ingress_requests = 600;
     // Optional explicit allow-list of trusted proxy IPs. Loopback
     // addresses (127.0.0.1, ::1) are always implicit. Each entry is a
     // single IPv4 / IPv6 address in textual form; CIDR ranges are not
@@ -249,24 +270,6 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // itself enforce a loopback-only listener.
     bool expose_consensus_status = false;
   };
-
-  // M-02 hardening: the listen-time decision matrix is broken out so
-  // unit tests can drive every (loopback, profile, api_key, override)
-  // tuple without standing up a real TCP listener. Returns the result
-  // type below; `listen()` itself only translates `Refuse*` outcomes
-  // into the appropriate LOG(ERROR) + early return.
-  enum class ListenDecision {
-    Accept,
-    RefuseWriteRemoteWithoutAuth,
-  };
-  // Pure decision-making helper. No side effects, no logging.
-  // - `is_loopback`     : true iff the listening address is 127.0.0.1 / ::1.
-  // - `api_key_empty`   : `Options::api_key.empty()` snapshot.
-  // - `readonly`        : `Options::readonly` snapshot.
-  static ListenDecision decide_listen_admission(
-      bool is_loopback,
-      bool api_key_empty,
-      bool readonly);
 
   // M-01 hardening: pure helper that maps a real TCP peer IP plus
   // optional X-Forwarded-For / X-Real-IP header values onto the
@@ -320,10 +323,25 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     explicit HttpCallback(td::actor::ActorId<JsonRpcServer> server);
     void receive_request(RequestPtr request, PayloadPtr payload,
                          td::Promise<HttpReturn> promise) override;
+    void admit_request(const http::HttpRequest &request, td::Promise<http::HttpServer::Admission> promise) override;
+
    private:
     td::actor::ActorId<JsonRpcServer> server_;
   };
   friend HttpCallback;
+
+  // What header admission needs from a request, copied out of it.
+  struct AdmissionHead {
+    std::string method;
+    std::string url;
+    std::string api_key;
+    std::string peer_ip;
+    std::string forwarded_for;
+    std::string real_ip;
+  };
+  // Header admission: API key, then the source's request budget. Runs before
+  // any of the request body is parsed or reserved.
+  void admit_request_head(AdmissionHead head, td::Promise<http::HttpServer::Admission> promise);
 
   void on_request(RequestPtr request, PayloadPtr payload,
                   td::Promise<HttpReturn> promise);
@@ -332,6 +350,16 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // scheduler. Empty string means the client address was not available.
   void on_body_ready(PayloadPtr payload, std::string source_ip,
                      td::Promise<HttpReturn> promise);
+  // Where a completed request body goes: the JSON-RPC envelope, or a REST
+  // POST whose body is the params of `rest_method`.
+  enum class BodyRoute { envelope, rest };
+  // The single place a completed request body is drained. It takes over the
+  // body's reservation (held until the request is answered), drains the
+  // body, and processes it by route.
+  void on_request_body(PayloadPtr payload, BodyRoute route, std::string rest_method, std::string source_ip,
+                       td::Promise<HttpReturn> promise);
+  void process_request_body(td::BufferSlice body, BodyRoute route, std::string rest_method, std::string source_ip,
+                            td::Promise<HttpReturn> promise);
   void process_body(td::BufferSlice body, std::string req_id,
                     std::string source_ip,
                     td::Promise<HttpReturn> promise);
@@ -644,6 +672,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   std::shared_ptr<JsonRpcResponseCache> cache_;
   // Declared after opts_: it is constructed from the option values.
   PerIpRateGate per_ip_gate_;
+  PerIpRateGate ingress_gate_;
   td::uint32 consensus_block_seqno_{0};
   td::int64 consensus_block_timestamp_{0};
 

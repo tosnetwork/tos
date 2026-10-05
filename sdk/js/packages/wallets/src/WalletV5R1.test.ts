@@ -4,6 +4,9 @@ import { keyPairFromSeed, signVerify } from "@tos/crypto";
 import { WalletV5R1 } from "./WalletV5R1.js";
 import { WalletV4R2 } from "./WalletV4R2.js";
 
+// The network every wallet in these tests signs for (ConfigParam 19).
+const NETWORK = 42;
+
 // ---------------------------------------------------------------------------
 // Deterministic test key pair
 // ---------------------------------------------------------------------------
@@ -90,7 +93,7 @@ describe("WalletV5R1", () => {
 
   it("V5R1 address differs from V4R2 address for the same key", () => {
     const v5 = WalletV5R1.create({ publicKey: KEY_PAIR.publicKey, networkGlobalId: 3 });
-    const v4 = WalletV4R2.create({ publicKey: KEY_PAIR.publicKey });
+    const v4 = WalletV4R2.create({ networkGlobalId: NETWORK, publicKey: KEY_PAIR.publicKey });
     expect(v5.address.equals(v4.address)).toBe(false);
   });
 

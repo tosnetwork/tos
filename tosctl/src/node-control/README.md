@@ -621,14 +621,23 @@ Import an existing private key into the vault.
 | Flag | Short form | Description |
 |------|------------|-------------|
 | `--name <NAME>` | `-n` | Key name (unique identifier in the vault) |
-| `--private-key <KEY>` | `-k` | Private key (base64) |
+| `--private-key-file <PATH>` | | Read the base64 private key from a file you own with mode `0600` |
+| `--private-key-fd <N>` | | Read the base64 private key from an inherited descriptor (`0` for standard input, or `3` and above): a pipe, a socket, or a regular file you own with mode `0600` |
 | `--algorithm <ALG>` | `-a` | Algorithm (default: `ed25519`) |
 | `--extractable` | `-e` | Mark key as extractable |
 
+With neither `--private-key-file` nor `--private-key-fd`, the command prompts for the key without echo. The key is never a command-line value: process arguments are readable by other local processes and are kept by shell history. The former `--private-key`/`-k` option is refused with an error, and a key that was passed that way should be treated as exposed. A symlink, a non-regular file, or a file readable or writable by group or others is refused. Environment variables are not accepted as a key source.
+
 ```bash
-tosctl key import \
-  --name "wallet0-key" \
-  --private-key "base64-encoded-private-key"
+# From a protected file
+install -m 600 /dev/null wallet0.key && $EDITOR wallet0.key
+tosctl key import --name "wallet0-key" --private-key-file wallet0.key
+
+# From a pipe on standard input (for example, from a secret manager)
+secret-manager read wallet0-key | tosctl key import --name "wallet0-key" --private-key-fd 0
+
+# Interactively, without echo
+tosctl key import --name "wallet0-key"
 ```
 
 ---
@@ -1672,10 +1681,10 @@ tosctl auth rm viewer
 # List all vault keys
 tosctl key ls
 
-# Import an existing key
+# Import an existing key (from a mode-0600 file; see `key import`)
 tosctl key import \
   --name "imported-key" \
-  --private-key "base64-private-key" \
+  --private-key-file imported-key.b64 \
   --extractable
 
 # Remove a key

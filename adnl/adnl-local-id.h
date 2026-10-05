@@ -50,6 +50,10 @@ class AdnlLocalId : public td::actor::Actor {
 
   void decrypt_message(td::BufferSlice data, td::Promise<td::BufferSlice> promise);
   void deliver(AdnlNodeIdShort src, td::BufferSlice data);
+  // Delivers, then releases `held`: the subscriber has the message.
+  void deliver_holding(AdnlNodeIdShort src, td::BufferSlice data, std::shared_ptr<void> held) {
+    deliver(src, std::move(data));
+  }
   void deliver_query(AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
   void receive(td::IPAddress addr, td::BufferSlice data);
   td::actor::Task<> receive_coro(td::IPAddress addr, td::BufferSlice data);

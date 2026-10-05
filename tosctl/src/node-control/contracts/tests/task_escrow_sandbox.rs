@@ -11,10 +11,15 @@
 //! accept -> result -> settle flow, the cancel and timeout flows, and the
 //! unauthorized/illegal-transition rejections.
 
-use chain_block::{BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, StateInit};
+use chain_block::{
+    BuilderData, Cell, Coins, CurrencyCollection, IBitstring, MsgAddressInt, Serializable,
+    StateInit,
+};
 use contracts::{TaskEscrowContract, TaskEscrowInit};
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury};
+
+mod weak_ed25519;
 
 const TOS: u64 = 1_000_000_000;
 const STATUS_OPEN: i128 = 0;
@@ -25,6 +30,7 @@ const STATUS_CANCELLED: i128 = 4;
 const STATUS_EXPIRED: i128 = 5;
 const STATUS_REJECTED: i128 = 6;
 const STATUS_DISPUTED: i128 = 7;
+const DEFAULT_FALLBACK_BPS: u16 = TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS;
 
 struct Fixture {
     bc: Blockchain,
@@ -46,15 +52,24 @@ impl Fixture {
     }
 
     fn with_assignment(budget: u64, funding: u64, assigned: bool) -> Self {
-        Self::build(budget, funding, assigned, None, true)
+        Self::build(budget, funding, assigned, None, true, DEFAULT_FALLBACK_BPS)
     }
 
     fn with_attestor(budget: u64, funding: u64, attestor_pubkey: [u8; 32]) -> Self {
-        Self::build(budget, funding, true, Some(attestor_pubkey), true)
+        Self::build(budget, funding, true, Some(attestor_pubkey), true, DEFAULT_FALLBACK_BPS)
     }
 
     fn without_verifier(budget: u64, funding: u64) -> Self {
-        Self::build(budget, funding, true, None, false)
+        Self::build(budget, funding, true, None, false, DEFAULT_FALLBACK_BPS)
+    }
+
+    fn with_fallback(
+        budget: u64,
+        funding: u64,
+        fallback_bps: u16,
+        attestor_pubkey: Option<[u8; 32]>,
+    ) -> Self {
+        Self::build(budget, funding, true, attestor_pubkey, true, fallback_bps)
     }
 
     fn build(
@@ -63,6 +78,7 @@ impl Fixture {
         assigned: bool,
         attestor_pubkey: Option<[u8; 32]>,
         has_verifier: bool,
+        fallback_bps: u16,
     ) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         // The sandbox config has no basechain workchain descriptor, so run
@@ -83,6 +99,7 @@ impl Fixture {
             settlement_policy_hash: [0x11; 32],
             permission_hash: [0x22; 32],
             attestor_pubkey,
+            dispute_fallback_agent_bps: fallback_bps,
         };
         let escrow = TaskEscrowContract::calculate_address(-1, &init).expect("address");
         let state_init = TaskEscrowContract::build_state_init(&init).expect("state init");
@@ -96,15 +113,18 @@ impl Fixture {
     }
 
     fn send_from(&mut self, from: &MsgAddressInt, body: Cell) -> SendResult {
-        // 0.1 TOS: masterchain gas is 10x basechain pricing, and the credited
-        // gas limit is derived from the message value.
-        self.send_from_with_value(from, body, TOS / 10)
+        // The value tosctl attaches by default: the credited gas limit is
+        // derived from the message value, so this is what proves that default
+        // pays for every action.
+        let value = self.action_value();
+        self.send_from_with_value(from, body, value)
+    }
+
+    fn action_value(&self) -> u64 {
+        default_action_value(&self.bc, &self.escrow)
     }
 
     /// Like [`Fixture::send_from`], but with an explicit message value.
-    /// Attestor-signature-checking calls do the extra work of building and
-    /// hashing the domain-separation cell, which needs more gas headroom
-    /// than the default `TOS / 10` credits in the masterchain.
     fn send_from_with_value(&mut self, from: &MsgAddressInt, body: Cell, value: u64) -> SendResult {
         let msg = MessageBuilder::internal(from, &self.escrow, value).body(body).build();
         self.bc.send_message(msg).expect("send")
@@ -140,6 +160,15 @@ impl Fixture {
             .get_account(addr)
             .and_then(|acc| acc.balance().and_then(|cc| cc.coins.as_u64()))
             .unwrap_or(0)
+    }
+
+    /// Lowers the escrow's balance in place, as storage rent does over time
+    /// after the budget was checked at claim/accept. The contract cannot be
+    /// driven below its budget any other way before settlement.
+    fn drain_escrow_to(&mut self, balance: u64) {
+        let mut account = self.bc.get_account(&self.escrow).expect("escrow account").clone();
+        account.set_balance(CurrencyCollection::with_coins(balance));
+        self.bc.set_account(self.escrow.clone(), account);
     }
 
     fn has_attestor(&self) -> bool {
@@ -179,7 +208,15 @@ fn build_state_init_bypassing_client_side_review_period_check(init: &TaskEscrowI
     data.append_u64(init.deadline).unwrap().append_u8(0).unwrap();
     let mut hashes = BuilderData::new();
     let mut permission = BuilderData::new();
-    permission.append_u256(&init.permission_hash).unwrap().append_u256(&[0; 32]).unwrap();
+    permission
+        .append_u256(&init.permission_hash)
+        .unwrap()
+        .append_u256(&[0; 32])
+        .unwrap()
+        .append_u16(init.dispute_fallback_agent_bps)
+        .unwrap()
+        .append_u64(0)
+        .unwrap();
     hashes
         .append_u256(&[0; 32])
         .unwrap()
@@ -217,6 +254,7 @@ fn claim_and_accept_reject_a_too_short_review_period_before_the_agent_does_any_w
         settlement_policy_hash: [0x11; 32],
         permission_hash: [0x22; 32],
         attestor_pubkey: None,
+        dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
     let state_init = build_state_init_bypassing_client_side_review_period_check(&init);
     let escrow_cell = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
@@ -562,11 +600,14 @@ fn unauthorized_and_out_of_order_messages_are_rejected() {
 
 #[test]
 fn settlement_rejects_payout_above_actual_contract_balance() {
-    let mut f = Fixture::new(5 * TOS, 2 * TOS);
+    // Accept requires the budget to be held, so the balance only falls short
+    // of it afterwards, as storage rent would make it.
+    let mut f = Fixture::new(5 * TOS, 5 * TOS + TOS / 5);
     let agent_addr = f.agent.address().clone();
     f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
     f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
         .expect_success();
+    f.drain_escrow_to(2 * TOS);
     let creator_addr = f.creator.address().clone();
     f.send_from(&creator_addr, TaskEscrowContract::settle(3, 4 * TOS).unwrap())
         .expect_aborted()
@@ -576,21 +617,23 @@ fn settlement_rejects_payout_above_actual_contract_balance() {
 
 #[test]
 fn settlement_rejects_payout_one_nanoton_above_the_exact_available_balance() {
-    // Budget (5 TOS) intentionally exceeds funding (2 TOS), so the actual
-    // contract balance -- not the budget -- is the binding constraint here.
-    // `send_from` always attaches TOS/10 as the message's own value, which
-    // is credited to the contract's balance before `get_balance()` runs
-    // inside the transaction, so the balance settle actually checks against
-    // is the pre-message balance plus that credit. This tightens
+    // The balance (drained to 2 TOS after accept, as storage rent would) is
+    // below the 5 TOS budget, so the actual contract balance -- not the
+    // budget -- is the binding constraint here.
+    // `send_from` attaches the default action value as the message's own
+    // value, which is credited to the contract's balance before
+    // `get_balance()` runs inside the transaction, so the balance settle
+    // actually checks against is the pre-message balance plus that credit. This tightens
     // `settlement_rejects_payout_above_actual_contract_balance` (which uses
     // a payout far above the balance) down to the exact off-by-one boundary.
-    let mut f = Fixture::new(5 * TOS, 2 * TOS);
+    let mut f = Fixture::new(5 * TOS, 5 * TOS + TOS / 5);
     let agent_addr = f.agent.address().clone();
     let creator_addr = f.creator.address().clone();
     f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
     f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
         .expect_success();
-    let available_at_settle = f.balance(&f.escrow.clone()) + TOS / 10;
+    f.drain_escrow_to(2 * TOS);
+    let available_at_settle = f.balance(&f.escrow.clone()) + f.action_value();
     f.send_from(&creator_addr, TaskEscrowContract::settle(3, available_at_settle + 1).unwrap())
         .expect_aborted()
         .expect_exit_code(112);
@@ -614,7 +657,9 @@ fn settle_on_an_attestor_configured_task_requires_a_valid_signature() {
     f.send_from(&creator_addr, TaskEscrowContract::settle(3, TOS).unwrap()).expect_aborted();
     assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
 
-    let domain_hash = contracts::settle_domain_hash(&f.escrow, &result_hash, TOS).unwrap();
+    let domain_hash =
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS)
+            .unwrap();
 
     // A signature from the wrong key is rejected. (Domain-bound hashing and
     // signature verification both run before the signature is judged
@@ -684,7 +729,8 @@ fn settle_signature_is_bound_to_the_exact_payout_amount() {
 
     // The attestor signs off on a payout of TOS / 2.
     let approved_payout_domain_hash =
-        contracts::settle_domain_hash(&f.escrow, &result_hash, TOS / 2).unwrap();
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS / 2)
+            .unwrap();
     let signature: [u8; 64] = attestor.sign(&approved_payout_domain_hash).to_bytes();
 
     // Settling with a larger payout, reusing that same signature, is rejected:
@@ -736,8 +782,14 @@ fn resolve_on_an_attestor_configured_task_requires_a_valid_signature() {
     f.send_from(&verifier_addr, TaskEscrowContract::resolve(4, TOS).unwrap()).expect_aborted();
     assert_eq!(f.status(), STATUS_DISPUTED);
 
-    let domain_hash =
-        contracts::resolve_domain_hash(&f.escrow, &result_hash, &dispute_hash, TOS).unwrap();
+    let domain_hash = contracts::resolve_domain_hash(
+        sandbox_global_id(&f.bc),
+        &f.escrow,
+        &result_hash,
+        &dispute_hash,
+        TOS,
+    )
+    .unwrap();
 
     // A signature from the wrong key is rejected.
     let wrong_key = SigningKey::from_bytes(&[0x88; 32]);
@@ -753,7 +805,9 @@ fn resolve_on_an_attestor_configured_task_requires_a_valid_signature() {
 
     // A signature over the settle-style domain (result_hash + payout, no
     // dispute_hash) is rejected: resolve's domain also binds dispute_hash.
-    let settle_style_hash = contracts::settle_domain_hash(&f.escrow, &result_hash, TOS).unwrap();
+    let settle_style_hash =
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS)
+            .unwrap();
     let mismatched_domain_signature: [u8; 64] = attestor.sign(&settle_style_hash).to_bytes();
     f.send_from_with_value(
         &verifier_addr,
@@ -837,7 +891,9 @@ fn creator_can_rotate_and_revoke_the_attestor_key_others_rejected() {
 
     // Creator settles with a valid attestor signature, reaching the terminal
     // settled state -- where rotate/revoke are unfrozen again.
-    let domain_hash = contracts::settle_domain_hash(&f.escrow, &result_hash, TOS).unwrap();
+    let domain_hash =
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS)
+            .unwrap();
     let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     f.send_from_with_value(
         &creator_addr,
@@ -914,8 +970,14 @@ fn attestor_rotate_and_revoke_are_frozen_once_the_agent_has_accepted() {
     // The verifier resolves the dispute, reaching the terminal settled
     // status -- rotate/revoke are unfrozen again.
     let verifier_addr = f.verifier.address().clone();
-    let domain_hash =
-        contracts::resolve_domain_hash(&f.escrow, &[0xAA; 32], &[0xCC; 32], TOS).unwrap();
+    let domain_hash = contracts::resolve_domain_hash(
+        sandbox_global_id(&f.bc),
+        &f.escrow,
+        &[0xAA; 32],
+        &[0xCC; 32],
+        TOS,
+    )
+    .unwrap();
     let signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     f.send_from_with_value(
         &verifier_addr,
@@ -949,7 +1011,9 @@ fn configured_attestor_is_immutable_even_while_task_is_open() {
     f.send_from(&agent_addr, TaskEscrowContract::result(3, result_hash, [0xBB; 32]).unwrap())
         .expect_success();
 
-    let domain_hash = contracts::settle_domain_hash(&f.escrow, &result_hash, TOS).unwrap();
+    let domain_hash =
+        contracts::settle_domain_hash(sandbox_global_id(&f.bc), &f.escrow, &result_hash, TOS)
+            .unwrap();
 
     // The deployment key remains authoritative.
     let old_signature: [u8; 64] = old_attestor.sign(&domain_hash).to_bytes();
@@ -998,7 +1062,7 @@ fn timeout_deadlines_are_inclusive_boundaries() {
 
 #[test]
 fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_tasks() {
-    // The signed message is domain_bound_hash(contract_address, result_hash),
+    // The signed message is settle_domain_hash(contract_address, result_hash, ...),
     // not the bare result_hash -- so a signature minted for one Task Escrow
     // instance is *not* accepted by a second, independent instance that
     // happens to share the same attestor_pubkey and the same result_hash
@@ -1015,8 +1079,13 @@ fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_ta
     task_a
         .send_from(&agent_a, TaskEscrowContract::result(2, shared_result_hash, [0; 32]).unwrap())
         .expect_success();
-    let domain_hash_a =
-        contracts::settle_domain_hash(&task_a.escrow, &shared_result_hash, TOS / 2).unwrap();
+    let domain_hash_a = contracts::settle_domain_hash(
+        sandbox_global_id(&task_a.bc),
+        &task_a.escrow,
+        &shared_result_hash,
+        TOS / 2,
+    )
+    .unwrap();
     let signature: [u8; 64] = attestor.sign(&domain_hash_a).to_bytes();
     task_a
         .send_from_with_value(
@@ -1056,8 +1125,13 @@ fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_ta
     );
 
     // A correctly re-signed (domain-bound to task_b) signature still works.
-    let domain_hash_b =
-        contracts::settle_domain_hash(&task_b.escrow, &shared_result_hash, TOS / 2).unwrap();
+    let domain_hash_b = contracts::settle_domain_hash(
+        sandbox_global_id(&task_b.bc),
+        &task_b.escrow,
+        &shared_result_hash,
+        TOS / 2,
+    )
+    .unwrap();
     let signature_b: [u8; 64] = attestor.sign(&domain_hash_b).to_bytes();
     task_b
         .send_from_with_value(
@@ -1067,4 +1141,698 @@ fn attestation_signature_is_bound_to_the_contract_address_and_rejected_across_ta
         )
         .expect_success();
     assert_eq!(task_b.status(), STATUS_SETTLED);
+}
+
+const ERR_BUDGET_NOT_ESCROWED: i32 = 133;
+
+#[test]
+fn claim_and_accept_refuse_a_budget_the_escrow_does_not_hold() {
+    // Underfunded: the agent must be refused before doing any work.
+    let mut open = Fixture::open(5 * TOS, 2 * TOS);
+    let agent_addr = open.agent.address().clone();
+    open.send_from(&agent_addr, TaskEscrowContract::claim(1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_BUDGET_NOT_ESCROWED);
+    assert_eq!(open.status(), STATUS_OPEN);
+    // The value the agent attaches is its own and does not fund the budget.
+    open.send_from_with_value(&agent_addr, TaskEscrowContract::claim(2).unwrap(), 10 * TOS)
+        .expect_aborted()
+        .expect_exit_code(ERR_BUDGET_NOT_ESCROWED);
+    assert_eq!(open.status(), STATUS_OPEN);
+
+    let mut assigned = Fixture::new(5 * TOS, 2 * TOS);
+    let agent_addr = assigned.agent.address().clone();
+    assigned
+        .send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_BUDGET_NOT_ESCROWED);
+    assert_eq!(assigned.status(), STATUS_OPEN);
+
+    // Control: the same tasks fully funded are taken.
+    let mut funded_open = Fixture::open(5 * TOS, 5 * TOS + TOS / 5);
+    let agent_addr = funded_open.agent.address().clone();
+    funded_open.send_from(&agent_addr, TaskEscrowContract::claim(1).unwrap()).expect_success();
+    assert_eq!(funded_open.status(), STATUS_ACCEPTED);
+    let mut funded = Fixture::new(5 * TOS, 5 * TOS + TOS / 5);
+    let agent_addr = funded.agent.address().clone();
+    funded.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    assert_eq!(funded.status(), STATUS_ACCEPTED);
+}
+
+#[test]
+fn a_dispute_with_the_reserved_zero_commitment_is_refused() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let agent_addr = f.agent.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    let creator_addr = f.creator.address().clone();
+    f.send_from(&creator_addr, TaskEscrowContract::dispute(3, [0; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(127);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+    // Control: a non-zero commitment opens the dispute.
+    f.send_from(&creator_addr, TaskEscrowContract::dispute(4, [0xCC; 32]).unwrap())
+        .expect_success();
+    assert_eq!(f.status(), STATUS_DISPUTED);
+}
+
+/// The network the sandbox runs, as GLOBALID reads it from ConfigParam 19.
+fn sandbox_global_id(bc: &Blockchain) -> i32 {
+    match bc.config_params().config(19).expect("parameter 19") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        other => panic!("parameter 19 is not the global id: {other:?}"),
+    }
+}
+
+const ERR_WEAK_ATTESTOR: i32 = 134;
+
+/// An attestor key anyone could sign for is refused when the creator sets it,
+/// and refused at settlement when it arrived in a hand-built StateInit.
+#[test]
+fn weak_attestor_keys_are_refused_when_set_and_when_used() {
+    for weak in weak_ed25519::weak_keys() {
+        let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+        let creator = f.creator.address().clone();
+        f.send_from(&creator, TaskEscrowContract::rotate_attestor_key(1, weak).unwrap())
+            .expect_aborted()
+            .expect_exit_code(ERR_WEAK_ATTESTOR);
+        assert!(!f.has_attestor(), "a refused key must not be stored");
+    }
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let creator = f.creator.address().clone();
+    let strong = SigningKey::from_bytes(&[0x77; 32]).verifying_key().to_bytes();
+    f.send_from(&creator, TaskEscrowContract::rotate_attestor_key(1, strong).unwrap())
+        .expect_success();
+    assert!(f.has_attestor());
+
+    let weak = weak_ed25519::weak_keys()[0];
+    let mut f = Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, weak);
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    f.send_from_with_value(
+        &creator,
+        TaskEscrowContract::settle_signed(3, TOS, &[0u8; 64]).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_WEAK_ATTESTOR);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+}
+
+/// A settlement signed for another network does not settle this one.
+#[test]
+fn an_attestor_signature_for_another_network_is_refused() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let result_hash = [0xAA; 32];
+    let mut f =
+        Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, attestor.verifying_key().to_bytes());
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent, TaskEscrowContract::result(2, result_hash, [0xBB; 32]).unwrap())
+        .expect_success();
+    let here = sandbox_global_id(&f.bc);
+    let elsewhere =
+        contracts::settle_domain_hash(here.wrapping_add(1), &f.escrow, &result_hash, TOS).unwrap();
+    f.send_from_with_value(
+        &creator,
+        TaskEscrowContract::settle_signed(3, TOS, &attestor.sign(&elsewhere).to_bytes()).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(127);
+    let this_network = contracts::settle_domain_hash(here, &f.escrow, &result_hash, TOS).unwrap();
+    f.send_from_with_value(
+        &creator,
+        TaskEscrowContract::settle_signed(4, TOS, &attestor.sign(&this_network).to_bytes())
+            .unwrap(),
+        TOS / 4,
+    )
+    .expect_success();
+}
+
+/// Drives an attestor-configured task to `disputed`.
+fn disputed_with_attestor(
+    attestor_pubkey: [u8; 32],
+    result_hash: [u8; 32],
+    dispute_hash: [u8; 32],
+) -> Fixture {
+    let mut f = Fixture::with_attestor(2 * TOS, 2 * TOS + TOS / 5, attestor_pubkey);
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent, TaskEscrowContract::result(2, result_hash, [0xBB; 32]).unwrap())
+        .expect_success();
+    f.send_from(&creator, TaskEscrowContract::dispute(3, dispute_hash).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_DISPUTED);
+    f
+}
+
+/// resolve() authorizes a payout as settle() does, so a weak attestor key that
+/// arrived in a hand-built StateInit is refused there too.
+#[test]
+fn a_weak_attestor_key_cannot_resolve_a_dispute() {
+    let mut f = disputed_with_attestor(weak_ed25519::weak_keys()[0], [0xAA; 32], [0xCC; 32]);
+    let verifier = f.verifier.address().clone();
+    f.send_from_with_value(
+        &verifier,
+        TaskEscrowContract::resolve_signed(4, TOS, &[0u8; 64]).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_WEAK_ATTESTOR);
+    assert_eq!(f.status(), STATUS_DISPUTED);
+}
+
+/// A resolution signed for another network does not resolve this dispute.
+#[test]
+fn a_resolution_signed_for_another_network_is_refused() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let (result_hash, dispute_hash) = ([0xAA; 32], [0xCC; 32]);
+    let mut f =
+        disputed_with_attestor(attestor.verifying_key().to_bytes(), result_hash, dispute_hash);
+    let verifier = f.verifier.address().clone();
+    let here = sandbox_global_id(&f.bc);
+    let elsewhere = contracts::resolve_domain_hash(
+        here.wrapping_add(1),
+        &f.escrow,
+        &result_hash,
+        &dispute_hash,
+        TOS,
+    )
+    .unwrap();
+    f.send_from_with_value(
+        &verifier,
+        TaskEscrowContract::resolve_signed(4, TOS, &attestor.sign(&elsewhere).to_bytes()).unwrap(),
+        TOS / 4,
+    )
+    .expect_aborted()
+    .expect_exit_code(131);
+    assert_eq!(f.status(), STATUS_DISPUTED);
+    let this_network =
+        contracts::resolve_domain_hash(here, &f.escrow, &result_hash, &dispute_hash, TOS).unwrap();
+    f.send_from_with_value(
+        &verifier,
+        TaskEscrowContract::resolve_signed(5, TOS, &attestor.sign(&this_network).to_bytes())
+            .unwrap(),
+        TOS / 4,
+    )
+    .expect_success();
+    assert_eq!(f.status(), STATUS_SETTLED);
+}
+
+const ERR_BAD_FALLBACK_BPS: i32 = 135;
+const ERR_DISPUTE_WINDOW_OPEN: i32 = 136;
+const ERR_DISPUTE_WINDOW_CLOSED: i32 = 137;
+const ERR_FALLBACK_FEE_UNPAID: i32 = 138;
+
+impl Fixture {
+    fn task_int(&self, index: usize) -> i128 {
+        self.bc
+            .run_get_method(&self.escrow, "get_task_data", vec![])
+            .expect("get_task_data")
+            .expect_success()
+            .int_at(index)
+    }
+
+    fn dispute_deadline(&self) -> u64 {
+        u64::try_from(self.task_int(18)).expect("dispute deadline")
+    }
+
+    /// Accepts, submits a result and disputes it; returns when it was disputed.
+    fn disputed(&mut self) -> u64 {
+        let agent = self.agent.address().clone();
+        let creator = self.creator.address().clone();
+        self.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+        self.send_from(&agent, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+            .expect_success();
+        let at = u64::from(self.bc.now());
+        self.send_from(&creator, TaskEscrowContract::dispute(3, [0xCC; 32]).unwrap())
+            .expect_success();
+        assert_eq!(self.status(), STATUS_DISPUTED);
+        at
+    }
+}
+
+/// Value of every message the escrow sent in this call, by destination.
+fn payouts(result: &SendResult, escrow: &MsgAddressInt) -> Vec<(MsgAddressInt, u128)> {
+    let tx = result.transactions_for(escrow).into_iter().next().expect("escrow transaction");
+    let mut out = Vec::new();
+    tx.iterate_out_msgs(|message| {
+        let value = message.get_value().map(|v| v.coins.as_u128()).unwrap_or(0);
+        out.push((message.dst().expect("destination"), value));
+        Ok(true)
+    })
+    .expect("out messages");
+    out
+}
+
+/// A dispute the verifier leaves alone ends at its deadline: before it the
+/// fallback is refused, at it anyone may apply the split the task carried, the
+/// agent receives exactly its rounded-down share and the creator the rest.
+#[test]
+fn an_unresolved_dispute_falls_back_to_the_accepted_split_at_its_deadline() {
+    // An odd budget, so the split has a remainder to allocate.
+    let budget = 2 * TOS + 1;
+    let mut f = Fixture::with_fallback(budget, budget + TOS / 5, 3_333, None);
+    assert_eq!(f.task_int(17), 3_333);
+    assert_eq!(f.dispute_deadline(), 0, "no deadline before a dispute");
+    let disputed_at = f.disputed();
+    let deadline = f.dispute_deadline();
+    assert_eq!(deadline, disputed_at + TaskEscrowContract::DISPUTE_WINDOW_SECS);
+
+    let outsider = f.outsider.address().clone();
+    f.bc.set_now((deadline - 1) as u32);
+    f.send_from(&outsider, TaskEscrowContract::dispute_timeout(4).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_DISPUTE_WINDOW_OPEN);
+    assert_eq!(f.status(), STATUS_DISPUTED);
+    assert_eq!(f.dispute_deadline(), deadline, "a refused call does not move the deadline");
+
+    f.bc.set_now(deadline as u32);
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    let escrow = f.escrow.clone();
+    let result = f.send_from(&outsider, TaskEscrowContract::dispute_timeout(5).unwrap());
+    result.expect_success();
+    let agent_share = u128::from(budget) * 3_333 / 10_000;
+    let sent = payouts(&result, &escrow);
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent[0], (agent, agent_share), "the agent receives exactly its share");
+    assert_eq!(sent[1].0, creator);
+    assert!(
+        sent[1].1 >= u128::from(budget) - agent_share,
+        "the creator receives at least the rest of the budget: {} < {}",
+        sent[1].1,
+        u128::from(budget) - agent_share
+    );
+    assert_eq!(f.status(), STATUS_SETTLED);
+    assert!(f.balance(&escrow) < TOS / 100, "escrow must be drained");
+    f.send_from(&outsider, TaskEscrowContract::dispute_timeout(6).unwrap())
+        .expect_aborted()
+        .expect_exit_code(123);
+}
+
+/// The verifier decides until the deadline and not from it on, so the two
+/// endings never race.
+#[test]
+fn the_verifier_resolves_before_the_deadline_and_not_after() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    f.disputed();
+    let deadline = f.dispute_deadline();
+    let verifier = f.verifier.address().clone();
+    f.bc.set_now(deadline as u32);
+    f.send_from(&verifier, TaskEscrowContract::resolve(4, TOS).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_DISPUTE_WINDOW_CLOSED);
+    assert_eq!(f.status(), STATUS_DISPUTED);
+
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    f.disputed();
+    let deadline = f.dispute_deadline();
+    let verifier = f.verifier.address().clone();
+    f.bc.set_now((deadline - 1) as u32);
+    f.send_from(&verifier, TaskEscrowContract::resolve(4, TOS).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_SETTLED);
+    let outsider = f.outsider.address().clone();
+    f.bc.set_now(deadline as u32);
+    f.send_from(&outsider, TaskEscrowContract::dispute_timeout(5).unwrap())
+        .expect_aborted()
+        .expect_exit_code(123);
+}
+
+/// A configured attestor does not stand between a silent verifier and the
+/// fallback: the outcome was fixed at acceptance and needs no signature.
+#[test]
+fn the_fallback_needs_no_attestor_signature() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]).verifying_key().to_bytes();
+    let mut f =
+        Fixture::with_fallback(2 * TOS, 2 * TOS + TOS / 5, DEFAULT_FALLBACK_BPS, Some(attestor));
+    f.disputed();
+    let deadline = f.dispute_deadline();
+    f.bc.set_now(deadline as u32);
+    let outsider = f.outsider.address().clone();
+    let escrow = f.escrow.clone();
+    let result = f.send_from(&outsider, TaskEscrowContract::dispute_timeout(4).unwrap());
+    result.expect_success();
+    assert_eq!(payouts(&result, &escrow)[0].1, u128::from(TOS));
+    assert_eq!(f.status(), STATUS_SETTLED);
+}
+
+/// The caller pays the fallback's fees: one nanotos short of the value tosctl
+/// attaches is refused and changes nothing; the exact value is enough. This
+/// also holds the contract's `dispute_timeout_gas` equal to `MAX_ACTION_GAS`.
+#[test]
+fn the_fallback_caller_pays_its_fees_and_the_principal_is_untouched() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    f.disputed();
+    f.bc.set_now(f.dispute_deadline() as u32);
+    let outsider = f.outsider.address().clone();
+    let value = f.action_value();
+    f.send_from_with_value(&outsider, TaskEscrowContract::dispute_timeout(4).unwrap(), value - 1)
+        .expect_aborted()
+        .expect_exit_code(ERR_FALLBACK_FEE_UNPAID);
+    assert_eq!(f.status(), STATUS_DISPUTED);
+
+    // Only the principal is held: the fallback still pays it in full when
+    // the escrow holds nothing beyond the budget.
+    f.drain_escrow_to(2 * TOS);
+    let escrow = f.escrow.clone();
+    let result =
+        f.send_from_with_value(&outsider, TaskEscrowContract::dispute_timeout(5).unwrap(), value);
+    result.expect_success();
+    let sent = payouts(&result, &escrow);
+    assert_eq!(sent[0].1, u128::from(TOS));
+    assert!(sent[1].1 >= u128::from(TOS), "creator share reduced by fees: {}", sent[1].1);
+
+    // Below the budget the fallback refuses rather than short anyone.
+    let mut g = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    g.disputed();
+    g.bc.set_now(g.dispute_deadline() as u32);
+    g.drain_escrow_to(2 * TOS - 1);
+    let outsider = g.outsider.address().clone();
+    g.send_from(&outsider, TaskEscrowContract::dispute_timeout(4).unwrap())
+        .expect_aborted()
+        .expect_exit_code(126);
+    assert_eq!(g.status(), STATUS_DISPUTED);
+}
+
+/// The two ends of the split: all to the creator sends the agent nothing, all
+/// to the agent sends it the whole budget.
+#[test]
+fn the_fallback_split_at_zero_and_at_the_whole_budget() {
+    for (bps, agent_share) in [(0u16, 0u128), (10_000, u128::from(2 * TOS))] {
+        let mut f = Fixture::with_fallback(2 * TOS, 2 * TOS + TOS / 5, bps, None);
+        f.disputed();
+        f.bc.set_now(f.dispute_deadline() as u32);
+        let outsider = f.outsider.address().clone();
+        let agent = f.agent.address().clone();
+        let creator = f.creator.address().clone();
+        let escrow = f.escrow.clone();
+        let result = f.send_from(&outsider, TaskEscrowContract::dispute_timeout(4).unwrap());
+        result.expect_success();
+        let sent = payouts(&result, &escrow);
+        if agent_share == 0 {
+            assert_eq!(sent.len(), 1, "{sent:?}");
+            assert_eq!(sent[0].0, creator);
+            assert!(sent[0].1 >= u128::from(2 * TOS));
+        } else {
+            assert_eq!(sent[0], (agent, agent_share));
+            assert_eq!(sent[1].0, creator);
+        }
+    }
+}
+
+/// A share above the whole budget is refused before the agent commits: by
+/// tosctl when it builds the task, and by the contract at claim and accept
+/// when a hand-built StateInit carries one.
+#[test]
+fn a_fallback_share_above_the_budget_is_refused_before_acceptance() {
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let creator = bc.treasury("creator", 1_000 * TOS).expect("creator");
+    let agent = bc.treasury("agent", 1_000 * TOS).expect("agent");
+    let init = TaskEscrowInit {
+        creator: creator.address().clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: 2 * TOS,
+        deadline: u64::from(bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x11; 32],
+        permission_hash: [0x22; 32],
+        attestor_pubkey: None,
+        dispute_fallback_agent_bps: 10_001,
+    };
+    assert!(TaskEscrowContract::build_data(&init).is_err());
+    let value = default_action_value(&bc, creator.address());
+    for assigned in [false, true] {
+        let init = TaskEscrowInit {
+            assigned_agent: assigned.then(|| agent.address().clone()),
+            ..init.clone()
+        };
+        let state_init = build_state_init_bypassing_client_side_review_period_check(&init);
+        let escrow_cell = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+        let escrow = MsgAddressInt::with_params(-1, escrow_cell.hash(0)).expect("address");
+        let deploy = MessageBuilder::internal(creator.address(), &escrow, 2 * TOS + TOS / 5)
+            .bounce(false)
+            .state_init(state_init)
+            .body(Cell::default())
+            .build();
+        bc.send_message(deploy).expect("deploy").expect_success();
+        let body = if assigned {
+            TaskEscrowContract::accept(1).unwrap()
+        } else {
+            TaskEscrowContract::claim(1).unwrap()
+        };
+        let msg = MessageBuilder::internal(agent.address(), &escrow, value).body(body).build();
+        bc.send_message(msg).expect("send").expect_aborted().expect_exit_code(ERR_BAD_FALLBACK_BPS);
+    }
+}
+
+/// Nothing moves the deadline: a second dispute is refused, so is rotating
+/// the attestor, and neither changes it.
+#[test]
+fn nothing_extends_the_dispute_deadline() {
+    let attestor = SigningKey::from_bytes(&[0x77; 32]).verifying_key().to_bytes();
+    let mut f =
+        Fixture::with_fallback(2 * TOS, 2 * TOS + TOS / 5, DEFAULT_FALLBACK_BPS, Some(attestor));
+    f.disputed();
+    let deadline = f.dispute_deadline();
+    f.bc.set_now((deadline - 10) as u32);
+    let creator = f.creator.address().clone();
+    f.send_from(&creator, TaskEscrowContract::dispute(4, [0xDD; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(119);
+    let other = SigningKey::from_bytes(&[0x78; 32]).verifying_key().to_bytes();
+    f.send_from(&creator, TaskEscrowContract::rotate_attestor_key(5, other).unwrap())
+        .expect_aborted()
+        .expect_exit_code(130);
+    assert_eq!(f.dispute_deadline(), deadline);
+}
+
+/// Every action at the widest inputs this suite can fund, with the value
+/// tosctl attaches by default. The gas allowance keeps at least half again
+/// the most any of them used, so that margin cannot erode unnoticed.
+#[test]
+fn every_action_fits_the_declared_gas_allowance_with_margin() {
+    fn gas(result: &SendResult) -> u64 {
+        result.expect_success();
+        match result.read_primary_description().compute_ph {
+            chain_block::TrComputePhase::Vm(vm) => vm.gas_used.as_u64(),
+            other => panic!("no VM compute phase: {other:?}"),
+        }
+    }
+    let attestor = SigningKey::from_bytes(&[0x77; 32]);
+    let budget = 900 * TOS;
+    let funding = budget + TOS;
+    let mut used: Vec<(&str, u64)> = Vec::new();
+
+    // claim on an open task, then cancel and reject on fresh ones.
+    let mut f = Fixture::open(budget, funding);
+    let agent = f.agent.address().clone();
+    used.push(("claim", gas(&f.send_from(&agent, TaskEscrowContract::claim(1).unwrap()))));
+    let mut f = Fixture::open(budget, funding);
+    let creator = f.creator.address().clone();
+    used.push(("cancel", gas(&f.send_from(&creator, TaskEscrowContract::cancel(1).unwrap()))));
+    let mut f = Fixture::new(budget, funding);
+    let agent = f.agent.address().clone();
+    used.push(("reject", gas(&f.send_from(&agent, TaskEscrowContract::reject(1).unwrap()))));
+
+    // accept, result, attested settle with the widest payout.
+    let mut f = Fixture::with_attestor(budget, funding, attestor.verifying_key().to_bytes());
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    used.push(("accept", gas(&f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()))));
+    used.push((
+        "result",
+        gas(&f.send_from(&agent, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())),
+    ));
+    let here = sandbox_global_id(&f.bc);
+    let hash = contracts::settle_domain_hash(here, &f.escrow, &[0xAA; 32], budget).unwrap();
+    let body =
+        TaskEscrowContract::settle_signed(3, budget, &attestor.sign(&hash).to_bytes()).unwrap();
+    used.push(("settle_signed", gas(&f.send_from(&creator, body))));
+
+    // timeout paying the agent after an unattended review.
+    let mut f = Fixture::without_verifier(budget, funding);
+    let agent = f.agent.address().clone();
+    f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    f.bc.set_now((f.review_deadline() + 1) as u32);
+    let outsider = f.outsider.address().clone();
+    used.push(("timeout", gas(&f.send_from(&outsider, TaskEscrowContract::timeout(3).unwrap()))));
+
+    // dispute, attested resolve, and the fallback.
+    let mut f = Fixture::with_attestor(budget, funding, attestor.verifying_key().to_bytes());
+    let agent = f.agent.address().clone();
+    let creator = f.creator.address().clone();
+    f.send_from(&agent, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    used.push((
+        "dispute",
+        gas(&f.send_from(&creator, TaskEscrowContract::dispute(3, [0xCC; 32]).unwrap())),
+    ));
+    let mut g = Fixture::with_attestor(budget, funding, attestor.verifying_key().to_bytes());
+    g.disputed();
+    let here = sandbox_global_id(&g.bc);
+    let hash =
+        contracts::resolve_domain_hash(here, &g.escrow, &[0xAA; 32], &[0xCC; 32], budget).unwrap();
+    let verifier = g.verifier.address().clone();
+    let body =
+        TaskEscrowContract::resolve_signed(4, budget, &attestor.sign(&hash).to_bytes()).unwrap();
+    used.push(("resolve_signed", gas(&g.send_from(&verifier, body))));
+    f.bc.set_now(f.dispute_deadline() as u32);
+    let outsider = f.outsider.address().clone();
+    used.push((
+        "dispute_timeout",
+        gas(&f.send_from(&outsider, TaskEscrowContract::dispute_timeout(4).unwrap())),
+    ));
+
+    // rotate and revoke the attestor on an open task.
+    let mut f = Fixture::open(budget, funding);
+    let creator = f.creator.address().clone();
+    let key = attestor.verifying_key().to_bytes();
+    used.push((
+        "rotate_attestor_key",
+        gas(&f.send_from(&creator, TaskEscrowContract::rotate_attestor_key(1, key).unwrap())),
+    ));
+    let mut f = Fixture::open(budget, funding);
+    let creator = f.creator.address().clone();
+    used.push((
+        "revoke_attestor",
+        gas(&f.send_from(&creator, TaskEscrowContract::revoke_attestor(1).unwrap())),
+    ));
+
+    let most = used.iter().map(|(_, gas)| *gas).max().expect("measured");
+    println!("task escrow gas by action: {used:?}; most {most}");
+    assert!(
+        most.checked_mul(3).expect("gas")
+            <= TaskEscrowContract::MAX_ACTION_GAS.checked_mul(2).expect("gas"),
+        "MAX_ACTION_GAS {} leaves less than half again the most used ({most}): {used:?}",
+        TaskEscrowContract::MAX_ACTION_GAS
+    );
+}
+
+/// The value tosctl attaches by default, priced as tosctl prices it: the
+/// escrow's own gas schedule and the dearest of its workchain's and the
+/// masterchain's forwarding schedules. A chain without a basechain schedule
+/// has only the masterchain's.
+fn default_action_value(bc: &Blockchain, escrow: &MsgAddressInt) -> u64 {
+    let config = bc.config_params();
+    let gas = config.gas_prices(escrow.is_masterchain()).expect("gas prices");
+    let masterchain = config.fwd_prices(true).expect("masterchain forwarding prices");
+    let own = config.fwd_prices(escrow.is_masterchain()).unwrap_or_else(|_| masterchain.clone());
+    TaskEscrowContract::action_value(&gas, &[&own, &masterchain]).expect("action value")
+}
+
+/// A basechain escrow paying masterchain accounts forwards each payout at
+/// masterchain rates. With those rates far above the basechain's, the escrow
+/// holding exactly its budget, and the value tosctl attaches by default, the
+/// fallback still pays the agent its exact share and the creator at least the
+/// rest of the budget.
+#[test]
+fn a_basechain_fallback_paying_masterchain_accounts_keeps_both_shares_whole() {
+    let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
+    let mut config = bc.config_params().clone();
+    let mut masterchain = config.fwd_prices(true).expect("masterchain forwarding");
+    let basechain = config.fwd_prices(false).expect("basechain forwarding");
+    masterchain.lump_price = basechain.lump_price.checked_mul(20).expect("lump").max(TOS / 50);
+    config.set_config(chain_block::ConfigParamEnum::ConfigParam24(masterchain)).expect("param 24");
+    // A configuration the sandbox rebuilds needs the fundamental-contract list.
+    if config.config(31).expect("param 31").is_none() {
+        config
+            .set_config(chain_block::ConfigParamEnum::ConfigParam31(chain_block::ConfigParam31 {
+                fundamental_smc_addr: chain_block::FundamentalSmcAddresses::default(),
+            }))
+            .expect("the fundamental contracts are listed");
+    }
+    bc.set_config(config).expect("config");
+    bc.set_workchain(-1);
+    let creator = bc.treasury("creator", 1_000 * TOS).expect("creator");
+    let agent = bc.treasury("agent", 1_000 * TOS).expect("agent");
+    let verifier = bc.treasury("verifier", 1_000 * TOS).expect("verifier");
+    let outsider = bc.treasury("outsider", 1_000 * TOS).expect("outsider");
+    let budget = 2 * TOS + 1;
+    let init = TaskEscrowInit {
+        creator: creator.address().clone(),
+        assigned_agent: Some(agent.address().clone()),
+        verifier: Some(verifier.address().clone()),
+        budget,
+        deadline: u64::from(bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x11; 32],
+        permission_hash: [0x22; 32],
+        attestor_pubkey: None,
+        dispute_fallback_agent_bps: DEFAULT_FALLBACK_BPS,
+    };
+    let escrow = TaskEscrowContract::calculate_address(0, &init).expect("address");
+    assert!(!escrow.is_masterchain());
+    let deploy = MessageBuilder::internal(creator.address(), &escrow, budget + TOS / 5)
+        .bounce(false)
+        .state_init(TaskEscrowContract::build_state_init(&init).expect("state init"))
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+    let value = default_action_value(&bc, &escrow);
+    let send = |bc: &mut Blockchain, from: &MsgAddressInt, body: Cell| {
+        let msg = MessageBuilder::internal(from, &escrow, value).body(body).build();
+        bc.send_message(msg).expect("send")
+    };
+    send(&mut bc, agent.address(), TaskEscrowContract::accept(1).unwrap()).expect_success();
+    send(&mut bc, agent.address(), TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    send(&mut bc, creator.address(), TaskEscrowContract::dispute(3, [0xCC; 32]).unwrap())
+        .expect_success();
+    let deadline = bc
+        .run_get_method(&escrow, "get_task_data", vec![])
+        .expect("get_task_data")
+        .expect_success()
+        .int_at(18);
+    bc.set_now(u32::try_from(deadline).expect("deadline"));
+
+    // Exactly the budget, nothing beyond it to absorb fees, with storage
+    // already paid up to now so only this call's own costs are in play.
+    let mut account = bc.get_account(&escrow).expect("escrow").clone();
+    account.set_balance(CurrencyCollection::with_coins(budget));
+    account.set_last_paid(bc.now());
+    bc.set_account(escrow.clone(), account);
+
+    // A caller that prices both transfers at basechain rates does not pay
+    // for forwarding them to masterchain accounts, and is refused.
+    let config = bc.config_params().clone();
+    let basechain_only = TaskEscrowContract::action_value(
+        &config.gas_prices(false).expect("basechain gas"),
+        &[&config.fwd_prices(false).expect("basechain forwarding")],
+    )
+    .expect("value");
+    assert!(basechain_only < value);
+    let msg = MessageBuilder::internal(outsider.address(), &escrow, basechain_only)
+        .body(TaskEscrowContract::dispute_timeout(4).unwrap())
+        .build();
+    bc.send_message(msg).expect("send").expect_aborted().expect_exit_code(138);
+    let mut account = bc.get_account(&escrow).expect("escrow").clone();
+    account.set_balance(CurrencyCollection::with_coins(budget));
+    account.set_last_paid(bc.now());
+    bc.set_account(escrow.clone(), account);
+
+    let result = send(&mut bc, outsider.address(), TaskEscrowContract::dispute_timeout(4).unwrap());
+    result.expect_success();
+    let agent_share = u128::from(budget) * u128::from(DEFAULT_FALLBACK_BPS) / 10_000;
+    let sent = payouts(&result, &escrow);
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent[0], (agent.address().clone(), agent_share));
+    assert_eq!(sent[1].0, creator.address().clone());
+    assert!(
+        sent[1].1 >= u128::from(budget) - agent_share,
+        "masterchain forwarding came out of the creator's share: {} < {}",
+        sent[1].1,
+        u128::from(budget) - agent_share
+    );
 }

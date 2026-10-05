@@ -12,6 +12,7 @@ pub mod crypto;
 pub mod errors;
 pub mod events;
 pub mod memory;
+pub mod secret_input;
 pub mod storage;
 pub mod types;
 pub mod utils;

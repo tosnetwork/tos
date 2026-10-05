@@ -51,40 +51,64 @@ void HttpInboundConnection::send_payload_refused() {
   loop();
 }
 
-void HttpInboundConnection::send_server_error() {
+// A handler error answers without a body. Like any answer, it closes the
+// connection when the listener closes after early answers and the request
+// body is still being read; otherwise the connection stays open.
+void HttpInboundConnection::send_bodiless_error(td::Slice status_line) {
   arm_response_deadline();
-  static const auto s =
-      "HTTP/1.1 502 Bad Gateway\r\n"
-      "Connection: keep-alive\r\n"
-      "Content-length: 0\r\n"
-      "\r\n";
-  buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
+  auto &out = buffered_fd_.output_buffer();
+  out.append(status_line);
+  if (answering_before_body_read()) {
+    out.append(td::Slice("Connection: close\r\n"));
+    close_after_write_ = true;
+  } else {
+    out.append(td::Slice("Connection: keep-alive\r\n"));
+  }
+  out.append(td::Slice("Content-length: 0\r\n\r\n"));
   loop();
 }
 
-void HttpInboundConnection::send_proxy_error(td::Status error) {
+// The listener's body capacity is spent (or the handler gave no answer):
+// answer from the headers and close without reading the body.
+void HttpInboundConnection::send_body_capacity_refused() {
   arm_response_deadline();
-  if (error.code() == ErrorCode::timeout) {
-    static const auto s =
-        "HTTP/1.1 504 Gateway Timeout\r\n"
-        "Connection: keep-alive\r\n"
-        "Content-length: 0\r\n"
-        "\r\n";
-    buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
-  } else {
-    static const auto s =
-        "HTTP/1.1 502 Bad Gateway\r\n"
-        "Connection: keep-alive\r\n"
-        "Content-length: 0\r\n"
-        "\r\n";
-    buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
-  }
+  static const auto s =
+      "HTTP/1.1 503 Service Unavailable\r\n"
+      "Connection: close\r\n"
+      "Content-length: 0\r\n"
+      "\r\n";
+  buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
+  cur_request_ = nullptr;
+  read_next_request_ = false;
+  close_after_write_ = true;
   loop();
+}
+
+void HttpInboundConnection::send_server_error() {
+  send_bodiless_error(td::Slice("HTTP/1.1 502 Bad Gateway\r\n"));
+}
+
+void HttpInboundConnection::send_proxy_error(td::Status error) {
+  if (error.code() == ErrorCode::timeout) {
+    send_bodiless_error(td::Slice("HTTP/1.1 504 Gateway Timeout\r\n"));
+  } else {
+    send_bodiless_error(td::Slice("HTTP/1.1 502 Bad Gateway\r\n"));
+  }
 }
 
 td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
   if (reading_payload_) {
-    return receive_payload(input);
+    auto before = input.size();
+    auto status = receive_payload(input);
+    auto consumed = before - input.size();
+    body_window_ = body_window_ > consumed ? body_window_ - consumed : 0;
+    return status;
+  }
+
+  // The request is waiting for its admission answer: nothing past the
+  // headers is parsed until it arrives (see on_admission).
+  if (admission_pending_) {
+    return td::Status::OK();
   }
 
   if (!cur_request_ && !read_next_request_) {
@@ -118,7 +142,85 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
   // real connecting client (not to a forgeable X-Forwarded-For).
   cur_request_->set_peer_ip(peer_ip_);
 
-  auto payload = cur_request_->create_empty_payload().move_as_ok();
+  // Header admission barrier. The handler decides from the headers alone,
+  // asynchronously; until it answers, the body is neither parsed, reserved
+  // nor dispatched, and the socket is read no further than the header
+  // read-ahead.
+  admission_pending_ = true;
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<HttpServer::Admission> R) {
+    td::actor::send_closure(SelfId, &HttpInboundConnection::on_admission, std::move(R));
+  });
+  http_callback_->admit_request(*cur_request_, std::move(P));
+  return td::Status::OK();
+}
+
+void HttpInboundConnection::on_admission(td::Result<HttpServer::Admission> result) {
+  if (!admission_pending_ || !cur_request_) {
+    return;
+  }
+  admission_pending_ = false;
+  if (result.is_error()) {
+    // The handler went away without deciding: refuse.
+    send_body_capacity_refused();
+    return;
+  }
+  auto admission = result.move_as_ok();
+  if (!admission.admitted) {
+    // Refused from the headers: the body, if any, is never read. A request
+    // that announced one closes after the answer, since the rest of its body
+    // would otherwise be read as the next request.
+    bool has_body = cur_request_->announces_body();
+    cur_request_ = nullptr;
+    read_next_request_ = false;
+    if (has_body) {
+      close_after_write_ = true;
+    }
+    if (!admission.response || !admission.payload) {
+      send_body_capacity_refused();
+      return;
+    }
+    send_answer(std::move(admission.response), std::move(admission.payload));
+    return;
+  }
+  if (!start_admitted_request()) {
+    return;
+  }
+  loop();
+  // An end of input seen while the request awaited admission is acted on
+  // now that the request has a payload (see receive_eof).
+  if (deferred_eof_ && buffered_fd_.left_unread() == 0) {
+    deferred_eof_ = false;
+    found_eof_ = false;
+    auto status = receive_eof();
+    if (status.is_error()) {
+      LOG(INFO) << "request ended early: " << status;
+      stop();
+    }
+  }
+}
+
+bool HttpInboundConnection::start_admitted_request() {
+  std::shared_ptr<BodyBudget::Reservation> reservation;
+  size_t reserve_bytes = cur_request_->body_reservation_bytes();
+  if (body_budget_ && reserve_bytes > 0) {
+    reservation = body_budget_->reserve(reserve_bytes);
+    if (!reservation) {
+      send_body_capacity_refused();
+      return false;
+    }
+    body_window_ = reserve_bytes;
+  }
+
+  auto payload_r = cur_request_->create_empty_payload();
+  if (payload_r.is_error()) {
+    cur_request_ = nullptr;
+    send_client_error();
+    return false;
+  }
+  auto payload = payload_r.move_as_ok();
+  if (reservation) {
+    payload->attach_reservation(std::move(reservation));
+  }
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this)](td::Result<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> R) {
         if (R.is_ok()) {
@@ -129,16 +231,20 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
         }
       });
   http_callback_->receive_request(std::move(cur_request_), payload, std::move(P));
-  // Round 155 HIGH fix: propagate the initial read_payload error so the
-  // connection closes when the chunked-body cap (round-153/154) rejects
-  // the very first chunk (i.e. the body parse begins on the same TCP
-  // write as the headers).  Pre-fix this caller dropped the Status
-  // and returned OK, so an oversize chunk header in the same write
-  // as the request headers left the connection open waiting for
-  // more bytes — the round-154 receive_payload propagation only
-  // covered the second-and-subsequent reads.
   arm_request_body_deadline();
-  return read_payload(std::move(payload));
+  // An error from the first part of the body (for example a chunk over the
+  // size cap that arrived with the headers) closes the connection.
+  auto &input = buffered_fd_.input_buffer();
+  auto before = input.size();
+  auto status = read_payload(std::move(payload));
+  auto consumed = before - input.size();
+  body_window_ = body_window_ > consumed ? body_window_ - consumed : 0;
+  if (status.is_error()) {
+    LOG(INFO) << "request body refused: " << status;
+    stop();
+    return false;
+  }
+  return true;
 }
 
 void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload) {
@@ -153,11 +259,20 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
       close_after_write_ = true;
     }
   }
+  // Answered while the request body is still arriving (an early refusal, a
+  // 404, a GET that declared a body): on listeners that ask for it, close once
+  // the answer is written rather than go on reading and buffering the body. A
+  // request whose body was already read keeps the connection.
+  if (answering_before_body_read()) {
+    close_after_write_ = true;
+  }
+  // Armed before the response is appended, so it can tell output left over
+  // from an earlier response from this one's.
+  arm_response_deadline();
   response->store_http(buffered_fd_.output_buffer());
 
   metrics_.responses_total->label(response->code())->add(1);
 
-  arm_response_deadline();
   write_payload(std::move(payload));
   loop();
 }

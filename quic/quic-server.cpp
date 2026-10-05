@@ -48,7 +48,8 @@ QuicServer::QuicServer(td::UdpSocketFd fd, td::uint64 default_mtu, ServerIdentit
     , alpn_(std::move(alpn))
     , identities_(td::make_ref<ServerIdentities>())
     , options_(options)
-    , conn_rate_limiters_(options.new_connection_rate_limit_capacity, options.new_connection_rate_limit_period)
+    , conn_rate_limiters_(options.new_connection_rate_limit_capacity, options.new_connection_rate_limit_period,
+                          options.max_tracked_new_connection_sources)
     , global_conn_rate_limiter_(options.global_new_connection_rate_limit_capacity,
                                 options.global_new_connection_rate_limit_period)
     , gso_enabled_(options.enable_gso && td::UdpSocketFd::is_gso_supported())
@@ -176,13 +177,14 @@ void QuicServer::unbind_all_cids(ConnectionState &state) {
 }
 
 td::Result<std::shared_ptr<QuicServer::ConnectionState>> QuicServer::install_connection(
-    std::unique_ptr<QuicConnectionPImpl> p_impl, const td::IPAddress &remote_address, bool is_outbound,
-    std::optional<QuicConnectionId> bootstrap_routed_cid) {
+    std::unique_ptr<QuicConnectionPImpl> p_impl, const td::IPAddress &remote_address, std::string source,
+    bool is_outbound, std::optional<QuicConnectionId> bootstrap_routed_cid) {
   TRY_RESULT(initial_cid_state, p_impl->take_initial_cid_state());
 
   auto state = std::make_shared<ConnectionState>(ConnectionState{
       .impl_ = std::move(p_impl),
       .remote_address = remote_address,
+      .source = std::move(source),
       .cid = initial_cid_state.primary_scid,
       .bootstrap_routed_cid = {},
       .routed_cids = {},
@@ -214,7 +216,18 @@ td::Result<std::shared_ptr<QuicServer::ConnectionState>> QuicServer::install_con
   return state;
 }
 
-td::Status QuicServer::ensure_flood_allowed(const std::string &flood_addr) {
+std::string QuicServer::source_of(const td::IPAddress &peer) const {
+  if (options_.source_key_for_test) {
+    return options_.source_key_for_test(peer);
+  }
+  return adnl::network_source_key(peer);
+}
+
+size_t QuicServer::max_connections_per_source() const {
+  return options_.max_connections_per_source.value_or(adnl::default_source_share(options_.max_connections));
+}
+
+td::Status QuicServer::ensure_flood_allowed(const std::string &flood_addr, const std::string &source) {
   // Global connection count ceiling. The rate limiters below bound how fast new
   // connections arrive, not the live total, so a distributed source can still
   // accumulate connections without bound. Refuse a new inbound connection once
@@ -223,27 +236,33 @@ td::Status QuicServer::ensure_flood_allowed(const std::string &flood_addr) {
   if (connections_.size() >= options_.max_connections) {
     return td::Status::Error("global connection count limit exceeded");
   }
+  // One source's share of the connection table, also unconditional: it is
+  // what keeps one source from holding the table the global ceiling guards.
+  if (auto it = inbound_per_source_.find(source);
+      it != inbound_per_source_.end() && it->second >= max_connections_per_source()) {
+    return td::Status::Error("source connection share exceeded");
+  }
   if (!options_.flood_control.has_value()) {
     return td::Status::OK();
   }
   if (auto it = flood_map_.find(flood_addr); it != flood_map_.end() && it->second >= *options_.flood_control) {
     return td::Status::Error("flood control overflow");
   }
-  TRY_STATUS(conn_rate_limiters_.take_new_connection(flood_addr));
-  if (!global_conn_rate_limiter_.take()) {
-    return td::Status::Error("global new connection rate limit exceeded");
-  }
-  return td::Status::OK();
+  return conn_rate_limiters_.take_new_connection(flood_addr, global_conn_rate_limiter_);
 }
 
-void QuicServer::flood_on_inbound_connection_created(const std::string &flood_addr) {
+void QuicServer::flood_on_inbound_connection_created(const std::string &flood_addr, const std::string &source) {
+  inbound_per_source_[source]++;
   if (!options_.flood_control.has_value()) {
     return;
   }
   flood_map_[flood_addr]++;
 }
 
-void QuicServer::flood_on_inbound_connection_closed(const std::string &flood_addr) {
+void QuicServer::flood_on_inbound_connection_closed(const std::string &flood_addr, const std::string &source) {
+  if (auto it = inbound_per_source_.find(source); it != inbound_per_source_.end() && --it->second == 0) {
+    inbound_per_source_.erase(it);
+  }
   if (!options_.flood_control.has_value()) {
     return;
   }
@@ -256,9 +275,11 @@ void QuicServer::flood_on_inbound_connection_closed(const std::string &flood_add
   }
 }
 
-QuicConnectionOptions QuicServer::build_connection_options() const {
+QuicConnectionOptions QuicServer::build_connection_options(std::string source) const {
   QuicConnectionOptions conn_options;
   conn_options.cc_algo = options_.cc_algo;
+  conn_options.transport_budget = options_.transport_budget;
+  conn_options.transport_source = std::move(source);
   if (options_.max_streams_bidi.has_value()) {
     conn_options.max_streams_bidi = *options_.max_streams_bidi;
   }
@@ -477,7 +498,7 @@ void QuicServer::on_connection_closed(QuicConnectionId cid) {
     timeout_heap_.erase(state.get());
   }
   if (!state->is_outbound) {
-    flood_on_inbound_connection_closed(state->remote_address.get_ip_host());
+    flood_on_inbound_connection_closed(state->remote_address.get_ip_host(), state->source);
   }
   connections_.erase(it);
   callback_->on_closed(cid);
@@ -581,8 +602,8 @@ void QuicServer::notify() {
 
 class QuicServer::PImplCallback final : public QuicConnectionPImpl::Callback {
  public:
-  explicit PImplCallback(QuicServer &server, bool is_outbound)
-      : server_(server), callback_(*server.callback_), is_outbound_(is_outbound) {
+  PImplCallback(QuicServer &server, bool is_outbound, std::string source)
+      : server_(server), callback_(*server.callback_), is_outbound_(is_outbound), source_(std::move(source)) {
   }
 
   void set_connection_id(QuicConnectionId cid) override {
@@ -597,7 +618,7 @@ class QuicServer::PImplCallback final : public QuicConnectionPImpl::Callback {
 
   void on_handshake_completed(HandshakeCompletedEvent event) override {
     auto status = callback_.on_connected(cid_, std::move(event.local_public_key), std::move(event.peer_public_key),
-                                         is_outbound_);
+                                         is_outbound_, source_);
     if (status.is_error()) {
       LOG(WARNING) << "on_connected failed for " << cid_ << ": " << status;
       server_.to_erase_connections_.push_back(cid_);
@@ -616,6 +637,7 @@ class QuicServer::PImplCallback final : public QuicConnectionPImpl::Callback {
   QuicServer::Callback &callback_;
   QuicConnectionId cid_;
   bool is_outbound_;
+  std::string source_;
 };
 
 td::Result<std::shared_ptr<QuicServer::ConnectionState>> QuicServer::get_or_create_connection(
@@ -639,7 +661,8 @@ td::Result<std::shared_ptr<QuicServer::ConnectionState>> QuicServer::get_or_crea
   TRY_RESULT(initial_packet, VersionCid::from_initial_datagram(td::Slice(msg_in.storage)));
 
   auto flood_addr = msg_in.address.get_ip_host();
-  TRY_STATUS(ensure_flood_allowed(flood_addr));
+  auto source = source_of(msg_in.address);
+  TRY_STATUS(ensure_flood_allowed(flood_addr, source));
 
   TRY_RESULT(initial_info, prepare_server_initial_info(initial_packet, msg_in.address));
   if (!initial_info.has_value()) {
@@ -649,13 +672,13 @@ td::Result<std::shared_ptr<QuicServer::ConnectionState>> QuicServer::get_or_crea
   // Create new connection to handle unknown inbound message
   TRY_RESULT(local_address, fd_.get_local_address());
 
-  auto conn_options = build_connection_options();
-  auto pimpl_callback = std::make_unique<PImplCallback>(*this, false);
+  auto conn_options = build_connection_options(source);
+  auto pimpl_callback = std::make_unique<PImplCallback>(*this, false, source);
   TRY_RESULT(p_impl, QuicConnectionPImpl::create_server(local_address, msg_in.address, identities_, alpn_.as_slice(),
                                                         *initial_info, std::move(pimpl_callback), conn_options));
-  TRY_RESULT(state, install_connection(std::move(p_impl), msg_in.address, false, initial_packet.dcid));
+  TRY_RESULT(state, install_connection(std::move(p_impl), msg_in.address, source, false, initial_packet.dcid));
 
-  flood_on_inbound_connection_created(flood_addr);
+  flood_on_inbound_connection_created(flood_addr, state->source);
 
   return state;
 }
@@ -668,11 +691,12 @@ td::Result<QuicConnectionId> QuicServer::connect(td::Slice host, int port, td::E
 
   // Do not check flood here, because connect is initiated by us
 
-  auto conn_options = build_connection_options();
-  auto pimpl_callback = std::make_unique<PImplCallback>(*this, true);
+  auto source = source_of(remote_address);
+  auto conn_options = build_connection_options(source);
+  auto pimpl_callback = std::make_unique<PImplCallback>(*this, true, source);
   TRY_RESULT(p_impl, QuicConnectionPImpl::create_client(local_address, remote_address, std::move(client_key), alpn, sni,
                                                         std::move(pimpl_callback), conn_options));
-  TRY_RESULT(state, install_connection(std::move(p_impl), remote_address, true, std::nullopt));
+  TRY_RESULT(state, install_connection(std::move(p_impl), remote_address, source, true, std::nullopt));
 
   on_connection_updated(*state);
   return QuicConnectionId(state->cid);
@@ -828,7 +852,12 @@ bool QuicServer::flush_pending() {
     return false;  // blocked, will retry on wakeup
   }
 
-  // All sent - re-queue connections for more data
+  // All sent - re-queue connections for more data. The batch no longer needs
+  // its connections; holding them would keep a closed connection, and all
+  // the transport memory charged to it, alive until the slot is reused.
+  for (size_t i = 0; i < pending_batch_count_; i++) {
+    egress_batch_owners_[i].reset();
+  }
   pending_batch_count_ = 0;
   pending_batch_sent_ = 0;
   return true;
@@ -855,12 +884,21 @@ bool QuicServer::produce_next_egress(size_t batch_index) {
     auto status = conn->impl().produce_egress(batch, gso_enabled_, max_packets);
     if (status.is_error()) {
       LOG(WARNING) << "produce_egress failed for " << conn->remote_address << ": " << status;
+      if (ngtcp2_err_is_fatal(status.code())) {
+        // The transport cannot go on (for one, an allocation the transport
+        // memory budget refused). Tear the connection down now, which frees
+        // what it holds, instead of leaving it to its idle timeout.
+        on_connection_closed(cid);
+      }
       continue;
     }
     if (batch.storage.empty()) {
       continue;  // no data, connection stays out of queue
     }
     on_connection_updated(*conn);
+    if (options_.drop_outgoing_datagram && options_.drop_outgoing_datagram(batch.storage)) {
+      continue;
+    }
 
     egress_batch_owners_[batch_index] = conn;
     return true;

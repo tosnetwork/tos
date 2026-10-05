@@ -1,5 +1,6 @@
 """Verify rotation identity and first-hop evidence refuses retired validators."""
 
+import asyncio
 import importlib.util
 from pathlib import Path
 
@@ -167,3 +168,27 @@ def test_trace_partial_line_is_not_consumed(tmp_path, monkeypatch):
         f.write(b" done\n")
     elections.trace_once(offsets)
     assert "partial done" in (tmp_path / "relay-trace.jsonl").read_text()
+
+
+def test_a_missing_lite_client_is_refused_before_the_output_is_touched(monkeypatch, tmp_path):
+    def untouched(*args, **kwargs):
+        raise AssertionError("the output directory was touched before the lite-client check")
+
+    monkeypatch.setattr(elections.local, "INSTALLED_LITE_CLIENT", tmp_path / "absent")
+    monkeypatch.setattr(elections.local, "secure_output_dir", untouched)
+    with pytest.raises(RuntimeError, match="does not exist"):
+        asyncio.run(elections.main())
+
+
+def test_lite_queries_run_the_installed_lite_client(monkeypatch, tmp_path):
+    seen = []
+
+    async def fake_exec(program, *args, **kwargs):
+        seen.append(program)
+        raise OSError("stop")
+
+    monkeypatch.setattr(elections.local, "INSTALLED_LITE_CLIENT", tmp_path / "tos-lite-client")
+    monkeypatch.setattr(elections.asyncio, "create_subprocess_exec", fake_exec)
+    with pytest.raises(OSError, match="stop"):
+        asyncio.run(elections.lite_int("active_election_id"))
+    assert seen == [str(tmp_path / "tos-lite-client")]

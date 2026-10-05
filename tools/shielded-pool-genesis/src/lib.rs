@@ -23,6 +23,9 @@ use sha2::{Digest, Sha256};
 use shielded_pool_circuit::field::Fr;
 use shielded_pool_circuit::{imt, tree};
 
+pub use shielded_pool_ceremony::audit::{audit, preflight, Audited, StartingKey};
+pub use shielded_pool_ceremony::record::Directory as CeremonyDirectory;
+
 pub mod manifest;
 
 /// Section 13.1.
@@ -292,6 +295,8 @@ pub fn build(parameters: Parameters) -> Result<Genesis> {
         .and_then(|b| b.append_u16(STATE_VERSION))
         .and_then(|b| b.append_raw(&fr_be32(commitment_root), 256))
         .and_then(|b| b.append_u64(0))
+        // No withdrawal has been accepted, so no recovery leaf is reserved.
+        .and_then(|b| b.append_u32(0))
         .and_then(|b| b.append_raw(&fr_be32(nullifier_root), 256))
         .and_then(|b| b.append_u64(1))
         .and_then(|b| b.append_u32(EPOCH_NONE))
@@ -514,6 +519,234 @@ pub fn development_parameters(root: &std::path::Path) -> Result<Parameters> {
         reserve_floor: RESERVE_FLOOR,
         withdrawal_fee: WITHDRAWAL_FEE,
         denominations: DENOMINATIONS.to_vec(),
+    })
+}
+
+/// A ceremony's identity as a genesis records it: everything the audit
+/// established about the key, so the manifest can be held against it.
+///
+/// Fields are private and the only constructor reads an [`Audited`], which
+/// only the ceremony's own audit produces. A transcript digest typed in by
+/// hand cannot become one of these.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CeremonyKey {
+    protocol: String,
+    steps: usize,
+    transcript: String,
+    beacon_sha256: String,
+    phase1_transcript: String,
+    phase1_slice_sha256: String,
+    starting_key_sha256: String,
+    constraints: usize,
+    instance_variables: usize,
+    key_sha256: String,
+    vk_sha256: String,
+}
+
+impl CeremonyKey {
+    /// Refuses a ceremony no beacon has closed: its `delta` depends on nothing
+    /// the participants could not all have known in advance.
+    fn from_audit(audited: &Audited) -> Result<Self> {
+        let beacon_sha256 =
+            match (audited.is_finished(), audited.beacon_sha256()) {
+                (true, Some(beacon)) => beacon.to_string(),
+                (false, _) | (true, None) => return Err(Error::Parameter(
+                    "that ceremony is not finished -- no beacon has closed it -- and a genesis \
+                     carries only a finished ceremony's key"
+                        .into(),
+                )),
+            };
+        let record = audited.record();
+        Ok(Self {
+            protocol: record.protocol.clone(),
+            steps: audited.steps(),
+            transcript: audited.transcript().to_string(),
+            beacon_sha256,
+            phase1_transcript: record.phase1_transcript.clone(),
+            phase1_slice_sha256: record.phase1_slice_sha256.clone(),
+            starting_key_sha256: record.starting_key_sha256.clone(),
+            constraints: record.constraints,
+            instance_variables: record.instance_variables,
+            key_sha256: record.key_sha256.clone(),
+            vk_sha256: audited.vk_sha256().to_string(),
+        })
+    }
+
+    pub fn protocol(&self) -> &str {
+        &self.protocol
+    }
+    pub fn steps(&self) -> usize {
+        self.steps
+    }
+    pub fn transcript(&self) -> &str {
+        &self.transcript
+    }
+    pub fn beacon_sha256(&self) -> &str {
+        &self.beacon_sha256
+    }
+    pub fn phase1_transcript(&self) -> &str {
+        &self.phase1_transcript
+    }
+    pub fn phase1_slice_sha256(&self) -> &str {
+        &self.phase1_slice_sha256
+    }
+    pub fn starting_key_sha256(&self) -> &str {
+        &self.starting_key_sha256
+    }
+    pub fn constraints(&self) -> usize {
+        self.constraints
+    }
+    pub fn instance_variables(&self) -> usize {
+        self.instance_variables
+    }
+    pub fn key_sha256(&self) -> &str {
+        &self.key_sha256
+    }
+    pub fn vk_sha256(&self) -> &str {
+        &self.vk_sha256
+    }
+}
+
+/// Where the verifying key in a genesis state came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyClass {
+    /// The fixed-seed development key. Its toxic waste is in the source, so a
+    /// pool built around it protects nothing; it exists for test chains.
+    Development,
+    /// The key an audited, finished ceremony produced.
+    Ceremony(Box<CeremonyKey>),
+}
+
+/// What the caller asked the generator for.
+#[derive(Clone, Debug, Default)]
+pub struct Request {
+    /// Build around the development key. Must be asked for; it is never the
+    /// fallback for a missing key.
+    pub development: bool,
+    /// The ceremony's audit. The verifying key comes out of it.
+    pub ceremony: Option<Audited>,
+    /// Optional: the bytes `phase2-verify --vk-out` wrote. When given they
+    /// must be the audited ceremony's key, byte for byte.
+    pub verifying_key: Option<Vec<u8>>,
+    /// Optional: the transcript digest the operator expects, typically the
+    /// one announced. When given it must be the audited transcript.
+    pub ceremony_transcript: Option<String>,
+    /// The memo commit and blob the profile was copied from.
+    pub source_commit: Option<String>,
+    pub source_blob: Option<String>,
+}
+
+/// What [`plan`] decided: the parameters, where their key came from, and the
+/// profile's provenance. Only [`plan`] makes one.
+#[derive(Clone, Debug)]
+pub struct Plan {
+    parameters: Parameters,
+    key: KeyClass,
+    provenance: manifest::Provenance,
+}
+
+impl Plan {
+    pub fn parameters(&self) -> &Parameters {
+        &self.parameters
+    }
+    pub fn key(&self) -> &KeyClass {
+        &self.key
+    }
+    pub fn provenance(&self) -> &manifest::Provenance {
+        &self.provenance
+    }
+    /// The genesis state these parameters produce.
+    pub fn build(&self) -> Result<Genesis> {
+        build(self.parameters.clone())
+    }
+}
+
+/// 64 lowercase hexadecimal digits.
+pub fn is_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// A git object id: 40 (SHA-1) or 64 (SHA-256) lowercase hexadecimal digits.
+pub fn is_object_id(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64)
+        && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// The parameters, key class and provenance a request may be built with.
+///
+/// The development key has to be asked for by name and is marked as such.
+/// Anything else needs an audited, finished ceremony -- the key is taken from
+/// that audit, so it cannot be a different key wearing the ceremony's
+/// transcript -- and the git ids of the profile's source.
+pub fn plan(root: &std::path::Path, request: Request) -> Result<Plan> {
+    if request.development {
+        if request.verifying_key.is_some()
+            || request.ceremony_transcript.is_some()
+            || request.ceremony.is_some()
+        {
+            return Err(Error::Parameter(
+                "a development genesis takes no verifying key or ceremony".into(),
+            ));
+        }
+        let unknown = || "unknown".to_string();
+        let provenance = manifest::Provenance {
+            source_commit: request.source_commit.unwrap_or_else(unknown),
+            source_blob: request.source_blob.unwrap_or_else(unknown),
+        };
+        return Ok(Plan {
+            parameters: development_parameters(root)?,
+            key: KeyClass::Development,
+            provenance,
+        });
+    }
+
+    let audited = request.ceremony.ok_or_else(|| {
+        Error::Parameter(
+            "a production genesis needs an audited ceremony; the development key is only used \
+             when asked for by name"
+                .into(),
+        )
+    })?;
+    let ceremony = CeremonyKey::from_audit(&audited)?;
+    if let Some(supplied) = &request.verifying_key {
+        if supplied.as_slice() != audited.verifying_key() {
+            return Err(Error::Parameter(format!(
+                "the verifying key supplied (sha256 {}) is not the key the audited ceremony \
+                 produced (sha256 {})",
+                hex::encode(sha256(supplied)),
+                audited.vk_sha256()
+            )));
+        }
+    }
+    if let Some(expected) = &request.ceremony_transcript {
+        if !is_digest(expected) {
+            return Err(Error::Parameter(format!(
+                "a ceremony transcript digest is 64 lowercase hex digits, not {expected:?}"
+            )));
+        }
+        if expected != audited.transcript() {
+            return Err(Error::Parameter(format!(
+                "the ceremony's transcript is {} and {expected} was expected",
+                audited.transcript()
+            )));
+        }
+    }
+    let (source_commit, source_blob) = match (request.source_commit, request.source_blob) {
+        (Some(commit), Some(blob)) if is_object_id(&commit) && is_object_id(&blob) => {
+            (commit, blob)
+        }
+        (commit, blob) => {
+            return Err(Error::Parameter(format!(
+                "a production genesis needs the profile's source commit and blob as git object \
+                 ids, not {commit:?} and {blob:?}"
+            )))
+        }
+    };
+    let parameters = parameters_with_verifying_key(root, audited.verifying_key().to_vec())?;
+    Ok(Plan {
+        parameters,
+        key: KeyClass::Ceremony(Box::new(ceremony)),
+        provenance: manifest::Provenance { source_commit, source_blob },
     })
 }
 

@@ -19,8 +19,10 @@
 */
 #pragma once
 
+#include <atomic>
 #include <list>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -38,6 +40,7 @@ enum HttpStatusCode : td::uint32 {
   status_method_not_allowed = 405,
   status_internal_server_error = 500,
   status_bad_gateway = 502,
+  status_service_unavailable = 503,
   status_gateway_timeout = 504
 };
 
@@ -63,6 +66,90 @@ td::Result<std::string> get_line(td::ChainBufferReader &input, std::string &cur_
 td::Result<HttpHeader> get_header(std::string line);
 
 }  // namespace util
+
+// The request-body capacity one listener shares among all its connections.
+// A connection reserves a request's body before it parses any of it and the
+// reservation travels with the body to whoever consumes it, so the bytes held
+// for request bodies across the listener never exceed the capacity, whether
+// they sit in a connection, in a payload, or in the consumer's copy.
+//
+// It also counts, separately, the socket read-ahead of connections whose
+// current request has not been admitted (see HttpInboundConnection): bytes
+// read while looking for the end of the request headers, which may include
+// the start of a body that is not charged to any reservation.
+class BodyBudget : public std::enable_shared_from_this<BodyBudget> {
+ public:
+  // Bytes of one request body; released when destroyed.
+  class Reservation {
+   public:
+    Reservation(std::shared_ptr<BodyBudget> budget, size_t bytes) : budget_(std::move(budget)), bytes_(bytes) {
+    }
+    Reservation(const Reservation &) = delete;
+    Reservation &operator=(const Reservation &) = delete;
+    ~Reservation() {
+      if (budget_) {
+        budget_->release(bytes_);
+      }
+    }
+    size_t bytes() const {
+      return bytes_;
+    }
+
+   private:
+    std::shared_ptr<BodyBudget> budget_;
+    size_t bytes_;
+  };
+
+  explicit BodyBudget(size_t capacity) : capacity_(capacity) {
+  }
+
+  // Reserves `bytes`, or returns null when they do not fit in what is left.
+  std::shared_ptr<Reservation> reserve(size_t bytes) {
+    size_t current = reserved_.load(std::memory_order_relaxed);
+    while (true) {
+      if (bytes > capacity_ || current > capacity_ - bytes) {
+        return nullptr;
+      }
+      if (reserved_.compare_exchange_weak(current, current + bytes, std::memory_order_acq_rel)) {
+        return std::make_shared<Reservation>(shared_from_this(), bytes);
+      }
+    }
+  }
+
+  size_t capacity() const {
+    return capacity_;
+  }
+  size_t reserved() const {
+    return reserved_.load(std::memory_order_acquire);
+  }
+
+  // Read-ahead accounting, updated by each connection as its unadmitted
+  // input grows and shrinks.
+  void add_read_ahead(size_t bytes) {
+    read_ahead_.fetch_add(bytes, std::memory_order_acq_rel);
+  }
+  void sub_read_ahead(size_t bytes) {
+    size_t current = read_ahead_.load(std::memory_order_relaxed);
+    while (!read_ahead_.compare_exchange_weak(current, current >= bytes ? current - bytes : 0,
+                                              std::memory_order_acq_rel)) {
+    }
+  }
+  size_t read_ahead() const {
+    return read_ahead_.load(std::memory_order_acquire);
+  }
+
+ private:
+  void release(size_t bytes) {
+    size_t current = reserved_.load(std::memory_order_relaxed);
+    while (
+        !reserved_.compare_exchange_weak(current, current >= bytes ? current - bytes : 0, std::memory_order_acq_rel)) {
+    }
+  }
+
+  const size_t capacity_;
+  std::atomic<size_t> reserved_{0};
+  std::atomic<size_t> read_ahead_{0};
+};
 
 class HttpPayload {
  public:
@@ -120,11 +207,14 @@ class HttpPayload {
     return ready_bytes_ > high_watermark_;
   }
   bool is_error() const {
-    return error_;
+    return error_.load(std::memory_order_acquire);
   }
-  void set_error() {
-    error_ = true;
-  }
+  // The payload will not be completed: mark it failed and tell its consumers,
+  // once, as completion would, so they see is_error() instead of waiting. A
+  // consumer added later is told when it is added. Completion and failure
+  // exclude each other: whichever comes first is the payload's end, and a
+  // failed payload accepts no more input.
+  void fail();
   PayloadType payload_type() const {
     return type_;
   }
@@ -153,6 +243,19 @@ class HttpPayload {
     is_flushing_ = false;
   }
 
+  // The listener's reservation for this body. It is held by the payload
+  // while the body is read and buffered; a consumer that keeps the body, or a
+  // copy of it, past the payload takes it over with take_reservation() and
+  // holds it until it is done with the body.
+  void attach_reservation(std::shared_ptr<BodyBudget::Reservation> reservation) {
+    std::lock_guard<std::mutex> guard(reservation_mutex_);
+    reservation_ = std::move(reservation);
+  }
+  std::shared_ptr<BodyBudget::Reservation> take_reservation() {
+    std::lock_guard<std::mutex> guard(reservation_mutex_);
+    return std::move(reservation_);
+  }
+
  private:
   enum class ParseState { reading_chunk_header, reading_chunk_data, reading_trailer, reading_crlf, completed };
   PayloadType type_{PayloadType::pt_chunked};
@@ -168,7 +271,7 @@ class HttpPayload {
   size_t chunk_size_ = 1 << 14;
   bool written_zero_chunk_ = false;
   bool written_trailer_ = false;
-  bool error_ = false;
+  std::atomic<bool> error_{false};
   bool is_flushing_ = false;
 
   std::list<std::unique_ptr<Callback>> callbacks_;
@@ -176,6 +279,9 @@ class HttpPayload {
 
   std::atomic<ParseState> state_{ParseState::reading_chunk_header};
   std::mutex mutex_;
+
+  std::mutex reservation_mutex_;
+  std::shared_ptr<BodyBudget::Reservation> reservation_;
 };
 
 class HttpRequest {
@@ -254,6 +360,19 @@ class HttpRequest {
   // "Content-Length: 0" announces nothing and is not a body.
   bool announces_body() const {
     return found_transfer_encoding_ || (found_content_length_ && content_length_ > 0);
+  }
+  // Bytes to reserve for this request's body before reading it: the declared
+  // Content-Length (already capped at max_payload_size() by add_header), the
+  // whole max_payload_size() for a chunked body whose size is not known in
+  // advance, and nothing for a request without a body.
+  size_t body_reservation_bytes() const {
+    if (found_content_length_) {
+      return content_length_;
+    }
+    if (found_transfer_encoding_) {
+      return max_payload_size();
+    }
+    return 0;
   }
 
   const auto &method() const {

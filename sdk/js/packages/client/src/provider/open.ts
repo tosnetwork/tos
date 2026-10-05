@@ -163,7 +163,8 @@ function makeContractProvider(address: AddressLike, client: TosProvider, contrac
  * import { WalletV4R2 } from "@tos/wallets";
  *
  * const client = new TosClient({ endpoint: "http://localhost:8081" });
- * const wallet = open(WalletV4R2.create({ publicKey: keys.publicKey }), client);
+ * const networkGlobalId = await client.getNetworkGlobalId();
+ * const wallet = open(WalletV4R2.create({ publicKey: keys.publicKey, networkGlobalId }), client);
  *
  * // ContractProvider is injected automatically:
  * const seqno = await wallet.getSeqno();

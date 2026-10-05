@@ -69,6 +69,11 @@ class HttpOutboundConnection : public HttpConnection {
     if (promise_) {
       answer_error(HttpStatusCode::status_gateway_timeout, "", std::move(promise_));
     }
+    // The response was already handed over and its body is still arriving:
+    // the only way left to report the timeout is to fail the body.
+    if (reading_payload_) {
+      reading_payload_->fail();
+    }
     stop();
   }
 

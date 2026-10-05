@@ -363,7 +363,7 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     }
     try_process_pending_block_finality(id);
     auto *pending = pending_block_finality_.get_if_exists(id);
-    auto *cached = cached_masterchain_block_candidates_.get_if_exists(id);
+    auto *cached = cached_masterchain_block_candidates_.get(id, false);
     if (!pending || pending->size() != 1 || pending->processing() || !cached ||
         cached->as_slice() != expected_data.as_slice()) {
       return promise.set_error(td::Status::Error("C04 stale context did not retain evidence and block bytes"));
@@ -416,7 +416,7 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     // Keep the candidate bytes available without triggering proof processing:
     // otherwise the scheduled retry can lazily erase expired evidence before
     // the ingress timer, and the control measures only empty-map cleanup.
-    auto *cached = cached_masterchain_block_candidates_.get_if_exists(id);
+    auto *cached = cached_masterchain_block_candidates_.get(id, false);
     if (!pending_block_finality_.get_if_exists(id) || pending_block_finality_.get_if_exists(id)->size() != 1 ||
         !cached || cached->as_slice() != expected_data.as_slice()) {
       return promise.set_error(td::Status::Error("C04 ingress expiry lost evidence or candidate bytes"));
@@ -436,7 +436,7 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
   }
 
   void finish_stale_expiry(BlockIdExt id, td::BufferSlice expected_data, td::Promise<td::Unit> promise) {
-    auto *cached = cached_masterchain_block_candidates_.get_if_exists(id);
+    auto *cached = cached_masterchain_block_candidates_.get(id, false);
     auto *pending = pending_block_finality_.get_if_exists(id);
     const bool candidate_equal = cached && cached->as_slice() == expected_data.as_slice();
     const bool target_live = last_masterchain_block_handle_ && last_masterchain_block_handle_->id() == id;

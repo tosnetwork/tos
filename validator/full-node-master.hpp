@@ -95,7 +95,8 @@ class FullNodeMasterImpl : public FullNodeMaster {
 
   FullNodeMasterImpl(adnl::AdnlNodeIdShort adnl_id, td::uint16 port, FileHash zero_state_file_hash,
                      td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
-                     td::actor::ActorId<ValidatorManagerInterface> validator_manager);
+                     td::actor::ActorId<ValidatorManagerInterface> validator_manager,
+                     std::shared_ptr<FullNodeMasterLimiter> limiter);
 
  private:
   adnl::AdnlNodeIdShort adnl_id_;
@@ -105,6 +106,7 @@ class FullNodeMasterImpl : public FullNodeMaster {
   td::actor::ActorId<keyring::Keyring> keyring_;
   td::actor::ActorId<adnl::Adnl> adnl_;
   td::actor::ActorId<ValidatorManagerInterface> validator_manager_;
+  std::shared_ptr<FullNodeMasterLimiter> limiter_;
 };
 
 }  // namespace fullnode

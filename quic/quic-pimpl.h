@@ -15,12 +15,13 @@
 #include "ngtcp2/ngtcp2.h"
 #include "ngtcp2/ngtcp2_crypto.h"
 #include "ngtcp2/ngtcp2_crypto_ossl.h"
-#include "td/utils/Time.h"
 #include "td/utils/Badge.h"
+#include "td/utils/Time.h"
 #include "td/utils/port/UdpSocketFd.h"
 
 #include "openssl-utils.h"
 #include "quic-common.h"
+#include "quic-inbound-budget.h"
 
 namespace tos::quic {
 
@@ -54,6 +55,45 @@ struct QuicConnectionOptions {
   ngtcp2_duration idle_timeout = DEFAULT_IDLE_TIMEOUT;
   ngtcp2_duration keep_alive_timeout = DEFAULT_KEEP_ALIVE_TIMEOUT;
   CongestionControlAlgo cc_algo = CongestionControlAlgo::Bbr;
+  // Every transport allocation of the connection is reserved here first.
+  // Unset means the process-wide default.
+  std::shared_ptr<QuicTransportMemoryBudget> transport_budget;
+  // The peer source the allocations are also charged to, within its share of
+  // the transport budget. Empty charges the global budget only.
+  QuicBudgetSource transport_source;
+};
+
+// The transport's allocator for one connection: each allocation is reserved
+// from a shared budget, and from the share of it the connection's peer source
+// may hold, before it is made, and refused when it does not fit either, which
+// the transport reports as a fatal error that closes the connection.
+// Must outlive the transport connection that uses it.
+class QuicTransportAllocator {
+ public:
+  QuicTransportAllocator(std::shared_ptr<QuicTransportMemoryBudget> budget, QuicBudgetSource source);
+  QuicTransportAllocator(const QuicTransportAllocator&) = delete;
+  QuicTransportAllocator& operator=(const QuicTransportAllocator&) = delete;
+  const ngtcp2_mem* mem() const {
+    return &mem_;
+  }
+  // Bytes this connection's transport holds, headers included.
+  size_t held() const {
+    return held_;
+  }
+
+ private:
+  static void* malloc_cb(size_t size, void* user_data);
+  static void free_cb(void* ptr, void* user_data);
+  static void* calloc_cb(size_t nmemb, size_t size, void* user_data);
+  static void* realloc_cb(void* ptr, size_t size, void* user_data);
+  void* allocate(size_t size, bool zero);
+  void release(void* ptr);
+  void* reallocate(void* ptr, size_t size);
+
+  std::shared_ptr<QuicTransportMemoryBudget> budget_;
+  QuicBudgetSource source_;
+  ngtcp2_mem mem_{};
+  size_t held_{0};
 };
 
 struct QuicConnectionIdAccess {
@@ -229,6 +269,8 @@ struct QuicConnectionPImpl {
     bool in_ready_queue = false;
   };
 
+  // Declared before the transport connection so that it is destroyed after it.
+  std::unique_ptr<QuicTransportAllocator> allocator_;
   openssl_ptr<SSL_CTX, &SSL_CTX_free> ssl_ctx_;
   openssl_ptr<SSL, &SSL_free> ssl_;
   openssl_ptr<ngtcp2_crypto_ossl_ctx, &ngtcp2_crypto_ossl_ctx_del> ossl_ctx_;

@@ -39,3 +39,22 @@ const int STATE_COLLECTOR_SIGNATURE_REMOVAL_SUSPENDED = 8; ;; state_flags & 8 - 
 
     return (bridge_address_hash, oracles_address_hash, oracles, state_flags, bridge_burn_fee, bridge_mint_fee, wallet_min_tos_for_storage, wallet_gas_consumption, minter_min_tos_for_storage, discover_gas_consumption);
 }
+
+;; The counterparty bridge the configuration names, or -1 when the parameter
+;; carries none. New business requires it to equal the bridge's pinned one.
+int get_external_bridge_address() impure inline_ref {
+    cell bridge_config = config_param(CONFIG_PARAM_ID);
+    if (bridge_config.cell_null?()) {
+        bridge_config = config_param(- CONFIG_PARAM_ID);
+    }
+    throw_if(error::no_bridge_config, bridge_config.cell_null?());
+    slice cs = bridge_config.begin_parse();
+    cs~skip_bits(8 + 256 + 256);
+    cs~load_dict();
+    cs~skip_bits(8);
+    cs~load_ref();
+    if (cs.slice_bits() < 256) {
+        return -1;
+    }
+    return cs~load_uint(256);
+}

@@ -46,6 +46,7 @@
 #include "td/utils/port/Poll.h"
 #include "td/utils/port/StdStreams.h"
 
+#include "candidate-data-cache.h"
 #include "finality-cache-policy.h"
 #include "liteserver-admission.h"
 #include "manager-init.h"
@@ -241,8 +242,22 @@ class ValidatorManagerImpl : public ValidatorManager {
   static constexpr std::size_t MAX_ACTIVE_SHARD_BLOCK_DESC_GENERATIONS = 64;
   BoundedActiveOperations<BlockIdExt> active_shard_block_desc_generations_{MAX_ACTIVE_SHARD_BLOCK_DESC_GENERATIONS};
 
-  td::LRUCache<BlockIdExt, td::BufferSlice> cached_block_data_{/* max_size = */ 128};
-  td::LRUCache<BlockIdExt, td::BufferSlice> cached_masterchain_block_candidates_{/* max_size = */ 128};
+  // The largest block data any ingress accepts, FullNode::max_block_size();
+  // manager.cpp asserts the two agree.
+  static constexpr std::size_t kMaxCandidateDataSize = std::size_t{4} << 20;
+  // Block data received before the block is validated. Both caches are bounded
+  // by entry count and by the bytes of their allocations still alive,
+  // including clones held by pending finality verification and block
+  // processing after eviction: with 128 entries of up to kMaxCandidateDataSize
+  // each, a count bound alone would let them hold 1 GiB.
+  static constexpr CandidateDataCacheLimits kCandidateDataCacheLimits{
+      .max_entries = 128, .max_bytes = std::size_t{64} << 20, .max_entry_size = kMaxCandidateDataSize};
+  CandidateDataCache<BlockIdExt> cached_block_data_{kCandidateDataCacheLimits};
+  CandidateDataCache<BlockIdExt> cached_masterchain_block_candidates_{kCandidateDataCacheLimits};
+  // Candidate broadcasts being applied ahead of finality. Each holds its block
+  // data until done, so at most this many, of max_block_size each, are pending.
+  static constexpr std::size_t MAX_ACTIVE_CANDIDATE_BROADCASTS = 16;
+  BoundedActiveOperations<BlockIdExt> active_candidate_broadcasts_{MAX_ACTIVE_CANDIDATE_BROADCASTS};
   td::LRUCache<BlockIdExt, td::Unit> cached_checked_shard_block_descriptions_{/* max_size = */ 1024};
   PendingFinalityStore<BlockIdExt, PendingBlockFinalitySender, PendingBlockFinalityCandidate> pending_block_finality_;
   td::optional<BlockIdExt> pending_finality_authority_memo_state_;

@@ -211,7 +211,7 @@ class VerifierBudgetTests(unittest.TestCase):
             {},
             {"source_sha": "a" * 40},
             Path("/nonexistent"),
-            [],
+            {},
             launcher=lambda *a: launched.append(a),
             deadline=1000.0,
             clock=lambda: 1000.0 - 179.0,
@@ -225,7 +225,7 @@ class VerifierBudgetTests(unittest.TestCase):
             {},
             {"source_sha": "a" * 40},
             Path("/nonexistent"),
-            [],
+            {},
             deadline=1000.0,
             clock=lambda: 1000.0 - 181.0,
         )
@@ -475,19 +475,38 @@ class PortableGitBindingTest(unittest.TestCase):
             repo, worktree = root / "repo", root / "worktree"
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
             subprocess.run(
-                ["git", "-C", str(repo), "-c", "user.name=Tests", "-c",
-                 "user.email=tests@localhost", "commit", "-q", "--allow-empty", "-m", "Fixture"],
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=Tests",
+                    "-c",
+                    "user.email=tests@localhost",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "Fixture",
+                ],
                 check=True,
             )
-            subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
-            with patch.object(closure, "__file__", str(worktree / "scripts/binding.py")), patch.dict(
-                os.environ, {"GIT_DIR": str(root / "untrusted")}
+            subprocess.run(
+                ["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(worktree)],
+                check=True,
+            )
+            with (
+                patch.object(closure, "__file__", str(worktree / "scripts/binding.py")),
+                patch.dict(os.environ, {"GIT_DIR": str(root / "untrusted")}),
             ):
-                self.assertEqual(str((repo / ".git").resolve()), closure.repository_git_common_root())
+                self.assertEqual(
+                    str((repo / ".git").resolve()), closure.repository_git_common_root()
+                )
 
     def test_missing_repository_metadata_is_refused(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(
-            closure, "__file__", str(Path(directory) / "scripts/binding.py")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(closure, "__file__", str(Path(directory) / "scripts/binding.py")),
         ):
             with self.assertRaises(subprocess.CalledProcessError):
                 closure.repository_git_common_root()

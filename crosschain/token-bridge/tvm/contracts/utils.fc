@@ -1,12 +1,30 @@
 #include "messages.fc";
 #include "op-codes.fc";
 
+;; The settlement half of a wallet's storage when it is created: no life yet, no
+;; minter life, no credits and no burns. jetton-wallet.fc reads and writes the
+;; same layout; an address is the hash of this initial state.
+;; born_lt:uint64 minter_life:uint64 minter_terminal:uint1 open_attempt:uint32
+;; credit_watermark:uint64 credit_compaction:uint64 credit_high:uint64
+;; credits_above:(HashmapE 64 uint256)
+;; next_burn:uint64 burn_ack:uint64 burns:(HashmapE 64 PendingBurn)
+cell empty_wallet_settlement() inline {
+    return begin_cell()
+            .store_uint(0, 64 + 64 + 1 + 32)      ;; born_lt, minter_life, minter_terminal, open_attempt
+            .store_uint(0, 64 + 64 + 64)          ;; credit watermark, compaction, high
+            .store_dict(null())
+            .store_uint(0, 64 + 64)
+            .store_dict(null())
+            .end_cell();
+}
+
 cell pack_jetton_wallet_data(int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code) inline {
     return  begin_cell()
             .store_coins(balance)
             .store_slice(owner_address)
             .store_slice(jetton_master_address)
             .store_ref(jetton_wallet_code)
+            .store_ref(empty_wallet_settlement())
             .end_cell();
 }
 
@@ -16,6 +34,32 @@ cell calculate_jetton_wallet_state_init(slice owner_address, slice jetton_master
             .store_dict(jetton_wallet_code)
             .store_dict(pack_jetton_wallet_data(0, owner_address, jetton_master_address, jetton_wallet_code))
             .store_uint(0, 1)
+            .end_cell();
+}
+
+;; A minter's storage when the bridge creates it: nothing counted, reserved or
+;; recorded, and the bridge that may drive it pinned in. jetton-minter.fc reads
+;; and writes the same layout. Because the bridge is part of the initial state,
+;; it is part of the minter's address: each bridge has its own minters.
+cell pack_minter_initial_data(cell content, cell jetton_wallet_code, slice bridge_address) inline {
+    return begin_cell()
+            .store_int(0, 128)            ;; total_supply
+            .store_coins(0)               ;; in_flight
+            .store_coins(0)               ;; mint_reserve
+            .store_coins(0)               ;; burn_reserve
+            .store_coins(0)               ;; stranded
+            .store_ref(content)
+            .store_ref(jetton_wallet_code)
+            .store_ref(begin_cell()
+                .store_slice(bridge_address)
+                .store_uint(0, 64 + 64 + 1)        ;; bridge_life, born_lt, terminal
+                .store_uint(0, 64 + 64)            ;; mint_watermark, mint_compaction
+                .store_uint(0, 64 + 64)            ;; next_notice, bridge_burn_ack
+                .store_uint(0, 32)                 ;; holders_count
+                .store_dict(null())                ;; mints
+                .store_dict(null())                ;; notices
+                .store_dict(null())                ;; holders
+                .end_cell())
             .end_cell();
 }
 

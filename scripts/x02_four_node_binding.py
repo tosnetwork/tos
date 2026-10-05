@@ -15,6 +15,8 @@ BINARY_PATHS = (
     "crypto/pq/tos-pq-consensus-key",
     "utils/generate-random-id",
     "lite-client/lite-client",
+    # Authenticates the elected Config34 block from the network's zerostate.
+    "lite-client/proof-verify/tos-proof-verify",
     "validator-engine/validator-engine",
     "dht-server/dht-server",
     "validator-engine-console/validator-engine-console",
@@ -38,7 +40,14 @@ def repository_git_common_root():
     """Bind to this checkout's actual Git metadata, including linked worktrees."""
     repo = Path(__file__).resolve().parents[1]
     output = subprocess.check_output(
-        ["/usr/bin/git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        [
+            "/usr/bin/git",
+            "-C",
+            str(repo),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
         env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
         text=True,
         timeout=10,
@@ -126,10 +135,10 @@ def verify_binding(binding, host=False):
         "sandbox paths differ from fixed interface",
     )
     require(
-        binding["native_source_sha"] == "f1f912dafd2dc3120e92829ec1858941bc426ec9"
+        binding["native_source_sha"] == "a075bc51c4e5f949e3c79f36a2cbce8eccb34fce"
         and binding["native_binary_sha256"]
-        == "e7670133c59160614fdedb04dd8ae03ba4be74c2a4841518f3ccec92cde4f3ee",
-        "native snapshot differs from actual frozen f1f source/binary",
+        == "8e370be745db7ee406746ffed6e1bd1cfe57bb104ff1827abde6e2992e838236",
+        "native snapshot differs from the frozen a075bc51c source/binary",
     )
     if host:
         for name, receipt in sorted(binding["host_files"].items()):

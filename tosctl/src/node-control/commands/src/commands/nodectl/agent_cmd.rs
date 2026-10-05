@@ -243,7 +243,7 @@ pub struct AgentTaskSendCmd {
     #[arg(
         long,
         conflicts_with = "amount_nanotos",
-        help = "Message value in TOS; defaults to 0.01"
+        help = "Message value in TOS; defaults to the gas allowance of any Task Escrow action, priced from the chain's config"
     )]
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact message value in nanoTOS")]
@@ -319,6 +319,13 @@ pub struct AgentTaskCreateCmd {
     deadline: u64,
     #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
     review_period: u32,
+    #[arg(
+        long,
+        default_value_t = TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+        value_parser = clap::value_parser!(u16).range(0..=10_000),
+        help = "Agent's share of the budget, in basis points, if a dispute is still unresolved 7 days after it is raised; the creator receives the rest"
+    )]
+    dispute_fallback_agent_bps: u16,
     #[arg(long)]
     policy_hash: String,
     #[arg(
@@ -376,7 +383,8 @@ pub struct AgentTaskCreateCmd {
     #[arg(
         long,
         conflicts_with = "amount_nanotos",
-        help = "Funding amount in TOS; defaults to 0.2"
+        help = "Funding amount in TOS; at least the budget plus 0.05; defaults to the budget plus 0.2 \
+                (recommended)"
     )]
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact funding amount in nanoTOS")]
@@ -404,6 +412,13 @@ enum AgentTaskOperation {
     Settle,
     Cancel,
     Timeout,
+    /// Ends a dispute left unresolved past its deadline with the fallback split.
+    /// The escrow must still hold the whole budget: the default message value
+    /// pays this call's gas and forwarding, not storage rent that has eaten
+    /// into the budget. If it has, top the escrow up first (a plain transfer,
+    /// with headroom for further rent); a larger value on this call does not
+    /// count towards the budget.
+    DisputeTimeout,
     RotateAttestorKey,
     RevokeAttestor,
 }
@@ -413,7 +428,7 @@ impl AgentTaskOperation {
         match self {
             Self::Accept | Self::Claim => Ok(status == 1),
             Self::Result => Ok(status == 2),
-            Self::Settle | Self::Resolve => Ok(status == 3),
+            Self::Settle | Self::Resolve | Self::DisputeTimeout => Ok(status == 3),
             Self::Cancel => Ok(status == 4),
             Self::Timeout => Ok(matches!(status, 3 | 5)),
             Self::Reject => Ok(status == 6),
@@ -435,6 +450,7 @@ impl AgentTaskOperation {
             Self::Settle => "settle",
             Self::Cancel => "cancel",
             Self::Timeout => "timeout",
+            Self::DisputeTimeout => "dispute-timeout",
             Self::RotateAttestorKey => "rotate-attestor-key",
             Self::RevokeAttestor => "revoke-attestor",
         }
@@ -537,6 +553,13 @@ pub struct AgentTaskBuildStateCmd {
     deadline: u64,
     #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
     review_period: u32,
+    #[arg(
+        long,
+        default_value_t = TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+        value_parser = clap::value_parser!(u16).range(0..=10_000),
+        help = "Agent's share of the budget, in basis points, if a dispute is still unresolved 7 days after it is raised; the creator receives the rest"
+    )]
+    dispute_fallback_agent_bps: u16,
     #[arg(long, help = "32-byte settlement policy hash")]
     policy_hash: String,
     #[arg(
@@ -1815,6 +1838,13 @@ fn validate_controller_task_action(
             validate_controller_task_payout(task, context)?;
             validate_controller_task_attestation(operation, task, context)?;
         }
+        AgentTaskOperation::DisputeTimeout => {
+            require_task_status(task, 7, "disputed")?;
+            if context.now < task.dispute_deadline {
+                anyhow::bail!("Task Escrow dispute deadline has not passed");
+            }
+            validate_dispute_timeout_principal(task, context)?;
+        }
         AgentTaskOperation::RotateAttestorKey | AgentTaskOperation::RevokeAttestor => {
             anyhow::bail!("this Task operation is not supported through Agent Account custody")
         }
@@ -1823,12 +1853,18 @@ fn validate_controller_task_action(
 }
 
 struct ControllerTaskActionContext<'a> {
+    global_id: i32,
     task_address: &'a MsgAddressInt,
     now: u64,
     payout: Option<u64>,
     dispute_hash: Option<[u8; 32]>,
     attestation_signature: Option<&'a [u8; 64]>,
+    /// The escrow's balance as the contract sees it while handling this
+    /// message: what it held plus the value attached to the message.
     available_balance: u64,
+    /// The value attached to this message, already counted in
+    /// `available_balance`.
+    attached_value: u64,
 }
 
 fn require_task_status(
@@ -1860,6 +1896,35 @@ fn validate_controller_task_payout(
     Ok(())
 }
 
+/// dispute_timeout refuses with exit 126 unless the escrow still holds the
+/// whole budget without the caller's attached value
+/// (`budget <= balance - msg_value`). The attached value pays the call's fees,
+/// so a larger one cannot make up a missing principal; only a separate
+/// transfer to the escrow can.
+fn validate_dispute_timeout_principal(
+    task: &TaskEscrowData,
+    context: &ControllerTaskActionContext<'_>,
+) -> anyhow::Result<()> {
+    let principal = context
+        .available_balance
+        .checked_sub(context.attached_value)
+        .context("Task Escrow balance is smaller than the value attached to this message")?;
+    if task.budget > principal {
+        let shortfall = task
+            .budget
+            .checked_sub(principal)
+            .context("Task Escrow principal shortfall underflowed")?;
+        anyhow::bail!(
+            "Task Escrow holds {principal} nanoTOS of its {} nanoTOS budget, so dispute-timeout \
+             would be refused (exit 126); top up the escrow first with a separate transfer of at \
+             least {shortfall} nanoTOS (attaching more value to this message does not count \
+             toward the principal)",
+            task.budget
+        );
+    }
+    Ok(())
+}
+
 fn validate_controller_task_attestation(
     operation: &AgentTaskOperation,
     task: &TaskEscrowData,
@@ -1875,11 +1940,13 @@ fn validate_controller_task_attestation(
         context.attestation_signature.context("Task Escrow requires an attestation signature")?;
     let domain_hash = match operation {
         AgentTaskOperation::Settle => contracts::settle_domain_hash(
+            context.global_id,
             context.task_address,
             &task.result_hash,
             context.payout.context("settle requires payout")?,
         )?,
         AgentTaskOperation::Resolve => contracts::resolve_domain_hash(
+            context.global_id,
             context.task_address,
             &task.result_hash,
             &task.dispute_hash,
@@ -1895,8 +1962,11 @@ fn validate_controller_task_attestation(
 
 impl AgentTaskSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let amount_nanotos =
-            resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.01))?;
+        let explicit_amount = if self.amount.is_some() || self.amount_nanotos.is_some() {
+            Some(resolve_nanotos("amount", self.amount, self.amount_nanotos, None)?)
+        } else {
+            None
+        };
         let mut payout_nanotos = None;
         let mut dispute_hash = None;
         let mut attestation_signature = None;
@@ -1947,6 +2017,9 @@ impl AgentTaskSendCmd {
             }
             AgentTaskOperation::Cancel => Some(TaskEscrowContract::cancel(self.query_id)?),
             AgentTaskOperation::Timeout => Some(TaskEscrowContract::timeout(self.query_id)?),
+            AgentTaskOperation::DisputeTimeout => {
+                Some(TaskEscrowContract::dispute_timeout(self.query_id)?)
+            }
             AgentTaskOperation::RotateAttestorKey => {
                 match parse_optional_hash("new-attestor-pubkey", &self.new_attestor_pubkey)? {
                     Some(pubkey) => {
@@ -1966,6 +2039,30 @@ impl AgentTaskSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &destination,
+            contracts::VersionedContract::TaskEscrow,
+        )
+        .await?;
+        let amount_nanotos = match explicit_amount {
+            Some(amount) => amount,
+            None => {
+                let schedule = load_agent_deploy_fee_schedule(&rpc_client, &destination).await?;
+                // A payout to a masterchain account is forwarded at masterchain
+                // rates even from a workchain escrow.
+                let masterchain_forwarding = match rpc_client.get_config_param(24).await? {
+                    ConfigParamEnum::ConfigParam24(value) => value,
+                    _ => anyhow::bail!(
+                        "chain config parameter 24 is not masterchain forwarding pricing"
+                    ),
+                };
+                TaskEscrowContract::action_value(
+                    &schedule.gas,
+                    &[&schedule.forwarding, &masterchain_forwarding],
+                )?
+            }
+        };
         if body.is_none() {
             let vault_key = self
                 .signer_vault_key
@@ -1980,6 +2077,7 @@ impl AgentTaskSendCmd {
                         .await?;
                     let chain_task = TaskEscrowContract::decode_data(&stack)?;
                     let domain_hash = contracts::settle_domain_hash(
+                        super::utils::network_global_id(&rpc_client).await?,
                         &destination,
                         &chain_task.result_hash,
                         payout,
@@ -1998,6 +2096,7 @@ impl AgentTaskSendCmd {
                         .await?;
                     let chain_task = TaskEscrowContract::decode_data(&stack)?;
                     let domain_hash = contracts::resolve_domain_hash(
+                        super::utils::network_global_id(&rpc_client).await?,
                         &destination,
                         &chain_task.result_hash,
                         &chain_task.dispute_hash,
@@ -2084,6 +2183,7 @@ impl AgentTaskSendCmd {
                 AgentTaskOperation::Settle
                     | AgentTaskOperation::Timeout
                     | AgentTaskOperation::Dispute
+                    | AgentTaskOperation::DisputeTimeout
             ) {
                 let master = rpc_client.get_masterchain_info().await?;
                 let header = rpc_client
@@ -2102,7 +2202,9 @@ impl AgentTaskSendCmd {
             };
             let available_balance = if matches!(
                 self.operation,
-                AgentTaskOperation::Settle | AgentTaskOperation::Resolve
+                AgentTaskOperation::Settle
+                    | AgentTaskOperation::Resolve
+                    | AgentTaskOperation::DisputeTimeout
             ) {
                 provider
                     .balance(&destination)
@@ -2113,12 +2215,14 @@ impl AgentTaskSendCmd {
                 u64::MAX
             };
             let validation_context = ControllerTaskActionContext {
+                global_id: super::utils::network_global_id(&rpc_client).await?,
                 task_address: &destination,
                 now: validation_now,
                 payout: payout_nanotos,
                 dispute_hash,
                 attestation_signature: attestation_signature.as_ref(),
                 available_balance,
+                attached_value: amount_nanotos,
             };
             validate_controller_task_action(
                 &self.operation,
@@ -2207,6 +2311,13 @@ struct AgentTaskDataView {
     settlement_policy_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     attestor_pubkey: Option<String>,
+    /// The agent's share, in basis points, if a dispute outlives its deadline.
+    dispute_fallback_agent_bps: u16,
+    /// When the fallback may end an open dispute; zero until one is raised.
+    dispute_deadline: u64,
+    balance: String,
+    /// Whether the escrow holds its budget; claim and accept refuse until it does.
+    budget_held: bool,
 }
 
 impl AgentTaskShowCmd {
@@ -2214,9 +2325,15 @@ impl AgentTaskShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_task_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        let info = rpc_client.get_address_information(&address).await?;
+        contracts::VersionedContract::TaskEscrow
+            .require_supported_code_boc(info.code.as_deref())
+            .map_err(|e| anyhow::anyhow!("{address}: {e}"))?;
+        let balance = info.balance;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_task_data", vec![]).await?;
         let data = TaskEscrowContract::decode_data(&stack)?;
+        let shortfall = data.budget.saturating_sub(balance);
         let permission_id = config
             .agent_tasks
             .values()
@@ -2239,6 +2356,10 @@ impl AgentTaskShowCmd {
             dispute_hash: hex::encode(data.dispute_hash),
             settlement_policy_hash: hex::encode(data.settlement_policy_hash),
             attestor_pubkey: data.attestor_pubkey.map(hex::encode),
+            dispute_fallback_agent_bps: data.dispute_fallback_agent_bps,
+            dispute_deadline: data.dispute_deadline,
+            balance: display_tos(balance),
+            budget_held: shortfall == 0,
         };
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&view)?);
@@ -2253,6 +2374,13 @@ impl AgentTaskShowCmd {
             println!("Review period: {}s", view.review_period);
             println!("Review deadline: {}", view.review_deadline);
             println!("Status: {}", view.status);
+            println!("Balance: {} TOS", view.balance);
+            if shortfall > 0 && data.status == 0 {
+                println!(
+                    "Not claimable yet: the escrow holds less than its budget; top it up by at least {} TOS",
+                    display_tos(shortfall)
+                );
+            }
             println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
         }
         Ok(())
@@ -2509,9 +2637,13 @@ async fn verify_task_deploy_quorum_network(
 
 impl AgentTaskCreateCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let amount_nanotos =
-            resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.2))?;
         let budget_nanotos = resolve_nanotos("budget", self.budget, self.budget_nanotos, None)?;
+        let explicit_amount = if self.amount.is_some() || self.amount_nanotos.is_some() {
+            Some(resolve_nanotos("amount", self.amount, self.amount_nanotos, None)?)
+        } else {
+            None
+        };
+        let amount_nanotos = task_escrow_funding_nanotos(budget_nanotos, explicit_amount)?;
         let path = Path::new(config_path);
         let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let agent_account = self
@@ -2575,6 +2707,7 @@ impl AgentTaskCreateCmd {
             settlement_policy_hash: policy_hash,
             permission_hash,
             attestor_pubkey,
+            dispute_fallback_agent_bps: self.dispute_fallback_agent_bps,
         };
         let address = TaskEscrowContract::calculate_address(deployment_workchain, &init)?;
         let state_init = TaskEscrowContract::build_state_init(&init)?;
@@ -3458,6 +3591,9 @@ impl AgentTaskEncodeCmd {
             }
             AgentTaskOperation::Cancel => TaskEscrowContract::cancel(self.query_id)?,
             AgentTaskOperation::Timeout => TaskEscrowContract::timeout(self.query_id)?,
+            AgentTaskOperation::DisputeTimeout => {
+                TaskEscrowContract::dispute_timeout(self.query_id)?
+            }
             AgentTaskOperation::RotateAttestorKey => TaskEscrowContract::rotate_attestor_key(
                 self.query_id,
                 parse_required_hash("new-attestor-pubkey", &self.new_attestor_pubkey)?,
@@ -3527,6 +3663,7 @@ impl AgentTaskBuildStateCmd {
             settlement_policy_hash: policy_hash,
             permission_hash,
             attestor_pubkey,
+            dispute_fallback_agent_bps: self.dispute_fallback_agent_bps,
         };
         let state_init = TaskEscrowContract::build_state_init(&init)?;
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
@@ -11279,6 +11416,36 @@ pub(crate) fn parse_optional_signature(
     Ok(Some(signature))
 }
 
+/// Recommended margin over the budget when no funding amount is given. The
+/// escrow pays its deployment and storage out of the excess; this is a default
+/// that covers deployment with room for storage, not a guarantee for every fee
+/// configuration or holding period (`agent task show` reports a shortfall).
+const TASK_ESCROW_FUNDING_RESERVE_NANOTOS: u64 = 200_000_000;
+/// Smallest margin over the budget an explicit amount may leave. Below it,
+/// deployment fees alone can bring the balance under the budget, and the task
+/// can then not be claimed until it is topped up.
+const TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS: u64 = 50_000_000;
+
+/// The value a new Task Escrow is funded with. The contract refuses claim and
+/// accept until it holds the full budget, so funding must cover the budget and
+/// the escrow's own fees.
+fn task_escrow_funding_nanotos(budget: u64, explicit_amount: Option<u64>) -> anyhow::Result<u64> {
+    let minimum = budget.checked_add(TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS).ok_or_else(|| {
+        anyhow::anyhow!("budget {budget} nanoTOS plus the funding margin overflows")
+    })?;
+    match explicit_amount {
+        Some(amount) if amount < minimum => anyhow::bail!(
+            "funding amount {amount} nanoTOS must be at least the budget {budget} nanoTOS plus \
+             {TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS} nanoTOS: the escrow must hold the whole budget \
+             before an agent can take the task, and pays its own fees from the excess"
+        ),
+        Some(amount) => Ok(amount),
+        None => budget.checked_add(TASK_ESCROW_FUNDING_RESERVE_NANOTOS).ok_or_else(|| {
+            anyhow::anyhow!("budget {budget} nanoTOS plus the funding reserve overflows")
+        }),
+    }
+}
+
 fn resolve_nanotos(
     name: &str,
     value_tos: Option<f64>,
@@ -11496,7 +11663,7 @@ mod tests {
         relay_network_domain_digest, resolve_nanotos, resolve_payout_nanotos,
         rpc_failure_diagnostic, rpc_locator_identity_digest, select_exact_finalized_output,
         sponsorship_rpc_not_found, sponsorship_rpc_temporarily_unavailable,
-        task_deploy_valid_until, task_deployment_workchain,
+        task_deploy_valid_until, task_deployment_workchain, task_escrow_funding_nanotos,
         validate_agent_account_task_create_funding, validate_controller_task_action,
         validate_destination_credit_semantics, validate_exact_sponsorship_top_up_boc,
         validate_release_profile_rpc_locator, validate_sponsorship_custody_evidence_context,
@@ -11540,6 +11707,24 @@ mod tests {
     struct TaskActionParser {
         #[command(subcommand)]
         action: AgentTaskAction,
+    }
+
+    #[test]
+    fn task_escrow_funding_must_exceed_the_budget() {
+        // Default: the budget plus the fee reserve.
+        assert_eq!(task_escrow_funding_nanotos(5_000_000_000, None).unwrap(), 5_200_000_000);
+        // An explicit amount at or below the budget creates a task no agent
+        // can take: the contract refuses claim/accept until it holds the budget.
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(200_000_000)).is_err());
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_000)).is_err());
+        // A sliver over the budget is consumed by deployment fees.
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_001)).is_err());
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_049_999_999)).is_err());
+        assert_eq!(
+            task_escrow_funding_nanotos(5_000_000_000, Some(5_050_000_000)).unwrap(),
+            5_050_000_000
+        );
+        assert!(task_escrow_funding_nanotos(u64::MAX, None).is_err());
     }
 
     #[test]
@@ -11925,17 +12110,24 @@ mod tests {
             permission_hash: permission_id_hash(Some("bounded-task")),
             dispute_hash: [0; 32],
             attestor_pubkey: None,
+            dispute_fallback_agent_bps:
+                contracts::TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+            dispute_deadline: 0,
         }
     }
 
+    const TEST_GLOBAL_ID: i32 = 42;
+
     fn controller_task_context(task_address: &MsgAddressInt) -> ControllerTaskActionContext<'_> {
         ControllerTaskActionContext {
+            global_id: TEST_GLOBAL_ID,
             task_address,
             now: 100,
             payout: Some(500_000_000),
             dispute_hash: Some([7; 32]),
             attestation_signature: None,
             available_balance: 1_000_000_000,
+            attached_value: 0,
         }
     }
 
@@ -13987,6 +14179,97 @@ mod tests {
     }
 
     #[test]
+    fn controller_dispute_timeout_requires_the_principal_without_the_attached_value() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let mut disputed = controller_task(7);
+        disputed.dispute_deadline = 100;
+        let mut context = controller_task_context(&task_address);
+        // The escrow held exactly its budget before this message.
+        context.attached_value = 50_000_000;
+        context.available_balance = disputed.budget + context.attached_value;
+        validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+
+        // One nanoTOS short of the budget is refused with the exact top-up.
+        context.available_balance = disputed.budget - 1 + context.attached_value;
+        let error = validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("top up the escrow first"), "{error}");
+        assert!(error.contains("at least 1 nanoTOS"), "{error}");
+
+        // Attaching more value does not count toward the principal.
+        context.attached_value = 5_000_000_000;
+        context.available_balance = disputed.budget - 1 + context.attached_value;
+        let error = validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("at least 1 nanoTOS"), "{error}");
+    }
+
+    #[test]
+    fn controller_dispute_timeout_waits_for_the_dispute_deadline_and_has_no_sender_restriction() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let mut disputed = controller_task(7);
+        disputed.dispute_deadline = 100;
+        let mut context = controller_task_context(&task_address);
+        context.now = 99;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::DisputeTimeout,
+                &disputed,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("dispute deadline has not passed")
+        );
+        context.now = 100;
+        validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+        let mut submitted = controller_task(2);
+        submitted.dispute_deadline = 100;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::DisputeTimeout,
+                &submitted,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn controller_timeout_matches_contract_deadlines_and_has_no_sender_restriction() {
         let permission_hash = permission_id_hash(Some("bounded-task"));
         let task_address = address(9);
@@ -14256,8 +14539,13 @@ mod tests {
         task.review_deadline = 100;
         task.result_hash = [8; 32];
         task.attestor_pubkey = Some(signing_key.verifying_key().to_bytes());
-        let domain =
-            contracts::settle_domain_hash(&task_address, &task.result_hash, 500_000_000).unwrap();
+        let domain = contracts::settle_domain_hash(
+            TEST_GLOBAL_ID,
+            &task_address,
+            &task.result_hash,
+            500_000_000,
+        )
+        .unwrap();
         let signature = signing_key.sign(&domain).to_bytes();
         let mut context = controller_task_context(&task_address);
         context.attestation_signature = Some(&signature);
@@ -14328,6 +14616,7 @@ mod tests {
         disputed.verifier = Some(address(3));
         disputed.dispute_hash = [11; 32];
         let resolve_domain = contracts::resolve_domain_hash(
+            TEST_GLOBAL_ID,
             &task_address,
             &disputed.result_hash,
             &disputed.dispute_hash,
@@ -14367,6 +14656,7 @@ mod tests {
             (AgentTaskOperation::Settle, vec![3]),
             (AgentTaskOperation::Cancel, vec![4]),
             (AgentTaskOperation::Timeout, vec![3, 5]),
+            (AgentTaskOperation::DisputeTimeout, vec![3]),
         ] {
             for status in 0..=7 {
                 assert_eq!(

@@ -39,13 +39,14 @@ void HttpConnection::loop() {
       if (is_eof || buffered_fd_.left_unread() <= fd_low_watermark()) {
         allow_read_ = true;
       }
-      if (allow_read_ && buffered_fd_.left_unread() < fd_high_watermark()) {
-        TRY_RESULT(r, buffered_fd_.flush_read(fd_high_watermark() - buffered_fd_.left_unread()));
+      auto window = std::min(input_window(), fd_high_watermark());
+      if (allow_read_ && buffered_fd_.left_unread() < window) {
+        TRY_RESULT(r, buffered_fd_.flush_read(window - buffered_fd_.left_unread()));
         if (r == 0 && is_eof) {
           read_eof = true;
         }
       }
-      if (buffered_fd_.left_unread() >= fd_high_watermark()) {
+      if (buffered_fd_.left_unread() >= window) {
         allow_read_ = false;
       }
       {
@@ -257,7 +258,7 @@ td::Status HttpConnection::continue_payload_read(td::ChainBufferReader &input) {
     auto s = input.size();
     auto R = reading_payload_->parse(input);
     if (R.is_error()) {
-      reading_payload_->set_error();
+      reading_payload_->fail();
       return R.move_as_error();
     }
     if (input.size() == s) {

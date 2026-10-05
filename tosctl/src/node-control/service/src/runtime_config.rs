@@ -809,6 +809,7 @@ mod tests {
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
             alerts: Default::default(),
+            proof_verifier: None,
         })
     }
 

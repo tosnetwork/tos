@@ -87,14 +87,23 @@ done
 rm -f /etc/systemd/system/tos-dht.service /etc/systemd/system/tos-validator@*.service
 rm -rf /etc/systemd/system/tos-validator@*.service.d
 systemctl disable --now tos-rss-monitor.timer 2>/dev/null || true
+# Root-run tools write throughout /data, so it is root's before anything is
+# written in it: a tos-owned /data would let tos swap directories or plant
+# links for root to follow.
+mkdir -p /data
+chown root:root /data
+chmod 0755 /data
 if [[ $CLEAN == 1 ]]; then
     # Literal fixed root: never derive this destructive target from an environment variable.
-    mkdir -p /data
     find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 fi
+# The emptiness check above ran while tos may still have owned /data; only
+# now that tos cannot add entries does an empty /data mean nothing is planted.
+if [[ -n "$(find /data -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    echo '/data gained entries before it became root-owned; refusing to write into it'; exit 1
+fi
 id tos >/dev/null 2>&1 || useradd --system --home-dir /data --shell /usr/sbin/nologin tos
-mkdir -p /data /usr/local/share/tos/fift/lib /usr/local/share/tos/smartcont
-chmod 0755 /data
+mkdir -p /usr/local/share/tos/fift/lib /usr/local/share/tos/smartcont
 for pair in 'validator-engine/validator-engine:validator-engine' 'dht-server/dht-server:dht-server' \
     'validator-engine-console/validator-engine-console:validator-console' 'lite-client/lite-client:lite-client' \
     'utils/generate-random-id:genkey' 'crypto/pq/tos-pq-consensus-key:pq-consensus-key' \
@@ -108,18 +117,29 @@ cp -a "$STAGING/pool" /data/shielded-pool
 PREPARE_ARGS=()
 [[ $ROTATE == 0 ]] || PREPARE_ARGS+=(--rotate)
 "$UV" run python scripts/local_pq_testnet.py prepare "${PREPARE_ARGS[@]}"
-chown -R tos:tos /data
-chmod 0755 /data/shielded-pool /data/configs
+# Everything in /data was written by root just now. Set modes while it is
+# all still root's, then hand tos only the directories its daemons write.
+chmod 0755 /data/testnet /data/shielded-pool /data/configs
 chmod 0644 /data/shielded-pool/* /data/configs/*
 find /data/testnet -name 'pq-consensus.seed' -exec chmod 0600 {} +
 find /data/testnet -name keyring -type d -exec chmod 0700 {} +
 chmod 0700 /data/testnet/state
+chown -R tos:tos /data/testnet/node* /data/lite-client
 install -m644 "$REPO/scripts/tos-pq-dht.service" /etc/systemd/system/tos-pq-dht.service
 install -m644 "$REPO/scripts/tos-pq-validator@.service" /etc/systemd/system/tos-pq-validator@.service
 install -m644 "$REPO/scripts/tos-pq-observer@.service" /etc/systemd/system/tos-pq-observer@.service
 install -m644 "$REPO/scripts/tos-pq-lite-client.service" /etc/systemd/system/tos-pq-lite-client.service
 install -d /usr/local/libexec/tos
 install -m755 "$REPO/scripts/run-local-lite-client.py" /usr/local/libexec/tos/run-local-lite-client.py
+# The traffic and election services run as root. They run a root-owned snapshot
+# of their code, taken now, never this checkout: whoever can write the checkout
+# must not be able to change what root executes at the next start. ProtectHome
+# hides /home from them, so a path that still reached back into a checkout there
+# fails instead of running. Re-run this installer to deploy changed drivers.
+SERVICES=/usr/local/lib/tos-dev-services
+UV="$UV" "$REPO/scripts/install-root-services.sh" "$SERVICES" "$REPO" "$BUILD" \
+    "$REPO/tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic"
+SNAPSHOT="$SERVICES/current"
 systemctl daemon-reload
 systemd-analyze verify tos-pq-dht.service tos-pq-validator@1.service tos-pq-observer@5.service tos-pq-lite-client.service
 python3 - <<'CHECK'
@@ -150,11 +170,13 @@ Type=simple
 User=root
 Group=root
 UMask=0077
-WorkingDirectory=$REPO
-Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
+WorkingDirectory=$SNAPSHOT/src
+Environment=PYTHONPATH=$SNAPSHOT/src/test/tostester/src:$SNAPSHOT/src/scripts
 Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONNOUSERSITE=1
 Environment=RAYON_NUM_THREADS=4
-ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-privacy.py
+ProtectHome=true
+ExecStart=$SNAPSHOT/venv/bin/python $SNAPSHOT/src/scripts/local-pq-privacy.py
 Restart=no
 CPUQuota=400%
 MemoryMax=12G
@@ -172,10 +194,12 @@ Type=simple
 User=root
 Group=root
 UMask=0077
-WorkingDirectory=$REPO
-Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
+WorkingDirectory=$SNAPSHOT/src
+Environment=PYTHONPATH=$SNAPSHOT/src/test/tostester/src:$SNAPSHOT/src/scripts
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-transfers.py
+Environment=PYTHONNOUSERSITE=1
+ProtectHome=true
+ExecStart=$SNAPSHOT/venv/bin/python $SNAPSHOT/src/scripts/local-pq-transfers.py
 Restart=no
 CPUQuota=100%
 MemoryMax=1G
@@ -195,9 +219,11 @@ Type=simple
 User=root
 Group=root
 UMask=0077
-WorkingDirectory=$REPO
-Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
-ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-elections.py
+WorkingDirectory=$SNAPSHOT/src
+Environment=PYTHONPATH=$SNAPSHOT/src/test/tostester/src:$SNAPSHOT/src/scripts
+Environment=PYTHONNOUSERSITE=1
+ProtectHome=true
+ExecStart=$SNAPSHOT/venv/bin/python $SNAPSHOT/src/scripts/local-pq-elections.py
 # The driver re-reads the elector on every pass, so a restart loses nothing.
 # Left dead after one transient lite-server error it misses a whole election
 # window, and an election nobody staked into closes empty.
@@ -212,7 +238,6 @@ UNIT
     systemctl daemon-reload
 fi
 "$UV" run python scripts/local_pq_testnet.py deploy
-chown -R tos:tos /data/shielded-pool
 systemctl enable --now tos-pq-lite-client
 [[ $ROTATE == 0 ]] || systemctl enable --now tos-pq-elections
 printf '\nFour PQ validators, two observers, lite-client and the local development pool are running.\n'

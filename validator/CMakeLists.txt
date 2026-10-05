@@ -148,6 +148,7 @@ set(FULL_NODE_SOURCE
   full-node.hpp
   full-node.cpp
   full-node-shard.h
+  full-node-shard-admission.h
   full-node-shard.hpp
   full-node-shard.cpp
   full-node-master.h

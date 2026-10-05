@@ -32,6 +32,7 @@
 #include "tos/tos-types.h"
 #include "validator/validator.h"
 
+#include "full-node-shard-admission.h"
 #include "types.h"
 
 namespace tos {
@@ -127,6 +128,10 @@ class FullNode : public td::actor::Actor {
   static constexpr td::uint64 max_zerostate_size() {
     return 16 << 20;
   }
+  // Overlay admission limits derived from the options, and a check that they
+  // can admit one of every mandatory request from a single source.
+  static FullNodeRateLimits rate_limits(const FullNodeOptions& opts);
+  static td::Status check_rate_limits(const FullNodeOptions& opts);
   enum { broadcast_mode_public = 1, broadcast_mode_fast_sync = 2, broadcast_mode_custom = 4 };
 
   static constexpr td::int32 MAX_FAST_SYNC_OVERLAY_CLIENTS = 5;

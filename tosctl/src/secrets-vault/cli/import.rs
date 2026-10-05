@@ -12,8 +12,35 @@ use secrets_vault::{
     crypto::factory::{AutoCryptoFactory, CryptoFactory},
     errors::error::VaultError,
     memory::protected_memory::ProtectedMemory,
+    secret_input::{decode_hex, read_secret, select_source},
     types::{algorithm::Algorithm, metadata::Metadata, secret::Secret, store_mode::StoreMode},
 };
+use std::path::Path;
+use zeroize::Zeroizing;
+
+/// Message for the retired `--data` option. It never repeats the value.
+pub const LEGACY_DATA_MESSAGE: &str = "import --data is no longer accepted: a secret in process \
+arguments is visible to other local processes and is kept by shell history. Pass \
+--data-file <PATH> (a file you own with mode 0600), --data-fd <N> (an inherited descriptor, \
+0 for standard input), or neither to be prompted without echo. Treat the secret you passed \
+as exposed.";
+
+/// Reads the hex-encoded secret for `import` from the selected protected
+/// channel and decodes it. Refuses the retired `--data` option before
+/// reading anything.
+pub fn read_import_secret(
+    legacy_data_given: bool,
+    data_file: Option<&Path>,
+    data_fd: Option<i32>,
+) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+    if legacy_data_given {
+        anyhow::bail!(LEGACY_DATA_MESSAGE);
+    }
+    let source =
+        select_source(data_file, data_fd, "--data-file", "--data-fd", "Secret (hex, hidden): ")?;
+    let text = read_secret(&source)?;
+    Ok(decode_hex(&text)?)
+}
 
 pub async fn execute(
     secret_id: &str,

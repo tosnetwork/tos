@@ -29,6 +29,7 @@ REQUIRED_SOURCES = [
     "tvm/tests/migrate.js",
     "tvm/tests/change-fee-floor.js",
     "tvm/tests/tos2eth-zero-destination.js",
+    "tvm/tests/weak-owner-key.js",
     "evm/contracts/Bridge.sol",
     "evm/contracts/WrappedTOS.sol",
     "evm/contracts/SignatureChecker.sol",
@@ -56,6 +57,17 @@ def require_text(path: Path, needles: list[str]) -> None:
     missing = [needle for needle in needles if needle not in text]
     if missing:
         raise AssertionError(f"{path.relative_to(REPO_ROOT)} missing invariants: {missing}")
+
+
+def require_helper_copy(directory: Path) -> None:
+    """The weak-key list must stay byte-identical to the one the chain's own contracts use."""
+    canonical = (REPO_ROOT / "crypto/smartcont/strong-ed25519-key.fc").read_bytes()
+    copy = directory / "strong-ed25519-key.fc"
+    if not copy.is_file() or copy.read_bytes() != canonical:
+        raise AssertionError(
+            f"{copy.relative_to(REPO_ROOT)} must be a byte-identical copy of "
+            "crypto/smartcont/strong-ed25519-key.fc"
+        )
 
 
 def verify_required_sources() -> None:
@@ -95,77 +107,103 @@ def verify_tvm_sources() -> None:
     expected_params = {"ethereum": 71, "bsc": 72}
     for network, param in expected_params.items():
         c = PROJECT / "tvm" / network
-        require_text(c / "bridge-config.fc", [
-            f"config_param({param})",
-            f"config_param(-{param})",
-        ])
-        require_text(c / "bridge_code.fc", [
-            "create_swap_from_tos",
-            "calculate_fee",
-            "flat_reward",
-            "network_fee",
-            "state_flags",
-            "total_locked",
-            # The network fee must cover the fixed 0.1 receipt each swap pays
-            # from the bridge balance, or every swap drains the bridge.
-            "throw_unless(392, network_fee >= 110000000)",
-            # A zero external destination is unspendable; refuse the swap.
-            "throw_unless(307, destination_address != 0)",
-            # A migration transfer must be recognized and locked by the
-            # receiving bridge, not left as sweepable plain balance.
-            "if (op == 0xf00d) {",
-            "total_locked += msg_value;",
-            "store_coins(total_locked); ;; echoed back in a bounce, for exact restoration",
-            "total_locked += restored;",
-            # The migrating bridge stops backing funds that left it.
-            "total_locked = 0;",
-        ])
-        require_text(c / "multisig-code.fc", [
-            "check_signature",
-            "recv_external",
-            'int get_global_id() asm "GLOBALID";',
-            "var hash = slice_hash(in_msg);",
-            "int query_wallet_id = in_msg~load_uint(32);",
-            "throw_unless(42, query_wallet_id == wallet_id);",
-            "int query_global_id = in_msg~load_int(32);",
-            "throw_unless(44, query_global_id == get_global_id());",
-            "throw_unless(36, slice_hash(msg) == slice_hash(in_msg));",
-        ])
+        require_text(
+            c / "bridge-config.fc",
+            [
+                f"config_param({param})",
+                f"config_param(-{param})",
+            ],
+        )
+        require_text(
+            c / "bridge_code.fc",
+            [
+                "create_swap_from_tos",
+                "calculate_fee",
+                "flat_reward",
+                "network_fee",
+                "state_flags",
+                "total_locked",
+                # The network fee must cover the fixed 0.1 receipt each swap pays
+                # from the bridge balance, or every swap drains the bridge.
+                "throw_unless(392, network_fee >= 110000000)",
+                # A zero external destination is unspendable; refuse the swap.
+                "throw_unless(307, destination_address != 0)",
+                # A migration transfer must be recognized and locked by the
+                # receiving bridge, not left as sweepable plain balance.
+                "if (op == 0xf00d) {",
+                "total_locked += msg_value;",
+                "store_coins(total_locked); ;; echoed back in a bounce, for exact restoration",
+                "total_locked += restored;",
+                # The migrating bridge stops backing funds that left it.
+                "total_locked = 0;",
+            ],
+        )
+        require_text(
+            c / "multisig-code.fc",
+            [
+                "check_signature",
+                "recv_external",
+                'int get_global_id() asm "GLOBALID";',
+                "var hash = slice_hash(in_msg);",
+                "int query_wallet_id = in_msg~load_uint(32);",
+                "throw_unless(42, query_wallet_id == wallet_id);",
+                "int query_global_id = in_msg~load_int(32);",
+                "throw_unless(44, query_global_id == get_global_id());",
+                "throw_unless(36, slice_hash(msg) == slice_hash(in_msg));",
+                # An owner key anyone can sign for authorizes nothing: refused when
+                # the initial data is built and before every stored key's signature.
+                '#include "strong-ed25519-key.fc";',
+                "  require_strong_owner_keys(owners_info);",
+                "  require_strong_owner_key(public_key);",
+                "    require_strong_owner_key(key);",
+                "  require_strong_owner_key(root_key);",
+            ],
+        )
+        require_helper_copy(c)
         require_text(c / "votes-collector.fc", ["get_bridge_config"])
         require_text(c / "stdlib.fc", ['"STTOMIS"', '"LDTOMIS"'])
 
 
 def verify_evm_sources() -> None:
     c = PROJECT / "evm/contracts"
-    require_text(c / "Bridge.sol", [
-        "contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS",
-        "require(!finishedVotings[digest]",
-        "finishedVotings[digest] = true",
-        "require(isOracle[signer]",
-        "require(next_signer > last_signer",
-        "require(!isOracle[newSet[i]]",
-        'require(newSet[i] != address(0), "Zero oracle in Set")',
-        'require(newSet.length > 2, "Set is too short")',
-        'require(oracleSetHash > lastOracleSetHash, "Stale oracle set hash")',
-        'require(nonce > lastBurnStatusNonce, "Stale burn status nonce")',
-        "require(signatures.length >= (2 * oraclesSet.length + 2) / 3",
-    ])
-    require_text(c / "WrappedTOS.sol", [
-        'require(allowBurn, "Burn is currently disabled")',
-        "_burn(msg.sender, amount)",
-        # Burns outside the 64-bit release range or to the zero TOS address
-        # destroy wrapped coins with nothing unlocked on the other side.
-        'require(amount > 0 && amount <= type(uint64).max, "Burn amount out of range")',
-        'require(addr.address_hash != bytes32(0), "Burn to zero address")',
-    ])
+    require_text(
+        c / "Bridge.sol",
+        [
+            "contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS",
+            "require(!finishedVotings[digest]",
+            "finishedVotings[digest] = true",
+            "require(isOracle[signer]",
+            "require(next_signer > last_signer",
+            "require(!isOracle[newSet[i]]",
+            'require(newSet[i] != address(0), "Zero oracle in Set")',
+            'require(newSet.length > 2, "Set is too short")',
+            'require(oracleSetHash > lastOracleSetHash, "Stale oracle set hash")',
+            'require(nonce > lastBurnStatusNonce, "Stale burn status nonce")',
+            "require(signatures.length >= (2 * oraclesSet.length + 2) / 3",
+        ],
+    )
+    require_text(
+        c / "WrappedTOS.sol",
+        [
+            'require(allowBurn, "Burn is currently disabled")',
+            "_burn(msg.sender, amount)",
+            # Burns outside the 64-bit release range or to the zero TOS address
+            # destroy wrapped coins with nothing unlocked on the other side.
+            'require(amount > 0 && amount <= type(uint64).max, "Burn amount out of range")',
+            'require(addr.address_hash != bytes32(0), "Burn to zero address")',
+        ],
+    )
     signature_checker = c / "SignatureChecker.sol"
-    require_text(signature_checker, [
-        "0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0",
-        "if (v != 27 && v != 28)",
-        'require(ecrecover(prefixedHash, v, r, s) == sig.signer, "Wrong signature")',
-        "function getChainId() internal pure returns (uint256 id)",
-        "assembly { id := chainid() }",
-    ])
+    require_text(
+        signature_checker,
+        [
+            "0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0",
+            "if (v != 27 && v != 28)",
+            'require(ecrecover(prefixedHash, v, r, s) == sig.signer, "Wrong signature")',
+            "function getChainId() internal pure returns (uint256 id)",
+            "assembly { id := chainid() }",
+        ],
+    )
     signature_text = signature_checker.read_text(encoding="utf-8")
     if signature_text.count("getChainId(),") != 3:
         raise AssertionError("all three EVM vote digests must bind getChainId()")
@@ -175,9 +213,7 @@ def verify_evm_sources() -> None:
             re.MULTILINE,
         )
         if not pattern.search(signature_text):
-            raise AssertionError(
-                f"{magic} digest must use magic,address(this),chainId field order"
-            )
+            raise AssertionError(f"{magic} digest must use magic,address(this),chainId field order")
     require_text(c / "TosUtils.sol", ["bytes32 tx_hash", "uint64 lt"])
 
 
@@ -194,25 +230,41 @@ def verify_domain_separation_artifacts() -> None:
         if not digest_pattern.fullmatch(expected.get(name, "")):
             raise AssertionError(f"golden vector has no valid {name}")
 
-    require_text(PROJECT / "evm/test/chainid-domain-separation.js", [
-        "same contract address",
-        'expectRevert("swap replay"',
-        'expectRevert("oracle-set replay"',
-        'expectRevert("burn-status replay"',
-        'expectRevert("legacy swap"',
-        'expectRevert("legacy oracle set"',
-        'expectRevert("legacy burn status"',
-    ])
-    require_text(PROJECT / "NOTICE.md", [
-        "chain-ID domain separation",
-        "magic, address(this), chainId, fields",
-        "chain-id-domain-separation.json",
-    ])
+    require_text(
+        PROJECT / "evm/test/chainid-domain-separation.js",
+        [
+            "same contract address",
+            'expectRevert("swap replay"',
+            'expectRevert("oracle-set replay"',
+            'expectRevert("burn-status replay"',
+            'expectRevert("legacy swap"',
+            'expectRevert("legacy oracle set"',
+            'expectRevert("legacy burn status"',
+        ],
+    )
+    require_text(
+        PROJECT / "NOTICE.md",
+        [
+            "chain-ID domain separation",
+            "magic, address(this), chainId, fields",
+            "chain-id-domain-separation.json",
+        ],
+    )
 
 
 def run_model_tests() -> None:
     subprocess.run(
-        [sys.executable, "-m", "unittest", "discover", "-s", str(PROJECT / "tests"), "-p", "test_*.py", "-v"],
+        [
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            str(PROJECT / "tests"),
+            "-p",
+            "test_*.py",
+            "-v",
+        ],
         check=True,
     )
 
@@ -230,7 +282,9 @@ def main() -> int:
     if not args.skip_model:
         run_model_tests()
     print("coin bridge source checks and protocol model passed")
-    print("note: these are source-text and model checks; behavior is proven by the EVM and TVM suites")
+    print(
+        "note: these are source-text and model checks; behavior is proven by the EVM and TVM suites"
+    )
     return 0
 
 

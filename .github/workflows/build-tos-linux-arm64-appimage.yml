@@ -6,6 +6,7 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [master, testnet]
+    tags: ['v*']
   workflow_dispatch:
   workflow_call:
 
@@ -13,13 +14,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-22.04-arm
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Date Stamp
       shell: bash
       id: date-stamp
@@ -33,15 +37,10 @@ jobs:
         mkdir ~/.ccache
 
     - name: Install clang-21
-      run: |
-        lsb_release -a
-        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-        echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-        sudo apt-get -y update
-        sudo apt-get install -y clang-21
+      run: sudo scripts/install-llvm-toolchain.sh 21
 
     - name: Restore cache TOS
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-ccache-${{ steps.date-stamp.outputs.timestamp }}
@@ -59,7 +58,7 @@ jobs:
         ccache -sp
 
     - name: Save cache TOS
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-ccache-${{ steps.date-stamp.outputs.timestamp }}
@@ -74,7 +73,7 @@ jobs:
         rm -rf artifacts
 
     - name: Save/Restore cache TOS libs
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-libs-ccache-${{ steps.date-stamp.outputs.timestamp }}
@@ -89,7 +88,7 @@ jobs:
         cp ./artifacts/libemulator.so appimages/artifacts/
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: tos-arm64-linux
         path: appimages/artifacts

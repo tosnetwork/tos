@@ -1,5 +1,9 @@
+add_library(rldp-http-tunnel STATIC tcp-tunnel.cpp tcp-tunnel.h)
+target_include_directories(rldp-http-tunnel PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+target_link_libraries(rldp-http-tunnel PUBLIC adnl toshttp tl-utils tdactor tdutils)
+
 add_executable(rldp-http-proxy rldp-http-proxy.cpp DNSResolver.h DNSResolver.cpp)
 target_include_directories(rldp-http-proxy PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(rldp-http-proxy PRIVATE toshttp rldp2 dht toslib git)
+target_link_libraries(rldp-http-proxy PRIVATE rldp-http-tunnel toshttp rldp2 dht toslib git)
 
 install(TARGETS rldp-http-proxy RUNTIME DESTINATION bin)

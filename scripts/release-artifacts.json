@@ -1,0 +1,429 @@
+{
+  "build_workflows": [
+    {
+      "artifact": "tos-arm64-linux",
+      "workflow": "build-tos-linux-arm64-appimage.yml"
+    },
+    {
+      "artifact": "tos-x86_64-linux",
+      "workflow": "build-tos-linux-x86-64-appimage.yml"
+    },
+    {
+      "artifact": "tos-x86_64-macos",
+      "workflow": "build-tos-macos-15-x86-64-portable.yml"
+    },
+    {
+      "artifact": "tos-arm64-macos",
+      "workflow": "build-tos-macos-14-arm64-portable.yml"
+    },
+    {
+      "artifact": "tos-x86-64-windows",
+      "workflow": "tos-x86-64-windows.yml"
+    },
+    {
+      "artifact": "tos-wasm",
+      "workflow": "build-tos-wasm-emscripten.yml"
+    },
+    {
+      "artifact": "tos-android-toslib",
+      "workflow": "build-tos-linux-android-toslib.yml"
+    }
+  ],
+  "release_sets": {
+    "full": {
+      "assets": [
+        {
+          "artifact": "tos-x86-64-windows",
+          "zip": true,
+          "name": "tos-win-x86-64.zip"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "fift.exe",
+          "name": "fift.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "func.exe",
+          "name": "func.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "tol.exe",
+          "name": "tol.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "lite-client.exe",
+          "name": "lite-client.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "proxy-liteserver.exe",
+          "name": "proxy-liteserver.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "rldp-http-proxy.exe",
+          "name": "rldp-http-proxy.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "http-proxy.exe",
+          "name": "http-proxy.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "storage-daemon-cli.exe",
+          "name": "storage-daemon-cli.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "storage-daemon.exe",
+          "name": "storage-daemon.exe"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "toslibjson.dll",
+          "name": "toslibjson.dll"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "emulator.dll",
+          "name": "libemulator.dll"
+        },
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "toslib-cli.exe",
+          "name": "toslib-cli.exe"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "zip": true,
+          "name": "tos-mac-x86-64.zip"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "fift",
+          "name": "fift-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "func",
+          "name": "func-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "tol",
+          "name": "tol-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "lite-client",
+          "name": "lite-client-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "proxy-liteserver",
+          "name": "proxy-liteserver-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "rldp-http-proxy",
+          "name": "rldp-http-proxy-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "http-proxy",
+          "name": "http-proxy-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "storage-daemon-cli",
+          "name": "storage-daemon-cli-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "storage-daemon",
+          "name": "storage-daemon-mac-x86-64"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "libtoslibjson.dylib",
+          "name": "toslibjson-mac-x86-64.dylib"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "libemulator.dylib",
+          "name": "libemulator-mac-x86-64.dylib"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "toslib-cli",
+          "name": "toslib-cli-mac-x86-64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "zip": true,
+          "name": "tos-mac-arm64.zip"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "fift",
+          "name": "fift-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "func",
+          "name": "func-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "tol",
+          "name": "tol-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "lite-client",
+          "name": "lite-client-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "proxy-liteserver",
+          "name": "proxy-liteserver-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "rldp-http-proxy",
+          "name": "rldp-http-proxy-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "http-proxy",
+          "name": "http-proxy-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "storage-daemon-cli",
+          "name": "storage-daemon-cli-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "storage-daemon",
+          "name": "storage-daemon-mac-arm64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "libtoslibjson.dylib",
+          "name": "toslibjson-mac-arm64.dylib"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "libemulator.dylib",
+          "name": "libemulator-mac-arm64.dylib"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "toslib-cli",
+          "name": "toslib-cli-mac-arm64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "zip": true,
+          "name": "tos-linux-x86_64.zip"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "fift",
+          "name": "fift-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "func",
+          "name": "func-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tol",
+          "name": "tol-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "lite-client",
+          "name": "lite-client-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "proxy-liteserver",
+          "name": "proxy-liteserver-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "rldp-http-proxy",
+          "name": "rldp-http-proxy-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "http-proxy",
+          "name": "http-proxy-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "storage-daemon-cli",
+          "name": "storage-daemon-cli-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "storage-daemon",
+          "name": "storage-daemon-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "libtoslibjson.so",
+          "name": "toslibjson-linux-x86_64.so"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "libemulator.so",
+          "name": "libemulator-linux-x86_64.so"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "toslib-cli",
+          "name": "toslib-cli-linux-x86_64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "zip": true,
+          "name": "tos-linux-arm64.zip"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "fift",
+          "name": "fift-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "func",
+          "name": "func-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tol",
+          "name": "tol-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "lite-client",
+          "name": "lite-client-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "proxy-liteserver",
+          "name": "proxy-liteserver-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "rldp-http-proxy",
+          "name": "rldp-http-proxy-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "http-proxy",
+          "name": "http-proxy-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "storage-daemon-cli",
+          "name": "storage-daemon-cli-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "storage-daemon",
+          "name": "storage-daemon-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "libtoslibjson.so",
+          "name": "toslibjson-linux-arm64.so"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "libemulator.so",
+          "name": "libemulator-linux-arm64.so"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "toslib-cli",
+          "name": "toslib-cli-linux-arm64"
+        },
+        {
+          "artifact": "tos-wasm",
+          "zip": true,
+          "name": "tos-wasm.zip"
+        },
+        {
+          "artifact": "tos-android-toslib",
+          "zip": true,
+          "name": "tos-android-toslib.zip"
+        }
+      ],
+      "bundles": [
+        {
+          "artifact": "tos-x86_64-linux",
+          "directories": [
+            "smartcont",
+            "lib"
+          ],
+          "name": "smartcont_lib.zip"
+        }
+      ],
+      "tag_prefix": "v"
+    },
+    "tol": {
+      "tag_prefix": "tol-v",
+      "assets": [
+        {
+          "artifact": "tos-x86-64-windows",
+          "path": "tol.exe",
+          "name": "tol.exe"
+        },
+        {
+          "artifact": "tos-x86_64-macos",
+          "path": "tol",
+          "name": "tol-mac-x86-64"
+        },
+        {
+          "artifact": "tos-arm64-macos",
+          "path": "tol",
+          "name": "tol-mac-arm64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tol",
+          "name": "tol-linux-x86_64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tol",
+          "name": "tol-linux-arm64"
+        },
+        {
+          "artifact": "tos-wasm",
+          "zip": true,
+          "name": "tos-wasm.zip"
+        }
+      ],
+      "bundles": [
+        {
+          "artifact": "tos-x86_64-linux",
+          "directories": [
+            "smartcont",
+            "lib"
+          ],
+          "name": "smartcont_lib.zip"
+        }
+      ]
+    }
+  }
+}

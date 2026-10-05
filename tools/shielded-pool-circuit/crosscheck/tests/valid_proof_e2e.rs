@@ -352,6 +352,13 @@ fn a_private_transfer_with_a_proof_that_verifies() {
         "4",
         "one deposit and three outputs should leave four leaves"
     );
+    // A transfer pays nobody, so nothing can bounce and no recovery leaf is
+    // held back for it.
+    assert_eq!(
+        pool.get("reserved_recovery_leaves").expect("reserved recovery leaves"),
+        "0",
+        "a private transfer reserved a recovery leaf it can never use"
+    );
     assert_eq!(
         pool.get("nullifier_next_index").expect("nullifier next index"),
         "3",

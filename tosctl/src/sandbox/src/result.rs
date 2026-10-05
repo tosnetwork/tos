@@ -52,8 +52,8 @@ impl SendResult {
 
     /// Asserts that the first transaction was not aborted.
     pub fn expect_success(&self) -> &Self {
-        let (aborted, _) = self.primary_outcome();
-        assert!(!aborted, "expected first transaction to succeed, but it was aborted");
+        let (aborted, compute) = self.primary_outcome();
+        assert!(!aborted, "expected first transaction to succeed, but it was aborted: {compute:?}");
         self
     }
 

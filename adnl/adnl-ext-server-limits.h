@@ -7,10 +7,14 @@
 
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "common/checksum.h"
 #include "td/utils/RateLimiterWindow.h"
+#include "td/utils/port/IPAddress.h"
+
+#include "adnl-source-share.h"
 
 namespace tos::adnl {
 
@@ -50,43 +54,62 @@ inline ExtConnectionIdentity make_ext_connection_identity(std::string peer_ip) {
 
 // Small value types kept separate from the socket actor so admission behavior
 // can be tested without opening real TCP connections.
+//
+// Connections are counted per source, the same key the input-byte share uses
+// (network_source_key: IPv4 address or IPv6 /64), not per exact address: a
+// host free to send from any address of its /64 would otherwise hold a
+// per-source allowance for each of them and could fill the server-wide table
+// while staying under its byte share. Admission takes the peer address, not a
+// string, so a caller cannot key it by the exact address by mistake; the exact
+// address stays the connection's identity for logging and query limits.
 class ExtServerConnectionLimits {
  public:
-  ExtServerConnectionLimits(size_t max_connections, size_t max_connections_per_ip)
-      : max_connections_(max_connections), max_connections_per_ip_(max_connections_per_ip) {
+  ExtServerConnectionLimits(size_t max_connections, size_t max_connections_per_source)
+      : max_connections_(max_connections), max_connections_per_source_(max_connections_per_source) {
   }
 
-  bool try_acquire(const std::string &peer_ip) {
-    auto it = connections_per_ip_.find(peer_ip);
-    size_t per_ip = it == connections_per_ip_.end() ? 0 : it->second;
-    if (connections_ >= max_connections_ || per_ip >= max_connections_per_ip_) {
-      return false;
+  // Admit a connection from `peer`; returns the source it was counted under,
+  // which release() takes back, or nothing when a limit refused it.
+  std::optional<std::string> try_acquire(const td::IPAddress &peer) {
+    auto source = network_source_key(peer);
+    auto it = connections_per_source_.find(source);
+    size_t per_source = it == connections_per_source_.end() ? 0 : it->second;
+    if (connections_ >= max_connections_ || per_source >= max_connections_per_source_) {
+      return std::nullopt;
     }
     ++connections_;
-    ++connections_per_ip_[peer_ip];
-    return true;
+    ++connections_per_source_[source];
+    return source;
   }
 
-  void release(const std::string &peer_ip) {
-    auto it = connections_per_ip_.find(peer_ip);
-    if (it == connections_per_ip_.end() || it->second == 0) {
+  void release(const std::string &source) {
+    auto it = connections_per_source_.find(source);
+    if (it == connections_per_source_.end() || it->second == 0) {
       return;
     }
     --connections_;
     if (--it->second == 0) {
-      connections_per_ip_.erase(it);
+      connections_per_source_.erase(it);
     }
   }
 
   size_t connections() const {
     return connections_;
   }
+  size_t connections_from(const std::string &source) const {
+    auto it = connections_per_source_.find(source);
+    return it == connections_per_source_.end() ? 0 : it->second;
+  }
+  // Sources holding a connection; an entry is erased when its last one closes.
+  size_t sources() const {
+    return connections_per_source_.size();
+  }
 
  private:
   size_t max_connections_;
-  size_t max_connections_per_ip_;
+  size_t max_connections_per_source_;
   size_t connections_{0};
-  std::map<std::string, size_t> connections_per_ip_;
+  std::map<std::string, size_t> connections_per_source_;
 };
 
 class ExtConnectionQueryLimits {
@@ -123,36 +146,57 @@ class ExtConnectionQueryLimits {
   size_t inflight_{0};
 };
 
-class ExtServerQueryLimits {
+// The source a connection's server-wide query allowance is counted under:
+// network_source_key of the peer address (IPv4 address or IPv6 /64), the same
+// key as the connection and input-byte shares. Built only from an address, so
+// a caller cannot count queries under the exact address by mistake; the exact
+// address stays the connection's identity for logging.
+class ExtSourceKey {
  public:
-  ExtServerQueryLimits(size_t max_inflight, size_t max_inflight_per_ip)
-      : max_inflight_(max_inflight), max_inflight_per_ip_(max_inflight_per_ip) {
+  explicit ExtSourceKey(const td::IPAddress &peer) : key_(network_source_key(peer)) {
+  }
+  const std::string &str() const {
+    return key_;
   }
 
-  ExtAdmission try_acquire(const std::string &peer_ip) {
+ private:
+  std::string key_;
+};
+
+// Parked and executing queries across a server's connections: at most
+// `max_inflight` in all and `max_inflight_per_source` for one source. Counting
+// per source rather than per exact address keeps one IPv6 /64 from holding an
+// allowance for every address it sends from.
+class ExtServerQueryLimits {
+ public:
+  ExtServerQueryLimits(size_t max_inflight, size_t max_inflight_per_source)
+      : max_inflight_(max_inflight), max_inflight_per_source_(max_inflight_per_source) {
+  }
+
+  ExtAdmission try_acquire(const ExtSourceKey &source) {
     std::lock_guard lock(mutex_);
     if (inflight_ >= max_inflight_) {
       return ExtAdmission::ServerInflightLimited;
     }
-    auto it = inflight_per_ip_.find(peer_ip);
-    size_t per_ip = it == inflight_per_ip_.end() ? 0 : it->second;
-    if (per_ip >= max_inflight_per_ip_) {
+    auto it = inflight_per_source_.find(source.str());
+    size_t per_source = it == inflight_per_source_.end() ? 0 : it->second;
+    if (per_source >= max_inflight_per_source_) {
       return ExtAdmission::PerIpInflightLimited;
     }
     ++inflight_;
-    ++inflight_per_ip_[peer_ip];
+    ++inflight_per_source_[source.str()];
     return ExtAdmission::Acquired;
   }
 
-  void release(const std::string &peer_ip) {
+  void release(const ExtSourceKey &source) {
     std::lock_guard lock(mutex_);
-    auto it = inflight_per_ip_.find(peer_ip);
-    if (it == inflight_per_ip_.end() || it->second == 0) {
+    auto it = inflight_per_source_.find(source.str());
+    if (it == inflight_per_source_.end() || it->second == 0) {
       return;
     }
     --inflight_;
     if (--it->second == 0) {
-      inflight_per_ip_.erase(it);
+      inflight_per_source_.erase(it);
     }
   }
 
@@ -160,13 +204,23 @@ class ExtServerQueryLimits {
     std::lock_guard lock(mutex_);
     return inflight_;
   }
+  size_t inflight_from(const ExtSourceKey &source) const {
+    std::lock_guard lock(mutex_);
+    auto it = inflight_per_source_.find(source.str());
+    return it == inflight_per_source_.end() ? 0 : it->second;
+  }
+  // Sources with a query in flight; an entry is erased when its last one ends.
+  size_t sources() const {
+    std::lock_guard lock(mutex_);
+    return inflight_per_source_.size();
+  }
 
  private:
   size_t max_inflight_;
-  size_t max_inflight_per_ip_;
+  size_t max_inflight_per_source_;
   mutable std::mutex mutex_;
   size_t inflight_{0};
-  std::map<std::string, size_t> inflight_per_ip_;
+  std::map<std::string, size_t> inflight_per_source_;
 };
 
 }  // namespace tos::adnl

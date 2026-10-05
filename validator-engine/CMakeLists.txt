@@ -32,17 +32,7 @@ set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
 set(VALIDATOR_ENGINE_SOURCE
   validator-engine.hpp
   validator-engine.cpp
-  ${VALIDATOR_ENGINE_JSON_RPC_SOURCE}
 )
-
-add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})
-target_compile_options(validator-engine PRIVATE
-  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
-  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
-)
-target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_api dht
-  rldp2 quic full-node validator tos_validator validator
-  fift-lib memprof git tos_pq_consensus_signer ${JEMALLOC_LIBRARIES})
 
 add_library(json-rpc-account-model STATIC
   json-rpc-account-model.h
@@ -50,6 +40,27 @@ add_library(json-rpc-account-model STATIC
 )
 target_link_libraries(json-rpc-account-model PUBLIC smc-envelope tos_crypto tdutils)
 target_include_directories(json-rpc-account-model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# The JSON-RPC server as a library, so a test can run the real server and its
+# listener without the rest of the engine (see test/test-json-rpc-transport.cpp).
+add_library(validator-engine-json-rpc STATIC ${VALIDATOR_ENGINE_JSON_RPC_SOURCE})
+target_compile_options(validator-engine-json-rpc PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+)
+target_include_directories(validator-engine-json-rpc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(validator-engine-json-rpc PUBLIC metrics overlay tdutils tdactor adnl tl_api dht
+  rldp2 quic full-node validator tos_validator validator toshttp
+  fift-lib smc-envelope json-rpc-parse json-rpc-account-model)
+
+add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})
+target_compile_options(validator-engine PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+)
+target_link_libraries(validator-engine validator-engine-json-rpc metrics overlay tdutils tdactor adnl tl_api dht
+  rldp2 quic full-node validator tos_validator validator
+  fift-lib memprof git tos_pq_consensus_signer ${JEMALLOC_LIBRARIES})
 
 target_link_libraries(validator-engine smc-envelope json-rpc-parse json-rpc-account-model)
 if (JEMALLOC_FOUND)

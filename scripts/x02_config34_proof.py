@@ -1,28 +1,35 @@
 #!/usr/bin/env python3
-"""Same-block Config34 proof for X02 Stage A, from retained lite bytes only.
+"""Config34 for X02 Stage A, proven from the network's own zerostate.
 
-A Config34 claim counts only if it is proven, layer by layer, from one exact
-masterchain full block ID:
-  [optional block BOC: file hash, root hash] -> state proof (Merkle proof of the
-  full ID's block root, yielding its state hash) -> config proof (Merkle proof of that state) ->
-  ConfigParams dictionary -> parameter cell,
-and the separately retained parameter BOC is that same cell. The Config34 cell is
-then decoded field by field (validator_id, algorithm_id, key_id, public key, ADNL),
-every key_id is re-derived from its public key, and the set must equal the four rows
-frozen before the first fault and belong to the election being checked.
+A Config34 claim counts only if the compiled anchored verifier (tos-proof-verify)
+authenticates the exact masterchain block from a locally provisioned anchor -- the
+network's masterchain zerostate identity, supplied by the caller and never by the
+bundle -- through a continuous chain of post-quantum finality proofs, and then proves
+ConfigParam 34 from that block's state. This module only drives that verifier and
+reads its bound result; it does not check a proof itself.
 
-Runs under the pinned Stage A interpreter with the repository's pytosiq_core;
-the stdlib-only coordinator calls it as a separate process and reads its verdict.
+After the verifier accepts, the proven Config34 cell must be the separately retained
+parameter BOC, is decoded field by field (validator_id, algorithm_id, key_id, public
+key, ADNL), every key_id is re-derived from its public key, and the set must equal the
+four rows frozen before the first fault and belong to the election being checked.
+Those comparisons are consistency checks; the authentication is the verifier's.
+
+Runs under the pinned Stage A interpreter with the repository's pytosiq_core; the
+stdlib-only coordinator calls it as a separate process and reads its verdict.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
+import re
 import stat
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 KEY_ID_DOMAIN = b"TOS-PQ-CONSENSUS-KEY-v1"
@@ -30,14 +37,16 @@ ML_DSA_44 = 1
 ML_DSA_44_PUBLIC_KEY_BYTES = 1312
 PQ_BYTES_CHUNK = 127
 PQ_BYTES_HARD_MAX = 8192
-MC_STATE_EXTRA_TAG = 0xCC26
-BOC_MAX_BYTES = {
-    "block": 1 << 20,
-    "state_proof": 64 << 10,
-    "config_proof": 256 << 10,
-    "param": 64 << 10,
-}
 VERDICT = "X02_CONFIG34_SAME_BLOCK_PROOF_OK"
+VERIFIER_INTERFACE = "tos-proof-verify/1"
+VERIFIER_RELATIVE = "lite-client/proof-verify/tos-proof-verify"
+VERIFIER_TIMEOUT_SECONDS = 90
+VERIFIER_OUTPUT_MAX_BYTES = 4 << 20
+MATERIAL_MAX_BYTES = 8 << 20
+PARAM_MAX_BYTES = 64 << 10
+MAX_CHAIN_FILES = 64
+CHAIN_NAME = re.compile(r"chain-([0-9]{4})\.tl")
+HEX256 = re.compile(r"[0-9a-fA-F]{64}")
 
 
 class ProofRefused(ValueError):
@@ -116,16 +125,6 @@ def open_contained(
     return raw
 
 
-def bundle_paths(election_id: int) -> dict:
-    """The only file names a Config34 bundle for this election may use."""
-    prefix = f"election-{election_id}-config34-proof/"
-    names = {
-        name: prefix + f"{name}.boc" for name in ("block", "state_proof", "config_proof", "param")
-    }
-    names["headers"] = [prefix + f"header-node{index}.json" for index in range(1, 5)]
-    return names
-
-
 def derive_key_id(algorithm_id: int, public_key: bytes) -> bytes:
     """key_id = SHA-256(key_id_domain || u16_le(algorithm_id) || public_key) (crypto/pq/pq-consensus.h)."""
     require(
@@ -133,80 +132,6 @@ def derive_key_id(algorithm_id: int, public_key: bytes) -> bytes:
         "only an ML-DSA-44 public key of 1312 bytes has a key_id",
     )
     return hashlib.sha256(KEY_ID_DOMAIN + algorithm_id.to_bytes(2, "little") + public_key).digest()
-
-
-def _pytosiq():
-    from pytosiq_core.boc.cell import Cell
-    from pytosiq_core.proof.check_proof import ProofError, check_block_header_proof, check_proof
-
-    return Cell, ProofError, check_block_header_proof, check_proof
-
-
-def proven_config_param(
-    block_id: dict, block_boc: bytes | None, state_proof: bytes, config_proof: bytes, index: int
-):
-    """Return the parameter cell `index` proven from exactly this full block ID.
-
-    The state proof alone binds the block root, as a lite client does. A retained block
-    BOC additionally binds the file hash; without one, the caller must bind the full ID's
-    file hash to the node's own finalized record.
-    """
-    Cell, ProofError, check_block_header_proof, check_proof = _pytosiq()
-    require(block_id.get("workchain") == -1, "Config34 is proven from a masterchain block only")
-    root, file = bytes.fromhex(block_id["root_hash"]), bytes.fromhex(block_id["file_hash"])
-    require(len(root) == len(file) == 32, "full block ID digests are not 256-bit")
-    if block_boc is not None:
-        require(
-            hashlib.sha256(block_boc).digest() == file,
-            "block BOC file hash differs from the full block ID",
-        )
-    try:
-        if block_boc is not None:
-            require(
-                Cell.one_from_boc(block_boc).hash == root,
-                "block BOC root hash differs from the full block ID",
-            )
-        state_cell = Cell.one_from_boc(state_proof)
-        check_proof(state_cell, root)
-        state_hash = check_block_header_proof(state_cell[0], root, True)
-        config_cell = Cell.one_from_boc(config_proof)
-        check_proof(config_cell, state_hash)
-    except ProofError as error:
-        raise ProofRefused(
-            f"state/config proof does not match the full block ID: {error}"
-        ) from error
-    state_root = config_cell[0]
-    # shard_state refs: out_msg_queue_info, accounts, the ^[...] cell, then Maybe ^McStateExtra.
-    require(len(state_root.refs) == 4, "proven state carries no masterchain extra")
-    extra = state_root.refs[3].begin_parse()
-    require(extra.load_uint(16) == MC_STATE_EXTRA_TAG, "masterchain state extra has the wrong tag")
-    if extra.load_bit():  # shard_hashes:ShardHashes (HashmapE)
-        extra.load_ref()
-    extra.load_bytes(32)  # config_addr
-    from pytosiq_core.boc.builder import Builder
-    from pytosiq_core.boc.exotic import CellTypes
-
-    try:
-        # Same key and value shape as ConfigParams, but keep each value as its cell.
-        params = (
-            extra.load_ref()
-            .begin_parse()
-            .load_hashmap(
-                32,
-                key_deserializer=lambda src: Builder().store_bits(src).to_slice().load_int(32),
-                value_deserializer=lambda src: src.load_ref(),
-            )
-        )
-    except (ProofRefused, ProofError):
-        raise
-    except Exception as error:  # a pruned path inside the dictionary cannot be walked
-        raise ProofRefused(
-            f"ConfigParams dictionary is not walkable in this proof: {error!r}"
-        ) from error
-    require(index in params, f"ConfigParam{index} is not proven by this state proof")
-    cell = params[index]
-    require(cell.type_ == CellTypes.ordinary, f"ConfigParam{index} is pruned in this proof")
-    return cell
 
 
 def unpack_pq_bytes(cell) -> bytes:
@@ -308,89 +233,226 @@ def compare_frozen_rows(decoded: dict, frozen_rows: list[dict], election_id: int
     )
 
 
-def require_four_node_headers(
-    bundle: dict, base: Path, expected_rpcs: list[str], paths: list[str]
-) -> None:
-    import base64
+def bundle_paths(election_id: int) -> dict:
+    """The only file names a Config34 bundle for this election may use."""
+    prefix = f"election-{election_id}-config34-proof/"
+    return {"material": prefix + "material/", "param": prefix + "param.boc"}
 
-    headers = bundle.get("headers") or []
+
+def check_anchor(anchor: dict) -> dict:
+    """The caller's anchor: the network's masterchain zerostate identity."""
+    require(isinstance(anchor, dict), "anchor is not an object")
     require(
-        len(expected_rpcs) == 4 and len(set(expected_rpcs)) == 4,
-        "four distinct frozen node endpoints are required",
+        set(anchor) == {"kind", "workchain", "shard", "seqno", "root_hash", "file_hash"}
+        and anchor["kind"] == "zerostate"
+        and anchor["workchain"] == -1
+        and anchor["shard"] == "8000000000000000"
+        and anchor["seqno"] == 0
+        and all(
+            isinstance(anchor[k], str) and HEX256.fullmatch(anchor[k])
+            for k in ("root_hash", "file_hash")
+        ),
+        "anchor is not a full masterchain zerostate identity",
     )
-    # Exact bijection, in node order, with the frozen endpoints; the reply came from node 1.
+    return {
+        **anchor,
+        "root_hash": anchor["root_hash"].lower(),
+        "file_hash": anchor["file_hash"].lower(),
+    }
+
+
+def check_target(block_id: dict) -> dict:
+    require(isinstance(block_id, dict), "bundle block_id is not an object")
+    require(block_id.get("workchain") == -1, "Config34 is proven from a masterchain block only")
     require(
-        [item.get("rpc") for item in headers] == list(expected_rpcs)
-        and bundle.get("source_rpc") == expected_rpcs[0],
-        "header endpoints are not exactly the four frozen node endpoints",
+        str(block_id.get("shard")) in (str(-(1 << 63)), "8000000000000000"),
+        "bundle block_id is not the masterchain shard",
     )
-    require([item.get("path") for item in headers] == paths, "header files are not this election's")
-    expected = bundle["block_id"]
-    for item in headers:
-        reply = json.loads(open_contained(base, item["path"], 64 << 10, item["sha256"]))
-        full = reply["result"]["id"]
+    seqno = block_id.get("seqno")
+    require(type(seqno) is int and 0 < seqno < 1 << 32, "bundle block_id seqno is invalid")
+    for key in ("root_hash", "file_hash"):
+        value = block_id.get(key)
         require(
-            full.get("workchain") == expected["workchain"]
-            and str(full.get("shard")) == str(expected["shard"])
-            and full.get("seqno") == expected["seqno"]
-            and base64.b64decode(full["root_hash"], validate=True).hex()
-            == expected["root_hash"].lower()
-            and base64.b64decode(full["file_hash"], validate=True).hex()
-            == expected["file_hash"].lower(),
-            f"node header from {item['rpc']} differs from the proven full block ID",
+            isinstance(value, str) and HEX256.fullmatch(value) is not None,
+            "full block ID digests are not 256-bit",
         )
+    return {
+        "workchain": -1,
+        "shard": "8000000000000000",
+        "seqno": seqno,
+        "root_hash": block_id["root_hash"].lower(),
+        "file_hash": block_id["file_hash"].lower(),
+    }
+
+
+def check_verifier(verifier: Path) -> Path:
+    """The verifier is trusted local software named by the caller, never by the bundle."""
+    verifier = Path(verifier)
+    require(verifier.is_absolute(), "verifier path is not absolute")
+    info = os.stat(verifier, follow_symlinks=False)
+    require(
+        stat.S_ISREG(info.st_mode) and os.access(verifier, os.X_OK),
+        "verifier is not an executable regular file",
+    )
+    return verifier
+
+
+def material_files(bundle: dict, base: Path, prefix: str) -> dict[str, bytes]:
+    """Every retained lite answer, contained, bounded and digest-checked; fixed names only."""
+    material = bundle.get("material")
+    require(isinstance(material, dict) and material, "Config34 proof bundle has no material")
+    chain = sorted(name for name in material if CHAIN_NAME.fullmatch(name))
+    require(
+        set(material) == {*chain, "config.tl"}
+        and 0 < len(chain) <= MAX_CHAIN_FILES
+        and chain == [f"chain-{index:04d}.tl" for index in range(len(chain))],
+        "Config34 proof material is not a contiguous chain plus one configuration proof",
+    )
+    files = {}
+    for name in [*chain, "config.tl"]:
+        entry = material[name]
+        require(
+            isinstance(entry, dict) and entry.get("path") == prefix + name,
+            f"{name} file is not this election's",
+        )
+        require(
+            isinstance(entry.get("sha256"), str) and HEX256.fullmatch(entry["sha256"]) is not None,
+            f"{name} has no retained digest",
+        )
+        files[name] = open_contained(
+            base, entry["path"], MATERIAL_MAX_BYTES, entry["sha256"].lower()
+        )
+    return files
+
+
+def run_verifier(verifier: Path, anchor: dict, target: dict, files: dict[str, bytes]) -> dict:
+    """Run the compiled verifier once on exactly these bytes and bind its result."""
+    request = json.dumps(
+        {"mode": "historical", "target": target, "config_params": [34]}, sort_keys=True
+    ).encode()
+    with tempfile.TemporaryDirectory(prefix="x02-config34-") as work:
+        work = Path(work)
+        (work / "anchor.json").write_text(json.dumps(anchor, sort_keys=True))
+        (work / "request.json").write_bytes(request)
+        (work / "material").mkdir()
+        for name, raw in files.items():
+            (work / "material" / name).write_bytes(raw)
+        try:
+            completed = subprocess.run(
+                [
+                    str(verifier),
+                    "verify",
+                    "--anchor",
+                    str(work / "anchor.json"),
+                    "--request",
+                    str(work / "request.json"),
+                    "--material",
+                    str(work / "material"),
+                ],
+                capture_output=True,
+                timeout=VERIFIER_TIMEOUT_SECONDS,
+                env={},
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ProofRefused("anchored verifier did not finish in its bound") from error
+    require(len(completed.stdout) <= VERIFIER_OUTPUT_MAX_BYTES, "verifier output exceeds bound")
+    try:
+        result = json.loads(completed.stdout)
+    except ValueError as error:
+        raise ProofRefused("verifier output is not one JSON object") from error
+    require(isinstance(result, dict), "verifier output is not one JSON object")
+    if completed.returncode != 0 or result.get("status") != "verified":
+        reason = result.get("reason") if isinstance(result.get("reason"), str) else "no reason"
+        raise ProofRefused(
+            f"anchored verifier refused (exit {completed.returncode}): {reason[:300]}"
+        )
+    proven_target = result.get("target") or {}
+    require(
+        result.get("interface") == VERIFIER_INTERFACE
+        and result.get("mode") == "historical"
+        and result.get("anchor") == anchor
+        and {k: proven_target.get(k) for k in target} == target
+        and result.get("request_sha256") == hashlib.sha256(request).hexdigest(),
+        "verifier result is not bound to this anchor, target and request",
+    )
+    params = result.get("config_params")
+    require(
+        isinstance(params, list) and len(params) == 1 and params[0].get("index") == 34,
+        "verifier result does not carry exactly ConfigParam 34",
+    )
+    return result
 
 
 def verify_bundle(
-    bundle: dict,
-    base: Path,
-    frozen_rows: list[dict],
-    election_id: int,
-    expected_rpcs: list[str],
-    index: int = 34,
+    bundle: dict, base: Path, frozen_rows: list[dict], election_id: int, anchor: dict, verifier
 ) -> dict:
-    """Verify one retained capture bundle; every file is this election's, contained and bounded."""
+    """Authenticate the bundle's block from the anchor, then check its Config34 and rows."""
+    require(isinstance(bundle, dict), "Config34 proof bundle is not an object")
+    require(
+        {"block_id", "material", "param"} <= set(bundle),
+        "Config34 proof bundle is incomplete",
+    )
+    anchor = check_anchor(anchor)
+    target = check_target(bundle["block_id"])
+    verifier = check_verifier(verifier)
     paths = bundle_paths(election_id)
-    for name in ("block", "state_proof", "config_proof", "param"):
-        if name in bundle:
-            require(bundle[name].get("path") == paths[name], f"{name} file is not this election's")
-    raw = {
-        name: open_contained(base, paths[name], BOC_MAX_BYTES[name], bundle[name]["sha256"])
-        for name in ("block", "state_proof", "config_proof", "param")
-        if name in bundle
-    }
-    if "block" not in raw:
-        # Without a block BOC the file hash is bound by four nodes' headers for this height.
-        require_four_node_headers(bundle, base, expected_rpcs, paths["headers"])
+    files = material_files(bundle, base, paths["material"])
+    param = bundle["param"]
     require(
-        {"state_proof", "config_proof", "param"} <= set(raw), "Config34 proof bundle is incomplete"
+        isinstance(param, dict) and param.get("path") == paths["param"],
+        "param file is not this election's",
     )
-    proven = proven_config_param(
-        bundle["block_id"], raw.get("block"), raw["state_proof"], raw["config_proof"], index
-    )
-    Cell = _pytosiq()[0]
     require(
-        Cell.one_from_boc(raw["param"]).hash == proven.hash,
-        "retained Config34 BOC differs from the proven parameter cell",
+        isinstance(param.get("sha256"), str) and HEX256.fullmatch(param["sha256"]) is not None,
+        "param has no retained digest",
     )
-    decoded = decode_validator_set(proven)
+    retained_param = open_contained(base, paths["param"], PARAM_MAX_BYTES, param["sha256"].lower())
+    result = run_verifier(verifier, anchor, target, files)
+    Cell = _pytosiq_cell()
+    proven = result["config_params"][0]
+    try:
+        cell = Cell.one_from_boc(base64.b64decode(proven["boc"], validate=True))
+        retained = Cell.one_from_boc(retained_param)
+    except Exception as error:  # a malformed BOC is a refusal, never a pass
+        raise ProofRefused(f"Config34 BOC cannot be decoded: {error!r}") from error
+    require(
+        cell.hash.hex() == proven.get("cell_hash"), "verifier Config34 BOC differs from its hash"
+    )
+    require(
+        retained.hash == cell.hash, "retained Config34 BOC differs from the proven parameter cell"
+    )
+    decoded = decode_validator_set(cell)
     compare_frozen_rows(decoded, frozen_rows, election_id)
     return {
         "verdict": VERDICT,
         "election_id": election_id,
-        "block_id": bundle["block_id"],
-        "file_hash_bound_by": "block BOC" if "block" in raw else "four nodes' headers",
+        "anchor": anchor,
+        "block_id": target,
+        "block_gen_utime": result["target"].get("gen_utime"),
+        "chain_links": result["chain"]["links"],
+        "chain_key_blocks": [block["seqno"] for block in result["chain"]["key_blocks"]],
+        "verifier_request_sha256": result["request_sha256"],
         "config34_cell_hash": decoded["cell_hash"],
         "validators": decoded["validators"],
     }
+
+
+def _pytosiq_cell():
+    from pytosiq_core.boc.cell import Cell
+
+    return Cell
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument(
-        "--request", type=Path, required=True, help="JSON: {base, election_id, bundle, frozen_rows}"
+        "--request",
+        type=Path,
+        required=True,
+        help="JSON: {base, election_id, bundle, frozen_rows, anchor}",
     )
+    parser.add_argument("--verifier", type=Path, required=True)
     parser.add_argument(
         "--dependency-root",
         action="append",
@@ -406,9 +468,10 @@ def main() -> int:
             Path(request["base"]),
             request["frozen_rows"],
             request["election_id"],
-            request["expected_rpcs"],
+            request["anchor"],
+            args.verifier,
         )
-    except ProofRefused as error:
+    except (ProofRefused, OSError) as error:
         print(json.dumps({"verdict": "REFUSED", "reason": str(error)}))
         return 1
     print(json.dumps(result, sort_keys=True))

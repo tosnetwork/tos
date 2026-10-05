@@ -24,7 +24,7 @@ POOL = "pool_receipts_bind_actual_controller_query_hash_and_exact_forwarded_amou
 CONTROLLER = "controller_results_bind_elector_query_commitment_amount_and_wait_phase"
 BOUNCE = "bounces_and_acknowledgments_cannot_change_the_wrong_or_unpaid_request"
 SLOT = "one_pending_slot_and_monotonic_query_prevent_replay_and_storage_growth"
-RECOVER = "recovery_tombstones_protect_later_credits_and_outstanding_receipts_block_upgrade"
+RECOVER = "recovery_tombstones_protect_later_credits_and_outstanding_receipts_do_not_block_upgrade"
 MUTATIONS = [
     (
         "pool-source",
@@ -253,9 +253,16 @@ MUTATIONS = [
     (
         "recovery-upgrade-liability",
         E,
-        [("& (outstanding == 0);", "& true;")],
+        [
+            (
+                "  return elect.null?() & credits.null?() & past.null?() & (returning == 0);",
+                "  var (outstanding, _) = recovery_book();\n"
+                "  return elect.null?() & credits.null?() & past.null?() & (outstanding == 0)"
+                " & (returning == 0);",
+            )
+        ],
         RECOVER,
-        "only outstanding recovery blocks upgrade",
+        "a paid receipt awaiting its ACK does not block upgrade",
     ),
     (
         "recovery-metadata-lost",

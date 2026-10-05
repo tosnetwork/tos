@@ -548,7 +548,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   endfunction()
 
   GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config
-    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/pq-launch-limits.fc)
   GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
   GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
   GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)
@@ -562,12 +562,14 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
   GenFif(DEST smartcont/auto/validator-controller-v1-code SOURCE smartcont/validator-controller-v1.fc NAME validator-controller-v1
     EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
-  GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig)
+  GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet)
   GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)
   GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3)
   GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
-  GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow)
+  GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc)
   GenFif(DEST smartcont/auto/pq-highload-wallet-code SOURCE smartcont/pq-highload-wallet-code.fc
     NAME pq-highload-wallet EXTRA_DEPS smartcont/replay-guard.fc smartcont/pq-bytes.fc smartcont/pq.fc)
   GenFif(DEST smartcont/auto/multisig-wallet-code SOURCE smartcont/multisig-wallet-code.fc NAME multisig-wallet
@@ -584,7 +586,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
       ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
-    DEPENDS func fift smartcont/stdlib.fc
+    DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc
       smartcont/tos-service-native-registry-v1.boc.base64
       smartcont/tos-service-native-registry-v1.release.json
       ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-native-registry-v1.sh
@@ -594,27 +596,6 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   )
   add_custom_target(gen_fif_smartcont_auto_native_registry_code DEPENDS ${NATIVE_REGISTRY_CPP})
   add_dependencies(gen_fif gen_fif_smartcont_auto_native_registry_code)
-  set(TOS_SERVICE_STABLECOIN_ESCROW_CPP "${SMARTCONT_AUTO_DIR}/tos-service-stablecoin-escrow-v1.cpp")
-  add_custom_command(
-    COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_COMMAND} -E env
-      FUNC_BIN=$<TARGET_FILE:func>
-      FIFT_BIN=$<TARGET_FILE:fift>
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
-      ${TOS_SERVICE_STABLECOIN_ESCROW_CPP} tos-service-stablecoin-escrow-v1
-    MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v1.fc
-    DEPENDS func fift smartcont/stdlib.fc
-      smartcont/tos-service-stablecoin-escrow-v1.boc.base64
-      smartcont/tos-service-stablecoin-escrow-v1.release.json
-      ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/test-tos-service-stablecoin-escrow-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
-    OUTPUT ${TOS_SERVICE_STABLECOIN_ESCROW_CPP}
-  )
-  add_custom_target(gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1
-    DEPENDS ${TOS_SERVICE_STABLECOIN_ESCROW_CPP})
-  add_dependencies(gen_fif gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1)
   set(TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP "${SMARTCONT_AUTO_DIR}/tos-service-stablecoin-escrow-v2.cpp")
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC"
@@ -625,7 +606,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
       ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
-    DEPENDS func fift smartcont/stdlib.fc
+    DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc
       smartcont/tos-service-stablecoin-escrow-v2.boc.base64
       smartcont/tos-service-stablecoin-escrow-v2.release.json
       ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v2.sh
@@ -640,10 +621,12 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/prediction-market-code SOURCE smartcont/prediction-market-code.fc NAME prediction-market)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
-  GenFif(DEST smartcont/auto/dns-manual-code SOURCE smartcont/dns-manual-code.fc NAME dns-manual)
+  GenFif(DEST smartcont/auto/dns-manual-code SOURCE smartcont/dns-manual-code.fc NAME dns-manual
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/dns-auto-code SOURCE smartcont/dns-auto-code.fc NAME dns-auto)
 
-  GenFif(DEST smartcont/auto/payment-channel-code SOURCE smartcont/payment-channel-code.fc NAME payment-channel)
+  GenFif(DEST smartcont/auto/payment-channel-code SOURCE smartcont/payment-channel-code.fc NAME payment-channel
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
 
   GenFif(DEST smartcont/auto/simple-wallet-ext-code SOURCE smartcont/simple-wallet-ext-code.fc NAME simple-wallet-ext)
 endif()

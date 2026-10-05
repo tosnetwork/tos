@@ -48,7 +48,7 @@ import type {
   CreateTransferAsyncArgs,
   SendTransferArgs,
 } from "./types.js";
-import { createInternalMessage, defaultValidUntil } from "./utils.js";
+import { createInternalMessage, defaultValidUntil, requireWalletPublicKey } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -165,6 +165,7 @@ export class WalletV5R1 implements Wallet {
     networkGlobalId: number;
     subwalletNumber?: number;
   }): WalletV5R1 {
+    requireWalletPublicKey(args.publicKey, "WalletV5R1");
     const workchain = args.workchain ?? 0;
     const networkGlobalId = args.networkGlobalId;
     if (

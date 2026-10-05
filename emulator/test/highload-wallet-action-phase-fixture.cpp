@@ -67,6 +67,26 @@ td::Ref<vm::Cell> wallet_code() {
   return cell.move_as_ok();
 }
 
+// The network these emulators run (ConfigParam 19, which GLOBALID reads); a request names
+// it. The shared fee fixture config carries no ConfigParam 19, so new_emulator adds it.
+constexpr td::int32 kNetworkGlobalId = -217;
+
+std::string config_on_network(std::string config_boc) {
+  auto decoded = td::base64_decode(td::Slice(config_boc));
+  CHECK(decoded.is_ok());
+  auto root = vm::std_boc_deserialize(decoded.move_as_ok());
+  CHECK(root.is_ok());
+  vm::Dictionary params{root.move_as_ok(), 32};
+  td::BitArray<32> key;
+  key.store_ulong(19);
+  vm::CellBuilder cb;
+  cb.store_long(kNetworkGlobalId, 32);
+  CHECK(params.set_ref(key, cb.finalize()));
+  auto boc = vm::std_boc_serialize(params.get_root_cell());
+  CHECK(boc.is_ok());
+  return td::base64_encode(boc.move_as_ok());
+}
+
 td::Ed25519::PrivateKey key() {
   return td::Ed25519::PrivateKey(td::SecureString(std::string(32, '\x51')));
 }
@@ -181,6 +201,8 @@ std::string deployed_wallet(void *emulator) {
 // may omit it, and the wallet must add it.
 td::Ref<vm::Cell> signed_request(td::uint64 query_id, td::Ref<vm::Cell> message, int mode = 1) {
   vm::CellBuilder inner;
+  inner.store_long(kNetworkGlobalId, 32);
+  store_std_address(inner, wallet_address());
   inner.store_long(kSubwallet, 32).store_ref(std::move(message)).store_long(mode, 8);
   inner.store_long(static_cast<long long>(query_id), 23).store_long(kNow - 1, 64).store_long(kTimeout, 22);
   auto inner_cell = inner.finalize();
@@ -196,7 +218,7 @@ td::Ref<vm::Cell> signed_request(td::uint64 query_id, td::Ref<vm::Cell> message,
 }
 
 void *new_emulator(td::uint32 global_version = fee_fixture::kTosGlobalVersion) {
-  const auto config = fee_fixture::tos_versioned_config_boc(global_version);
+  const auto config = config_on_network(fee_fixture::tos_versioned_config_boc(global_version));
   void *emulator = transaction_emulator_create(config.c_str(), 0);
   CHECK(emulator != nullptr);
   CHECK(transaction_emulator_set_unixtime(emulator, kNow));

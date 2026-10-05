@@ -585,10 +585,24 @@ class Rldp : public td::actor::Actor, public ConnectionCallback {
       : net_channel_(std::move(net_channel)), stats_(stats) {
     CHECK(stats_);
     connection_.set_default_mtu(1 << 31);
+    // This measures transport throughput between two endpoints, one of which
+    // sends many multi-megabyte transfers at once under an MTU no production
+    // peer is given. The process budget would hold them to one peer identity's
+    // share of its unsolicited half, which is the point of that share, so the
+    // measurement gets a budget of its own with no division.
+    RldpInboundLimits limits;
+    limits.max_decoders = rldp_max_active_decoders;
+    limits.max_bytes = rldp_max_inbound_bytes;
+    limits.unsolicited_decoders = limits.max_decoders;
+    limits.unsolicited_bytes = limits.max_bytes;
+    limits.per_identity_decoders = limits.max_decoders;
+    limits.per_identity_bytes = limits.max_bytes;
+    limits.max_identities = 1;
+    connection_.set_inbound_budget(std::make_shared<RldpInboundBudget>(limits));
   }
 
  private:
-  RldpConnection connection_;
+  RldpConnection connection_{RldpPeerIdentity{}};
   td::actor::ActorOwn<NetChannel> net_channel_;
   td::actor::ActorId<Rldp> peer_;
   std::map<TransferId, td::Promise<td::Unit>> queries_;

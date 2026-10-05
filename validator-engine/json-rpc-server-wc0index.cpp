@@ -23,6 +23,7 @@
 //
 #include <algorithm>
 #include <charconv>
+#include <utility>
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
@@ -32,11 +33,23 @@
 #include "vm/dict.h"
 
 #include "json-rpc-server-internal.h"
+#include "wallet-index-writer.h"
 #include "wallet-index.h"
 
 namespace tos {
 
 namespace {
+
+// Why the index is not there. A node that keeps no index says it is disabled;
+// a node whose index failed says it is unavailable and why, so neither is
+// mistaken for an empty account.
+std::pair<int, std::string> wallet_index_absent() {
+  auto reason = tos_wallet_index::wallet_index_unavailable_reason();
+  if (!reason.empty()) {
+    return {-32603, "wallet index unavailable on this node: " + reason};
+  }
+  return {-32601, "wallet index disabled on this node"};
+}
 
 // Optional "limit" param: default 100, clamped to [1, 1000]. The index can be
 // inflated by third parties (anyone can send notification/spam transactions at
@@ -239,6 +252,15 @@ td::Result<AccountEventId> parse_event_id(td::Slice value) {
 
 }  // namespace
 
+// Token lists come from candidates verified as blocks apply; some may still
+// be waiting, and some may have been given up. Say so alongside the list, so
+// an empty or short answer is not read as the whole truth.
+static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIndexSnapshot &view) {
+  TRY_RESULT(stats, view.token_backlog_stats());
+  stats.needs_rebuild = stats.needs_rebuild || tos_wallet_index::wc0_index_degraded();
+  return tos_wallet_index::format_token_index_state(stats);
+}
+
 void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string req_id,
                                              td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
@@ -251,20 +273,35 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
-    // No index DB on this node (JSON-RPC-less nodes never open one, and an
-    // open failure leaves it null). An explicit error beats silently empty
+    // No index DB on this node (JSON-RPC-less nodes never open one, and a
+    // failure to open or arm it leaves it null). An explicit error beats silently empty
     // results that look like "this account holds nothing".
-    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    auto [code, message] = wallet_index_absent();
+    promise.set_value(make_json_error(code, std::move(message), req_id));
+    return;
+  }
+  // The state and the list come from one view of the index, so a block
+  // committed in between cannot make them disagree.
+  auto view_r = tos_wallet_index::WalletIndexSnapshot::of(*db);
+  if (view_r.is_error()) {
+    promise.set_value(make_json_error(-32603, view_r.error().message().str(), req_id));
+    return;
+  }
+  auto view = view_r.move_as_ok();
+  auto index_state_r = token_index_state_json(view);
+  if (index_state_r.is_error()) {
+    promise.set_value(make_json_error(-32603, index_state_r.error().message().str(), req_id));
     return;
   }
   td::StringBuilder sb;
-  sb << "{\"@type\":\"wallet.accountJettons\",\"jettons\":[";
+  sb << "{\"@type\":\"wallet.accountJettons\",\"index_state\":" << index_state_r.ok() << ",\"jettons\":[";
   bool first = true;
   if (is_indexed_workchain(addr)) {
     // Entries are state-verified by the writer (master-acknowledged wallets only);
     // the client resolves the live balance via get_wallet_data (runGetMethod).
-    auto status =
-        db->for_each_jetton(addr.addr, limit, [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
+    // A row without the pair record that decided it is never listed as current.
+    auto status = view.for_each_current_jetton(
+        addr.addr, limit, [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
           td::Bits256 jetton_wallet = td::Bits256::zero();
           unsigned long long last_lt = 0;
           if (value.not_null()) {
@@ -316,7 +353,8 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
-    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    auto [code, message] = wallet_index_absent();
+    promise.set_value(make_json_error(code, std::move(message), req_id));
     return;
   }
   td::StringBuilder sb;
@@ -392,7 +430,8 @@ void JsonRpcServer::handle_getAccountEvent(td::JsonObject &params, std::string r
   auto addr = addr_r.move_as_ok();
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
-    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    auto [code, message] = wallet_index_absent();
+    promise.set_value(make_json_error(code, std::move(message), req_id));
     return;
   }
   if (!is_indexed_workchain(addr)) {
@@ -419,15 +458,29 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
-    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    auto [code, message] = wallet_index_absent();
+    promise.set_value(make_json_error(code, std::move(message), req_id));
+    return;
+  }
+  // The state and the list come from one view of the index, so a block
+  // committed in between cannot make them disagree.
+  auto view_r = tos_wallet_index::WalletIndexSnapshot::of(*db);
+  if (view_r.is_error()) {
+    promise.set_value(make_json_error(-32603, view_r.error().message().str(), req_id));
+    return;
+  }
+  auto view = view_r.move_as_ok();
+  auto index_state_r = token_index_state_json(view);
+  if (index_state_r.is_error()) {
+    promise.set_value(make_json_error(-32603, index_state_r.error().message().str(), req_id));
     return;
   }
   td::StringBuilder sb;
-  sb << "{\"@type\":\"wallet.accountNfts\",\"nfts\":[";
+  sb << "{\"@type\":\"wallet.accountNfts\",\"index_state\":" << index_state_r.ok() << ",\"nfts\":[";
   bool first = true;
   if (is_indexed_workchain(addr)) {
     auto status =
-        db->for_each_nft(addr.addr, limit, [&](const td::Bits256 &nft, td::Ref<vm::Cell> value) -> td::Status {
+        view.for_each_nft(addr.addr, limit, [&](const td::Bits256 &nft, td::Ref<vm::Cell> value) -> td::Status {
           bool has_collection = false;
           td::Bits256 collection = td::Bits256::zero();
           unsigned long long last_lt = 0;

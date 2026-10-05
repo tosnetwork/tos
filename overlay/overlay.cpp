@@ -28,6 +28,7 @@
 #include "common/delay.h"
 #include "dht/dht.h"
 #include "keys/encryptor.h"
+#include "rldp2/rldp-inbound-budget.h"
 #include "td/utils/Random.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
@@ -55,6 +56,21 @@ static bool is_original_plumtree_sender(adnl::AdnlNodeIdShort local_id, const st
 static constexpr td::uint64 plumtree_payload_mtu() {
   return static_cast<td::uint64>(Overlays::max_fec_broadcast_size()) + 4096;
 }
+
+// What update_peers_mtu adds to an overlay's broadcast limit for the
+// transport's own framing.
+static constexpr td::uint64 peer_mtu_envelope() {
+  return 1024;
+}
+
+// Overlays with the fixed broadcast limit may carry it over RLDP2, which
+// charges each peer identity's unsolicited transfers to a fixed share of its
+// inbound budget. The largest transfer at that limit must fit the share, or
+// RLDP2 would refuse the allowance. Limits derived from network configuration
+// are checked by RLDP2 when the allowance is installed.
+static_assert(rldp2::rldp_transfer_allowance_fits(static_cast<td::uint64>(Overlays::max_fec_broadcast_size()) +
+                                                  peer_mtu_envelope()));
+static_assert(rldp2::rldp_transfer_allowance_fits(plumtree_payload_mtu()));
 
 td::actor::ActorOwn<Overlay> Overlay::create_public(td::actor::ActorId<keyring::Keyring> keyring,
                                                     td::actor::ActorId<adnl::Adnl> adnl,
@@ -553,7 +569,7 @@ void OverlayImpl::update_peers_mtu() {
   auto sender =
       !opts_.twostep_broadcast_sender_.empty() ? opts_.twostep_broadcast_sender_ : opts_.plumtree_broadcast_sender_;
   if (!sender.empty()) {
-    td::uint64 mtu = rules_.max_broadcast_size() + 1024;
+    td::uint64 mtu = rules_.max_broadcast_size() + peer_mtu_envelope();
     std::vector<adnl::AdnlNodeIdShort> peers;
     iterate_all_peers([&](const adnl::AdnlNodeIdShort &peer_id, const OverlayPeer &peer) {
       if (peer.is_permanent_member() && peer_id != local_id_) {

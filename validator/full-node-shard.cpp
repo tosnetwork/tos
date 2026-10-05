@@ -56,30 +56,12 @@ namespace fullnode {
 namespace {
 
 constexpr const char *k_called_from_public = "public";
-constexpr td::uint32 k_heavy_request_cost_unit = 1 << 21;
 constexpr size_t k_ed25519_signature_size = 64;
 
-size_t heavy_request_cost(td::uint64 requested_max_size) {
-  size_t cost = static_cast<size_t>((requested_max_size + k_heavy_request_cost_unit - 1) / k_heavy_request_cost_unit);
-  return cost == 0 ? 1 : cost;
-}
-
-size_t request_cost_for_limiter(tos_api::Function &function) {
-  size_t cost = 1;
-  tos_api::downcast_call(
-      function, td::overloaded(
-                    [&](const tos_api::tosNode_getArchiveSlice &query) {
-                      cost = heavy_request_cost(query.max_size_ > 0 ? static_cast<td::uint64>(query.max_size_) : 0);
-                    },
-                    [&](const tos_api::tosNode_downloadPersistentStateSliceV2 &query) {
-                      cost = heavy_request_cost(query.max_size_ > 0 ? static_cast<td::uint64>(query.max_size_) : 0);
-                    },
-                    [&](const tos_api::tosNode_downloadZeroState &) {
-                      cost = heavy_request_cost(FullNode::max_zerostate_size());
-                    },
-                    [&](const auto &) {}));
-  return cost;
-}
+static_assert(k_max_zerostate_bytes == FullNode::max_zerostate_size(),
+              "the admission price of a zero state must follow the size the node serves");
+static_assert(heavy_request_cost(DownloadArchiveSlice::slice_size()) <= k_max_mandatory_request_cost,
+              "an archive slice must not cost more than the largest mandatory request");
 
 }  // namespace
 
@@ -753,16 +735,15 @@ void FullNodeShardImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice
     promise.set_error(td::Status::Error("shard is inactive"));
     return;
   }
-  auto B = fetch_tl_object<tos_api::Function>(std::move(query), true);
-  if (B.is_error()) {
-    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "cannot parse tosnode query"));
+  // Admission parses the query, charges it to its source and to this shard
+  // (malformed queries included, priced before any lookup), and refuses it
+  // before anything is dispatched.
+  auto admitted = admission_.admit(src, std::move(query));
+  if (admitted.is_error()) {
+    promise.set_error(admitted.move_as_error());
     return;
   }
-  auto fun_ptr = B.move_as_ok();
-  if (!limiter_->check_in(fun_ptr->get_id(), request_cost_for_limiter(*fun_ptr))) {
-    promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
-    return;
-  }
+  auto fun_ptr = admitted.move_as_ok();
   tos_api::downcast_call(*fun_ptr.get(), [&](auto &obj) { this->process_query(src, obj, std::move(promise)); });
 }
 
@@ -1248,6 +1229,7 @@ void FullNodeShardImpl::start_up() {
     overlay_id_ = overlay_id_full_.compute_short_id();
     rules_ = overlay::OverlayPrivacyRules{overlay::Overlays::max_fec_broadcast_size()};
 
+    admission_.start();
     create_overlay();
 
     reload_neighbours_at_ = td::Timestamp::now();
@@ -1258,6 +1240,7 @@ void FullNodeShardImpl::start_up() {
 }
 
 void FullNodeShardImpl::tear_down() {
+  admission_.stop();
   td::actor::send_closure(overlays_, &tos::overlay::Overlays::delete_overlay, adnl_id_, overlay_id_);
 }
 
@@ -1607,7 +1590,7 @@ void FullNodeShardImpl::get_stats_extra(td::Promise<std::string> promise) {
 
 FullNodeShardImpl::FullNodeShardImpl(
     ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-    FullNodeOptions opts, std::shared_ptr<RateLimiter<>> limiter, td::actor::ActorId<keyring::Keyring> keyring,
+    FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter, td::actor::ActorId<keyring::Keyring> keyring,
     td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
     td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
     td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client,
@@ -1627,12 +1610,12 @@ FullNodeShardImpl::FullNodeShardImpl(
     , active_(active)
     , enable_plumtree_broadcast_(enable_plumtree_broadcast)
     , opts_(opts)
-    , limiter_(std::move(limiter)) {
+    , admission_(std::move(limiter), shard) {
 }
 
 td::actor::ActorOwn<FullNodeShard> FullNodeShard::create(
     ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-    FullNodeOptions opts, std::shared_ptr<RateLimiter<>> limiter, td::actor::ActorId<keyring::Keyring> keyring,
+    FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter, td::actor::ActorId<keyring::Keyring> keyring,
     td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
     td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
     td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client,

@@ -106,3 +106,15 @@ def test_failed_compute_or_action_is_not_a_receipt(monkeypatch):
     tx.description.aborted = True
     with pytest.raises(ValueError, match="aborted"):
         transfers.check_transaction(SimpleNamespace(data=b""))
+
+
+@pytest.mark.parametrize("name", ["status.json", "transfers.jsonl"])
+def test_record_never_writes_through_a_planted_symlink(tmp_path, name):
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    out = tmp_path / "out"
+    out.mkdir(mode=0o700)
+    (out / name).symlink_to(victim)
+    with pytest.raises(OSError):
+        transfers.record(out, {"ok": True})
+    assert victim.read_text() == "untouched"

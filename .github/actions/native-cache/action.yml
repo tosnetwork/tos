@@ -1,0 +1,47 @@
+name: Native object cache
+description: Cache C/C++ compilations without caching test results or changing build flags.
+inputs:
+  profile:
+    description: Separate incompatible build families and bound their working sets.
+    required: false
+    default: release
+  max-size:
+    description: Maximum local object cache size.
+    required: false
+    default: 2G
+outputs:
+  host-key:
+    description: CPU, runner image and installed compiler fingerprint.
+    value: ${{ steps.prepare.outputs.host-key }}
+runs:
+  using: composite
+  steps:
+    - name: Install the compiler cache
+      shell: bash
+      run: |
+        if ! command -v ccache >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache
+        fi
+    - name: Identify compatible native objects
+      id: prepare
+      shell: bash
+      env:
+        CACHE_PROFILE: ${{ inputs.profile }}
+        CACHE_MAX_SIZE: ${{ inputs.max-size }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: python3 "$ACTION_PATH/prepare.py"
+    # Native code generation can depend on the host even when the flag text is
+    # unchanged. Never fall back across this CPU/compiler compatibility prefix.
+    - name: Restore native objects
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      continue-on-error: true
+      with:
+        path: ${{ steps.prepare.outputs.directory }}
+        key: ${{ steps.prepare.outputs.prefix }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        restore-keys: ${{ steps.prepare.outputs.prefix }}-
+    - name: Start compile-cache measurement
+      shell: bash
+      run: |
+        ccache --zero-stats
+        ccache --show-config

@@ -46,12 +46,49 @@ Example pattern:
 
 - `-C`: global config
 - `-D`: local DB root
-- `-p`: local HTTP listen port
-- `-a`: ADNL listen address
+- `-p`: HTTP listen address: `<port>` listens on `127.0.0.1` only;
+  `<ipv4>:<port>` or `[<ipv6>]:<port>` listens on that address
+- `-a`: ADNL address to advertise; its UDP port is bound on all interfaces
 - `-A`: explicit server ADNL address
 - `-L`: local hostname mapping
 - `-R`: remote hostname mapping
 - `-P`: whether to proxy all HTTP traffic
+- `--forward-timeout`: total seconds a request forwarded to a local HTTP
+  server may take, response included (default 60). It is a total, not an idle
+  limit: a response still streaming when it passes is cut off. Concurrent
+  forwards are capped (1000 per remote); more are answered 503. Values must be
+  finite and at most 2147483 (about 24.8 days, the longest delay the
+  scheduler can represent); larger values are refused.
+- `--max-tunnels`, `--max-tunnels-per-peer`: how many CONNECT tunnels a
+  service-side proxy keeps open at once, from all peers together (default 512)
+  and from one ADNL peer (default 16). Each tunnel holds a TCP connection to
+  the backend; a CONNECT beyond either limit is answered 503 and opens nothing.
+  The per-peer limit bounds one client, not a peer that creates many ADNL
+  identities; the global limit bounds that.
+  Each tunnel also buffers at most 64 KiB of application data in each
+  direction. It pauses backend reads at that limit and requests another RLDP
+  part only after the preceding part has drained to the socket. Thus the
+  default 512 tunnels can queue at most 64 MiB of application data; kernel
+  socket buffers, transport state and allocator overhead are separate.
+  Normal closure drains accepted data before sending the final part. Idle
+  and lifetime deadlines still terminate a stalled drain.
+- `--tunnel-idle-timeout`: seconds a tunnel may pass without moving a byte in
+  either direction before it is closed (default 600, at most 604800).
+- `--tunnel-max-lifetime`: seconds after which a tunnel is closed however busy
+  it is (default 86400, at most 2147483), so every tunnel's connection is
+  eventually reclaimed.
+
+`-p 8080` used to listen on every interface; it now listens on `127.0.0.1`
+only. A proxy that other hosts should reach must name the address, for
+example `-p 0.0.0.0:8080`, which opens the proxy to every host that can
+reach that port. This does not change ADNL: the UDP ports given by `-a` and
+`-c` are still bound on all interfaces.
+
+The generic forwarding proxy `http-proxy` reads `-p` the same way: a bare
+port listens on `127.0.0.1` only. It forwards to any host a client names, so
+listening on another address (for example `-p 0.0.0.0:8080`) makes it an open
+proxy for every host that can reach that port; do that only behind a firewall
+that admits the intended clients.
 
 ## DNS Integration
 

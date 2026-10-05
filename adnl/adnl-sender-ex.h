@@ -16,6 +16,8 @@
 */
 #pragma once
 
+#include <set>
+
 #include "adnl.h"
 
 namespace tos::adnl {
@@ -34,6 +36,8 @@ class AdnlSenderEx : public AdnlSenderInterface {
   // - max peer mtu of (local_id, peer_id)
   // MTU = 0 means that incoming connections from this peer are not accepted
   // Use PeersMtuGuard instead of calling add_peer_mtu/remove_peer_mtu directly
+  // An MTU the transport cannot carry (check_mtu) is refused, logged with the
+  // sizes, and not installed.
   void set_default_mtu(td::uint64 mtu);
   void set_local_id_mtu(AdnlNodeIdShort local_id, td::uint64 mtu);
   void add_peer_mtu(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id, td::uint64 mtu);
@@ -48,12 +52,29 @@ class AdnlSenderEx : public AdnlSenderInterface {
 
   td::uint64 get_peer_mtu(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id);
 
+  // Whether this transport can carry incoming transfers of up to `mtu` bytes.
+  // A transport whose receive state is budgeted refuses an allowance it could
+  // not hold, rather than accept transfers it would then drop until they
+  // expire.
+  virtual td::Status check_mtu(td::uint64 mtu) const {
+    return td::Status::OK();
+  }
+
   td::uint64 get_peer_mtu_inner(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id);
   std::vector<std::pair<AdnlNodeIdShort, td::uint64>> get_local_id_peers_mtu(AdnlNodeIdShort local_id);
   td::uint64 get_local_id_mtu(AdnlNodeIdShort local_id);
 
  private:
   td::uint64 default_mtu_ = Adnl::get_mtu();
+
+  // False, after logging why, if `mtu` may not be installed.
+  bool admit_mtu(td::uint64 mtu);
+  // Refused values already logged, so a refusal repeated for every peer of an
+  // overlay is reported once. Bounded: the values come from local
+  // configuration, and past the bound refusals are still refused, only not
+  // logged again.
+  std::set<td::uint64> refused_mtus_logged_;
+  static constexpr size_t MAX_REFUSED_MTUS_LOGGED = 64;
 
   struct LocalIdMtu {
     td::uint64 mtu = 0;

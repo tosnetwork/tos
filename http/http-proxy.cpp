@@ -43,6 +43,10 @@
 
 class HttpProxy;
 
+// Concurrent requests to one host each take their own connection, and at
+// most this many are open per host; more are answered 503.
+constexpr td::uint32 kMaxConnectionsPerHost = 64;
+
 class HttpRemote : public td::actor::Actor {
  public:
   struct Query {
@@ -68,7 +72,8 @@ class HttpRemote : public td::actor::Actor {
      private:
       td::actor::ActorId<HttpRemote> id_;
     };
-    client_ = tos::http::HttpClient::create_multi(domain_, td::IPAddress(), 1, 1, std::make_shared<Cb>(actor_id(this)));
+    client_ = tos::http::HttpClient::create_multi(domain_, td::IPAddress(), kMaxConnectionsPerHost, 1,
+                                                  std::make_shared<Cb>(actor_id(this)));
     fail_at_ = td::Timestamp::in(10.0);
     close_at_ = td::Timestamp::in(60.0);
     // Arm the alarm. Without this the timeout logic in alarm() -- the only
@@ -144,16 +149,16 @@ class HttpProxy : public td::actor::Actor {
   HttpProxy() {
   }
 
-  void set_port(td::uint16 port) {
-    if (port_ != 0) {
+  void set_listen_address(td::IPAddress address) {
+    if (listen_address_.is_valid()) {
       LOG(ERROR) << "duplicate port";
       std::_Exit(2);
     }
-    port_ = port;
+    listen_address_ = address;
   }
 
   void run() {
-    if (port_ == 0) {
+    if (!listen_address_.is_valid()) {
       LOG(ERROR) << "no port specified";
       std::_Exit(2);
     }
@@ -178,7 +183,7 @@ class HttpProxy : public td::actor::Actor {
     // headroom than the library default, but still a finite bound.
     tos::http::HttpServer::Limits limits;
     limits.max_connections = 4096;
-    server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)), limits);
+    server_ = tos::http::HttpServer::create(listen_address_, std::make_shared<Cb>(actor_id(this)), limits);
   }
 
   void receive_request(
@@ -231,10 +236,9 @@ class HttpProxy : public td::actor::Actor {
   }
 
  private:
-  // Read by set_port before it is ever assigned: an indeterminate value
-  // makes the binary refuse a port it was given ("duplicate port"), or,
-  // with no port given, listen on whatever the value happened to be.
-  td::uint16 port_{0};
+  // Where the proxy listens. Invalid until -p sets it: a second -p is refused,
+  // and with none the proxy does not start.
+  td::IPAddress listen_address_;
 
   td::actor::ActorOwn<tos::http::HttpServer> server_;
   std::map<std::string, td::actor::ActorOwn<HttpRemote>> clients_;
@@ -289,11 +293,16 @@ int main(int argc, char *argv[]) {
     std::cout << sb.as_cslice().c_str();
     std::exit(2);
   });
-  p.add_checked_option('p', "port", "sets listening port", [&](td::Slice arg) -> td::Status {
-    TRY_RESULT(port, td::to_integer_safe<td::uint16>(arg));
-    td::actor::send_closure(x, &HttpProxy::set_port, port);
-    return td::Status::OK();
-  });
+  // The proxy forwards to any host a client names, so a listener other hosts
+  // can reach is an open proxy: it has to be asked for by address.
+  p.add_checked_option('p', "port",
+                       "listening <port> on 127.0.0.1, or <ip>:<port> / [<ipv6>]:<port> to listen elsewhere "
+                       "(0.0.0.0:<port> lets any host that can reach it use this proxy)",
+                       [&](td::Slice arg) -> td::Status {
+                         TRY_RESULT(address, tos::http::HttpServer::parse_listen_address(arg));
+                         td::actor::send_closure(x, &HttpProxy::set_listen_address, address);
+                         return td::Status::OK();
+                       });
   p.add_option('d', "daemonize", "set SIGHUP", [&]() {
     td::set_signal_handler(td::SignalType::HangUp, [](int sig) {
 #if TD_DARWIN || TD_LINUX

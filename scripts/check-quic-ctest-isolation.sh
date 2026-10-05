@@ -14,6 +14,11 @@ names = (
     "quic-inbound-stream-timeout",
     "quic-outbound-query-deadline",
     "quic-connection-count-cap",
+    "quic-admission-global-limit",
+    "quic-admission-full-table",
+    "quic-inbound-budget",
+    "quic-transport-budget",
+    "quic-source-share",
 )
 ports = []
 roots = []
@@ -39,5 +44,5 @@ if min(abs(a - b) for i, a in enumerate(ports) for b in ports[i + 1 :]) < 2000:
 if 'g_config.db_root + "-adnl"' not in source or 'g_config.db_root + "-raw"' not in source:
     raise SystemExit("QUIC_CTEST_ISOLATION_SOURCE_FAILURE: a QUIC runner still uses a process-shared directory")
 
-print("QUIC_CTEST_ISOLATION_SOURCE_OK: three filtered processes have disjoint directories and port ranges")
+print(f"QUIC_CTEST_ISOLATION_SOURCE_OK: {len(names)} filtered processes have disjoint directories and port ranges")
 PY

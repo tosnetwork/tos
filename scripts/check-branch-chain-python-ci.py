@@ -19,10 +19,14 @@ REQUIRED_NATIVE_TARGETS = {
     "test-pq-lite-forward-proof",
     "test-pending-finality-cache",
     "test-c04-real-state-proof",
+    "tos-proof-verify",
+    "test-proof-verify",
+    "proof-verify-fs-shim",
     "test-n5-manager-db-fixture",
     "test-consensus",
     "test-notarize-after-transient-resolve",
     "test-state-resolver-teardown",
+    "test-custom-overlay-relay-dedup",
 }
 
 RESTART_ORIGIN_TESTS = (
@@ -79,10 +83,45 @@ def main() -> int:
         "ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'" in text,
         "PQ key-block proof context behavior gate is absent",
     )
+    verifier_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^test-proof-verify(-cli-verified|-cli-refused|-live-commit)?$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(verifier_ctest)}\s*$", text) is not None,
+        "anchored proof verifier behavior gate is absent",
+    )
+    c09_pytest = (
+        "uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py "
+        "test/pq-native/test_x02_stage_a_capture.py"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(c09_pytest)}\s*$", text) is not None
+        and "TOS_PROOF_VERIFY: build/lite-client/proof-verify/tos-proof-verify" in text,
+        "C09 Config34 anchored-verifier behavior gate is absent",
+    )
+    cmake_text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    for registration in (
+        r"tos_test\(test-proof-verify\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data\)",
+        r"add_test\(NAME test-proof-verify-cli-verified\s",
+        r"add_test\(NAME test-proof-verify-cli-refused\s",
+        r"add_test\(NAME test-proof-verify-live-commit\s",
+    ):
+        require(
+            re.search(registration, cmake_text) is not None,
+            f"anchored proof verifier CTest registration is absent: {registration}",
+        )
     manager_ctest = "ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'"
     require(
         re.search(rf"(?m)^\s*run: {re.escape(manager_ctest)}\s*$", text) is not None,
         "pending PQ finality manager actor behavior gate is absent",
+    )
+    relay_ctest = (
+        "ctest --test-dir build --output-on-failure -R '^test-custom-overlay-relay-dedup$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(relay_ctest)}\s*$", text) is not None,
+        "custom overlay relay deduplication gate is absent",
     )
     real_state_ctest = "ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'"
     require(
@@ -241,8 +280,9 @@ def main() -> int:
     )
     require(
         re.search(
+            # Either the E04 group alone or the whole commands library, which includes it.
             r"(?m)^\s*run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib "
-            r"exact_deploy_wallet_transaction_tests --locked --no-default-features\s*$",
+            r"(?:exact_deploy_wallet_transaction_tests )?--locked --no-default-features\s*$",
             rust_job.group("body"),
         )
         is not None,
@@ -278,6 +318,7 @@ def main() -> int:
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
         "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
+        "the anchored proof verifier, its CLI and the C09 Config34 path, "
         "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "

@@ -657,8 +657,9 @@ target_link_libraries(test-storage PRIVATE storage tos_db memprof tl_api tl-util
 add_executable(test-rocksdb test/test-rocksdb.cpp)
 target_link_libraries(test-rocksdb PRIVATE memprof tddb tdutils)
 
-add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cpp validator-engine/wallet-index.cpp)
-target_link_libraries(test-wallet-index PRIVATE tos_crypto tddb memprof tdutils)
+add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cpp validator-engine/wallet-index.cpp
+  validator-engine/wallet-index-writer.cpp validator/wc0-block-hook.cpp)
+target_link_libraries(test-wallet-index PRIVATE smc-envelope tos_crypto tddb memprof tdutils)
 
 add_executable(test-tddb test/test-td-main.cpp ${TDDB_TEST_SOURCE})
 target_link_libraries(test-tddb PRIVATE tdutils tddb ${CMAKE_THREAD_LIBS_INIT} memprof)
@@ -771,6 +772,11 @@ target_link_libraries(test-msg-envelope PRIVATE tos_crypto)
 
 add_executable(test-rate-limiter test/test-td-main.cpp test/test-rate-limiter.cpp)
 target_link_libraries(test-rate-limiter PRIVATE tdutils)
+
+add_executable(test-full-node-shard-admission test/test-td-main.cpp test/test-full-node-shard-admission.cpp)
+target_link_libraries(test-full-node-shard-admission PRIVATE tl_api tl-utils keys tos_crypto tdutils)
+target_include_directories(test-full-node-shard-admission PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_include_directories(test-rate-limiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test-config-transition test/test-td-main.cpp test/test-config-transition.cpp)
@@ -811,6 +817,21 @@ add_executable(test-validator-transport-authority test/pq-native/validator-trans
 target_include_directories(test-validator-transport-authority PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-validator-transport-authority PRIVATE overlay tos_block tos_crypto keys tdutils tdactor adnl
+                      tl_api dht)
+
+add_executable(test-custom-overlay-relay-dedup test/pq-native/custom-overlay-relay-dedup-test.cpp)
+target_include_directories(test-custom-overlay-relay-dedup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-custom-overlay-relay-dedup PRIVATE tos_block tos_crypto tl_api tl_lite_api tdutils)
+
+add_executable(test-candidate-data-cache test/validator/candidate-data-cache-test.cpp)
+target_include_directories(test-candidate-data-cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-candidate-data-cache PRIVATE tdutils)
+
+add_executable(test-shard-block-confirmations test/validator/shard-block-confirmations-test.cpp)
+target_include_directories(test-shard-block-confirmations PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-shard-block-confirmations PRIVATE overlay tos_block tos_crypto keys tdutils tdactor adnl
                       tl_api dht)
 
 add_executable(test-pending-finality-cache test/pq-native/pending-finality-cache-test.cpp)
@@ -876,17 +897,76 @@ target_include_directories(test-pq-lite-forward-proof PRIVATE ${CMAKE_CURRENT_SO
 target_link_libraries(test-pq-lite-forward-proof PRIVATE lite-client-common tos_block tos_pq_consensus_signer
                       tos_pq_consensus tos_crypto tl_api tl_lite_api tl-lite-utils tdutils tdactor adnl keys dht)
 
+add_executable(test-proof-verify test/pq-native/proof-verify-test.cpp)
+target_include_directories(test-proof-verify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-proof-verify PRIVATE proof-verify-core tos_pq_consensus_signer tos_pq_consensus
+                      tos_crypto)
+
+# Writes signed, provable material for a current-code nominator pool; the
+# proven pool snapshot tests in the contracts crate re-verify it.
+add_executable(test-proven-pool-fixture test/proven-snapshot/pool-snapshot-fixture.cpp)
+target_include_directories(test-proven-pool-fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-proven-pool-fixture PRIVATE proof-verify-core tos_pq_consensus_signer tos_pq_consensus
+                      tos_crypto)
+
 add_executable(test-adnl-ext-query-closure test/pq-native/adnl-ext-query-closure-test.cpp)
 target_include_directories(test-adnl-ext-query-closure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-adnl-ext-query-closure PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
                       tdutils tdactor)
 
+add_executable(test-quic-admission test/test-td-main.cpp test/test-quic-admission.cpp)
+target_include_directories(test-quic-admission PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-quic-admission PRIVATE adnl tl_api tdutils)
+
+add_executable(test-adnl-ext-client-identity test/test-adnl-ext-client-identity.cpp)
+target_include_directories(test-adnl-ext-client-identity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-client-identity PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
+                      tdutils tdactor)
+
+add_executable(test-full-node-master-admission test/test-full-node-master-admission.cpp)
+target_include_directories(test-full-node-master-admission PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-full-node-master-admission PRIVATE full-node tos_block adnl dht keyring keys tl_api
+                      tl-utils tdutils tdactor)
+
 add_executable(test-adnl-ext-query-refusal test/pq-native/adnl-ext-query-refusal-test.cpp)
 target_include_directories(test-adnl-ext-query-refusal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-adnl-ext-query-refusal PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
                       tdutils tdactor)
+
+add_executable(test-adnl-ext-output-backpressure test/pq-native/adnl-ext-output-backpressure-test.cpp)
+target_include_directories(test-adnl-ext-output-backpressure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-output-backpressure PRIVATE adnl tl_api tdutils tdactor)
+
+add_executable(test-adnl-ext-input-budget test/pq-native/adnl-ext-input-budget-test.cpp)
+target_include_directories(test-adnl-ext-input-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-input-budget PRIVATE adnl dht keyring keys tl_api tdutils tdactor)
+
+# Block application never waits for the wallet index: real ApplyBlock with the
+# index's read, WAL sync or queue blocked.
+add_executable(test-wallet-index-apply test/test-td-main.cpp test/validator/wallet-index-apply-test.cpp
+  validator-engine/wallet-index.cpp validator-engine/wallet-index-writer.cpp)
+target_include_directories(test-wallet-index-apply PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-wallet-index-apply PRIVATE validator-disk validator-common validator-db
+                      tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
+
+# Measurement tool, not a gate: apply completion when the wallet index must
+# read a block's data itself, against the same apply with no index.
+add_executable(test-apply-block-readback-latency test/validator/apply-block-readback-latency.cpp
+  validator-engine/wallet-index.cpp validator-engine/wallet-index-writer.cpp)
+target_include_directories(test-apply-block-readback-latency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-apply-block-readback-latency PRIVATE validator-disk validator-common validator-db
+                      tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
 
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -901,12 +981,35 @@ target_link_libraries(test-account-model-detection PRIVATE json-rpc-account-mode
 add_executable(test-json-rpc-source-ip test/test-json-rpc-source-ip.cpp)
 target_include_directories(test-json-rpc-source-ip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-source-ip PRIVATE tdutils)
+add_executable(test-json-rpc-listen-policy test/test-json-rpc-listen-policy.cpp)
+target_include_directories(test-json-rpc-listen-policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-listen-policy PRIVATE tdutils)
 add_executable(test-json-rpc-signing-payload test/test-json-rpc-signing-payload.cpp)
 target_include_directories(test-json-rpc-signing-payload PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-signing-payload PRIVATE tdutils)
 
 add_executable(test-http-server-limits test/test-td-main.cpp test/test-http-server-limits.cpp)
 target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
+
+# The real JSON-RPC server and listener, driven over loopback TCP.
+add_executable(test-json-rpc-transport test/test-td-main.cpp test/test-json-rpc-transport.cpp)
+target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc)
+
+# Drives real CONNECT tunnel actors, and runs the RLDP proxy binary to check
+# how it reads its limits.
+add_executable(test-rldp-http-tunnel test/test-td-main.cpp test/test-rldp-http-tunnel.cpp)
+target_link_libraries(test-rldp-http-tunnel PRIVATE rldp-http-tunnel tdactor tdutils)
+target_compile_definitions(test-rldp-http-tunnel PRIVATE RLDP_HTTP_PROXY_BINARY="$<TARGET_FILE:rldp-http-proxy>")
+add_dependencies(test-rldp-http-tunnel rldp-http-proxy)
+
+# Checks that a bare listen port is unreachable from a non-loopback address,
+# for HttpServer and for the http-proxy binary. It has its own main: without
+# such an address it fails, unless TOS_TEST_ALLOW_LOOPBACK_ONLY=1 asks for a
+# reported skip (exit 77).
+add_executable(test-http-listen-address test/test-http-listen-address.cpp)
+target_link_libraries(test-http-listen-address PRIVATE toshttp tdactor tdutils)
+target_compile_definitions(test-http-listen-address PRIVATE HTTP_PROXY_BINARY="$<TARGET_FILE:http-proxy>")
+add_dependencies(test-http-listen-address http-proxy)
 
 add_executable(test-wallet-message-processor test/test-td-main.cpp test/test-wallet-message-processor.cpp)
 target_link_libraries(test-wallet-message-processor PRIVATE tos_validator smc-envelope tos_crypto tdutils)
@@ -1030,6 +1133,14 @@ add_executable(test-rldp2-inbound-transfer-bound test/test-td-main.cpp test/test
 target_include_directories(test-rldp2-inbound-transfer-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-rldp2-inbound-transfer-bound PRIVATE rldp2 adnl tdutils)
 
+add_executable(test-rldp2-decoder-heap test/rldp2-decoder-heap-measure.cpp)
+target_include_directories(test-rldp2-decoder-heap PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-rldp2-decoder-heap PRIVATE tdfec tdutils)
+
+add_executable(test-rldp2-inbound-budget test/test-td-main.cpp test/test-rldp2-inbound-budget.cpp)
+target_include_directories(test-rldp2-inbound-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-rldp2-inbound-budget PRIVATE rldp2 adnl fec tdfec tdutils)
+
 add_executable(test-collator-node-limits test/test-collator-node-limits.cpp)
 target_include_directories(test-collator-node-limits PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-collator-node-limits PRIVATE tdutils)
@@ -1078,11 +1189,14 @@ endfunction()
 
 # Compile FunC sources (one or more .fc files) to a .boc. func -W emits
 # the BoC write directive into its .fif output; running fift on that .fif
-# materializes the .boc on disk.
+# materializes the .boc on disk. The positional arguments are the compiler's
+# inputs; INCLUDES lists the files they #include, which func reads on its own
+# and which must not be passed to it again, so an edit to one rebuilds the BoC.
 function(slice1_func_to_boc OUT_BOC WORKING_DIR)
+    cmake_parse_arguments(ARG "" "" "INCLUDES" ${ARGN})
     get_filename_component(_stem ${OUT_BOC} NAME_WE)
     set(_fif ${SLICE1_GAS_PARITY_DIR}/${_stem}.fif)
-    set(_sources ${ARGN})
+    set(_sources ${ARG_UNPARSED_ARGUMENTS})
     add_custom_command(
         OUTPUT ${OUT_BOC}
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
@@ -1090,7 +1204,7 @@ function(slice1_func_to_boc OUT_BOC WORKING_DIR)
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
                 $<TARGET_FILE:fift> ${_fif}
         WORKING_DIRECTORY ${WORKING_DIR}
-        DEPENDS func fift ${_sources}
+        DEPENDS func fift ${_sources} ${ARG_INCLUDES}
         COMMENT "Compiling FunC contract ${_stem} -> ${OUT_BOC}"
         VERBATIM
     )
@@ -1118,10 +1232,24 @@ slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/examples/slice5/tos-report-bond-or
 
 slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/jetton-minter.fc)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/jetton-minter.fc
+                   INCLUDES
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/stdlib.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/params.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/constants.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/jetton-utils.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/op-codes.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/utils.fc)
 slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/jetton-wallet.fc)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/jetton-wallet.fc
+                   INCLUDES
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/stdlib.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/params.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/constants.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/jetton-utils.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/op-codes.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/utils.fc)
 # wallet-v5 lives at crypto/smartcont/wallet-v5-code.fc per the
 # migration playbook (verified via the find search in this slice's
 # closure work). It depends on crypto/smartcont/stdlib.fc, which is
@@ -1130,7 +1258,8 @@ slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}
 slice1_func_to_boc(${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/stdlib.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc
+                   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/auth-extension.fc)
 
 # Compile a production FunC contract from crypto/smartcont to a .boc, with
 # stdlib.fc first. ARGN lists the library files the contract includes, so an
@@ -1367,6 +1496,23 @@ if (NOT NIX)
           "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
           "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     endif()
+    # Committed scaffold examples must match `tol new` output, and the tests
+    # it generates must pass.
+    add_test(
+      NAME test-tol-scaffolds
+      COMMAND ${PYTHON_VER} check-scaffolds.py
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tol-tester)
+    if (WIN32)
+        set_property(TEST test-tol-scaffolds PROPERTY ENVIRONMENT
+          "TOL_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tol/tol.exe"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift.exe"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    else()
+        set_property(TEST test-tol-scaffolds PROPERTY ENVIRONMENT
+          "TOL_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tol/tol"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    endif()
 endif()
 
 #BEGIN internal
@@ -1391,6 +1537,9 @@ tos_test(test-pq-network-parser-resource)
 tos_test(test-pq-signature-persistence)
 tos_test(test-validator-transport-authority)
 tos_test(test-pending-finality-cache)
+tos_test(test-custom-overlay-relay-dedup)
+tos_test(test-candidate-data-cache)
+tos_test(test-shard-block-confirmations)
 tos_test(test-c04-real-state-proof ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 # N01's short production AcceptBlock/#13/RootDb cut uses C04's exact PQ
 # seq0→seq1 fixture, but runs as a separate CTest from C04's 60-second
@@ -1474,6 +1623,10 @@ add_test(NAME n6-cluster-runner
 set_tests_properties(n6-cluster-runner PROPERTIES
   ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/test/tostester/src"
   LABELS "source-guard")
+add_test(NAME full-node-master-startup
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/full-node-master-startup-test.py
+          $<TARGET_FILE:validator-engine>)
+set_tests_properties(full-node-master-startup PROPERTIES LABELS "security-findings")
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
@@ -1506,6 +1659,28 @@ add_test(NAME tosctl-election-chain-reads-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-election-chain-reads.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(tosctl-election-chain-reads-source PROPERTIES LABELS "source-guard")
+# Release and deployment supply chain: pinned actions, per-job permissions,
+# authenticated build inputs, digest-pinned images, release artifacts bound to
+# the tag commit, and authenticated snapshot import.
+add_test(NAME workflow-supply-chain-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-workflow-supply-chain.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(workflow-supply-chain-source PROPERTIES LABELS "source-guard")
+add_test(NAME workflow-supply-chain-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-workflow-supply-chain.py --self-test)
+set_tests_properties(workflow-supply-chain-self-test PROPERTIES LABELS "source-guard")
+add_test(NAME release-artifacts-binding
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_release_artifacts.py)
+set_tests_properties(release-artifacts-binding PROPERTIES LABELS "source-guard")
+add_test(NAME image-digest-pinning
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_pin_image_digest.py)
+set_tests_properties(image-digest-pinning PROPERTIES LABELS "source-guard")
+add_test(NAME llvm-apt-key-pin
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_install_llvm_toolchain.py)
+set_tests_properties(llvm-apt-key-pin PROPERTIES LABELS "source-guard")
+add_test(NAME snapshot-import-offline
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_import_snapshot.py)
+set_tests_properties(snapshot-import-offline PROPERTIES LABELS "source-guard")
 add_test(NAME dns-pq-vote-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-dns-pq-vote-source.py
           ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1538,6 +1713,20 @@ add_test(NAME validator-id-key-hash-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-validator-id-key-hash.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(validator-id-key-hash-source PROPERTIES LABELS "source-guard")
+# Stablecoin escrow v1 was removed outright; nothing would notice its return
+# except this guard, which looks for its code hashes, artifacts and paths. The
+# self-test plants each kind of fingerprint and needs full Git history.
+add_test(NAME no-legacy-escrow-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-no-legacy-escrow.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(no-legacy-escrow-source PROPERTIES LABELS "source-guard")
+add_test(NAME no-legacy-escrow-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_check_no_legacy_escrow.py)
+set_tests_properties(no-legacy-escrow-self-test PROPERTIES LABELS "source-guard")
+# Escrow v2 is deployable only with the non-production acknowledgment.
+add_test(NAME escrow-deploy-policy
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_tos_service_escrow_deploy_policy.py)
+set_tests_properties(escrow-deploy-policy PROPERTIES LABELS "source-guard")
 add_test(NAME n6-scale-sweep-cardinality
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/n6-scale-sweep-cardinality-test.py)
 set_tests_properties(n6-scale-sweep-cardinality PROPERTIES
@@ -1570,16 +1759,42 @@ add_test(NAME pending-finality-retry-policy-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-finality-retry-policy.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pending-finality-retry-policy-source PROPERTIES LABELS "source-guard")
 tos_test(test-pq-lite-forward-proof)
+tos_test(test-proof-verify ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data)
+set(PROOF_VERIFY_REAL ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+add_test(NAME test-proof-verify-cli-verified
+  COMMAND tos-proof-verify verify --anchor ${PROOF_VERIFY_REAL}/anchor.json
+          --request ${PROOF_VERIFY_REAL}/historical-request.json --material ${PROOF_VERIFY_REAL}/historical)
+set_tests_properties(test-proof-verify-cli-verified PROPERTIES
+  PASS_REGULAR_EXPRESSION "^\\{\"status\":\"verified\",\"interface\":\"tos-proof-verify/1\"")
+add_test(NAME test-proof-verify-cli-refused
+  COMMAND tos-proof-verify verify --anchor ${PROOF_VERIFY_REAL}/anchor.json
+          --request ${PROOF_VERIFY_REAL}/wrong-target-request.json --material ${PROOF_VERIFY_REAL}/historical)
+set_tests_properties(test-proof-verify-cli-refused PROPERTIES
+  PASS_REGULAR_EXPRESSION "^\\{\"status\":\"refused\".*does not end at the exact target block")
+add_dependencies(all-tests tos-proof-verify)
+add_library(proof-verify-fs-shim SHARED test/pq-native/proof-verify-fs-shim.cpp)
+target_link_libraries(proof-verify-fs-shim PRIVATE ${CMAKE_DL_LIBS})
+add_test(NAME test-proof-verify-live-commit
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/proof-verify-live-commit-test.py
+          $<TARGET_FILE:tos-proof-verify> $<TARGET_FILE:test-proof-verify> $<TARGET_FILE:proof-verify-fs-shim>)
+add_dependencies(all-tests proof-verify-fs-shim)
 tos_test(test-adnl-ext-query-closure)
 tos_test(test-adnl-ext-query-refusal)
+tos_test(test-adnl-ext-output-backpressure)
+tos_test(test-adnl-ext-client-identity)
+tos_test(test-full-node-master-admission)
+tos_test(test-adnl-ext-input-budget)
+tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
+tos_test(test-full-node-shard-admission)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
 tos_test(test-account-model-detection)
 tos_test(test-json-rpc-source-ip)
+tos_test(test-json-rpc-listen-policy)
 tos_test(test-json-rpc-signing-payload)
 tos_test(test-consensus-db-path)
 tos_test(test-validator-cleanup)
@@ -1597,8 +1812,18 @@ if (Python3_Interpreter_FOUND)
            COMMAND ${Python3_EXECUTABLE}
                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-route-gating.py)
   set_tests_properties(jsonrpc-route-gating PROPERTIES LABELS "source-guard")
+  # The real engine binary must refuse to start a write-enabled plaintext
+  # JSON-RPC listener on a non-loopback address.
+  add_test(NAME json-rpc-startup-refusal
+           COMMAND ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-json-rpc-startup-refusal.py
+                   --binary $<TARGET_FILE:validator-engine>)
 endif()
 tos_test(test-http-server-limits)
+tos_test(test-json-rpc-transport)
+tos_test(test-rldp-http-tunnel)
+tos_test(test-http-listen-address)
+set_tests_properties(test-http-listen-address PROPERTIES SKIP_RETURN_CODE 77)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
 tos_test(test-celldb-streaming-import)
@@ -1619,9 +1844,28 @@ tos_test(test-health-core-registry)
 tos_test(test-health-source-policy)
 tos_test(test-health-pq-signer)
 tos_test(test-rldp2-inbound-transfer-bound)
+tos_test(test-rldp2-inbound-budget)
+tos_test(test-rldp2-decoder-heap)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)
+tos_test(test-wallet-index-apply)
+# Keep the security fixes exercised before merge, not only by main's full
+# CTest pass. The branch workflow also verifies this inventory is complete.
+set_tests_properties(
+  test-wallet-index
+  test-wallet-index-apply
+  test-candidate-data-cache
+  test-shard-block-confirmations
+  test-adnl-ext-input-budget
+  test-adnl-ext-output-backpressure
+  test-rate-limiter
+  test-full-node-shard-admission
+  test-full-node-master-admission
+  test-rldp2-inbound-budget
+  test-rldp2-inbound-transfer-bound
+  test-rldp2-decoder-heap
+  PROPERTIES LABELS "security-findings")
 tos_test(test-quorum)
 tos_test(test-emulator)
 
@@ -1636,6 +1880,9 @@ set_tests_properties(benchmark-exclusion-source PROPERTIES LABELS "source-guard"
 add_test(NAME frozen-boc-toolchain-resolution
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-frozen-boc-toolchain.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(frozen-boc-toolchain-resolution PROPERTIES LABELS "source-guard")
+add_test(NAME func-build-include-deps
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-func-build-deps.py)
+set_tests_properties(func-build-include-deps PROPERTIES LABELS "source-guard")
 add_test(NAME quic-ctest-isolation-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-quic-ctest-isolation.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(quic-ctest-isolation-source PROPERTIES LABELS "source-guard")
@@ -1680,12 +1927,30 @@ add_test(NAME quic-outbound-query-deadline COMMAND test-quic-sender
   -p 31000 -d tmp-dir-test-quic-outbound -f PartialResponseDoesNotExtendDeadline)
 add_test(NAME quic-connection-count-cap COMMAND test-quic-sender
   -p 41000 -d tmp-dir-test-quic-cap -f MaxConnectionsRejectsBeyondCap)
+add_test(NAME quic-admission-global-limit COMMAND test-quic-sender
+  -p 43000 -d tmp-dir-test-quic-admission-global -f SourcesRefusedByTheGlobalLimitAreNotTracked)
+add_test(NAME quic-admission-full-table COMMAND test-quic-sender
+  -p 45000 -d tmp-dir-test-quic-admission-table -f AFullSourceTableAdmitsAgainOnceEntriesRefill)
+add_test(NAME quic-inbound-budget COMMAND test-quic-sender
+  -p 47000 -d tmp-dir-test-quic-inbound-budget -f QuicInboundBudget)
+add_test(NAME quic-transport-budget COMMAND test-quic-sender
+  -p 49000 -d tmp-dir-test-quic-transport-budget -f QuicTransportBudget)
+add_test(NAME quic-source-share COMMAND test-quic-sender
+  -p 51000 -d tmp-dir-test-quic-source-share -f QuicSourceShare)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
   quic-connection-count-cap
+  quic-admission-global-limit
+  quic-admission-full-table
+  quic-inbound-budget
+  quic-transport-budget
+  quic-source-share
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
+  test-http-server-limits
+  test-json-rpc-transport
+  test-rldp-http-tunnel
   PROPERTIES LABELS "network-safety")
 
 add_subdirectory(test)

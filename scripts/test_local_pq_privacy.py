@@ -1,7 +1,9 @@
 """Checks the pool traffic verifier against single-point false positives."""
 
+import asyncio
 import importlib.util
 import random
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,3 +103,45 @@ def test_wrong_payout(change):
 def test_low_private_value_adds_deposit_before_withdrawal():
     notes = {"notes": [{"index": i, "amount": 100_000_000, "owner": i} for i in range(2)]}
     assert privacy.choose(notes, random.Random(0), 3)["operation"] == "deposit"
+
+
+def test_a_missing_lite_client_is_refused_before_anything_is_written(tmp_path):
+    # The service runs from a snapshot without a build tree; it must use the
+    # installed lite-client and refuse to start when that is absent.
+    args = SimpleNamespace(
+        nodes=7,
+        min_interval=20.0,
+        max_interval=60.0,
+        count=0,
+        lite_client=tmp_path / "absent-lite-client",
+        output=tmp_path / "out",
+    )
+    with pytest.raises(RuntimeError, match="does not exist"):
+        asyncio.run(privacy.run(args))
+    assert not args.output.exists()
+
+
+def test_pool_state_queries_the_validated_lite_client(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        privacy.local,
+        "get_method",
+        lambda lite_client, data, address, name: calls.append(lite_client) or 0,
+    )
+    lite_client = tmp_path / "tos-lite-client"
+    args = SimpleNamespace(lite_client=lite_client, data=tmp_path, build=tmp_path / "build")
+    asyncio.run(privacy.pool_state(args, "0:" + "ab" * 32))
+    assert calls and set(calls) == {lite_client}
+
+
+def test_the_lite_client_defaults_to_the_installed_binary(monkeypatch):
+    seen = {}
+
+    def capture(coroutine):
+        seen["args"] = coroutine.cr_frame.f_locals["args"]
+        coroutine.close()
+
+    monkeypatch.setattr(privacy.asyncio, "run", capture)
+    monkeypatch.setattr(sys, "argv", ["local-pq-privacy.py"])
+    privacy.main()
+    assert seen["args"].lite_client == privacy.local.INSTALLED_LITE_CLIENT
