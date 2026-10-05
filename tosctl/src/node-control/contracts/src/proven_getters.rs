@@ -927,6 +927,39 @@ mod fee_state_tests {
     }
 
     #[test]
+    fn successor_fee_state_binding() {
+        use crate::wallet_v5r2_genesis::SuccessorDeployment;
+        use crate::wallet_v5r2_state::ProvenFeeVault;
+        let (template, mut state) = fixture();
+        let successor = SuccessorDeployment::new(template, [7; 32]).unwrap();
+        assert!(ProvenFeeVault::bind_successor(&state, &successor, 4620, 30).is_err());
+        let address = format!("0:{}", successor.vault_init().repr_hash().to_hex_string());
+        state.account = Account::active(
+            address.parse().unwrap(),
+            CurrencyCollection::with_coins(100),
+            0,
+            4600,
+            StateInit::construct_from_cell(successor.vault_init().clone()).unwrap(),
+            0,
+        )
+        .unwrap();
+        state.root = state.account.serialize().unwrap();
+        state.evidence.account.address = address;
+        state.evidence.account.state_hash = state.root.repr_hash().to_hex_string();
+        state.evidence.account.data_hash = successor.vault_data().repr_hash().to_hex_string();
+        let view = ProvenFeeVault::bind_successor(&state, &successor, 4620, 30).unwrap();
+        assert_eq!(view.route().vault, *successor.vault_init().repr_hash().as_array());
+        assert_eq!(view.route().tree_id, [4; 32]);
+        assert_eq!(view.config_hash(), successor.config_hash());
+        let (other, _) = fixture();
+        let wrong_wallet = SuccessorDeployment::new(other, [8; 32]).unwrap();
+        match ProvenFeeVault::bind_successor(&state, &wrong_wallet, 4620, 30) {
+            Ok(_) => panic!("accepted another wallet's recovery vault"),
+            Err(error) => assert!(error.to_string().contains("address"), "{error}"),
+        }
+    }
+
+    #[test]
     fn initial_fee_state_binding() {
         let (g, s) = fixture();
         let view = ProvenInitialFeeVault::bind(&s, &g, 4620, 30).unwrap();

@@ -1,0 +1,42 @@
+{
+  "source_base": "bdc3d8e90b2e225adb67b0f3ba0817bb70c346f6",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_genesis.rs": "a6fbf17bbeed1ae0f9ca32b4670b57948afd3130668fe9e6c39ab443116b8613",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs": "c4834aa36c3a5b1adec1ab28f34b538fe4ba359adbd746f8ba9a2d0e3b3c4c47",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "ff654c1007f7903eb616a518f26bbf5a632984b4bdbc4e03124a0cedc1c1bca3",
+    "tosctl/src/node-control/contracts/examples/v5r2_genesis_encode.rs": "3dc1c46663691c9afd47f3e99803ba8ab3fa2631d3681b2da58b410d747af0d9",
+    "test/wallet-v5r2/sdk_genesis_fixture.py": "5de90a729a340dffef89f9bd65381e9b7bd52986baf4620b0399c52c3136f046",
+    "test/wallet-v5r2/test_fee_delivery.py": "c7cdd8ae39659e617c7baba771259d52a16824648e419976df4d78002a8b48ef",
+    "test/wallet-v5r2/sdk_genesis_vectors.py": "8e4cf7bcbfc313ff22921972076fcf1d59f6b27b778a2f9de7ddd524b5a634bc",
+    "test/wallet-v5r2/sdk_auth_controls.py": "6b92cf6bc804d1eeee81389baa5a50c189d75925bc1955521bd65227cfeb3d26"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-successor-sdk-final",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "256bf4592f878b91b1c41efa446fc91f86ef306e38487b0bb59ad301c8179f7c",
+  "results": {
+    "wallet_sdk_tests": 21,
+    "state_binding_tests": 2,
+    "genesis_semantic_controls": 8,
+    "state_semantic_controls": 9,
+    "successor_vectors": 4,
+    "matching_transactions": 65,
+    "diagnostic_credit": 20000,
+    "default_credit_admission": false
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cargo build --manifest-path tosctl/src/Cargo.toml -p contracts --example v5r2_genesis_encode",
+    "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --lib wallet_v5r2",
+    "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --lib fee_state_tests",
+    "python3 test/wallet-v5r2/sdk_auth_controls.py --genesis --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-successor-sdk-final/genesis-controls",
+    "python3 test/wallet-v5r2/fee_state_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-successor-sdk-final/state-controls",
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/sdk_auth_parity.py --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --fee-driver tosctl/src/target/debug/examples/v5r2_fee_encode --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-successor-sdk-final"
+  ],
+  "limits": [
+    "Public deterministic fixture keys only.",
+    "Binding uses synthetic proven-state objects in unit tests, not real V5R2 network proofs.",
+    "SDK-created successor cells execute in the native/Rust local recovery harness; current authorization and proof/receipt integration remain open.",
+    "Initial harness startup failed due to a Python default argument typo, corrected before final run; failure log retained.",
+    "Production custody, default-credit admission, worst-case pricing, independent review and final-head CI remain open."
+  ]
+}

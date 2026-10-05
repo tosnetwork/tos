@@ -17,6 +17,7 @@ from test_state import fee, state  # noqa: E402
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--successor", action="store_true")
     args = p.parse_args()
     rows = []
     key = (
@@ -42,9 +43,12 @@ def main():
         wd = state(mi, metadata=metadata, mode=2, retired=0, seqno=0, epoch=1, primary=0, rescue=0)
         wd.bits = wd.bits[:33] + format(wallet_id, "032b") + wd.bits[65:]
         wi = state_init(Cell().uint(1, 8), wd)
+        owner = (
+            (100 if wallet_id == 42 else 101) if args.successor else int.from_bytes(wi.hash, "big")
+        )
         vd = vault_data(
             metadata=metadata,
-            wallet=int.from_bytes(wi.hash, "big"),
+            wallet=owner,
             module=int.from_bytes(mi.hash, "big"),
         )
         vi = state_init(Cell().uint(3, 8), vd)
@@ -63,6 +67,8 @@ def main():
                 config_hash=f"{vd.slice().uint(296) & ((1 << 256) - 1):064x}",
             )
         )
+        if args.successor:
+            rows[-1]["wallet_address"] = f"{owner:064x}"
     args.output.write_text(json.dumps(rows, indent=2) + "\n")
 
 

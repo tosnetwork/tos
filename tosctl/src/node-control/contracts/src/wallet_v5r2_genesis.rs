@@ -7,7 +7,7 @@
 //! Construction proves neither key possession nor safe LMS custody. Verify
 //! deployment and fresh per-key POP before treating a wallet as operational.
 use crate::wallet_v5r2_pop::RescuePolicy;
-use chain_block::{BuilderData, Cell, CellType, IBitstring};
+use chain_block::{BuilderData, Cell, CellType, IBitstring, SliceData};
 
 pub struct CodeHashes {
     pub wallet: [u8; 32],
@@ -81,6 +81,46 @@ fn key_chain(bytes: &[u8]) -> anyhow::Result<Cell> {
     }
     tail.ok_or_else(|| anyhow::anyhow!("empty public key"))
 }
+fn paired_vault_data(
+    global_id: i32,
+    network: [u8; 32],
+    wallet: [u8; 32],
+    module: [u8; 32],
+    metadata: &Cell,
+    epoch0: u32,
+    key: Cell,
+) -> anyhow::Result<(Cell, [u8; 32])> {
+    let mut config = BuilderData::new();
+    config.append_u8(1)?;
+    config.append_i32(global_id)?;
+    config.append_u256(&network)?;
+    address(&mut config, &wallet)?;
+    address(&mut config, &module)?;
+    config.checked_append_reference(metadata.clone())?;
+    let config_hash = *config.into_cell()?.repr_hash().as_array();
+    let mut prefix = BuilderData::new();
+    prefix.append_u32(0x41553252)?;
+    prefix.append_i32(global_id)?;
+    prefix.append_u256(&network)?;
+    address(&mut prefix, &wallet)?;
+    prefix.append_u256(&module)?;
+    prefix.append_u8(2)?;
+    let mut parties = BuilderData::new();
+    address(&mut parties, &wallet)?;
+    parties.append_u256(&module)?;
+    let parties_hash = *parties.into_cell()?.repr_hash().as_array();
+    let mut vault = BuilderData::new();
+    vault.append_u8(3)?;
+    vault.append_u32(0)?;
+    vault.append_u256(&config_hash)?;
+    vault.append_u32(epoch0)?;
+    address(&mut vault, &module)?;
+    vault.append_u256(&parties_hash)?;
+    vault.checked_append_reference(key)?;
+    vault.checked_append_reference(prefix.into_cell()?)?;
+    let vault_data = vault.into_cell()?;
+    Ok((vault_data, config_hash))
+}
 impl WalletGenesis {
     pub fn new(code: CodeBundle, p: GenesisParameters) -> anyhow::Result<Self> {
         anyhow::ensure!(
@@ -132,35 +172,15 @@ impl WalletGenesis {
         let wallet_data = wallet.into_cell()?;
         let wallet_init = state_init(code.wallet, wallet_data.clone())?;
         let wallet_hash = *wallet_init.repr_hash().as_array();
-        let mut config = BuilderData::new();
-        config.append_u8(1)?;
-        config.append_i32(p.global_id)?;
-        config.append_u256(&p.network)?;
-        address(&mut config, &wallet_hash)?;
-        address(&mut config, &module_hash)?;
-        config.checked_append_reference(metadata.clone())?;
-        let config_hash = *config.into_cell()?.repr_hash().as_array();
-        let mut prefix = BuilderData::new();
-        prefix.append_u32(0x41553252)?;
-        prefix.append_i32(p.global_id)?;
-        prefix.append_u256(&p.network)?;
-        address(&mut prefix, &wallet_hash)?;
-        prefix.append_u256(&module_hash)?;
-        prefix.append_u8(2)?;
-        let mut parties = BuilderData::new();
-        address(&mut parties, &wallet_hash)?;
-        parties.append_u256(&module_hash)?;
-        let parties_hash = *parties.into_cell()?.repr_hash().as_array();
-        let mut vault = BuilderData::new();
-        vault.append_u8(3)?;
-        vault.append_u32(0)?;
-        vault.append_u256(&config_hash)?;
-        vault.append_u32(p.epoch0)?;
-        address(&mut vault, &module_hash)?;
-        vault.append_u256(&parties_hash)?;
-        vault.checked_append_reference(key)?;
-        vault.checked_append_reference(prefix.into_cell()?)?;
-        let vault_data = vault.into_cell()?;
+        let (vault_data, config_hash) = paired_vault_data(
+            p.global_id,
+            p.network,
+            wallet_hash,
+            module_hash,
+            &metadata,
+            p.epoch0,
+            key,
+        )?;
         let vault_init = state_init(code.vault, vault_data.clone())?;
         Ok(Self {
             module_data,
@@ -196,6 +216,79 @@ impl WalletGenesis {
     }
     pub fn config_hash(&self) -> &[u8; 32] {
         &self.config_hash
+    }
+}
+
+/// Canonical successor witnesses for an existing wallet address. Construction
+/// establishes pairing only, not approval, deployment, POP or migration success.
+/// The template carries locally enrolled new keys and trusted release code pins.
+pub struct SuccessorDeployment {
+    template: WalletGenesis,
+    wallet: [u8; 32],
+    vault_data: Cell,
+    vault_init: Cell,
+    config_hash: [u8; 32],
+}
+impl SuccessorDeployment {
+    pub fn new(template: WalletGenesis, wallet: [u8; 32]) -> anyhow::Result<Self> {
+        let module_hash = *template.module_init().repr_hash().as_array();
+        anyhow::ensure!(wallet != module_hash, "successor wallet and module must differ");
+        let mut module = SliceData::load_cell(template.module_data().clone())?;
+        module.move_by(8)?;
+        let global_id = i32::from_be_bytes(module.get_next_u32()?.to_be_bytes());
+        let network = *module.get_next_hash()?.as_array();
+        let mut metadata = SliceData::load_cell(template.metadata().clone())?;
+        metadata.move_by(16 + 256)?;
+        let epoch0 = metadata.get_next_u32()?;
+        let key = metadata.checked_drain_reference()?;
+        let (vault_data, config_hash) = paired_vault_data(
+            global_id,
+            network,
+            wallet,
+            module_hash,
+            template.metadata(),
+            epoch0,
+            key,
+        )?;
+        let mut old_init = SliceData::load_cell(template.vault_init().clone())?;
+        let vault_init = state_init(old_init.checked_drain_reference()?, vault_data.clone())?;
+        Ok(Self { template, wallet, vault_data, vault_init, config_hash })
+    }
+    pub fn wallet(&self) -> &[u8; 32] {
+        &self.wallet
+    }
+    pub fn module_data(&self) -> &Cell {
+        self.template.module_data()
+    }
+    pub fn module_init(&self) -> &Cell {
+        self.template.module_init()
+    }
+    pub fn metadata(&self) -> &Cell {
+        self.template.metadata()
+    }
+    pub fn vault_data(&self) -> &Cell {
+        &self.vault_data
+    }
+    pub fn vault_init(&self) -> &Cell {
+        &self.vault_init
+    }
+    pub fn config_hash(&self) -> &[u8; 32] {
+        &self.config_hash
+    }
+    /// Exact paired witnesses for the SLH-signed preparation request. Amounts
+    /// remain subject to canonical encoding and network fee validation.
+    pub fn preparation_plan(
+        &self,
+        module_amount: u128,
+        vault_amount: u128,
+    ) -> crate::wallet_v5r2_prepare::PreparationPlan {
+        crate::wallet_v5r2_prepare::PreparationPlan {
+            module_amount,
+            vault_amount,
+            module_init: self.module_init().clone(),
+            metadata: self.metadata().clone(),
+            vault_init: self.vault_init().clone(),
+        }
     }
 }
 
@@ -274,6 +367,45 @@ mod tests {
             assert_eq!(hex::encode(g.config_hash()), c["config_hash"]);
         }
     }
+    #[test]
+    fn independent_successor_vectors() {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/v5r2/successor-wire.json"))
+                .unwrap();
+        for c in cases.as_array().unwrap() {
+            let mut p = parameters();
+            p.policy = if c["policy"] == 1 { RescuePolicy::Ready } else { RescuePolicy::Required };
+            p.wallet_id = u32::try_from(c["wallet_id"].as_u64().unwrap()).unwrap();
+            p.fee_tree_id[30..].copy_from_slice(
+                &u16::try_from(c["tree_id"].as_u64().unwrap()).unwrap().to_be_bytes(),
+            );
+            let wallet: [u8; 32] =
+                hex::decode(c["wallet_address"].as_str().unwrap()).unwrap().try_into().unwrap();
+            let successor =
+                SuccessorDeployment::new(WalletGenesis::new(bundle(), p).unwrap(), wallet).unwrap();
+            assert_eq!(successor.wallet(), &wallet);
+            for (name, cell) in [
+                ("module_data", successor.module_data()),
+                ("module_init", successor.module_init()),
+                ("metadata", successor.metadata()),
+                ("vault_data", successor.vault_data()),
+                ("vault_init", successor.vault_init()),
+            ] {
+                assert_eq!(cell.repr_hash().to_hex_string(), c[name], "{name}");
+            }
+            assert_eq!(hex::encode(successor.config_hash()), c["config_hash"]);
+            let plan = successor.preparation_plan(100, 200);
+            assert_eq!(plan.module_amount, 100);
+            assert_eq!(plan.vault_amount, 200);
+            assert_eq!(plan.module_init.repr_hash(), successor.module_init().repr_hash());
+            assert_eq!(plan.metadata.repr_hash(), successor.metadata().repr_hash());
+            assert_eq!(plan.vault_init.repr_hash(), successor.vault_init().repr_hash());
+        }
+        let g = WalletGenesis::new(bundle(), parameters()).unwrap();
+        let module = *g.module_init().repr_hash().as_array();
+        assert!(SuccessorDeployment::new(g, module).is_err());
+    }
+
     #[test]
     fn wrong_code_and_fee_profile_refused() {
         for which in 0..3 {

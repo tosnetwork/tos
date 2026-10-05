@@ -967,7 +967,38 @@ signing remain the custody journal's responsibility.
 Synthetic account tests cover this binding and expiration; they are not a live
 V5R2 deployment proof. The separate recorded-account tests cover proof plumbing.
 Nine guard deletion controls require explicit acceptance of a bad input to be
-detected by the tests. This interface covers the initial enrollment only: a
-successor vault must instead be bound to proven preparation/migration state.
+detected by the tests. The original `bind` entry point covers initial enrollment. The successor
+entry point described below additionally checks locally enrolled recovery pairing;
+authoritative preparation/migration receipts remain a separate requirement.
 Wallet/module deployment, POP outcome, balances/pricing, transaction receipts,
 local enrollment provenance and the complete signer integration remain open.
+
+
+### Successor deployment construction and observed vault binding
+
+`SuccessorDeployment` derives canonical module/metadata/vault witnesses from a
+locally enrolled key/code template and the existing wallet address. The unused
+new-wallet address from the template is never installed into the successor
+vault. Initial and successor construction share the exact paired-vault codec.
+`preparation_plan` supplies those three witnesses directly to the SLH preparation
+encoder, with explicit deployment amounts; canonical amounts and network fee
+bounds still require their respective checks.
+
+`ProvenFeeVault::bind_successor` applies the same live-proof, code/address,
+immutable-data, counter and time checks as initial binding. Its expectation is
+the enrolled successor tuple. It does not infer wallet installation or successful
+POP from the existence of a vault. `ProvenInitialFeeVault` remains a compatibility
+alias for callers using initial enrollment.
+
+Four independently generated successor vectors cover READY/REQUIRED, existing
+wallet identity and tree identity. The real public-key local recovery harness
+compares all five successor cells against Python, then uses the SDK cells for
+preparation, deployment, POP, migration and recipient payment. All 65 native/Rust
+transaction outcomes match at diagnostic credit 20,000. Synthetic proven-state
+binding tests separately reject an initial vault and another wallet's successor;
+they are not cryptographic proof or live-network evidence. Evidence index:
+`test/wallet-v5r2/successor-sdk-20261006.json`.
+
+Fresh authenticated recovery receipts, authorization from current wallet state,
+production signer custody, reference hardware/pricing and final-head CI remain
+open. Default-credit admission remains a failed release gate.

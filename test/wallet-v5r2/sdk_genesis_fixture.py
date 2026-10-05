@@ -7,7 +7,21 @@ import native
 from cells import Cell, from_boc
 
 
-def encode(driver, out, *, wallet, module, vault, primary, rescue, fee_key, expected):
+def encode(
+    driver,
+    out,
+    *,
+    wallet,
+    module,
+    vault,
+    primary,
+    rescue,
+    fee_key,
+    expected,
+    policy=1,
+    tree_id=456,
+    existing_wallet=None,
+):
     payload = dict(
         wallet_code=wallet.boc().hex(),
         module_code=module.boc().hex(),
@@ -20,11 +34,13 @@ def encode(driver, out, *, wallet, module, vault, primary, rescue, fee_key, expe
         wallet_id=42,
         primary_key=primary.hex(),
         rescue_key=rescue.hex(),
-        policy=1,
-        fee_tree_id=f"{456:064x}",
+        policy=policy,
+        fee_tree_id=f"{tree_id:064x}",
         fee_public_key=fee_key.hex(),
         epoch0=native.NOW - 2 * 3600 - 10,
     )
+    if existing_wallet is not None:
+        payload["existing_wallet"] = f"{existing_wallet:064x}"
     result = subprocess.run(
         [str(driver.resolve())], input=json.dumps(payload), capture_output=True, text=True
     )

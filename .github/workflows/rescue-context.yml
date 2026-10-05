@@ -84,6 +84,8 @@ jobs:
           cmp /tmp/v5r2-fee-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/fee-wire.json
           python test/wallet-v5r2/sdk_genesis_vectors.py --output /tmp/v5r2-genesis-vectors.json
           cmp /tmp/v5r2-genesis-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/genesis-wire.json
+          python test/wallet-v5r2/sdk_genesis_vectors.py --successor --output /tmp/v5r2-successor-vectors.json
+          cmp /tmp/v5r2-successor-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/successor-wire.json
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2
       - name: Wallet SDK semantic deletion controls
         if: matrix.runner == 'ubuntu-24.04'

@@ -3,7 +3,9 @@
 // compiler; this executable does not authenticate a production release bundle.
 use chain_block::{Cell, read_single_root_boc, write_boc};
 use contracts::{
-    wallet_v5r2_genesis::{CodeBundle, CodeHashes, GenesisParameters, WalletGenesis},
+    wallet_v5r2_genesis::{
+        CodeBundle, CodeHashes, GenesisParameters, SuccessorDeployment, WalletGenesis,
+    },
     wallet_v5r2_pop::RescuePolicy,
 };
 use serde::Deserialize;
@@ -25,6 +27,7 @@ struct Input {
     fee_tree_id: String,
     fee_public_key: String,
     epoch0: u32,
+    existing_wallet: Option<String>,
 }
 fn bytes<const N: usize>(s: &str) -> anyhow::Result<[u8; N]> {
     hex::decode(s)?.try_into().map_err(|_| anyhow::anyhow!("field width"))
@@ -66,18 +69,32 @@ fn main() -> anyhow::Result<()> {
         },
     )?;
     let mut result = serde_json::Map::new();
-    for (name, cell) in [
-        ("module_data", g.module_data()),
-        ("module_init", g.module_init()),
-        ("metadata", g.metadata()),
-        ("wallet_data", g.wallet_data()),
-        ("wallet_init", g.wallet_init()),
-        ("vault_data", g.vault_data()),
-        ("vault_init", g.vault_init()),
-    ] {
-        result.insert(name.into(), hex::encode(write_boc(cell)?).into());
+    if let Some(owner) = i.existing_wallet {
+        let successor = SuccessorDeployment::new(g, bytes(&owner)?)?;
+        for (name, cell) in [
+            ("module_data", successor.module_data()),
+            ("module_init", successor.module_init()),
+            ("metadata", successor.metadata()),
+            ("vault_data", successor.vault_data()),
+            ("vault_init", successor.vault_init()),
+        ] {
+            result.insert(name.into(), hex::encode(write_boc(cell)?).into());
+        }
+        result.insert("config_hash".into(), hex::encode(successor.config_hash()).into());
+    } else {
+        for (name, cell) in [
+            ("module_data", g.module_data()),
+            ("module_init", g.module_init()),
+            ("metadata", g.metadata()),
+            ("wallet_data", g.wallet_data()),
+            ("wallet_init", g.wallet_init()),
+            ("vault_data", g.vault_data()),
+            ("vault_init", g.vault_init()),
+        ] {
+            result.insert(name.into(), hex::encode(write_boc(cell)?).into());
+        }
+        result.insert("config_hash".into(), hex::encode(g.config_hash()).into());
     }
-    result.insert("config_hash".into(), hex::encode(g.config_hash()).into());
     println!("{}", serde_json::Value::Object(result));
     Ok(())
 }

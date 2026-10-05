@@ -279,6 +279,43 @@ def main():
                 metadata=successor_metadata, wallet=wa[1], module=successor_root
             )
             successor_vault = native.state_init(vault, successor_vd)
+            if options.genesis_driver:
+                successor_cells = encode_genesis(
+                    options.genesis_driver,
+                    out / "sdk-successor.json",
+                    wallet=wallet,
+                    module=module,
+                    vault=vault,
+                    primary=successor_pk.read_bytes(),
+                    rescue=new_slh_pk,
+                    fee_key=successor_key,
+                    policy=2,
+                    tree_id=457,
+                    existing_wallet=wa[1],
+                    expected=dict(
+                        module_data=successor_data,
+                        module_init=successor_module,
+                        metadata=successor_metadata,
+                        vault_data=successor_vd,
+                        vault_init=successor_vault,
+                    ),
+                )
+                (
+                    successor_data,
+                    successor_module,
+                    successor_metadata,
+                    successor_vd,
+                    successor_vault,
+                ) = (
+                    successor_cells[name]
+                    for name in (
+                        "module_data",
+                        "module_init",
+                        "metadata",
+                        "vault_data",
+                        "vault_init",
+                    )
+                )
             module_amount, vault_amount = 10**10, 2 * 10**10
             plan = (
                 Cell()

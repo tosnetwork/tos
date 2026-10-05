@@ -1,5 +1,5 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
-//! Bind an authenticated initial fee vault to locally trusted genesis parameters.
+//! Bind an authenticated fee vault to locally trusted initial or recovery enrollment.
 //!
 //! Genesis code pins and keys must come from the reviewed release and local
 //! enrollment. This does not prove deployment of the wallet/module, successful
@@ -8,12 +8,12 @@ use crate::lms_fee_schedule::{
     Continuity, FeeRoute, LEAF_COUNT, ReservationPlan, SLOT_SECONDS, plan_reservation,
 };
 use crate::proven_getters::ProvenAccountState;
-use crate::wallet_v5r2_genesis::WalletGenesis;
+use crate::wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis};
 use chain_block::{Cell, CellType, SliceData};
 
 /// A bounded observation, not permission to reuse a signature or reserve a leaf.
 /// Construct again with fresh proofs/time before starting a signing operation.
-pub struct ProvenInitialFeeVault {
+pub struct ProvenFeeVault {
     route: FeeRoute,
     next_leaf: u32,
     proven_time: u32,
@@ -22,7 +22,18 @@ pub struct ProvenInitialFeeVault {
     max_age: u32,
 }
 
-impl ProvenInitialFeeVault {
+/// Compatibility name for callers binding initial enrollment.
+pub type ProvenInitialFeeVault = ProvenFeeVault;
+
+struct Enrollment<'a> {
+    module_data: &'a Cell,
+    metadata: &'a Cell,
+    vault_data: &'a Cell,
+    vault_init: &'a Cell,
+    config_hash: &'a [u8; 32],
+}
+
+impl ProvenFeeVault {
     /// `now` is the trusted local clock, not endpoint-provided time. Both the
     /// masterchain and shard observation must be recent, and in the local
     /// current slot. Only live proofs may be used to start new signatures.
@@ -33,14 +44,57 @@ impl ProvenInitialFeeVault {
         now: u32,
         max_age: u32,
     ) -> anyhow::Result<Self> {
+        Self::bind_enrollment(
+            state,
+            Enrollment {
+                module_data: genesis.module_data(),
+                metadata: genesis.metadata(),
+                vault_data: genesis.vault_data(),
+                vault_init: genesis.vault_init(),
+                config_hash: genesis.config_hash(),
+            },
+            now,
+            max_age,
+        )
+    }
+
+    /// Bind the proven successor vault to locally enrolled recovery witnesses.
+    /// This proves vault identity/state, not preparation delivery, module POP,
+    /// or installation in the wallet. Verify those separately before migration.
+    pub fn bind_successor(
+        state: &ProvenAccountState,
+        successor: &SuccessorDeployment,
+        now: u32,
+        max_age: u32,
+    ) -> anyhow::Result<Self> {
+        Self::bind_enrollment(
+            state,
+            Enrollment {
+                module_data: successor.module_data(),
+                metadata: successor.metadata(),
+                vault_data: successor.vault_data(),
+                vault_init: successor.vault_init(),
+                config_hash: successor.config_hash(),
+            },
+            now,
+            max_age,
+        )
+    }
+
+    fn bind_enrollment(
+        state: &ProvenAccountState,
+        genesis: Enrollment<'_>,
+        now: u32,
+        max_age: u32,
+    ) -> anyhow::Result<Self> {
         let evidence = state.evidence();
         anyhow::ensure!(evidence.live, "fee signing requires a live proof");
-        let vault = *genesis.vault_init().repr_hash().as_array();
+        let vault = *genesis.vault_init.repr_hash().as_array();
         anyhow::ensure!(
             evidence.account.address == format!("0:{}", hex::encode(vault)),
             "proven vault address does not match enrollment"
         );
-        let mut init = SliceData::load_cell(genesis.vault_init().clone())?;
+        let mut init = SliceData::load_cell(genesis.vault_init.clone())?;
         let code = init.checked_drain_reference()?;
         anyhow::ensure!(
             evidence.account.code_hash == code.repr_hash().to_hex_string(),
@@ -48,12 +102,12 @@ impl ProvenInitialFeeVault {
         );
         let data =
             state.account().get_data().ok_or_else(|| anyhow::anyhow!("vault has no data"))?;
-        let next_leaf = checked_counter(&data, genesis.vault_data())?;
-        let mut module = SliceData::load_cell(genesis.module_data().clone())?;
+        let next_leaf = checked_counter(&data, genesis.vault_data)?;
+        let mut module = SliceData::load_cell(genesis.module_data.clone())?;
         module.get_next_byte()?;
         let global_id = i32::from_be_bytes(module.get_next_u32()?.to_be_bytes());
         let network = *module.get_next_hash()?.as_array();
-        let mut metadata = SliceData::load_cell(genesis.metadata().clone())?;
+        let mut metadata = SliceData::load_cell(genesis.metadata.clone())?;
         metadata.move_by(16)?;
         let tree_id = *metadata.get_next_hash()?.as_array();
         let epoch0 = metadata.get_next_u32()?;
@@ -62,7 +116,7 @@ impl ProvenInitialFeeVault {
             route: FeeRoute { global_id, network, vault, tree_id, epoch0 },
             next_leaf,
             proven_time: evidence.account.gen_utime,
-            config_hash: *genesis.config_hash(),
+            config_hash: *genesis.config_hash,
             master_time: evidence.block_gen_utime,
             max_age,
         })

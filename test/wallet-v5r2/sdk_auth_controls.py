@@ -176,6 +176,12 @@ def main():
     if args.genesis:
         cases = [
             (
+                "successor_parties",
+                "wallet != module_hash",
+                "true",
+                "independent_successor_vectors",
+            ),
+            (
                 "code_pin",
                 "*code.repr_hash().as_array() == pin",
                 "true",
@@ -214,7 +220,7 @@ def main():
             (
                 "paired_metadata",
                 "config.checked_append_reference(metadata.clone())?;",
-                "config.checked_append_reference(module_init.clone())?;",
+                "config.checked_append_reference(key.clone())?;",
                 "independent_genesis_vectors",
             ),
         ]
