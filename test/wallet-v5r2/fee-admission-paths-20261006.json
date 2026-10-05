@@ -1,0 +1,347 @@
+{
+  "base_commit": "fe3d92b3fd2d9f717baeb85b02add4268772a5a4",
+  "release_gate": "FAILED: all current paths exceed unchanged 10000 default credit; diagnostic configuration is not release acceptance.",
+  "paths": {
+    "auth": {
+      "credit_probe": {
+        "default_credit": 10000,
+        "minimum_accept_credit": 11689,
+        "production_admission_passed": false,
+        "downstream_diagnostic_credit": 20000
+      },
+      "lms_opcode_gas": 6135,
+      "other_preaccept_gas": 5528,
+      "replay_exit": 2004,
+      "failure_exits": {
+        "invalid_fee_signature": 2007,
+        "insufficient_reserve": 2008
+      },
+      "vault_exit": 0,
+      "module_exit": 0,
+      "wallet_exit": 0,
+      "recipient_exit": 0
+    },
+    "pop_primary": {
+      "credit_probe": {
+        "default_credit": 10000,
+        "minimum_accept_credit": 12034,
+        "production_admission_passed": false,
+        "downstream_diagnostic_credit": 20000
+      },
+      "lms_opcode_gas": 6135,
+      "other_preaccept_gas": 5873,
+      "replay_exit": 2004,
+      "failure_exits": {
+        "invalid_fee_signature": 2007,
+        "insufficient_reserve": 2008
+      },
+      "vault_exit": 0,
+      "module_exit": 0,
+      "wallet_exit": null,
+      "recipient_exit": null
+    },
+    "pop_rescue": {
+      "credit_probe": {
+        "default_credit": 10000,
+        "minimum_accept_credit": 12034,
+        "production_admission_passed": false,
+        "downstream_diagnostic_credit": 20000
+      },
+      "lms_opcode_gas": 6135,
+      "other_preaccept_gas": 5873,
+      "replay_exit": 2004,
+      "failure_exits": {
+        "invalid_fee_signature": 2007,
+        "insufficient_reserve": 2008
+      },
+      "vault_exit": 0,
+      "module_exit": 0,
+      "wallet_exit": null,
+      "recipient_exit": null
+    }
+  },
+  "primitive_checks": {
+    "cells": 20,
+    "bounds": 524,
+    "independent_deleted_guard_controls": 6
+  },
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "sha256": "827e527962e79d02249e510bb109e9fdda3b54e922168c85dacbcc6573a6c99a",
+      "bytes": 5060
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_cells.py",
+      "sha256": "52267164bd1c2f5860a20e04bfcded463f8afd33a87989b0c38b6648b08ec780",
+      "bytes": 4622
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_bounds.py",
+      "sha256": "26573c12265cf80eab59d02621b4881123e1c27a422e6517d8a3cf9ce45fa2ed",
+      "bytes": 4254
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "sha256": "c18f2ec659612860588596f4c74f11a2350ca459d33b405176f5f42779ab04c8",
+      "bytes": 15119
+    },
+    {
+      "path": "test/auth-extensions/native.py",
+      "sha256": "ab29b8dbd3b301c312dfe17b4a5b602f57bafae8fe7baf5f75207e41ca66531c",
+      "bytes": 7096
+    },
+    {
+      "path": ".github/workflows/auth-extension-validation.yml",
+      "sha256": "994b5d1b578a5a029dfcf152ed6b8fe4aea243cf6e66cc8520dde8935bb8a55f",
+      "bytes": 3886
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/credit-probe.json",
+      "sha256": "28927a1c9f81716a30d0c174577992b79a71180a8bbe3c5eb22a5224e0a01c97",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/gas-profile.json",
+      "sha256": "43dba28f4bd77f9f7be11e8a086d3ccf2089aa20fa870e53687081da669c134a",
+      "bytes": 1234
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/default-credit-result.json",
+      "sha256": "34c48d1d3d883c20e3aec865ba4c080c136eed9f1a9a088c8e21d3544d480ce1",
+      "bytes": 26060
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/results.json",
+      "sha256": "79c3f60bc3260cadfd4cb3cf0a1a04d58874d40bf7a474e589442bdb8b889bdf",
+      "bytes": 1531
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/vault-result.json",
+      "sha256": "1936b3cd3121a10c709ee2973d103cb7018de97125534a6037e6f86ddead31af",
+      "bytes": 58119
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/module-result.json",
+      "sha256": "b163f0842b679289f9a0146efe5ba42a8be7c0dfd80bc4cd89ebcc2b8348f60c",
+      "bytes": 110295
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/failure-results.json",
+      "sha256": "0adb719a0c5ea37933e9dbeefb5bf89e084a943f587984278c2e351d63f0b2e1",
+      "bytes": 52101
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/replay-result.json",
+      "sha256": "17445937e5d3d3017c4c99146c880a27bac538d1788c7be6d02e8c6dfd24b636",
+      "bytes": 10823
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/wallet-result.json",
+      "sha256": "2cc9a06b9f2a66e0e6d38e62cd407f137038c80c0e74d3acc9a19b158bb22bbc",
+      "bytes": 1083252
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/recipient-result.json",
+      "sha256": "25697dd41042546fc5d6a29e7d0338b1761412a8084be1ea29897604f611ca88",
+      "bytes": 2755
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop1/credit-probe.json",
+      "sha256": "c4609a0512e8c9b01f392e139ace02f7c3044a0cf98dd78bde0aae58b5c4a578",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop1/gas-profile.json",
+      "sha256": "2502c9c615b263ac04b0224c2e8fae4520b51dd4eb7ad4a8779c2e645fddfa06",
+      "bytes": 1210
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop1/default-credit-result.json",
+      "sha256": "aed7dbbc16b98abe4eb3e6c176a0debec48ef9d95da0475f1e4812fde14d4fe4",
+      "bytes": 27937
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop1/results.json",
+      "sha256": "33d7d59f9e446e949142e1e568e8048ed41e84491c50fe7e2640c894a4cf59c6",
+      "bytes": 1184
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop1/vault-result.json",
+      "sha256": "604901e08573612063a597828f6612b05fc1c393149d8772f512738bd6c8d74b",
+      "bytes": 45118
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop1/module-result.json",
+      "sha256": "f6a6238882347ee9a1ad3492ad4e27defe18b5d830ae496e2f01d1700f991396",
+      "bytes": 100123
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop1/failure-results.json",
+      "sha256": "2334aeca60ce4af6d7064e8b590d44c43e58648e60a359f4c4c3b3c2c99ffac5",
+      "bytes": 55882
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop1/replay-result.json",
+      "sha256": "c781a550aa0be7bbc93cd25c2402bc493dfd040dd6fdb3852cdbf18db5946f68",
+      "bytes": 10823
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop2/credit-probe.json",
+      "sha256": "c4609a0512e8c9b01f392e139ace02f7c3044a0cf98dd78bde0aae58b5c4a578",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop2/gas-profile.json",
+      "sha256": "2502c9c615b263ac04b0224c2e8fae4520b51dd4eb7ad4a8779c2e645fddfa06",
+      "bytes": 1210
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop2/default-credit-result.json",
+      "sha256": "b48f910ccc3bcbfab094929a20348948fc8c26f61b373f8aa5cc5557b87eb226",
+      "bytes": 27937
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop2/results.json",
+      "sha256": "c692bd256e66c8d01e5ba88276374c0d85d6739c995a5ab48b9c2e640f717a19",
+      "bytes": 1185
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop2/vault-result.json",
+      "sha256": "9897069a7e7844f5c1db7195c04afd8ff829c1ddf58ea990c3bd30861dee3ed1",
+      "bytes": 59954
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop2/module-result.json",
+      "sha256": "37455b738ef538c79e6d1e478190dc124819963217a5cecd2a92f49cb8d58bda",
+      "bytes": 108472
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop2/failure-results.json",
+      "sha256": "ac83833f3ad57e66056c800eb1f8b73aa7c9f0f58b9ac8873e60144ec5caab50",
+      "bytes": 55884
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop2/replay-result.json",
+      "sha256": "836e22ab80933ea17168cda7cba1b58d7862c29ebd112c11498dfe394b64dbce",
+      "bytes": 10823
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/results.json",
+      "sha256": "5706a61d9e183bc61c534ec55ad30e0b35a0416a34e37a2dac6be1a96ce1bd80",
+      "bytes": 3951
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_child_special-child_library.json",
+      "sha256": "2a49bec40d699fc3e34d01d1aa03a89d67cd06e12442aa2227458eb8e244d62b",
+      "bytes": 1892
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_child_special-child_ordinary.json",
+      "sha256": "356792c5687f5a28e9da1d40a5c97cb3eb0fee4d10a73bc6f5d759077b2c5491",
+      "bytes": 1848
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_child_special-inherited_nonzero_level.json",
+      "sha256": "d8b19b6bac2984e627d92876201074ec79dbcf66d02ab2d6d5ca513de8256201",
+      "bytes": 2032
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_child_special-ordinary.json",
+      "sha256": "f23940cf601aae7f6df3129ca9b8ec4a159602551097b33574a980241296cb84",
+      "bytes": 1765
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_child_special-root_library.json",
+      "sha256": "6dfe634f9ea39843980d6596ce2779c5e6f44a8a2111a0998d16885c7e430454",
+      "bytes": 1566
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_level-child_library.json",
+      "sha256": "e351c9ad1b7ce7184f882025b8a66c7d8ae388c89aeb8235f480e86f1a75e2a5",
+      "bytes": 1628
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_level-child_ordinary.json",
+      "sha256": "4cbee2c7003777e44111df11673a7dd8130edb4703837b88368de9aa08764825",
+      "bytes": 1774
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_level-inherited_nonzero_level.json",
+      "sha256": "e8b1630f6a1eba2207e9d59d72bb8b819751acfb451b469af516322d60757d90",
+      "bytes": 2279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_level-ordinary.json",
+      "sha256": "15882c56e19bc5cfd66433eda48992b39c1bf3af8d0977d31ad70cc395ec8317",
+      "bytes": 1683
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_level-root_library.json",
+      "sha256": "202839d303e0730d6c2063434e455aff32f53f030180231dbb35db63500ac3ed",
+      "bytes": 1480
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_special-child_library.json",
+      "sha256": "673bfaf2c64013ac71576941cea22fb6d2c072181202f9bcfc085372567460d9",
+      "bytes": 1693
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_special-child_ordinary.json",
+      "sha256": "05487e8601e5d185ecaf824c09dc18d38ac84e213e099f3522c41ca6cc7bfa23",
+      "bytes": 1839
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_special-inherited_nonzero_level.json",
+      "sha256": "fc2c7904530b98fc0619cb4a7945c3a1c44d2b0afde2424fa7992e7f0896a438",
+      "bytes": 2011
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_special-ordinary.json",
+      "sha256": "6644d12b7f8a0f851458764e07fb192299f5c7a5b4320d32c7c1a50c21a83912",
+      "bytes": 1748
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/cells/deleted_root_special-root_library.json",
+      "sha256": "cdb6d6734755abb7dc3c6f7ccb54f630a172c4d9b0669caaabdfc80e523f6fd4",
+      "bytes": 1791
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/bounds/results.json",
+      "sha256": "0200ef15f896db9f83e57c9804bf140cf83fab3109f91a673e0ad4635b4f7426",
+      "bytes": 243
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/bounds/deadline-deleted.json",
+      "sha256": "53fef9c2ff02d1e3e8d9e2bd81c1a46906b3d57c21810d9e2c6cbdd1c533ffc3",
+      "bytes": 1323
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/bounds/kind-deleted.json",
+      "sha256": "8da975416d658cd746069681d2cc71dedb30692439342eef686e53bdff18b524",
+      "bytes": 1319
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/bounds/role-deleted.json",
+      "sha256": "17b6b2c7c4d2e8aa511313f5a5652e559cd5969d529c9d14259cb5bf440556f8",
+      "bytes": 1318
+    }
+  ],
+  "commands": [
+    "python test/wallet-v5r2/test_fee_cells.py --output <auth>/cells",
+    "python test/wallet-v5r2/test_fee_bounds.py --output <auth>/bounds",
+    "python test/wallet-v5r2/test_fee_delivery.py --credit-probe --gas-trace --output <auth>",
+    "python test/wallet-v5r2/test_fee_delivery.py --pop-role 1 --credit-probe --gas-trace --output <pop_primary>",
+    "python test/wallet-v5r2/test_fee_delivery.py --pop-role 2 --credit-probe --gas-trace --output <pop_rescue>"
+  ],
+  "retention": "Retain local raw receipts through PR review and release acceptance. Deterministic public test LMS trees remain outside Git.",
+  "remaining": [
+    "Default-credit admission with worst-case headroom for every class",
+    "Full-envelope malformed-input and post-ACCEPT failure mutations",
+    "Class 3 preparation and fee handoff",
+    "Both-VM/reference hardware gates",
+    "Complete client and restore lifecycle, security review and activation gates"
+  ]
+}

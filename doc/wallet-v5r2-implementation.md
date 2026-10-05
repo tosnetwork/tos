@@ -288,7 +288,7 @@ parties hash derived by `r2pair_data`; wallet/module witness validation compares
 whole reconstructed data hash. Arbitrary caches cannot be installed as a paired
 route. The public tree id and full metadata remain committed by the config hash.
 
-The measured SUB3 path requires **12,225 gas to reach ACCEPT**, exceeding the
+The measured SUB3 path requires **11,689 gas to reach ACCEPT**, exceeding the
 unchanged default **10,000**. This is a failed release gate. No credit or tariff
 change is made to production configuration and no check is moved after ACCEPT.
 The 1024-cell envelope, compute/storage bounds and class limits are provisional
@@ -308,12 +308,34 @@ Resolve the credit gap while retaining fail-closed signature, class, identity,
 value and solvency checks, then test all classes, failure paths and both VMs before
 freezing the dependency identities or publishing any code artifact.
 
-The 2026-10-06 equivalent ordinary-cell predicate reduces this measured admission
-cost by 188 gas. Both exotic and nonzero-level cells remain disallowed. The new
-`test_fee_cells.py` exercises the actual helper with ordinary and exotic library
-cells; deleting its guard produces unsafe acceptance, proving sensitivity for the
-exotic-cell rejection. This does not yet establish nonzero-level fixture coverage.
-`--gas-trace` records native instruction costs: 6,135 gas for LMSCHECKFEEHASH,
-6,064 for the remaining pre-ACCEPT execution, and 26 for ACCEPT itself. The native
-opcode includes byte-chain parsing and cryptographic work; this measurement is
-not a hardware repricing justification. See `test/wallet-v5r2/fee-optimization-20261006.json`.
+The 2026-10-06 predicate optimizations retain rejection of exotic cells and
+nonzero cell levels. Ordinary parent cells inherit their children's level masks;
+a checked ordinary level-zero parent therefore bounds each direct child's level.
+The three child parsing sites still explicitly reject exotic children. The
+native VM fixture constructs a real level-one pruned branch and ordinary ancestors
+to verify this inheritance; removing the parent-level guard admits that forbidden
+case. Independently removing the root or child exotic guard admits a library cell.
+`test_fee_cells.py` covers 20 cases and three deletion controls. No exotic-cell
+support was added to the default Python decoder.
+
+`test_fee_bounds.py` compares the exact production class/role/TTL predicates with
+independent specification bounds: all 256 class and role values, deadline extremes
+and TTL boundary cases, plus three guard deletion controls (524 cases total).
+Floor division checks TTL [1, 3600]; signed right shift checks class/role {1, 2}.
+The native AUTH workflow now runs and retains both suites; wiring is not evidence
+that remote CI has passed on this revision.
+
+The delivery runner's `--pop-role 1` and `--pop-role 2` now exercise actual fee vault
+payments for ML-DSA and SLH POP. Both require **12,034 gas** at ACCEPT, still exceeding
+default credit. Diagnostic 20,000-credit transactions verify POP without module
+data changes, outgoing authorization messages or spending its pre-message funds.
+Both also reject replay, corrupt LMS signatures and insufficient reserves. Wallet
+and recipient receipt fields are null for POP, rather than claiming a payment.
+The class-1 four-hop AUTH delivery remains separately checked. These are candidate
+bounds, not worst-case production headroom or both-VM acceptance.
+
+`--gas-trace` retains instruction accounting. LMSCHECKFEEHASH remains 6,135 gas;
+other execution before ACCEPT is 5,528 for AUTH and 5,873 for POP, plus 26 for ACCEPT.
+The native opcode includes byte-chain parsing and cryptographic work; this is not
+a hardware repricing justification. See
+`test/wallet-v5r2/fee-admission-paths-20261006.json` for source-bound receipts.

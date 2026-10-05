@@ -1,4 +1,4 @@
-"""Real LMS external fee -> SLH module -> complete PQ-only receiver; candidate limits."""
+"""Real LMS fee delivery for wallet AUTH or non-authorizing per-key POP; candidate limits."""
 
 import argparse
 import json
@@ -18,6 +18,8 @@ from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 from test_auth_policy import policy as global_policy  # noqa: E402
 from test_fee_identity import vault_data  # noqa: E402
 from test_identity import chain  # noqa: E402
+from test_pop import challenge as pop_challenge  # noqa: E402
+from test_pop import signed as pop_signed  # noqa: E402
 from test_receiver_auth import request  # noqa: E402
 from test_rescue_e2e import Signers, digest  # noqa: E402
 from test_state import fee, state  # noqa: E402
@@ -32,6 +34,7 @@ def main():
         help="Measure required credit without changing protocol defaults",
     )
     p.add_argument("--gas-trace", action="store_true", help="Retain instruction gas accounting")
+    p.add_argument("--pop-role", type=int, choices=(1, 2), help="Exercise fee-funded per-key POP")
     options = p.parse_args()
     out = options.output
     out.mkdir(parents=True, exist_ok=True)
@@ -94,17 +97,30 @@ def main():
         payment = native.internal(wa, recipient, Cell(), value=1_000_000_000)
         actions = Cell().uint(0x0EC3C86D, 32).uint(3, 8).ref(Cell()).ref(payment)
         req = request(root=root, role=2, account=wa, body=Cell().uint(0x45584543, 32).ref(actions))
-        submit = Cell().uint(0x53554233, 32).ref(req).ref(chain(signer.slh(digest(req))))
+        if options.pop_role:
+            req = pop_challenge(
+                root,
+                int.from_bytes(chain(signer.ml_pk.read_bytes()).hash, "big"),
+                int.from_bytes(signer.slh_pk, "big"),
+                role=options.pop_role,
+                account=wa,
+            )
+            submit = (
+                Cell().uint(0x50505333, 32).ref(req).ref(pop_signed(signer, req, options.pop_role))
+            )
+        else:
+            submit = Cell().uint(0x53554233, 32).ref(req).ref(chain(signer.slh(digest(req))))
+        amount = 5_000_000_000
         intent = (
             Cell()
             .uint(0x46454534, 32)
             .raw(b"TOS-RESCUE-FEE-v1")
-            .uint(1, 8)
+            .uint(2 if options.pop_role else 1, 8)
             .addr(va)
             .uint(vd.slice().uint(8 + 32 + 256) & ((1 << 256) - 1), 256)
             .uint(8, 32)
             .uint(native.NOW + 600, 32)
-            .coins(5_000_000_000)
+            .coins(amount)
             .ref(submit)
         )
         msg = work / "message"
@@ -213,7 +229,7 @@ def main():
             bad = e.send(initial, invalid)
             assert not bad["success"] and bad.get("vm_exit_code") == 2007, bad
             failures["invalid_fee_signature"] = bad["vm_exit_code"]
-            poor = e.send(native.active_account(va, vault, vd, balance=5_000_000_000), ext)
+            poor = e.send(native.active_account(va, vault, vd, balance=amount), ext)
             assert not poor["success"] and poor.get("vm_exit_code") == 2008, poor
             failures["insufficient_reserve"] = poor["vm_exit_code"]
             (out / "failure-results.json").write_text(
@@ -229,31 +245,43 @@ def main():
             (out / "module-result.json").write_text(json.dumps(relayed, indent=2) + "\n")
             assert relayed["success"] and relayed["details"]["exit"] == 0, relayed
             messages = native.outgoing(from_boc(relayed["transaction"]))
-            assert len(messages) == 1
-            executed = e.send(native.active_account(wa, wallet, wd, balance=10**15), messages[0])
-            (out / "wallet-result.json").write_text(json.dumps(executed, indent=2) + "\n")
-            assert executed["success"] and executed["details"]["exit"] == 0, executed
-            assert len(native.outgoing(from_boc(executed["transaction"]))) == 1
-            outgoing = native.outgoing(from_boc(executed["transaction"]))[0]
-            delivered = e.send(
-                native.active_account(
-                    recipient, recipient_code, recipient_data, balance=1_000_000_000
-                ),
-                outgoing,
-            )
-            assert (
-                delivered["success"]
-                and delivered["details"]["exit"] == 0
-                and not delivered["details"]["aborted"]
-            ), delivered
-            recipient_after, recipient_balance = native.account_data(
-                from_boc(delivered["shard_account"])
-            )
-            assert (
-                recipient_after.hash == Cell().uint(1, 32).hash
-                and recipient_balance > 1_000_000_000
-            )
-            (out / "recipient-result.json").write_text(json.dumps(delivered, indent=2) + "\n")
+            executed = delivered = None
+            if options.pop_role:
+                assert not relayed["details"]["aborted"] and not messages, (
+                    "POP emitted authorization"
+                )
+                module_after, module_balance = native.account_data(
+                    from_boc(relayed["shard_account"])
+                )
+                assert module_after.hash == md.hash and module_balance >= 10**12
+            else:
+                assert len(messages) == 1
+                executed = e.send(
+                    native.active_account(wa, wallet, wd, balance=10**15), messages[0]
+                )
+                (out / "wallet-result.json").write_text(json.dumps(executed, indent=2) + "\n")
+                assert executed["success"] and executed["details"]["exit"] == 0, executed
+                assert len(native.outgoing(from_boc(executed["transaction"]))) == 1
+                outgoing = native.outgoing(from_boc(executed["transaction"]))[0]
+                delivered = e.send(
+                    native.active_account(
+                        recipient, recipient_code, recipient_data, balance=1_000_000_000
+                    ),
+                    outgoing,
+                )
+                assert (
+                    delivered["success"]
+                    and delivered["details"]["exit"] == 0
+                    and not delivered["details"]["aborted"]
+                ), delivered
+                recipient_after, recipient_balance = native.account_data(
+                    from_boc(delivered["shard_account"])
+                )
+                assert (
+                    recipient_after.hash == Cell().uint(1, 32).hash
+                    and recipient_balance > 1_000_000_000
+                )
+                (out / "recipient-result.json").write_text(json.dumps(delivered, indent=2) + "\n")
             vault_after = native.account_data(from_boc(paid["shard_account"]))[0]
             vs = vault_after.slice()
             assert vs.uint(8) == 3 and vs.uint(32) == 9
@@ -263,11 +291,12 @@ def main():
 
             report = {
                 "scope": __doc__,
+                "pop_role": options.pop_role,
                 "credit_probe": credit_probe,
                 "vault": paid["details"],
                 "module": relayed["details"],
-                "wallet": executed["details"],
-                "recipient": delivered["details"],
+                "wallet": executed["details"] if executed else None,
+                "recipient": delivered["details"] if delivered else None,
                 "replay_exit": replay["vm_exit_code"],
                 "failure_exits": failures,
                 "addresses": {

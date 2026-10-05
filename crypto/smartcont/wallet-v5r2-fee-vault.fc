@@ -13,6 +13,14 @@ slice r2fee_ordinary(cell c) impure inline {
   throw_if(2012, special | r2fee_level(c));
   return s;
 }
+;; Only for a direct child of an ordinary level-zero parent. An ordinary
+;; parent's level mask includes every child's mask, so child level is already
+;; constrained to zero. Exotic children still require explicit rejection.
+slice r2fee_child(cell c) impure inline {
+  (slice s, int special) = r2fee_raw(c);
+  throw_if(2012, special);
+  return s;
+}
 (slice, ()) r2fee_intent_prefix(slice s) asm "x{46454534544f532d5245534355452d4645452d7631} SDBEGINS";
 (slice, ()) r2fee_prefix(slice s, slice prefix) asm "SDBEGINSX";
 const int r2fee::max_cells = 1024;
@@ -41,12 +49,12 @@ const int r2fee::storage_horizon = 33554432;
   slice module = ds~load_msg_addr();
   int pop_parties = ds~load_uint(256);
   cell key = ds~load_ref();
-  slice prefix = r2fee_ordinary(ds~load_ref());
+  slice prefix = r2fee_child(ds~load_ref());
   ds.end_parse();
   slice is = r2fee_ordinary(intent);
   is~r2fee_intent_prefix();
   int kind = is~load_uint(8);
-  throw_unless(2012, (kind == 1) | (kind == 2));
+  throw_if(2012, (kind - 1) >> 1); ;; exactly 1 or 2, including rejection of zero
   r2fee_address(my_address());
   throw_unless(2002, equal_slice_bits(is~load_msg_addr(), my_address()));
   throw_unless(2013, is~load_uint(256) == expected_header);
@@ -57,12 +65,13 @@ const int r2fee::storage_horizon = 33554432;
   is.end_parse();
   ;; Fixed digest domain, distinct from AUTH/POP/preparation signatures.
   throw_unless(2004, (leaf >= next_leaf) & (leaf < 1048576));
-  throw_unless(2003, (deadline > now()) & (deadline <= now() + 3600));
+  ;; TVM division rounds down: this is zero exactly for TTL in [1, 3600].
+  throw_if(2003, (deadline - now() - 1) / 3600);
   int slot = (now() - epoch0) / 3600;
   throw_if(2009, (slot - (leaf / 4)) >> 1);
-  slice ps = r2fee_ordinary(payload);
+  slice ps = r2fee_child(payload);
   throw_unless(2012, ps~load_uint(32) == (kind == 1 ? 0x53554233 : 0x50505333));
-  slice request = r2fee_ordinary(ps~load_ref());
+  slice request = r2fee_child(ps~load_ref());
   ps~load_ref(); ;; module verifies the inner PQ signature
   ps.end_parse();
   if (kind == 1) {
@@ -76,7 +85,7 @@ const int r2fee::storage_horizon = 33554432;
     slice namespace = prefix.skip_bits(32).preload_bits(288);
     request~r2fee_prefix(namespace);
     int role = request~load_uint(8);
-    throw_unless(2012, (role == 1) | (role == 2));
+    throw_if(2012, (role - 1) >> 1);
     request~skip_bits(256 + 32);
     throw_unless(2013, cell_hash(request~load_ref()) == pop_parties);
     request~load_ref();

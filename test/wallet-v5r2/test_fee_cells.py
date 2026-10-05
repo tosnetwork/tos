@@ -1,4 +1,4 @@
-"""Exercise the fee vault's actual ordinary-cell guard and its deletion control."""
+"""Exercise the fee vault's actual cell guards, level inheritance, and deletion controls."""
 
 import argparse
 import json
@@ -28,42 +28,71 @@ def main():
             "() recv_external(", "() fee_external("
         )
         driver = """
+cell fixture_special(builder b, int special) asm "ENDXC";
 () recv_internal(slice body) impure {
-  slice parsed = r2fee_ordinary(body~load_ref());
+  int fixture = body~load_uint(8);
+  cell input = body~load_ref();
   body.end_parse();
+  if (fixture == 2) {
+    ;; A genuine level-one pruned branch, created inside the VM. It never enters
+    ;; the ordinary-only Python codec or a transaction's persistent outputs.
+    cell pruned = fixture_special(begin_cell().store_uint(1, 8).store_uint(1, 8)
+        .store_uint(123, 256).store_uint(0, 16), -1);
+    cell child = begin_cell().store_uint(456, 16).store_ref(pruned).end_cell();
+    input = begin_cell().store_ref(child).end_cell();
+    throw_unless(777, (r2fee_level(input) == 1) & (r2fee_level(child) == 1));
+  }
+  slice parsed = r2fee_ordinary(input);
+  if (fixture != 0) { parsed = r2fee_child(parsed~load_ref()); }
   set_data(begin_cell().store_uint(slice_bits(parsed), 16).end_cell());
 }
 """
         guard = "throw_if(2012, special | r2fee_level(c));"
-        assert source.count(guard) == 1
-        for mutant in (False, True):
-            (work / "driver.fc").write_text(
-                (source.replace(guard, "") if mutant else source) + driver
-            )
-            label = "deleted_guard" if mutant else "production_guard"
+        child_guard = "throw_if(2012, special);"
+        assert source.count(guard) == 1 and source.count(child_guard) == 1
+        variants = {
+            "production": source,
+            "deleted_root_special": source.replace(guard, "throw_if(2012, r2fee_level(c));"),
+            "deleted_root_level": source.replace(guard, "throw_if(2012, special);"),
+            "deleted_child_special": source.replace(child_guard, ""),
+        }
+        for label, variant in variants.items():
+            (work / "driver.fc").write_text(variant + driver)
             code = native.compile_contract(str(work / "driver.fc"), out / f"{label}.boc")
             emulator = native.Emulator(17)
             try:
-                for name, candidate, expected in (
-                    ("ordinary", Cell().uint(123, 16), 0),
-                    ("library", LibraryReference(123), 0 if mutant else 2012),
+                for name, fixture, candidate, output_bits, rejected_by in (
+                    ("ordinary", 0, Cell().uint(123, 16), 16, None),
+                    ("root_library", 0, LibraryReference(123), 264, "deleted_root_special"),
+                    ("child_ordinary", 1, Cell().ref(Cell().uint(123, 16)), 16, None),
+                    (
+                        "child_library",
+                        1,
+                        Cell().ref(LibraryReference(123)),
+                        264,
+                        "deleted_child_special",
+                    ),
+                    ("inherited_nonzero_level", 2, Cell(), 16, "deleted_root_level"),
                 ):
+                    expected = 2012 if rejected_by and label != rejected_by else 0
                     initial = Cell().uint(999, 16)
                     result = send_with_library_fixture(
                         emulator,
                         native.active_account((0, 100), code, initial),
-                        native.internal((0, 101), (0, 100), Cell().ref(candidate), value=10**11),
+                        native.internal(
+                            (0, 101), (0, 100), Cell().uint(fixture, 8).ref(candidate), value=10**11
+                        ),
                     )
                     assert result["success"] and result["details"]["exit"] == expected, result
                     after = native.account_data(from_boc(result["shard_account"]))[0]
-                    target = initial if expected else Cell().uint(len(candidate.bits), 16)
+                    target = initial if expected else Cell().uint(output_bits, 16)
                     assert after.hash == target.hash
                     results[f"{label}/{name}"] = result["details"]
                     (out / f"{label}-{name}.json").write_text(json.dumps(result, indent=2) + "\n")
             finally:
                 emulator.close()
     (out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("4 cell guard cases passed, including unsafe acceptance after guard deletion")
+    print("20 cell guard cases passed; 3 independent guard deletion controls")
 
 
 if __name__ == "__main__":
