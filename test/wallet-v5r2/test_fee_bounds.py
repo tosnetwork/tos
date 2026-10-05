@@ -20,6 +20,13 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     source = (ROOT / "crypto/smartcont/wallet-v5r2-fee-vault.fc").read_text()
     cases = {
+        "tag": (
+            "throw_if(2017, (tag - 0xdd) >> 1);",
+            8,
+            range(256),
+            lambda x: x in (0xDD, 0xDE),
+            2017,
+        ),
         "kind": ("throw_if(2012, (kind - 1) >> 1);", 8, range(256), lambda x: x in (1, 2), 2012),
         "role": ("throw_if(2012, (role - 1) >> 1);", 8, range(256), lambda x: x in (1, 2), 2012),
         "deadline": (
@@ -89,7 +96,9 @@ def main():
                     emulator.close()
             summaries[name] = {"cases": count, "deleted_guard_forbidden_input_exit": 0}
     (out / "results.json").write_text(json.dumps(summaries, indent=2) + "\n")
-    print(f"{sum(s['cases'] for s in summaries.values())} cases passed; 3 guard deletion controls")
+    print(
+        f"{sum(s['cases'] for s in summaries.values())} cases passed; {len(cases)} guard deletion controls"
+    )
 
 
 if __name__ == "__main__":

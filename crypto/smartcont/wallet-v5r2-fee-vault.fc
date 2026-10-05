@@ -41,7 +41,7 @@ int r2fee_gas_limit() impure inline {
     prices~skip_bits(128);
     tag = prices~load_uint(8);
   }
-  throw_unless(2017, (tag == 0xdd) | (tag == 0xde));
+  throw_if(2017, (tag - 0xdd) >> 1); ;; exactly legacy 0xdd or extended 0xde
   return prices.skip_bits(64).preload_uint(64);
 }
 
