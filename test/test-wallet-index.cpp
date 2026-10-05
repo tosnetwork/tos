@@ -35,7 +35,9 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -51,6 +53,8 @@
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 #include "vm/cells/CellBuilder.h"
+
+#include "wallet-index-chain-fixture.h"
 
 namespace {
 
@@ -661,6 +665,8 @@ using tos_wallet_index::TokenCandidate;
 using tos_wallet_index::TokenKind;
 
 const tos::ShardIdFull kWholeBasechain{0, tos::shardIdAll};
+// The end logical time of the blocks these tests schedule for.
+constexpr uint64_t kTestLt = 1000;
 
 // An address in queue (bucket) `top`; `n` makes it distinct within the queue.
 td::Bits256 token_address(uint32_t n, uint8_t top = 0) {
@@ -686,9 +692,10 @@ std::vector<TokenCandidate> token_candidates(uint32_t first, uint32_t count, uin
 std::vector<ScheduledTokenCandidate> schedule_block(tos_wallet_index::WalletIndexDb &db,
                                                     const std::vector<TokenCandidate> &block_candidates,
                                                     tos::ShardIdFull shard = kWholeBasechain,
-                                                    size_t capacity = kMaxTokenCandidatesPerBlock) {
+                                                    size_t capacity = kMaxTokenCandidatesPerBlock,
+                                                    uint64_t end_lt = kTestLt) {
   db.begin_batch().ensure();
-  auto chosen = db.schedule_token_candidates(block_candidates, shard, capacity).move_as_ok();
+  auto chosen = db.schedule_token_candidates(block_candidates, shard, capacity, end_lt).move_as_ok();
   db.commit_batch().ensure();
   return chosen;
 }
@@ -850,7 +857,7 @@ TEST(WalletIndex, AFullQueueCannotStarveTheOthers) {
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, IndeterminateVerificationIsRetriedThenCounted) {
+TEST(WalletIndex, IndeterminateVerificationIsRetriedThenParkedWithItsIdentity) {
   using tos_wallet_index::kMaxTokenCandidateAttempts;
   auto path = std::string("test-wallet-index-db-token-retry");
   auto db = open_fresh_db(path);
@@ -858,7 +865,8 @@ TEST(WalletIndex, IndeterminateVerificationIsRetriedThenCounted) {
   std::vector<TokenCandidate> next_block = block;
   for (uint8_t attempt = 0; attempt < kMaxTokenCandidateAttempts; ++attempt) {
     db->begin_batch().ensure();
-    auto chosen = db->schedule_token_candidates(next_block, kWholeBasechain).move_as_ok();
+    auto chosen =
+        db->schedule_token_candidates(next_block, kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).move_as_ok();
     ASSERT_EQ(chosen.size(), static_cast<size_t>(1));
     ASSERT_EQ(chosen[0].attempts, attempt);
     // The node could not decide: hand it back.
@@ -867,12 +875,29 @@ TEST(WalletIndex, IndeterminateVerificationIsRetriedThenCounted) {
     next_block.clear();
     if (attempt + 1 < kMaxTokenCandidateAttempts) {
       ASSERT_EQ(backlog_size(*db), static_cast<size_t>(1));
-      ASSERT_EQ(backlog_stats(*db).lost, static_cast<uint64_t>(0));
+      ASSERT_EQ(backlog_stats(*db).parked, static_cast<uint64_t>(0));
     }
   }
-  // Out of attempts: given up, and counted.
+  // Out of attempts: it no longer waits in a queue, but it is not given up.
+  // Its identity is kept, nothing is counted as lost, and the index says it
+  // is incomplete.
   ASSERT_EQ(backlog_size(*db), static_cast<size_t>(0));
-  ASSERT_EQ(backlog_stats(*db).lost, static_cast<uint64_t>(1));
+  auto stats = backlog_stats(*db);
+  ASSERT_EQ(stats.parked, static_cast<uint64_t>(1));
+  ASSERT_EQ(stats.lost, static_cast<uint64_t>(0));
+  ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
+  // Blocks that do not nominate it leave it parked across a restart.
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  ASSERT_TRUE(schedule_block(*db, {}).empty());
+  ASSERT_EQ(backlog_stats(*db).parked, static_cast<uint64_t>(1));
+  // A later nomination verifies it afresh; once verified, nothing is parked.
+  auto chosen = schedule_block(*db, block);
+  ASSERT_EQ(chosen.size(), static_cast<size_t>(1));
+  ASSERT_EQ(chosen[0].attempts, static_cast<uint8_t>(0));
+  stats = backlog_stats(*db);
+  ASSERT_EQ(stats.parked, static_cast<uint64_t>(0));
+  ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":true") != std::string::npos);
   td::rmrf(path).ignore();
 }
 
@@ -896,11 +921,21 @@ TEST(WalletIndex, TokenBacklogHoldsOneEntryPerCandidateAndIsBounded) {
   ASSERT_EQ(backlog_size(*db), block.size());
   ASSERT_EQ(backlog_stats(*db).entries, block.size());
 
-  // At the bound, further deferrals are refused and counted, not silently dropped.
+  // At the bound, deferring stops at the first candidate without room and
+  // says which one; nothing is dropped or counted as lost.
   db->set_token_backlog_limit(7);
-  ASSERT_TRUE(schedule_block(*db, token_candidates(100, 4), kWholeBasechain, 0).empty());
+  auto more = token_candidates(100, 4);
+  db->begin_batch().ensure();
+  ASSERT_TRUE(db->schedule_token_candidates(more, kWholeBasechain, 0, kTestLt).move_as_ok().empty());
+  auto stopped_at = db->first_unhandled_block_candidate();
+  db->commit_batch().ensure();
+  std::set<TokenCandidate> ordered(more.begin(), more.end());
+  auto third = std::next(ordered.begin(), 2);
+  ASSERT_TRUE(static_cast<bool>(stopped_at));
+  ASSERT_TRUE(stopped_at.value() == *third);
   ASSERT_EQ(backlog_size(*db), static_cast<size_t>(7));
-  ASSERT_EQ(backlog_stats(*db).lost, static_cast<uint64_t>(2));
+  ASSERT_EQ(backlog_stats(*db).lost, static_cast<uint64_t>(0));
+  ASSERT_TRUE(!db->token_backlog_has_room().move_as_ok());
   td::rmrf(path).ignore();
 }
 
@@ -910,13 +945,13 @@ TEST(WalletIndex, AbortedBlockLeavesTokenBacklogUnchanged) {
   auto block = token_candidates(0, kMaxTokenCandidatesPerBlock + 5);
 
   // Scheduling outside a batch would write past the block's atomicity.
-  ASSERT_TRUE(db->schedule_token_candidates(block, kWholeBasechain).is_error());
+  ASSERT_TRUE(db->schedule_token_candidates(block, kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).is_error());
   // So would a retry before anything was scheduled.
   db->begin_batch().ensure();
   ASSERT_TRUE(db->retry_token_candidate(ScheduledTokenCandidate{block[0], 0}).is_error());
-  ASSERT_TRUE(db->schedule_token_candidates(block, kWholeBasechain).is_ok());
+  ASSERT_TRUE(db->schedule_token_candidates(block, kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).is_ok());
   // A second pass in one batch would start from counters already moved on.
-  ASSERT_TRUE(db->schedule_token_candidates(block, kWholeBasechain).is_error());
+  ASSERT_TRUE(db->schedule_token_candidates(block, kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).is_error());
   db->abort_batch();
   ASSERT_EQ(backlog_size(*db), static_cast<size_t>(0));
   ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(0));
@@ -925,12 +960,16 @@ TEST(WalletIndex, AbortedBlockLeavesTokenBacklogUnchanged) {
   ASSERT_EQ(backlog_size(*db), static_cast<size_t>(5));
   // Drained entries are erased only when the draining block commits.
   db->begin_batch().ensure();
-  ASSERT_EQ(db->schedule_token_candidates({}, kWholeBasechain).move_as_ok().size(), static_cast<size_t>(5));
+  ASSERT_EQ(
+      db->schedule_token_candidates({}, kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).move_as_ok().size(),
+      static_cast<size_t>(5));
   db->abort_batch();
   ASSERT_EQ(backlog_size(*db), static_cast<size_t>(5));
   // Only a wc=0 shard can be scheduled.
   db->begin_batch().ensure();
-  ASSERT_TRUE(db->schedule_token_candidates({}, tos::ShardIdFull{-1, tos::shardIdAll}).is_error());
+  ASSERT_TRUE(
+      db->schedule_token_candidates({}, tos::ShardIdFull{-1, tos::shardIdAll}, kMaxTokenCandidatesPerBlock, kTestLt)
+          .is_error());
   db->abort_batch();
   td::rmrf(path).ignore();
 }
@@ -980,7 +1019,8 @@ TEST(WalletIndex, ProcessingRetriesCountsAndStopsOnAWriteFailure) {
   auto db = open_fresh_db(path);
   auto block = token_candidates(0, 4);
   db->begin_batch().ensure();
-  auto chosen = db->schedule_token_candidates(block, kWholeBasechain).move_as_ok();
+  auto chosen =
+      db->schedule_token_candidates(block, kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).move_as_ok();
   ASSERT_EQ(chosen.size(), static_cast<size_t>(4));
   std::vector<size_t> remaining_seen;
   auto status = db->process_token_candidates(chosen, [&](const ScheduledTokenCandidate &s, size_t remaining) {
@@ -1004,7 +1044,7 @@ TEST(WalletIndex, ProcessingRetriesCountsAndStopsOnAWriteFailure) {
   ASSERT_EQ(backlog_stats(*db).unverifiable, static_cast<uint64_t>(1));
 
   db->begin_batch().ensure();
-  auto again = db->schedule_token_candidates({}, kWholeBasechain).move_as_ok();
+  auto again = db->schedule_token_candidates({}, kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).move_as_ok();
   ASSERT_EQ(again.size(), static_cast<size_t>(2));
   auto failed = db->process_token_candidates(
       again, [](const ScheduledTokenCandidate &, size_t) { return TokenVerifyOutcome::WriteFailed; });
@@ -1019,19 +1059,24 @@ TEST(WalletIndex, TokenIndexStateSaysWhenItIsIncomplete) {
   using tos_wallet_index::format_token_index_state;
   ASSERT_EQ(format_token_index_state({0, 0, 0, false}),
             std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
   ASSERT_EQ(format_token_index_state({3, 0, 0, false}),
             std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
   ASSERT_EQ(format_token_index_state({0, 1, 0, false}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
   ASSERT_EQ(format_token_index_state({0, 0, 2, false}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
+  tos_wallet_index::TokenBacklogStats parked{0, 0, 0, false};
+  parked.parked = 2;
+  ASSERT_EQ(format_token_index_state(parked),
+            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
+                        "\"needs_rebuild\":false,\"parked\":2}"));
   ASSERT_EQ(format_token_index_state({0, 0, 0, true}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":true,"
-                        "\"needs_rebuild\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
 }
 
 TEST(WalletIndex, ABlockWhoseIndexingDidNotCommitLeavesTheIndexIncomplete) {
@@ -1044,7 +1089,7 @@ TEST(WalletIndex, ABlockWhoseIndexingDidNotCommitLeavesTheIndexIncomplete) {
     db->put_incomplete_block(make_test_block_id(0, tos::shardIdAll, seqno, 0x11, 0x22)).ensure();
   }
   db->begin_batch().ensure();
-  db->schedule_token_candidates(token_candidates(0, 3), kWholeBasechain).ensure();
+  db->schedule_token_candidates(token_candidates(0, 3), kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).ensure();
   db->abort_batch();
   auto stats = backlog_stats(*db);
   ASSERT_TRUE(stats.unfinished_block);
@@ -1260,9 +1305,10 @@ TEST(WalletIndex, AnEntryDroppedAsMalformedDoesNotHideItsCandidateDeferredInTheS
   write_broken_entry_beside_a_sibling(path, broken, sibling);
   db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
 
-  // Capacity 1: another candidate takes the slot and the broken row's
-  // candidate is deferred in the very block that drops that row.
-  auto first = deep_candidate(3, true);
+  // Capacity 1: another candidate, earlier in candidate order, takes the slot
+  // and the broken row's candidate is deferred in the very block that drops
+  // that row.
+  auto first = deep_candidate(0, true);
   auto chosen = candidates_of(schedule_block(*db, {first, broken}, high, 1));
   ASSERT_EQ(chosen, std::set<TokenCandidate>{first});
   bool waiting = false;
@@ -2433,5 +2479,223 @@ TEST(WalletIndexWorker, NoBlockIsAcceptedBeforeTheRunIsRecorded) {
   ASSERT_TRUE(tos_wallet_index::wallet_index_db() == nullptr);
   ASSERT_TRUE(!tos_wallet_index::wallet_index_unavailable_reason().empty());
   reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+constexpr uint32_t kJettonTransferOp = 0x0f8a7ea5;
+
+// A real block in which `count` distinct accounts each receive a jetton
+// transfer, so each is nominated as a jetton-wallet candidate. None of them
+// is a contract in `state`, so each verification is definite (the wallet is
+// absent) and leaves a wallet record behind.
+struct OverflowingBlock {
+  tos::BlockIdExt id;
+  td::Ref<vm::Cell> root;
+  td::Ref<vm::Cell> state;
+  std::vector<td::Bits256> wallets;  // in candidate order
+};
+
+OverflowingBlock overflowing_block(tos::BlockSeqno seqno, size_t count) {
+  OverflowingBlock block;
+  block.id = worker_block_id(seqno);
+  std::vector<wallet_index_fixture::Tx> txs;
+  std::set<td::Bits256> wallets;
+  for (size_t i = 0; i < count; ++i) {
+    auto account = token_address(static_cast<uint32_t>(i), static_cast<uint8_t>(0x10 + i % 64));
+    txs.push_back(wallet_index_fixture::Tx{account, 10 + i, kJettonTransferOp});
+    wallets.insert(account);
+  }
+  block.root = wallet_index_fixture::block(seqno, 5000, 1000, txs);
+  block.state = wallet_index_fixture::shard_state({});
+  block.wallets.assign(wallets.begin(), wallets.end());
+  return block;
+}
+
+struct IndexView {
+  tos_wallet_index::TokenBacklogStats stats;
+  bool complete;
+  bool final_processed;
+};
+
+// Completeness and whether the block's last candidate was verified, from one
+// snapshot, so the two cannot straddle a commit.
+IndexView view_of(tos_wallet_index::WalletIndexDb &db, const OverflowingBlock &block) {
+  auto snapshot = tos_wallet_index::WalletIndexSnapshot::of(db).move_as_ok();
+  IndexView view;
+  view.stats = snapshot.token_backlog_stats().move_as_ok();
+  view.complete = tos_wallet_index::format_token_index_state(view.stats).find("\"complete\":true") != std::string::npos;
+  view.final_processed = snapshot.has_jetton_wallet_record(block.wallets.back()).move_as_ok();
+  return view;
+}
+
+size_t processed_count(tos_wallet_index::WalletIndexDb &db, const OverflowingBlock &block) {
+  size_t n = 0;
+  for (const auto &wallet : block.wallets) {
+    n += db.has_jetton_wallet_record(wallet).move_as_ok() ? 1 : 0;
+  }
+  return n;
+}
+
+// Polls until the index reports itself complete, failing if it ever does so
+// while the block's last candidate is still unverified.
+bool complete_only_after_the_final_candidate(tos_wallet_index::WalletIndexDb &db, const OverflowingBlock &block,
+                                             std::chrono::milliseconds limit) {
+  auto deadline = std::chrono::steady_clock::now() + limit;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto view = view_of(db, block);
+    if (view.complete) {
+      return view.final_processed;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  return false;
+}
+
+// Answers the worker's reads of `block` with its data and state, after the
+// test releases the gate.
+struct BlockFetcher {
+  const OverflowingBlock *block;
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool open = true;
+  std::atomic<int> calls{0};
+
+  tos_wallet_index::Wc0IndexBlockFetcher fetcher() {
+    return [this](const tos::BlockIdExt &id, bool,
+                  std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
+      calls++;
+      std::thread([this, id, done = std::move(done)] {
+        {
+          std::unique_lock<std::mutex> lock(mutex);
+          cv.wait(lock, [this] { return open; });
+        }
+        if (id == block->id) {
+          done(tos_wallet_index::Wc0FetchedBlock{block->root, block->state});
+        } else {
+          done(td::Status::Error("unknown block"));
+        }
+      }).detach();
+    };
+  }
+  void set_open(bool value) {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      open = value;
+    }
+    cv.notify_all();
+  }
+};
+
+}  // namespace
+
+// One block nominates more candidates than the per-block bound plus the whole
+// backlog can take. Its overflow is neither dropped nor counted as lost: the
+// block stays unfinished with a resume point, the backlog drains with no new
+// block arriving, the block is resumed once there is room, and the index
+// reports itself complete only after the block's last candidate is verified.
+TEST(WalletIndexWorker, AnOverflowingBlockIsResumedAndOnlyThenComplete) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-overflow-resume");
+  td::rmrf(path).ignore();
+  auto block = overflowing_block(5, kMaxTokenCandidatesPerBlock + 40);
+  BlockFetcher reads;
+  reads.block = &block;
+  // Hold the resume until the overflow has been observed.
+  reads.set_open(false);
+  {
+    auto &db = install_db(path);
+    // Smaller than the block's candidate set. A pass keeps room for each
+    // candidate it verifies to go back to the backlog, so this leaves room
+    // for 16 of the block's deferrals.
+    db.set_token_backlog_limit(kMaxTokenCandidatesPerBlock + 16);
+    tos_wallet_index::set_wc0_index_block_fetcher(reads.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    tos_wallet_index::enqueue_wc0_index_block(block.root, block.state, block.id);
+    // The first pass verified the per-block share and queued what fit; then
+    // the backlog drained against the block's own state, with no further
+    // block, and the worker asked for the block again to resume it.
+    ASSERT_TRUE(eventually([&] { return reads.calls.load() >= 1; }));
+    auto view = view_of(db, block);
+    ASSERT_TRUE(!view.complete);
+    ASSERT_TRUE(!view.final_processed);
+    ASSERT_TRUE(view.stats.unfinished_block);
+    ASSERT_EQ(view.stats.lost, static_cast<uint64_t>(0));
+    ASSERT_EQ(view.stats.entries, static_cast<uint64_t>(0));
+    ASSERT_EQ(processed_count(db, block), kMaxTokenCandidatesPerBlock + 16);
+    ASSERT_TRUE(db.get_pending_block(block.id).move_as_ok());
+    reads.set_open(true);
+    ASSERT_TRUE(complete_only_after_the_final_candidate(db, block, std::chrono::seconds(60)));
+    ASSERT_EQ(processed_count(db, block), block.wallets.size());
+    ASSERT_TRUE(!db.has_incomplete_block(block.id).move_as_ok());
+    ASSERT_TRUE(!db.get_pending_block(block.id).move_as_ok());
+    auto stats = backlog_stats(db);
+    ASSERT_EQ(stats.lost + stats.parked + stats.entries, static_cast<uint64_t>(0));
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// The node stops while a block's overflow is still waiting, with the backlog
+// full, and no block arrives after the restart. The restarted worker reads
+// the unfinished block itself, drains the backlog against its state, resumes
+// it, and only then is the index complete.
+TEST(WalletIndexWorker, ARestartDuringOverflowCompletesWithNoLaterBlock) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-overflow-restart");
+  td::rmrf(path).ignore();
+  auto block = overflowing_block(6, kMaxTokenCandidatesPerBlock + 40);
+  {
+    auto &db = install_db(path);
+    db.set_token_backlog_limit(kMaxTokenCandidatesPerBlock + 16);
+    // Indexed as startup recovery does, synchronously and with no worker.
+    tos_wallet_index::wc0_index_block(block.root, block.state, block.id);
+    auto view = view_of(db, block);
+    ASSERT_TRUE(!view.complete);
+    ASSERT_TRUE(!view.final_processed);
+    ASSERT_EQ(view.stats.entries, static_cast<uint64_t>(16));
+    ASSERT_EQ(view.stats.lost, static_cast<uint64_t>(0));
+    ASSERT_TRUE(db.has_incomplete_block(block.id).move_as_ok());
+    ASSERT_TRUE(db.get_pending_block(block.id).move_as_ok());
+    // The process stops here.
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  BlockFetcher reads;
+  reads.block = &block;
+  {
+    auto &db = install_db(path);
+    // The restarted node allows no more than the 16 already waiting: the
+    // backlog is full and stays so until it drains.
+    db.set_token_backlog_limit(16);
+    ASSERT_TRUE(!db.token_backlog_has_room().move_as_ok());
+    tos_wallet_index::set_wc0_index_block_fetcher(reads.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(complete_only_after_the_final_candidate(db, block, std::chrono::seconds(60)));
+    ASSERT_EQ(processed_count(db, block), block.wallets.size());
+    ASSERT_TRUE(!db.has_incomplete_block(block.id).move_as_ok());
+    ASSERT_TRUE(!db.get_pending_block(block.id).move_as_ok());
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// A backlog pass against an older state leaves a candidate a newer block
+// nominated: it waits for a state at least that new.
+TEST(WalletIndex, AnOlderStateNeverTakesANewerNomination) {
+  auto path = std::string("test-wallet-index-db-token-lt-order");
+  auto db = open_fresh_db(path);
+  auto block = token_candidates(0, 3);
+  ASSERT_TRUE(schedule_block(*db, block, kWholeBasechain, 0, 2000).empty());
+  ASSERT_TRUE(schedule_block(*db, {}, kWholeBasechain, kMaxTokenCandidatesPerBlock, 1000).empty());
+  ASSERT_EQ(backlog_size(*db), block.size());
+  // An older block nominating one of them verifies it itself but leaves the
+  // newer nomination waiting.
+  auto older = schedule_block(*db, {block[0]}, kWholeBasechain, kMaxTokenCandidatesPerBlock, 1500);
+  ASSERT_EQ(candidates_of(older), std::set<TokenCandidate>{block[0]});
+  ASSERT_EQ(backlog_size(*db), block.size());
+  auto newer = schedule_block(*db, {}, kWholeBasechain, kMaxTokenCandidatesPerBlock, 2000);
+  ASSERT_EQ(candidates_of(newer), std::set<TokenCandidate>(block.begin(), block.end()));
+  ASSERT_EQ(backlog_size(*db), static_cast<size_t>(0));
   td::rmrf(path).ignore();
 }

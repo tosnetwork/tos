@@ -36,17 +36,23 @@ namespace tos_wallet_index {
 // The worker can be held (start paused, pause()) and released (resume());
 // pushes are still recorded meanwhile. Items not processed by destruction stay
 // recorded and unprocessed.
+//
+// While no item is ready and the worker is not held, it calls `idle` (when
+// given), which does a bounded piece of background work and returns whether
+// more may be ready at once; after a pass that found nothing, it waits for an
+// item, or kIdleRecheck, before trying again.
 template <class Id, class Item>
 class BoundedWorkQueue {
  public:
   BoundedWorkQueue(size_t capacity, std::function<bool(const std::vector<Id> &)> record,
                    std::function<void(Item &)> process, std::function<bool()> persist_degraded = nullptr,
-                   size_t record_capacity = 0, bool start_paused = false)
+                   size_t record_capacity = 0, bool start_paused = false, std::function<bool()> idle = nullptr)
       : capacity_(capacity)
       , record_capacity_(record_capacity != 0 ? record_capacity : 16 * capacity)
       , record_(std::move(record))
       , process_(std::move(process))
       , persist_degraded_(std::move(persist_degraded))
+      , idle_(std::move(idle))
       , paused_(start_paused) {
     recorder_ = std::thread([this] { run_recorder(); });
     worker_ = std::thread([this] { run_worker(); });
@@ -133,6 +139,7 @@ class BoundedWorkQueue {
 
  private:
   static constexpr auto kFirstRetryPause = std::chrono::milliseconds(50);
+  static constexpr auto kIdleRecheck = std::chrono::milliseconds(1000);
   static constexpr auto kLongestRetryPause = std::chrono::milliseconds(5000);
 
   void latch_degraded() {
@@ -205,26 +212,41 @@ class BoundedWorkQueue {
     }
   }
 
+  bool item_ready() const {
+    // An item whose id was never queued for recording (the id list was
+    // full) is past recorded_through_ once a later id is recorded; the gap
+    // is already latched as degraded.
+    return !paused_ && !items_.empty() && items_.front().first < recorded_through_;
+  }
+
   void run_worker() {
     std::unique_lock<std::mutex> lock(mutex_);
     while (true) {
-      // An item whose id was never queued for recording (the id list was
-      // full) is past recorded_through_ once a later id is recorded; the gap
-      // is already latched as degraded.
-      wake_.wait(lock, [this] {
-        return stopping_ || (!paused_ && !items_.empty() && items_.front().first < recorded_through_);
-      });
       if (stopping_) {
         return;
       }
-      auto entry = std::move(items_.front());
-      items_.pop_front();
-      lock.unlock();
-      try {
-        process_(entry.second);
-      } catch (...) {
+      if (item_ready()) {
+        auto entry = std::move(items_.front());
+        items_.pop_front();
+        lock.unlock();
+        try {
+          process_(entry.second);
+        } catch (...) {
+        }
+        lock.lock();
+        continue;
       }
-      lock.lock();
+      if (idle_ && !paused_) {
+        lock.unlock();
+        bool more = call_safely(idle_);
+        lock.lock();
+        if (more) {
+          continue;
+        }
+        wake_.wait_for(lock, kIdleRecheck, [this] { return stopping_ || item_ready(); });
+        continue;
+      }
+      wake_.wait(lock, [this] { return stopping_ || item_ready() || (idle_ && !paused_); });
     }
   }
 
@@ -233,6 +255,7 @@ class BoundedWorkQueue {
   std::function<bool(const std::vector<Id> &)> record_;
   std::function<void(Item &)> process_;
   std::function<bool()> persist_degraded_;
+  std::function<bool()> idle_;
   mutable std::mutex mutex_;
   std::condition_variable wake_;
   std::deque<std::pair<uint64_t, Id>> to_record_;

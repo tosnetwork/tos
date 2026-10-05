@@ -25,6 +25,7 @@
 #include "td/utils/Status.h"
 #include "td/utils/bits.h"
 #include "td/utils/buffer.h"
+#include "td/utils/optional.h"
 #include "tos/tos-shard.h"
 #include "tos/tos-types.h"
 #include "vm/cells.h"
@@ -87,12 +88,15 @@ constexpr size_t kTokenBacklogBuckets = 256;
 constexpr size_t kTokenBacklogScanPerBucket = 4 * kMaxTokenCandidatesPerBlock;
 // Verification attempts a candidate gets. A candidate whose verification is
 // indeterminate (the node, not the contract, prevented an answer) goes back to
-// the end of its queue until it has used them all; then it is given up and
-// counted as lost.
+// the end of its queue until it has used them all; then it is parked: its
+// identity is kept, the token index reports itself incomplete while any
+// candidate is parked, and a later nomination of it queues it again.
 constexpr uint8_t kMaxTokenCandidateAttempts = 4;
-// Distinct candidates the backlog may hold. A candidate already in the backlog
-// is not added twice. Past this, new deferrals are refused and counted as lost,
-// which marks the token index incomplete until it is rebuilt.
+// Distinct candidates the backlog may hold, waiting and parked together. A
+// candidate already in the backlog is not added twice. A block whose
+// candidates do not all fit stops deferring at the first that does not; the
+// block stays marked unfinished with a resume point, and the indexing worker
+// resumes it once the backlog has room, so no candidate is ever dropped.
 constexpr uint64_t kMaxTokenBacklogEntries = 1u << 20;
 
 using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
@@ -117,6 +121,10 @@ struct ScheduledTokenCandidate {
   TokenCandidate candidate;
   // Verification attempts already made before this one.
   uint8_t attempts;
+  // End logical time of the newest block that nominated it. Only a state at
+  // least this new can verify it; an older one could only give a verdict the
+  // nominating block has already overtaken.
+  uint64_t lt = 0;
 };
 
 struct TokenBacklogStats {
@@ -136,6 +144,9 @@ struct TokenBacklogStats {
   // Some block may have gone unindexed with no mark to recover it by; only
   // rebuilding the index makes it complete again.
   bool needs_rebuild = false;
+  // Candidates whose verification stayed indeterminate through every
+  // attempt. Their identities are kept; a later nomination retries them.
+  uint64_t parked = 0;
 };
 
 // Completeness of the token index as RPC answers report it: a JSON object
@@ -144,11 +155,12 @@ struct TokenBacklogStats {
 // verified; only rebuilding the index clears lost and unverifiable.
 inline std::string format_token_index_state(const TokenBacklogStats& stats) {
   bool complete = stats.entries == 0 && stats.lost == 0 && stats.unverifiable == 0 && !stats.unfinished_block &&
-                  !stats.needs_rebuild;
+                  !stats.needs_rebuild && stats.parked == 0;
   return "{\"complete\":" + std::string(complete ? "true" : "false") + ",\"pending\":" + std::to_string(stats.entries) +
          ",\"lost\":" + std::to_string(stats.lost) + ",\"unverifiable\":" + std::to_string(stats.unverifiable) +
          ",\"unfinished_block\":" + std::string(stats.unfinished_block ? "true" : "false") +
-         ",\"needs_rebuild\":" + std::string(stats.needs_rebuild ? "true" : "false") + "}";
+         ",\"needs_rebuild\":" + std::string(stats.needs_rebuild ? "true" : "false") +
+         ",\"parked\":" + std::to_string(stats.parked) + "}";
 }
 
 // What became of one scheduled candidate's verification.
@@ -294,23 +306,36 @@ class WalletIndexDb {
   td::Status apply_nft_verdict(const HashKey& item, const NftVerdict& verdict, uint64_t end_lt);
 
   // --- Deferred token candidates ---
-  //   0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1)
+  //   0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1) + lt_be(8)
+  //     (an entry written by an older binary has no lt: it counts as lt 0)
   //   0x16 + kind(1) + address(32) -> bucket(1) + seq_be(8)   (its queue entry)
-  // Choose the token candidates a block of wc=0 `shard` verifies: at most
-  // `capacity` (<= kMaxTokenCandidatesPerBlock) of them. While the shard's
-  // queues hold entries, up to kTokenBacklogDrainPerBlock of the capacity goes
-  // to them; the block's own candidates fill the rest, and those that do not
-  // fit are deferred. A block candidate already waiting is claimed from the
-  // backlog with the attempts it has used. Pass capacity 0 to defer all of a
-  // block's candidates (no state to verify against). Chosen backlog entries
-  // are erased. Every write joins the open batch, so an aborted block leaves
-  // the backlog as it was. Requires an open batch and runs once per batch.
+  //   0x1A + kind(1) + address(32) -> lt_be(8)                 (parked)
+  // Choose the token candidates a block of wc=0 `shard` ending at `end_lt`
+  // verifies: at most `capacity` (<= kMaxTokenCandidatesPerBlock) of them.
+  // While the shard's queues hold entries this state can verify (nominated at
+  // or before `end_lt`), up to kTokenBacklogDrainPerBlock of the capacity goes
+  // to them; the block's own candidates fill the rest in candidate order, and
+  // those that do not fit are deferred. A block candidate already waiting is
+  // claimed from the backlog with the attempts it has used, unless a newer
+  // block nominated it. Pass capacity 0 to defer all of a block's candidates
+  // (no state to verify against). Chosen backlog entries are erased. Every
+  // write joins the open batch, so an aborted block leaves the backlog as it
+  // was. Requires an open batch and runs once per batch.
+  // When the backlog has no room for a deferral, deferring stops there:
+  // first_unhandled_block_candidate() then names the first block candidate
+  // neither chosen nor queued, and that one and every later candidate are
+  // left to a later pass over the block. Room is kept for every chosen
+  // candidate to go back to the backlog, so a retry never needs room.
   td::Result<std::vector<ScheduledTokenCandidate>> schedule_token_candidates(
-      const std::vector<TokenCandidate>& block_candidates, tos::ShardIdFull shard,
-      size_t capacity = kMaxTokenCandidatesPerBlock);
+      const std::vector<TokenCandidate>& block_candidates, tos::ShardIdFull shard, size_t capacity, uint64_t end_lt);
+  // After schedule_token_candidates: the first block candidate (in candidate
+  // order) that was neither chosen nor queued, if deferring stopped early.
+  td::optional<TokenCandidate> first_unhandled_block_candidate() const {
+    return token_batch_.first_unhandled;
+  }
   // Hand back a scheduled candidate whose verification was indeterminate: it
-  // rejoins the end of its queue, or is counted as lost after its last
-  // attempt. Joins the open batch; requires schedule_token_candidates first.
+  // rejoins the end of its queue, or is parked after its last attempt. Joins
+  // the open batch; requires schedule_token_candidates first.
   td::Status retry_token_candidate(const ScheduledTokenCandidate& scheduled);
   // Verify every scheduled candidate with `verify` (given the candidate and
   // how many remain, this one included) and record what it could not finish:
@@ -319,7 +344,24 @@ class WalletIndexDb {
   td::Status process_token_candidates(
       const std::vector<ScheduledTokenCandidate>& scheduled,
       const std::function<TokenVerifyOutcome(const ScheduledTokenCandidate&, size_t remaining)>& verify);
-  // Backlog size and lost/unverifiable counts, as committed.
+  // Whether the backlog, as committed, has room for another deferral.
+  td::Result<bool> token_backlog_has_room();
+
+  // --- Blocks whose token candidates are not all handled yet ---
+  //   0x19 + workchain_be(4) + shard_be(8) + seqno_be(4) + root_hash(32) + file_hash(32)
+  //     -> kind(1) + address(32): the first candidate not yet verified or queued
+  // The block keeps its incomplete-block marker beside this record; a later
+  // pass over the block (the indexing worker, or startup recovery) handles
+  // the candidates from this one on. Writes join the open batch.
+  td::Status put_pending_block(const tos::BlockIdExt& block_id, const TokenCandidate& resume_from);
+  td::Result<td::optional<TokenCandidate>> get_pending_block(const tos::BlockIdExt& block_id);
+  td::Status delete_pending_block(const tos::BlockIdExt& block_id);
+  // Calls `cb` for at most `limit` pending blocks, in key order (committed).
+  td::Status for_each_pending_block(size_t limit,
+                                    std::function<td::Status(const tos::BlockIdExt&, const TokenCandidate&)> cb);
+  // Whether a verdict on `wallet` has been recorded (committed state).
+  td::Result<bool> has_jetton_wallet_record(const HashKey& wallet);
+  // Backlog size and lost/unverifiable/parked counts, as committed.
   td::Result<TokenBacklogStats> token_backlog_stats();
   // Lower the backlog bound (never above kMaxTokenBacklogEntries) so tests can
   // reach it without writing a million rows.
@@ -446,9 +488,17 @@ class WalletIndexDb {
     uint64_t entries = 0;
     uint64_t lost = 0;
     uint64_t unverifiable = 0;
+    uint64_t parked = 0;
+    // Chosen candidates not yet verified: each keeps room to go back.
+    uint64_t reserved = 0;
+    td::optional<TokenCandidate> first_unhandled;
     std::map<std::string, std::string> index_overlay;
     // Queue rows already erased in the batch, which committed reads still see.
     std::set<std::string> queue_erased;
+    // Queue rows written in the batch, which committed reads do not see yet.
+    std::map<std::string, std::string> queue_written;
+    // Parked rows written (value) or erased (empty) in the batch.
+    std::map<std::string, std::string> parked_overlay;
     // Jetton wallet and pair records written in the batch, which committed
     // reads do not see yet: key -> value.
     std::map<std::string, std::string> jetton_records;
@@ -461,9 +511,14 @@ class WalletIndexDb {
   td::Status token_index_erase(const std::string& index_key);
   td::Result<bool> token_queue_has(const std::string& queue_key);
   td::Status token_queue_erase(const std::string& queue_key);
-  td::Result<uint8_t> token_claim(const TokenCandidate& candidate);
-  td::Status token_enqueue(const TokenCandidate& candidate, uint8_t attempts);
-  td::Status token_note_lost(const TokenCandidate& candidate, td::Slice reason);
+  td::Result<uint8_t> token_claim(const TokenCandidate& candidate, uint64_t end_lt);
+  // Queue `candidate`. False when the backlog has no room; `reserved` uses
+  // the room a chosen candidate kept, so it always succeeds.
+  td::Result<bool> token_enqueue(const TokenCandidate& candidate, uint8_t attempts, uint64_t lt, bool reserved);
+  td::Status token_park(const ScheduledTokenCandidate& scheduled);
+  td::Result<std::string> token_queue_value(const std::string& queue_key);
+  td::Result<td::optional<uint64_t>> token_parked_lt(const std::string& parked_key);
+  void token_release_reservation();
   td::Status token_write_counters();
 };
 
@@ -484,6 +539,9 @@ class WalletIndexSnapshot {
   td::Status for_each_nft(const HashKey& owner, size_t limit,
                           std::function<td::Status(const HashKey& nft, td::Ref<vm::Cell>)> cb) {
     return view_->for_each_nft(owner, limit, std::move(cb));
+  }
+  td::Result<bool> has_jetton_wallet_record(const HashKey& wallet) {
+    return view_->has_jetton_wallet_record(wallet);
   }
 
  private:

@@ -82,6 +82,15 @@ from `getAccountJettons` and `getAccountNfts` carry an `index_state`; read
 `"complete": false` as "this list may be missing entries", not as the whole
 truth.
 
+- **Token candidates are never dropped for lack of room.** Candidates a block
+  cannot verify at once wait in a bounded backlog (`pending`). When the
+  backlog is full, the block stays unfinished (`unfinished_block`) with the
+  point to resume from, and the indexing worker drains the backlog and
+  resumes the block by itself, also after a restart and with no new block
+  arriving. A candidate whose verification stays indeterminate through every
+  attempt is `parked`: it is kept and verified again when a block nominates
+  it. Any of these keeps `"complete": false`.
+
 - **Stopping the node marks the index as incomplete.** Only an exit that
   happens after block application has stopped records the indexing run as
   finished. `systemctl stop` (SIGTERM), a crash, an out-of-memory kill and a
