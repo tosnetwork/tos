@@ -195,6 +195,14 @@ jobs:
       - name: Run the complete Python suite
         run: uv run pytest
 
+      # C09: X02 Config34 is accepted only through the anchored verifier built
+      # above. These production-path tests need that binary and fail without it.
+      - name: Check X02 Config34 authentication through the anchored verifier
+        env:
+          PYTHONPATH: scripts
+          TOS_PROOF_VERIFY: build/lite-client/proof-verify/tos-proof-verify
+        run: uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py test/pq-native/test_x02_stage_a_capture.py
+
       # E04's negative controls are fast source-bound tests, not a replacement
       # for the retained single-node real-chain lifecycle run.
       - name: Check E04 exact cancellation and expiry controls
