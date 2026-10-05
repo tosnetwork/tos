@@ -58,6 +58,29 @@ contract SignatureChecker is TosUtils {
         );
     }
 
+    function getRefundLockId(
+        uint64 n,
+        uint32 lockGeneration,
+        address locker,
+        address token,
+        uint256 amount
+    ) public view returns (bytes32 result) {
+        result = keccak256(
+            abi.encode(0x4EF0, address(this), block.chainid, n, lockGeneration, locker, token, amount)
+        );
+    }
+
+    function getNewGenerationId(
+        uint32 newGeneration,
+        bytes32 tosBridge,
+        uint64 tosLife,
+        uint256 nonce
+    ) public view returns (bytes32 result) {
+        result = keccak256(
+            abi.encode(0x6E4E, address(this), block.chainid, newGeneration, tosBridge, tosLife, nonce)
+        );
+    }
+
     function getNewSetId(uint256 oracleSetHash, address[] memory set)
         public
         view

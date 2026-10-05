@@ -34,6 +34,9 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
+      // The TOS bridge in the coupled vector tests is compiled for chain id 1;
+      // votes name the chain, so the in-process network uses the same id.
+      chainId: 1,
       accounts: {
         count: 100,
       },

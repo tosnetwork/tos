@@ -218,4 +218,32 @@ contract("Tron VM behaviour", () => {
     const after = await voteAndReadLock(false, 4, oracleWallets.slice(0, 2));
     assert.strictEqual(after, false, "a real quorum must be able to disable locking");
   });
+
+  it("activates a source generation through an oracle quorum, once", async () => {
+    // Locks carry the generation the TOS bridge checks, so its activation
+    // vote must verify on Tron exactly as on the EVM.
+    const tosBridge = "0x" + "44".repeat(32);
+    const vote = async (generation, nonce) => {
+      const digest = await bridge.getNewGenerationId(generation, tosBridge, 5, nonce);
+      const raw = typeof digest === "string" ? digest : digest.toString();
+      const signed = await Promise.all(
+        oracleWallets.slice(0, 2).map(async (wallet) => ({
+          signer: wallet.address,
+          signature: await wallet.signMessage(ethers.utils.arrayify(raw)),
+        }))
+      );
+      signed.sort((a, b) => (BigInt(a.signer) < BigInt(b.signer) ? -1 : 1));
+      try {
+        await bridge.voteForNewGeneration(
+          generation, tosBridge, 5, nonce, signed.map((s) => [toTronAddress(s.signer), s.signature]));
+      } catch (err) {
+        // State is what decides.
+      }
+      return Number((await bridge.generation()).toString());
+    };
+    assert.strictEqual(Number((await bridge.generation()).toString()), 0, "no generation at deployment");
+    assert.strictEqual(await vote(2, 1), 0, "a generation must follow the current one");
+    assert.strictEqual(await vote(1, 1), 1, "the quorum's activation must take effect");
+    assert.strictEqual(await vote(2, 1), 1, "a stale nonce must not activate another");
+  });
 });

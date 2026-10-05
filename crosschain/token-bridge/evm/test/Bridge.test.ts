@@ -15,6 +15,7 @@ import {
   prepareSwapData, signDisableToken,
   signSwapData, signUpdateLockStatus,
   signUpdateOracleData,
+  signNewGeneration,
 } from "./utils/utils";
 import type { Bridge, TestToken, TestWrappedJetton, TestTokenWithoutMetadata } from "../typechain-types";
 import {BigNumber} from "ethers";
@@ -76,6 +77,10 @@ describe("Bridge contract", () => {
 
     await bridge.voteForSwitchLock(true, 1, signatures);
 
+    // Locking needs an active source generation bound to a TOS bridge life.
+    const tosBridge = "0x" + "11".repeat(32);
+    await bridge.voteForNewGeneration(1, tosBridge, 1, 1, signNewGeneration(1, tosBridge, 1, 1, oracleSet, bridge.address));
+
   });
 
   // LOCK
@@ -86,7 +91,7 @@ describe("Bridge contract", () => {
 
     await expect(bridge.lock(token.address, bridgeAllowance, tosAddressHash))
         .to.emit(bridge, 'Lock')
-        .withArgs(owner.address, token.address, tosAddressHash.toLowerCase(), bridgeAllowance, bridgeAllowance, 18);
+        .withArgs(owner.address, token.address, tosAddressHash.toLowerCase(), bridgeAllowance, bridgeAllowance, 18, 0, 1);
 
     const ownerBalanceNew = await token.balanceOf(owner.address);
     const bridgeBalance = await token.balanceOf(bridge.address);
@@ -101,7 +106,7 @@ describe("Bridge contract", () => {
 
     await expect(bridge.lock(tokenWithoutMetadata.address, bridgeAllowance, tosAddressHash))
         .to.emit(bridge, 'Lock')
-        .withArgs(owner.address, tokenWithoutMetadata.address, tosAddressHash.toLowerCase(), bridgeAllowance, bridgeAllowance, 0);
+        .withArgs(owner.address, tokenWithoutMetadata.address, tosAddressHash.toLowerCase(), bridgeAllowance, bridgeAllowance, 0, 0, 1);
 
     const ownerBalanceNew = await tokenWithoutMetadata.balanceOf(owner.address);
     const bridgeBalance = await tokenWithoutMetadata.balanceOf(bridge.address);
@@ -156,6 +161,9 @@ describe("Bridge contract", () => {
 
     await guarded.voteForSwitchLock(true, 1,
       signUpdateLockStatus(true, 1, oracleSet, guarded.address));
+    const tosBridge = "0x" + "11".repeat(32);
+    await guarded.voteForNewGeneration(1, tosBridge, 1, 1,
+      signNewGeneration(1, tosBridge, 1, 1, oracleSet, guarded.address));
 
     const bridgeAllowance = parseUnits("5");
     await token.approve(guarded.address, bridgeAllowance);

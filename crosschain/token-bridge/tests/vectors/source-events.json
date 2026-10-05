@@ -1,0 +1,17 @@
+{
+  "evm_chain_id": 1,
+  "evm_bridge": "0xD3255346b2Ed5Bc623708c334b1d56DA1AD9D63a",
+  "token": "0x9803c6e95e6bD1E43419437fb08EC8e5a434b7A8",
+  "decimals": 18,
+  "activation": {
+    "generation": 1,
+    "nonce": "7",
+    "tos_bridge": "0xdfcdf57288a776572cea5f1cd58dadaf4becc3ee923277a101bad3808f8c99a0",
+    "tos_life": "2000000000",
+    "start": "0"
+  },
+  "locks": [
+    {"n": "0", "to": "0x5ae4714a98d7d4be6c73d16bd83bfd45b531e3b090595ba94508b5a9f7b73f24", "amount": "1000"},
+    {"n": "1", "to": "0x5ae4714a98d7d4be6c73d16bd83bfd45b531e3b090595ba94508b5a9f7b73f24", "amount": "234"}
+  ]
+}

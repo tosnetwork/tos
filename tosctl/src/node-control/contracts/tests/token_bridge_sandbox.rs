@@ -34,3 +34,5 @@ mod windows;
 mod recovery;
 #[path = "token_bridge/lifecycle.rs"]
 mod lifecycle;
+#[path = "token_bridge/source.rs"]
+mod source;

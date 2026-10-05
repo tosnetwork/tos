@@ -31,7 +31,9 @@ pub const MINT_FEE: u64 = 5 * TOS;
 pub const BURN_FEE: u64 = 3 * TOS;
 pub const CHAIN_ID: u32 = 1;
 pub const CONFIG_PARAM: u32 = 79;
-pub const EVM_BRIDGE: [u8; 20] = [0xb7; 20];
+/// The EVM bridge this TOS bridge serves: where the Hardhat suite's coupled
+/// vector test deploys `Bridge.sol` (crosschain/token-bridge/tests/vectors).
+pub const EVM_BRIDGE: [u8; 20] = [0xd3, 0x25, 0x53, 0x46, 0xb2, 0xed, 0x5b, 0xc6, 0x23, 0x70, 0x8c, 0x33, 0x4b, 0x1d, 0x56, 0xda, 0x1a, 0xd9, 0xd6, 0x3a];
 pub const GENERATION: u32 = 1;
 pub const DESTINATION: [u8; 20] = [0x77; 20];
 
@@ -460,6 +462,13 @@ impl Net {
     }
 
     pub fn deployed(how: Deployment) -> Self {
+        let mut net = Self::unactivated(how);
+        net.activate(GENERATION, 0);
+        net
+    }
+
+    /// A deployed bridge that no source generation has activated yet.
+    pub fn unactivated(how: Deployment) -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("a chain");
         bc.set_workchain(-1);
         let oracles = bc.treasury("token-bridge-oracles", 10_000 * TOS).expect("oracles");
@@ -532,7 +541,6 @@ impl Net {
         }
         let code = net.bc.get_account(&bridge).and_then(|a| a.get_code()).expect("deployed");
         assert_eq!(code.repr_hash(), codes().bridge.repr_hash(), "the bridge runs jetton-bridge.fc");
-        net.activate(GENERATION, 0);
         net
     }
 
