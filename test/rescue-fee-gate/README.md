@@ -120,3 +120,47 @@ The bounded result receipt is `compact-admission-20261005.json`; the source tran
 and both executable sensitivity controls are in the probe. Remaining gates include canonical
 identity/domain/class/size checks, current-config solvency, successor witnesses and POP,
 and complete cross-VM/reference-hardware worst-case measurements.
+
+### Fixed-layout fee admission experiment
+
+`crypto/smartcont/rescue-fee-vault-layout.fc` is a separate experimental candidate.
+Its data is `next_leaf:uint32 gas_at_accept:uint32 global_id:int32 epoch0:uint32
+max_value:Coins target:MsgAddressInt public_key:^Cell`. This is incompatible with
+the original slot-vault data; it is not an upgrade or a completed v5 wire format.
+The external envelope is unchanged. Slot duration and allocation are fixed to
+3,600 seconds and four leaves; deadlines are limited to one hour.
+
+The candidate retains the immutable data suffix, defers target decoding until
+after ACCEPT, uses the consuming digest parser, checks the inner RESCUE role,
+and queries current compute/forwarding/storage prices before checking balance.
+Two times the larger input forwarding bound conservatively covers both former
+forwarding terms, saving a fee query. The combined 64-bit signature-prefix check
+requires both zero HSS subkeys and the exact leaf. The arithmetic-shift slot check
+accepts only the current or previous slot. Verifier tariffs and external credit
+are unchanged. FunC integer arithmetic traps on overflow.
+
+Run with the same compiler/emulator/signer environment:
+
+```sh
+python3 test/rescue-fee-gate/probe_layout_admission.py
+```
+
+The real signed lock reaches ACCEPT at **9,978 gas** and locks the receiver. The
+fixture's minimum initial balance is 2,430,389,821 nanotomis for its 2,000,000,000
+nanotomis forwarding value; one nanotomis less is rejected before ACCEPT. This is
+a conservative admission threshold, not the transaction's actual fee. Doubling
+the current gas prices rejects that old threshold; adequate funding still works.
+Seven executable mutations expose role, digest-binding, solvency, slot,
+leaf-binding, deadline and frozen-fee failures. Restored code/configuration passes.
+The test also checks actual updated-state replay rejection, immutable suffix
+preservation, malformed digests, expiry and the value cap.
+
+Only **22 gas** remains on the measured fixture. This does not prove worst-case
+fit or production solvency: input-size/storage bounds remain unproved, and full
+canonical network/domain/party/class validation, minimum downstream funding,
+successor witnesses and POP are still missing. The candidate performs LMS
+verification before semantic intent validation; rejected inputs must still be
+included in future worst-case hardware measurements. Native transaction evidence
+is recorded in `layout-admission-20261005.json`; Rust execution of this contract,
+reference-hardware pricing and hosted CI have not been run. The original prototype
+and its earlier receipts are unchanged.

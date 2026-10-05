@@ -1,0 +1,109 @@
+{
+  "candidate": {
+    "next_leaf": 21,
+    "gas_at_accept": 9978
+  },
+  "receiver_locked": true,
+  "actual_updated_state_replay_rejected": 2004,
+  "immutable_suffix_preserved": true,
+  "primary_rejected": 2011,
+  "digest_binding_rejected": 2006,
+  "malformed_digest_rejected": {
+    "short": 9,
+    "trailing_bit": 9,
+    "trailing_ref": 9
+  },
+  "role_mutation_admitted_primary": {
+    "next_leaf": 22,
+    "gas_at_accept": 9546
+  },
+  "binding_mutation_admitted_swapped_body": {
+    "next_leaf": 22,
+    "gas_at_accept": 9759
+  },
+  "restored": {
+    "next_leaf": 21,
+    "gas_at_accept": 9978
+  },
+  "replay_rejected": 2004,
+  "future_slot_rejected": 2009,
+  "old_slot_rejected": 2009,
+  "previous_slot": {
+    "next_leaf": 21,
+    "gas_at_accept": 9978
+  },
+  "value_cap_rejected": 2010,
+  "expired_rejected": 2003,
+  "long_deadline_rejected": 2003,
+  "leaf_binding_rejected": 2005,
+  "minimum_initial_balance": 2430389821,
+  "one_below_rejected": 2008,
+  "at_balance_boundary": {
+    "next_leaf": 21,
+    "gas_at_accept": 9978
+  },
+  "solvency_mutation_admitted_insufficient_balance": {
+    "next_leaf": 21,
+    "gas_at_accept": 9470
+  },
+  "slot_mutation_admitted_future": {
+    "next_leaf": 21,
+    "gas_at_accept": 9822
+  },
+  "slot_mutation_admitted_old": {
+    "next_leaf": 21,
+    "gas_at_accept": 9822
+  },
+  "leaf_mutation_admitted_wrong_leaf": {
+    "next_leaf": 21,
+    "gas_at_accept": 9867
+  },
+  "deadline_mutation_admitted_long_window": {
+    "next_leaf": 23,
+    "gas_at_accept": 9836
+  },
+  "restored_final": {
+    "next_leaf": 21,
+    "gas_at_accept": 9978
+  },
+  "raised_gas_price_rejects_old_balance": 2008,
+  "raised_gas_price_with_funding": {
+    "next_leaf": 21,
+    "gas_at_accept": 9978
+  },
+  "frozen_fee_mutation_admits_old_balance": {
+    "next_leaf": 21,
+    "gas_at_accept": 9923
+  },
+  "restored_config_and_contract": {
+    "next_leaf": 21,
+    "gas_at_accept": 9978
+  },
+  "scope": "fixed layout with current-config bounded fee estimate; not complete v5 admission",
+  "global_version": 16,
+  "external_credit": 10000,
+  "source_sha256": "679dce318c378d7737b13e38f39ba51658340b18b274c928f770c834a2d2b7d3",
+  "candidate_sha256": "679dce318c378d7737b13e38f39ba51658340b18b274c928f770c834a2d2b7d3",
+  "base_commit": "ef56eb6686da4aedf81500a216dca4f13f2b3d5e",
+  "host": "Darwin arm64",
+  "command": "python3 test/rescue-fee-gate/probe_layout_admission.py (environment as README.md)",
+  "runner_sha256": "885f0f328168d7a8f26f7064a9851c082b895450f8c5b0e8f7e92c677385255c",
+  "native_build_sha256": {
+    "build/crypto/func": "b6649c82021046d10f3126b0c68fdedb97b4c7557264f112504920b90f7a3485",
+    "build/emulator/libemulator.dylib": "8fce62c08e8dcef22338714d7c2e2a38eff99fbd1965804529543f45fcffbef8"
+  },
+  "validation": {
+    "native_probe_exit": 0,
+    "ruff_exit": 0,
+    "mutation_controls": 7,
+    "rust_contract_execution": "not run",
+    "hosted_ci": "not run",
+    "production_acceptance": false
+  },
+  "raw_result": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/layout-admission.json",
+    "sha256": "f0242400412757bb31a006ad0268eb39766c7969180a16ce4b7969e93360d147",
+    "bytes": 2233,
+    "retention": "retain with this experiment until superseded by a reproduced admission result"
+  }
+}
