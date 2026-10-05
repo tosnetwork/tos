@@ -76,13 +76,20 @@ fee_route_v1#01
   slot_seconds:uint32 per_slot:uint16 epoch0:uint32   // time-slot leaves; per_slot = 0 means counter mode
   = FeeRoute;
 
-auth_state_v2#02 mode:(## 2)                  // 2 = module only, 3 = Ed25519 AND module
-  root:bits256 root_code_hash:bits256
-  daily:DailySuite policy:RescuePolicy
-  local_retired:uint16                         // bit s = daily suite s retired here; set-only
+// Complete receiver storage candidate, superseding the circular v2 init tuple.
+// Module StateInit binds network/global id, code, keys and policy once. The wallet
+// validates it against its compiled dependency. Fee metadata has no vault address.
+// A runtime FeeRoute cache must be derived and checked, never a genesis input.
+fee_metadata_v1#01 fee_profile:uint8 epoch0:uint32 slot_seconds:uint32 per_slot:uint16
+  fee_public_key:^Cell = FeeMetadata;
+// Admitted profile: 1, slot_seconds=3600, per_slot=4, canonical HSS L1/H20/W4 key.
+auth_state_v3#03 mode:(## 2) local_retired:uint16
   epoch:uint64 primary_nonce:uint64 rescue_nonce:uint64
-  fee_route:^FeeRoute
-  = AuthStateV2;
+  module_init:^StateInit fee_metadata:^FeeMetadata = AuthStateV3;
+wallet_v5r2_data$_ signature_allowed:Bool seqno:uint32 wallet_id:uint32
+  public_key:bits256 extensions:(HashmapE 256 int1) auth:^AuthStateV3 = WalletV5R2Data;
+// signature_allowed must be false, extensions empty, and mode exactly 2 or 3.
+// No missing-state fallback. Stored local_retired bits survive every transition.
 
 // ---- Fee vault (immutable code; data mutates only in next_leaf, budget and diagnostics)
 // header_hash = cell_hash(FeeHeader) of this vault: one comparison binds network, vault, wallet,

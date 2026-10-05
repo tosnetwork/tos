@@ -136,3 +136,29 @@ python test/wallet-v5r2/test_identity.py --output /path/to/r2-identity
 These tests run in authentication-extension CI. The shared Python cell decoder
 continues rejecting exotic cells by default; identity negative fixtures explicitly
 opt into decoding level-zero library-reference cells without resolving them.
+
+## Strict complete-wallet storage candidate
+
+`wallet-v5r2-state.fc` implements the `AuthStateV3` storage candidate in
+`wallet-v5r2-rescue.tlb`. The ordinary V5 fields remain present; signature authority
+is disabled and the extension dictionary must be empty. Modes 0/1, missing AUTH,
+trailing fields and weak mode-3 classical keys fail admission. The installed module
+StateInit is validated against the caller's compiled dependency and expected
+network. Root address, policy and keys are derived from that witness rather than
+separately writable assertions.
+
+Genesis stores only fee metadata (profile, epoch, fixed 3600-second/four-leaf slots
+and canonical HSS L1/H20/W4 public key), with no vault address. This removes the
+circular genesis input in the earlier v2 storage proposal. The immutable module
+witness contains the network and code identity. A future runtime vault-address
+cache must be derived from the wallet address and validated metadata. Vault code,
+reserve/budget policy, pairing derivation and migration installation still require
+integration; the storage codec alone does not establish these properties.
+
+The native fixture round-trips all ordinary and AUTH fields, including saturated
+counters and every retirement bit. It tests malformed admission and guard-deletion
+sensitivity without claiming wallet message authorization or deployment. Run:
+
+```sh
+python test/wallet-v5r2/test_state.py --output /path/to/r2-state
+```

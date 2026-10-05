@@ -1,0 +1,11 @@
+;; Test only: validates and round-trips supplied wallet storage. Not a wallet.
+#include "wallet-v5r2-state.fc";
+() recv_internal(int value, cell full, slice body) impure {
+  slice fixture = get_data().begin_parse();
+  int code = fixture~load_uint(256);
+  cell candidate = body~load_ref();
+  body.end_parse();
+  var (seqno, id, key, mode, retired, epoch, primary, rescue, module, fee) =
+      r2state_load(candidate, code, 42, 123);
+  set_data(r2state_store(seqno, id, key, mode, retired, epoch, primary, rescue, module, fee));
+}
