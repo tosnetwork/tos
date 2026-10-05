@@ -9,6 +9,9 @@ import time
 from pathlib import Path
 
 
+REQUIRED_COUNTERS = {"cache_miss", "direct_cache_hit", "preprocessed_cache_hit"}
+
+
 def run(command: list[str], env: dict[str, str], *, success: bool = True) -> str:
     result = subprocess.run(command, env=env, capture_output=True, text=True)
     output = result.stdout + result.stderr
@@ -17,9 +20,41 @@ def run(command: list[str], env: dict[str, str], *, success: bool = True) -> str
     return output
 
 
+def parse_stats(output: str) -> dict[str, int]:
+    """Read machine counters, refusing missing evidence instead of assuming zero."""
+    counters: dict[str, int] = {}
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            raise RuntimeError(f"Malformed ccache counter: {line!r}")
+        key, raw_value = fields
+        if key in counters:
+            raise RuntimeError(f"Duplicate ccache counter: {key}")
+        try:
+            value = int(raw_value)
+        except ValueError as error:
+            raise RuntimeError(f"Non-integer ccache counter: {line!r}") from error
+        if value < 0:
+            raise RuntimeError(f"Negative ccache counter: {line!r}")
+        counters[key] = value
+    missing = REQUIRED_COUNTERS - counters.keys()
+    if missing:
+        raise RuntimeError(f"Missing required ccache counters: {sorted(missing)}")
+    return counters
+
+
 def stats(env: dict[str, str]) -> dict[str, int]:
-    lines = run(["ccache", "--print-stats"], env).splitlines()
-    return {key: int(value) for key, value in (line.split() for line in lines)}
+    return parse_stats(run(["ccache", "--print-stats"], env))
+
+
+def require_restored_hits(warm: dict[str, int]) -> int:
+    missing = REQUIRED_COUNTERS - warm.keys()
+    if missing:
+        raise RuntimeError(f"Missing required ccache counters: {sorted(missing)}")
+    hits = warm["direct_cache_hit"] + warm["preprocessed_cache_hit"]
+    if hits < 2 or warm["cache_miss"] != 0:
+        raise RuntimeError(f"Restored-cache build did not reuse both compilations: {warm}")
+    return hits
 
 
 def main() -> None:
@@ -57,7 +92,7 @@ def main() -> None:
         time.sleep(1.1)
         rebuild()
         cold = stats(env)
-        if cold.get("cache_miss", 0) < 2:
+        if cold["cache_miss"] < 2:
             raise RuntimeError(f"Cold C and C++ compilations did not pass through ccache: {cold}")
         run([str(build / "probe")], env)
         archive = root / "objects.tar"
@@ -68,9 +103,7 @@ def main() -> None:
             stream.extractall(root, filter="data")
         rebuild()
         warm = stats(env)
-        hits = warm.get("cache_hit_direct", 0) + warm.get("cache_hit_preprocessed", 0)
-        if hits < 2 or warm.get("cache_miss", 0):
-            raise RuntimeError(f"Restored-cache build did not reuse both compilations: {warm}")
+        hits = require_restored_hits(warm)
         run([str(build / "probe")], env)
         header.write_text("static inline int expected(void) { int must_be_rejected; return 42; }\n")
         failure = rebuild(success=False)

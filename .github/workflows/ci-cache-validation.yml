@@ -24,6 +24,8 @@ jobs:
         uses: ./.github/actions/native-cache
         with:
           profile: validation
+      - name: Check machine counter names and reject missing cache evidence
+        run: python3 .github/actions/native-cache/test_smoke.py -v
       - name: Check cache identities and early CMake launcher propagation
         run: python3 .github/actions/native-cache/test_prepare.py -v
       - name: Require cold misses, restored hits and a failing header-warning control
