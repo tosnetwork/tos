@@ -244,13 +244,13 @@ td::actor::ActorOwn<JsonRpcServer> JsonRpcServer::create(
                                                 std::move(options));
 }
 
-JsonRpcServer::JsonRpcServer(
-    td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
-    Options options)
-    : validator_manager_(std::move(validator_manager)),
-      opts_(std::move(options)),
-      cache_(std::make_shared<JsonRpcResponseCache>(opts_.cache_max_entries, opts_.cache_max_body_bytes)),
-      per_ip_gate_(opts_.per_ip_rate_window, opts_.per_ip_rate_requests, opts_.per_ip_rate_max_sources) {
+JsonRpcServer::JsonRpcServer(td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
+                             Options options)
+    : validator_manager_(std::move(validator_manager))
+    , opts_(std::move(options))
+    , cache_(std::make_shared<JsonRpcResponseCache>(opts_.cache_max_entries, opts_.cache_max_body_bytes))
+    , per_ip_gate_(opts_.per_ip_rate_window, opts_.per_ip_rate_requests, opts_.per_ip_rate_max_sources)
+    , ingress_gate_(opts_.per_ip_ingress_window, opts_.per_ip_ingress_requests, opts_.per_ip_rate_max_sources) {
   // Arm periodic cache cleanup if caching is enabled
   if (opts_.cache_ttl > 0) {
     alarm_timestamp() = td::Timestamp::in(10.0);
@@ -332,12 +332,14 @@ void JsonRpcServer::admit_request_head(AdmissionHead head, td::Promise<http::Htt
     promise.set_value(http::HttpServer::Admission::refuse(std::move(refusal.first), std::move(refusal.second)));
     return;
   }
-  // Readiness probes are never charged to the source budget (see on_request).
+  // Readiness probes are never charged to a source budget (see on_request).
+  // Every other request spends one unit of its source's ingress budget here,
+  // atomically on this actor, before its body may be reserved or read.
   bool readiness = head.method == "GET" && (path == "/readyz" || path == "/readyz/");
   if (!readiness) {
     auto source = resolve_source_ip(head.peer_ip, head.forwarded_for, head.real_ip, opts_.trust_proxy_headers,
                                     opts_.trusted_proxies);
-    if (!per_ip_gate_.would_admit(source, td::Timestamp::now())) {
+    if (!ingress_gate_.consume(source, td::Timestamp::now())) {
       auto refusal = json_rpc::rate_limited_response(opts_.cors_origin);
       promise.set_value(http::HttpServer::Admission::refuse(std::move(refusal.first), std::move(refusal.second)));
       return;
@@ -654,19 +656,11 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         td::Promise<HttpReturn> promise_;
       };
       if (payload->parse_completed()) {
-        json_rpc::hold_body_reservation_until_answered(payload, promise);
-        auto body_r = drain_payload_body(payload);
-        if (body_r.is_error()) {
-          // REST POST endpoint — TVM-style error envelope (HTTP 422)
-          promise.set_value(make_json_error(-32600, "Request body too large",
-                                            "null", opts_.cors_origin));
-          return;
-        }
         // REST POST carries source_ip so its submissions meet the same
         // per-IP budget as the JSON-RPC envelope path; an unattributed
         // caller would otherwise be admitted without spending any.
-        process_rest_post_body(body_r.move_as_ok(), std::move(rest_method),
-                               std::move(source_ip), std::move(promise));
+        on_request_body(std::move(payload), BodyRoute::rest, std::move(rest_method), std::move(source_ip),
+                        std::move(promise));
       } else {
         payload->add_callback(std::make_unique<PostRestWaiter>(
             actor_id(this), payload, std::move(rest_method),
@@ -679,16 +673,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
   // Accept POST on /jsonRPC (canonical) and any other path (backward compat)
 
   if (payload->parse_completed()) {
-    json_rpc::hold_body_reservation_until_answered(payload, promise);
-    auto body_r = drain_payload_body(payload);
-    if (body_r.is_error()) {
-      // JSON-RPC envelope path — emit spec-shape so generic clients decode it.
-      promise.set_value(make_json_rpc_error(-32600, "Request body too large",
-                                            "null", opts_.cors_origin));
-      return;
-    }
-    process_body(body_r.move_as_ok(), "", std::move(source_ip),
-                 std::move(promise));
+    on_request_body(std::move(payload), BodyRoute::envelope, "", std::move(source_ip), std::move(promise));
   } else {
     // Body not yet fully received — register callback.
     // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
@@ -734,15 +719,44 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, std::string source_ip,
   }
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
+  on_request_body(std::move(payload), BodyRoute::envelope, "", std::move(source_ip), std::move(promise));
+}
+
+void JsonRpcServer::on_request_body(PayloadPtr payload, BodyRoute route, std::string rest_method, std::string source_ip,
+                                    td::Promise<HttpReturn> promise) {
   json_rpc::hold_body_reservation_until_answered(payload, promise);
   auto body_r = drain_payload_body(payload);
+  payload.reset();
   if (body_r.is_error()) {
-    promise.set_value(make_json_rpc_error(-32600, "Request body too large", "null",
-                                          opts_.cors_origin));
+    if (route == BodyRoute::rest) {
+      // REST POST endpoint — TVM-style error envelope (HTTP 422)
+      promise.set_value(make_json_error(-32600, "Request body too large", "null", opts_.cors_origin));
+    } else {
+      // JSON-RPC envelope path — emit spec-shape so generic clients decode it.
+      promise.set_value(make_json_rpc_error(-32600, "Request body too large", "null", opts_.cors_origin));
+    }
     return;
   }
-  process_body(body_r.move_as_ok(), "", std::move(source_ip),
-               std::move(promise));
+  if (opts_.body_drained_hook) {
+    auto resume = td::PromiseCreator::lambda([self = actor_id(this), body = body_r.move_as_ok(), route,
+                                              rest_method = std::move(rest_method), source_ip = std::move(source_ip),
+                                              promise = std::move(promise)](td::Result<td::Unit>) mutable {
+      td::actor::send_closure(self, &JsonRpcServer::process_request_body, std::move(body), route,
+                              std::move(rest_method), std::move(source_ip), std::move(promise));
+    });
+    opts_.body_drained_hook(std::move(resume));
+    return;
+  }
+  process_request_body(body_r.move_as_ok(), route, std::move(rest_method), std::move(source_ip), std::move(promise));
+}
+
+void JsonRpcServer::process_request_body(td::BufferSlice body, BodyRoute route, std::string rest_method,
+                                         std::string source_ip, td::Promise<HttpReturn> promise) {
+  if (route == BodyRoute::rest) {
+    process_rest_post_body(std::move(body), std::move(rest_method), std::move(source_ip), std::move(promise));
+  } else {
+    process_body(std::move(body), "", std::move(source_ip), std::move(promise));
+  }
 }
 
 // JSON-RPC 2.0 batch request cap. Anything larger gets rejected with
@@ -981,22 +995,31 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
           state->cursor++;
           continue;
         }
-        // Same rule as the dispatch path: an element whose id cannot be
-        // echoed is answered with id null.
+        // The same validation as the dispatch path comes first: an element
+        // that is not an object, or whose id cannot be echoed, is an invalid
+        // request (-32600, id null) whether or not the batch ran out of time.
+        // Only a valid element is answered with the timeout, under its id.
         std::string elem_id = "null";
-        if (state->elements[j].type() == td::JsonValue::Type::Object) {
+        td::Status invalid;
+        if (state->elements[j].type() != td::JsonValue::Type::Object) {
+          invalid = td::Status::Error("batch element is not a JSON object");
+        } else {
           auto &obj = state->elements[j].get_object();
           for (auto &fv : obj.field_values_) {
             if (fv.first != "id") continue;
             auto id_r = reflected_request_id(fv.second);
             if (id_r.is_ok()) {
               elem_id = id_r.move_as_ok();
+            } else {
+              invalid = id_r.move_as_error();
             }
             break;
           }
         }
-        auto err = make_json_rpc_error(
-            -32603, "Request batch timed out", elem_id, state->cors);
+        auto err = invalid.is_error()
+                       ? make_json_rpc_error(-32600, PSTRING() << "Invalid Request: " << invalid.message(), "null",
+                                             state->cors)
+                       : make_json_rpc_error(-32603, "Request batch timed out", elem_id, state->cors);
         state->responses[j] = extract_response_body(err);
         state->cursor++;
       }
@@ -1073,15 +1096,7 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
                                             td::Promise<HttpReturn> promise) {
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s callback chain. Breaks the deadlock.
-  json_rpc::hold_body_reservation_until_answered(payload, promise);
-  auto body_r = drain_payload_body(payload);
-  if (body_r.is_error()) {
-    promise.set_value(make_json_error(-32600, "Request body too large", "null",
-                                      opts_.cors_origin));
-    return;
-  }
-  process_rest_post_body(body_r.move_as_ok(), std::move(method),
-                         std::move(source_ip), std::move(promise));
+  on_request_body(std::move(payload), BodyRoute::rest, std::move(method), std::move(source_ip), std::move(promise));
 }
 
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
