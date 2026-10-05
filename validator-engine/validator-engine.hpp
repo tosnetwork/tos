@@ -45,6 +45,7 @@
 #include "td/actor/PromiseFuture.h"
 #include "tos/tos-types.h"
 #include "validator/full-node-master.h"
+#include "validator/full-node-slave-key.h"
 #include "validator/full-node.h"
 #include "validator/manager.h"
 #include "validator/validator-transport-authority.h"
@@ -188,6 +189,9 @@ class ValidatorEngine : public td::actor::Actor {
   td::actor::ActorOwn<tos::overlay::Overlays> overlay_manager_;
   td::actor::ActorOwn<tos::validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<tos::adnl::AdnlExtClient> full_node_client_;
+  // The full-node ADNL key a slave signs in to its masters with; loaded and
+  // checked at startup, before anything else starts.
+  tos::PrivateKey full_node_slave_key_;
   td::actor::ActorOwn<tos::validator::fullnode::FullNode> full_node_;
   tos::adnl::AdnlNodeIdShort full_node_id_ = tos::adnl::AdnlNodeIdShort::zero();
   tos::validator::ValidatorAdnlRefCounts local_validator_adnl_ids_;
@@ -511,6 +515,9 @@ class ValidatorEngine : public td::actor::Actor {
   void load_noncritical_params_overrides();
 
   void start();
+  void check_full_node_master_and_slave_config();
+  void loaded_full_node_slave_key(tos::PrivateKey key);
+  void start_after_config_checks();
 
   void start_adnl();
   void add_addr(const Config::Addr &addr, const Config::AddrCats &cats);
@@ -547,7 +554,6 @@ class ValidatorEngine : public td::actor::Actor {
   size_t wc0_recovery_index_ = 0;
 
   void start_full_node();
-  void start_full_node_with_slave_key(tos::PrivateKey slave_key);
   void started_full_node();
 
   void add_lite_server(tos::PublicKeyHash id, td::uint16 port);

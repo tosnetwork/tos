@@ -914,6 +914,12 @@ target_include_directories(test-adnl-ext-client-identity PRIVATE ${CMAKE_CURRENT
 target_link_libraries(test-adnl-ext-client-identity PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
                       tdutils tdactor)
 
+add_executable(test-full-node-master-admission test/test-full-node-master-admission.cpp)
+target_include_directories(test-full-node-master-admission PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-full-node-master-admission PRIVATE full-node tos_block adnl dht keyring keys tl_api
+                      tl-utils tdutils tdactor)
+
 add_executable(test-adnl-ext-query-refusal test/pq-native/adnl-ext-query-refusal-test.cpp)
 target_include_directories(test-adnl-ext-query-refusal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1590,6 +1596,10 @@ add_test(NAME n6-cluster-runner
 set_tests_properties(n6-cluster-runner PROPERTIES
   ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/test/tostester/src"
   LABELS "source-guard")
+add_test(NAME full-node-master-startup
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/full-node-master-startup-test.py
+          $<TARGET_FILE:validator-engine>)
+set_tests_properties(full-node-master-startup PROPERTIES LABELS "security-findings")
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
@@ -1712,6 +1722,7 @@ tos_test(test-adnl-ext-query-closure)
 tos_test(test-adnl-ext-query-refusal)
 tos_test(test-adnl-ext-output-backpressure)
 tos_test(test-adnl-ext-client-identity)
+tos_test(test-full-node-master-admission)
 tos_test(test-adnl-ext-input-budget)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
@@ -1787,6 +1798,7 @@ set_tests_properties(
   test-adnl-ext-output-backpressure
   test-rate-limiter
   test-full-node-shard-admission
+  test-full-node-master-admission
   test-rldp2-inbound-budget
   test-rldp2-inbound-transfer-bound
   test-rldp2-decoder-heap
