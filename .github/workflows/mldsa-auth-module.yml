@@ -15,6 +15,7 @@ on:
       - 'test/mldsa-auth/**'
       - 'doc/mldsa44-auth-module.md'
       - '.github/workflows/mldsa-auth-module.yml'
+      - '.github/actions/native-cache/**'
 permissions:
   contents: read
 concurrency:
@@ -41,6 +42,12 @@ jobs:
           persist-credentials: false
       - name: Check wire formats and signing-profile constants
         run: python3 test/mldsa-auth/test_protocol.py
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: mldsa-auth-module-release
+
       - name: Build real contract tools and transaction emulator
         run: |
           test "$(uname -m)" = '${{ matrix.arch }}'
@@ -79,6 +86,9 @@ jobs:
           path: artifacts/
           retention-days: 14
           if-no-files-found: warn
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats
   determinism:
     needs: native
     if: always()

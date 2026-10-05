@@ -29,6 +29,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build
 
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: n6-microbench-smoke-release
+
       - name: Configure Release build
         run: cmake -S . -B build-n6-smoke -G Ninja -DCMAKE_BUILD_TYPE=Release
 
@@ -38,3 +44,6 @@ jobs:
       - name: Run registered smoke gate
         working-directory: build-n6-smoke
         run: ctest -L n6-microbench-smoke --no-tests=error --output-on-failure
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats

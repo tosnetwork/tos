@@ -37,6 +37,7 @@ on:
       - "artifacts/phase2/ceremony/**"
       - "artifacts/shielded-pool/**"
       - ".github/workflows/shielded-pool-crosscheck.yml"
+      - ".github/actions/native-cache/**"
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [main, master, testnet]
@@ -54,6 +55,7 @@ on:
       - "artifacts/phase2/ceremony/**"
       - "artifacts/shielded-pool/**"
       - ".github/workflows/shielded-pool-crosscheck.yml"
+      - ".github/actions/native-cache/**"
   workflow_dispatch:
 
 concurrency:
@@ -75,6 +77,24 @@ jobs:
 
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
+
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: shielded-pool-crosscheck-release
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: shielded-release-${{ steps.native-cache.outputs.host-key }}
+          cache-bin: false
+          workspaces: |
+            tools/shielded-pool-circuit/crosscheck -> target
+            tools/shielded-pool-circuit -> target
+            tools/shielded-pool-wallet -> target
+            tools/shielded-pool-genesis -> target
 
       - name: Configure compiler toolchain
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -148,3 +168,6 @@ jobs:
       #
       # If that ever becomes cheap enough, it belongs in a scheduled job
       # rather than this one.
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats

@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/pq-v16-readiness.yml'
+      - '.github/actions/native-cache/**'
       - 'test/pq-readiness/**'
       - 'crypto/pq/**'
       - 'crypto/vm/pqops*'
@@ -58,6 +59,20 @@ jobs:
         run: |
           scripts/install-rust-toolchain.sh
           python -m pip install bitarray==3.7.2 PyNaCl==1.5.0 pycryptodome==3.23.0 cryptography==46.0.4
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: pq-v16-readiness-release
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: pq-v16-readiness-${{ steps.native-cache.outputs.host-key }}
+          cache-bin: false
+          workspaces: tosctl/src -> target
+
       - name: Build native candidate tools and Rust opcode execution
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -123,6 +138,9 @@ jobs:
           path: artifacts/
           retention-days: 14
           if-no-files-found: error
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats
   readiness:
     needs: native
     if: always()

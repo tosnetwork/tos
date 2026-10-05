@@ -40,6 +40,7 @@ on:
       - "scripts/tos_service_escrow_deploy_policy.py"
       - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
+      - ".github/actions/native-cache/**"
     types: [opened, reopened, synchronize, ready_for_review]
   # Restricted to the integration branches on purpose. Without this, a push to
   # a PR branch fires here *and* through pull_request, running the same SHA
@@ -75,6 +76,7 @@ on:
       - "scripts/tos_service_escrow_deploy_policy.py"
       - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
+      - ".github/actions/native-cache/**"
   workflow_dispatch:
 
 concurrency:
@@ -98,6 +100,20 @@ jobs:
 
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
+
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: contract-sandboxes-release
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: contract-sandboxes-${{ steps.native-cache.outputs.host-key }}
+          cache-bin: false
+          workspaces: tosctl/src -> target
 
       - name: Configure compiler toolchain
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -262,3 +278,6 @@ jobs:
 
       - name: Frozen BOCs match their sources
         run: git diff --exit-code
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats
