@@ -74,6 +74,7 @@ fn app_cfg_with_auth_and_proxies(
         disputes: HashMap::new(),
         proof_attestations: HashMap::new(),
         alerts: Default::default(),
+        proof_verifier: None,
     })
 }
 
@@ -99,6 +100,7 @@ fn app_cfg_no_auth() -> Arc<common::app_config::AppConfig> {
         disputes: HashMap::new(),
         proof_attestations: HashMap::new(),
         alerts: Default::default(),
+        proof_verifier: None,
     })
 }
 

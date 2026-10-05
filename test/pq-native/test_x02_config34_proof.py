@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""X02 same-block Config34 proof on retained real bytes, with the controls that matter.
+"""X02 Config34: decoding, frozen-row binding and bundle-shape refusals, without the verifier.
 
-Positive proof-chain bytes are Z01's retained lite quartets (a ConfigParam30 proof per
-block, each accepted by the native checker); positive Config34 bytes are four real
-Config34 cells returned by JSON-RPC in X01. No retained lite reply proves Config34
-itself, so a real same-block Config34 bundle is exercised only by a live capture.
+Authentication itself is the compiled anchored verifier's; its production-path tests,
+including a self-consistent bundle that is not authenticated from the anchor, are in
+test_x02_config34_verifier.py. The checks here refuse before the verifier runs, so they
+need no native build. Positive Config34 bytes are four real Config34 cells returned by
+JSON-RPC in X01.
 """
 
-import base64
 import hashlib
 import json
 import os
@@ -15,36 +15,11 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 import x02_config34_proof as proof
 from pytosiq_core.boc.cell import Cell
 
 FIXTURES = Path(__file__).resolve().parent / "x02-config34-fixtures"
-SEQ = {
-    11: {
-        "workchain": -1,
-        "shard": str(-(1 << 63)),
-        "seqno": 11,
-        "root_hash": "944F0E7095C7BACB5D4CBED23785BAF9C4B30A606ED36E7B916F6865BAFF7C0C",
-        "file_hash": "78099EA7E95C42FE8BEDC2CDA8F67FB0D162A67ED0F13644E6DE3D177FF839EC",
-    },
-    12: {
-        "workchain": -1,
-        "shard": str(-(1 << 63)),
-        "seqno": 12,
-        "root_hash": "4A77BA6D3D146F6DEBE31C3E9600E44D3609991857D8155B2711DFC3E9554F87",
-        "file_hash": "C4B33E125A555681BE0D93C0C0D473D9D05C32D905C4B9EC197AF7DF52F6EE11",
-    },
-}
-NATIVE_PARAM30 = "A922FC0CB6BACFEE2D49645DA25394F069447D8C250E4A0FB5ED75BA23CDD9E5"
-
-
-def quartet(seqno):
-    return {
-        kind: (FIXTURES / f"z01-seq{seqno}-{kind}.boc").read_bytes()
-        for kind in ("block", "state-proof", "config-proof", "param30")
-    }
 
 
 def config34_cells():
@@ -55,127 +30,45 @@ def config34_cells():
 
 
 ELECTION = 1790358449
-RPCS = [f"127.0.0.1:{34600 + index}" for index in range(4)]
+ANCHOR = {
+    "kind": "zerostate",
+    "workchain": -1,
+    "shard": "8000000000000000",
+    "seqno": 0,
+    "root_hash": "1b" * 32,
+    "file_hash": "c9" * 32,
+}
+TARGET = {
+    "workchain": -1,
+    "shard": "8000000000000000",
+    "seqno": 11,
+    "root_hash": "944F0E7095C7BACB5D4CBED23785BAF9C4B30A606ED36E7B916F6865BAFF7C0C",
+    "file_hash": "78099EA7E95C42FE8BEDC2CDA8F67FB0D162A67ED0F13644E6DE3D177FF839EC",
+}
 
 
-def make_bundle(base, block=True, param=None, forged_header=None, seqno=11):
-    """A bundle laid out exactly as Stage A writes it, from retained Z01 bytes."""
-    q = quartet(seqno)
+def make_bundle(base, chain=b"chain", config=b"config", param=b"param"):
+    """A bundle in Stage A's layout; its bytes are placeholders that never reach a proof."""
     paths = proof.bundle_paths(ELECTION)
-    directory = base / f"election-{ELECTION}-config34-proof"
-    directory.mkdir(parents=True)
-    bundle = {"block_id": SEQ[seqno], "source_rpc": RPCS[0], "headers": []}
-    kinds = {
-        "state_proof": q["state-proof"],
-        "config_proof": q["config-proof"],
-        "param": q["param30"] if param is None else param,
-    }
-    if block:
-        kinds["block"] = q["block"]
-    for key, raw in kinds.items():
-        (base / paths[key]).write_bytes(raw)
-        bundle[key] = {"path": paths[key], "sha256": hashlib.sha256(raw).hexdigest()}
-    for index, rpc in enumerate(RPCS, 1):
-        full = {
-            "workchain": -1,
-            "shard": SEQ[seqno]["shard"],
-            "seqno": seqno,
-            "root_hash": base64.b64encode(bytes.fromhex(SEQ[seqno]["root_hash"])).decode(),
-            "file_hash": base64.b64encode(bytes.fromhex(SEQ[seqno]["file_hash"])).decode(),
+    (base / paths["material"]).mkdir(parents=True)
+    bundle = {"block_id": dict(TARGET), "material": {}}
+    for name, raw in (("chain-0000.tl", chain), ("config.tl", config)):
+        (base / paths["material"] / name).write_bytes(raw)
+        bundle["material"][name] = {
+            "path": paths["material"] + name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
         }
-        if forged_header == index:
-            full["file_hash"] = base64.b64encode(b"\x07" * 32).decode()
-        raw = json.dumps({"result": {"id": full}}).encode()
-        (base / paths["headers"][index - 1]).write_bytes(raw)
-        bundle["headers"].append(
-            {
-                "rpc": rpc,
-                "path": paths["headers"][index - 1],
-                "sha256": hashlib.sha256(raw).hexdigest(),
-            }
-        )
+    (base / paths["param"]).write_bytes(param)
+    bundle["param"] = {"path": paths["param"], "sha256": hashlib.sha256(param).hexdigest()}
     return bundle
 
 
 class FixtureIdentity(unittest.TestCase):
     def test_fixture_bytes_match_their_recorded_provenance(self):
         manifest = json.loads((FIXTURES / "manifest.json").read_text())
-        for key in ("z01_seq11_quartet", "z01_seq12_quartet"):
-            for name, digest in manifest[key]["files"].items():
-                self.assertEqual(hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest(), digest)
         for since, row in manifest["config34_cells"]["by_utime_since"].items():
             raw = (FIXTURES / f"config34-since-{since}.boc").read_bytes()
             self.assertEqual(hashlib.sha256(raw).hexdigest(), row["sha256"])
-
-
-class SameBlockProofChain(unittest.TestCase):
-    def prove(self, block_seq, proof_seq=None, index=30, block_id=None):
-        block, proofs = quartet(block_seq), quartet(proof_seq or block_seq)
-        return proof.proven_config_param(
-            block_id or SEQ[block_seq],
-            block["block"],
-            proofs["state-proof"],
-            proofs["config-proof"],
-            index,
-        )
-
-    def test_both_retained_blocks_prove_the_native_checkers_param30(self):
-        for seqno in (11, 12):
-            cell = self.prove(seqno)
-            self.assertEqual(cell.hash.hex().upper(), NATIVE_PARAM30)
-            self.assertEqual(cell.hash, Cell.one_from_boc(quartet(seqno)["param30"]).hash)
-
-    def test_state_proof_alone_binds_the_block_root(self):
-        q = quartet(11)
-        cell = proof.proven_config_param(SEQ[11], None, q["state-proof"], q["config-proof"], 30)
-        self.assertEqual(cell.hash.hex().upper(), NATIVE_PARAM30)
-        with self.assertRaisesRegex(proof.ProofRefused, "does not match the full block ID"):
-            proof.proven_config_param(SEQ[12], None, q["state-proof"], q["config-proof"], 30)
-
-    def test_wrong_parameter_is_not_proven(self):
-        with self.assertRaisesRegex(proof.ProofRefused, "ConfigParam34 is not proven"):
-            self.prove(11, index=34)
-
-    def test_proofs_from_another_block_are_refused(self):
-        with self.assertRaisesRegex(proof.ProofRefused, "does not match the full block ID"):
-            self.prove(11, proof_seq=12)
-
-    def test_block_bytes_and_full_id_must_agree(self):
-        wrong_root = dict(SEQ[11], root_hash=SEQ[12]["root_hash"])
-        with self.assertRaisesRegex(proof.ProofRefused, "file hash|root hash"):
-            self.prove(11, block_id=wrong_root)
-        wrong_file = dict(SEQ[11], file_hash=SEQ[12]["file_hash"])
-        with self.assertRaisesRegex(proof.ProofRefused, "file hash"):
-            self.prove(11, block_id=wrong_file)
-        with self.assertRaisesRegex(proof.ProofRefused, "masterchain"):
-            self.prove(11, block_id=dict(SEQ[11], workchain=0))
-
-    def test_a_config_proof_from_another_block_is_refused(self):
-        block, other = quartet(11), quartet(12)
-        with self.assertRaisesRegex(proof.ProofRefused, "does not match the full block ID"):
-            proof.proven_config_param(
-                SEQ[11], block["block"], block["state-proof"], other["config-proof"], 30
-            )
-
-    def test_the_retained_parameter_must_be_the_proven_cell(self):
-        with tempfile.TemporaryDirectory() as directory:
-            base = Path(os.path.realpath(directory))
-            wrong = sorted(FIXTURES.glob("config34-since-*.boc"))[0].read_bytes()
-            bundle = make_bundle(base, param=wrong)
-            with self.assertRaisesRegex(
-                proof.ProofRefused, "differs from the proven parameter cell"
-            ):
-                proof.verify_bundle(bundle, base, [], ELECTION, RPCS, index=30)
-            bundle = make_bundle(base / "again", param=quartet(11)["param30"])
-            with self.assertRaisesRegex(proof.ProofRefused, "not a validator set"):
-                proof.verify_bundle(bundle, base / "again", [], ELECTION, RPCS, index=30)
-
-    def test_a_flipped_state_proof_byte_is_refused(self):
-        q = quartet(11)
-        tampered = bytearray(q["state-proof"])
-        tampered[len(tampered) // 2] ^= 1
-        with self.assertRaises((proof.ProofRefused, ValueError, Exception)):
-            proof.proven_config_param(SEQ[11], q["block"], bytes(tampered), q["config-proof"], 30)
 
 
 class Config34Decoding(unittest.TestCase):
@@ -270,6 +163,10 @@ class BoundedInputs(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.base = Path(os.path.realpath(self.directory.name))
+        # An executable that fails if run: every refusal below precedes it.
+        self.stub = self.base / "stub-verifier"
+        self.stub.write_text("#!/bin/sh\nexit 9\n")
+        self.stub.chmod(0o755)
 
     def tearDown(self):
         self.directory.cleanup()
@@ -305,90 +202,89 @@ class BoundedInputs(unittest.TestCase):
             proof.open_contained(self.base / "linkdir", "secret.boc", 100)
         shutil.rmtree(outside)
 
+    def refuse(self, bundle, reason, anchor=ANCHOR, verifier=None):
+        """Every refusal here must happen before any verifier could run."""
+        with self.assertRaisesRegex(proof.ProofRefused, reason):
+            proof.verify_bundle(bundle, self.base, [], ELECTION, anchor, verifier or self.stub)
+
     def test_bundle_files_must_be_this_elections_fixed_names(self):
         bundle = make_bundle(self.base)
         for name, path in (
-            ("state_proof", f"election-{ELECTION + 1}-config34-proof/state_proof.boc"),
-            ("config_proof", "/etc/passwd"),
-            ("param", f"election-{ELECTION}-config34-proof/../x/param.boc"),
+            ("chain-0000.tl", f"election-{ELECTION + 1}-config34-proof/material/chain-0000.tl"),
+            ("config.tl", "/etc/passwd"),
         ):
             changed = json.loads(json.dumps(bundle))
-            changed[name]["path"] = path
-            with (
-                self.subTest(name=name),
-                self.assertRaisesRegex(proof.ProofRefused, "not this election's"),
-            ):
-                proof.verify_bundle(changed, self.base, [], ELECTION, RPCS)
+            changed["material"][name]["path"] = path
+            with self.subTest(name=name):
+                self.refuse(changed, "not this election's", verifier=self.stub)
+        changed = json.loads(json.dumps(bundle))
+        changed["param"]["path"] = f"election-{ELECTION}-config34-proof/../x/param.boc"
+        self.refuse(changed, "not this election's", verifier=self.stub)
 
-    def test_digest_mismatch_refuses_before_parsing(self):
+    def test_material_must_be_a_contiguous_chain_and_one_configuration_proof(self):
         bundle = make_bundle(self.base)
-        bundle["config_proof"]["sha256"] = "0" * 64
-        with self.assertRaisesRegex(proof.ProofRefused, "digest differs"):
-            proof.verify_bundle(bundle, self.base, [], ELECTION, RPCS)
-
-    def test_headers_bind_the_file_hash_only_from_the_four_frozen_endpoints(self):
-        bundle = make_bundle(self.base, block=False)
-        # Correct headers reach the proof, which (Config30 only) is then refused as Config34.
-        with self.assertRaisesRegex(proof.ProofRefused, "ConfigParam34 is not proven"):
-            proof.verify_bundle(bundle, self.base, [], ELECTION, RPCS)
-        cases = {
-            "swapped": RPCS[1::-1] + RPCS[2:],
-            "foreign": RPCS[:3] + ["127.0.0.1:9999"],
-            "three": RPCS[:3],
-        }
-        for label, expected in cases.items():
-            with self.subTest(case=label), self.assertRaisesRegex(proof.ProofRefused, "frozen"):
-                proof.verify_bundle(bundle, self.base, [], ELECTION, expected)
-        changed = json.loads(json.dumps(bundle))
-        changed["source_rpc"] = RPCS[2]
-        with self.assertRaisesRegex(proof.ProofRefused, "not exactly the four frozen"):
-            proof.verify_bundle(changed, self.base, [], ELECTION, RPCS)
-        changed = json.loads(json.dumps(bundle))
-        changed["headers"][1], changed["headers"][2] = changed["headers"][2], changed["headers"][1]
-        with self.assertRaisesRegex(proof.ProofRefused, "not exactly the four frozen"):
-            proof.verify_bundle(changed, self.base, [], ELECTION, RPCS)
-
-    def test_a_header_disagreeing_on_the_file_hash_is_refused(self):
-        bundle = make_bundle(self.base, block=False, forged_header=3)
-        with self.assertRaisesRegex(proof.ProofRefused, "differs from the proven full block ID"):
-            proof.verify_bundle(bundle, self.base, [], ELECTION, RPCS)
-
-    def test_the_verdict_names_its_unauthenticated_trust_root(self):
-        # Only the verdict mapping is under test: the retained fixtures prove Config30,
-        # not Config34, so the proof and decoding steps are stood in for.
-        stand_ins = {
-            "proven_config_param": lambda *args: SimpleNamespace(hash=None),
-            "decode_validator_set": lambda cell: {"cell_hash": "00", "validators": []},
-            "compare_frozen_rows": lambda *args: None,
-        }
-
-        class Cell:
-            hash = None
-
-            @staticmethod
-            def one_from_boc(raw):
-                return Cell
-
-        saved = {name: getattr(proof, name) for name in [*stand_ins, "_pytosiq"]}
-        try:
-            for name, value in stand_ins.items():
-                setattr(proof, name, value)
-            proof._pytosiq = lambda: (Cell, None, None, None)
-            for block, bound_by in [(True, "block BOC"), (False, "four nodes' headers")]:
-                base = self.base / bound_by.replace(" ", "-").replace("'", "")
-                result = proof.verify_bundle(
-                    make_bundle(base, block=block), base, [], ELECTION, RPCS
+        for label, mutate in (
+            ("no chain", lambda m: m.pop("chain-0000.tl")),
+            ("no config", lambda m: m.pop("config.tl")),
+            ("gap", lambda m: m.__setitem__("chain-0002.tl", m["chain-0000.tl"])),
+            ("extra", lambda m: m.__setitem__("account.tl", m["config.tl"])),
+        ):
+            changed = json.loads(json.dumps(bundle))
+            mutate(changed["material"])
+            with self.subTest(case=label):
+                self.refuse(
+                    changed,
+                    "contiguous chain plus one configuration proof",
+                    verifier=self.stub,
                 )
-                self.assertEqual(result["file_hash_bound_by"], bound_by)
-                self.assertIn("no validator signature", result["block_id_trust_root"])
-                self.assertEqual(result["block_id_trust_root"], proof.TRUST_ROOT[bound_by])
-        finally:
-            for name, value in saved.items():
-                setattr(proof, name, value)
 
-    def test_a_config30_only_bundle_is_not_config34(self):
-        with self.assertRaisesRegex(proof.ProofRefused, "ConfigParam34 is not proven"):
-            proof.verify_bundle(make_bundle(self.base), self.base, [], ELECTION, RPCS)
+    def test_digest_mismatch_and_missing_digest_refuse_before_any_proof(self):
+        bundle = make_bundle(self.base)
+        bundle["material"]["config.tl"]["sha256"] = "0" * 64
+        self.refuse(bundle, "digest differs", verifier=self.stub)
+        bundle = make_bundle(self.base / "again")
+        del bundle["param"]["sha256"]
+        with self.assertRaisesRegex(proof.ProofRefused, "no retained digest"):
+            proof.verify_bundle(bundle, self.base / "again", [], ELECTION, ANCHOR, self.stub)
+
+    def test_only_a_full_zerostate_identity_is_an_anchor(self):
+        bundle = make_bundle(self.base)
+        for label, anchor in (
+            ("key block kind", dict(ANCHOR, kind="key_block")),
+            ("seqno", dict(ANCHOR, seqno=1)),
+            ("short root", dict(ANCHOR, root_hash="1b" * 31)),
+            ("no file hash", {k: v for k, v in ANCHOR.items() if k != "file_hash"}),
+            ("global id only", {"global_id": 3}),
+            ("extra field", dict(ANCHOR, trusted=True)),
+        ):
+            with self.subTest(case=label):
+                self.refuse(bundle, "not a full masterchain zerostate identity", anchor=anchor)
+
+    def test_the_target_must_be_a_full_masterchain_id(self):
+        for label, target, reason in (
+            ("basechain", dict(TARGET, workchain=0), "masterchain block only"),
+            ("zero seqno", dict(TARGET, seqno=0), "seqno is invalid"),
+            ("short hash", dict(TARGET, file_hash="00"), "not 256-bit"),
+            ("shard", dict(TARGET, shard="4000000000000000"), "masterchain shard"),
+        ):
+            base = self.base / label.replace(" ", "-")
+            bundle = make_bundle(base)
+            bundle["block_id"] = target
+            with self.subTest(case=label), self.assertRaisesRegex(proof.ProofRefused, reason):
+                proof.verify_bundle(bundle, base, [], ELECTION, ANCHOR, self.stub)
+
+    def test_the_verifier_must_be_an_absolute_executable_named_by_the_caller(self):
+        bundle = make_bundle(self.base)
+        with self.assertRaisesRegex(proof.ProofRefused, "not absolute"):
+            proof.verify_bundle(bundle, self.base, [], ELECTION, ANCHOR, "tos-proof-verify")
+        data = self.base / "data.bin"
+        data.write_bytes(b"x")
+        with self.assertRaisesRegex(proof.ProofRefused, "executable regular file"):
+            proof.verify_bundle(bundle, self.base, [], ELECTION, ANCHOR, data)
+
+    def test_the_unauthenticated_header_path_is_gone(self):
+        for name in ("proven_config_param", "require_four_node_headers", "TRUST_ROOT"):
+            self.assertFalse(hasattr(proof, name), name)
 
 
 if __name__ == "__main__":

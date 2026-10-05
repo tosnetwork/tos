@@ -142,12 +142,17 @@ pub trait ChainProvider: Send + Sync {
         stack: Vec<StackEntry>,
     ) -> anyhow::Result<TvmStackParser>;
 
-    /// Execute against one exact masterchain checkpoint. Implementations that
-    /// cannot pin state must fail rather than silently substitute latest state.
-    /// The block identity checked against the checkpoint is the one the
-    /// endpoint reports, not one proven from state: a dishonest endpoint can
-    /// return any stack under the expected identity.
-    async fn run_get_method_at(
+    /// Execute against one exact masterchain checkpoint, as the endpoint
+    /// reports it. Implementations that cannot pin state must fail rather than
+    /// silently substitute latest state.
+    ///
+    /// NOT AUTHENTICATED. The block identity checked against the checkpoint
+    /// arrives in the same response as the stack, so a dishonest endpoint can
+    /// return any stack under the expected identity. Use it only for
+    /// informational reads. Anything authoritative, such as a pool snapshot,
+    /// goes through [`crate::proven_getters::ProvenGetterProvider`], which
+    /// never reads an endpoint's stack.
+    async fn run_get_method_at_unverified(
         &self,
         _address: String,
         _method: &str,
@@ -299,7 +304,7 @@ impl ChainProvider for DefaultChainProvider {
         Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
     }
 
-    async fn run_get_method_at(
+    async fn run_get_method_at_unverified(
         &self,
         address: String,
         method: &str,

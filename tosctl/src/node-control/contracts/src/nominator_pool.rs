@@ -14,7 +14,8 @@ mod pool_impl;
 mod wrapper;
 
 pub use pool_impl::{
-    NominatorPoolSnapshot, NominatorPoolWrapperImpl, read_nominator_pool_snapshot_at,
+    NOMINATOR_POOL_SNAPSHOT_METHODS, NominatorPoolSnapshot, NominatorPoolSnapshotProof,
+    NominatorPoolWrapperImpl, PoolSnapshotSource, read_proven_nominator_pool_snapshot,
 };
 pub use wrapper::*;
 
