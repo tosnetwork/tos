@@ -55,6 +55,11 @@ def main() -> int:
     ).strip()
     verifier = Path(binding["build_root"]) / four_node.ANCHORED_VERIFIER
 
+    def frozen(command):
+        """Run the frozen verifier the only way it runs: in the frozen U24 sandbox."""
+        argv = four_node.verifier_sandbox_argv(binding, output, command, [verifier])
+        return subprocess.run(argv, capture_output=True, check=True)
+
     # The retained answers, laid out as Stage A retains them.
     target = json.loads((REAL / "historical-request.json").read_text())["target"]
     target = {
@@ -69,7 +74,7 @@ def main() -> int:
     material.mkdir()
     for name in ("chain-0000.tl", "config.tl"):
         shutil.copyfile(REAL / "historical" / name, material / name)
-    fetched = subprocess.run(
+    fetched = frozen(
         [
             str(verifier),
             "verify",
@@ -79,9 +84,7 @@ def main() -> int:
             str(request),
             "--material",
             str(material),
-        ],
-        capture_output=True,
-        check=True,
+        ]
     )
     param = base64.b64decode(json.loads(fetched.stdout)["config_params"][0]["boc"])
     sys.path.insert(0, str(REPO / "test/tostester/src"))
@@ -93,22 +96,25 @@ def main() -> int:
         {f: row[f] for f in ("controller_id_hex", "consensus_key_id_hex", "adnl_id_hex")}
         for row in decoded["validators"]
     ]
-    artifacts = output / "artifacts"
     paths = proof.bundle_paths(election_id)
-    (artifacts / paths["material"]).mkdir(parents=True)
-    bundle = {"block_id": target, "material": {}}
-    for name in ("chain-0000.tl", "config.tl"):
-        raw = (REAL / "historical" / name).read_bytes()
-        (artifacts / paths["material"] / name).write_bytes(raw)
-        bundle["material"][name] = {
-            "path": paths["material"] + name,
-            "sha256": hashlib.sha256(raw).hexdigest(),
-        }
-    (artifacts / paths["param"]).write_bytes(param)
-    bundle["param"] = {"path": paths["param"], "sha256": hashlib.sha256(param).hexdigest()}
-    genesis = subprocess.run(
-        [str(verifier), "anchor", "--zerostate", str(GENESIS)], capture_output=True, check=True
-    )
+
+    def retain(run: Path) -> dict:
+        """Lay the bundle out under run/artifacts, as Stage A retains it in its run."""
+        artifacts = run / "artifacts"
+        (artifacts / paths["material"]).mkdir(parents=True)
+        bundle = {"block_id": target, "material": {}}
+        for name in ("chain-0000.tl", "config.tl"):
+            raw = (REAL / "historical" / name).read_bytes()
+            (artifacts / paths["material"] / name).write_bytes(raw)
+            bundle["material"][name] = {
+                "path": paths["material"] + name,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            }
+        (artifacts / paths["param"]).write_bytes(param)
+        bundle["param"] = {"path": paths["param"], "sha256": hashlib.sha256(param).hexdigest()}
+        return bundle
+
+    genesis = frozen([str(verifier), "anchor", "--zerostate", str(GENESIS)])
     anchors = {
         "genuine": json.loads((REAL / "anchor.json").read_text()),
         "foreign-anchor": json.loads(genesis.stdout),
@@ -123,9 +129,10 @@ def main() -> int:
     for name, anchor in anchors.items():
         leaf = output / name
         leaf.mkdir()
+        bundle = retain(leaf)
         check = four_node.config34_proof_check(binding, {"source_sha": source_sha}, leaf, anchor)
         try:
-            verdict = check({"election_id": election_id, "config34_proof": bundle}, output, rows)
+            verdict = check({"election_id": election_id, "config34_proof": bundle}, leaf, rows)
             results[name] = {
                 "accepted": True,
                 "verdict": verdict["verdict"],
