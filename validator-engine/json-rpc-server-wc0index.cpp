@@ -299,8 +299,9 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
   if (is_indexed_workchain(addr)) {
     // Entries are state-verified by the writer (master-acknowledged wallets only);
     // the client resolves the live balance via get_wallet_data (runGetMethod).
-    auto status =
-        view.for_each_jetton(addr.addr, limit, [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
+    // A row without the pair record that decided it is never listed as current.
+    auto status = view.for_each_current_jetton(
+        addr.addr, limit, [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
           td::Bits256 jetton_wallet = td::Bits256::zero();
           unsigned long long last_lt = 0;
           if (value.not_null()) {

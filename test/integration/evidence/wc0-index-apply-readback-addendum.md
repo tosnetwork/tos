@@ -1,4 +1,4 @@
-# Addendum: wallet index handoff on the block-data read-back path
+# Addendum: wallet index handoff when ApplyBlock lacks block data
 
 This addendum qualifies the claim in
 [`wc0-index-apply-latency.json`](wc0-index-apply-latency.json). That file is
@@ -6,84 +6,109 @@ kept unchanged as the record of its own run. Read the two together.
 
 ## Claim
 
-Index processing and its WAL writes run asynchronously. When ApplyBlock lacks
-block data, index handoff currently requires one block-data read before apply
-completion. The earlier integration measurement did not establish latency on
-this path.
+Block application does not wait for the wallet index on any path, including
+an apply that does not hold the block's data. ApplyBlock hands the index hook
+the block id and whatever it already holds (block data, state) and flushes
+the block handle at once. It makes no read for the index. When the data is
+absent, the indexing worker reads it itself, off the block-application path.
 
-Any wording that indexing never delays block application is withdrawn: on
-this path, apply completion waits for the block-data read.
+This replaces the earlier behaviour, recorded in
+[`wc0-index-apply-readback-b8a3f5350.json`](wc0-index-apply-readback-b8a3f5350.json),
+in which ApplyBlock read the block back from the database before the hook and
+the flush, so apply completion grew one-for-one with that read (p50 1.1 ms,
+10.7 ms and 51.0 ms for reads answered after 1, 10 and 50 ms). That file is
+kept as the record of its own run at `b8a3f5350`.
 
-## Why the path exists
+## How a block without data reaches the index now
 
-When ApplyBlock runs without block data in hand, it reads the block back from
-the database. It then hands the block to the index hook, and only after that
-flushes the block handle. If the read fails, the block id alone is handed
-over. The hook comes before the flush so that a block whose apply is durable
-has always reached the index, and a clean exit can account for every applied
-block. The earlier integration run measured hook duration and apply duration
-on a live chain, but it did not show whether, or how often, its blocks took
-this path.
+- The hook is a bounded, non-waiting enqueue. Besides the producer lock it
+  takes two small locks to keep the block in the archive until its marker
+  exists: one around a bounded list of handed-over blocks, and the archive's
+  retention lock, which pruning holds only for a constant-size admission
+  check, never across the deletion's I/O. ApplyBlock itself takes the same
+  retention lock once when it starts a basechain block, to lease the archive
+  package the block will be filed in until the hook has run. Nothing holds
+  any of these locks across I/O or a wait. The hook does not log, mark, or
+  sync.
+- The recorder thread durably marks every handed-over block id before the
+  worker may index it. A block the worker never finishes stays marked, and
+  startup recovery re-indexes it.
+- The worker asks a fetcher for the missing data. The validator engine's
+  fetcher is an actor that reads the block handle, block data and, when
+  needed, the state from the validator databases. The worker gives up after
+  60 s or at shutdown; the block then stays marked.
+- When the worker is 256 blocks behind, a new block is not queued; its id is
+  still recorded, so it is marked and recovered later.
+- The indexing-run marker is written and WAL-synced before any producer is
+  accepted. The exit flush closes the queue to producers, waits until every
+  handed-over block is marked, and only then clears the run marker. A block
+  handed over after the queue closed is only recorded and keeps the run
+  unfinished; one handed over after the marker was cleared makes the recorder
+  record the run as active again before marking it.
+- **Crash safety after the run marker is cleared rests on genuine producer
+  quiescence.** The validator engine clears the marker only from its final
+  exit path, after the actor scheduler has stopped and the hook is removed, so
+  no block can be applied any more (`Wc0IndexProducers::Quiesced`). The
+  asynchronous re-recording after an unexpected late block is a defence, not
+  a replacement for that requirement: a crash between such a block's apply
+  and the recorder's write would leave no trace of it. A scheduled shutdown,
+  which exits while blocks may still be applied, never clears the marker.
 
 ## Measurement
 
 - **Tool:** `test/validator/apply-block-readback-latency.cpp` (target
   `test-apply-block-readback-latency`).
-- **Source commit:** `b8a3f5350`, built with clang-21 and
-  `-DTOS_WERROR_BUILD=On` (Release).
+- **Source commit:** `968992c50`, Release build with clang 21.1.8.
 - **Host:** Intel Xeon Platinum 8455C, Linux 6.8.
 - **Command:** `build/test-apply-block-readback-latency <existing parent dir> 2000 1 10 50`
 - **Exit status:** 0.
 - **Raw output:**
-  [`wc0-index-apply-readback-b8a3f5350.json`](wc0-index-apply-readback-b8a3f5350.json),
-  772 bytes, SHA-256
-  `88ecbf2da296264f531c5abb4c03b3b9db975d6748863b49b7053b9c735561e3`.
-  This is the tool's complete output, so it is committed whole. A scratch copy
-  on the measuring host is not retained beyond the review that requested it.
+  [`wc0-index-apply-readback-968992c50.json`](wc0-index-apply-readback-968992c50.json),
+  914 bytes, SHA-256
+  `6bacdb0560930840c7dc171ab10b0cf818436ce0ae9af46da41d2507875965ed`.
+  This is the tool's complete output, so it is committed whole.
 
 Apply completion is the time from starting the apply query to its promise,
 which resolves after the handle flush. n = 2000 for each mode. Times are in
-microseconds.
+microseconds. "Worker read delay" is how long each of the worker's own reads
+takes.
 
-| mode | block-data reads | p50 | p99 | max |
-| --- | --- | --- | --- | --- |
-| index off (no hook) | 0 | 8.7 | 15.6 | 3242.8 |
-| index on, read answered at once | 2000 | 12.9 | 19.1 | 76.6 |
-| index on, read answered after 1 ms | 2000 | 1116.0 | 1157.0 | 1285.4 |
-| index on, read answered after 10 ms | 2000 | 10682.0 | 10911.7 | 11057.4 |
-| index on, read answered after 50 ms | 2000 | 50992.0 | 51250.2 | 63950.2 |
+| mode | reads by ApplyBlock | reads by the worker | p50 | p99 | max |
+| --- | --- | --- | --- | --- | --- |
+| index off (no hook) | 0 | 0 | 20.2 | 37.9 | 2222.0 |
+| index on, worker read answered at once | 0 | 1978 | 24.2 | 32.7 | 144.1 |
+| index on, worker read takes 1 ms | 0 | 62 | 21.0 | 28.5 | 44.9 |
+| index on, worker read takes 10 ms | 0 | 7 | 21.1 | 28.7 | 44.0 |
+| index on, worker read takes 50 ms | 0 | 2 | 21.1 | 27.4 | 78.9 |
 
-On this path, apply completion grows one-for-one with the time the
-block-data read takes.
+Apply completion no longer depends on the read's duration. The worker read
+counts are low in the slow modes because applies arrive far faster than a
+slow worker reads: once it is 256 blocks behind, further blocks are only
+marked for recovery, which is the designed overflow behaviour, and the exit
+flush still reported every block marked (`index_flushed_cleanly: true`).
 
 ## Scope
 
-- **What it establishes:** apply completion depends on the read-back. It does
-  not measure production archive-read latency.
-- **Real pieces:** the real ApplyBlock actor and the real index hook, queueing
-  into a real wallet index database.
-- **Stand-in manager:** every other manager request is answered by a
-  stand-in. The block-data read always fails, after the chosen delay, so the
-  hook receives only the block id. The handle flush is simulated: the
-  stand-in marks the handle written and does no database write.
-- **Read counting (an automatic check):** a run fails unless every sample with
-  the hook read its block back exactly once and no sample without the hook
-  read at all. With the hook disabled inside ApplyBlock (checked at
-  `d6b77f983`), the run read nothing and exited 1.
-- **Sensitivity (shown by timings only):** when the old ordering is restored
-  (flush without waiting for the read), apply completion with 1 ms and 10 ms
-  reads drops to a p50 of about 11 µs, against 1.1 ms and 10.8 ms here. That
-  control was run by hand at `d6b77f983` with 200 samples per mode. It is not
-  an assertion the tool makes.
+- **What it establishes:** apply completion does not wait for the index's
+  block-data read. It does not measure production archive-read latency.
+- **Real pieces:** the real ApplyBlock actor, the real index hook, worker and
+  recorder, queueing into a real wallet index database.
+- **Stand-ins:** every manager request ApplyBlock makes is answered by a
+  stand-in; the handle flush is simulated. The worker's fetcher is the tool's
+  own: it sleeps for the configured delay on the worker thread and then fails
+  the read, so the block stays marked.
+- **Read counting (an automatic check):** the run fails unless no sample made
+  a block-data read through the manager. With the old read-back restored in
+  `ApplyBlock::applied_set` (checked by hand on top of `968992c50`, 200
+  samples per mode), every hook sample read once (`apply_read_backs: 200`),
+  `no_apply_read_backs` was false, and the tool exited 1.
 
-## Possible future work
+## Gates
 
-A bounded asynchronous fetch by the indexing worker would take the read off
-the apply path: ApplyBlock would hand over only the block id, and the worker
-would read the data itself. Before that could replace the current ordering,
-it would need:
-
-- durable coverage of every handed-over block id before the indexing-run
-  marker is cleared;
-- recovery marks that stay in place whenever the fetch fails;
-- tests for shutdown while fetches are pending, and for queue overflow.
+The latency tool is a measurement, not a gate. The gate is
+`test-wallet-index-apply` (`test/validator/wallet-index-apply-test.cpp`,
+CTest label `security-findings`): it drives the real ApplyBlock actor against
+a manager whose block-data read never answers, and requires every apply to
+complete while the worker's read is blocked, while the recorder's WAL write
+is stalled, and while the worker's queue is full. Restoring the read-back in
+ApplyBlock makes all three fail.

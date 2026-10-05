@@ -82,6 +82,32 @@ from `getAccountJettons` and `getAccountNfts` carry an `index_state`; read
 `"complete": false` as "this list may be missing entries", not as the whole
 truth.
 
+- **Token candidates are never dropped for lack of room.** Candidates a block
+  cannot verify at once wait in a bounded backlog (`pending`). When the
+  backlog is full, the rest of the block's candidates are stored with the
+  block, which stays unfinished (`unfinished_block`); the indexing worker
+  verifies them by itself, against the newest state the node has, also after
+  a restart and with no new block arriving. At most 1024 blocks can be
+  unfinished this way; past that the worker finishes them before indexing
+  more. A candidate whose verification stays indeterminate through every
+  attempt, or needs the state of another shard the node does not have yet
+  (a jetton master or NFT collection elsewhere), is `parked`: it is kept,
+  retried by the worker in bounded rounds against each shard's newest state,
+  and released only on a definite result. Any of these keeps
+  `"complete": false`.
+- **The index holds back archive pruning for blocks it has yet to read.** A
+  block applied but not yet indexed (still queued, or only marked because
+  the indexer was behind) is kept by the archive, past `--archive-ttl` if
+  need be, until its token candidates are indexed or stored with it. On the
+  next start the indexer reads such blocks back and indexes them first.
+  Pruning also never deletes a package that may hold a block still being
+  applied or not yet applied (one referenced at or after the shard client's
+  masterchain block).
+- **An index written by another schema version is reset.** When the node
+  opens an index database of any other layout, it empties it and starts a
+  fresh, forward-only index from the blocks applied from then on. Nothing of
+  the old database is imported or served, and no earlier history is
+  recovered.
 - **Stopping the node marks the index as incomplete.** Only an exit that
   happens after block application has stopped records the indexing run as
   finished. `systemctl stop` (SIGTERM), a crash, an out-of-memory kill and a
