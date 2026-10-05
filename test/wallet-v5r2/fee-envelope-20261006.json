@@ -1,0 +1,266 @@
+{
+  "base_commit": "75e4d51609a187038a617bdc26f042739ea74fb3",
+  "release_gate": "FAILED: unchanged default credit is 10000; all route diagnostics use 20000 copied-config credit.",
+  "paths": {
+    "auth": {
+      "minimum_accept_credit": 11435,
+      "production_admission_passed": false,
+      "negative_exits": {
+        "invalid_fee_signature": 2007,
+        "insufficient_reserve": 2008,
+        "payload_constructor": 2012,
+        "class_zero": 2012,
+        "class_three": 2012,
+        "wrong_vault": 2002,
+        "wrong_config": 2013,
+        "expired": 2003,
+        "ttl_overflow": 2003,
+        "future_slot": 2009,
+        "old_slot": 2009,
+        "below_floor": 2010,
+        "above_ceiling": 2010
+      },
+      "fee_floor": 4301904000,
+      "accepted_endpoints": [
+        "minimum_amount",
+        "maximum_amount",
+        "minimum_ttl",
+        "maximum_ttl"
+      ],
+      "diagnostic_recipient_exit": 0
+    },
+    "pop_primary": {
+      "minimum_accept_credit": 11898,
+      "production_admission_passed": false,
+      "negative_exits": {
+        "invalid_fee_signature": 2007,
+        "insufficient_reserve": 2008,
+        "payload_constructor": 2012,
+        "class_zero": 2012,
+        "class_three": 2012,
+        "wrong_vault": 2002,
+        "wrong_config": 2013,
+        "expired": 2003,
+        "ttl_overflow": 2003,
+        "future_slot": 2009,
+        "old_slot": 2009,
+        "below_floor": 2010,
+        "above_ceiling": 2010
+      },
+      "fee_floor": 3301904000,
+      "accepted_endpoints": [
+        "minimum_amount",
+        "maximum_amount",
+        "minimum_ttl",
+        "maximum_ttl"
+      ],
+      "diagnostic_recipient_exit": null
+    },
+    "pop_rescue": {
+      "minimum_accept_credit": 11898,
+      "production_admission_passed": false,
+      "negative_exits": {
+        "invalid_fee_signature": 2007,
+        "insufficient_reserve": 2008,
+        "payload_constructor": 2012,
+        "class_zero": 2012,
+        "class_three": 2012,
+        "wrong_vault": 2002,
+        "wrong_config": 2013,
+        "expired": 2003,
+        "ttl_overflow": 2003,
+        "future_slot": 2009,
+        "old_slot": 2009,
+        "below_floor": 2010,
+        "above_ceiling": 2010
+      },
+      "fee_floor": 3301904000,
+      "accepted_endpoints": [
+        "minimum_amount",
+        "maximum_amount",
+        "minimum_ttl",
+        "maximum_ttl"
+      ],
+      "diagnostic_recipient_exit": null
+    }
+  },
+  "mutation_controls": {
+    "pop1": {
+      "runner_exit": 0,
+      "minimum_credit": 11898,
+      "negative_cases": 13,
+      "positive_boundaries": 4
+    },
+    "pop2": {
+      "runner_exit": 0,
+      "minimum_credit": 11898,
+      "negative_cases": 13,
+      "positive_boundaries": 4
+    },
+    "auth-mutant": {
+      "runner_exit": 1,
+      "wrong_constructor_accepted": true,
+      "leaf_consumed": 9
+    },
+    "pop-mutant": {
+      "runner_exit": 1,
+      "wrong_constructor_accepted": true,
+      "leaf_consumed": 9
+    }
+  },
+  "checks": [
+    "Three routes each reject 13 negative cases and accept four exact fee/TTL endpoints",
+    "AUTH and POP constructor guard deletion each causes unsafe fee acceptance and leaf 8 -> 9, making the runner exit 1 for the expected semantic reason",
+    "Ruff check and format for the changed harness pass",
+    "make -C tosctl/src fmt-check exits 0 after the exact three line-wrap corrections reported by CI run 37332183214"
+  ],
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "sha256": "043d420ff58a6c10756eb83ed25a6b6bc35fa4efb2510433ee4ada52955dc37c",
+      "bytes": 5106
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "sha256": "0456c073ccf81d875544790d7a4c1068aae39bdc7d1ace0df89441668073100c",
+      "bytes": 19813
+    },
+    {
+      "path": "tosctl/src/assembler/src/lib.rs",
+      "sha256": "4ae26d3c8883b952f02638782ff4c9e18a0b06d56b6d9ac2fe1ca3c1fdc8b4cf",
+      "bytes": 22199
+    },
+    {
+      "path": "tosctl/src/block/src/accounts.rs",
+      "sha256": "10337654092ab0c860592a3f00e2ad9aee39650228314a7428b88f69ed6c83d1",
+      "bytes": 45288
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/results.json",
+      "sha256": "3208a2b11e06af17b569aa25bfe6d3fe19cce1ffc01c202f63bb0b9d7eee3c85",
+      "bytes": 2717
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/default-credit-result.json",
+      "sha256": "d57ddbf509851164449ad89a8d35818289076cc23dc86e78d2a69e0b5e814bd7",
+      "bytes": 24864
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/gas-profile.json",
+      "sha256": "dfc38979a6240eb6a3d1b6939a74cde6d01edd363cd8dfe00941f87c4e0b5843",
+      "bytes": 1227
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/negative-payload_constructor.json",
+      "sha256": "0cb58f4eb32e917d3ebccd5511ca8ed374cff78984e299fa208f4ec4a1e295e2",
+      "bytes": 15885
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/boundary-minimum_amount.json",
+      "sha256": "9b9a0fa7712eb714639bcaf1324fc00933e850cdca5512ade616f9d43a79dda9",
+      "bytes": 56895
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/boundary-maximum_amount.json",
+      "sha256": "7a16fb096d15cea13696a8c6312112f5f093f3f6a473ac78986d8d889de8b784",
+      "bytes": 56894
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop1/results.json",
+      "sha256": "c38a88d9391b3153a29512207035b06eb9267d792436122515a0ff05d98a5ce1",
+      "bytes": 2370
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop1/default-credit-result.json",
+      "sha256": "db78974aab2436b2d5e5f167616825998479b7418a73509736ded3abdba0d9fc",
+      "bytes": 26859
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop1/gas-profile.json",
+      "sha256": "0f488e8a6f1f28f0ea3a7edb8b627deb9cc22b2d7ad674824adb9660e2bd3141",
+      "bytes": 1204
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop1/negative-payload_constructor.json",
+      "sha256": "73c9bfa8ff92c4c684cf70e8e02c947f2b686e1d3e02c3ff76fc39ec45a37f90",
+      "bytes": 15877
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop1/boundary-minimum_amount.json",
+      "sha256": "09d3134a35b9d2e40a032eedd71a154afbe8f4fcff2880d312fb8ad65c336f46",
+      "bytes": 44014
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop1/boundary-maximum_amount.json",
+      "sha256": "85ac65c59f4cb37f570b652632bc5040f21dd76edb6f65c07ed7b277885ede86",
+      "bytes": 44014
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop2/results.json",
+      "sha256": "737da58ca63b512def6ea3ce7139c86e724db36c84a314837b73fb4fac8ea7e9",
+      "bytes": 2371
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop2/default-credit-result.json",
+      "sha256": "1a2296b05ddf3914eff088e0fe89f8bf480a7420e7c061b076006a11d9dd91a9",
+      "bytes": 26860
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop2/gas-profile.json",
+      "sha256": "0f488e8a6f1f28f0ea3a7edb8b627deb9cc22b2d7ad674824adb9660e2bd3141",
+      "bytes": 1204
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop2/negative-payload_constructor.json",
+      "sha256": "369a20229141d40ffb87fc628c834ee83e99ea53ef3f075bb98feb628e0ea88c",
+      "bytes": 15877
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop2/boundary-minimum_amount.json",
+      "sha256": "5f85650ac815b559810ab85ee00d57ce5639a88e5507c508ea31f1f15b8ffc6a",
+      "bytes": 58846
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop2/boundary-maximum_amount.json",
+      "sha256": "7418979ba674df711fd9377fabc2521ceee54c9c5baac03af11bac63b9dd9de7",
+      "bytes": 58850
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/auth-mutant/negative-payload_constructor.json",
+      "sha256": "13dfdb806df92d894f1b26b6bbaebfd0706f60a36a121ed998cc675061ee8952",
+      "bytes": 56584
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/pop-mutant/negative-payload_constructor.json",
+      "sha256": "011dc609ea1fbdb9f2a685a639e87da3fcd518b22b5ccc39fc389bf9ba6f2463",
+      "bytes": 58420
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/new-cases-summary.json",
+      "sha256": "db3b285298ec8fc2e7e8c1dbca6e88ea59f28258b249fffabad1d41901077f61",
+      "bytes": 466
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-next/source-hygiene.log",
+      "sha256": "b7748496d130aef77eb99a0fb54580584df1d9dc5ca0ae675373b6119f78681a",
+      "bytes": 4719
+    }
+  ],
+  "commands": [
+    "python test/wallet-v5r2/test_fee_delivery.py --credit-probe --gas-trace --output <auth>",
+    "python test/wallet-v5r2/test_fee_delivery.py --pop-role 1 --credit-probe --gas-trace --output <pop1>",
+    "python test/wallet-v5r2/test_fee_delivery.py --pop-role 2 --credit-probe --gas-trace --output <pop2>",
+    "python test/wallet-v5r2/test_fee_delivery.py --delete-payload-guard --credit-probe --output <auth-mutant> # expect exit 1 and accepted negative-payload_constructor receipt",
+    "python test/wallet-v5r2/test_fee_delivery.py --pop-role 2 --delete-payload-guard --credit-probe --output <pop-mutant> # same sensitivity expectation"
+  ],
+  "retention": "Retain local receipts through PR review and release acceptance. All LMS keys/trees are deterministic public test material, never suitable for custody.",
+  "remaining": [
+    "Production-credit worst-case admission for all classes",
+    "Post-ACCEPT/action-failure safety matrix",
+    "Class 3 preparation and funded handoff",
+    "Client signer/restore and independent security review",
+    "Final-head CI, both-VM and reference hardware acceptance"
+  ]
+}

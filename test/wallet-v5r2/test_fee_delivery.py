@@ -35,6 +35,11 @@ def main():
     )
     p.add_argument("--gas-trace", action="store_true", help="Retain instruction gas accounting")
     p.add_argument("--pop-role", type=int, choices=(1, 2), help="Exercise fee-funded per-key POP")
+    p.add_argument(
+        "--delete-payload-guard",
+        action="store_true",
+        help="Sensitivity control: delete the selected class constructor guard",
+    )
     options = p.parse_args()
     out = options.output
     out.mkdir(parents=True, exist_ok=True)
@@ -52,6 +57,13 @@ def main():
             shutil.copyfile(src, work / src.name)
         for name in ["auth-policy.fc", "pq.fc", "pq-bytes.fc", "wallet-v5-action-list.fc"]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
+        if options.delete_payload_guard:
+            src = work / "wallet-v5r2-fee-vault.fc"
+            source = src.read_text()
+            tag = "0x50505333" if options.pop_role else "0x53554233"
+            guard = f"throw_unless(2012, payload_tag == {tag});"
+            assert source.count(guard) == 1
+            src.write_text(source.replace(guard, ""))
         vault = native.compile_contract(str(work / "wallet-v5r2-fee-vault.fc"), out / "vault.boc")
         const = f'cell compiled_vault() asm "B{{{vault.boc().hex()}}} B>boc PUSHREF";\n'
         (work / "module.fc").write_text(
@@ -111,29 +123,66 @@ def main():
         else:
             submit = Cell().uint(0x53554233, 32).ref(req).ref(chain(signer.slh(digest(req))))
         amount = 5_000_000_000
-        intent = (
-            Cell()
-            .uint(0x46454534, 32)
-            .raw(b"TOS-RESCUE-FEE-v1")
-            .uint(2 if options.pop_role else 1, 8)
-            .addr(va)
-            .uint(vd.slice().uint(8 + 32 + 256) & ((1 << 256) - 1), 256)
-            .uint(8, 32)
-            .uint(native.NOW + 600, 32)
-            .coins(amount)
-            .ref(submit)
-        )
+        header = vd.slice().uint(8 + 32 + 256) & ((1 << 256) - 1)
+
+        def make_intent(
+            *,
+            kind=2 if options.pop_role else 1,
+            target=va,
+            config_hash=header,
+            leaf=8,
+            deadline=native.NOW + 600,
+            value=amount,
+            payload=submit,
+        ):
+            return (
+                Cell()
+                .uint(0x46454534, 32)
+                .raw(b"TOS-RESCUE-FEE-v1")
+                .uint(kind, 8)
+                .addr(target)
+                .uint(config_hash, 256)
+                .uint(leaf, 32)
+                .uint(deadline, 32)
+                .coins(value)
+                .ref(payload)
+            )
+
         msg = work / "message"
         sig = work / "signature"
-        msg.write_bytes(intent.hash)
-        subprocess.run(
-            [os.environ["LMS_TOOL"], "sign", *args, "8", str(msg), "66" * 32, str(sig)],
-            check=True,
-            capture_output=True,
-        )
-        ext = native.external(va, Cell().ref(intent).ref(chain(sig.read_bytes())))
+
+        def sign_fee(fee_intent, leaf=8):
+            # All messages use public, deterministic test-only OTS material.
+            # Reusing a leaf this way is forbidden for a production signer.
+            msg.write_bytes(fee_intent.hash)
+            subprocess.run(
+                [os.environ["LMS_TOOL"], "sign", *args, str(leaf), str(msg), "66" * 32, str(sig)],
+                check=True,
+                capture_output=True,
+            )
+            return native.external(va, Cell().ref(fee_intent).ref(chain(sig.read_bytes())))
+
+        intent = make_intent()
+        ext = sign_fee(intent)
         entries = read_dict(native.config(17), 32)
         entries[48] = Cell().ref(global_policy())
+        # Independently decode the fixture's current tariffs. This mirrors the
+        # protocol fee formulas, not the optimized contract arithmetic/branches.
+        gas_prices = entries[21].refs[0].slice()
+        assert gas_prices.uint(8) == 0xD1
+        flat_limit, flat_price = gas_prices.uint(64), gas_prices.uint(64)
+        assert gas_prices.uint(8) == 0xDE
+        gas_price = gas_prices.uint(64)
+        forward_prices = entries[25].refs[0].slice()
+        assert forward_prices.uint(8) == 0xEA
+        lump, bit_price, cell_price = (forward_prices.uint(64) for _ in range(3))
+        forwarding = lump + (1024 * 1023 * bit_price + 1024 * cell_price + 65535) // 65536
+        downstream_gas = 1_000_000 if options.pop_role else 2_000_000
+        fee_floor = (
+            flat_price
+            + (max(downstream_gas - flat_limit, 0) * gas_price + 65535) // 65536
+            + 2 * forwarding
+        )
         initial = native.active_account(va, vault, vd, balance=10**15)
         credit_probe = None
         if options.credit_probe:
@@ -237,6 +286,51 @@ def main():
                 + "\n"
             )
 
+            wrong_tag = 0x53554233 if options.pop_role else 0x50505333
+            wrong_payload = Cell().uint(wrong_tag, 32).ref(req).ref(submit.refs[1])
+            # These envelopes have genuine LMS signatures, so signature failure
+            # cannot hide an omitted structural/class/value guard.
+            for name, changes, error in [
+                ("payload_constructor", {"payload": wrong_payload}, 2012),
+                ("class_zero", {"kind": 0}, 2012),
+                ("class_three", {"kind": 3}, 2012),
+                ("wrong_vault", {"target": (0, va[1] ^ 1)}, 2002),
+                ("wrong_config", {"config_hash": header ^ 1}, 2013),
+                ("expired", {"deadline": native.NOW}, 2003),
+                ("ttl_overflow", {"deadline": native.NOW + 3601}, 2003),
+                ("future_slot", {"leaf": 12}, 2009),
+                ("old_slot", {"leaf": 3}, 2009),
+                ("below_floor", {"value": fee_floor - 1}, 2010),
+                ("above_ceiling", {"value": 4 * fee_floor + 1}, 2010),
+            ]:
+                rejected = e.send(initial, sign_fee(make_intent(**changes), changes.get("leaf", 8)))
+                (out / f"negative-{name}.json").write_text(json.dumps(rejected, indent=2) + "\n")
+                assert not rejected["success"] and rejected.get("vm_exit_code") == error, (
+                    name,
+                    "fee admission guard failed",
+                    rejected,
+                )
+                failures[name] = rejected["vm_exit_code"]
+
+            boundaries = {}
+            for name, changes in [
+                ("minimum_amount", {"value": fee_floor}),
+                ("maximum_amount", {"value": 4 * fee_floor}),
+                ("minimum_ttl", {"deadline": native.NOW + 1}),
+                ("maximum_ttl", {"deadline": native.NOW + 3600}),
+            ]:
+                accepted = e.send(initial, sign_fee(make_intent(**changes)))
+                (out / f"boundary-{name}.json").write_text(json.dumps(accepted, indent=2) + "\n")
+                assert (
+                    accepted["success"]
+                    and accepted["details"]["exit"] == 0
+                    and not accepted["details"]["aborted"]
+                ), (name, accepted)
+                assert len(native.outgoing(from_boc(accepted["transaction"]))) == 1
+                after = native.account_data(from_boc(accepted["shard_account"]))[0].slice()
+                assert after.uint(8) == 3 and after.uint(32) == 9
+                boundaries[name] = accepted["details"]
+
             messages = native.outgoing(from_boc(paid["transaction"]))
             assert len(messages) == 1
             relayed = e.send(
@@ -299,6 +393,8 @@ def main():
                 "recipient": delivered["details"] if delivered else None,
                 "replay_exit": replay["vm_exit_code"],
                 "failure_exits": failures,
+                "fee_floor": fee_floor,
+                "admission_boundaries": boundaries,
                 "addresses": {
                     "wallet": hex(wa[1]),
                     "module": hex(root),

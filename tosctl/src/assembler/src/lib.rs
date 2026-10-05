@@ -575,7 +575,8 @@ mod pq_falcon512_tests {
 mod lms_fee_hash_tests {
     #[test]
     fn lms_fee_hash_mnemonic_round_trip() {
-        let mut code = crate::compile_code("NOP\nLMSCHECKFEEHASH\nDROP").expect("assemble fee verifier");
+        let mut code =
+            crate::compile_code("NOP\nLMSCHECKFEEHASH\nDROP").expect("assemble fee verifier");
         assert_eq!(code.get_bytestring(0), vec![0x00, 0xf9, 0x31, 0x03, 0x30]);
         let text = crate::disasm::disasm(&mut code).expect("disassemble fee verifier");
         let names: Vec<_> = text.lines().map(str::trim).filter(|s| !s.is_empty()).collect();

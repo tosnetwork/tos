@@ -158,8 +158,10 @@ impl StorageUsageCalc {
         {
             return Ok(false);
         }
-        let cells = self.cells.checked_add(cells).ok_or_else(|| error!("storage cell count overflow"))?;
-        let bits = self.bits.checked_add(bits).ok_or_else(|| error!("storage bit count overflow"))?;
+        let cells =
+            self.cells.checked_add(cells).ok_or_else(|| error!("storage cell count overflow"))?;
+        let bits =
+            self.bits.checked_add(bits).ok_or_else(|| error!("storage bit count overflow"))?;
         // Callers reject counts above their limits. Preserve the first excess
         // instead of silently reporting a truncated count equal to the limit.
         self.cells = cells;

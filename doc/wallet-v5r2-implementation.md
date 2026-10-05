@@ -288,7 +288,7 @@ parties hash derived by `r2pair_data`; wallet/module witness validation compares
 whole reconstructed data hash. Arbitrary caches cannot be installed as a paired
 route. The public tree id and full metadata remain committed by the config hash.
 
-The measured SUB3 path requires **11,689 gas to reach ACCEPT**, exceeding the
+The measured SUB3 path requires **11,435 gas to reach ACCEPT**, exceeding the
 unchanged default **10,000**. This is a failed release gate. No credit or tariff
 change is made to production configuration and no check is moved after ACCEPT.
 The 1024-cell envelope, compute/storage bounds and class limits are provisional
@@ -326,7 +326,7 @@ The native AUTH workflow now runs and retains both suites; wiring is not evidenc
 that remote CI has passed on this revision.
 
 The delivery runner's `--pop-role 1` and `--pop-role 2` now exercise actual fee vault
-payments for ML-DSA and SLH POP. Both require **12,034 gas** at ACCEPT, still exceeding
+payments for ML-DSA and SLH POP. Both require **11,898 gas** at ACCEPT, still exceeding
 default credit. Diagnostic 20,000-credit transactions verify POP without module
 data changes, outgoing authorization messages or spending its pre-message funds.
 Both also reject replay, corrupt LMS signatures and insufficient reserves. Wallet
@@ -335,7 +335,25 @@ The class-1 four-hop AUTH delivery remains separately checked. These are candida
 bounds, not worst-case production headroom or both-VM acceptance.
 
 `--gas-trace` retains instruction accounting. LMSCHECKFEEHASH remains 6,135 gas;
-other execution before ACCEPT is 5,528 for AUTH and 5,873 for POP, plus 26 for ACCEPT.
+other execution before ACCEPT is 5,274 for AUTH and 5,737 for POP, plus 26 for ACCEPT.
 The native opcode includes byte-chain parsing and cryptographic work; this is not
 a hardware repricing justification. See
 `test/wallet-v5r2/fee-admission-paths-20261006.json` for source-bound receipts.
+
+The next admission optimization shares the existing class dispatch with the
+constructor check, computes the doubled forwarding bound once, and derives the
+class compute budget from the already-validated class. It preserves constructor,
+value and reserve checks. The delivery harness now signs 11 malformed or out-of-
+policy envelopes for each of AUTH, primary POP and rescue POP: mismatched payload
+constructor, class 0/3, wrong vault/config, expired/overlong TTL, old/future leaf
+slots, and one unit outside each fee bound. Together with invalid LMS signatures
+and insufficient reserves, each path has 13 negative cases. Exact amount and TTL
+endpoints are accepted in four separate admission transactions per path. Fee
+endpoints are derived independently from the fixture's ConfigParams 21 and 25.
+
+Deleting either class's payload-constructor guard makes the corresponding test
+fail because the incorrectly tagged, LMS-authenticated envelope is accepted and
+leaf 8 advances to 9. These are fee-admission sensitivity controls, not claims
+that an invalid inner request gains wallet authority. All positive and negative
+path diagnostics use copied 20,000-credit configuration while the default-credit
+receipts remain failed. See `test/wallet-v5r2/fee-envelope-20261006.json`.
