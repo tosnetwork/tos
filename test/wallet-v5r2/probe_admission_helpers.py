@@ -13,6 +13,20 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def transform(source, variant):
+    if variant == "late-send":
+        # Retain all admission checks; reconstruct send-only values after ACCEPT
+        # so the compiler need not preserve them throughout fee/signature checks.
+        source = source.replace("  slice immutable = ds;\n", "")
+        source = source.replace(
+            "  accept_message();\n",
+            """  accept_message();
+  slice immutable = get_data().begin_parse().skip_bits(40);
+  slice parties = immutable.skip_bits(256 + 32);
+  module = parties~load_msg_addr();
+  payload = intent.begin_parse().preload_ref();
+""",
+        )
+        return source
     if variant.startswith("bounds"):
         start = source.index("  ;; Fee-relative class bounds:")
         end = source.index("  throw_unless(2010, (amount >= floor)", start)
@@ -36,7 +50,9 @@ def transform(source, variant):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--variant", choices=("bounds", "bounds-inline", "payload"), required=True)
+    parser.add_argument(
+        "--variant", choices=("bounds", "bounds-inline", "payload", "late-send"), required=True
+    )
     parser.add_argument("--route", choices=("auth", "pop", "prepare"), required=True)
     parser.add_argument("--trees", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

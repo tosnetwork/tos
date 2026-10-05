@@ -1,0 +1,45 @@
+{
+  "base_commit": "0ffe0a2a60a3aeef2180f1b86a93c24319bb9ac4",
+  "scope": "Private native compiler-copy experiment; no production source or pricing change. Baseline complete-run gas from cache-chain fixtures; exact envelope hashes differ with compiled code.",
+  "variant": "late-send",
+  "results": {
+    "auth": {
+      "baseline_minimum_credit": 12600,
+      "candidate_minimum_credit": 12528,
+      "baseline_total_vault_gas": 14641,
+      "candidate_total_vault_gas": 14899,
+      "runner_exit": 0
+    },
+    "pop": {
+      "baseline_minimum_credit": 13190,
+      "candidate_minimum_credit": 13118,
+      "baseline_total_vault_gas": 15231,
+      "candidate_total_vault_gas": 15489,
+      "runner_exit": 0
+    },
+    "prepare": {
+      "baseline_minimum_credit": 13515,
+      "candidate_minimum_credit": 13453,
+      "baseline_total_vault_gas": 15556,
+      "candidate_total_vault_gas": 15824,
+      "runner_exit": 0
+    }
+  },
+  "decision": "Do not adopt: moves only 62-72 gas out of admission, raises total vault gas, and leaves all three routes above default credit. Reconstructing send-only values is not a solution to the release admission gap.",
+  "reproduction": "python test/wallet-v5r2/probe_admission_helpers.py --variant late-send --route <auth|pop|prepare> --trees <existing-public-test-trees> --output <new-directory>",
+  "source_sha256": {
+    "crypto/smartcont/wallet-v5r2-fee-vault.fc": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a",
+    "test/wallet-v5r2/probe_admission_helpers.py": "3feba2f76fab9c1d8463240ea75b3649ae711e608ea062accc07ef4f877d4fd4"
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-late-send",
+    "retention_until": "2027-01-06",
+    "manifest": {
+      "sha256": "cec213954e16935e8702151371257a61a829ca8be43296f3e0f2d5e5a5c79b70",
+      "bytes": 20866
+    },
+    "total_bytes": 411898123
+  },
+  "production_source_unchanged": true,
+  "production_admission_passed": false
+}

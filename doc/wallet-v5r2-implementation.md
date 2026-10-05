@@ -751,3 +751,11 @@ evidence, not a verified chain-proof client or a production signer: backend
 keys are public, chain time is supplied by the harness, and chain next-leaf
 inputs remain fixture assumptions. The default 10,000 gas release failure is
 unchanged. Evidence: `test/wallet-v5r2/session-chain-20261006.json`.
+
+A further private `late-send` compiler experiment reconstructed immutable/send
+fields only after ACCEPT, retaining every admission check. Minimum credit fell
+from 12,600/13,190/13,515 to 12,528/13,118/13,453 for AUTH/POP/preparation,
+but total vault execution gas increased. This variant is not adopted: it moves
+62–72 gas across the payment boundary without resolving any default-credit
+failure. The official contract remains unchanged. Exact totals, source hashes
+and reproduction are in `test/wallet-v5r2/admission-late-send-20261006.json`.
