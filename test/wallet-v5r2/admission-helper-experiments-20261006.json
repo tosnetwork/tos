@@ -1,0 +1,208 @@
+{
+  "base_commit": "b7bdd86fc250cc35e357bdc1f36b59bcba7886aa",
+  "scope": "Rejected local native function-extraction experiments; all production contract changes restored. Not a pricing or admission pass.",
+  "baseline": {
+    "auth": 12600,
+    "pop": 13190,
+    "prepare": 13515
+  },
+  "variants": {
+    "bounds": {
+      "auth": 12593,
+      "pop": 13183,
+      "prepare": 13546
+    },
+    "payload": {
+      "auth": 12763,
+      "pop": 13235,
+      "prepare": 13616
+    },
+    "bounds-inline": {
+      "prepare-inline": 13525
+    }
+  },
+  "decision": "Reject all three: each increases preparation admission cost; do not adopt an AUTH-only improvement that worsens the largest class. Continue architectural/resource-budget evaluation.",
+  "reproduction": "python test/wallet-v5r2/probe_admission_helpers.py --variant <bounds|bounds-inline|payload> --route <auth|pop|prepare> --trees <existing-public-test-trees> --output <artifacts>",
+  "repro_verified": {
+    "variant": "bounds-inline",
+    "route": "prepare",
+    "minimum_accept_credit": 13525,
+    "runner_exit": 0,
+    "production_source_unchanged": true
+  },
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "bytes": 7015,
+      "sha256": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a"
+    },
+    {
+      "path": "test/wallet-v5r2/probe_admission_helpers.py",
+      "bytes": 3286,
+      "sha256": "03446818dcbfa8b739d3d2563dbcb3f172f7205770b64dc7a216b219813319d4"
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "bytes": 42880,
+      "sha256": "595ceea1f61ba8b6ba087b8cf4b64a8de3669ee1102abf0377e4e54ac3cde488"
+    }
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/auth/credit-probe.json",
+      "bytes": 145,
+      "sha256": "699bee4df32118740ccf6aae01c7574cdbe93fbe0380451e31f024ea15594c68"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/auth/gas-profile.json",
+      "bytes": 1432,
+      "sha256": "c46e825e663257a675e3ecef4628710909efcf32e008504c05ecdd49e62c441b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/auth/vault.boc",
+      "bytes": 689,
+      "sha256": "f0696420e2f74b8bb1cc7cbe75ba510aa92ee932558752e5543a551e3437efea"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/auth/run.log",
+      "bytes": 3129,
+      "sha256": "d7fccd58eb313a712c6d99af047331b35d3e94851d8984c8eb15990fb5c9e6e3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/pop/credit-probe.json",
+      "bytes": 145,
+      "sha256": "07dc962a015c3b0d09ecc2b923b469116654706120329c81461aac7d44c0bcbb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/pop/gas-profile.json",
+      "bytes": 1447,
+      "sha256": "8119b0628e1a275b8bf8c81e215c59827da547708f45c5c1e4560382b07de829"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/pop/vault.boc",
+      "bytes": 689,
+      "sha256": "f0696420e2f74b8bb1cc7cbe75ba510aa92ee932558752e5543a551e3437efea"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/pop/run.log",
+      "bytes": 2783,
+      "sha256": "2494d2add925f89af796af4f42fb8092ebef70b9b868df931375748f12415530"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/prepare/credit-probe.json",
+      "bytes": 145,
+      "sha256": "9ddce3f1550ed813d91e378d6514b68b1526ff68743ae8d797f33ec68f116fcf"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/prepare/gas-profile.json",
+      "bytes": 1499,
+      "sha256": "e35fbc897ae76d0a9dacbf84e5601243fc685de897550baf195d15d0f77029c5"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/prepare/vault.boc",
+      "bytes": 689,
+      "sha256": "f0696420e2f74b8bb1cc7cbe75ba510aa92ee932558752e5543a551e3437efea"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/prepare/run.log",
+      "bytes": 3938,
+      "sha256": "b8e68987272cc2a743c00dc82add2e406f1f68a7b3b2796565542aea10c4223a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/auth/credit-probe.json",
+      "bytes": 145,
+      "sha256": "3bcfa1604ef1a3ccd4e8c6d54b4af61f232d2ac85bc3713b3938e4ef68ff6b49"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/auth/gas-profile.json",
+      "bytes": 1413,
+      "sha256": "aff48b36c3de98504fcc2edf6715300fa1b7b1424fc332df2ab096f175e1cea1"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/auth/vault.boc",
+      "bytes": 695,
+      "sha256": "c7e10d7a3e03644ba51322d7e958c007447407f9933dcb2c23df5b17965a0d41"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/auth/run.log",
+      "bytes": 3129,
+      "sha256": "8253a1e98a01a042fb843ec73bf3b5911ed0219a87b332ae5009d24186ad9d81"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/pop/credit-probe.json",
+      "bytes": 145,
+      "sha256": "bb90df864d62cacb1dc48a8a6547303ab9bcffebaa70a24e86067f63d586f06b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/pop/gas-profile.json",
+      "bytes": 1407,
+      "sha256": "184560ca41c85ed527c2511129f0e4fcc2164d364b88b6198e1e8d74fb4903b8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/pop/vault.boc",
+      "bytes": 695,
+      "sha256": "c7e10d7a3e03644ba51322d7e958c007447407f9933dcb2c23df5b17965a0d41"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/pop/run.log",
+      "bytes": 2783,
+      "sha256": "c263f8d8d01ba5c611a19676bb5f32a8c76da5864c359c454be69ed7af2283be"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/prepare/credit-probe.json",
+      "bytes": 145,
+      "sha256": "9c85faeb3cfaee6ce81f42389badefe53d82981739e66b21a2ecb44b414fc5c3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/prepare/gas-profile.json",
+      "bytes": 1438,
+      "sha256": "aa9fa2033ff0bc300fd9562c916b0a5b1305c746fc90bf80bdb1373ad8e469aa"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/prepare/vault.boc",
+      "bytes": 695,
+      "sha256": "c7e10d7a3e03644ba51322d7e958c007447407f9933dcb2c23df5b17965a0d41"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-payload/prepare/run.log",
+      "bytes": 3938,
+      "sha256": "ad82b77a61904241b6388e994e583b09c0c606d917d9e133cbe1495fd3764e81"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/prepare-inline/credit-probe.json",
+      "bytes": 145,
+      "sha256": "7e818fc36adc0c5ac3e21e0f9d3c9bedfeed5852934ef56f5654b605846cdf34"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/prepare-inline/gas-profile.json",
+      "bytes": 1479,
+      "sha256": "685bddccb8f4c9697a7502021e73e1cf43155849a3576625ae4bb56b4d34a29c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-bounds/prepare-inline/vault.boc",
+      "bytes": 687,
+      "sha256": "82e689a71058120db6c991b63dbe192febff04a15c1eaffacffae5ba2544afdb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-helper-repro/candidate.fc",
+      "bytes": 7225,
+      "sha256": "246a5194d509cdd2ef9bc3d09813037ed3d0b3a94e59aa36d9d0cf2e86ca2f07"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-helper-repro/credit-probe.json",
+      "bytes": 145,
+      "sha256": "7e818fc36adc0c5ac3e21e0f9d3c9bedfeed5852934ef56f5654b605846cdf34"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-helper-repro/gas-profile.json",
+      "bytes": 1479,
+      "sha256": "685bddccb8f4c9697a7502021e73e1cf43155849a3576625ae4bb56b4d34a29c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-helper-repro/vault.boc",
+      "bytes": 687,
+      "sha256": "82e689a71058120db6c991b63dbe192febff04a15c1eaffacffae5ba2544afdb"
+    }
+  ],
+  "retention": "Retain through review and at least 2027-01-06; local host access required. All signer material is deterministic public test-only."
+}

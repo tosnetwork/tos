@@ -571,3 +571,15 @@ check, accepting unauthenticated requests early, discounting verification or
 raising network credit without node-cost and abuse-budget validation. The
 contract must save 3,515 gas on this preparation fixture alone to meet the current
 default, with additional worst-case headroom still required.
+
+
+Three compiler-structure experiments were rejected after complete native delivery
+runs: extracting fee bounds with `inline_ref` changed AUTH/POP/preparation credit
+to 12,593/13,183/13,546; extracting payload checks with `inline_ref` changed them
+to 12,763/13,235/13,616; inline fee bounds required 13,525 for preparation. All
+increase the largest measured class. Production source was restored byte-for-byte.
+`probe_admission_helpers.py` reproduces each transformation only in the delivery
+runner's private compiler directory and asserts that production source remains
+unchanged. These results narrow the optimization search; they do not prove that
+all safe compiler/contract optimizations are exhausted. The retained index is
+`test/wallet-v5r2/admission-helper-experiments-20261006.json`.
