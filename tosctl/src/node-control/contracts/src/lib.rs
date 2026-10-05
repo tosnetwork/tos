@@ -53,6 +53,7 @@ pub mod wallet_v5r2_fee;
 pub mod wallet_v5r2_genesis;
 pub mod wallet_v5r2_pop;
 pub mod wallet_v5r2_prepare;
+pub mod wallet_v5r2_state;
 
 pub use agent_account::{
     AGENT_ACCOUNT_MAX_ACTION_GAS, AGENT_ACCOUNT_MAX_ACTION_VALUE,

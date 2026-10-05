@@ -1,0 +1,33 @@
+{
+  "source_base": "ece8af61f703a23e6069bb234050be63ba5f08ee",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs": "1d520ddbf96c4538bfdfe84488db0293c6dc434f3f0cacfdbf9ab353ebd6688c",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "76465b0d075de567bdf2bdb2aaf964565e292d3ca00253104f31f42c8110945f",
+    "test/wallet-v5r2/fee_state_controls.py": "146a397c9660358acdb2b8cc20a721b87b15088700219bd04b28fab35a9b5b86"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-state",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "3d45fc4b7620bedd46ce8e60fce8e7ab8a31a917d26b7b7e5f1ac97be2c406b2",
+  "results": {
+    "regression": {
+      "exit": 0,
+      "passed": 22,
+      "ignored": 1,
+      "ignored_note": "Existing subprocess helper is invoked by parent journal tests."
+    },
+    "binding_guard_controls": {
+      "exit": 0,
+      "count": 9
+    }
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/fee_state_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-state/controls-final",
+    "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --lib fee_"
+  ],
+  "limits": [
+    "Synthetic initial vault account binding, not real V5R2 proof or production custody.",
+    "Successor-vault preparation binding, full signer integration, default-credit admission and final CI remain open.",
+    "Initial zero-age control hit an overlapping expiry refusal. Corrected to equal observation/current times; final control demonstrates erroneous acceptance. Initial failure logs retained."
+  ]
+}

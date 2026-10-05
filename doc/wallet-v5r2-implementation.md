@@ -944,3 +944,30 @@ itself establish a sufficiently recent shard time for fee-leaf scheduling.
 Vault code/configuration pairing, shard-time policy, receipt binding and actual
 custody integration remain required before these reads can authorize signing.
 The recorded account is an elector, not a deployed V5R2 wallet.
+
+### Initial fee-vault enrollment and freshness binding
+
+`ProvenInitialFeeVault::bind` accepts only an opaque proven account plus locally
+trusted `WalletGenesis`. It requires a live read at the expected vault address
+and code hash. It compares the complete immutable data suffix with enrollment,
+including config/epoch, module address, parties commitment, fee public key and
+AUTH prefix. Only the bounded next-leaf counter may differ. The route and config
+hash are derived from enrollment, rather than accepted as independent caller
+assertions.
+
+The caller supplies its trusted local clock and a maximum observation age of
+1..3599 seconds. Both authenticated masterchain and shard times must be no later
+than that clock, within the age limit and in the same fee slot as that clock.
+The conservative same-slot rule can refuse a recent proof around a boundary;
+fetch a newer authenticated observation rather than signing from the previous
+slot. The read-only reservation proposal rechecks freshness when called, so
+retaining the object does not bypass expiry. Actual durable reservation and
+signing remain the custody journal's responsibility.
+
+Synthetic account tests cover this binding and expiration; they are not a live
+V5R2 deployment proof. The separate recorded-account tests cover proof plumbing.
+Nine guard deletion controls require explicit acceptance of a bad input to be
+detected by the tests. This interface covers the initial enrollment only: a
+successor vault must instead be bound to proven preparation/migration state.
+Wallet/module deployment, POP outcome, balances/pricing, transaction receipts,
+local enrollment provenance and the complete signer integration remain open.

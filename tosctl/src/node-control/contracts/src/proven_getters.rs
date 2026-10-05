@@ -849,3 +849,139 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod fee_state_tests {
+    use super::*;
+    use crate::wallet_v5r2_genesis::{CodeBundle, CodeHashes, GenesisParameters, WalletGenesis};
+    use crate::wallet_v5r2_pop::RescuePolicy;
+    use crate::wallet_v5r2_state::ProvenInitialFeeVault;
+    use chain_block::{BuilderData, CurrencyCollection, IBitstring, Serializable, StateInit};
+
+    // Synthetic account, deliberately not evidence of a cryptographic proof.
+    fn fixture() -> (WalletGenesis, ProvenAccountState) {
+        let code = Cell::default();
+        let hash = *code.repr_hash().as_array();
+        let bundle = CodeBundle::new(
+            code.clone(),
+            code.clone(),
+            code,
+            CodeHashes { wallet: hash, module: hash, vault: hash },
+        )
+        .unwrap();
+        let mut key = [0; 60];
+        key[..4].copy_from_slice(&1u32.to_be_bytes());
+        key[4..8].copy_from_slice(&8u32.to_be_bytes());
+        key[8..12].copy_from_slice(&3u32.to_be_bytes());
+        let genesis = WalletGenesis::new(
+            bundle,
+            GenesisParameters {
+                global_id: 42,
+                network: [1; 32],
+                wallet_id: 42,
+                primary_key: [2; 1312],
+                rescue_key: [3; 32],
+                policy: RescuePolicy::Required,
+                fee_tree_id: [4; 32],
+                fee_public_key: key,
+                epoch0: 1000,
+            },
+        )
+        .unwrap();
+        let address = format!("0:{}", genesis.vault_init().repr_hash().to_hex_string());
+        let account = Account::active(
+            address.parse().unwrap(),
+            CurrencyCollection::with_coins(100),
+            0,
+            4600,
+            StateInit::construct_from_cell(genesis.vault_init().clone()).unwrap(),
+            0,
+        )
+        .unwrap();
+        let root = account.serialize().unwrap();
+        let state = ProvenAccountState {
+            root: root.clone(),
+            account,
+            evidence: ProvenGetterResults {
+                live: true,
+                checkpoint: MasterchainCheckpoint {
+                    seqno: 1,
+                    root_hash: "00".repeat(32),
+                    file_hash: "00".repeat(32),
+                },
+                block_gen_utime: 4610,
+                account: ProvenAccount {
+                    address,
+                    state_hash: root.repr_hash().to_hex_string(),
+                    balance: "100".into(),
+                    code_hash: hex::encode(hash),
+                    data_hash: genesis.vault_data().repr_hash().to_hex_string(),
+                    last_trans_lt: 0,
+                    gen_utime: 4600,
+                },
+                results: vec![],
+                request_sha256: "00".repeat(32),
+            },
+        };
+        (genesis, state)
+    }
+
+    #[test]
+    fn initial_fee_state_binding() {
+        let (g, s) = fixture();
+        let view = ProvenInitialFeeVault::bind(&s, &g, 4620, 30).unwrap();
+        assert_eq!(view.next_leaf(), 0);
+        assert_eq!(view.route().global_id, 42);
+        assert_eq!(view.route().network, [1; 32]);
+        assert_eq!(view.route().tree_id, [4; 32]);
+        assert_eq!(view.config_hash(), g.config_hash());
+        let continuity =
+            crate::lms_fee_schedule::Continuity::Intact(crate::lms_fee_schedule::IntactState {
+                route: view.route(),
+                next_unreserved: 0,
+                last_proven_time: 4600,
+            });
+        assert_eq!(view.plan(4620, continuity).unwrap().leaf, 4);
+        assert!(view.plan(4631, continuity).is_err(), "expired view reused");
+        for case in ["live", "address", "code", "counter", "config", "version"] {
+            let (g, mut s) = fixture();
+            let reason = match case {
+                "live" => {
+                    s.evidence.live = false;
+                    "live proof"
+                }
+                "address" => {
+                    s.evidence.account.address = format!("0:{}", "aa".repeat(32));
+                    "address"
+                }
+                "code" => {
+                    s.evidence.account.code_hash = "aa".repeat(32);
+                    "code"
+                }
+                _ => {
+                    let mut old =
+                        chain_block::SliceData::load_cell(g.vault_data().clone()).unwrap();
+                    old.move_by(40).unwrap();
+                    let mut b = BuilderData::new();
+                    b.append_u8(if case == "version" { 2 } else { 3 }).unwrap();
+                    b.append_u32(if case == "counter" { (1 << 20) + 1 } else { 0 }).unwrap();
+                    if case == "config" {
+                        old.move_by(256).unwrap();
+                        b.append_u256(&[9; 32]).unwrap();
+                    }
+                    b.append_builder(&old.as_builder().unwrap()).unwrap();
+                    assert!(s.account.set_data(b.into_cell().unwrap()));
+                    match case {
+                        "counter" => "counter",
+                        "config" => "configuration",
+                        _ => "version",
+                    }
+                }
+            };
+            match ProvenInitialFeeVault::bind(&s, &g, 4620, 30) {
+                Ok(_) => panic!("accepted bad {case}"),
+                Err(error) => assert!(error.to_string().contains(reason), "{case}: {error}"),
+            }
+        }
+    }
+}
