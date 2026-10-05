@@ -1,0 +1,128 @@
+{
+  "base_commit": "7d1369273af92612347331e3b75fd3b6a38583e7",
+  "scope": "Local native Release / Rust debug continuous funded recovery at copied credit 20000; production admission remains failed. No production client or restore acceptance.",
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "expected_transactions": 62,
+    "observed_transactions": 62,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "transactions": 20,
+    "recipient_received": true,
+    "primary_signing_used": false,
+    "production_admission_passed": false
+  },
+  "state_transition_deletion_controls": {
+    "lock": {
+      "runner_exit": 1,
+      "semantic_failure": "lock state transition missing",
+      "wallet_exit": 0,
+      "aborted": false
+    },
+    "migrate": {
+      "runner_exit": 1,
+      "semantic_failure": "migration state transition missing",
+      "wallet_exit": 0,
+      "aborted": false
+    }
+  },
+  "sources": [
+    {
+      "path": "test/wallet-v5r2/funded_recovery.py",
+      "bytes": 6899,
+      "sha256": "80d928f2678bcad3e2b82dd2157807da7311b0929d18146ea60b3f79d8103fcb"
+    },
+    {
+      "path": "test/wallet-v5r2/recovery_controls.py",
+      "bytes": 2101,
+      "sha256": "93872ea46c30652709f75dff5dd0609a7c0384836f33067db5e0c1085e6c46e4"
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "bytes": 43645,
+      "sha256": "5503fda267b3e66c5250f0a1c48142acfbb7adb842c11713c7e108ea0db603f5"
+    },
+    {
+      "path": "test/wallet-v5r2/fee_tx_parity.py",
+      "bytes": 5722,
+      "sha256": "a0e5aa07008c2a2d4fb4e64b1894aea750724331909ad406bb34ab0cad590f4a"
+    },
+    {
+      "path": ".github/workflows/rescue-context.yml",
+      "bytes": 7257,
+      "sha256": "911ef742710039950d065d9da9398d4d9721453afdbc47cf3306c382aad1b08f"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-auth.fc",
+      "bytes": 4861,
+      "sha256": "e8e0b134d2229e4b0c97725d53afa707bb71bec5941fa85531d274d8df2a2799"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-code.fc",
+      "bytes": 4499,
+      "sha256": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-common.fc",
+      "bytes": 759,
+      "sha256": "042a1b054523a5838bc3cfff999dedfd4bcdf130eb92c18aed0d28b598c7ba14"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-identity.fc",
+      "bytes": 3056,
+      "sha256": "78889a4e42080b052a687198f4fbe54990be4e1c0694de66cabfc47eb6d796dc"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "bytes": 7015,
+      "sha256": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-identity.fc",
+      "bytes": 2471,
+      "sha256": "b6eeb0d91a46522f892c3e66a4ce37ebe0b2b242d5560e0dbe73c59561f5cbeb"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-module.fc",
+      "bytes": 8035,
+      "sha256": "263c0c24e14e0f65aa481633f18cc2bac61ce160038b151b81a8f032b3dbe802"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-pop.fc",
+      "bytes": 1965,
+      "sha256": "910f25e84aa4338829907d5bb57e58233d15b71c7f58b33883313770852cdd4d"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-state.fc",
+      "bytes": 3270,
+      "sha256": "71b1855f4ad9d836b9365b9618feeef53d9c1e6e30496b7d3211cd773d1eeb95"
+    }
+  ],
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python test/wallet-v5r2/fee_tx_parity.py --prepare --recovery --driver tosctl/src/target/debug/examples/pq-tx-parity --output <artifacts>",
+    "python test/wallet-v5r2/recovery_controls.py --baseline <artifacts> --output <artifacts>/controls"
+  ],
+  "checks": {
+    "runner_exit": 0,
+    "controls_exit": 0,
+    "ruff": "passed",
+    "workflow_supply_chain": "passed",
+    "diff_check": "passed"
+  },
+  "raw_artifacts": {
+    "root": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-funded-recovery",
+    "manifest": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-funded-recovery/MANIFEST.json",
+      "bytes": 33539,
+      "sha256": "ba8ff45f48702fd46bcabcb0833c7e5e492399a63a2bd15fdb67e0a6bd65a5c6"
+    },
+    "retention": "Through review and at least 2027-01-06. Local artifacts require host access; CI provides separate source-pinned reproductions.",
+    "test_secrets": "Deterministic public test material only; not for live funds."
+  }
+}

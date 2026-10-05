@@ -468,8 +468,8 @@ custom-cap partial-send scenario is currently native-only. Existing 74 fee-route
 parity transactions and real module/POP regressions also pass with the new code.
 
 At this module-only checkpoint the paired vault still refused preparation class 3.
-The following integration adds funded preparation and fresh-key POP; wallet
-migration, post-migration payment and restore/device drills remain open.
+The following integrations add funded preparation, fresh-key POP and the
+continuous wallet handoff. Restore/device drills remain open.
 The source-bound local evidence is `test/wallet-v5r2/preparation-module-20261006.json`.
 
 
@@ -499,10 +499,45 @@ failure/cap controls were rerun against the expanded vault.
 
 Current minimum admission credit is 12,600 for AUTH, 13,190 for either POP route,
 and **13,515 for preparation**. Default 10,000 remains a failed release gate;
-20,000 is only the copied emulator diagnostic setting. This evidence does not
-prove wallet lock/migration, payment through the migrated wallet, client/device
-recovery, restore safety, worst-case resource pricing or production readiness.
+20,000 is only the copied emulator diagnostic setting. This preparation-only
+checkpoint does not prove the continuous wallet handoff described below,
+client/device recovery, restore safety, worst-case pricing or production readiness.
 CI runs preparation parity on both configured architectures and the three guard
 deletion controls on x86-64; workflow wiring does not establish a remote pass.
 Source and retained receipts are indexed in
 `test/wallet-v5r2/fee-preparation-20261006.json`.
+
+
+## Continuous SLH-funded wallet recovery diagnostic
+
+`fee_tx_parity.py --prepare --recovery` additionally runs 20 linked transactions
+starting from the installed wallet and its funded V0/M0 accounts. The chain uses
+only SLH authorization and LMS fee signing: lock the wallet through V0/M0; use a
+fresh V0 leaf to prepare and deploy M1/V1; obtain fresh SLH POP through deployed
+V1/M1; migrate through V0/M0; then pay through V1/M1 and the actual migrated wallet
+to an executed recipient account. Each successful hop passes its resulting
+account into the next hop. No balance top-up or fabricated wallet transition is
+inserted. Fixture key generation is not a production signer or restore workflow.
+
+Exact wallet data hashes establish local retirement after lock, epoch increments,
+atomic module/metadata replacement, preserved retirement, zeroed migration
+counters, and the new rescue execution counter/ordinary seqno after payment.
+M1 uses REQUIRED policy. Old-module relay, stale lock, payment relay and fee
+replays are rejected. Module prior balances remain protected, V0 consumes leaves
+8 through 10, V1 consumes leaves 8 and 9, and the recipient's state and balance
+prove delivery. Separate negative probes do not replace the progressing account.
+
+The combined preparation/recovery suite has 62 exact native/Rust transaction
+comparisons. `recovery_controls.py` independently removes the lock retirement
+write and the migration module assignment from private contract copies. In both
+cases the wallet transaction still returns exit 0 without aborting, but the
+expected state assertion fails. Restoring the source restores the full chain.
+These controls prevent a successful phase result from substituting for the
+required authority transition. CI runs the full chain on both architectures and
+the two deletion controls on x86-64.
+
+Evidence is indexed in `test/wallet-v5r2/funded-recovery-20261006.json`. This is
+local emulator/executor evidence at diagnostic credit 20,000, not public-network
+acceptance. Default-credit admission, worst-case envelope/pricing validation,
+restart/partial-deployment recovery, durable fee-key anti-rollback and device/SDK
+restore integration, independent review and final-head CI remain release gates.

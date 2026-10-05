@@ -38,6 +38,9 @@ def main():
         help="Measure required credit without changing protocol defaults",
     )
     p.add_argument("--gas-trace", action="store_true", help="Retain instruction gas accounting")
+    p.add_argument(
+        "--recovery", action="store_true", help="Run continuous funded recovery after preparation"
+    )
     p.add_argument("--prepare", action="store_true", help="Exercise bounded successor deployment")
     p.add_argument("--pop-role", type=int, choices=(1, 2), help="Exercise fee-funded per-key POP")
     p.add_argument(
@@ -55,7 +58,10 @@ def main():
         choices=("floors", "ceiling"),
         help="Preparation fee budget sensitivity control",
     )
+    p.add_argument("--recovery-delete-transition", choices=("lock", "migrate"))
     options = p.parse_args()
+    assert not options.recovery_delete_transition or options.recovery
+    assert not options.recovery or options.prepare
     assert not options.delete_preparation_guard or options.prepare
     assert (
         sum(
@@ -84,6 +90,14 @@ def main():
             shutil.copyfile(src, work / src.name)
         for name in ["auth-policy.fc", "pq.fc", "pq-bytes.fc", "wallet-v5-action-list.fc"]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
+        if options.recovery_delete_transition:
+            src = work / "wallet-v5r2-code.fc"
+            source = src.read_text()
+            deleted = {"lock": "retired |= 2;", "migrate": "module = next_module;"}[
+                options.recovery_delete_transition
+            ]
+            assert source.count(deleted) == 1
+            src.write_text(source.replace(deleted, ""))
         if options.delete_payload_guard:
             src = work / "wallet-v5r2-fee-vault.fc"
             source = src.read_text()
@@ -716,6 +730,51 @@ def main():
                     ("successor-fee-replay", next_replay),
                 ]:
                     (out / f"{name}.json").write_text(json.dumps(receipt, indent=2) + "\n")
+                if options.recovery:
+                    from funded_recovery import run as run_recovery
+
+                    recovery = run_recovery(
+                        e,
+                        out / "recovery",
+                        old=SimpleNamespace(
+                            vault=initial,
+                            module=native.active_account((0, root), module, md, balance=10**12),
+                            root=root,
+                            witness=mi,
+                            metadata=metadata,
+                        ),
+                        new=SimpleNamespace(
+                            data=successor_data,
+                            vault_data=successor_vd,
+                            witness=successor_module,
+                            metadata=successor_metadata,
+                            vault_witness=successor_vault,
+                            root=successor_root,
+                            vault_address=next_address,
+                            header=next_header,
+                            tree=successor_tree,
+                        ),
+                        wallet=SimpleNamespace(
+                            address=wa,
+                            initial=native.active_account(wa, wallet, wd, balance=10**15),
+                        ),
+                        recipient=SimpleNamespace(
+                            address=recipient,
+                            initial=native.active_account(
+                                recipient, recipient_code, recipient_data, balance=1_000_000_000
+                            ),
+                        ),
+                        prepare=submit,
+                        pop_external=next_external,
+                        sign_old=signer.slh,
+                        sign_new=lambda d: signer.slh(d, sk=signer.other_slh_sk),
+                        fee_intent=make_intent,
+                        sign_fee=sign_fee,
+                        work=work,
+                    )
+                    (out / "recovery-summary.json").write_text(
+                        json.dumps(recovery, indent=2) + "\n"
+                    )
                 successor_pop = {
                     "role": 2,
                     "vault": next_paid["details"],

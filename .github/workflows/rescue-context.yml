@@ -88,7 +88,7 @@ jobs:
           mkdir -p artifacts/context/r2-fee-prepare/native
           ln artifacts/context/r2-fee-auth/native/PUBLIC-TEST-ONLY-lms-tree \
             artifacts/context/r2-fee-prepare/native/PUBLIC-TEST-ONLY-lms-tree
-          python test/wallet-v5r2/fee_tx_parity.py --prepare \
+          python test/wallet-v5r2/fee_tx_parity.py --prepare --recovery \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-fee-prepare
       - name: Preparation fee admission deletion controls
@@ -97,6 +97,12 @@ jobs:
           python test/wallet-v5r2/preparation_fee_controls.py \
             --baseline artifacts/context/r2-fee-prepare \
             --output artifacts/context/r2-fee-prepare-controls
+      - name: Recovery state transition deletion controls
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/wallet-v5r2/recovery_controls.py \
+            --baseline artifacts/context/r2-fee-prepare \
+            --output artifacts/context/r2-recovery-controls
       - name: Full fee verification deletion control
         if: matrix.runner == 'ubuntu-24.04'
         run: |
