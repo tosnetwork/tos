@@ -282,7 +282,7 @@ jobs:
         env:
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
-        run: python3 scripts/token-bridge-mutations.py --skip-evm --results token-bridge-mutations.json
+        run: python3 scripts/token-bridge-mutations.py --tvm-only --results token-bridge-mutations.json
 
       # A guard nothing reaches is decoration. This removes each rule the validator
       # controller work added and requires a test to go red for it; a mutation that
