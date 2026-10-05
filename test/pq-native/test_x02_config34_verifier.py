@@ -35,7 +35,18 @@ FIXTURES = REPO / "test/pq-native/x02-config34-fixtures"
 VERIFIER = Path(
     os.environ.get("TOS_PROOF_VERIFY", REPO / "build/lite-client/proof-verify/tos-proof-verify")
 ).resolve()
-OLD_SOURCE = "07cccbb0d"
+# The X02 Config34 script as it was before the fix (commit 07cccbb0d), kept as a
+# fixture so the regression comparison does not depend on the clone's history.
+OLD_SOURCE = FIXTURES / "x02_config34_proof_pre_fix.py.txt"
+OLD_SOURCE_SHA256 = "7ad04d57af66e2223d986c0dad63f3e8d7d0047cc8bc3f858405bc64b0a8ad13"
+
+# The coordinator and these tests ask git for the checked-out commit. Containers
+# often run git as a different user from the workspace owner, which git refuses
+# as dubious ownership; trust this repository for every git process started here.
+_git_trust = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
+os.environ["GIT_CONFIG_KEY_%d" % _git_trust] = "safe.directory"
+os.environ["GIT_CONFIG_VALUE_%d" % _git_trust] = str(REPO)
+os.environ["GIT_CONFIG_COUNT"] = str(_git_trust + 1)
 
 
 def verifier() -> Path:
@@ -213,9 +224,8 @@ class FabricatedBundles(Base):
     def test_the_old_verifier_accepted_this_unauthenticated_bundle_and_this_one_refuses_it(self):
         # Old green: the pre-fix script accepted state proof + config proof + parameter
         # bound only by four agreeing headers, with no chain from the zerostate at all.
-        raw = subprocess.check_output(
-            ["git", "-C", str(REPO), "show", f"{OLD_SOURCE}:scripts/x02_config34_proof.py"]
-        )
+        raw = OLD_SOURCE.read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), OLD_SOURCE_SHA256)
         old = types.ModuleType("x02_config34_proof_old")
         exec(compile(raw, "x02_config34_proof_old.py", "exec"), old.__dict__)
         state_proof, config_proof = split_config_info((REAL / "historical/config.tl").read_bytes())
