@@ -124,11 +124,18 @@ const int HOLDER_BURN_WINDOW = 4;    ;; C3, per wallet
 const int BURN_WINDOW = 8;           ;; C4, per minter
 const int SWAP_WINDOW = 16;          ;; EVM locks the bridge may hold at once
 const int CHANNEL_LIMIT = 8;         ;; minters one bridge serves
-const int HOLDER_LIMIT = 2048;       ;; holders one minter serves
+const int HOLDER_LIMIT = 1000;       ;; holders one minter serves
 
-const int BRIDGE_WORST_CELLS = 2000;
-const int MINTER_WORST_CELLS = 60000;
-const int WALLET_WORST_CELLS = 400;
+;; Worst-case state sizes, measured by the sandbox's T-G test on the compiled
+;; contracts with every window full, every record at its largest, an old life
+;; held in full and no cell shared between records:
+;;   wallet 115 cells; bridge 897 cells at 8 channels (58 per channel), under
+;;   the 2048-cell non-special masterchain limit; minter 347 cells plus 63 per
+;;   holder, 63347 at 1000 holders, under the 65536-cell basechain limit.
+;; HOLDER_LIMIT is the largest round number of holders that fits.
+const int BRIDGE_WORST_CELLS = 1000;
+const int MINTER_WORST_CELLS = 64000;
+const int WALLET_WORST_CELLS = 128;
 
 ;; Balances each contract keeps for its own storage.
 const int WALLET_RESERVE = 50000000;      ;; 0.05
@@ -141,6 +148,10 @@ const int BRIDGE_RESERVE = 1000000000;    ;; 1
 const int WALLET_STEP_GAS = 40000;
 const int MINTER_STEP_GAS = 120000;
 const int BRIDGE_STEP_GAS = 70000;
+;; An oracle vote at the bridge: a swap vote that deploys a minter computes
+;; its state's forwarding fee, the dearest bridge step (69698 gas at most
+;; in the sandbox suite). The oracles' message pays for it.
+const int BRIDGE_VOTE_GAS = 100000;
 ;; A minter step that also promotes or strands FOLD_LIMIT records.
 const int MINTER_BATCH_GAS = 250000;
 
@@ -205,6 +216,7 @@ int wallet_gas() inline { return gas_fee(WALLET_STEP_GAS, 0); }
 int minter_gas() inline { return gas_fee(MINTER_STEP_GAS, 0); }
 int minter_batch_gas() inline { return gas_fee(MINTER_BATCH_GAS, 0); }
 int bridge_gas() inline { return gas_fee(BRIDGE_STEP_GAS, -1); }
+int vote_gas() inline { return gas_fee(BRIDGE_VOTE_GAS, -1); }
 
 ;; mint: bridge <- M4/M5 <- minter <- M3 <- wallet <- M2 <- minter <- M1 <- bridge <- P2 <- minter <- P1
 int need_m4() inline { return bridge_gas(); }

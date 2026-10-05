@@ -36,3 +36,5 @@ mod recovery;
 mod lifecycle;
 #[path = "token_bridge/source.rs"]
 mod source;
+#[path = "token_bridge/gauge.rs"]
+mod gauge;

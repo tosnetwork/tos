@@ -419,6 +419,8 @@ pub struct Net {
     pub delivered: Vec<Delivery>,
     pub logs: Vec<(MsgAddressInt, u32, Message)>,
     pub model: Model,
+    /// The most gas each (contract, opcode, advance kind) used in this run.
+    pub gas_seen: BTreeMap<(&'static str, u32, u8), u64>,
     pub next_nonce: u64,
     pub burn_fee: u64,
     pub mint_fee: u64,
@@ -515,6 +517,7 @@ impl Net {
             delivered: Vec::new(),
             logs: Vec::new(),
             model: Model { enabled: true, ..Model::default() },
+            gas_seen: BTreeMap::new(),
             next_nonce: 0,
             burn_fee: BURN_FEE,
             mint_fee: MINT_FEE,
@@ -689,6 +692,7 @@ impl Net {
                 self.logs.push((addr.clone(), topic, out.clone()));
             }
         }
+        self.check_gas(&addr, &msg, &tx);
         let after = self.model.snapshot(self, &addr);
         let balance_before = account.balance().map(|b| b.coins.as_u128()).unwrap_or(0);
         let delivery = Delivery { balance_before, addr, msg, tx, outs };
@@ -704,6 +708,52 @@ impl Net {
             outs: delivery.outs.clone(),
         });
         delivery
+    }
+
+    /// Every settlement step stays within the gas its contract declares and
+    /// prices into every budget; a step over it would leave its successor
+    /// underfunded at worst-case occupancy.
+    fn check_gas(&mut self, addr: &MsgAddressInt, msg: &Message, tx: &Transaction) {
+        if msg.int_header().is_some_and(|h| h.bounced) {
+            return;
+        }
+        let Some(op) = body_op(msg) else { return };
+        let code = self.bc.get_account(addr).and_then(|a| a.get_code());
+        let Some(code) = code else { return };
+        let codes = codes();
+        let kind = if code.repr_hash() == codes.bridge.repr_hash() {
+            "bridge"
+        } else if code.repr_hash() == codes.minter.repr_hash() {
+            "minter"
+        } else if code.repr_hash() == codes.wallet.repr_hash() {
+            "wallet"
+        } else {
+            return;
+        };
+        let settlement = (40..=63).contains(&op) || op == OP_BURN || op == OP_EXECUTE_VOTING;
+        if !settlement {
+            return;
+        }
+        let mut body = msg.body().expect("a body").clone();
+        let sub = match op {
+            op::ADVANCE | OP_EXECUTE_VOTING => {
+                let _ = body.get_next_u32();
+                let _ = body.get_next_u64();
+                body.get_next_byte().unwrap_or(0)
+            }
+            _ => 0,
+        };
+        let gas = outcome(tx).gas_used;
+        let entry = self.gas_seen.entry((kind, op, sub)).or_insert(0);
+        *entry = (*entry).max(gas);
+        let budget = match kind {
+            "bridge" if op == OP_EXECUTE_VOTING => declared("BRIDGE_VOTE_GAS"),
+            "bridge" => declared("BRIDGE_STEP_GAS"),
+            "wallet" => declared("WALLET_STEP_GAS"),
+            _ if op == op::OPENED || (op == op::ADVANCE && sub == advance::STRAND) => declared("MINTER_BATCH_GAS"),
+            _ => declared("MINTER_STEP_GAS"),
+        } as u64;
+        assert!(gas <= budget, "{kind} op {op}/{sub} used {gas} gas, over its declared {budget}");
     }
 
     pub fn send(&mut self, msg: Message) -> Transaction {
@@ -1018,7 +1068,8 @@ impl Net {
     // ---- the operations ----
 
     pub fn vote(&mut self, query: u64, voting: Cell) -> Message {
-        MessageBuilder::internal(self.oracles.address(), &self.bridge, TOS)
+        // what the oracles attach to a vote: enough for its gas and records
+        MessageBuilder::internal(self.oracles.address(), &self.bridge, 2 * TOS)
             .body(cell(|b| {
                 b.append_u32(OP_EXECUTE_VOTING).unwrap().append_u64(query).unwrap();
                 b.checked_append_references_and_data(&SliceData::load_cell(voting).unwrap()).unwrap();

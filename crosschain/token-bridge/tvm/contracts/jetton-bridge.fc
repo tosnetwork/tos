@@ -930,7 +930,7 @@ int get_burn_outcome(int minter, int m) method_id {
 ;; current prices, for a new holder.
 ;; The least a vote cancelling an unpaid lock must carry.
 int get_cancel_cost() method_id {
-    return allowance(2, -1) + bridge_gas();
+    return allowance(2, -1) + vote_gas();
 }
 
 int get_mint_fee_floor(cell wrapped_token_data, slice recipient) method_id {
