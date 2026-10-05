@@ -43,6 +43,13 @@ def main():
             "accepted message absent from sender",
         ),
     ]
+    for field in ["recipient", "value", "credit", "body", "state init"]:
+        guards.append((
+            "payment_" + field.replace(" ", "_"),
+            "payment " + field + " differs from intent",
+            "accepted mismatched payment " + field,
+        ))
+    guards.append(("payment_bounce", "payment bounce flags differ from intent", "accepted mismatched payment bounce"))
     cases = []
     for label, message, reason in guards:
         marker = json.dumps(message)
@@ -95,7 +102,7 @@ def main():
     results = {}
     try:
         code, log = run("baseline")
-        assert code == 0 and "9 passed" in log, log[-3000:]
+        assert code == 0 and "10 passed" in log, log[-3000:]
         for label, mutated, reason in cases:
             SOURCE.write_text(mutated)
             code, log = run(label)
@@ -104,9 +111,9 @@ def main():
     finally:
         SOURCE.write_text(source)
         code, log = run("restored")
-        assert code == 0 and "9 passed" in log, log[-3000:]
+        assert code == 0 and "10 passed" in log, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("18 receipt/history/delivery guard controls detected; restored tests pass")
+    print("24 receipt/history/delivery guard controls detected; restored tests pass")
 
 
 if __name__ == "__main__":

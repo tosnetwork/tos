@@ -1,0 +1,26 @@
+{
+  "source_base": "4cb87eaff46591bbc79cd44646214c1b9ade518b",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/proven_transactions.rs": "af66abfbc01f1a11c4fe0b7970f03a810b9b5a3ed168137412144a7cd2dd4a33",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "9515e85c5e7c311007c95480a19bdba0bb56c38ce5ff91d4e543e7205c4d1d0d",
+    "test/wallet-v5r2/receipt_controls.py": "148f775f9e5b598bcbb021bb4ceb1a4ba586b5cf22ecfc7e6458c8f30ff98dc0"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-payment-receipts",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "851b9498d7c625c4803858b76597e175d68d7582fe254faef976ba78f2bb2865",
+  "results": {
+    "receipt_tests_passed": 10,
+    "semantic_controls_detected": 24,
+    "final_commands_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/receipt_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-payment-receipts/controls"
+  ],
+  "limits": [
+    "Actual native executor payment fixtures have synthetic account proof wrappers; not real-network finality.",
+    "Credit-phase value is not final spendable balance or application token-ledger credit.",
+    "Caller must supply locally approved intent and originating input, not infer intent from the observed receipt.",
+    "Full fee/module/wallet request-chain validation, POP interpretation, production custody, default gas admission, independent review and final-head CI remain open."
+  ]
+}

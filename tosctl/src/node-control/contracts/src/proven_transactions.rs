@@ -10,6 +10,17 @@ use chain_block::{
 use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use std::time::{Duration, Instant};
 
+/// Locally approved payment fields, not values inferred from an RPC response.
+/// Credit is the receiver's credit-phase amount, not its final spendable balance.
+pub struct PaymentExpectation {
+    pub recipient: MsgAddressInt,
+    pub value: chain_block::CurrencyCollection,
+    pub credited: chain_block::CurrencyCollection,
+    pub bounce: bool,
+    pub body: Option<Cell>,
+    pub state_init: Option<chain_block::StateInit>,
+}
+
 pub struct ProvenTransaction {
     root: Cell,
     transaction: Transaction,
@@ -243,6 +254,52 @@ impl ProvenTransaction {
                 "transaction actions incomplete"
             );
         }
+        Ok(())
+    }
+
+    /// Bind a payment to its originating request and locally approved message
+    /// fields, then require exact delivery and the expected credit phase.
+    /// Receiver execution may spend the credited value. Token balances and
+    /// application state effects still require application-specific proofs.
+    pub fn require_payment(
+        &self,
+        receiver: &Self,
+        originating_request: &Cell,
+        message_hash: &[u8; 32],
+        expected: &PaymentExpectation,
+    ) -> anyhow::Result<()> {
+        self.require_inbound(originating_request)?;
+        self.require_internal_delivery(receiver, message_hash)?;
+        let message = receiver
+            .transaction
+            .read_in_msg()?
+            .ok_or_else(|| anyhow::anyhow!("payment inbound missing"))?;
+        let header =
+            message.int_header().ok_or_else(|| anyhow::anyhow!("payment must be internal"))?;
+        anyhow::ensure!(header.dst == expected.recipient, "payment recipient differs from intent");
+        anyhow::ensure!(header.value == expected.value, "payment value differs from intent");
+        anyhow::ensure!(
+            !header.bounced && header.bounce == expected.bounce,
+            "payment bounce flags differ from intent"
+        );
+        let body = message.body().cloned().map(|slice| slice.into_cell()).transpose()?;
+        anyhow::ensure!(
+            body.as_ref().map(|cell| cell.repr_hash())
+                == expected.body.as_ref().map(|cell| cell.repr_hash()),
+            "payment body differs from intent"
+        );
+        anyhow::ensure!(
+            message.state_init() == expected.state_init.as_ref(),
+            "payment state init differs from intent"
+        );
+        let TransactionDescr::Ordinary(description) = receiver.transaction.read_description()?
+        else {
+            anyhow::bail!("payment receiver must be ordinary");
+        };
+        let credit = description
+            .credit_ph
+            .ok_or_else(|| anyhow::anyhow!("payment receiver has no credit phase"))?;
+        anyhow::ensure!(credit.credit == expected.credited, "payment credit differs from intent");
         Ok(())
     }
 

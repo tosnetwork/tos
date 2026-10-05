@@ -1157,3 +1157,21 @@ transactions, and delayed-response cancellation. The receipt suite now contains
 nine tests and eighteen semantic controls, including page cardinality and
 caller-deadline enforcement. This exercises real HTTP plumbing, not real-network
 V5R2 finality, and still does not interpret application payment/POP outcomes.
+
+### Payment intent and credit-phase evidence
+
+`PaymentExpectation` carries locally approved recipient, full native/extra-currency
+value, credited currency collection, bounce flag, normalized body cell and
+StateInit. `require_payment` first binds the sender transaction to its exact
+originating inbound request and proves complete internal delivery, then compares
+all expected fields and requires the receiver's credit phase to record exactly
+the expected amount. Bounced refund messages are refused. Expectations must come
+from the approved request, not be populated from an untrusted RPC observation.
+
+The native recovery payment fixture passes these checks; recipient, value,
+credit, body, StateInit and bounce mismatches are independently refused. The
+receipt suite now has ten tests and twenty-four semantic controls. The fixture
+account-proof wrappers remain synthetic. Credit-phase value is not final
+spendable balance: recipient execution may consume fees or send value onward.
+Token-ledger/application state, POP interpretation, the full fee/module/wallet
+request chain and real-network acceptance still require their own checks.

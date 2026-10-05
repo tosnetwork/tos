@@ -2072,6 +2072,69 @@ mod transaction_receipt_tests {
         );
     }
     #[test]
+    fn receipt_payment_matches_approved_intent_and_credit() {
+        use crate::proven_transactions::PaymentExpectation;
+        let (proof, root) = fixture("payment-wallet");
+        let sent = ProvenTransaction::latest(&proof, root).unwrap();
+        let (proof, root) = fixture("recipient");
+        let received = ProvenTransaction::latest(&proof, root).unwrap();
+        let emitted = sent_message(&sent);
+        let input = sent.transaction().in_msg_cell().unwrap();
+        let message = received.transaction().read_in_msg().unwrap().unwrap();
+        let header = message.int_header().unwrap();
+        let TransactionDescr::Ordinary(description) =
+            received.transaction().read_description().unwrap()
+        else {
+            panic!()
+        };
+        let credit = description.credit_ph.unwrap().credit;
+        let make_intent = || PaymentExpectation {
+            recipient: header.dst.clone(),
+            value: header.value.clone(),
+            credited: credit.clone(),
+            bounce: header.bounce,
+            body: message.body().cloned().map(|slice| slice.into_cell().unwrap()),
+            state_init: message.state_init().cloned(),
+        };
+        sent.require_payment(&received, &input, emitted.repr_hash().as_array(), &make_intent())
+            .unwrap();
+        for case in ["recipient", "value", "credit", "bounce", "body", "state init"] {
+            let mut intent = make_intent();
+            match case {
+                "recipient" => intent.recipient = format!("0:{}", "ab".repeat(32)).parse().unwrap(),
+                "value" => intent.value = chain_block::CurrencyCollection::with_coins(1),
+                "credit" => intent.credited = chain_block::CurrencyCollection::with_coins(1),
+                "bounce" => intent.bounce = !intent.bounce,
+                "body" => {
+                    intent.body = Some(
+                        chain_block::BuilderData::with_raw(vec![0x80], 1)
+                            .unwrap()
+                            .into_cell()
+                            .unwrap(),
+                    )
+                }
+                "state init" => intent.state_init = Some(chain_block::StateInit::default()),
+                _ => unreachable!(),
+            }
+            let error = sent
+                .require_payment(&received, &input, emitted.repr_hash().as_array(), &intent)
+                .err()
+                .unwrap_or_else(|| panic!("accepted mismatched payment {case}"));
+            assert!(error.to_string().contains(case), "{case}: {error}");
+        }
+        assert!(
+            sent.require_payment(
+                &received,
+                &Cell::default(),
+                emitted.repr_hash().as_array(),
+                &make_intent()
+            )
+            .is_err(),
+            "accepted payment for unrelated request"
+        );
+    }
+
+    #[test]
     fn receipt_latest_rejects_substitutions() {
         for case in ["hash", "lt", "account", "post_state", "future"] {
             let (mut proof, mut root) = fixture("payment-wallet");
