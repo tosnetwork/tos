@@ -9,7 +9,7 @@ FROM ubuntu:22.04 AS builder-22
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
-    autoconf automake libtool libjemalloc-dev ccache gperf wget curl \
+    autoconf automake libtool libjemalloc-dev ccache gperf jq wget curl \
     lsb-release software-properties-common gnupg python3 python3-dev \
     libgmp-dev libssl-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -51,7 +51,7 @@ FROM ubuntu:24.04 AS builder-24
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
-    autoconf automake libtool libjemalloc-dev ccache gperf ripgrep wget curl \
+    autoconf automake libtool libjemalloc-dev ccache gperf ripgrep jq wget curl \
     lsb-release software-properties-common gnupg python3 python3-dev \
     libgmp-dev libssl-dev && \
     rm -rf /var/lib/apt/lists/*

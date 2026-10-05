@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import socket
 import stat
 import subprocess
@@ -153,6 +154,14 @@ def tree(root: Path) -> dict[str, tuple[str, bytes]]:
 
 
 class ImportSnapshotTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        # docker/import-snapshot.sh reads the node config with jq, as the node
+        # image provides it. Without it every case would fail on the config read
+        # instead of on the refusal it checks, so say so once.
+        if shutil.which("jq") is None:
+            raise RuntimeError("jq is required by docker/import-snapshot.sh and is not installed")
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="import-snapshot-")
         root = Path(self._tmp.name)
