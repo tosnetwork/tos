@@ -211,6 +211,21 @@ impl ProvenTransaction {
         );
         Ok(previous)
     }
+    /// Authenticate a supplied pre-state preimage before interpreting which
+    /// program/data actually executed. Current account code alone is insufficient.
+    pub fn pre_account(&self, root: Cell) -> anyhow::Result<chain_block::Account> {
+        anyhow::ensure!(
+            root.repr_hash() == self.transaction.read_state_update()?.old_hash,
+            "transaction pre-state hash mismatch"
+        );
+        let account = chain_block::Account::construct_from_cell(root)?;
+        anyhow::ensure!(
+            account.get_addr() == Some(&self.address),
+            "transaction pre-state address mismatch"
+        );
+        Ok(account)
+    }
+
     pub fn root(&self) -> &Cell {
         &self.root
     }

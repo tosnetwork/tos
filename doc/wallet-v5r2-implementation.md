@@ -1175,3 +1175,27 @@ account-proof wrappers remain synthetic. Credit-phase value is not final
 spendable balance: recipient execution may consume fees or send value onward.
 Token-ledger/application state, POP interpretation, the full fee/module/wallet
 request chain and real-network acceptance still require their own checks.
+
+### POP execution identity and fresh challenge receipts
+
+`PopRequest::require_initial_receipt` and `require_successor_receipt` interpret an
+account-anchored module transaction against the locally enrolled module. The
+caller supplies the pre-transaction Account cell; `ProvenTransaction::pre_account`
+binds it to the transaction's old-state hash and address. The executed code and
+key data must equal the enrollment, not merely the module's current code. Full
+execution must succeed, and the inbound message must be internal, non-bounced,
+exactly PPS3-shaped and contain the exact locally generated POP request cell.
+Signature acceptance follows from authenticated execution of the enrolled
+verifier code, never from RPC flags or signature framing alone.
+
+The successor SLH POP and preceding deployment receipts are retained as bounded
+native-executor fixtures. Synthetic proof wrappers exercise the full predicate;
+four semantic deletion controls detect substituted pre-state, other executed
+code, unrelated challenge and a bounced input that would otherwise return
+success without verifying possession. The complete receipt suite has eleven
+tests and the earlier twenty-four controls remain regression gates.
+
+Release code pins and fresh CSPRNG challenges remain caller responsibilities.
+A POP proves possession for that key/challenge, not wallet enrollment, authority,
+continued key availability or safe custody. This fixture covers successor SLH;
+initial/per-key live network enrollment and production acceptance remain open.

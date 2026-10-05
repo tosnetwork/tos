@@ -1,0 +1,32 @@
+{
+  "source_base": "f4b8465102d35ad55fe3e90955b5d27a51598c6e",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/proven_transactions.rs": "978bbf0d5ff33a4090a2f32f8822013bce0dae0b246692db49d71988357b2f6f",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "1e3fdffa4334de64ac382928bbd9101d2aff167b6cd6e2528c9a2efb879bab9d",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs": "a18574942af2254162295aab18c5c92529f55f1355f9478b12729c921cc20d01",
+    "tosctl/src/node-control/contracts/tests/fixtures/v5r2/receipt-transactions.json": "f353b5b040309d6a573093b5b86e37e74e1cf0dc20fc6728c2f838b33d373355",
+    "test/wallet-v5r2/receipt_controls.py": "540297b2e62b06c2fc7835f99a5bc27414a90965b01aa5ac5c3ea4401a567ec4",
+    "test/wallet-v5r2/pop_receipt_controls.py": "f1bf6052752039d57c744296770f24d2a194f6b46c5e917592742c60c5622a52"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-receipts",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "3ad56df38b451576cff77c5708e1a522bd3b9ca1bf524c6a7ed91a3f32417b14",
+  "results": {
+    "receipt_tests_passed": 11,
+    "existing_semantic_controls_detected": 24,
+    "pop_semantic_controls_detected": 4,
+    "final_commands_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/pop_receipt_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-receipts/pop-controls",
+    "python3 test/wallet-v5r2/receipt_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-receipts/receipt-controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2_pop"
+  ],
+  "limits": [
+    "Actual successor SLH POP and deployment native receipts have synthetic account proof wrappers; not real-network finality.",
+    "POP is per-key possession, not wallet authority or safe custody. Release pins and fresh CSPRNG challenge generation remain caller responsibilities.",
+    "Initial and primary-key live enrollment, full fee/module/wallet request chain, production custody, default gas admission, independent review and final-head CI remain open.",
+    "Prior-head hygiene failed on receipt_controls.py formatting. Fixed and local Ruff lint/format checks passed; log retained."
+  ]
+}

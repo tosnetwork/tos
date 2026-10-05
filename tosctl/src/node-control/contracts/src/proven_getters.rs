@@ -1941,6 +1941,101 @@ mod transaction_receipt_tests {
         }
     }
 
+    #[test]
+    fn receipt_pop_binds_challenge_and_executed_code() {
+        use crate::wallet_v5r2::AuthRole;
+        use crate::wallet_v5r2_pop::{PopBinding, PopRequest, RescuePolicy};
+        use chain_block::{SliceData, StateInit};
+        let (proof, root) = fixture("successor-pop-module");
+        let receipt = ProvenTransaction::latest(&proof, root).unwrap();
+        let (before, _) = fixture("deploy-module");
+        let pre = before.root().clone();
+        let init = StateInit {
+            code: before.account().get_code(),
+            data: before.account().get_data(),
+            ..Default::default()
+        }
+        .serialize()
+        .unwrap();
+        let message = receipt.transaction().read_in_msg().unwrap().unwrap();
+        let mut submission = message.body().unwrap().clone();
+        assert_eq!(submission.get_next_u32().unwrap(), 0x50505333);
+        let request = submission.checked_drain_reference().unwrap();
+        let mut s = SliceData::load_cell(request.clone()).unwrap();
+        assert_eq!(s.get_next_u32().unwrap(), 0x504f5033);
+        let global_id = s.get_next_int(32).unwrap() as i32;
+        let network = *s.get_next_hash().unwrap().as_array();
+        let role = match s.get_next_byte().unwrap() {
+            1 => AuthRole::Primary,
+            2 => AuthRole::Rescue,
+            _ => panic!(),
+        };
+        let challenge = *s.get_next_hash().unwrap().as_array();
+        let valid_until = s.get_next_u32().unwrap();
+        let mut parties = SliceData::load_cell(s.checked_drain_reference().unwrap()).unwrap();
+        parties.move_by(11).unwrap();
+        let account = *parties.get_next_hash().unwrap().as_array();
+        let module = *parties.get_next_hash().unwrap().as_array();
+        let mut keys = SliceData::load_cell(s.checked_drain_reference().unwrap()).unwrap();
+        assert_eq!(keys.get_next_byte().unwrap(), 1);
+        let primary = *keys.get_next_hash().unwrap().as_array();
+        let rescue = *keys.get_next_hash().unwrap().as_array();
+        let policy = match keys.get_next_byte().unwrap() {
+            1 => RescuePolicy::Ready,
+            2 => RescuePolicy::Required,
+            _ => panic!(),
+        };
+        let make_request = |challenge| {
+            PopRequest::new(
+                PopBinding { global_id, network, account, module, challenge, valid_until },
+                role,
+                policy,
+                primary,
+                rescue,
+                valid_until - 1,
+            )
+            .unwrap()
+        };
+        let expected = make_request(challenge);
+        assert_eq!(expected.cell().repr_hash(), request.repr_hash());
+        expected.require_receipt(&receipt, pre.clone(), &init).unwrap();
+        let error = make_request([9; 32])
+            .require_receipt(&receipt, pre.clone(), &init)
+            .err()
+            .expect("accepted unrelated POP challenge");
+        assert!(error.to_string().contains("challenge differs"));
+        let error = expected
+            .require_receipt(&receipt, proof.root().clone(), &init)
+            .err()
+            .expect("accepted substituted POP pre-state");
+        assert!(error.to_string().contains("pre-state hash mismatch"));
+        let mut altered = before.account().clone();
+        assert!(altered.set_code(Cell::default()));
+        let altered = altered.serialize().unwrap();
+        let mut tx = receipt.transaction().clone();
+        let mut update = tx.read_state_update().unwrap();
+        update.old_hash = altered.repr_hash();
+        tx.write_state_update(&update).unwrap();
+        let (proof, _) = fixture("successor-pop-module");
+        let forged = reanchor(proof, tx);
+        let error = expected
+            .require_receipt(&forged, altered, &init)
+            .err()
+            .expect("accepted POP under other code");
+        assert!(error.to_string().contains("code or keys differ"));
+        let mut bounced = message;
+        bounced.int_header_mut().unwrap().bounced = true;
+        let mut tx = receipt.transaction().clone();
+        tx.write_in_msg(Some(&bounced)).unwrap();
+        let (proof, _) = fixture("successor-pop-module");
+        let forged = reanchor(proof, tx);
+        let error = expected
+            .require_receipt(&forged, pre, &init)
+            .err()
+            .expect("accepted bounced POP input");
+        assert!(error.to_string().contains("bounced message"));
+    }
+
     fn sent_message(tx: &ProvenTransaction) -> Cell {
         let mut cells = vec![];
         tx.transaction()
