@@ -33,12 +33,43 @@ class HttpInboundConnection;
 
 class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWrapper {
  public:
+  // The outcome of header admission: either the request may go on, or it is
+  // refused with the given answer and its body is never read.
+  struct Admission {
+    bool admitted = false;
+    std::unique_ptr<HttpResponse> response;
+    std::shared_ptr<HttpPayload> payload;
+
+    static Admission admit() {
+      Admission a;
+      a.admitted = true;
+      return a;
+    }
+    static Admission refuse(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload) {
+      Admission a;
+      a.response = std::move(response);
+      a.payload = std::move(payload);
+      return a;
+    }
+  };
+
   class Callback {
    public:
     virtual ~Callback() = default;
     virtual void receive_request(
         std::unique_ptr<HttpRequest> request, std::shared_ptr<HttpPayload> payload,
         td::Promise<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> promise) = 0;
+    // Header admission, asked once the request line and headers are complete
+    // and before any of the body is parsed, reserved or handed to
+    // receive_request. The connection holds the request, reads no further
+    // than its header read-ahead and parses nothing, until the promise is
+    // set; a request that is refused (or whose promise is dropped) is
+    // answered without its body ever being read. `request` is valid only for
+    // the duration of the call: copy what the decision needs. The default
+    // admits every request.
+    virtual void admit_request(const HttpRequest &request, td::Promise<Admission> promise) {
+      promise.set_value(Admission::admit());
+    }
   };
 
   // Limits applied to every inbound connection, so that a client which
@@ -80,6 +111,12 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
     // answer while the client is still uploading and expect the upload to go
     // on. Requests whose body was read keep the connection either way.
     bool close_after_early_answer = false;
+    // Request-body capacity shared by every connection of this listener. When
+    // set, each admitted request reserves its body (see
+    // HttpRequest::body_reservation_bytes) before any of it is parsed; a
+    // request that does not fit is answered 503 and its connection closed.
+    // Null leaves bodies uncharged, as a proxy streaming uploads wants.
+    std::shared_ptr<BodyBudget> body_budget;
   };
 
   HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits);

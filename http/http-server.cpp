@@ -73,7 +73,7 @@ void HttpServer::accepted(td::SocketFd fd) {
   td::actor::create_actor<HttpInboundConnection>(
       td::actor::ActorOptions().with_name("inhttpconn").with_poll(), std::move(fd), callback_, metrics_,
       limits_.request_header_timeout, limits_.request_body_timeout, limits_.reject_request_bodies,
-      limits_.io_buffer_bytes, limits_.response_timeout, limits_.close_after_early_answer)
+      limits_.io_buffer_bytes, limits_.response_timeout, limits_.close_after_early_answer, limits_.body_budget)
       .release();
 }
 

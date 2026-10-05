@@ -130,6 +130,30 @@ TEST(JsonRpcRateGate, full_table_of_active_budgets_refuses_newcomers) {
   ASSERT_TRUE(gate.consume("c", at(1011.0)));
 }
 
+TEST(JsonRpcRateGate, would_admit_answers_without_spending) {
+  tos::PerIpRateGate gate(10.0, 2, 2);
+  // Asking spends nothing and tracks nothing.
+  for (int i = 0; i < 5; i++) {
+    ASSERT_TRUE(gate.would_admit("a", at(1000.0)));
+  }
+  ASSERT_EQ(gate.tracked_sources(), static_cast<std::size_t>(0));
+  ASSERT_TRUE(gate.consume("a", at(1000.0)));
+  ASSERT_TRUE(gate.would_admit("a", at(1000.0)));
+  ASSERT_TRUE(gate.consume("a", at(1000.0)));
+  // Spent: refused, like consume().
+  ASSERT_TRUE(!gate.would_admit("a", at(1005.0)));
+  // A newcomer facing a full table of active budgets is refused as well.
+  ASSERT_TRUE(gate.consume("b", at(1005.0)));
+  ASSERT_TRUE(!gate.would_admit("c", at(1005.0)));
+  ASSERT_TRUE(!gate.consume("c", at(1005.0)));
+  // Once the window moves on, the spent source is admitted again.
+  ASSERT_TRUE(gate.would_admit("a", at(1011.0)));
+  // Disabled gate and unattributed callers are always admitted.
+  tos::PerIpRateGate off(10.0, 0, 2);
+  ASSERT_TRUE(off.would_admit("a", at(1000.0)));
+  ASSERT_TRUE(gate.would_admit("", at(1000.0)));
+}
+
 TEST(JsonRpcRateGate, unattributed_source_is_admitted) {
   // In-process and test callers have no remote address to charge.
   tos::PerIpRateGate gate(10.0, 1, 4096);

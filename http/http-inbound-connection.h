@@ -35,7 +35,8 @@ class HttpInboundConnection : public HttpConnection {
   HttpInboundConnection(td::SocketFd fd, std::shared_ptr<HttpServer::Callback> http_callback,
                         HttpServer::AllMetrics metrics, double request_header_timeout = 0,
                         double request_body_timeout = 0, bool reject_request_bodies = false, size_t io_buffer_bytes = 0,
-                        double response_timeout = 0, bool close_after_early_answer = false)
+                        double response_timeout = 0, bool close_after_early_answer = false,
+                        std::shared_ptr<BodyBudget> body_budget = nullptr)
       : HttpConnection(std::move(fd), nullptr, false, io_buffer_bytes)
       , http_callback_(std::move(http_callback))
       , metrics_(std::move(metrics))
@@ -43,7 +44,8 @@ class HttpInboundConnection : public HttpConnection {
       , request_body_timeout_(request_body_timeout)
       , reject_request_bodies_(reject_request_bodies)
       , response_timeout_(response_timeout)
-      , close_after_early_answer_(close_after_early_answer) {
+      , close_after_early_answer_(close_after_early_answer)
+      , body_budget_(std::move(body_budget)) {
     metrics_.connections->add(1);
     metrics_.connections_total->add(1);
     // Capture the TCP peer IP exactly once, at accept time. This is the
@@ -65,6 +67,21 @@ class HttpInboundConnection : public HttpConnection {
 
   ~HttpInboundConnection() override {
     metrics_.connections->sub(1);
+    if (body_budget_) {
+      body_budget_->sub_read_ahead(counted_read_ahead_);
+    }
+  }
+
+  // Socket input a connection may buffer while its current request has not
+  // been admitted: enough for the largest request line plus header block the
+  // parser accepts (HttpRequest::max_one_header_size() +
+  // HttpRequest::max_header_size()), with room to spare. Bytes of a body that
+  // arrive with the headers can sit in this window unparsed; they are not
+  // charged to the listener's body reservation, so this is the bound on
+  // uncharged input per connection, and the listener's connection limit times
+  // this is the bound across it (tracked in BodyBudget::read_ahead()).
+  static constexpr size_t header_read_ahead() {
+    return 64 << 10;
   }
 
   void start_up() override {
@@ -106,6 +123,12 @@ class HttpInboundConnection : public HttpConnection {
       return td::Status::OK();
     }
     found_eof_ = true;
+    if (admission_pending_) {
+      // Decided once the admission answer arrives: a bodiless request is
+      // still answered, a request whose body was cut off fails then.
+      deferred_eof_ = true;
+      return td::Status::OK();
+    }
     if (reading_payload_) {
       if (reading_payload_->payload_type() != HttpPayload::PayloadType::pt_eof &&
           reading_payload_->payload_type() != HttpPayload::PayloadType::pt_tunnel) {
@@ -149,10 +172,33 @@ class HttpInboundConnection : public HttpConnection {
   void payload_read() override {
     reading_payload_ = nullptr;
     read_next_request_ = false;
+    body_window_ = 0;
   }
 
   td::Status receive(td::ChainBufferReader &input) override;
   void send_answer(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload);
+  // The header admission answer for the request held in cur_request_.
+  void on_admission(td::Result<HttpServer::Admission> result);
+
+ protected:
+  void loop() override {
+    HttpConnection::loop();
+    account_read_ahead();
+  }
+
+  // Until a request is admitted only the header read-ahead is read off the
+  // socket. While an admitted body is read with a listener reservation, the
+  // window is the part of that reservation not yet parsed out of the input,
+  // plus the read-ahead for whatever follows the body.
+  size_t input_window() override {
+    if (reading_payload_ && !admission_pending_) {
+      if (!body_budget_) {
+        return io_window();
+      }
+      return header_read_ahead() + body_window_;
+    }
+    return header_read_ahead();
+  }
 
  private:
   static constexpr size_t chunk_size() {
@@ -172,7 +218,9 @@ class HttpInboundConnection : public HttpConnection {
   // refused) stays under the deadline, otherwise refused CONNECTs would pin
   // connection slots forever.
   bool waiting_for_client_request_data() const {
-    if (waiting_for_request_headers()) {
+    // A request awaiting admission is held to the header deadline too, so an
+    // admission that never answers cannot pin the connection.
+    if (admission_pending_ || waiting_for_request_headers()) {
       return true;
     }
     if (reading_payload_) {
@@ -249,6 +297,36 @@ class HttpInboundConnection : public HttpConnection {
   // Set when the handler answers a CONNECT with a 2xx response; only then
   // is the tunnel payload exempt from the request deadline.
   bool tunnel_established_ = false;
+
+  void send_body_capacity_refused();
+  // Reserves and starts reading the admitted request's body; false when the
+  // request was refused instead or the connection is closing.
+  bool start_admitted_request();
+  // Input ended while a request awaited admission.
+  bool deferred_eof_ = false;
+  // Updates the listener's read-ahead count with the input this connection
+  // holds beyond what its current reservation covers.
+  void account_read_ahead() {
+    if (!body_budget_) {
+      return;
+    }
+    size_t unread = buffered_fd_.left_unread();
+    size_t uncharged = unread > body_window_ ? unread - body_window_ : 0;
+    if (uncharged > counted_read_ahead_) {
+      body_budget_->add_read_ahead(uncharged - counted_read_ahead_);
+    } else if (uncharged < counted_read_ahead_) {
+      body_budget_->sub_read_ahead(counted_read_ahead_ - uncharged);
+    }
+    counted_read_ahead_ = uncharged;
+  }
+
+  std::shared_ptr<BodyBudget> body_budget_;
+  // True from the moment complete headers are handed to admit_request until
+  // the admission answer arrives.
+  bool admission_pending_ = false;
+  // Bytes of the current body reservation not yet parsed out of the input.
+  size_t body_window_ = 0;
+  size_t counted_read_ahead_ = 0;
 };
 
 }  // namespace http

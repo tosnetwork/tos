@@ -114,6 +114,15 @@ class HttpConnection : public td::actor::Actor, public td::ObserverBase {
 
   void loop() override;
 
+  // How many bytes of socket input may be buffered ahead of the parser. A
+  // connection may narrow it, for instance while a request awaits admission.
+  virtual size_t input_window() {
+    return fd_high_watermark();
+  }
+  size_t io_window() const {
+    return fd_high_watermark();
+  }
+
  private:
   size_t io_buffer_bytes_ = 0;
   size_t fd_low_watermark() const {

@@ -201,6 +201,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // Seconds to finish writing a response; mandatory, greater than 0. See
     // json-rpc-http-policy.h for why the listener needs one.
     double response_timeout = json_rpc::kDefaultResponseTimeout;
+    // Request-body capacity of the listener; null gives it its own
+    // json_rpc::kListenerBodyBudgetBytes budget.
+    std::shared_ptr<http::BodyBudget> body_budget;
     std::string api_key;             // empty = no auth required
     td::int32 cache_ttl = 0;        // seconds, 0 = disabled
     std::size_t cache_max_entries = 1024;
@@ -307,10 +310,25 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     explicit HttpCallback(td::actor::ActorId<JsonRpcServer> server);
     void receive_request(RequestPtr request, PayloadPtr payload,
                          td::Promise<HttpReturn> promise) override;
+    void admit_request(const http::HttpRequest &request, td::Promise<http::HttpServer::Admission> promise) override;
+
    private:
     td::actor::ActorId<JsonRpcServer> server_;
   };
   friend HttpCallback;
+
+  // What header admission needs from a request, copied out of it.
+  struct AdmissionHead {
+    std::string method;
+    std::string url;
+    std::string api_key;
+    std::string peer_ip;
+    std::string forwarded_for;
+    std::string real_ip;
+  };
+  // Header admission: API key, then the source's request budget. Runs before
+  // any of the request body is parsed or reserved.
+  void admit_request_head(AdmissionHead head, td::Promise<http::HttpServer::Admission> promise);
 
   void on_request(RequestPtr request, PayloadPtr payload,
                   td::Promise<HttpReturn> promise);

@@ -32,12 +32,15 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
+#include "http/http-inbound-connection.h"
 #include "td/actor/actor.h"
 #include "td/utils/buffer.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/tests.h"
 
+#include "json-rpc-http-policy.h"
 #include "json-rpc-server.h"
 
 namespace {
@@ -469,26 +472,40 @@ std::string fat_batch(bool with_key) {
 // server must drop the connection, and every byte it held for it, by that
 // deadline.
 void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
-  with_json_rpc(options_for(with_key, kResponseTimeout), [with_key, trickle](int port) {
+  // Per-request logging would make the server too slow to outgrow the socket
+  // buffers within the test.
+  auto verbosity = GET_VERBOSITY_LEVEL();
+  SET_VERBOSITY_LEVEL(VERBOSITY_NAME(WARNING));
+  auto options = options_for(with_key, kResponseTimeout);
+  // The source budget would refuse this client at header admission long
+  // before its replies outgrew the socket; this test is about the deadline.
+  options.per_ip_rate_requests = 0;
+  with_json_rpc(options, [with_key, trickle](int port) {
     auto baseline_mem = td::BufferAllocator::get_buffer_mem();
     Client client(port, 4096);
     ASSERT_TRUE(client.connect());
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     auto fds_connected = open_fd_count();
-    // 200 batches: about 6 MB of requests asking for about 7 MB of replies.
+    // 400 batches: about 12 MB of requests asking for about 14 MB of replies.
     std::string stream;
     auto request = fat_batch(with_key);
-    for (int i = 0; i < 200; i++) {
+    for (int i = 0; i < 400; i++) {
       stream += request;
     }
     size_t offset = 0;
     auto start = Clock::now();
-    auto release_by = start + std::chrono::duration<double>(kResponseTimeout + kTolerance);
+    auto give_up = start + std::chrono::seconds(20);
+    // Once the server holds this much more than at the start, replies are
+    // queued behind output the client has not read: the request read-ahead
+    // alone stays far below it.
+    const size_t stalled_mem = baseline_mem + (512 << 10);
+    Clock::time_point stalled_at{};
+    bool stalled = false;
     size_t peak_mem = 0;
     size_t trickled = 0;
     bool server_closed = false;
     double released_after = -1;
-    while (Clock::now() < start + std::chrono::duration<double>(3 * kResponseTimeout)) {
+    while (Clock::now() < give_up) {
       if (!server_closed && !client.send_some(stream, offset)) {
         server_closed = true;
       }
@@ -497,28 +514,35 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
       }
       auto mem = td::BufferAllocator::get_buffer_mem();
       peak_mem = std::max(peak_mem, mem);
-      if (released_after < 0 && peak_mem > baseline_mem + (1 << 20) && mem <= baseline_mem + (256 << 10) &&
-          open_fd_count() < fds_connected) {
-        released_after = std::chrono::duration<double>(Clock::now() - start).count();
+      if (!stalled && mem > stalled_mem) {
+        stalled = true;
+        stalled_at = Clock::now();
       }
-      if (released_after >= 0 || Clock::now() > release_by) {
+      if (stalled && mem <= baseline_mem + (256 << 10) && open_fd_count() < fds_connected) {
+        released_after = std::chrono::duration<double>(Clock::now() - stalled_at).count();
         break;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      if (stalled && Clock::now() > stalled_at + std::chrono::duration<double>(kResponseTimeout + kTolerance)) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    LOG(INFO) << "peak buffer memory over baseline: " << (peak_mem - baseline_mem) << " bytes; sent " << offset
-              << " bytes; released after " << released_after << " s";
+    LOG(WARNING) << "peak buffer memory over baseline: " << (peak_mem - baseline_mem) << " bytes; sent " << offset
+                 << " bytes; released " << released_after << " s after the stall was seen";
     // The stall was real: the server held well over a megabyte of replies
-    // and unread requests for this client.
+    // for this client.
+    ASSERT_TRUE(stalled);
     ASSERT_TRUE(peak_mem > baseline_mem + (1 << 20));
-    // Released by the deadline plus tolerance: the server's socket is closed
-    // and its input and output buffers are freed.
+    // Released by the deadline plus tolerance, counted from the moment the
+    // stall was seen (the first unwritten reply was queued no later): the
+    // server's socket is closed and its input and output buffers are freed.
     ASSERT_TRUE(released_after >= 0);
     // The client sees the close once it reads what was in flight, and never
     // gets the replies the server dropped.
     size_t received = 0;
     ASSERT_TRUE(client.drains_to_close(5000, received));
   });
+  SET_VERBOSITY_LEVEL(verbosity);
 }
 
 }  // namespace
@@ -531,4 +555,220 @@ TEST(JsonRpcTransport, a_non_reading_client_is_released_by_the_response_deadline
 TEST(JsonRpcTransport, a_trickle_reading_client_is_released_by_the_response_deadline) {
   stalled_client_is_released_by_the_deadline(false, true);
   stalled_client_is_released_by_the_deadline(true, true);
+}
+
+namespace {
+
+bool wait_until(const std::function<bool()> &condition, int timeout_ms) {
+  auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (!condition()) {
+    if (Clock::now() >= deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return true;
+}
+
+std::string post_headers(size_t content_length, const std::string &key) {
+  std::string request = "POST /jsonRPC HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n";
+  if (!key.empty()) {
+    request += "X-API-Key: " + key + "\r\n";
+  }
+  request += "Content-Length: " + std::to_string(content_length) + "\r\n\r\n";
+  return request;
+}
+
+// A valid JSON-RPC request padded to exactly `size` bytes.
+std::string padded_request(size_t size) {
+  std::string head = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"noSuchMethod\",\"params\":{\"pad\":\"";
+  std::string tail = "\"}}";
+  CHECK(size > head.size() + tail.size());
+  return head + std::string(size - head.size() - tail.size(), 'p') + tail;
+}
+
+tos::JsonRpcServer::Options budget_options(bool with_key, std::shared_ptr<tos::http::BodyBudget> budget) {
+  auto options = options_for(with_key);
+  options.body_budget = std::move(budget);
+  return options;
+}
+
+}  // namespace
+
+// A request with a wrong key is refused from its headers. Its body is never
+// reserved, parsed or handed to the server, whether it arrives with the
+// headers or in fragments after them, and the connection holds no more of it
+// than the header read-ahead.
+TEST(JsonRpcTransport, a_wrong_key_never_reaches_the_body_or_the_body_reservation) {
+  auto budget = std::make_shared<tos::http::BodyBudget>(tos::json_rpc::kListenerBodyBudgetBytes);
+  with_json_rpc(budget_options(true, budget), [budget](int port) {
+    const size_t declared = 4000000;
+    const std::string body = padded_request(declared);
+    std::atomic<bool> sampling{true};
+    std::atomic<size_t> max_reserved{0};
+    std::atomic<size_t> max_read_ahead{0};
+    std::thread sampler([&] {
+      while (sampling) {
+        max_reserved = std::max(max_reserved.load(), budget->reserved());
+        max_read_ahead = std::max(max_read_ahead.load(), budget->read_ahead());
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+      }
+    });
+
+    // Headers and the first megabyte of the body in one write.
+    Client together(port, 0);
+    ASSERT_TRUE(together.connect());
+    ASSERT_TRUE(together.send_all(post_headers(declared, "wrong-key") + body.substr(0, 1 << 20)));
+    std::string status, reply;
+    ASSERT_TRUE(together.read_response(5000, status, reply));
+    ASSERT_EQ(status, std::string("HTTP/1.1 401 Unauthorized"));
+    size_t rest = 0;
+    ASSERT_TRUE(together.drains_to_close(5000, rest));
+
+    // Headers in two pieces, then the body in 32 KiB fragments.
+    Client fragments(port, 0);
+    ASSERT_TRUE(fragments.connect());
+    auto headers = post_headers(declared, "wrong-key");
+    ASSERT_TRUE(fragments.send_all(headers.substr(0, 40)));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(fragments.send_all(headers.substr(40)));
+    for (size_t at = 0; at < (1u << 20); at += 32 << 10) {
+      if (!fragments.send_all(body.substr(at, 32 << 10))) {
+        break;  // the server has already answered and closed
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(fragments.read_response(5000, status, reply));
+    ASSERT_EQ(status, std::string("HTTP/1.1 401 Unauthorized"));
+    ASSERT_TRUE(fragments.drains_to_close(5000, rest));
+
+    sampling = false;
+    sampler.join();
+    ASSERT_EQ(max_reserved.load(), static_cast<size_t>(0));
+    ASSERT_TRUE(max_read_ahead.load() <= tos::http::HttpInboundConnection::header_read_ahead());
+    ASSERT_TRUE(wait_until([&] { return budget->read_ahead() == 0; }, 2000));
+
+    // Control: the right key reserves the declared body before reading it,
+    // and closing the connection mid-body releases it.
+    Client admitted(port, 0);
+    ASSERT_TRUE(admitted.connect());
+    ASSERT_TRUE(admitted.send_all(post_headers(declared, kApiKey) + body.substr(0, 1 << 20)));
+    ASSERT_TRUE(wait_until([&] { return budget->reserved() == declared; }, 5000));
+    admitted.close();
+    ASSERT_TRUE(wait_until([&] { return budget->reserved() == 0; }, 5000));
+  });
+}
+
+// Admitted requests share the listener's 64 MiB body reservation: sixteen
+// maximum-size bodies fill it, the seventeenth is refused from its headers,
+// and the capacity comes back when a request is answered or its connection
+// closes. Run with the API key off and on.
+TEST(JsonRpcTransport, admitted_bodies_share_the_listener_reservation) {
+  for (bool with_key : {false, true}) {
+    auto budget = std::make_shared<tos::http::BodyBudget>(tos::json_rpc::kListenerBodyBudgetBytes);
+    with_json_rpc(budget_options(with_key, budget), [budget, with_key](int port) {
+      const size_t max_body = tos::http::HttpRequest::max_payload_size();
+      const std::string key = with_key ? kApiKey : "";
+      const std::string body = padded_request(max_body);
+      std::vector<std::unique_ptr<Client>> held;
+      for (int i = 0; i < 16; i++) {
+        auto client = std::make_unique<Client>(port, 0);
+        ASSERT_TRUE(client->connect());
+        ASSERT_TRUE(client->send_all(post_headers(max_body, key) + body.substr(0, 1024)));
+        held.push_back(std::move(client));
+      }
+      ASSERT_TRUE(wait_until([&] { return budget->reserved() == tos::json_rpc::kListenerBodyBudgetBytes; }, 5000));
+
+      Client refused(port, 0);
+      ASSERT_TRUE(refused.connect());
+      ASSERT_TRUE(refused.send_all(post_headers(max_body, key) + body.substr(0, 1024)));
+      std::string status, reply;
+      ASSERT_TRUE(refused.read_response(5000, status, reply));
+      ASSERT_EQ(status, std::string("HTTP/1.1 503 Service Unavailable"));
+      size_t rest = 0;
+      ASSERT_TRUE(refused.drains_to_close(5000, rest));
+      ASSERT_EQ(budget->reserved(), tos::json_rpc::kListenerBodyBudgetBytes);
+
+      // Completion: the first body arrives in full and is answered.
+      ASSERT_TRUE(held[0]->send_all(body.substr(1024)));
+      ASSERT_TRUE(held[0]->read_response(10000, status, reply));
+      ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+      ASSERT_TRUE(reply.find("-32601") != std::string::npos);
+      ASSERT_TRUE(
+          wait_until([&] { return budget->reserved() == tos::json_rpc::kListenerBodyBudgetBytes - max_body; }, 5000));
+
+      // Teardown: a client that goes away mid-body.
+      held[1]->close();
+      ASSERT_TRUE(wait_until(
+          [&] { return budget->reserved() == tos::json_rpc::kListenerBodyBudgetBytes - 2 * max_body; }, 5000));
+
+      // The freed capacity admits new requests again.
+      Client late(port, 0);
+      ASSERT_TRUE(late.connect());
+      ASSERT_TRUE(late.send_all(post_headers(max_body, key) + body.substr(0, 1024)));
+      ASSERT_TRUE(
+          wait_until([&] { return budget->reserved() == tos::json_rpc::kListenerBodyBudgetBytes - max_body; }, 5000));
+
+      held.clear();
+      late.close();
+      ASSERT_TRUE(wait_until([&] { return budget->reserved() == 0 && budget->read_ahead() == 0; }, 5000));
+    });
+  }
+}
+
+// A body that is not delivered in time loses its connection at the body
+// deadline, and its reservation with it.
+TEST(JsonRpcTransport, a_withheld_body_releases_its_reservation_at_the_body_deadline) {
+  for (bool with_key : {false, true}) {
+    auto budget = std::make_shared<tos::http::BodyBudget>(tos::json_rpc::kListenerBodyBudgetBytes);
+    auto options = budget_options(with_key, budget);
+    options.request_body_timeout = 1.0;
+    with_json_rpc(options, [budget, with_key](int port) {
+      const size_t declared = 1 << 20;
+      std::vector<std::unique_ptr<Client>> held;
+      for (int i = 0; i < 4; i++) {
+        auto client = std::make_unique<Client>(port, 0);
+        ASSERT_TRUE(client->connect());
+        ASSERT_TRUE(client->send_all(post_headers(declared, with_key ? kApiKey : "") + std::string(100, ' ')));
+        held.push_back(std::move(client));
+      }
+      ASSERT_TRUE(wait_until([&] { return budget->reserved() == 4 * declared; }, 5000));
+      auto admitted_at = Clock::now();
+      ASSERT_TRUE(wait_until([&] { return budget->reserved() == 0; }, 5000));
+      ASSERT_TRUE(Clock::now() - admitted_at < std::chrono::milliseconds(1000 + 750));
+      for (auto &client : held) {
+        size_t rest = 0;
+        ASSERT_TRUE(client->drains_to_close(5000, rest));
+      }
+    });
+  }
+}
+
+// A source that has spent its request budget is refused from the headers of
+// its next request, before any of that request's body is reserved or read.
+TEST(JsonRpcTransport, a_spent_source_budget_is_refused_before_the_body) {
+  for (bool with_key : {false, true}) {
+    auto budget = std::make_shared<tos::http::BodyBudget>(tos::json_rpc::kListenerBodyBudgetBytes);
+    auto options = budget_options(with_key, budget);
+    options.per_ip_rate_requests = 2;
+    options.per_ip_rate_window = 60;
+    with_json_rpc(options, [budget, with_key](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      std::string status, reply;
+      for (int i = 0; i < 2; i++) {
+        ASSERT_TRUE(client.send_all(post(request_object("1"), with_key)));
+        ASSERT_TRUE(client.read_response(5000, status, reply));
+        ASSERT_TRUE(reply.find("-32601") != std::string::npos);
+      }
+      const size_t declared = 1 << 20;
+      ASSERT_TRUE(client.send_all(post_headers(declared, with_key ? kApiKey : "") + std::string(64 << 10, ' ')));
+      ASSERT_TRUE(client.read_response(5000, status, reply));
+      ASSERT_EQ(status, std::string("HTTP/1.1 429 Too Many Requests"));
+      ASSERT_TRUE(reply.find("-32005") != std::string::npos);
+      size_t rest = 0;
+      ASSERT_TRUE(client.drains_to_close(5000, rest));
+      ASSERT_EQ(budget->reserved(), static_cast<size_t>(0));
+    });
+  }
 }

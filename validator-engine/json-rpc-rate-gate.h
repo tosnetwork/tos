@@ -94,6 +94,31 @@ class PerIpRateGate {
     return true;
   }
 
+  // Whether consume() would admit `source` now, without spending anything or
+  // adding the source to the table. Used to refuse a request from its headers,
+  // before its body is read; the budget is still spent per dispatched call.
+  bool would_admit(const std::string &source, td::Timestamp now) {
+    if (window_ <= 0.0 || limit_ == 0) {
+      return true;
+    }
+    if (source.empty()) {
+      return true;
+    }
+    auto it = budgets_.find(source);
+    if (it != budgets_.end()) {
+      return it->second.window.check(now, 1);
+    }
+    if (max_sources_ == 0 || budgets_.size() < max_sources_) {
+      return true;
+    }
+    for (auto &entry : budgets_) {
+      if (entry.second.window.check(now, static_cast<size_t>(limit_))) {
+        return true;  // a slot consume() could reclaim
+      }
+    }
+    return false;
+  }
+
   std::size_t tracked_sources() const {
     return budgets_.size();
   }

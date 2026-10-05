@@ -268,7 +268,7 @@ void JsonRpcServer::listen(td::IPAddress addr) {
     return;
   }
   auto limits_r = json_rpc::listener_limits(opts_.max_connections, opts_.request_header_timeout,
-                                            opts_.request_body_timeout, opts_.response_timeout);
+                                            opts_.request_body_timeout, opts_.response_timeout, opts_.body_budget);
   if (limits_r.is_error()) {
     LOG(ERROR) << "JSON-RPC server not started: " << limits_r.error().message();
     http_ = {};
@@ -300,7 +300,51 @@ void JsonRpcServer::HttpCallback::receive_request(
                           std::move(request), std::move(payload), std::move(promise));
 }
 
+void JsonRpcServer::HttpCallback::admit_request(const http::HttpRequest &request,
+                                                td::Promise<http::HttpServer::Admission> promise) {
+  AdmissionHead head;
+  head.method = request.method();
+  head.url = request.url();
+  head.api_key = request.get_header("X-API-Key");
+  head.peer_ip = request.peer_ip();
+  head.forwarded_for = request.get_header("X-Forwarded-For");
+  head.real_ip = request.get_header("X-Real-IP");
+  td::actor::send_closure(server_, &JsonRpcServer::admit_request_head, std::move(head), std::move(promise));
+}
+
 // ─── Request handling ─────────────────────────────────────────────────────
+
+static bool constant_time_compare(const std::string &a, const std::string &b);
+
+void JsonRpcServer::admit_request_head(AdmissionHead head, td::Promise<http::HttpServer::Admission> promise) {
+  // The routes on_request answers without a key are admitted without one;
+  // on_request answers them from the headers.
+  auto path = head.url.substr(0, head.url.find('?'));
+  bool keyless = head.method == "OPTIONS" ||
+                 (head.method == "GET" &&
+                  (path == "/healthcheck" || path == "/healthcheck/" || path == "/api-info" || path == "/api-info/"));
+  if (keyless) {
+    promise.set_value(http::HttpServer::Admission::admit());
+    return;
+  }
+  if (!opts_.api_key.empty() && (head.api_key.empty() || !constant_time_compare(head.api_key, opts_.api_key))) {
+    auto refusal = json_rpc::unauthorized_response(opts_.cors_origin);
+    promise.set_value(http::HttpServer::Admission::refuse(std::move(refusal.first), std::move(refusal.second)));
+    return;
+  }
+  // Readiness probes are never charged to the source budget (see on_request).
+  bool readiness = head.method == "GET" && (path == "/readyz" || path == "/readyz/");
+  if (!readiness) {
+    auto source = resolve_source_ip(head.peer_ip, head.forwarded_for, head.real_ip, opts_.trust_proxy_headers,
+                                    opts_.trusted_proxies);
+    if (!per_ip_gate_.would_admit(source, td::Timestamp::now())) {
+      auto refusal = json_rpc::rate_limited_response(opts_.cors_origin);
+      promise.set_value(http::HttpServer::Admission::refuse(std::move(refusal.first), std::move(refusal.second)));
+      return;
+    }
+  }
+  promise.set_value(http::HttpServer::Admission::admit());
+}
 
 // Source-IP resolution (trim, loopback/trusted-proxy checks, and the
 // X-Forwarded-For chain walk) lives in json-rpc-source-ip.h so it can be unit
@@ -610,6 +654,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         td::Promise<HttpReturn> promise_;
       };
       if (payload->parse_completed()) {
+        json_rpc::hold_body_reservation_until_answered(payload, promise);
         auto body_r = drain_payload_body(payload);
         if (body_r.is_error()) {
           // REST POST endpoint — TVM-style error envelope (HTTP 422)
@@ -634,6 +679,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
   // Accept POST on /jsonRPC (canonical) and any other path (backward compat)
 
   if (payload->parse_completed()) {
+    json_rpc::hold_body_reservation_until_answered(payload, promise);
     auto body_r = drain_payload_body(payload);
     if (body_r.is_error()) {
       // JSON-RPC envelope path — emit spec-shape so generic clients decode it.
@@ -688,6 +734,7 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, std::string source_ip,
   }
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
+  json_rpc::hold_body_reservation_until_answered(payload, promise);
   auto body_r = drain_payload_body(payload);
   if (body_r.is_error()) {
     promise.set_value(make_json_rpc_error(-32600, "Request body too large", "null",
@@ -1026,6 +1073,7 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
                                             td::Promise<HttpReturn> promise) {
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s callback chain. Breaks the deadlock.
+  json_rpc::hold_body_reservation_until_answered(payload, promise);
   auto body_r = drain_payload_body(payload);
   if (body_r.is_error()) {
     promise.set_value(make_json_error(-32600, "Request body too large", "null",
