@@ -280,6 +280,21 @@ int need_p1_for(cell d) inline {
 
 ;; A swap number the bridge may still hold: within the generation and the window,
 ;; and never the exhausted sentinel, which the watermark could not fold past.
+;; New business stops while the masterchain account limit is below the
+;; bridge's measured worst case, unless the bridge is listed in ConfigParam 31,
+;; which exempts it from the limit.
+() require_bridge_capacity() impure inline {
+    cell p = config_param(31);
+    if (~ p.null?()) {
+        (_, int me) = parse_std_addr(my_address());
+        (_, int listed) = p.begin_parse().preload_dict().udict_get?(256, me);
+        if (listed) {
+            return ();
+        }
+    }
+    require_cell_capacity(BRIDGE_WORST_CELLS, true);
+}
+
 () require_open_swap(int n) impure inline {
     throw_unless(error::sequence_exhausted, n <= MAX_SEQ);
     throw_unless(error::not_admissible, n >= b_swap_wm);
@@ -309,11 +324,11 @@ int need_p1_for(cell d) inline {
     slice payer = e~load_msg_addr();
     int fee = e~load_coins();
 
+    require_bridge_capacity();
     (slice minter, _) = calculate_minter_address(wrapped_token_data);
     (_, int minter_hash) = parse_std_addr(minter);
     if (~ channel_load(minter_hash)) {
         throw_unless(error::window_full, b_channels_count < CHANNEL_LIMIT);
-        require_cell_capacity(BRIDGE_WORST_CELLS, true);
         c_terminal = 0;
         c_minter_life = 0;
         c_next_mint = 0;
@@ -823,6 +838,7 @@ int advance_need(int kind, int s) inline {
     require_open_swap(n);
     (_, int seen) = b_swaps.udict_get?(64, n);
     throw_if(error::not_admissible, seen);
+    require_bridge_capacity();
     b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_PAID, 2).store_slice(sender_address).store_coins(msg_value));
     save_data();
     emit_optional(LOG_SWAP_PAID, begin_cell().store_uint(generation, 32).store_uint(n, 64).end_cell());

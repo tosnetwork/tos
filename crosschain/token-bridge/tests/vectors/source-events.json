@@ -6,7 +6,7 @@
   "activation": {
     "generation": 1,
     "nonce": "7",
-    "tos_bridge": "0xa05f907182c53b541bcf6c194ef97444650cbd407f3e2fba4b1d5f065466c03f",
+    "tos_bridge": "0x170d9cfa3a8df5e7ca08203aa780595ef571575f87d8c5f5c08b1c3554ede4e4",
     "tos_life": "2000000000",
     "start": "0"
   },
