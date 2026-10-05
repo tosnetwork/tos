@@ -158,7 +158,7 @@ impl ProvenFeeVault {
     }
 }
 
-fn checked_counter(data: &Cell, expected: &Cell) -> anyhow::Result<u32> {
+pub(crate) fn checked_counter(data: &Cell, expected: &Cell) -> anyhow::Result<u32> {
     anyhow::ensure!(
         data.cell_type() == CellType::Ordinary && data.level() == 0,
         "ordinary vault state required"

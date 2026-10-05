@@ -1692,14 +1692,14 @@ mod fee_state_tests {
 }
 
 #[cfg(test)]
-mod transaction_receipt_tests {
+pub(crate) mod transaction_receipt_tests {
     use super::*;
     use crate::proven_transactions::ProvenTransaction;
     use chain_block::{Serializable, ShardAccount, TrComputePhase, Transaction, TransactionDescr};
 
     // Actual native-executor transactions/account states, wrapped in synthetic
     // proof metadata. Real finality proof plumbing is tested separately.
-    fn fixture(name: &str) -> (ProvenAccountState, Cell) {
+    pub(crate) fn fixture(name: &str) -> (ProvenAccountState, Cell) {
         let cases: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/v5r2/receipt-transactions.json"))
                 .unwrap();

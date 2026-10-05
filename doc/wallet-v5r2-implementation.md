@@ -1199,3 +1199,25 @@ Release code pins and fresh CSPRNG challenges remain caller responsibilities.
 A POP proves possession for that key/challenge, not wallet enrollment, authority,
 continued key availability or safe custody. This fixture covers successor SLH;
 initial/per-key live network enrollment and production acceptance remain open.
+
+### Complete fee/module/wallet payment route
+
+`PaymentRoute` derives immutable addresses/code pins from initial or successor
+local enrollment, retaining the original wallet identity across migration.
+`PaymentReceipts` supplies four authenticated transactions and the three sender
+pre-state Account cells. Verification binds each pre-state to the actual
+transaction, requires the enrolled addresses/code, checks the vault's immutable
+configuration while allowing its bounded LMS counter to advance, and checks the
+module's exact enrolled key data. It then binds the fee transaction to the exact
+submitted external message, verifies original-message delivery from vault to
+module and module to wallet, and applies payment-intent/credit checks to the
+wallet-to-recipient delivery. All four executions must be complete and every
+adjacent receipt pair must share a trust anchor.
+
+The full native successor recovery payment fixture passes this route check.
+Six semantic controls detect wrong address/code/module keys/vault configuration,
+an unrelated submitted request and a route spliced with a successful POP module
+transaction. Loopback/proof plumbing and these native receipts still use
+synthetic finality wrappers for V5R2; real-network acceptance is not established.
+The API is read-only and historical, does not approve or submit requests, and
+cannot infer final spendable balance, replay safety or custody readiness.

@@ -1,0 +1,36 @@
+{
+  "source_base": "f82014a0988869eb29123adf9fd32d0a77073073",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_receipts.rs": "02e1b380c88f9a6cb797bb6115f0e630d4312debec7cc1e78af24347f8b7988d",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs": "dc0d2a74d88687a9b0f7f1f51b06f872b7d572c11e61adc1ce9ff0fe5b439927",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "9e3156950933308af639e0f79cdcd43e7774d7e8bd3f25cdc386e9151b7af207",
+    "tosctl/src/node-control/contracts/tests/fixtures/v5r2/receipt-transactions.json": "fe916fadeba3d5b8a52e49290080496d2d7f84a4a9c89d8137f1fb0ec992f03b",
+    "test/wallet-v5r2/payment_route_controls.py": "247694b31d7422821001e4145d57086a9e1751a143e631d5cc83959e5d23c519"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-payment-route",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "4d7b285e56099906b104508d6bf898e74fe352c67a8ca8106c44fb9e788d5e99",
+  "results": {
+    "route_tests_passed": 1,
+    "route_semantic_controls_detected": 6,
+    "wallet_v5r2_regression_passed": 23,
+    "receipt_regression_passed": 11,
+    "fee_regression_passed": 31,
+    "fee_regression_ignored": 1,
+    "final_commands_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/payment_route_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-payment-route/controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib transaction_receipt_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib fee_"
+  ],
+  "limits": [
+    "Native successor recovery route uses actual transaction and state cells with synthetic account proof wrappers; not real-network V5R2 finality.",
+    "Trust pins are fixture assumptions; production callers must obtain reviewed release enrollment independently.",
+    "Receipt success is historical delivery/credit, not final spendable balance, replay safety or key custody.",
+    "Default gas admission, production custody, full SDK transport lifecycle, independent review and final-head CI remain open.",
+    "Test filters overlap; counts are not a unique total."
+  ]
+}
