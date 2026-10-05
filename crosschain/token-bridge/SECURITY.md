@@ -79,7 +79,7 @@ The two kinds of deletion leave different evidence.
 - each stranded mint is reported to the bridge, which finalizes it;
 - its burns the bridge has not decided are still decided; a recorded one completes, a cancelled one becomes a refund owed to the old life and is stranded as above.
 
-Reconciliation works from the logs, the `stranded` counter and the minter's stranded records (`get_mint`, `get_burn`).
+Reconciliation works from the mandatory logs, each carrying its record's full descriptor, and the aggregate `stranded` counter. The getters show only records still retained: a stranded mint stays readable through `get_mint` only until the bridge's acknowledged floor lets the minter compact it, and a stranded refund's record is deleted in the leg that logs it, so `get_burn` never shows it.
 
 **A deleted minter or bridge: a terminal relationship, without logs.** Detecting a hub's newer life makes the relationship terminal; no record is stranded, no `LOG_LIABILITY_STRANDED` is emitted and nothing moves into a `stranded` counter.
 

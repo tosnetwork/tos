@@ -10,8 +10,8 @@
 //! recipient is whatever 256-bit hash the EVM locker names, so the holders
 //! dictionary can be shaped by anyone willing to pay for the swaps. The
 //! longest path a 256-bit key can have is a fork at every bit: the keys
-//! {K} ∪ {K xor 2^i | i = 0..254}. Reading or rewriting K's record then walks
-//! 255 forks, and a rewrite rebuilds every one of those cells.
+//! {K} ∪ {K xor 2^i | i = 0..255}. Reading or rewriting K's record then walks
+//! 256 forks, and a rewrite rebuilds every one of those cells.
 //!
 //! These tests put that shape around a real holder, and around a holder not
 //! yet admitted, and run every minter step against it. The harness holds
@@ -33,18 +33,18 @@ fn flipped(k: &[u8], i: usize) -> Vec<u8> {
     v
 }
 
-/// Surrounds `owner`'s key in the minter's holders dictionary with 255
-/// holders, one differing from it at each of its 255 lowest bits.
+/// Surrounds `owner`'s key in the minter's holders dictionary with 256
+/// holders, one differing from it at each of its 256 bits.
 pub fn deepen(net: &mut Net, owner: &MsgAddressInt) {
     let k = account_hash(owner);
     net.patch_minter(|m| {
         let filler = Holder::empty().build();
         let mut d = HashmapE::with_hashmap(256, m.holders.clone());
-        for i in 0..255 {
+        for i in 0..256 {
             d.setref(key256(&flipped(&k, i)), filler.clone()).unwrap();
         }
         m.holders = d.data().cloned();
-        m.holders_count += 255;
+        m.holders_count += 256;
     });
 }
 
@@ -67,7 +67,7 @@ fn depth(net: &Net, owner: &MsgAddressInt) -> usize {
     forks.len()
 }
 
-/// Runs `f` on a thread with room for recursion over a 255-deep tree; the
+/// Runs `f` on a thread with room for recursion over a 256-deep tree; the
 /// default test thread's stack is too small for the debug build.
 fn deep_stack(f: impl FnOnce() + Send + 'static) {
     // keep the test's name: the trace for the native replay is filed under it
@@ -93,7 +93,7 @@ fn report(net: &Net, what: &str) {
     }
 }
 
-/// Every minter step on a holder at the end of a 255-fork path: mint, lost
+/// Every minter step on a holder at the end of a 256-fork path: mint, lost
 /// report, burn, cancelled burn and its refund, both syncs, and stranding of
 /// a deleted wallet's life with the new life's opening.
 #[test]
@@ -106,7 +106,7 @@ fn every_minter_step_on_a_holder_at_the_deepest_path_stays_within_its_gas_body()
     net.gas_measuring = measuring();
     let user = net.user(0);
     deepen(&mut net, &user);
-    assert_eq!(depth(&net, &user), 255, "the holder sits under a fork at every bit");
+    assert_eq!(depth(&net, &user), 256, "the holder sits under a fork at every bit");
     // mint
     net.swap(5);
     // a lost report, recovered by the wallet
@@ -136,11 +136,11 @@ fn every_minter_step_on_a_holder_at_the_deepest_path_stays_within_its_gas_body()
     reopen(&mut net, &user);
     net.swap(2);
     assert_eq!(net.tokens(&user), 2, "the new life is served at the deepest path");
-    assert_eq!(depth(&net, &user), 255);
+    assert_eq!(depth(&net, &user), 256);
     report(&net, "deep update");
 }
 
-/// A new holder admitted at the end of a 255-fork path: its first prepare,
+/// A new holder admitted at the end of a 256-fork path: its first prepare,
 /// its wallet's opening and the promotion of its waiting mint.
 #[test]
 fn a_new_holder_admitted_at_the_deepest_path_stays_within_its_gas() {
@@ -154,7 +154,7 @@ fn a_new_holder_admitted_at_the_deepest_path_stays_within_its_gas_body() {
     deepen(&mut net, &fresh);
     net.swap_to(&fresh, 9);
     assert_eq!(net.tokens(&fresh), 9);
-    assert!(depth(&net, &fresh) >= 255, "a fork at every bit");
+    assert_eq!(depth(&net, &fresh), 256, "a fork at every bit");
     report(&net, "deep insert");
 }
 

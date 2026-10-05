@@ -845,7 +845,10 @@ are not completed. They are stranded:
 - *Wallet deletion.* Every stranded record emits `LOG_LIABILITY_STRANDED`
   with its full descriptor, in mode 0, in the leg that strands it. Each leg
   strands at most `FOLD_LIMIT` records (section 10.3). The amount moves into
-  `stranded`, so supply capacity remains conservative.
+  `stranded`, so supply capacity remains conservative. Reconciliation uses
+  these logs and the aggregate counter: a stranded mint's record is kept
+  only until the bridge's floor lets the minter compact it, and a stranded
+  refund's record is deleted in the leg that logs it.
 - *Minter or bridge deletion.* Nothing is stranded, logged or moved into
   `stranded`: detection only marks the relationship terminal (the bridge
   emits the optional `LOG_CHANNEL_TERMINAL`). The evidence is what the
@@ -880,9 +883,11 @@ newer wallet life is detected:
      - A later `commit(s)` or advance for it re-sends M5 and applies
        nothing. M5 is replay-safe because STRANDED is final.
    - **A burn record** awaiting the bridge stays and keeps running.
-     RECORDED completes, and CANCELLED strands its refund (REFUNDING ->
-     STRANDED, `in_flight -> stranded`).
-   - **A refund** already REFUNDING strands the same way.
+     RECORDED completes, and CANCELLED strands its refund
+     (`in_flight -> stranded`, one `LOG_LIABILITY_STRANDED`).
+   - **A refund** already REFUNDING strands the same way. A stranded
+     refund keeps no record: its old-life record is deleted in the leg that
+     logs it.
 3. **The new life waits.** The new life may open only after `old_life` has
    emptied. Until then its open request gets `open_refused_retry`, and the
    new wallet can still receive transfers.
@@ -1507,9 +1512,9 @@ gas, close to the 70000 bridge step, so votes have their own declaration,
 **Worst-case dictionary paths.** A holder's key at the minter is its
 owner's address hash, which the EVM locker chooses through a swap's
 recipient, so anyone can give the holders dictionary a fork at every bit
-above one holder: the keys `{K} ∪ {K xor 2^i | i = 0..254}`. Reading and
-rewriting K's record then walks 255 forks and rebuilds each. On that shape
-(`token_bridge/deep.rs`) every minter step measured between 44,103 and
+above one holder: the keys `{K} ∪ {K xor 2^i | i = 0..255}`. Reading and
+rewriting K's record then walks 256 forks and rebuilds each. On that shape
+(`token_bridge/deep.rs`) every minter step measured between 44,203 and
 206,113 gas (a new holder's first prepare), against 120,000 declared
 before: `MINTER_STEP_GAS` is now 300,000 and `MINTER_BATCH_GAS` 400,000,
 and every quote follows from them. Recovery at that path succeeds with
