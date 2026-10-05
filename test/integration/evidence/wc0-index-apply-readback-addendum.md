@@ -38,6 +38,14 @@ kept as the record of its own run at `b8a3f5350`.
   handed over after the queue closed is only recorded and keeps the run
   unfinished; one handed over after the marker was cleared makes the recorder
   record the run as active again before marking it.
+- **Crash safety after the run marker is cleared rests on genuine producer
+  quiescence.** The validator engine clears the marker only from its final
+  exit path, after the actor scheduler has stopped and the hook is removed, so
+  no block can be applied any more (`Wc0IndexProducers::Quiesced`). The
+  asynchronous re-recording after an unexpected late block is a defence, not
+  a replacement for that requirement: a crash between such a block's apply
+  and the recorder's write would leave no trace of it. A scheduled shutdown,
+  which exits while blocks may still be applied, never clears the marker.
 
 ## Measurement
 
