@@ -119,6 +119,8 @@ pub struct Model {
     /// Set by tests that patch a counter next to exhaustion, where a sender's
     /// acknowledged floor and a receiver's storage are made inconsistent on purpose.
     pub skip_window_checks: bool,
+    /// Accounts the chain froze or deleted: address -> (wallet?, amount, life).
+    pub lost: BTreeMap<String, (bool, i128, i128)>,
 }
 
 fn key(addr: &MsgAddressInt) -> Vec<u8> {
@@ -175,6 +177,68 @@ impl Model {
             Some("wallet") => Snap::Wallet(wallet_snap(net, addr)),
             Some("minter") => Snap::Minter(minter_snap(net, addr)),
             Some(_) => Snap::Bridge(bridge_snap(net, addr)),
+        }
+    }
+
+    /// What `addr` would take out of the live sums if it stopped running now:
+    /// a wallet's balance and unadmitted holds, or a minter's supply.
+    pub fn exposure(&self, net: &Net, addr: &MsgAddressInt) -> Option<(bool, i128, i128)> {
+        if !self.enabled {
+            return None;
+        }
+        match kind_of(net, addr) {
+            Some("wallet") => {
+                let w = wallet_snap(net, addr);
+                let minter = wallet_master(net, addr);
+                let owner = wallet_owner(net, addr);
+                let mut lost = w.balance;
+                for (b, amount) in &w.holds {
+                    if !self.admitted.contains_key(&(key(&minter), key(&owner), w.born, *b)) {
+                        lost += amount;
+                    }
+                }
+                Some((true, lost, w.born))
+            }
+            Some("minter") => {
+                let m = minter_snap(net, addr);
+                Some((false, m.supply, m.born))
+            }
+            _ => None,
+        }
+    }
+
+    /// After a transaction on `addr` that held `exposure` before: if the chain
+    /// froze or deleted it, its holdings leave the live sums; if it came back
+    /// (unfrozen into the same life), they return.
+    pub fn lifecycle(&mut self, net: &Net, addr: &MsgAddressInt, exposure: Option<(bool, i128, i128)>) {
+        if !self.enabled {
+            return;
+        }
+        let k = addr.to_string();
+        let running = kind_of(net, addr).is_some();
+        if let Some((wallet, amount, life)) = exposure {
+            if !running {
+                if wallet {
+                    self.deleted_balances += amount;
+                    self.wallets.remove(&k);
+                } else {
+                    self.deleted_supply += amount;
+                    self.minters.remove(&k);
+                }
+                self.lost.insert(k, (wallet, amount, life));
+            }
+        } else if running {
+            if let Some((wallet, amount, life)) = self.lost.get(&k).copied() {
+                let now = self.exposure(net, addr).map(|e| e.2);
+                if now == Some(life) {
+                    if wallet {
+                        self.deleted_balances -= amount;
+                    } else {
+                        self.deleted_supply -= amount;
+                    }
+                    self.lost.remove(&k);
+                }
+            }
         }
     }
 
@@ -245,7 +309,7 @@ impl Model {
             _ => {}
         }
         self.check_funded(net, d, &before, &after);
-        if o.aborted && before != Snap::None {
+        if o.aborted && before != Snap::None && before != Snap::Other {
             // A failed deployment is left as an empty account by one engine and
             // not created by the other; neither carries any state.
             assert_eq!(before, after, "an aborted transaction changed the state it reports");
@@ -580,7 +644,16 @@ impl Model {
         for (n, state) in &a.swaps {
             swap_changes.push((*n, b.swaps.get(n).copied().unwrap_or(-1), *state));
         }
-        for n in b.swap_wm..a.swap_wm {
+        let activation = op == Some(OP_EXECUTE_VOTING) && {
+            let mut body = d.msg.body().unwrap().clone();
+            body.get_next_u32().unwrap();
+            body.get_next_u64().unwrap();
+            body.get_next_byte().unwrap() == 8
+        };
+        // An activation sets the watermark to the generation's start; nothing
+        // is consumed or cancelled by it.
+        let passed = if activation { 0..0 } else { b.swap_wm..a.swap_wm };
+        for n in passed {
             if a.swaps.contains_key(&n) {
                 continue;
             }
@@ -621,7 +694,7 @@ impl Model {
             .filter(|(n, s)| **s == swap_state::CANCELLED && b.swaps.get(n) != Some(&swap_state::CANCELLED))
             .count();
         // A cancelled lock may fold out of the window in the same transaction.
-        let folded = (b.swap_wm..a.swap_wm)
+        let folded = (if activation { 0..0 } else { b.swap_wm..a.swap_wm })
             .filter(|n| !matches!(b.swaps.get(n), Some(&swap_state::PREPARING) | Some(&swap_state::CONSUMED) | Some(&swap_state::CANCELLED)))
             .count();
         assert!(cancel_logs <= new_cancels + folded, "LOG_SWAP_CANCELLED without a new cancellation");

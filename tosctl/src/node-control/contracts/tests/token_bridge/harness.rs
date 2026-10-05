@@ -661,6 +661,7 @@ impl Net {
         let dst = msg.dst().expect("a destination");
         let account = self.bc.get_account(&dst).cloned().unwrap_or_default();
         let before = self.model.snapshot(self, &dst);
+        let exposure = self.model.exposure(self, &dst);
         let (addr, tx, outs) = self.bc.execute_one(msg.clone()).expect("the executor runs");
         if let Some(dir) = trace_dir() {
             self.record(&dir, &msg, &account, &addr, &tx);
@@ -684,6 +685,7 @@ impl Net {
         let balance_before = account.balance().map(|b| b.coins.as_u128()).unwrap_or(0);
         let delivery = Delivery { balance_before, addr, msg, tx, outs };
         let mut model = std::mem::take(&mut self.model);
+        model.lifecycle(self, &delivery.addr, exposure);
         model.observe(self, &delivery, before, after);
         self.model = model;
         self.delivered.push(Delivery {
@@ -1338,7 +1340,8 @@ impl Net {
             let body = m
                 .body()
                 .map(|b| b.clone().into_cell().expect("a body cell").repr_hash().as_hex_string())
-                .unwrap_or_default();
+                // an empty inline body is the empty cell, as the native engine reports it
+                .unwrap_or_else(|| Cell::default().repr_hash().as_hex_string());
             if let Some(h) = m.int_header() {
                 out.push(serde_json::json!({
                     "kind": "internal",
@@ -1476,4 +1479,95 @@ pub fn forward_fee_of(net: &Net, msg: &Message, masterchain: bool) -> u128 {
     let prices = net.bc.config_params().fwd_prices(masterchain).expect("forward prices");
     u128::from(prices.lump_price)
         + ((u128::from(prices.bit_price) * bits + u128::from(prices.cell_price) * cells + 0xffff) >> 16)
+}
+
+/// A minter's initial state: utils.fc, pack_minter_initial_data, with the
+/// bridge pinned in.
+pub fn minter_state_init(bridge: &MsgAddressInt, token: u8) -> StateInit {
+    let data = cell(|b| {
+        b.append_raw(&[0u8; 16], 128).unwrap();
+        for _ in 0..4 {
+            coins(b, 0);
+        }
+        b.checked_append_reference(wrapped_token_data(token)).unwrap();
+        b.checked_append_reference(codes().wallet.clone()).unwrap();
+        b.checked_append_reference(cell(|a| {
+            bridge.write_to(a).unwrap();
+            a.append_raw(&[0u8; 17], 129).unwrap();
+            a.append_raw(&[0u8; 16], 128).unwrap();
+            a.append_raw(&[0u8; 16], 128).unwrap();
+            a.append_u32(0).unwrap();
+            a.append_bit_zero().unwrap();
+            a.append_bit_zero().unwrap();
+            a.append_bit_zero().unwrap();
+        }))
+        .unwrap();
+    });
+    StateInit::with_code_and_data(codes().minter.clone(), data)
+}
+
+impl Net {
+    /// Deploys `init` at its address with a plain top-up: what any sender of a
+    /// StateInit-carrying message does to an account that does not exist.
+    pub fn deploy_initial(&mut self, init: StateInit, workchain: i32) -> MsgAddressInt {
+        let addr = MsgAddressInt::with_params(workchain, init.serialize().unwrap().repr_hash()).unwrap();
+        let from = self.deployer.address().clone();
+        let msg = MessageBuilder::internal(&from, &addr, 5 * TOS).bounce(false).state_init(init).build();
+        self.send(msg);
+        addr
+    }
+
+    pub fn recreate_wallet(&mut self, owner: &MsgAddressInt) -> MsgAddressInt {
+        let init = wallet_state_init(&self.minter(), owner);
+        self.deploy_initial(init, 0)
+    }
+
+    pub fn recreate_minter(&mut self) -> MsgAddressInt {
+        let init = minter_state_init(&self.bridge, 0x5a);
+        let addr = self.deploy_initial(init, 0);
+        assert_eq!(addr, self.minter(), "the minter's initial state reproduces its address");
+        addr
+    }
+
+    pub fn recreate_bridge(&mut self) {
+        let init = StateInit::with_code_and_data(codes().bridge.clone(), initial_bridge_data());
+        let addr = self.deploy_initial(init, -1);
+        assert_eq!(addr, self.bridge, "the bridge's initial state reproduces its address");
+    }
+
+    /// ConfigParam 18: one storage price table, in force from the start.
+    pub fn set_storage_prices(&mut self, bit: u64, cell_price: u64, mc_bit: u64, mc_cell: u64) {
+        let mut config = self.bc.config_params().clone();
+        let mut param = chain_block::ConfigParam18::default();
+        param
+            .insert(&chain_block::StoragePrices {
+                utime_since: 0,
+                bit_price_ps: bit,
+                cell_price_ps: cell_price,
+                mc_bit_price_ps: mc_bit,
+                mc_cell_price_ps: mc_cell,
+            })
+            .unwrap();
+        config.set_config(ConfigParamEnum::ConfigParam18(param)).expect("param 18");
+        self.bc.set_config(config).expect("the chain adopts it");
+    }
+
+    pub fn advance_time(&mut self, seconds: u32) {
+        let now = self.bc.now();
+        self.bc.set_now(now + seconds);
+    }
+
+    /// The account's whole state as a StateInit: what restores it once frozen.
+    pub fn state_of(&self, addr: &MsgAddressInt) -> StateInit {
+        let a = self.bc.get_account(addr).expect("deployed");
+        StateInit::with_code_and_data(a.get_code().unwrap(), a.get_data().unwrap())
+    }
+
+    pub fn is_frozen(&self, addr: &MsgAddressInt) -> bool {
+        self.bc.get_account(addr).is_some_and(|a| a.frozen_hash().is_some())
+    }
+
+    pub fn exists(&self, addr: &MsgAddressInt) -> bool {
+        self.bc.get_account(addr).is_some_and(|a| !a.is_none())
+    }
 }

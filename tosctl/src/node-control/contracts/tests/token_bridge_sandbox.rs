@@ -32,3 +32,5 @@ mod extended;
 mod windows;
 #[path = "token_bridge/recovery.rs"]
 mod recovery;
+#[path = "token_bridge/lifecycle.rs"]
+mod lifecycle;
