@@ -71,15 +71,26 @@ Note that `signMessageV2` cannot be corrected by an argument: it takes `(message
 
 The closing condition requires every consumed swap to be recoverable to exactly one credit, and every accepted burn to one release or one refund. That condition is **narrowed** for one case, by the owner's ruling: **when the chain deletes a participant's history, that participant's unfinished obligations are not completed. They are stranded.**
 
-- A deleted wallet: mints bound to it that were reserved or crediting, and refunds still owed to it, are stranded. Its burns the bridge has not decided are still decided; a recorded one completes, a cancelled one is stranded.
-- A deleted minter: its token family becomes terminal; the bridge and every wallet refuse its new life. Swaps it consumed but did not complete, and burns it admitted but the bridge did not decide, are stranded.
-- A deleted bridge (possible only after it leaves ConfigParam 31): the minters refuse its new life, its unfinished operations are stranded, and `LOG_BURN` is never emitted twice.
+The two kinds of deletion leave different evidence.
 
-Every stranded record emits `LOG_LIABILITY_STRANDED` with its full descriptor, in mode 0, in the leg that strands it, at most `FOLD_LIMIT` per transaction, and its amount stays counted in the minter's `stranded` reservation. Reconciliation of stranded liabilities is off-chain. No settlement effect is ever repeated after any deletion, of one participant or several.
+**A deleted wallet: logged stranding.** The minter detects the wallet's newer life when it next asks to open, and strands the old life's unfinished records in bounded legs:
+
+- mints bound to it that were reserved or crediting, and refunds still owed to it (refunding), each emit `LOG_LIABILITY_STRANDED` with the record's full descriptor, in mode 0, in the leg that strands it, at most `FOLD_LIMIT` per transaction, and move their amount from `mint_reserve` or `in_flight` into the minter's `stranded` counter;
+- each stranded mint is reported to the bridge, which finalizes it;
+- its burns the bridge has not decided are still decided; a recorded one completes, a cancelled one becomes a refund owed to the old life and is stranded as above.
+
+Reconciliation works from the logs, the `stranded` counter and the minter's stranded records (`get_mint`, `get_burn`).
+
+**A deleted minter or bridge: a terminal relationship, without logs.** Detecting a hub's newer life makes the relationship terminal; no record is stranded, no `LOG_LIABILITY_STRANDED` is emitted and nothing moves into a `stranded` counter.
+
+- A deleted minter: the bridge marks that token's channel terminal when the new minter life first reaches it, and emits the optional `LOG_CHANNEL_TERMINAL` (mode 2: skipped if the bridge cannot pay for it); wallets mark the minter terminal when its new life reaches them. Until then nothing is marked. Swaps the old minter had consumed but not completed stay PREPARING or CONSUMED in the bridge's records, with their descriptors (`get_swap`, `get_pending_mint`, `get_pending_descriptor`); burns it had admitted but the bridge had not decided stay held in the wallets (`get_burn`, `get_settlement_state`). The old minter's supply counters were deleted with it; its earlier transactions remain in chain history.
+- A deleted bridge (possible only after it leaves ConfigParam 31): a minter marks itself terminal when the new bridge life first reaches it, and logs nothing. Its reserved, crediting and admitted records keep their statuses, and their amounts stay in `mint_reserve`, `in_flight` and `burn_reserve`, not `stranded` (`get_mint`, `get_burn`, `get_supply_state`). `LOG_BURN` is never emitted twice: the old bridge's decisions remain in chain history and the minter refuses the new life.
+
+Reconciliation after a hub deletion therefore works from those retained records and from chain history, not from a liability log. In every case no settlement effect is ever repeated after any deletion, of one participant or several.
 
 What remains:
 
-- **Stranded liabilities need off-chain reconciliation**, from `LOG_LIABILITY_STRANDED`, under the scope above.
+- **Stranded liabilities need off-chain reconciliation**: from `LOG_LIABILITY_STRANDED` after a wallet deletion, and from the retained records and chain history after a hub deletion.
 - **Liveness, not safety, depends on execution and funding.** A step over the gas limit, a cell limit lowered below a live deployment's measured worst case, a frozen participant that is not restored, or absent funding stops completion until it is remedied; nothing is repeated meanwhile. Governance must not lower ConfigParam 43 below the measured worst case of a live deployment.
 - **Fees still decide liveness for new business.** A configured fee too small makes new mints or burns refuse. That is safe, but nothing new goes through until the fee is raised.
 
@@ -117,7 +128,7 @@ A TOS bridge accepts no business until a source generation names it. Generations
 4. **Activate it on TOS**: an oracle vote `activate_generation(bridge_hash, life, g + 1, start)` with the start the EVM event recorded. The bridge accepts it once, and only if it names its own address and life.
 5. **Enable locking** on the EVM bridge (`voteForSwitchLock(true, ...)`).
 
-Locks of an earlier generation are never acted on by the new bridge. Those the old bridge cancelled (`LOG_SWAP_CANCELLED` in TOS history) may still be refunded once with `refundLock`; those it consumed never; those neither consumed nor cancelled when it was deleted are stranded under the scope above.
+Locks of an earlier generation are never acted on by the new bridge. Those the old bridge cancelled (`LOG_SWAP_CANCELLED` in TOS history) may still be refunded once with `refundLock`; those it consumed never; those neither consumed nor cancelled when it was deleted are left unfinished under the scope above, with no log to mark them: the EVM `locks` records and the old bridge's history are their evidence.
 
 ### An operation that does not complete
 

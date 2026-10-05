@@ -822,27 +822,42 @@ of one relationship. Lives (section 10.4) enforce it.
 deletes a participant's history, that participant's unfinished obligations
 are not completed. They are stranded:
 
-- **A deleted wallet.**
+- **A deleted wallet (logged stranding).**
   - Mints bound to it that are RESERVED (prepared but not committed) or
     CREDITING move to `stranded`, and the bridge is told (section 10.3).
   - Refunds still REFUNDING to it move to `stranded`.
   - Its held burns that the bridge has not yet decided are still decided.
     RECORDED completes normally, because the tokens were destroyed with the
-    old wallet anyway. CANCELLED becomes stranded.
-- **A deleted minter.** Its token family becomes terminal: the bridge and
-  every wallet refuse its new life. Swaps it had consumed but not completed,
-  and burns it had admitted but not decided, are stranded.
-- **A deleted bridge** (only possible after it has left ConfigParam 31). The
-  minters refuse its new life. Its unfinished operations are stranded, and
+    old wallet anyway. CANCELLED becomes a refund owed to the old life and
+    is stranded as above.
+- **A deleted minter (terminal relationship).** Its token family becomes
+  terminal: the bridge marks the channel terminal, and every wallet the
+  minter, when the new life first reaches them. Swaps it had consumed but
+  not completed, and burns it had admitted but the bridge had not decided,
+  are left unfinished.
+- **A deleted bridge** (only possible after it has left ConfigParam 31;
+  terminal relationship). Each minter marks itself terminal when the new
+  life first reaches it. Its unfinished operations are left unfinished, and
   `LOG_BURN` is never emitted twice.
 
-**How stranding is recorded.** Every stranded record emits
-`LOG_LIABILITY_STRANDED` with its full descriptor, in mode 0, in the leg
-that strands it. Each leg strands at most `FOLD_LIMIT` records (section
-10.3). The amount stays counted in `stranded`, so supply capacity remains
-conservative. Reconciliation is off-chain. This is an
-explicit narrowing of the closing condition, not a reading of "permanent
-participant unavailability".
+**How stranding is recorded, and what a hub deletion leaves.**
+
+- *Wallet deletion.* Every stranded record emits `LOG_LIABILITY_STRANDED`
+  with its full descriptor, in mode 0, in the leg that strands it. Each leg
+  strands at most `FOLD_LIMIT` records (section 10.3). The amount moves into
+  `stranded`, so supply capacity remains conservative.
+- *Minter or bridge deletion.* Nothing is stranded, logged or moved into
+  `stranded`: detection only marks the relationship terminal (the bridge
+  emits the optional `LOG_CHANNEL_TERMINAL`). The evidence is what the
+  surviving participants keep: the bridge's swap and pending-mint records
+  with their descriptors and its channel's terminal flag; the wallets' held
+  burns; a surviving minter's records with their amounts still in
+  `mint_reserve`, `in_flight` or `burn_reserve`; and the deleted
+  participant's earlier transactions in chain history.
+
+Reconciliation is off-chain in both cases. This is an explicit narrowing of
+the closing condition, not a reading of "permanent participant
+unavailability".
 
 ### 10.3 Bounded storage under recreation
 
@@ -1024,8 +1039,9 @@ The TOS bridge enforces its generation:
   deleted, so locks the old generation cancelled can still be refunded once.
   Locks it consumed can never be refunded.
 - Locks of an old generation that were neither consumed nor cancelled when
-  its bridge was deleted are stranded under the owner-approved scope
-  (section 10.2). After a bridge deletion, operators disable locking on the
+  its bridge was deleted are left unfinished under the owner-approved scope
+  (section 10.2). No log marks them: their evidence is the EVM `locks`
+  records and the old bridge's history. After a bridge deletion, operators disable locking on the
   EVM side until the new generation is active.
 
 **Lock nonce.** `Bridge.sol` keeps a dense `uint64 lockNonce`.
@@ -1166,8 +1182,10 @@ The exceptions are:
 1. **Permanent execution failure.** This includes a step over the gas limit
    or a reduced cell limit (section 6.2).
 2. **A frozen participant that is not restored.**
-3. **A deleted participant.** Its unfinished obligations are stranded under
-   the owner-approved scope change (section 10.2).
+3. **A deleted participant.** Its unfinished obligations are left
+   unfinished under the owner-approved scope change (section 10.2): logged
+   and counted as stranded after a wallet deletion, retained as records of a
+   terminal relationship after a minter or bridge deletion.
 4. **Absent funding.** A full window then refuses new admissions until a
    funded advance or `sync` drains it.
 5. **Admission refusals.** A refused prepare leaves its swap unconsumed and
@@ -1485,6 +1503,24 @@ needed 129371. The declared worst cases are 128, 1000 and 64000 cells.
 contract's declared step gas. A swap vote that deploys a minter used 69698
 gas, close to the 70000 bridge step, so votes have their own declaration,
 `BRIDGE_VOTE_GAS` (100000).
+
+**Worst-case dictionary paths.** A holder's key at the minter is its
+owner's address hash, which the EVM locker chooses through a swap's
+recipient, so anyone can give the holders dictionary a fork at every bit
+above one holder: the keys `{K} ∪ {K xor 2^i | i = 0..254}`. Reading and
+rewriting K's record then walks 255 forks and rebuilds each. On that shape
+(`token_bridge/deep.rs`) every minter step measured between 44,103 and
+206,113 gas (a new holder's first prepare), against 120,000 declared
+before: `MINTER_STEP_GAS` is now 300,000 and `MINTER_BATCH_GAS` 400,000,
+and every quote follows from them. Recovery at that path succeeds with
+exactly the quoted funding, before and after a threefold gas price rise,
+and the quote from before the rise is refused after it. Every other
+dictionary in the three contracts is keyed by numbers within a window of
+at most 16, or holds at most `CHANNEL_LIMIT` (8) channels, so its paths
+have at most 15 forks; the bridge measured on its channel dictionary's
+deepest shape (7 forks) stays within its declarations. The shape does not
+change G1: a dictionary of n entries has n leaves and n - 1 forks, one cell
+each, whatever the keys.
 
 **Layouts.**
 
