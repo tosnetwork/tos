@@ -158,11 +158,13 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
   if (answering_before_body_read()) {
     close_after_write_ = true;
   }
+  // Armed before the response is appended, so it can tell output left over
+  // from an earlier response from this one's.
+  arm_response_deadline();
   response->store_http(buffered_fd_.output_buffer());
 
   metrics_.responses_total->label(response->code())->add(1);
 
-  arm_response_deadline();
   write_payload(std::move(payload));
   loop();
 }

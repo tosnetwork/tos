@@ -267,11 +267,16 @@ void JsonRpcServer::listen(td::IPAddress addr) {
     http_ = {};
     return;
   }
+  auto limits_r = json_rpc::listener_limits(opts_.max_connections, opts_.request_header_timeout,
+                                            opts_.request_body_timeout, opts_.response_timeout);
+  if (limits_r.is_error()) {
+    LOG(ERROR) << "JSON-RPC server not started: " << limits_r.error().message();
+    http_ = {};
+    return;
+  }
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
-  auto limits = json_rpc::listener_limits(opts_.max_connections, opts_.request_header_timeout,
-                                          opts_.request_body_timeout, opts_.response_timeout);
-  http_ = td::actor::create_actor<http::HttpServer>(
-      PSTRING() << "JsonRPC@" << addr, addr, std::move(callback), limits);
+  http_ = td::actor::create_actor<http::HttpServer>(PSTRING() << "JsonRPC@" << addr, addr, std::move(callback),
+                                                    limits_r.move_as_ok());
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
 
   if (opts_.cors_origin == "*") {
@@ -766,38 +771,22 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   auto &obj = req.get_object();
 
   // Extract request ID — store as JSON literal to preserve type in response
-  // (JSON-RPC 2.0 requires echoing the id type exactly).
+  // (JSON-RPC 2.0 requires echoing the id type exactly). An id that cannot be
+  // echoed -- not a string, number or null, a malformed number, or longer than
+  // kMaxReflectedIdBytes once serialized -- is answered as an invalid request
+  // with id null, so a client cannot make a reply carry a large id.
+  // A missing id extracts as null and is echoed as null; in batch mode the
+  // batch driver detects a notification by re-checking the original element.
   std::string req_id;
   {
     auto id_val = obj.extract_field("id");
-    if (id_val.type() == td::JsonValue::Type::String) {
-      {
-        // Growable, not PSTRING: a string id is echoed into the reply, and
-        // the fixed buffer would truncate a large one into malformed JSON.
-        // Its size is already bounded by the request body cap.
-        td::StringBuilder id_sb;
-        id_sb << td::JsonString(td::Slice(id_val.get_string()));
-        req_id = id_sb.as_cslice().str();
-      }
-    } else if (id_val.type() == td::JsonValue::Type::Number) {
-      // The scanner accepts any run of number-ish characters, so "." and
-      // "1e+-.3" arrive here as Numbers. The value is spliced into the
-      // reply unquoted, and echoing one of those verbatim produces a body
-      // no client can parse -- an answer lost to a malformed id rather
-      // than an error reported for one.
-      req_id = id_val.get_number().str();
-      if (!is_valid_json_number(req_id)) {
-        promise.set_value(make_json_rpc_error(-32600, "Invalid Request: malformed 'id' number", "null",
-                                              opts_.cors_origin));
-        return;
-      }
-    } else {
-      // Null id, missing id, or non-stringy/numeric id → echo as JSON
-      // null per spec.  Note: in single-request mode this still emits
-      // a response.  In batch mode the batch driver detects "no id"
-      // (notification) by re-checking the original element.
-      req_id = "null";
+    auto id_r = reflected_request_id(id_val);
+    if (id_r.is_error()) {
+      promise.set_value(make_json_rpc_error(-32600, PSTRING() << "Invalid Request: " << id_r.error().message(), "null",
+                                            opts_.cors_origin));
+      return;
     }
+    req_id = id_r.move_as_ok();
   }
 
   // Extract method
@@ -945,25 +934,16 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
           state->cursor++;
           continue;
         }
+        // Same rule as the dispatch path: an element whose id cannot be
+        // echoed is answered with id null.
         std::string elem_id = "null";
         if (state->elements[j].type() == td::JsonValue::Type::Object) {
           auto &obj = state->elements[j].get_object();
           for (auto &fv : obj.field_values_) {
             if (fv.first != "id") continue;
-            if (fv.second.type() == td::JsonValue::Type::String) {
-              {
-                td::StringBuilder id_sb;
-                id_sb << td::JsonString(td::Slice(fv.second.get_string()));
-                elem_id = id_sb.as_cslice().str();
-              }
-            } else if (fv.second.type() == td::JsonValue::Type::Number) {
-              // Same grammar check as the dispatch path: this literal is
-              // spliced into the reply unquoted, and an element that never
-              // ran is exactly where a malformed id survives to be echoed.
-              auto number = fv.second.get_number().str();
-              if (is_valid_json_number(number)) {
-                elem_id = std::move(number);
-              }
+            auto id_r = reflected_request_id(fv.second);
+            if (id_r.is_ok()) {
+              elem_id = id_r.move_as_ok();
             }
             break;
           }

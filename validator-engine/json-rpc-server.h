@@ -198,7 +198,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     std::size_t max_connections = 1024;    // simultaneously open HTTP connections (0 = unlimited)
     double request_header_timeout = 30.0;  // seconds to deliver request headers (0 = no deadline)
     double request_body_timeout = 120.0;   // seconds to deliver a declared request body
-    // Seconds to finish writing a response (0 = no deadline). See
+    // Seconds to finish writing a response; mandatory, greater than 0. See
     // json-rpc-http-policy.h for why the listener needs one.
     double response_timeout = json_rpc::kDefaultResponseTimeout;
     std::string api_key;             // empty = no auth required

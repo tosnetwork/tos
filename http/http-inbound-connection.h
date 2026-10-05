@@ -80,7 +80,7 @@ class HttpInboundConnection : public HttpConnection {
   // exempt. A listener can separately bound the response writing phase.
   void alarm() override {
     if (response_pending_) {
-      if (writing_payload_ || buffered_fd_.left_unwritten() != 0) {
+      if (writing_payload_ || buffered_fd_.ready_for_flush_write() != 0) {
         if (response_deadline_.is_in_past()) {
           stop();
           return;
@@ -209,10 +209,19 @@ class HttpInboundConnection : public HttpConnection {
   }
 
  private:
+  // The deadline is absolute and starts when a response is queued. Writing
+  // part of it never moves the deadline. A response queued while an earlier
+  // one still has bytes waiting for the socket inherits the earlier deadline,
+  // so a client that keeps sending requests without reading cannot push the
+  // deadline of output it has never read further out.
   void arm_response_deadline() {
     if (response_timeout_ > 0) {
+      bool earlier_output_pending =
+          response_pending_ && (writing_payload_ || buffered_fd_.ready_for_flush_write() != 0);
       response_pending_ = true;
-      response_deadline_ = td::Timestamp::in(response_timeout_);
+      if (!earlier_output_pending) {
+        response_deadline_ = td::Timestamp::in(response_timeout_);
+      }
       alarm_timestamp() = response_deadline_;
     }
   }

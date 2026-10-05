@@ -27,6 +27,7 @@
 #include <cstring>
 #include <functional>
 #include <ifaddrs.h>
+#include <limits>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -657,7 +658,7 @@ const std::string kLargeDeclaredBody =
 TEST(HttpServerLimits, an_answer_before_the_body_is_read_closes_after_the_response) {
   // Long header and body windows: any close inside the waits below comes from
   // the early answer, not from a deadline.
-  auto limits = tos::json_rpc::listener_limits(0, 30, 30, 0);
+  auto limits = tos::json_rpc::listener_limits(0, 30, 30, tos::json_rpc::kDefaultResponseTimeout).move_as_ok();
   with_server(limits, [](int port) {
     Client early(port);
     ASSERT_TRUE(early.connect_with_retries());
@@ -688,7 +689,7 @@ TEST(HttpServerLimits, without_the_option_an_early_answer_keeps_reading_the_body
 }
 
 TEST(HttpServerLimits, a_handler_error_before_the_body_is_read_closes_after_the_response) {
-  auto limits = tos::json_rpc::listener_limits(0, 30, 30, 0);
+  auto limits = tos::json_rpc::listener_limits(0, 30, 30, tos::json_rpc::kDefaultResponseTimeout).move_as_ok();
   with_server(
       limits,
       [](int port) {
@@ -707,7 +708,7 @@ TEST(HttpServerLimits, a_handler_error_before_the_body_is_read_closes_after_the_
 TEST(HttpServerLimits, an_answer_after_the_body_is_read_keeps_the_connection) {
   // Control for the test above: a request whose body has been read leaves the
   // connection open for the next request.
-  auto limits = tos::json_rpc::listener_limits(0, 30, 30, 0);
+  auto limits = tos::json_rpc::listener_limits(0, 30, 30, tos::json_rpc::kDefaultResponseTimeout).move_as_ok();
   with_server(limits, [](int port) {
     Client reused(port);
     ASSERT_TRUE(reused.connect_with_retries());
@@ -720,7 +721,7 @@ TEST(HttpServerLimits, an_answer_after_the_body_is_read_keeps_the_connection) {
 }
 
 TEST(JsonRpcHttpPolicy, a_refused_request_gets_the_whole_401_and_then_a_close) {
-  auto limits = tos::json_rpc::listener_limits(0, 30, 30, 0);
+  auto limits = tos::json_rpc::listener_limits(0, 30, 30, tos::json_rpc::kDefaultResponseTimeout).move_as_ok();
   with_server(
       limits,
       [](int port) {
@@ -753,12 +754,186 @@ TEST(JsonRpcHttpPolicy, listener_has_a_response_deadline) {
   // A client that stops reading must not hold its connection and queued reply
   // forever; the mechanism is tested above, this pins that JSON-RPC uses it.
   ASSERT_TRUE(tos::json_rpc::kDefaultResponseTimeout > 0);
-  auto limits = tos::json_rpc::listener_limits(1024, 30, 120, tos::json_rpc::kDefaultResponseTimeout);
+  auto limits_r = tos::json_rpc::listener_limits(1024, 30, 120, tos::json_rpc::kDefaultResponseTimeout);
+  ASSERT_TRUE(limits_r.is_ok());
+  auto limits = limits_r.move_as_ok();
   ASSERT_EQ(limits.response_timeout, tos::json_rpc::kDefaultResponseTimeout);
   ASSERT_EQ(limits.max_connections, static_cast<size_t>(1024));
   ASSERT_EQ(limits.request_header_timeout, 30.0);
   ASSERT_EQ(limits.request_body_timeout, 120.0);
   ASSERT_TRUE(limits.close_after_early_answer);
+}
+
+TEST(JsonRpcHttpPolicy, the_response_deadline_is_mandatory_and_bounded) {
+  for (auto good : {"60", "0.5", "86400", "1e-3"}) {
+    ASSERT_TRUE(tos::json_rpc::parse_response_timeout_seconds(td::Slice(good)).is_ok());
+  }
+  for (auto bad : {"0", "0.0", "-0", "-1", "", "inf", "nan", "1e400", "86400.5", "1e300", "60s"}) {
+    ASSERT_TRUE(tos::json_rpc::parse_response_timeout_seconds(td::Slice(bad)).is_error());
+  }
+  // The listener cannot be constructed without one, whatever the caller
+  // passes; the default is accepted.
+  for (double bad : {0.0, -0.0, -1.0, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
+                     std::numeric_limits<double>::quiet_NaN(), tos::json_rpc::kMaxResponseTimeout * 2, 1e300}) {
+    ASSERT_TRUE(tos::json_rpc::listener_limits(0, 30, 120, bad).is_error());
+  }
+  ASSERT_TRUE(tos::json_rpc::listener_limits(0, 30, 120, tos::json_rpc::kMaxResponseTimeout).is_ok());
+  ASSERT_EQ(tos::json_rpc::kDefaultResponseTimeout, 60.0);
+}
+
+namespace {
+struct PipelineObservation {
+  std::atomic<int> calls{0};
+  std::atomic<bool> closed{false};
+  std::atomic<size_t> output_peak{0};
+  std::atomic<double> closed_at{0};
+};
+
+class SmallReplyCallback final : public tos::http::HttpServer::Callback {
+ public:
+  explicit SmallReplyCallback(PipelineObservation *observation) : observation_(observation) {
+  }
+  void receive_request(
+      std::unique_ptr<tos::http::HttpRequest>, std::shared_ptr<tos::http::HttpPayload>,
+      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise)
+      override {
+    ++observation_->calls;
+    auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+    response->add_header({"Transfer-Encoding", "Chunked"});
+    response->complete_parse_header();
+    auto payload = response->create_empty_payload().move_as_ok();
+    payload->add_chunk(td::BufferSlice(std::string(16 << 10, 'x')));
+    payload->complete_parse();
+    promise.set_value({std::move(response), std::move(payload)});
+  }
+
+ private:
+  PipelineObservation *observation_;
+};
+
+class PipelinedInbound final : public tos::http::HttpInboundConnection {
+ public:
+  PipelinedInbound(td::SocketFd fd, PipelineObservation *observation, double response_timeout)
+      : HttpInboundConnection(std::move(fd), std::make_shared<SmallReplyCallback>(observation),
+                              tos::http::HttpServer::AllMetrics{}, 30, 30, false, 0, response_timeout)
+      , observation_(observation) {
+  }
+  ~PipelinedInbound() override {
+    observation_->closed_at = td::Time::now();
+    observation_->closed = true;
+  }
+  void payload_written() override {
+    observation_->output_peak.store(std::max(observation_->output_peak.load(), buffered_fd_.ready_for_flush_write()));
+    HttpInboundConnection::payload_written();
+  }
+
+ private:
+  PipelineObservation *observation_;
+};
+
+// Connects a client with small socket buffers on both ends to a
+// PipelinedInbound and runs `scenario` with the client's descriptor.
+void with_pipelined_inbound(double response_timeout, std::function<void(int, PipelineObservation &)> scenario) {
+  int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(listener >= 0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  CHECK(::bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+  socklen_t size = sizeof(address);
+  CHECK(::getsockname(listener, reinterpret_cast<sockaddr *>(&address), &size) == 0);
+  CHECK(::listen(listener, 1) == 0);
+  int client = ::socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(client >= 0);
+  int small = 4096;
+  CHECK(::setsockopt(client, SOL_SOCKET, SO_RCVBUF, &small, sizeof(small)) == 0);
+  CHECK(::connect(client, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+  int accepted = ::accept(listener, nullptr, nullptr);
+  CHECK(accepted >= 0);
+  ::close(listener);
+  CHECK(::setsockopt(accepted, SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) == 0);
+  PipelineObservation observation;
+  td::actor::Scheduler scheduler({2});
+  scheduler.run_in_context([&] {
+    auto fd = td::SocketFd::from_native_fd(td::NativeFd(accepted)).move_as_ok();
+    td::actor::create_actor<PipelinedInbound>(td::actor::ActorOptions().with_name("pipelined-inbound").with_poll(),
+                                              std::move(fd), &observation, response_timeout)
+        .release();
+  });
+  std::atomic<bool> done{false};
+  std::thread runner([&] {
+    scenario(client, observation);
+    done = true;
+  });
+  while (!done)
+    scheduler.run(0.01);
+  runner.join();
+  ::close(client);
+  scheduler.run_in_context([&] { td::actor::SchedulerContext::get().stop(); });
+  while (scheduler.run(1)) {
+  }
+}
+}  // namespace
+
+// Replies queued behind output the client never read inherit the deadline of
+// that output: a client that keeps sending small requests without reading
+// cannot keep pushing the deadline out. The connection, and the replies it
+// holds, are gone by the first unwritten reply's deadline.
+TEST(HttpServerLimits, replies_queued_behind_unread_output_do_not_extend_its_deadline) {
+  const double timeout = 0.5;
+  with_pipelined_inbound(timeout, [timeout](int fd, PipelineObservation &observation) {
+    const std::string request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    double start = td::Time::now();
+    // One request every 20 ms for four deadlines, never reading.
+    while (td::Time::now() < start + 4 * timeout && !observation.closed) {
+      if (::send(fd, request.data(), request.size(), MSG_NOSIGNAL) != static_cast<ssize_t>(request.size())) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!observation.closed && std::chrono::steady_clock::now() < until)
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    // The replies did pile up in the server's own buffer, behind the socket.
+    ASSERT_TRUE(observation.output_peak > (64u << 10));
+    ASSERT_TRUE(observation.calls > 10);
+    ASSERT_TRUE(observation.closed);
+    // The first reply that stayed unwritten was queued within the first few
+    // requests; allow scheduling slack on top of its deadline.
+    ASSERT_TRUE(observation.closed_at.load() - start < timeout + 0.5);
+  });
+}
+
+// A client that reads a few bytes at a time makes progress on every write,
+// and still loses the connection at the deadline: it is a total deadline,
+// not one renewed by each write.
+TEST(HttpServerLimits, a_trickle_reader_does_not_renew_the_response_deadline) {
+  const double timeout = 0.5;
+  with_pipelined_inbound(timeout, [timeout](int fd, PipelineObservation &observation) {
+    // Eight replies requested at once: 128 KB the client then reads 64
+    // bytes every 10 ms.
+    std::string requests;
+    for (int i = 0; i < 8; i++) {
+      requests += "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    }
+    double start = td::Time::now();
+    CHECK(::send(fd, requests.data(), requests.size(), MSG_NOSIGNAL) == static_cast<ssize_t>(requests.size()));
+    size_t received = 0;
+    while (!observation.closed && td::Time::now() < start + 5) {
+      char buf[64];
+      auto n = ::recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+      if (n > 0) {
+        received += static_cast<size_t>(n);
+      } else if (n == 0) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(received > 0);
+    ASSERT_TRUE(received < 8 * (16u << 10));
+    ASSERT_TRUE(observation.closed);
+    ASSERT_TRUE(observation.closed_at.load() - start < timeout + 0.5);
+  });
 }
 
 TEST(HttpListenAddress, a_bare_port_means_loopback_and_an_address_must_be_explicit) {

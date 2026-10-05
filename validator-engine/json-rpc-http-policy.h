@@ -35,12 +35,13 @@
 #include "http/http-server.h"
 #include "http/http.h"
 #include "td/utils/Status.h"
+#include "td/utils/logging.h"
 
 namespace tos::json_rpc {
 
 // Total seconds, from the answer, for a response to be handed to the socket;
 // past it the connection is dropped even if the client is still reading
-// slowly. Without it a client that stops reading holds its connection, and
+// slowly. The deadline is mandatory (see check_response_timeout). Without it a client that stops reading holds its connection, and
 // every byte queued for it, for as long as it likes. It is a total deadline on
 // purpose: an idle timeout renewed by each written byte would let a client
 // that reads one byte at a time hold the connection indefinitely. Operators
@@ -66,8 +67,36 @@ inline td::Result<double> parse_timeout_seconds(td::Slice text) {
   return value;
 }
 
-inline http::HttpServer::Limits listener_limits(std::size_t max_connections, double request_header_timeout,
-                                                double request_body_timeout, double response_timeout) {
+// Upper bound on the response deadline. The deadline is the only thing that
+// releases a connection, and every byte queued for it, when a client stops
+// reading; a value so large that it never expires is no deadline at all.
+inline constexpr double kMaxResponseTimeout = 24 * 60 * 60;
+
+// A response deadline is mandatory on the JSON-RPC listener: it must be a
+// finite number of seconds greater than zero and at most kMaxResponseTimeout.
+// Zero is refused instead of meaning "no deadline".
+inline td::Status check_response_timeout(double seconds) {
+  if (!std::isfinite(seconds) || !(seconds > 0) || seconds > kMaxResponseTimeout) {
+    return td::Status::Error(PSLICE() << "response timeout must be a number of seconds greater than 0 and at most "
+                                      << kMaxResponseTimeout);
+  }
+  return td::Status::OK();
+}
+
+// Parses --json-rpc-response-timeout: the whole argument must be a number
+// accepted by check_response_timeout.
+inline td::Result<double> parse_response_timeout_seconds(td::Slice text) {
+  TRY_RESULT(seconds, parse_timeout_seconds(text));
+  TRY_STATUS(check_response_timeout(seconds));
+  return seconds;
+}
+
+// The limits the JSON-RPC listener is constructed with. Fails when the
+// response deadline is not acceptable to check_response_timeout, so a caller
+// cannot construct the listener without one.
+inline td::Result<http::HttpServer::Limits> listener_limits(std::size_t max_connections, double request_header_timeout,
+                                                            double request_body_timeout, double response_timeout) {
+  TRY_STATUS(check_response_timeout(response_timeout));
   http::HttpServer::Limits limits;
   limits.max_connections = max_connections;
   limits.request_header_timeout = request_header_timeout;
