@@ -66,6 +66,7 @@ jobs:
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
+            tos-proof-verify test-proof-verify \
             test-n5-manager-db-fixture test-consensus \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup \
@@ -102,6 +103,12 @@ jobs:
       # field. This is a compiled behavior test, not a source-only guard.
       - name: Check PQ key-block proof context
         run: ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'
+
+      # The shared anchored proof verifier: real captured lite-server answers
+      # and a synthetic signed chain, plus the installed front end. Its
+      # binary is also what the C09 Config34 tests in full pytest call.
+      - name: Check the anchored proof verifier
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-proof-verify(-cli-verified|-cli-refused)?$'
 
       # This manager actor test exercises the real proof producer and pending
       # finality queue with bad evidence ahead of a valid certificate. It does
