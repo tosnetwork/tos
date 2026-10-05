@@ -1,0 +1,142 @@
+{
+  "base_commit": "4cdb3900711b1b2e58e88e2d517502705645de31",
+  "scope": "Rust executor outbound action-handler boundary regression, not full R2 both-VM delivery or production acceptance.",
+  "result": {
+    "executor_library": {
+      "passed": 50,
+      "ignored": 6,
+      "failed": 0
+    },
+    "size_limit_tests": 6,
+    "new_zero_limit_cases": "ordinary/special accounts, strict send and ignore-errors send",
+    "deletion_control": "Removing only the final cell-size refusal incorrectly sends a zero-cap message; assertion expects Err(40) and fails. Restoring source yields 50 passes.",
+    "counter_mode_control": "Disabling count_past_limit alone still passes this handler test because the unlimited walk also exceeds zero. This test does not prove bounded traversal; the separate chain_block counter mutation covers it.",
+    "format": "cargo fmt --all -- --check passed"
+  },
+  "commands": [
+    "cargo test -p tos_executor --lib --locked",
+    "Mutation: replace the unique final condition if sstat.bits() > limits.max_msg_bits as u64 || sstat.cells() > max_cells with its bits-only predicate; run cargo test -p tos_executor zero_cell_limit_refuses --lib --locked; restore source and run full library.",
+    "cargo fmt --all -- --check"
+  ],
+  "ci": "Already covered by contract-sandboxes.yml tests_message_size_limits and rescue-context.yml full executor library; current head CI was queued when checked.",
+  "admission_profile": {
+    "before_accept": 12263,
+    "lms_opcode": 6135,
+    "other_admission": 6128,
+    "instruction_totals": {
+      "LMSCHECKFEEHASH": 6135,
+      "XCTOS": 630,
+      "THROWIFNOT": 510,
+      "PUSHINT": 464,
+      "LDU": 338,
+      "THROWIF": 272,
+      "PUSHPOW2": 260,
+      "implicit": 230,
+      "DICTIGETJMPZ": 226,
+      "XCHG": 180,
+      "SWAP": 162,
+      "EQUAL": 144,
+      "LDREF": 144,
+      "PUSH": 134,
+      "IFREFELSEREF": 126,
+      "PUSHREFSLICE": 118,
+      "SDSKIPFIRST": 104,
+      "XCHG2": 104,
+      "PLDU": 102,
+      "ENDS": 90,
+      "RSHIFT": 78,
+      "PUXC": 78,
+      "OVER": 72,
+      "SUB": 72,
+      "ADD": 72,
+      "GETPARAMLONG": 68,
+      "NIP": 54,
+      "OR": 54,
+      "GEQ": 54,
+      "LEQ": 54,
+      "DUP": 54,
+      "AND": 54,
+      "INDEX": 52,
+      "CLEVEL": 52,
+      "EQINT": 52,
+      "LDMSGADDR": 52,
+      "SDBEGINSX": 52,
+      "MYADDR": 52,
+      "NOW": 52,
+      "DIV/MOD": 52,
+      "LSHIFT": 52,
+      "GETGASFEE": 52,
+      "DEC": 36,
+      "DICTPUSHCONST": 34,
+      "PLDI": 34,
+      "PUXC2": 34,
+      "SETCP": 26,
+      "BLKDROP2": 26,
+      "SDEQ": 26,
+      "LDTOMIS": 26,
+      "XCPU": 26,
+      "GLOBALID": 26,
+      "GETFORWARDFEE": 26,
+      "PUSH2": 26,
+      "GETSTORAGEFEE": 26,
+      "HASHCU": 26,
+      "PUSHCONT": 18,
+      "IF": 18,
+      "LESS": 18,
+      "POP": 18,
+      "POW2": 18,
+      "MUL": 18
+    }
+  },
+  "profile_scope": "Actual native AUTH trace at base_commit; 12263 before ACCEPT plus 26 for ACCEPT. Default credit remains failed.",
+  "sources": [
+    {
+      "path": "tosctl/src/executor/src/tests/test_message_size_limits.rs",
+      "bytes": 7337,
+      "sha256": "6d5fa9965869ea2960f008a68b68eb0d2a3b91aad1ca268cbc4312c274709675"
+    },
+    {
+      "path": "tosctl/src/executor/src/transaction_executor.rs",
+      "bytes": 81520,
+      "sha256": "d7e6819542e803a381727375e01c40b11a9be2bdad901190498d9702d8d5d83a"
+    },
+    {
+      "path": "tosctl/src/block/src/accounts.rs",
+      "bytes": 46415,
+      "sha256": "1def726e6acec3dac8e8ee88920eff1b7ed41b8f25fde4dc93ca22a96a4f6480"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "bytes": 5759,
+      "sha256": "c7107c7b287940060bf2c9b315d09e1703eb1b806a921dc5f371191a9e0ec27d"
+    }
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-executor-limits/v5r2-executor-all-final.log",
+      "bytes": 7528,
+      "sha256": "75ef9c5f72fc43b850b0d30915021930a4061383346e21c2c28f02fd2c1b4626"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-executor-limits/v5r2-executor-zero-size-guard-mutant.log",
+      "bytes": 3406,
+      "sha256": "763f5334c0bad5a7b4ba431cf012442a49819087d13f7a3d4e6b66552e650ebd"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-executor-limits/v5r2-executor-zero-mutant.log",
+      "bytes": 3105,
+      "sha256": "18e23b5e954da50df8d20fe124d74342924772f30ea7f3eef0bc91a3c73a4276"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-executor-limits/v5r2-executor-fmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-profile/auth/gas-profile.json",
+      "bytes": 1253,
+      "sha256": "2a6abd9adc9f10cc8bb114aadc72798be8865b91209de09ab6b0a6553398a7cc"
+    }
+  ],
+  "retention": "Retain local artifacts through release review and at least 2027-01-06; machine-local paths require access, hashes alone are not independent evidence."
+}
