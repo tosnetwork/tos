@@ -45,6 +45,11 @@ class ConfigHolder : public td::CntObject {
   virtual td::Result<td::int32> get_config_global_id() const = 0;
   virtual ValidatorSessionConfig get_consensus_config() const = 0;
   virtual td::optional<SelectedNewConsensusConfig> get_selected_new_consensus_config(WorkchainId wc) const = 0;
+  // Authenticated configuration used for monotonic wallet AUTH retirement.
+  // A holder without this proof surface must fail closed at state admission.
+  virtual td::Result<td::Ref<vm::Cell>> get_auth_policy_config_root() const {
+    return td::Status::Error("AUTH policy configuration is unavailable");
+  }
   virtual td::Status validate_pq_launch_resource_config() const {
     return td::Status::Error("launch resource validation is unavailable for this config holder");
   }

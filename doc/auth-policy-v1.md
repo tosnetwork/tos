@@ -2,8 +2,9 @@
 
 ConfigParam 48 is the mandatory policy for V5R2 PRIMARY authorization. This
 implementation now covers governance installation and the native node configuration
-validity/transition predicates. Genesis construction, trusted-state admission and
-full receiver/module integration remain required before release.
+validity/transition predicates. Explicit version-17 genesis construction and trusted-state admission are now
+implemented. Full receiver/module integration and shard-propagation evidence
+remain required before release.
 
 The policy identity is SHA-256 of the following exact ASCII string, without newline:
 
@@ -67,3 +68,33 @@ its omitted canonical block-limit, catchain and validator-set fields. It proves
 both the old complete configuration and the new policy configuration are accepted,
 then checks that an unsupported retirement bit is rejected. The validator-set data
 is a parser fixture; this test does not certify validator admission or launch.
+
+## Genesis and trusted snapshots
+
+The default canonical mainnet template remains version 16. A candidate wrapper
+can define an explicit `v5r2-network-tag` uint256 before including
+`gen-zerostate.fif`; this selects version 17 and installs the v1 record in both
+mandatory and critical parameter sets. The testing generator requires
+`NetworkConfig(global_version=17, auth_network_tag=<32 public bytes>)` and refuses
+missing, malformed or version-inappropriate tags before creating custody files.
+The shared Fift builder emits sequence zero, no retired bit and no scheduled date.
+The namespace is an input, not a hash of the state being constructed.
+
+ValidatorManager checks AUTH policy before initial/restored-state publication,
+before advancing its consecutive masterchain state, and again before consuming
+queued states. Candidate or previous proof lookup errors are preserved; they do
+not become a legacy configuration. An invalid queued state fails its promises
+without updating the last trusted state. Initialization rejects invalid snapshots
+with a fatal startup error instead of starting with a partially trusted policy.
+An accepted checkpoint remains a trust anchor; these checks do not reconstruct
+history preceding that checkpoint.
+
+Local evidence: 11 actual-genesis tests/controls, 18 native configuration tests,
+and three trusted-admission mutation controls. The manager translation unit builds
+on macOS. A complete local validator build is blocked by pre-existing Linux-only
+credential socket APIs in `metrics/diagnostic-ipc.h`; the dedicated Linux x86-64
+and AArch64 workflow must supply full-build evidence. Actor-level propagation and
+queued PRIMARY delivery tests remain necessary with the full R2 receiver.
+
+See `test/wallet-v5r2/auth-genesis-admission-20261005.json` for source bindings and
+retained local artifacts. This evidence does not authorize production activation.

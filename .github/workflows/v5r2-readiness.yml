@@ -1,0 +1,75 @@
+name: V5R2 genesis and trusted-state validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/v5r2-readiness.yml'
+      - 'crypto/block/**'
+      - 'crypto/fift/lib/Config.fif'
+      - 'crypto/smartcont/**'
+      - 'validator/auth-policy-admission.h'
+      - 'validator/manager.cpp'
+      - 'validator/interfaces/config.h'
+      - 'validator/impl/config.hpp'
+      - 'test/test-config-transition.cpp'
+      - 'test/wallet-v5r2/**'
+      - 'test/tostester/**'
+      - 'crypto/CMakeLists.txt'
+      - 'CMakeLists.txt'
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v5r2-readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      TOS_ROOT: ${{ github.workspace }}
+      TOS_BUILD_DIR: ${{ github.workspace }}/build
+      PYTHONPATH: ${{ github.workspace }}/test/tostester/src
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Build node and genesis configuration paths
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_QUIC=OFF
+          cmake --build build --target validator test-config-transition create-state \
+            tos-pq-consensus-key gen_fif_smartcont_auto_config_code \
+            gen_fif_smartcont_auto_elector_code gen_fif_smartcont_auto_validator_controller_v1_code -j2
+      - name: Prepare repository Python environment
+        run: |
+          uv sync --locked --no-dev
+          uv run test/tostester/generate_tl.py
+      - name: Configuration transitions and sensitivity controls
+        run: |
+          mkdir -p "$RUNNER_TEMP/v5r2-evidence"
+          build/test-config-transition > "$RUNNER_TEMP/v5r2-evidence/native.log" 2>&1
+          uv run python test/wallet-v5r2/policy_native_mutations.py --admission-only \
+            --build build --output "$RUNNER_TEMP/v5r2-evidence/admission-controls"
+      - name: Actual genesis construction and failure controls
+        run: |
+          uv run python -m pytest -q test/tostester/tests/tostester/test_zerostate_auth_policy.py \
+            test/tostester/tests/tostester/test_zerostate_supply.py \
+            -k 'auth_policy or initial_retirement or missing_policy or version16_retains or bad_namespace' \
+            > "$RUNNER_TEMP/v5r2-evidence/genesis.log" 2>&1
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: v5r2-readiness-${{ matrix.runner }}
+          path: ${{ runner.temp }}/v5r2-evidence/
+          retention-days: 14

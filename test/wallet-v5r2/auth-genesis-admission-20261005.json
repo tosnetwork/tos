@@ -1,0 +1,155 @@
+{
+  "base_commit": "367d41e4169d7e236e8244b2cb21649ffa99ea62",
+  "scope": "Explicit V5R2 genesis policy plus trusted snapshot admission; full wallet and release not complete",
+  "validation": {
+    "actual_genesis_cases_passed": 11,
+    "native_configuration_tests_passed": 18,
+    "trusted_admission_mutations_killed": {
+      "skip_previous": {
+        "exit": 1,
+        "target_test": "Test_AuthPolicy_trusted_state_admission_preserves_errors_and_retirement",
+        "output_sha256": "dae64c16262d32180cf276438fa0cb440517eb53cdb2d6816638b752c8356e7b"
+      },
+      "candidate_lookup": {
+        "exit": 1,
+        "target_test": "Test_AuthPolicy_trusted_state_admission_preserves_errors_and_retirement",
+        "output_sha256": "e9309601f59b5277b2221b90279d303f3a9fedb1b257119eadc88ca50e833cb2"
+      },
+      "previous_lookup": {
+        "exit": 1,
+        "target_test": "Test_AuthPolicy_trusted_state_admission_preserves_errors_and_retirement",
+        "output_sha256": "3f7966f3a18f28016dfa2d010e0037f8983bdd04ea11ee045d034b09f3638a05"
+      }
+    },
+    "manager_translation_unit_build": 0,
+    "create_state_build": 0,
+    "ruff": 0,
+    "yaml_parse": 0,
+    "full_macos_validator_build": "blocked by pre-existing Linux credential socket APIs in metrics/diagnostic-ipc.h",
+    "linux_ci": "wired, not yet run"
+  },
+  "commands": [
+    "PYTHONPATH=test/tostester/src TOS_ROOT=<checkout> python -m pytest -q test/tostester/tests/tostester/test_zerostate_auth_policy.py test/tostester/tests/tostester/test_zerostate_supply.py -k \"auth_policy or initial_retirement or missing_policy or version16_retains or bad_namespace\"",
+    "python test/wallet-v5r2/policy_native_mutations.py --admission-only --build build --output <artifact-directory>",
+    "cmake --build build --target validator/CMakeFiles/validator.dir/manager.cpp.o -j2"
+  ],
+  "source_sha256": {
+    "crypto/fift/lib/Config.fif": "1688ae9d06dcec2163758b69a24a1023c39bb187e7831b3c918f419217d5110e",
+    "crypto/smartcont/gen-zerostate.fif": "1f84d62fa8812c303ebd070a089ac725ba5e5f5237152abdf59de6fe0ff6702e",
+    "test/tostester/src/tostester/zerostate.py": "b6ba865162c87249291ebed42eb87201c4f542b3fd5f3d651f749bfe597a8fc0",
+    "test/tostester/tests/tostester/test_zerostate_auth_policy.py": "27c55592531a5865419bcd434d97c706401ff90080bcfa81e485a4928c5835d5",
+    "test/tostester/tests/tostester/test_zerostate_supply.py": "e022d3349ddb44fa096b2a7e768cb73730834e54551ac19d46e35f7bdb507338",
+    "test/test-config-transition.cpp": "bd3d9b6f53ef2041d36378872bd5c02b36075df59262c61b27c7f519c9eb020d",
+    "validator/auth-policy-admission.h": "14ea39c22cfcaefa69afe427d84fb9c9265f4395faf6c4b9f321e9331857767b",
+    "validator/manager.cpp": "3654246ad1504536f13b27d5cff2cd417812a5791c93e9af5b44d03544a7bb5e",
+    "validator/interfaces/config.h": "3bd011a2202e82f1805c7dbbd130cfbb504263c96d97800b2c06705409b0775c",
+    "validator/impl/config.hpp": "0c3ce31a0dbbb6de5d5993c0044cb7907f2bc33a2dffb1a28b96f6f8f7de8236",
+    "test/validator/consensus/test-twostep-wiring.cpp": "e1b9e4e50a94dc7d873a9872339889c904481f47d840483cd9c90ad8e48bc06a",
+    "test/wallet-v5r2/policy_native_mutations.py": "ac7efed656f46b4183bc5e713d6a3b6d14f814d818709ed0e137529b434f408d",
+    ".github/workflows/v5r2-readiness.yml": "4a48d42f9af6c6a4bbb4755406e752a60e597e0c88072bcde47a281894315460"
+  },
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/pytest.log",
+      "sha256": "f387ae925b92640fe96c4399cfc85893a5bd76c607ea49cca0447d122904dbc6",
+      "bytes": 114,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/manager-build.log",
+      "sha256": "a9f785faf2dc14e397079a2357799fee3476473fe4f409e1830a4562521262bb",
+      "bytes": 166,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/macos-full-validator-build.log",
+      "sha256": "c9e02d3edff03e2f15f7862e0c114297cbdf0611044c29f07df15473fc3648ca",
+      "bytes": 47679,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/create-state-build.log",
+      "sha256": "a1348b4053f70d3d662087950c2b7fe431264df9d445054f4d6a917c88b1660c",
+      "bytes": 10024,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-admission/results.json",
+      "sha256": "befab72b656e7a09abd00efa5f02abe5341e52d869aed169e93ec25f9939062c",
+      "bytes": 677,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-admission/restored.log",
+      "sha256": "f14c5d4e6cb45cec05e78895440573b89b89c9bbce9806f7dd19a7888c67779d",
+      "bytes": 9462,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-admission/skip_previous.log",
+      "sha256": "dae64c16262d32180cf276438fa0cb440517eb53cdb2d6816638b752c8356e7b",
+      "bytes": 12557,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-admission/candidate_lookup.log",
+      "sha256": "e9309601f59b5277b2221b90279d303f3a9fedb1b257119eadc88ca50e833cb2",
+      "bytes": 12568,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-admission/previous_lookup.log",
+      "sha256": "3f7966f3a18f28016dfa2d010e0037f8983bdd04ea11ee045d034b09f3638a05",
+      "bytes": 12571,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/pytest/test_canonical_genesis_auth_po0/candidate17/zerostate.boc",
+      "sha256": "be22f75545f0b48634a4d836c4f6790e1f88089ed7a8dfaac581def66e359f52",
+      "bytes": 21730,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/pytest/test_canonical_genesis_auth_po0/default16/zerostate.boc",
+      "sha256": "807ef675616250f36be033bf495ca912a9d259c8da80a96c2c70117fe3c42610",
+      "bytes": 21576,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/pytest/test_initial_retirement_value_0/mutated/zerostate.boc",
+      "sha256": "2528b64dc1c4c67a0605bad5916fbf91c289af1ecae0e41ac513e659388730d5",
+      "bytes": 16171,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/pytest/test_initial_retirement_value_0/restored/zerostate.boc",
+      "sha256": "e823e11bf54b114ab02e1d4d0b7f62f0ddfc76e0a991f0bde9ec578d80aa209f",
+      "bytes": 16171,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/pytest/test_missing_policy_mutation_i0/present/zerostate.boc",
+      "sha256": "e8ae35e5726c36095811e781671c4b41f05d089570b6ca466019ea9d98660e97",
+      "bytes": 16171,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/pytest/test_version16_retains_legacy_0/v16/zerostate.boc",
+      "sha256": "c42cdbd2c8d49f7745f32f0f504cb03e198676e867edff07aac9511b8e65a7b3",
+      "bytes": 16052,
+      "retention": "90 days; local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-genesis/pytest/test_version17_genesis_install0/v17/zerostate.boc",
+      "sha256": "f68cbaa47159cf93ec39a774de7b188ca8a562a7caf54d9992c3d4036f66377b",
+      "bytes": 16171,
+      "retention": "90 days; local machine access required"
+    }
+  ],
+  "remaining": [
+    "Linux full validator build",
+    "Actor-level trusted-state and shard propagation validation",
+    "Full R2 module/receiver, canonical witnesses, recovery funding and client integration",
+    "Production activation profile and final release acceptance"
+  ]
+}

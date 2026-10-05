@@ -67,6 +67,9 @@ class NetworkConfig:
     monitor_min_split: int = 0
     split: int = 0
     global_version: int = 16
+    # Mandatory public namespace for the experimental V5R2 activation profile.
+    # Deliberately no default: it must not depend on a generated genesis hash.
+    auth_network_tag: bytes | None = None
     shard_validators: int = 1  # DEV-SPECIFIC: single-validator bootstrap rehearsal
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
@@ -414,8 +417,9 @@ untriple make-block-limits 23 config!
 
 // ConfigParam 19 (global_id) is mandatory and critical, as in gen-zerostate.fif:
 // every wallet contract fails closed without it.
-( 0 1 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 ) config.mandatory_params!
-( -999 -1000 -1001 0 1 3 4 9 10 12 14 15 16 17 19 32 34 36 ) config.critical_params!
+( 0 1 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 {auth_policy_membership} ) config.mandatory_params!
+( -999 -1000 -1001 0 1 3 4 9 10 12 14 15 16 17 19 32 34 36 {auth_policy_membership} ) config.critical_params!
+{auth_policy_param}
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
 // first for ordinary proposals, then for critical proposals
@@ -538,6 +542,16 @@ def create_zerostate(
     validator_keys: list[Key],
     pq_validators: list[PqInitialValidator] | None = None,
 ) -> Zerostate:
+    if config.global_version >= 17:
+        if not isinstance(config.auth_network_tag, bytes) or len(config.auth_network_tag) != 32:
+            raise ValueError("version 17 Genesis requires an explicit 32-byte AUTH network tag")
+        auth_policy_param = f"0x{config.auth_network_tag.hex()} config.auth_policy!"
+        auth_policy_membership = "48"
+    else:
+        if config.auth_network_tag is not None:
+            raise ValueError("AUTH network tag requires Genesis version 17 or newer")
+        auth_policy_param = ""
+        auth_policy_membership = ""
     fixed_time = config.genesis_time
     wallet_seed = config.genesis_wallet_seed
     if (fixed_time is None) != (wallet_seed is None):
@@ -774,6 +788,8 @@ def create_zerostate(
             split=config.split,
             global_id=config.global_id,
             global_version=config.global_version,
+            auth_policy_param=auth_policy_param,
+            auth_policy_membership=auth_policy_membership,
             block_limit_mul=config.block_limit_mul,
             validators="\n".join(keys),
             mc_validators=len(keys),

@@ -30,6 +30,7 @@
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/tests.h"
+#include "validator/auth-policy-admission.h"
 #include "vm/boc.h"
 #include "vm/cells.h"
 #include "vm/dict.h"
@@ -343,4 +344,20 @@ TEST(AuthPolicy, full_configuration_installation) {
   ASSERT_TRUE(block::valid_config_data(configuration.get_root_cell(), address));
   CHECK(configuration.set_ref(td::BitArray<32>{48}, auth_policy_cell(0, 4)));
   ASSERT_TRUE(!block::valid_config_data(configuration.get_root_cell(), address));
+}
+
+TEST(AuthPolicy, trusted_state_admission_preserves_errors_and_retirement) {
+  using tos::validator::validate_auth_policy_admission;
+  auto initial = auth_config(auth_policy_cell());
+  auto retired = auth_config(auth_policy_cell(1, 2));
+  expect_ok(validate_auth_policy_admission(initial, td::Ref<vm::Cell>{}, false));
+  expect_ok(validate_auth_policy_admission(retired, initial, true));
+  expect_ok(validate_auth_policy_admission(retired, retired, true));
+  ASSERT_TRUE(validate_auth_policy_admission(auth_config({}), td::Ref<vm::Cell>{}, false).is_error());
+  ASSERT_TRUE(validate_auth_policy_admission(auth_config(auth_policy_cell(2)), retired, true).is_error());
+  ASSERT_TRUE(validate_auth_policy_admission(initial, td::Ref<vm::Cell>{}, true).is_error());
+  ASSERT_TRUE(
+      validate_auth_policy_admission(td::Status::Error("candidate proof unavailable"), initial, true).is_error());
+  ASSERT_TRUE(
+      validate_auth_policy_admission(initial, td::Status::Error("previous proof unavailable"), true).is_error());
 }

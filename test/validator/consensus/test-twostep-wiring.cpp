@@ -138,6 +138,13 @@ class StateConfig : public ConfigHolder {
     result.protocol_version = snapshot_.protocol;
     return SelectedNewConsensusConfig{result, hash(PSTRING() << "protocol-" << snapshot_.protocol)};
   }
+  td::Result<td::Ref<vm::Cell>> get_auth_policy_config_root() const override {
+    vm::CellBuilder version;
+    CHECK(version.store_long_bool(0xc4, 8) && version.store_long_bool(16, 32) && version.store_long_bool(0, 64));
+    vm::Dictionary configuration{32};
+    CHECK(configuration.set_ref(td::BitArray<32>{8}, version.finalize()));
+    return configuration.get_root_cell();
+  }
   td::Status validate_pq_launch_resource_config() const override {
     return td::Status::OK();
   }

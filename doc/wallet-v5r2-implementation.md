@@ -98,5 +98,7 @@ actually removed. Restored source is exercised again afterwards.
 v1 record and monotonic retirement transitions. Governance installation, native
 configuration validity, collator/validator transition predicates and the canonical
 ConfigParam 48 schema are connected. See `auth-policy-v1.md` and its evidence index.
-Genesis construction, trusted-state admission, shard propagation, and the full R2
-module/receiver's role dispatch still need integration and end-to-end evidence.
+Explicit candidate genesis construction and trusted-state admission are also
+implemented, with actual zero-state and mutation controls. Linux full-node build
+evidence, shard propagation, and the full R2 module/receiver role dispatch still
+need integration and end-to-end evidence.

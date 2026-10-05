@@ -18,11 +18,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--admission-only", action="store_true")
     args = parser.parse_args()
     args.build = args.build.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     source = ROOT / "crypto/block/auth-policy.cpp"
-    original = source.read_bytes()
     mutations = [
         (
             "retired",
@@ -43,6 +43,25 @@ def main():
             "Test_AuthPolicy_mandatory_version_and_membership",
         ),
     ]
+    if args.admission_only:
+        source = ROOT / "validator/auth-policy-admission.h"
+        target = "Test_AuthPolicy_trusted_state_admission_preserves_errors_and_retirement"
+        mutations = [
+            ("skip_previous", "if (!has_previous)", "if (true)", target),
+            (
+                "candidate_lookup",
+                "  TRY_RESULT(next, std::move(candidate));",
+                "  if (candidate.is_error()) { return td::Status::OK(); }\n  TRY_RESULT(next, std::move(candidate));",
+                target,
+            ),
+            (
+                "previous_lookup",
+                "  TRY_RESULT(old, std::move(previous));",
+                "  if (previous.is_error()) { return td::Status::OK(); }\n  TRY_RESULT(old, std::move(previous));",
+                target,
+            ),
+        ]
+    original = source.read_bytes()
     results = {}
 
     def build(name):

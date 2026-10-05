@@ -966,3 +966,41 @@ def test_public_pq_manifest_packer_roundtrip_and_rejections(tmp_path):
     source.write_text(json.dumps(records))
     assert subprocess.run(command, capture_output=True).returncode != 0
     assert not dest.exists()
+
+
+def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
+    network_tag = bytes(range(32))
+    for label, enabled in (("default16", False), ("candidate17", True)):
+        directory = tmp_path / label
+        directory.mkdir()
+        _write_pq_manifest(directory)
+        (directory / "main-wallet.pk").write_bytes(b"\x53" * 32)
+        wrapper = directory / "profile.fif"
+        wrapper.write_text(
+            (f"0x{network_tag.hex()} constant v5r2-network-tag\n" if enabled else "")
+            + f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n'
+        )
+        subprocess.run(
+            _create_state_command(wrapper),
+            cwd=directory,
+            check=True,
+            capture_output=True,
+            env=_mainnet_genesis_env(),
+        )
+        state = _load_masterchain_state(directory / "zerostate.boc")
+        cfg = state.custom.config.config
+        assert ConfigParam8.deserialize(cfg[8].copy()).version == (17 if enabled else 16)
+        assert (48 in cfg) == enabled
+        assert (48 in ConfigParam9.deserialize(cfg[9].copy()).mandatory_params) == enabled
+        assert (48 in ConfigParam10.deserialize(cfg[10].copy()).critical_params) == enabled
+        if enabled:
+            record = cfg[48].copy()
+            assert record.load_uint(8) == 0xA1
+            assert record.load_bytes(32) == network_tag
+            assert record.load_uint(64) == record.load_uint(16) == 0
+            assert record.load_dict(8) is None
+            assert (
+                record.load_bytes(32).hex()
+                == "5e4380aedc95f8cb72de55f7506de0269b47c03ad1d1ed0e5184c332544262c0"
+            )
+            assert record.remaining_bits == record.remaining_refs == 0

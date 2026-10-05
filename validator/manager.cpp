@@ -45,6 +45,7 @@
 #include "downloaders/wait-block-state.hpp"
 #include "impl/applied-ext-message-cleanup.hpp"
 #include "impl/config.hpp"
+#include "auth-policy-admission.h"
 #include "interfaces/validator-full-id.h"
 #include "lite-client/lite-ext-query-failure.h"
 #include "metrics/chain-anchor-snapshot.h"
@@ -2167,11 +2168,39 @@ void ValidatorManagerImpl::written_handle(BlockHandle handle, td::Promise<td::Un
   promise.set_value(td::Unit());
 }
 
+namespace {
+td::Result<td::Ref<vm::Cell>> auth_policy_config(const MasterchainState& state) {
+  TRY_RESULT(holder, state.get_config_holder());
+  if (holder.is_null()) {
+    return td::Status::Error("AUTH configuration holder is missing");
+  }
+  return holder->get_auth_policy_config_root();
+}
+
+td::Status admit_auth_policy_state(const MasterchainState& candidate,
+                                  const td::Ref<MasterchainState>& previous) {
+  try {
+    return validate_auth_policy_admission(auth_policy_config(candidate),
+        previous.not_null() ? auth_policy_config(*previous) : td::Result<td::Ref<vm::Cell>>{td::Ref<vm::Cell>{}},
+        previous.not_null());
+  } catch (vm::VmError& error) {
+    return error.as_status("cannot admit AUTH policy state: ");
+  } catch (vm::VmVirtError& error) {
+    return error.as_status("cannot admit AUTH policy proof: ");
+  }
+}
+}  // namespace
+
 void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState> state,
                                           td::Promise<td::Unit> promise) {
   if (state->get_shard().is_masterchain() && handle->id().id.seqno > last_masterchain_seqno_) {
     if (handle->id().id.seqno == last_masterchain_seqno_ + 1) {
       VLOG(VALIDATOR_DEBUG) << "new block " << handle->id().id.to_str() << " is the next masterchain block";
+      auto auth_status = admit_auth_policy_state(*td::Ref<MasterchainState>{state}, last_masterchain_state_);
+      if (auth_status.is_error()) {
+        promise.set_error(std::move(auth_status));
+        return;
+      }
       last_masterchain_seqno_ = handle->id().id.seqno;
       last_masterchain_state_ = td::Ref<MasterchainState>{state};
       last_masterchain_block_id_ = handle->id();
@@ -2189,6 +2218,14 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
         auto it = pending_masterchain_states_.find(last_masterchain_seqno_ + 1);
         if (it != pending_masterchain_states_.end()) {
           CHECK(it == pending_masterchain_states_.begin());
+          auto auth_status = admit_auth_policy_state(*std::get<1>(it->second), last_masterchain_state_);
+          if (auth_status.is_error()) {
+            for (auto& pending : std::get<2>(it->second)) {
+              pending.set_error(auth_status.clone());
+            }
+            pending_masterchain_states_.erase(it);
+            break;
+          }
           last_masterchain_block_handle_ = std::move(std::get<0>(it->second));
           last_masterchain_state_ = std::move(std::get<1>(it->second));
           last_masterchain_block_id_ = last_masterchain_block_handle_->id();
@@ -2697,6 +2734,10 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
   if (last_masterchain_state_.not_null()) {
     return;
   }
+  auto auth_status = admit_auth_policy_state(*state, {});
+  if (auth_status.is_error()) {
+    LOG(FATAL) << "refusing initial masterchain AUTH policy: " << auth_status;
+  }
   last_masterchain_state_ = std::move(state);
   update_shard_overlays();
 }
@@ -2704,6 +2745,10 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
 void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   CHECK(R.handle);
   CHECK(R.state.not_null());
+  auto auth_status = admit_auth_policy_state(*R.state, last_masterchain_state_);
+  if (auth_status.is_error()) {
+    LOG(FATAL) << "refusing restored masterchain AUTH policy: " << auth_status;
+  }
   last_masterchain_block_handle_ = std::move(R.handle);
   last_masterchain_block_id_ = last_masterchain_block_handle_->id();
   last_masterchain_seqno_ = last_masterchain_block_id_.id.seqno;

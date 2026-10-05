@@ -18,6 +18,15 @@ library Config  // ConfigParam builders and validator set helpers
 // max-validators masterchain-validators min-validators --
 { swap rot <b swap 16 u, swap 16 u, swap 16 u, b> 16 config! } : config.validator_num!
 
+// AUTH retirement starts with sequence zero, no retired suite and no deadline.
+// network-tag is an explicit public namespace, never a hash of this genesis.
+// ( network-tag:uint256 -- )
+{ dup 256 ufits not abort"AUTH network tag must fit uint256"
+  <b x{a1} s, swap 256 u, 0 64 u, 0 16 u, 0 1 u,
+  0x5e4380aedc95f8cb72de55f7506de0269b47c03ad1d1ed0e5184c332544262c0 256 u,
+  b> 48 config!
+} : config.auth_policy!
+
 // One admitted Validator Controller code hash for ConfigParam 47. The value is
 // HashmapE 256 True, not a bare hash: the elector and configuration contract
 // both parse its dictionary and refuse an absent or malformed policy.
