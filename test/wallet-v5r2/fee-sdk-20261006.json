@@ -1,0 +1,108 @@
+{
+  "base_commit": "ca833ece9aef5bb18dd2b292125eaa1812c55f6e",
+  "scope": "FEE4 intent and external-body SDK encoding. Current-slot signing only, exact class/payload/leaf/amount/domain binding; not a reservation, cryptographic verifier or chain proof. All five linked recovery fees and one independent initial preparation use real public-fixture cached signatures and SDK wire cells. Diagnostic credit 20000 remains necessary.",
+  "source_sha256": {
+    ".github/workflows/rescue-context.yml": "87b137642636befb5c45643f176fe8bda4139e214adb36eb43e8d917ec25917d",
+    "tosctl/src/node-control/contracts/src/lib.rs": "353320163f389245e539da4ed585661350fa090b26c958eb287d1a79e3a2ca4b",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_fee.rs": "5c98ed5e9f67417a4c8b20dfb9f981f05b378c6d3c43c6b636d82e522289385b",
+    "tosctl/src/node-control/contracts/examples/v5r2_fee_encode.rs": "439afcb0a0914c7ec6cb37f8c8209407710a3207367db81437eea5c76be76e96",
+    "tosctl/src/node-control/contracts/tests/fixtures/v5r2/fee-wire.json": "d7e77e992e304edbd845ec862c4ec1f9d2ea2e3b7fb1b81fa6e746b4dc15e779",
+    "test/wallet-v5r2/sdk_auth_controls.py": "ff05274e66e875a1da2ee52830f401d7368d5f699d981b945bb26019e253580f",
+    "test/wallet-v5r2/sdk_auth_parity.py": "245f4d9e54a6579dac54fd121240e16af836823593a679caf636824d830446cc",
+    "test/wallet-v5r2/sdk_fee_fixture.py": "01e9f5c3f380008c1510154867b13e3ba40741d19c8f4a17e2feeb7deaf4d07c",
+    "test/wallet-v5r2/sdk_fee_vectors.py": "2e70661017299679822bbf0f04800b5c4e26aa899486b615dcc878e7f5a4e8cf",
+    "test/wallet-v5r2/funded_recovery.py": "4dc3bbecbb30bd301fda92bf6f7d37a8e9232cee81f3e5b4ecbb541a4b7866be",
+    "test/wallet-v5r2/fee_tx_parity.py": "c82c130a6adbb8bab8dfc712295cb93e083bbc2cf36202cd9d143c54f13c22ec",
+    "test/wallet-v5r2/test_fee_delivery.py": "5c7e93bcfd30bf383f617455fa959e46732e32e1463af9261295c3f270324b12"
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --locked -p contracts",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example v5r2_fee_encode",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2",
+    "python test/wallet-v5r2/sdk_fee_vectors.py --output /tmp/v5r2-fee-vectors.json",
+    "cmp /tmp/v5r2-fee-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/fee-wire.json",
+    "python test/wallet-v5r2/sdk_auth_parity.py --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --fee-driver tosctl/src/target/debug/examples/v5r2_fee_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-sdk",
+    "python test/wallet-v5r2/sdk_auth_controls.py --fee --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-sdk/controls"
+  ],
+  "listed_commands_exit": 0,
+  "independent_vectors": 4,
+  "wallet_sdk_tests": 16,
+  "sdk_fee_encoder_calls": 12,
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 62,
+    "observed_transactions": 62,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 5,
+    "final_chain_time": 1780007190,
+    "transactions": 20,
+    "recipient_received": true,
+    "primary_signing_used": false,
+    "production_admission_passed": false
+  },
+  "semantic_controls": {
+    "primary": {
+      "exit": 101,
+      "semantic_witness": "primary_auth_and_class_mismatch_refused"
+    },
+    "class": {
+      "exit": 101,
+      "semantic_witness": "structural_mismatches_refused"
+    },
+    "shape": {
+      "exit": 101,
+      "semantic_witness": "structural_mismatches_refused"
+    },
+    "request_shape": {
+      "exit": 101,
+      "semantic_witness": "structural_mismatches_refused"
+    },
+    "ttl": {
+      "exit": 101,
+      "semantic_witness": "leaf_deadline_value_and_framing_boundaries"
+    },
+    "range": {
+      "exit": 101,
+      "semantic_witness": "exhausted_tree_even_at_matching_slot"
+    },
+    "slot": {
+      "exit": 101,
+      "semantic_witness": "leaf_deadline_value_and_framing_boundaries"
+    },
+    "value": {
+      "exit": 101,
+      "semantic_witness": "leaf_deadline_value_and_framing_boundaries"
+    },
+    "length": {
+      "exit": 101,
+      "semantic_witness": "trailing_signature_bytes_refused"
+    },
+    "leaf_binding": {
+      "exit": 101,
+      "semantic_witness": "leaf_deadline_value_and_framing_boundaries"
+    },
+    "domain": {
+      "exit": 101,
+      "semantic_witness": "independent_fee_vectors"
+    }
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-sdk",
+    "retain_until": "2027-01-06",
+    "manifest": {
+      "sha256": "5833a04daf4f4cbc79fc7f7538e93c25d1dcaf63ca7a257984edceab3baa0cc0",
+      "bytes": 24057
+    },
+    "files": 168,
+    "total_bytes": 140796613
+  },
+  "remaining": "Genesis creation; full client policy and trusted-state/receipt validation; reviewed production custody and device recovery; default-credit admission; worst-case resource/hardware pricing; independent review; final-head CI."
+}

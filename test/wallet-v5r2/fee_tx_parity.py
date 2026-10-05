@@ -53,6 +53,7 @@ def transcript(name, result):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fee-driver", type=Path)
     parser.add_argument("--preparation-driver", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--cache-driver", type=Path)
@@ -95,6 +96,8 @@ def main():
             return result
 
     args = ["test_fee_delivery.py", "--credit-probe", "--output", str(out / "native")]
+    if options.fee_driver:
+        args += ["--fee-driver", str(options.fee_driver)]
     if options.preparation_driver:
         assert options.prepare
         args += ["--preparation-driver", str(options.preparation_driver)]

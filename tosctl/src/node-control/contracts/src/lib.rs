@@ -49,6 +49,7 @@ pub mod task_escrow;
 pub mod validator_controller;
 pub mod wallet;
 pub mod wallet_v5r2;
+pub mod wallet_v5r2_fee;
 pub mod wallet_v5r2_pop;
 pub mod wallet_v5r2_prepare;
 

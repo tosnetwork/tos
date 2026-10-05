@@ -41,6 +41,7 @@ def _run(
     work,
     stack,
     cache_driver=None,
+    fee_encoder=None,
     retime_prepare=None,
     retime_pop=None,
 ):
@@ -49,6 +50,18 @@ def _run(
     now = native.NOW
     epoch0 = native.NOW - 2 * 3600 - 10
     old_session = new_session = None
+    if fee_encoder:
+        original_fee_intent = fee_intent
+
+        def fee_intent(**kwargs):
+            return fee_encoder.encode(original_fee_intent(**kwargs), now)
+
+    def fee_body(intent, signature):
+        return (
+            fee_encoder.encode(intent, now, signature)
+            if fee_encoder
+            else Cell().ref(intent).ref(chain(signature))
+        )
 
     def advance(time):
         nonlocal now
@@ -110,7 +123,7 @@ def _run(
         intent = fee_intent(kind=kind, leaf=leaf, payload=payload, value=value, deadline=now + 600)
         if old_session:
             signature = old_session.signature(intent, now, leaf)
-            external = native.external(old.vault_address, Cell().ref(intent).ref(chain(signature)))
+            external = native.external(old.vault_address, fee_body(intent, signature))
         else:
             external = sign_fee(intent, leaf)
         vault_state, messages = send(name + "-fee", vault_state, external, outputs=1)
@@ -176,7 +189,7 @@ def _run(
             payload=retime_pop(now),
         )
         signature = new_session.signature(intent, now, 16)
-        pop_external = native.external(new.vault_address, Cell().ref(intent).ref(chain(signature)))
+        pop_external = native.external(new.vault_address, fee_body(intent, signature))
     v1, messages = send("successor-pop-fee", v1, pop_external, outputs=1)
     before = native.account_data(m1)
     m1, _ = send("successor-pop-module", m1, messages[0])
@@ -213,7 +226,7 @@ def _run(
     )
     if new_session:
         signature = new_session.signature(intent, now, 17)
-        external = native.external(new.vault_address, Cell().ref(intent).ref(chain(signature)))
+        external = native.external(new.vault_address, fee_body(intent, signature))
     else:
         msg, sig = work / "recovery-fee-message", work / "recovery-fee-signature"
         msg.write_bytes(intent.hash)

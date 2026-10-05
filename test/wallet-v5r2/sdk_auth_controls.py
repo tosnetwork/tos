@@ -1,4 +1,4 @@
-"""Require AUTH SDK tests to fail semantically after independent binding guard deletions."""
+"""Require wallet SDK tests to fail semantically after independent binding guard deletions."""
 
 import argparse
 import json
@@ -14,6 +14,7 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--pop", action="store_true")
     modes.add_argument("--prepare", action="store_true")
+    modes.add_argument("--fee", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -22,6 +23,9 @@ def main():
     if args.prepare:
         source_path = SOURCE.with_name("wallet_v5r2_prepare.rs")
         module = "wallet_v5r2_prepare"
+    if args.fee:
+        source_path = SOURCE.with_name("wallet_v5r2_fee.rs")
+        module = "wallet_v5r2_fee"
     source = source_path.read_text()
     cases = [
         ("parties", "binding.account != binding.module", "true", "wallet_cannot_be_its_own_module"),
@@ -107,6 +111,61 @@ def main():
                 ".checked_add(plan.vault_amount)",
                 ".checked_sub(plan.vault_amount)",
                 "independent_preparation_vectors",
+            ),
+        ]
+
+    if args.fee:
+        cases = [
+            (
+                "primary",
+                "r.get_next_byte()? == 2",
+                "r.get_next_byte()? != 0",
+                "primary_auth_and_class_mismatch_refused",
+            ),
+            (
+                "class",
+                "s.get_next_u32()? == tag",
+                "s.get_next_u32()? != 0",
+                "structural_mismatches_refused",
+            ),
+            (
+                "shape",
+                "s.remaining_bits() == 32 && s.remaining_references() == 2",
+                "true",
+                "structural_mismatches_refused",
+            ),
+            (
+                "request_shape",
+                "r.remaining_bits() == bits && r.remaining_references() == refs",
+                "true",
+                "structural_mismatches_refused",
+            ),
+            (
+                "ttl",
+                "(1..=SLOT_SECONDS).contains(&ttl)",
+                "true",
+                "leaf_deadline_value_and_framing_boundaries",
+            ),
+            ("range", "binding.leaf < LEAF_COUNT", "true", "exhausted_tree_even_at_matching_slot"),
+            (
+                "slot",
+                "binding.leaf / LEAVES_PER_SLOT == elapsed / SLOT_SECONDS",
+                "true",
+                "leaf_deadline_value_and_framing_boundaries",
+            ),
+            ("value", "binding.value > 0", "true", "leaf_deadline_value_and_framing_boundaries"),
+            ("length", "signature.len() == 2832", "true", "trailing_signature_bytes_refused"),
+            (
+                "leaf_binding",
+                "signature[4..8] == self.leaf.to_be_bytes()",
+                "true",
+                "leaf_deadline_value_and_framing_boundaries",
+            ),
+            (
+                "domain",
+                'b.append_raw(b"TOS-RESCUE-FEE-v1", 136)?;',
+                'b.append_raw(b"BAD-RESCUE-FEE-v1", 136)?;',
+                "independent_fee_vectors",
             ),
         ]
 

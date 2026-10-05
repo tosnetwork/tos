@@ -790,7 +790,7 @@ restoring source and rerunning them. CI runs wire and transaction checks on both
 architectures and deletion controls on x86-64. Evidence:
 `test/wallet-v5r2/auth-sdk-20261006.json`.
 
-Fee-intent and genesis SDK codecs, trusted chain-view binding,
+Genesis SDK encoding, trusted chain-view binding,
 real custody and user-facing create/restore flows remain to be integrated.
 Default-credit admission remains a separate failed release gate.
 
@@ -845,3 +845,37 @@ continuous recovery branch. The complete suite retains 62 matching native/Rust
 transactions, actual M1/V1 deployment and recipient payment, at diagnostic
 credit 20,000. Malformed negative fixtures continue to use their explicit test
 encoders. Evidence: `test/wallet-v5r2/prepare-sdk-20261006.json`.
+
+### Fee-intent SDK encoding and cached-signature export
+
+`contracts::wallet_v5r2_fee` builds FEE4 and its two-reference external body.
+Its immutable digest binds the fixed fee domain, class, vault, full paired
+configuration hash, leaf, deadline, value and actual submitted payload. Amounts
+retain the full Coins wire range. Payload import checks envelope/request framing
+and refuses primary AUTH in the rescue fee class. It is not an inner-signature,
+full policy, configuration-pairing or dynamic fee/balance verifier.
+
+New intent construction permits only current-slot leaves, not the prior-slot
+network delivery allowance; it rejects exhaustion, invalid TTL and zero value.
+It does not reserve or sign anything. The caller must pass this exact digest
+and leaf through the durable journal and a reviewed signing/verification backend.
+External export checks the cached HSS L1/H20/W4 signature framing and leaf. It
+does not prove cryptographic validity or fresh admission; cache verification,
+expiry and chain checks remain mandatory before broadcast.
+
+Four independent Python vectors cover all classes and the maximum Coins value.
+Sixteen wallet SDK tests pass. Eleven semantic controls exercise class/shape,
+rescue-only routing, TTL, current slot, exhaustion, value, signature length/leaf
+and domain. In actual public-fixture recovery, all five fee intents and external
+bodies now come from Rust SDK bytes around persistent journal/cache signing,
+with independent Python hash equality checked at both boundaries. The initial
+positive preparation request uses the same integration. Twelve retained encoder
+calls correspond to those six intents and six external bodies. The suite still
+has 62 matching native/Rust transaction outcomes and actual recipient payment,
+using diagnostic credit 20,000. Malformed negative requests remain explicit
+fixture encodings. Evidence: `test/wallet-v5r2/fee-sdk-20261006.json`.
+
+This completes encoding coverage for the recovery messages, not production
+signer custody, verified state/receipt handling or user-facing recovery. Genesis
+construction, complete client policy validation and the default-credit release
+failure remain open alongside the other production gates.

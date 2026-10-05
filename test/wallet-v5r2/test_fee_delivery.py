@@ -31,6 +31,7 @@ from test_state import fee, state  # noqa: E402
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--fee-driver", type=Path)
     p.add_argument("--preparation-driver", type=Path)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument(
@@ -312,6 +313,15 @@ def main():
             return native.external(va, Cell().ref(fee_intent).ref(chain(sig.read_bytes())))
 
         intent = make_intent()
+        fee_encoder = None
+        if options.fee_driver:
+            assert options.cache_driver, "SDK fee integration requires journal-backed signing"
+            from sdk_fee_fixture import FeeEncoder
+
+            fee_encoder = FeeEncoder(
+                options.fee_driver, out / "sdk-fee", native.NOW - 2 * 3600 - 10
+            )
+            intent = fee_encoder.encode(intent, native.NOW)
         if options.cache_driver:
             from cached_fee_fixture import signature as cached_fee_signature
 
@@ -326,7 +336,12 @@ def main():
                 epoch0=native.NOW - 2 * 3600 - 10,
             )
             sig.write_bytes(cached_signature)
-            ext = native.external(va, Cell().ref(intent).ref(chain(cached_signature)))
+            body = (
+                fee_encoder.encode(intent, native.NOW, cached_signature)
+                if fee_encoder
+                else Cell().ref(intent).ref(chain(cached_signature))
+            )
+            ext = native.external(va, body)
         else:
             ext = sign_fee(intent)
         entries = read_dict(native.config(17), 32)
@@ -799,6 +814,7 @@ def main():
                         sign_fee=sign_fee,
                         work=work,
                         cache_driver=options.cache_driver,
+                        fee_encoder=fee_encoder,
                         retime_prepare=lambda now: (
                             encode_preparation(
                                 options.preparation_driver,
