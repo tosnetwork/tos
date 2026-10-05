@@ -33,16 +33,21 @@ in Git history.
 `scripts/check-no-legacy-escrow.py` (tested by
 `scripts/test_check_no_legacy_escrow.py`, and run in CI and as the CTest
 `source-guard` tests `no-legacy-escrow-source` and
-`no-legacy-escrow-self-test`) fails if any part of v1 reappears anywhere in
-the tree: either of its two code hashes, any v1 bytecode artifact ever
-committed (recognised by content, and by the hash of every cell of every BOC
-in the tree, so a re-serialized or StateInit-wrapped copy is caught too), or
-any v1 source, build, rehearsal or deployment path.
+`no-legacy-escrow-self-test`) fails if any of these known v1 fingerprints
+appears in a tracked file outside its stated exemptions: either of the two v1
+code hashes; a v1 bytecode artifact that was ever committed, recognised by its
+content; v1 code inside any BOC in a supported level-zero encoding, compared
+by cell hash so that a re-serialized or StateInit-wrapped copy is caught; an
+exact historical v1 source; or a v1 source, build, rehearsal or deployment
+name. It does not parse pruned or non-standard BOC encodings, and it does not
+recognise edited v1 source.
 
 Removing the code does not change a contract that was already deployed:
 deployed contracts are immutable, and a third party can still deploy v1
-bytecode taken from Git history. What this repository guarantees is that its
-own tooling cannot build or deploy v1.
+bytecode taken from Git history with a generic StateInit deployment. What
+this repository guarantees is narrower: the maintained tree contains no
+v1-specific build or deployment path, and the supported escrow deploy script
+refuses historical code.
 
 ## Escrow v2: refused payouts can strand funds (accepted risk)
 
