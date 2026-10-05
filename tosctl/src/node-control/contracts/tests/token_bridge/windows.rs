@@ -352,3 +352,71 @@ fn t_z7_waiting_mints_beyond_the_credit_window_are_refused_not_prepared() {
         assert!(consumed(s) || s == swap_state::PAID);
     }
 }
+
+/// T-X3: a refusal is an exception on C1. The minter's watermark folds past
+/// it, but the refusal stays stored until the bridge's acknowledged floor
+/// passes it: a re-sent prepare for that number is answered with the stored
+/// refusal, never with the default answer for a folded number, so the lock
+/// returns to paid instead of being consumed.
+#[test]
+fn t_x3_a_refusal_outlives_the_watermark_until_the_bridge_acknowledges_it() {
+    let mut net = minted();
+    let user = net.user(0);
+    let (base, mc) = {
+        let l = net.bc.config_params().size_limits_config().expect("limits");
+        (l.max_acc_state_cells, l.max_mc_acc_state_cells)
+    };
+    net.configure_limits(declared("MINTER_WORST_CELLS") as u32 - 1, mc);
+    let refused = net.start_swap(5);
+    let lost = net.intercept(|m| body_op(m) == Some(op::REFUSED));
+    net.configure_limits(base, mc);
+    let s = 1;
+    assert_eq!(net.mint_status(s), mint_status::REFUSED);
+    // later mints finish: the minter's watermark folds past the refusal
+    for _ in 0..3 {
+        net.swap(1);
+    }
+    assert!(net.minter_channels()[3] > s as i128, "the watermark passed the refusal");
+    assert_eq!(net.mint_status(s), mint_status::REFUSED, "the exception is still stored");
+    assert_eq!(net.swap_record(refused).0, swap_state::PREPARING);
+    // the bridge re-sends its prepare: the stored refusal answers it
+    succeeded(&net.advance_bridge_mint(s));
+    assert_eq!(net.swap_record(refused).0, swap_state::PAID, "refused, the lock is paid again");
+    assert_eq!(net.tokens(&user), 1_003, "nothing minted for the refusal");
+    // the lost original arrives late and changes nothing
+    let before = net.state_hashes();
+    net.send(lost);
+    assert_eq!(net.state_hashes(), before);
+    // once acknowledged, a sync compacts it
+    // C1's sender syncs: the minter folds and compacts what the bridge's
+    // floor has passed
+    succeeded(&net.advance_bridge_sync());
+    assert_eq!(net.mint_status(s), -1, "compacted after the acknowledgement");
+}
+
+/// T-X3: finalization out of order on C1, more than FOLD_LIMIT numbers past a
+/// gap. The watermark waits at the gap; once it closes, the watermark folds
+/// at most FOLD_LIMIT numbers per transaction and reaches the end by later
+/// transactions and a sync, with no effect repeated.
+#[test]
+fn t_x3_a_gap_closed_late_folds_in_bounded_steps() {
+    let mut net = minted();
+    let fold = declared("FOLD_LIMIT") as usize;
+    let first = net.start_swap_to(&net.user(1), 1);
+    net.deliver_until(|m| body_op(m) == Some(op::PREPARED));
+    let gap = net.take(|m| body_op(m) == Some(op::PREPARED));
+    let gap_s = 1;
+    // more than FOLD_LIMIT later mints finish, spread over the holders
+    for i in 0..fold + 2 {
+        let to = net.user(i % 4);
+        net.swap_to(&to, 1);
+    }
+    assert_eq!(net.minter_channels()[3], gap_s as i128, "the watermark waits at the gap");
+    net.send(gap);
+    succeeded(&net.advance_bridge_sync());
+    succeeded(&net.advance_bridge_sync());
+    let total: u128 = (0..4).map(|i| net.tokens(&net.user(i))).sum();
+    assert_eq!(total, 1_000 + fold as u128 + 3, "each mint credited once");
+    assert_eq!(net.minter_channels()[3], (fold + 4) as i128, "the watermark reached the end");
+    assert_eq!(net.swap_record(first).0, -1, "the late swap is consumed and folded");
+}

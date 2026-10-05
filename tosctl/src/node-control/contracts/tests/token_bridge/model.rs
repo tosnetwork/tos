@@ -146,7 +146,7 @@ fn outs_with_op(outs: &[Message], op: u32) -> usize {
     outs.iter().filter(|m| m.is_internal() && body_op(m) == Some(op)).count()
 }
 
-fn ext_topic(m: &Message) -> Option<u32> {
+pub fn ext_topic(m: &Message) -> Option<u32> {
     let h = m.ext_out_header()?;
     match &h.dst {
         chain_block::MsgAddressExt::AddrExtern(ext) => {

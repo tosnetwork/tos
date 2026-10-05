@@ -704,6 +704,9 @@ impl Net {
             }
         }
         self.check_gas(&addr, &msg, &tx);
+        // G2: no transaction strands, or logs, more than FOLD_LIMIT records
+        let stranded = outs.iter().filter(|m| !m.is_internal() && crate::model::ext_topic(m) == Some(declared("LOG_LIABILITY_STRANDED") as u32)).count();
+        assert!(stranded <= declared("FOLD_LIMIT") as usize, "a transaction logged {stranded} strandings");
         let after = self.model.snapshot(self, &addr);
         let balance_before = account.balance().map(|b| b.coins.as_u128()).unwrap_or(0);
         let delivery = Delivery { balance_before, addr, msg, tx, outs };

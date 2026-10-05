@@ -7,7 +7,7 @@
 //! Storage rent: freezing and deletion by the chain itself (T-Y7), the
 //! special-account exemptions (T-Z5), and storage maintenance (T-L).
 
-use chain_block::{Message, MsgAddressInt};
+use chain_block::{IBitstring, Message, MsgAddressInt};
 use tos_sandbox::MessageBuilder;
 
 use crate::burn::minted;
@@ -265,4 +265,97 @@ fn t_z5_a_bridge_removed_from_the_list_at_worst_case_occupancy_still_completes()
     let total: u128 = (0..4).map(|i| net.tokens(&net.user(i))).sum();
     assert_eq!(total, 1_000 + window as u128 - 1, "every held mint completed");
     assert_eq!(net.channel()[10], 0, "nothing pending");
+}
+
+fn wallet_advance(net: &Net, owner: &MsgAddressInt, b: u64, value: u64) -> Message {
+    let wallet = net.wallet_of(owner);
+    net.advance_message(&wallet, advance::BURN, value, |x| {
+        x.append_u64(b).unwrap();
+    })
+}
+
+/// T-L: a wallet drained below its reserve: the quote adds the shortfall and
+/// a day of rent to the need. Half a day later an advance carrying only the
+/// need is refused before any effect; one carrying the quote completes, pays
+/// the rent from its own value and restores the reserve (I7 after every
+/// transaction).
+#[test]
+fn t_l_a_quote_covers_the_reserve_shortfall_and_a_day_of_rent() {
+    let mut net = minted();
+    let user = net.user(0);
+    ordinary_prices(&mut net);
+    net.start_burn(10);
+    net.drop_op(op::BURN_ADMIT);
+    net.settle();
+    let wallet = net.wallet_of(&user);
+    let reserve = declared("WALLET_RESERVE") as u64;
+    net.set_balance(&wallet, u128::from(reserve / 2));
+    let (need, quote) = net.wallet_advance_cost(&user, advance::BURN);
+    assert!(quote >= need + reserve / 2, "the quote adds the shortfall: need {need}, quote {quote}");
+    net.advance_time(43_200);
+    let before = net.state_hashes();
+    let short = wallet_advance(&net, &user, 0, need);
+    let tx = net.send(short);
+    assert!(outcome(&tx).aborted, "the need alone does not restore the reserve");
+    assert!(outcome(&tx).storage_fees > 0, "rent was due, and paid even by the refusal");
+    assert_eq!(net.state_hashes(), before, "no effect");
+    let enough = wallet_advance(&net, &user, 0, quote);
+    let tx = net.send(enough);
+    succeeded(&tx);
+    assert!(net.balance(&wallet) >= u128::from(reserve), "the reserve is restored");
+    assert_eq!(net.tokens(&user), 990);
+    assert_eq!(net.burn_logs(), 1, "the burn completed once");
+    assert_eq!(net.held(&user, 0), -1, "nothing held");
+}
+
+/// T-L: rent leaves a wallet in debt; a plain top-up, a message with no
+/// body, pays the debt and its business continues.
+#[test]
+fn t_l_a_plain_top_up_pays_a_debt() {
+    let mut net = minted();
+    let user = net.user(0);
+    ordinary_prices(&mut net);
+    let wallet = net.wallet_of(&user);
+    net.set_balance(&wallet, 0);
+    net.advance_time(3_600);
+    let msg = poke(&net, &wallet);
+    let tx = net.send_one(msg);
+    net.queue.clear();
+    assert!(outcome(&tx).storage_fees == 0 && !net.is_frozen(&wallet), "a small debt, not frozen");
+    let top_up = MessageBuilder::internal(net.stranger.address(), &wallet, TOS).bounce(false).build();
+    succeeded(&net.send(top_up));
+    let due = net.bc.get_account(&wallet).and_then(|a| a.due_payment().cloned());
+    assert!(due.is_none_or(|d| d.is_zero()), "the debt is paid");
+    net.start_burn(10);
+    net.settle();
+    assert_eq!(net.tokens(&user), 990);
+    assert_eq!(net.burn_logs(), 1);
+}
+
+/// T-X7: a leg whose sends exceed the balance fails in its action phase and
+/// rolls back whole. A bridge drained below its recorded payments cannot
+/// return a cancelled lock's fee: the cancellation is not recorded and
+/// nothing is logged. After a plain top-up the same cancellation succeeds
+/// once.
+#[test]
+fn t_x7_a_send_above_the_balance_rolls_the_leg_back_whole() {
+    let mut net = minted();
+    let n = net.next_nonce;
+    net.next_nonce += 1;
+    succeeded(&net.pay(n));
+    let bridge = net.bridge.clone();
+    net.set_balance(&bridge, 0);
+    let before = net.state_hashes();
+    let cancel = net.vote(400, net.cancel_lock_vote(GENERATION, n));
+    let tx = net.send_one(cancel);
+    net.queue.clear();
+    assert!(!outcome(&tx).action_ok, "the refund exceeds the balance: the action phase fails");
+    assert_eq!(net.state_hashes(), before, "rolled back whole");
+    assert_eq!(net.logs_from(&bridge, declared("LOG_SWAP_CANCELLED") as u32), 0, "nothing logged");
+    let top_up = MessageBuilder::internal(net.stranger.address(), &bridge, 50 * TOS).bounce(false).build();
+    succeeded(&net.send(top_up));
+    let cancel = net.vote(401, net.cancel_lock_vote(GENERATION, n));
+    succeeded(&net.send(cancel));
+    assert_eq!(net.swap_record(n).0, -1, "cancelled and folded");
+    assert_eq!(net.logs_from(&bridge, declared("LOG_SWAP_CANCELLED") as u32), 1, "logged once");
 }
