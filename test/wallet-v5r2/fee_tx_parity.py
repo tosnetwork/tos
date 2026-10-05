@@ -54,6 +54,7 @@ def transcript(name, result):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--cache-driver", type=Path)
     parser.add_argument("--driver", type=Path, required=True)
     parser.add_argument("--recovery", action="store_true")
     parser.add_argument("--prepare", action="store_true")
@@ -93,6 +94,8 @@ def main():
             return result
 
     args = ["test_fee_delivery.py", "--credit-probe", "--output", str(out / "native")]
+    if options.cache_driver:
+        args += ["--cache-driver", str(options.cache_driver)]
     if options.recovery:
         assert options.prepare
         args += ["--recovery"]
@@ -134,6 +137,7 @@ def main():
         "pop_role": options.pop_role,
         "prepare": options.prepare,
         "recovery": options.recovery,
+        "sdk_cache": options.cache_driver is not None,
         "expected_transactions": len(expected),
         "observed_transactions": len(observed),
         "differences": differences,

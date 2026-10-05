@@ -65,6 +65,8 @@ jobs:
           sh test/rescue-fee-gate/tools/build.sh build-signers
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
             --example fee-native-cost --example suite-parity --example pq-tx-parity
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
+            --example lms_fee_cache_fixture
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule
@@ -84,6 +86,7 @@ jobs:
         run: |
           python test/wallet-v5r2/fee_tx_parity.py \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-fee-auth
           for role in 1 2; do
             mkdir -p "artifacts/context/r2-fee-pop$role/native"
@@ -91,6 +94,7 @@ jobs:
               "artifacts/context/r2-fee-pop$role/native/PUBLIC-TEST-ONLY-lms-tree"
             python test/wallet-v5r2/fee_tx_parity.py --pop-role "$role" \
               --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+              --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
               --output "artifacts/context/r2-fee-pop$role"
           done
           mkdir -p artifacts/context/r2-fee-prepare/native
@@ -98,6 +102,7 @@ jobs:
             artifacts/context/r2-fee-prepare/native/PUBLIC-TEST-ONLY-lms-tree
           python test/wallet-v5r2/fee_tx_parity.py --prepare --recovery \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-fee-prepare
       - name: Preparation fee admission deletion controls
         if: matrix.runner == 'ubuntu-24.04'
@@ -111,6 +116,13 @@ jobs:
           python test/wallet-v5r2/recovery_controls.py \
             --baseline artifacts/context/r2-fee-prepare \
             --output artifacts/context/r2-recovery-controls
+      - name: Real cached signature verification deletion control
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/wallet-v5r2/cache_verification_control.py \
+            --baseline artifacts/context/r2-fee-auth/native/sdk-cache \
+            --driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
+            --output artifacts/context/r2-cache-verification-control
       - name: Full fee verification deletion control
         if: matrix.runner == 'ubuntu-24.04'
         run: |

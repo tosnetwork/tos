@@ -1,0 +1,177 @@
+{
+  "base_commit": "0b64e1628dbb850df8134dd32e5863ee729126a4",
+  "scope": "Real public-test LMS C signer, independent Rust VM verification and SDK cache bytes supplied to initial positive external request in each of four native/Rust suites. Other adversarial/recovery requests still use explicit test signers. Fixture times, diagnostic credit 20000, no production custody or default-credit pass.",
+  "parity": {
+    "auth": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": null,
+      "prepare": false,
+      "recovery": false,
+      "sdk_cache": true,
+      "expected_transactions": 26,
+      "observed_transactions": 26,
+      "differences": [],
+      "success": true
+    },
+    "pop1": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": 1,
+      "prepare": false,
+      "recovery": false,
+      "sdk_cache": true,
+      "expected_transactions": 24,
+      "observed_transactions": 24,
+      "differences": [],
+      "success": true
+    },
+    "pop2": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": 2,
+      "prepare": false,
+      "recovery": false,
+      "sdk_cache": true,
+      "expected_transactions": 24,
+      "observed_transactions": 24,
+      "differences": [],
+      "success": true
+    },
+    "prepare": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": null,
+      "prepare": true,
+      "recovery": true,
+      "sdk_cache": true,
+      "expected_transactions": 62,
+      "observed_transactions": 62,
+      "differences": [],
+      "success": true
+    }
+  },
+  "sdk_cache": {
+    "auth": {
+      "real_lms_signature": true,
+      "independent_rust_vm_verification": true,
+      "signer_calls": 1,
+      "restart_retry_signer_calls": 0,
+      "retry_bytes_identical": true,
+      "wrong_intent_rejected": true,
+      "wrong_public_key_rejected": true,
+      "restart_signing_blocked": true,
+      "corrupted_backend_rejected_and_leaf_burned": true,
+      "scope": "Public deterministic test key, fixture chain time; not production custody"
+    },
+    "pop1": {
+      "real_lms_signature": true,
+      "independent_rust_vm_verification": true,
+      "signer_calls": 1,
+      "restart_retry_signer_calls": 0,
+      "retry_bytes_identical": true,
+      "wrong_intent_rejected": true,
+      "wrong_public_key_rejected": true,
+      "restart_signing_blocked": true,
+      "corrupted_backend_rejected_and_leaf_burned": true,
+      "scope": "Public deterministic test key, fixture chain time; not production custody"
+    },
+    "pop2": {
+      "real_lms_signature": true,
+      "independent_rust_vm_verification": true,
+      "signer_calls": 1,
+      "restart_retry_signer_calls": 0,
+      "retry_bytes_identical": true,
+      "wrong_intent_rejected": true,
+      "wrong_public_key_rejected": true,
+      "restart_signing_blocked": true,
+      "corrupted_backend_rejected_and_leaf_burned": true,
+      "scope": "Public deterministic test key, fixture chain time; not production custody"
+    },
+    "prepare": {
+      "real_lms_signature": true,
+      "independent_rust_vm_verification": true,
+      "signer_calls": 1,
+      "restart_retry_signer_calls": 0,
+      "retry_bytes_identical": true,
+      "wrong_intent_rejected": true,
+      "wrong_public_key_rejected": true,
+      "restart_signing_blocked": true,
+      "corrupted_backend_rejected_and_leaf_burned": true,
+      "scope": "Public deterministic test key, fixture chain time; not production custody"
+    }
+  },
+  "verification_deletion": {
+    "deleted_verifier_accepts_wrong_key": true,
+    "fixture_detected_semantic_failure": true,
+    "restored_real_signature_and_negative_controls_pass": true
+  },
+  "checks": {
+    "native_rust_transactions": 136,
+    "all_route_runners_exit": 0,
+    "example_build_exit": 0,
+    "deletion_and_restored_control_exit": 0,
+    "ruff": "passed",
+    "rustfmt": "passed",
+    "workflow_supply_chain": "passed",
+    "diff_check": "passed"
+  },
+  "sources": [
+    {
+      "path": "tosctl/src/node-control/contracts/examples/lms_fee_cache_fixture.rs",
+      "bytes": 5801,
+      "sha256": "ea4aedd43b65f68e2cde9e096ba25a255f31aa3b145caa60bdc2c48ad263c225"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/lms_fee_cache.rs",
+      "bytes": 14878,
+      "sha256": "21cdcadd9842f0fc64aab4f6445fda38476b60d69cef943c0279c381d720d8c0"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/lms_fee_journal.rs",
+      "bytes": 16120,
+      "sha256": "bfb9212a0a68774db2264769c0d1c09c45386c271436ca669da992fe42294f18"
+    },
+    {
+      "path": "tosctl/src/vm/src/executor/lms_fee.rs",
+      "bytes": 5582,
+      "sha256": "ff6ae2ffc152a193695c7f152be4a1063f958bc5e16a6f43be0262694f609f66"
+    },
+    {
+      "path": "test/wallet-v5r2/cached_fee_fixture.py",
+      "bytes": 3941,
+      "sha256": "4dfe18753c61f9d89001ab39d2f491f3164f881e0570e04d166c474b8881b7ed"
+    },
+    {
+      "path": "test/wallet-v5r2/cache_verification_control.py",
+      "bytes": 3086,
+      "sha256": "3cb8358abd794b9b95fc4efd76a8cc3c7754429afec8ce532e4c8ca0615b53da"
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "bytes": 43628,
+      "sha256": "2a09db60cc59b8f245e88a59a1c6de0453a8ad9d595e14fc91e22c60ae575342"
+    },
+    {
+      "path": "test/wallet-v5r2/fee_tx_parity.py",
+      "bytes": 5921,
+      "sha256": "468db569ed04fa4695f6b85efbdbae4c0e99aad9e8e70cb747cd53aeb466f7ef"
+    },
+    {
+      "path": ".github/workflows/rescue-context.yml",
+      "bytes": 8548,
+      "sha256": "6900bfec90c378a385d0126f0a83d1f8bf46397723c82f1dbb9eeaadb11a99cd"
+    }
+  ],
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example lms_fee_cache_fixture",
+    "python test/wallet-v5r2/fee_tx_parity.py [--pop-role 1|2 | --prepare --recovery] --driver tosctl/src/target/debug/examples/pq-tx-parity --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --output <artifacts>/<route>",
+    "python test/wallet-v5r2/cache_verification_control.py --baseline <artifacts>/auth/native/sdk-cache --driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --output <artifacts>/control"
+  ],
+  "raw_artifacts": {
+    "root": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cache-chain",
+    "manifest": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cache-chain/MANIFEST.json",
+      "bytes": 54093,
+      "sha256": "baddd8162ad72247dec9bda38da2528a964e0b96b032251b886a969dbae3561c"
+    },
+    "retention": "Through review and at least 2027-01-06; local access required. Public test signatures/keys only. Ephemeral request directory paths are retained as provenance; actual journal files copied to retained-journal directories. Reproduce with runners, not expired temporary paths."
+  }
+}

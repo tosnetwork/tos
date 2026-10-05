@@ -690,3 +690,38 @@ restart and last-slot retries. The child-process helper remains explicitly run
 by its parent test. Evidence is `test/wallet-v5r2/fee-cache-20261006.json`.
 Real signer/cache-to-chain delivery, proof freshness, cross-device revocation,
 CLI/mobile integration and production-credit admission remain open.
+
+
+## Real LMS cache-to-transaction diagnostic
+
+The test-only `lms_fee_cache_fixture` SDK example now supplies an actual H20/W4
+signature to the journal adapter using the public deterministic C fixture signer.
+Its callback verifies the signature independently with the Rust VM's
+LMSCHECKFEEHASH instruction before caching. A second process reopens the journal
+at the current fixture time and retrieves identical cached bytes with its signer
+path deliberately unavailable; backend calls are one for creation and zero for
+retry. Cache export is reverified against the provided public key. Wrong intent,
+wrong public key, same-slot restarted signing and corrupt backend output are
+refused; rejected output burns the reservation and leaves no usable cache.
+
+`fee_tx_parity.py --cache-driver <example>` uses those returned bytes for the
+initial positive external fee request in AUTH, primary POP, rescue POP and
+preparation runs. The actual native transactions verify the LMS signature, and
+the AUTH route reaches an executed recipient account. The preparation/recovery
+suite retains its full linked wallet handoff. Across all four runs, 136 native
+and Rust transactions match. **Only the four initial positive fee requests use
+the SDK cache**; adversarial fixtures and the additional continuous-recovery
+requests still use their explicit public test signer. This is not a claim that
+the complete recovery client has been integrated with production custody.
+
+Deleting the example's verification-result check makes a cached signature pass
+under a wrong public key; the fixture detects that semantic failure. Restoring
+the verifier restores all cache/real-signature controls. CI builds the example,
+runs all four cache-fed routes on both architectures and performs the deletion
+control on x86-64. Evidence: `test/wallet-v5r2/cache-chain-20261006.json`.
+
+The example embeds public test seed/identifier/randomizer constants and accepts
+fixture times. It must not be used for live funds. A production signer backend,
+key isolation, proof-checked current chain state, device revocation and client
+integration remain unimplemented. Transaction runs still use diagnostic credit
+20,000; default-credit admission and final-head CI remain release gates.

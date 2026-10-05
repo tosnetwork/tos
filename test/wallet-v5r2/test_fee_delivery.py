@@ -33,6 +33,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument(
+        "--cache-driver",
+        type=Path,
+        help="Use real SDK cached signature for the positive fee request",
+    )
+    p.add_argument(
         "--credit-probe",
         action="store_true",
         help="Measure required credit without changing protocol defaults",
@@ -299,7 +304,23 @@ def main():
             return native.external(va, Cell().ref(fee_intent).ref(chain(sig.read_bytes())))
 
         intent = make_intent()
-        ext = sign_fee(intent)
+        if options.cache_driver:
+            from cached_fee_fixture import signature as cached_fee_signature
+
+            cached_signature = cached_fee_signature(
+                options.cache_driver,
+                out / "sdk-cache",
+                tree=tree,
+                key=pub,
+                vault=va[1],
+                digest=intent.hash,
+                now=native.NOW,
+                epoch0=native.NOW - 2 * 3600 - 10,
+            )
+            sig.write_bytes(cached_signature)
+            ext = native.external(va, Cell().ref(intent).ref(chain(cached_signature)))
+        else:
+            ext = sign_fee(intent)
         entries = read_dict(native.config(17), 32)
         entries[48] = Cell().ref(global_policy())
         cap = {
