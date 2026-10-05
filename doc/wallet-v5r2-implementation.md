@@ -147,7 +147,7 @@ StateInit is validated against the caller's compiled dependency and expected
 network. Root address, policy and keys are derived from that witness rather than
 separately writable assertions.
 
-Genesis stores only fee metadata (profile, epoch, fixed 3600-second/four-leaf slots
+Genesis stores only fee metadata (profile, public fee tree id, epoch, fixed 3600-second/four-leaf slots
 and canonical HSS L1/H20/W4 public key), with no vault address. This removes the
 circular genesis input in the earlier v2 storage proposal. The immutable module
 witness contains the network and code identity. A future runtime vault-address
@@ -161,4 +161,30 @@ sensitivity without claiming wallet message authorization or deployment. Run:
 
 ```sh
 python test/wallet-v5r2/test_state.py --output /path/to/r2-state
+```
+
+## Canonical paired-vault identity
+
+`wallet-v5r2-fee-identity.fc` constructs `PairedVaultData` and its full canonical
+StateInit from compiled vault code, network, standard basechain wallet/module
+addresses and validated fee metadata. The initial leaf is zero. Neither the vault
+address nor its balance appears in its own data. Validation binds the whole data
+commitment and rejects altered parties, key, tree id, network, initial leaf, code
+or address. A future runtime cache must equal this derivation.
+
+The public fee tree id is a separate 256-bit restore KDF input, not a public-key
+hash. It is retained alongside the key and bound by the vault identity. On-chain
+encoding checks cannot prove that someone derived a key using that id or retained
+its secret. Fresh possession and signer custody remain separate requirements.
+
+The new paired-vault layout is a candidate for the complete implementation, not a
+claim that the historical contextual fee-admission probe understands it. Its
+15 native fixture cases and pairing guard-deletion control use a minimal compiled
+vault-code fixture solely to check independent Python/FunC address derivation.
+No fee signature, payment, reserve sufficiency or production code identity is
+inferred from these tests. Storage regression also passes all 22 cases after adding
+the required tree id. Both runners are included in authentication CI.
+
+```sh
+python test/wallet-v5r2/test_fee_identity.py --output /path/to/r2-fee-identity
 ```

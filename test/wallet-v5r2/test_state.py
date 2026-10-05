@@ -23,13 +23,14 @@ from test_auth import KEY  # noqa: E402
 from test_identity import chain, module_data  # noqa: E402
 
 
-def fee(version=1, profile=1, slot=3600, per_slot=4, key=None):
+def fee(version=1, profile=1, slot=3600, per_slot=4, key=None, tree_id=456):
     if key is None:
         key = Cell().uint(1, 32).uint(8, 32).uint(3, 32).uint(7, 128).uint(9, 256)
     return (
         Cell()
         .uint(version, 8)
         .uint(profile, 8)
+        .uint(tree_id, 256)
         .uint(123, 32)
         .uint(slot, 32)
         .uint(per_slot, 16)

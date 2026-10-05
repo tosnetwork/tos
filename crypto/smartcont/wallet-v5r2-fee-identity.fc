@@ -1,0 +1,45 @@
+;; Canonical paired-vault identity for the complete wallet construction DAG.
+;; Code is a compiled dependency, never a witness-selected implementation.
+;; This codec confers no fee authority and does not establish reserve or POP.
+#include "wallet-v5r2-state.fc";
+
+slice r2pair_address(int address) inline {
+  return begin_cell().store_uint(4, 3).store_int(0, 8).store_uint(address, 256).end_cell().begin_parse();
+}
+
+int r2pair_basechain(slice address) impure inline {
+  throw_unless(r2id::invalid, (address.slice_bits() == 267) & (address.slice_refs() == 0));
+  throw_unless(r2id::invalid, address.preload_uint(3) == 4);
+  (int wc, int hash) = parse_std_addr(address);
+  throw_unless(r2id::invalid, wc == 0);
+  return hash;
+}
+
+;; Genesis next_leaf is zero. No self-address/header hash appears in vault data;
+;; external fee intents bind the derived vault address explicitly.
+cell r2pair_data(int global_id, int network, slice wallet, slice module, cell metadata) impure inline_ref {
+  r2pair_basechain(wallet);
+  r2pair_basechain(module);
+  r2state_fee(metadata);
+  cell config = begin_cell().store_uint(1, 8).store_int(global_id, 32).store_uint(network, 256)
+      .store_slice(wallet).store_slice(module).store_ref(metadata).end_cell();
+  return begin_cell().store_uint(2, 8).store_uint(0, 32).store_ref(config).end_cell();
+}
+
+cell r2pair_init(cell vault_code, int global_id, int network, slice wallet, slice module,
+    cell metadata) impure inline_ref {
+  cell data = r2pair_data(global_id, network, wallet, module, metadata);
+  cell witness = begin_cell().store_uint(6, 5).store_ref(vault_code).store_ref(data).end_cell();
+  r2id_check_dag(witness, 1024, 0);
+  return witness;
+}
+
+;; The whole data commitment binds all parties and the exact metadata, including
+;; slot origin, public restore tree id and key. It binds these values but cannot
+;; prove their off-chain KDF relationship or possession.
+() r2pair_validate(cell witness, int compiled_vault_code_hash, int claimed_address,
+    int global_id, int network, slice wallet, slice module, cell metadata) impure inline_ref {
+  cell actual = r2id_state_init(witness, compiled_vault_code_hash, claimed_address);
+  cell expected = r2pair_data(global_id, network, wallet, module, metadata);
+  throw_unless(r2id::invalid, cell_hash(actual) == cell_hash(expected));
+}

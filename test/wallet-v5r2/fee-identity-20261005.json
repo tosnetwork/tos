@@ -1,0 +1,166 @@
+{
+  "base_commit": "b564a5a7f0433a33414e498f09aea2a4755fdbfb",
+  "scope": "Paired-vault identity codec; compiled stub fixture is not production fee code.",
+  "cases": {
+    "pairing": 15,
+    "storage_regression": 22
+  },
+  "mutations": {
+    "pairing": 1,
+    "storage": 2
+  },
+  "golden_fixture_addresses": {
+    "wallet_100": "15362e8836bdfe512a6f79f783df89f912b1c22e110ba79a559bd89d5f4ca886",
+    "wallet_101": "1b1a4b7d43ad605a961978541536141d26ac5cd70184ccbf87818b530b38c5a5"
+  },
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-state.fc",
+      "sha256": "b103b2ef825ece297098792e9e68061fccb5f6078ca49002439c1ba9ca885372",
+      "bytes": 3254
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-identity.fc",
+      "sha256": "9338d13e56394e1f5636d7a6a08239f090eb61c8f024c1bd2da4db9ab454ebd4",
+      "bytes": 2320
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-rescue.tlb",
+      "sha256": "eefcbc86705399f83d40fb2c8c796d41a43d9b8f52bf96dec7521f7b55c582bf",
+      "bytes": 9324
+    },
+    {
+      "path": "test/wallet-v5r2/fee-identity-driver.fc",
+      "sha256": "758189725f8cdf840f0faded2ca8a321e2a0d1855f3aefcc92280e51aa52129d",
+      "bytes": 772
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_identity.py",
+      "sha256": "3915b9b2f6b4e9622b1a5424865c6c3fe559d2655ed930ed430a09aa004ac820",
+      "bytes": 5658
+    },
+    {
+      "path": "test/wallet-v5r2/test_state.py",
+      "sha256": "926cbb14c6715d283b72b55330777864b60d4ace77cbca924b2491abdfe0c479",
+      "bytes": 6945
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/pairing-mutant.boc",
+      "sha256": "c35f89e90f7846733904e8c38e899b507f89e515da6ee53788d8184ba366c318",
+      "bytes": 581
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/pairing-mutant.fif",
+      "sha256": "80d05060a1e129f230f2733d5a53116048b6f1cd17e76f9a962dc2b769b4ac80",
+      "bytes": 34426
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/pairing-mutant.run.fif",
+      "sha256": "e45da723eb87aef9e7b5a3003a9b4350a4677b2701d603de302ad4c2f55e7732",
+      "bytes": 220
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/pairing.boc",
+      "sha256": "1ceaf8f4eb851d31630844edefe137fe8467555748e63365081c300be600df8b",
+      "bytes": 591
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/pairing.fif",
+      "sha256": "e55ce6e348b76dd83277013ffee772d17f921d2b54d188423efbef6d47b35f58",
+      "bytes": 34549
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/pairing.run.fif",
+      "sha256": "abb242e860092ada40eaf5bad177b2fcb4d381b984edac483910429c48e4f33f",
+      "bytes": 206
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/results.json",
+      "sha256": "823596a2abfd5ae55b05a39182485823b31ae588f818e1a3010e920bb62a2aaa",
+      "bytes": 3032
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/vault-fixture.fif",
+      "sha256": "8d9d69431ce99e7cb9a74d996086e716102b201710a48fec91d78ed760d93812",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-fee-identity/vault-fixture.run.fif",
+      "sha256": "75050a2e86ef8e39a70d478b09ef77a32c5ab7d6b99bbb71189efa48e9f9d863",
+      "bytes": 218
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/fee_profile.boc",
+      "sha256": "348150ea45649040bb611a4cea3b6309164fdd0fe9ab0b010b44f7aebd8a412a",
+      "bytes": 881
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/fee_profile.fif",
+      "sha256": "2f958e43ff007336f45e27d9977a777ebf4fb8a9689defe6bee95059cb62ced3",
+      "bytes": 30449
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/fee_profile.run.fif",
+      "sha256": "7f1af48e2649a439f396308894505414dcd1fa01898c61884873d15db96321df",
+      "bytes": 216
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/module.boc",
+      "sha256": "b31e38d5e3e427e1fcc69fee75ae5ccaefac52bda2f3662edcc2a2906f959abf",
+      "bytes": 493
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/module.fif",
+      "sha256": "2646bb500fd3f62f26accdddc8441d491152ff08088ed1ad8fa30df4afd89d45",
+      "bytes": 15786
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/module.run.fif",
+      "sha256": "6674ae9796d4221b69caaaa88bddf2477effb5b833adcec451f11344cf71c05e",
+      "bytes": 206
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/results.json",
+      "sha256": "84e8391e0e97ffe2bda602a992da16897bc7dc2600e37dbd37cbfd4bb1e60aaa",
+      "bytes": 4159
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/state.boc",
+      "sha256": "20a7e305fe24be1e4d4db82f31570f068b290ff39d944758acf158de002f7679",
+      "bytes": 886
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/state.fif",
+      "sha256": "7b910f13c44e2ec0dda981070e62819ac1629182e43adab562a8e6270eeb3dc7",
+      "bytes": 30494
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/state.run.fif",
+      "sha256": "1ea1530eebe31c10502e008d824b1441626a9df43cff8ab2cf3311f40354c2a2",
+      "bytes": 204
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/strict_mode.boc",
+      "sha256": "c279cc2eb5829d77aa7bc9dee64e879a4ff8ad44e8eebe45e5e01e80407fc8f0",
+      "bytes": 876
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/strict_mode.fif",
+      "sha256": "d2bc5268ff892efdde044cbfdb6573a2db17823edee21b72de3652bdd105cba1",
+      "bytes": 30087
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state-tree-id/strict_mode.run.fif",
+      "sha256": "3b4f1c08163df91620107574961f0f57e3aa7ce006b7d8eaa4fcebd4e26e8f1f",
+      "bytes": 216
+    }
+  ],
+  "retention": "Local artifacts retained through PR review and release acceptance; CI retention 14 days."
+}

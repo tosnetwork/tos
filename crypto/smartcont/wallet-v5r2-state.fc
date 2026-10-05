@@ -12,6 +12,7 @@ const int r2state::invalid = 1819;
   slice s = r2id_ordinary(metadata);
   throw_unless(r2state::invalid, s~load_uint(8) == 1);
   throw_unless(r2state::invalid, s~load_uint(8) == 1);
+  s~load_uint(256); ;; public fee_tree_id: restore KDF input, not a key digest.
   s~load_uint(32); ;; epoch0; authenticated chain time is checked by the vault.
   throw_unless(r2state::invalid, s~load_uint(32) == 3600);
   throw_unless(r2state::invalid, s~load_uint(16) == 4);

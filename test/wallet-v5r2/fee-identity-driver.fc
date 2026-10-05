@@ -1,0 +1,17 @@
+;; Test-only fixture: its data supplies the compiled code and expected metadata.
+;; The vault code used by tests is not a production fee implementation.
+#include "wallet-v5r2-fee-identity.fc";
+() recv_internal(int value, cell full, slice body) impure {
+  slice ds = get_data().begin_parse();
+  cell code = ds~load_ref();
+  cell metadata = ds~load_ref();
+  slice wallet = ds~load_msg_addr();
+  slice module = ds~load_msg_addr();
+  ds.end_parse();
+  cell witness = body~load_ref();
+  int address = body~load_uint(256);
+  body.end_parse();
+  r2pair_validate(witness, cell_hash(code), address, 42, 123, wallet, module, metadata);
+  cell derived = r2pair_init(code, 42, 123, wallet, module, metadata);
+  set_data(begin_cell().store_uint(cell_hash(derived), 256).end_cell());
+}

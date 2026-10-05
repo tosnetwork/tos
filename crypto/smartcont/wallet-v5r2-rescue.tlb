@@ -80,7 +80,7 @@ fee_route_v1#01
 // Module StateInit binds network/global id, code, keys and policy once. The wallet
 // validates it against its compiled dependency. Fee metadata has no vault address.
 // A runtime FeeRoute cache must be derived and checked, never a genesis input.
-fee_metadata_v1#01 fee_profile:uint8 epoch0:uint32 slot_seconds:uint32 per_slot:uint16
+fee_metadata_v1#01 fee_profile:uint8 fee_tree_id:bits256 epoch0:uint32 slot_seconds:uint32 per_slot:uint16
   fee_public_key:^Cell = FeeMetadata;
 // Admitted profile: 1, slot_seconds=3600, per_slot=4, canonical HSS L1/H20/W4 key.
 auth_state_v3#03 mode:(## 2) local_retired:uint16
@@ -90,6 +90,14 @@ wallet_v5r2_data$_ signature_allowed:Bool seqno:uint32 wallet_id:uint32
   public_key:bits256 extensions:(HashmapE 256 int1) auth:^AuthStateV3 = WalletV5R2Data;
 // signature_allowed must be false, extensions empty, and mode exactly 2 or 3.
 // No missing-state fallback. Stored local_retired bits survive every transition.
+
+// Canonical paired-vault storage candidate, separate from the historical fee
+// admission probe below. No self address in data. Code fixes admission/budget
+// policy; current account balance is not a genesis identity input.
+paired_vault_config_v1#01 global_id:int32 network_tag:bits256
+  wallet:MsgAddressInt module:MsgAddressInt metadata:^FeeMetadata = PairedVaultConfig;
+paired_vault_data_v2#02 next_leaf:uint32 config:^PairedVaultConfig = PairedVaultData;
+// Canonical deployment requires next_leaf=0; wallet/module are standard wc0.
 
 // ---- Fee vault (immutable code; data mutates only in next_leaf, budget and diagnostics)
 // header_hash = cell_hash(FeeHeader) of this vault: one comparison binds network, vault, wallet,
