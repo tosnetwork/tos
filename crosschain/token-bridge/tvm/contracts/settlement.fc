@@ -132,6 +132,9 @@ const int HOLDER_LIMIT = 1000;       ;; holders one minter serves
 ;;   wallet 115 cells; bridge 897 cells at 8 channels (58 per channel), under
 ;;   the 2048-cell non-special masterchain limit; minter 347 cells plus 63 per
 ;;   holder, 63347 at 1000 holders, under the 65536-cell basechain limit.
+;; Measured at commit 1f99ccdbe by the sandbox test
+;; t_g_worst_case_cells_fit_the_declared_bound_and_the_account_limit, which
+;; fails if a later state exceeds these constants.
 ;; HOLDER_LIMIT is the largest round number of holders that fits.
 const int BRIDGE_WORST_CELLS = 1000;
 const int MINTER_WORST_CELLS = 64000;
