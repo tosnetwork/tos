@@ -1310,3 +1310,44 @@ async fn raw_account_tampered_proof_is_refused() {
         ),
     }
 }
+
+#[tokio::test]
+async fn raw_account_and_config_share_recorded_checkpoint() {
+    let case = Case::new();
+    let mut files = historical_material();
+    files.retain(|(name, _)| *name != "exec-config.tl");
+    files.push(("config.tl", fixture("exec-config-638197.tl")));
+    let config = case.config(verifier(), case.material(&files), false);
+    let provider = ProvenGetterProvider::new(&config).unwrap();
+    let state =
+        provider.read_account_with_config(&address(ELECTOR), &[8], &historical()).await.unwrap();
+    let cell = state.config_param(8).expect("requested parameter");
+    let mut value = chain_block::SliceData::load_cell(cell.clone()).unwrap();
+    assert_eq!(value.remaining_bits(), 104);
+    assert_eq!(value.get_next_byte().unwrap(), 0xc4);
+    assert_eq!(state.evidence().checkpoint, target());
+    assert!(state.config_param(48).is_none(), "unrequested policy must not appear");
+    assert!(
+        provider.read_account_with_config(&address(ELECTOR), &[8, 8], &historical()).await.is_err()
+    );
+}
+
+#[tokio::test]
+async fn raw_config_from_another_block_is_refused() {
+    let case = Case::new();
+    let mut files = historical_material();
+    files.retain(|(name, _)| *name != "exec-config.tl");
+    files.push(("config.tl", fixture("live-638326/exec-config.tl")));
+    let config = case.config(verifier(), case.material(&files), false);
+    match ProvenGetterProvider::new(&config)
+        .unwrap()
+        .read_account_with_config(&address(ELECTOR), &[8], &historical())
+        .await
+    {
+        Ok(_) => panic!("accepted configuration from another block"),
+        Err(e) => assert!(
+            format!("{e:#}").contains("configuration proof answers for another block"),
+            "{e:#}"
+        ),
+    }
+}

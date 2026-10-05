@@ -31,6 +31,7 @@
 //! may be all come from local configuration ([`ProofVerifierConfig`]); nothing
 //! an endpoint returns can choose them.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -153,9 +154,15 @@ pub struct ProvenAccountState {
     evidence: ProvenGetterResults,
     root: Cell,
     account: Account,
+    config_params: BTreeMap<u32, Cell>,
 }
 
 impl ProvenAccountState {
+    /// Only explicitly requested parameters proven at this account checkpoint.
+    pub fn config_param(&self, index: u32) -> Option<&Cell> {
+        self.config_params.get(&index)
+    }
+
     pub fn evidence(&self) -> &ProvenGetterResults {
         &self.evidence
     }
@@ -266,8 +273,20 @@ impl ProvenGetterProvider {
         address: &MsgAddressInt,
         policy: &ReadPolicy,
     ) -> anyhow::Result<ProvenAccountState> {
+        self.read_account_with_config(address, &[], policy).await
+    }
+
+    /// Prove an account and selected configuration parameters at one target.
+    /// Nonempty `params` requires configuration proof material (`config.tl`).
+    /// Missing parameters refuse the entire read; absence is never approval.
+    pub async fn read_account_with_config(
+        &self,
+        address: &MsgAddressInt,
+        params: &[u32],
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<ProvenAccountState> {
         let address = canonical_address(address)?;
-        let request = Request::build(&address, &[], policy, &self.config)?;
+        let request = Request::build(&address, &[], policy, &self.config)?.with_config(params)?;
         let output = self.invoke(&request.bytes, policy).await?;
         let evidence = check_verified(&output, &request, &self.anchor, (self.clock)())?;
         let wire: VerifiedOutput = serde_json::from_slice(&output)?;
@@ -297,7 +316,8 @@ impl ProvenGetterProvider {
                 == evidence.account.balance,
             "raw account balance mismatch"
         );
-        Ok(ProvenAccountState { evidence, root, account })
+        let config_params = checked_config_params(&wire.config_params, &request.config_params)?;
+        Ok(ProvenAccountState { evidence, root, account, config_params })
     }
 
     async fn invoke(&self, request: &[u8], policy: &ReadPolicy) -> anyhow::Result<Vec<u8>> {
@@ -451,9 +471,27 @@ struct Request {
     policy: ReadPolicy,
     max_age_seconds: Option<u32>,
     methods: Vec<(String, Vec<serde_json::Value>)>,
+    config_params: Vec<u32>,
 }
 
 impl Request {
+    fn with_config(mut self, params: &[u32]) -> anyhow::Result<Self> {
+        anyhow::ensure!(params.len() <= 16, "at most 16 configuration parameters");
+        let unique: std::collections::BTreeSet<_> = params.iter().collect();
+        anyhow::ensure!(
+            unique.len() == params.len() && params.iter().all(|p| *p <= i32::MAX as u32),
+            "configuration indices must be distinct nonnegative int32 values"
+        );
+        if !params.is_empty() {
+            let mut value: serde_json::Value = serde_json::from_slice(&self.bytes)?;
+            value["config_params"] = serde_json::to_value(params)?;
+            self.bytes = serde_json::to_vec(&value)?;
+            self.sha256 = hex::encode(sha2::Sha256::digest(&self.bytes));
+            self.config_params = params.to_vec();
+        }
+        Ok(self)
+    }
+
     fn build(
         account: &str,
         calls: &[GetMethodCall],
@@ -527,12 +565,15 @@ impl Request {
             policy: policy.clone(),
             max_age_seconds,
             methods,
+            config_params: Vec::new(),
         })
     }
 }
 
 #[derive(Deserialize)]
 struct VerifiedOutput {
+    #[serde(default)]
+    config_params: Vec<ConfigParamOutput>,
     status: String,
     interface: String,
     mode: String,
@@ -546,6 +587,38 @@ struct VerifiedOutput {
     execution_context: serde_json::Value,
     #[serde(default)]
     get_methods: Vec<MethodOutput>,
+}
+
+#[derive(Deserialize)]
+struct ConfigParamOutput {
+    index: u32,
+    cell_hash: String,
+    boc: String,
+}
+
+fn checked_config_params(
+    params: &[ConfigParamOutput],
+    expected: &[u32],
+) -> anyhow::Result<BTreeMap<u32, Cell>> {
+    anyhow::ensure!(
+        params.len() == expected.len(),
+        "proven configuration parameter count mismatch"
+    );
+    let mut cells = BTreeMap::new();
+    for (param, index) in params.iter().zip(expected) {
+        anyhow::ensure!(param.index == *index, "proven configuration parameter index mismatch");
+        ensure_digest(&param.cell_hash, "configuration cell hash")?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&param.boc)
+            .context("invalid configuration BOC base64")?;
+        let cell = read_single_root_boc(&bytes).context("invalid configuration BOC")?;
+        anyhow::ensure!(
+            cell.repr_hash().to_hex_string() == param.cell_hash,
+            "proven configuration BOC hash mismatch"
+        );
+        cells.insert(*index, cell);
+    }
+    Ok(cells)
 }
 
 #[derive(Deserialize)]
@@ -644,6 +717,8 @@ fn check_verified(
         verified.request_sha256 == request.sha256,
         "proof verifier answered another request"
     );
+
+    checked_config_params(&verified.config_params, &request.config_params)?;
 
     let target = &verified.target;
     anyhow::ensure!(
@@ -860,6 +935,9 @@ mod fee_state_tests {
 
     // Synthetic account, deliberately not evidence of a cryptographic proof.
     fn fixture() -> (WalletGenesis, ProvenAccountState) {
+        fixture_with_policy(RescuePolicy::Required)
+    }
+    fn fixture_with_policy(policy: RescuePolicy) -> (WalletGenesis, ProvenAccountState) {
         let code = Cell::default();
         let hash = *code.repr_hash().as_array();
         let bundle = CodeBundle::new(
@@ -881,7 +959,7 @@ mod fee_state_tests {
                 wallet_id: 42,
                 primary_key: [2; 1312],
                 rescue_key: [3; 32],
-                policy: RescuePolicy::Required,
+                policy,
                 fee_tree_id: [4; 32],
                 fee_public_key: key,
                 epoch0: 1000,
@@ -900,6 +978,7 @@ mod fee_state_tests {
         .unwrap();
         let root = account.serialize().unwrap();
         let state = ProvenAccountState {
+            config_params: BTreeMap::new(),
             root: root.clone(),
             account,
             evidence: ProvenGetterResults {
@@ -982,6 +1061,94 @@ mod fee_state_tests {
         assert!(wallet.account.set_data(w.into_cell().unwrap()));
         refresh_proof_data(wallet);
     }
+    #[test]
+    fn primary_request_requires_current_proven_policy() {
+        use crate::wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole};
+        use crate::wallet_v5r2_policy::tests::policy;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        let (g, p) = fixture_with_policy(RescuePolicy::Ready);
+        let mut w = account_proof(p, g.wallet_init());
+        let (_, p) = fixture();
+        let m = account_proof(p, g.module_init());
+        set_wallet_counters(&g, &mut w, 7, 9, 10, 11);
+        let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
+        assert!(view.primary_locally_enabled());
+        match view.primary_request(&w, 4620, 4700, Cell::default()) {
+            Ok(_) => panic!("accepted missing policy"),
+            Err(e) => assert!(e.to_string().contains("missing"), "{e}"),
+        }
+        w.config_params.insert(48, policy([1; 32], 0, &[], true));
+        let req = view.primary_request(&w, 4620, 4700, Cell::default()).unwrap();
+        let expected = AuthRequest::new(
+            AuthBinding {
+                global_id: 42,
+                network: [1; 32],
+                account: *g.wallet_init().repr_hash().as_array(),
+                module: *g.module_init().repr_hash().as_array(),
+                epoch: 9,
+                nonce: 10,
+                valid_until: 4700,
+            },
+            AuthRole::Primary,
+            AuthAction::Execute { actions: Cell::default() },
+            4600,
+        )
+        .unwrap();
+        assert_eq!(req.digest(), expected.digest(), "primary request binding mismatch");
+        w.evidence.checkpoint.seqno += 1;
+        match view.primary_request(&w, 4620, 4700, Cell::default()) {
+            Ok(_) => panic!("accepted policy at another checkpoint"),
+            Err(e) => assert!(e.to_string().contains("checkpoint mismatch"), "{e}"),
+        }
+        w.evidence.checkpoint.seqno -= 1;
+        w.config_params.insert(48, policy([1; 32], 2, &[], true));
+        assert!(
+            view.primary_request(&w, 4620, 4700, Cell::default()).is_err(),
+            "accepted retired primary"
+        );
+        assert!(
+            view.rescue_request(4620, 4700, AuthAction::LockPrimary).is_ok(),
+            "retirement blocked rescue"
+        );
+        w.config_params.insert(48, policy([1; 32], 0, &[], true));
+        for (seq, nonce) in [(0, u64::MAX), (u32::MAX, 0)] {
+            set_wallet_counters(&g, &mut w, seq, 9, nonce, 0);
+            let exhausted = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
+            assert!(
+                exhausted.primary_request(&w, 4620, 4700, Cell::default()).is_err(),
+                "accepted exhausted primary counter"
+            );
+        }
+        let (required, rw, rm) = wallet_pair();
+        let required = ProvenWalletState::bind_initial(&rw, &rm, &required, 4620, 30).unwrap();
+        assert!(
+            required.primary_request(&w, 4620, 4700, Cell::default()).is_err(),
+            "accepted REQUIRED primary"
+        );
+    }
+
+    #[test]
+    fn config_response_cells_are_bound_to_requested_indices_and_hashes() {
+        let cell = Cell::default();
+        let make = || ConfigParamOutput {
+            index: 48,
+            cell_hash: cell.repr_hash().to_hex_string(),
+            boc: base64::engine::general_purpose::STANDARD
+                .encode(chain_block::write_boc(&cell).unwrap()),
+        };
+        assert_eq!(
+            checked_config_params(&[make()], &[48]).unwrap()[&48].repr_hash(),
+            cell.repr_hash()
+        );
+        assert!(checked_config_params(&[], &[48]).is_err(), "accepted missing config output");
+        let mut wrong = make();
+        wrong.index = 47;
+        assert!(checked_config_params(&[wrong], &[48]).is_err(), "accepted wrong config index");
+        let mut wrong = make();
+        wrong.cell_hash = "ab".repeat(32);
+        assert!(checked_config_params(&[wrong], &[48]).is_err(), "accepted wrong config hash");
+    }
+
     #[test]
     fn proven_wallet_snapshot_binds_rescue_request() {
         use crate::wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole};

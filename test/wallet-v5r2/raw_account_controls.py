@@ -47,7 +47,7 @@ def main():
     results = {}
     try:
         code, log = test("baseline", "raw_")
-        assert code == 0 and "8 passed" in log, log[-3000:]
+        assert code == 0 and "10 passed" in log, log[-3000:]
         for guard, witness, mutation in cases:
             marker = f'"raw account {guard} mismatch"'
             assert source.count(marker) == 1
@@ -63,9 +63,9 @@ def main():
     finally:
         SOURCE.write_text(source)
         code, log = test("restored", "raw_")
-        assert code == 0 and "8 passed" in log, log[-3000:]
+        assert code == 0 and "10 passed" in log, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("5 raw-account binding deletion controls detected; restored 8 tests pass")
+    print("5 raw-account binding deletion controls detected; restored 10 tests pass")
 
 
 if __name__ == "__main__":

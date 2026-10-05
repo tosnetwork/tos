@@ -1048,13 +1048,41 @@ configure checks epoch and seqno; lock/migration check epoch without blocking
 recovery merely because execution counters are exhausted. Action validation,
 POP/delivery and actual signing are not implied by constructing this request.
 
-`primary_locally_enabled` explicitly reports local eligibility only. There is
-no proven PRIMARY request constructor yet: authenticated ConfigParam 48 policy
-must also be bound and checked before that path can be offered. This remains a
-release gate rather than treating absent global policy as approval.
+`primary_locally_enabled` explicitly reports local eligibility only. The
+`primary_request` path below additionally requires authenticated ConfigParam 48
+at the same wallet checkpoint; local eligibility alone never grants permission.
 
 Five synthetic-account tests exercise current counters, stale/mismatched proofs,
 installed successor state, PQ-only entry and independent counter exhaustion.
 Eleven semantic guard controls require erroneous acceptance to be detected.
 These are SDK binding tests, not live V5R2 finality/receipt evidence. The existing
 raw-account proof suite separately covers the cryptographic account-read boundary.
+
+
+### Proven ConfigParam 48 and PRIMARY request construction
+
+`read_account_with_config` asks the existing native verifier to prove an account
+and explicit configuration indices at one target block. The Rust response path
+requires the exact requested count/order, binds each returned BOC to its cell
+hash and stores the cells privately with the opaque account result. Duplicate,
+out-of-range or excessive indices refuse before invocation; a missing parameter
+refuses rather than becoming a default policy. Existing getter/raw-account reads
+continue to request no configuration parameters.
+
+`ProvenWalletState::primary_request` requires local READY/non-retired status,
+current time/deadline/counters, and ConfigParam 48 proven at exactly the wallet's
+checkpoint and masterchain time. The policy decoder checks the v1 tag, network,
+known retirement mask, specification hash, exact optional single-suite schedule,
+positive deadline and current retirement decision. It builds only a PRIMARY
+execute request from the proven epoch/primary nonce; it does not approve actions
+or invoke a signer. Retirement during later delivery can still reject the request
+on chain. SLH request construction remains independent of global primary policy.
+
+Recorded real proof tests read an account plus ConfigParam 8 and reject a
+configuration proof from another block. This proves the generic account/config
+read path, not real-network deployment of ConfigParam 48. Synthetic policy and
+wallet tests cover ConfigParam 48 semantics, missing/retired/wrong-checkpoint
+policy, REQUIRED status, nonce/seqno exhaustion and rescue independence. Twelve
+semantic controls cover response binding and PRIMARY policy gates. Live V5R2
+proof/receipt integration, production signing/custody, default-credit admission
+and independent/final-head acceptance remain open.

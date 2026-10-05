@@ -7,6 +7,7 @@ use crate::wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis};
 use chain_block::{Cell, CellType, SliceData};
 
 pub struct ProvenWalletState {
+    checkpoint: crate::MasterchainCheckpoint,
     global_id: i32,
     network: [u8; 32],
     wallet: [u8; 32],
@@ -162,6 +163,7 @@ impl ProvenWalletState {
         md.move_by(8 + 256)?;
         let policy = md.get_next_byte()?;
         let result = Self {
+            checkpoint: w.checkpoint.clone(),
             global_id,
             network,
             wallet: wallet_hash,
@@ -216,9 +218,51 @@ impl ProvenWalletState {
         self.policy == 1 && self.retired & 2 == 0
     }
 
+    /// Construct a PRIMARY execute request only with ConfigParam 48 proven at
+    /// this exact wallet checkpoint. An old or absent policy never authorizes it.
+    /// This still does not approve actions or invoke a signer.
+    pub fn primary_request(
+        &self,
+        policy_source: &ProvenAccountState,
+        now: u32,
+        valid_until: u32,
+        actions: Cell,
+    ) -> anyhow::Result<AuthRequest> {
+        self.fresh(now)?;
+        anyhow::ensure!(valid_until > now, "primary deadline expired by local clock");
+        anyhow::ensure!(self.primary_locally_enabled(), "wallet locally requires rescue");
+        anyhow::ensure!(
+            policy_source.evidence().checkpoint == self.checkpoint
+                && policy_source.evidence().block_gen_utime == self.master_time,
+            "retirement policy checkpoint mismatch"
+        );
+        let policy = policy_source
+            .config_param(48)
+            .ok_or_else(|| anyhow::anyhow!("proven ConfigParam 48 is missing"))?;
+        crate::wallet_v5r2_policy::require_primary(policy, &self.network, now)?;
+        anyhow::ensure!(
+            self.primary_nonce < u64::MAX && self.seqno < u32::MAX,
+            "primary execute counter exhausted"
+        );
+        AuthRequest::new(
+            AuthBinding {
+                global_id: self.global_id,
+                network: self.network,
+                account: self.wallet,
+                module: self.module,
+                epoch: self.epoch,
+                nonce: self.primary_nonce,
+                valid_until,
+            },
+            AuthRole::Primary,
+            AuthAction::Execute { actions },
+            self.wallet_time,
+        )
+    }
+
     /// Build the SLH request from current counters. This does not approve the
     /// requested action, validate migration delivery/POP, or invoke a signer.
-    /// PRIMARY construction awaits an authenticated global-retirement policy.
+    /// This rescue path does not depend on the global primary-retirement policy.
     pub fn rescue_request(
         &self,
         now: u32,

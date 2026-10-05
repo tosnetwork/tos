@@ -1,0 +1,38 @@
+{
+  "source_base": "41c982364877296444a09d36f85ff0e15a716b4b",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "19d65060b7f522ca6094441ade9cdddb6e5adc43ffb7ac36b44b1e26fcecb076",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_policy.rs": "85fe11b34555f58281c43ea7406f50191d0676cab70485ffc675615f87960085",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs": "ced6c7bec83cad710f9c8bad9803cebbf3ba0a629a456f8c838b0747a99c765b",
+    "tosctl/src/node-control/contracts/tests/proven_pool_snapshot.rs": "561aa0345841b33a31baf6fd389029c60df38ee56e845c89dc5c0784791c6fd5",
+    "test/wallet-v5r2/primary_policy_controls.py": "924582ce8f4bd9cc4d4605c8531067cc7ecf6faa6fe652d92b80dbb1da2082fd",
+    "test/wallet-v5r2/raw_account_controls.py": "f792a0eedda5db9d9d59e74d0b74a196e2f9579d40d942b13a815f408de29633"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-policy",
+  "retain_until": "2027-01-06",
+  "manifest_sha256": "c8237af4ccf4a8d1566592d1c0c2a82d002e45f056a20c8e5d6a88e1d5f2bf2d",
+  "results": {
+    "fee_regression_passed": 31,
+    "primary_regression_passed": 4,
+    "proof_regression_passed": 31,
+    "raw_tests_passed": 10,
+    "new_semantic_controls": 12,
+    "raw_binding_controls": 5,
+    "all_final_commands_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/primary_policy_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-policy/controls",
+    "python3 test/wallet-v5r2/raw_account_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-policy/raw-controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib fee_",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib primary_",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --test proven_pool_snapshot -- --skip live --skip a_current_code_pool --skip a_pool_whose_code_is_a_library --skip a_library_pool --skip substituted_library --skip a_library_proof"
+  ],
+  "limits": [
+    "Recorded account plus ConfigParam 8 proves generic account/config read path, not real V5R2 ConfigParam 48 deployment.",
+    "ConfigParam 48 policy semantics and wallet authorization bindings use synthetic fixtures.",
+    "Selected macOS regression omits live-clock and synthetic library/pool suites; Linux CI still required.",
+    "Production signer/custody, action approval, live receipts, fee admission and independent review remain open.",
+    "Test filters overlap; their counts are not a unique total."
+  ]
+}
