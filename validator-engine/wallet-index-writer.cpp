@@ -780,6 +780,8 @@ td::optional<IndexContext> context_for(const td::Bits256& address, uint64_t min_
 }
 
 std::atomic<uint64_t> g_pending_block_limit{kMaxPendingTokenBlocks};
+// Tests only: block commits still to fail.
+std::atomic<int> g_commit_faults{0};
 
 // Archive blocks the index may still need to read: those marked but whose
 // candidates it has not extracted. The floor handed to archive pruning sits
@@ -792,27 +794,57 @@ uint32_t floor_for(uint32_t gen_utime) {
   return gen_utime > kArchiveFloorMargin ? gen_utime - kArchiveFloorMargin : 0;
 }
 
-// Lower the floor for newly marked blocks (the recorder, after their marks).
-void lower_archive_floor(const std::vector<MarkedBlock>& blocks) {
-  std::lock_guard<std::mutex> guard(g_floor_mutex);
-  auto floor = tos::validator::g_archive_gc_floor.load();
-  for (const auto& block : blocks) {
-    floor = std::min(floor, floor_for(block.gen_utime));
+// Blocks handed over but not yet durably marked: the floor values that keep
+// them in the archive until their markers can. Guarded by g_inflight_mutex,
+// which nothing holds across I/O, so the block-apply hook may take it.
+std::mutex g_inflight_mutex;
+std::multiset<uint32_t> g_inflight_floors;
+
+void lower_floor_atomically(uint32_t value) {
+  auto current = tos::validator::g_archive_gc_floor.load();
+  while (value < current && !tos::validator::g_archive_gc_floor.compare_exchange_weak(current, value)) {
   }
-  tos::validator::g_archive_gc_floor.store(floor);
 }
 
-// Recompute the floor from the durable markers.
+// The block-apply hook, before it hands a block over: from here on archive
+// pruning keeps the block. No I/O; the lock is held for a set insertion.
+void protect_handed_over_block(uint32_t gen_utime) {
+  std::lock_guard<std::mutex> guard(g_inflight_mutex);
+  auto value = floor_for(gen_utime);
+  g_inflight_floors.insert(value);
+  lower_floor_atomically(value);
+}
+
+// The recorder, once the blocks' markers are durable: the markers keep them
+// from now on. Under g_floor_mutex, so a recomputation either reads the
+// markers or still counts these blocks as handed over.
+void release_handed_over_blocks(const std::vector<MarkedBlock>& blocks) {
+  std::lock_guard<std::mutex> floor_guard(g_floor_mutex);
+  std::lock_guard<std::mutex> guard(g_inflight_mutex);
+  for (const auto& block : blocks) {
+    auto it = g_inflight_floors.find(floor_for(block.gen_utime));
+    if (it != g_inflight_floors.end()) {
+      g_inflight_floors.erase(it);
+    }
+  }
+}
+
+// Recompute the floor from the durable markers and the blocks handed over
+// but not yet marked.
 void publish_archive_floor(WalletIndexDb& db) {
-  std::lock_guard<std::mutex> guard(g_floor_mutex);
+  std::lock_guard<std::mutex> floor_guard(g_floor_mutex);
   auto floor = db.unextracted_block_floor();
   if (floor.is_error()) {
     // Keep what is published: a floor too low only keeps data longer.
     LOG(WARNING) << "wc0-index: could not read the archive floor: " << floor.error().message();
     return;
   }
-  tos::validator::g_archive_gc_floor.store(floor.ok() ? floor_for(floor.ok().value())
-                                                      : tos::validator::kNoArchiveGcFloor);
+  auto value = floor.ok() ? floor_for(floor.ok().value()) : tos::validator::kNoArchiveGcFloor;
+  std::lock_guard<std::mutex> guard(g_inflight_mutex);
+  if (!g_inflight_floors.empty()) {
+    value = std::min(value, *g_inflight_floors.begin());
+  }
+  tos::validator::g_archive_gc_floor.store(value);
 }
 
 // After a block's candidates were extracted: when it may have been the one
@@ -950,12 +982,19 @@ bool resume_pending_block_locked(WalletIndexDb* db, const tos::BlockIdExt& block
     size_t take = std::min(pending.remaining.size(), kMaxTokenCandidatesPerBlock);
     bool moved = false;
     WalletIndexVerificationBudget budget;
-    for (size_t i = 0; i < pending.remaining.size(); ++i) {
+    // The candidates not examined this pass go first; every examined one that
+    // is still undecided, including one whose shard's state cannot be had
+    // now, goes to the back. The record rotates, so no prefix of it can keep
+    // the rest from being examined.
+    for (size_t i = take; i < pending.remaining.size(); ++i) {
+      rest.remaining.push_back(pending.remaining[i]);
+    }
+    for (size_t i = 0; i < take; ++i) {
       const auto& entry = pending.remaining[i];
       uint64_t end_lt = 0;
-      StateAccounts* state = i < take ? states.state_for(entry.candidate.address, end_lt) : nullptr;
+      StateAccounts* state = states.state_for(entry.candidate.address, end_lt);
       if (state == nullptr) {
-        rest.remaining.push_back(entry);
+        later.push_back(entry);
         continue;
       }
       budget.begin_candidate(take - i);
@@ -1270,6 +1309,12 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
     db->abort_batch();
     return Wc0IndexResult::NotDone;
   }
+  if (g_commit_faults.load() > 0) {
+    g_commit_faults.fetch_sub(1);
+    LOG(WARNING) << "wc0-index: injected commit fault for block seqno=" << seqno;
+    db->abort_batch();
+    return Wc0IndexResult::NotDone;
+  }
   auto s = db->commit_batch();
   if (s.is_error()) {
     LOG(WARNING) << "wc0-index: commit failed for block seqno=" << seqno << ": " << s.message();
@@ -1554,9 +1599,8 @@ bool mark_queued_blocks(const std::vector<MarkedBlock>& block_ids) {
                << " queued block(s) for recovery, will retry: " << status.message();
     return false;
   }
-  // Marked, so recoverable from the archive: keep the archive from pruning
-  // them until their candidates are extracted.
-  lower_archive_floor(block_ids);
+  // Their markers keep them in the archive from now on.
+  release_handed_over_blocks(block_ids);
   return true;
 }
 
@@ -1578,52 +1622,80 @@ bool persist_index_degraded() {
 
 // Blocks marked by an earlier run whose candidates were never extracted,
 // gathered when the worker starts and indexed by it before anything newer.
+struct RecoveryEntry {
+  MarkedBlock block;
+  std::chrono::milliseconds pause{0};
+  std::chrono::steady_clock::time_point not_before{};
+};
 std::mutex g_recovery_mutex;
-std::deque<MarkedBlock> g_recovery;  // guarded by g_recovery_mutex
+std::deque<RecoveryEntry> g_recovery;  // guarded by g_recovery_mutex
 
 // Rotation points of the background passes, so that one shard or block that
 // cannot progress does not hold up the others. Worker thread only.
 size_t g_drain_bucket = 0;
 td::optional<tos::BlockIdExt> g_pending_after;
 
-// Index the next recovered block, read back from the archive (which keeps it
-// while it is marked). Without its state its candidates are deferred, so the
-// state is not needed. Returns whether a block was taken: false when none is
-// left, when the read failed (the block goes to the back and keeps its mark),
-// or when the index is at its bound of unfinished blocks.
+// After a failed attempt a recovered block waits before the next one, at most
+// this long; it is never given up while it stays marked.
+constexpr auto kRecoveryFirstPause = std::chrono::milliseconds(100);
+constexpr auto kRecoveryLongestPause = std::chrono::seconds(60);
+
+// Index the next recovered block that is due, read back from the archive
+// (which keeps it while it is marked) by a block-only read: its candidates
+// are verified later against newer states, so its own state is never waited
+// for. A block whose read or indexing fails goes to the back with a growing
+// pause, so the others go on. Returns whether a block was indexed; at_cap
+// tells when the index is at its bound of unfinished blocks.
 bool recover_one_marked_block(bool& at_cap) {
   at_cap = false;
   auto* db = wallet_index_db();
-  MarkedBlock block;
+  RecoveryEntry entry;
   {
     std::lock_guard<std::mutex> guard(g_recovery_mutex);
-    if (g_recovery.empty() || db == nullptr) {
+    if (db == nullptr) {
       return false;
     }
-    block = g_recovery.front();
-    g_recovery.pop_front();
+    auto now = std::chrono::steady_clock::now();
+    auto due =
+        std::find_if(g_recovery.begin(), g_recovery.end(), [&](const RecoveryEntry& e) { return e.not_before <= now; });
+    if (due == g_recovery.end()) {
+      return false;
+    }
+    entry = *due;
+    g_recovery.erase(due);
   }
-  auto marked = db->has_incomplete_block(block.id);
+  auto retry_later = [&](const char* what) {
+    LOG(WARNING) << "wc0-index: recovery: block " << entry.block.id.id.to_str() << " " << what
+                 << "; it stays marked and is tried again";
+    entry.pause =
+        std::min(entry.pause * 2, std::chrono::duration_cast<std::chrono::milliseconds>(kRecoveryLongestPause));
+    entry.not_before = std::chrono::steady_clock::now() + entry.pause;
+    std::lock_guard<std::mutex> guard(g_recovery_mutex);
+    g_recovery.push_back(entry);
+  };
+  auto marked = db->has_incomplete_block(entry.block.id);
   if (marked.is_ok() && !marked.ok()) {
     return true;  // finished meanwhile
   }
-  auto fetched = fetch_block(block.id, true);
+  auto fetched = fetch_block(entry.block.id, false);
   if (fetched.is_error() || fetched.ok().block_root.is_null()) {
-    LOG(WARNING) << "wc0-index: recovery: block " << block.id.id.to_str() << " could not be read now; it stays "
-                 << "marked and is tried again: "
-                 << (fetched.is_error() ? fetched.error().message().str() : std::string("no block data"));
-    std::lock_guard<std::mutex> guard(g_recovery_mutex);
-    g_recovery.push_back(block);
+    retry_later("could not be read now");
     return false;
   }
-  auto data = fetched.move_as_ok();
-  if (wc0_index_block(data.block_root, data.state_root, block.id) == Wc0IndexResult::AtPendingCap) {
-    at_cap = true;
-    std::lock_guard<std::mutex> guard(g_recovery_mutex);
-    g_recovery.push_front(block);
-    return false;
+  switch (wc0_index_block(fetched.ok().block_root, td::Ref<vm::Cell>{}, entry.block.id)) {
+    case Wc0IndexResult::Done:
+      return true;
+    case Wc0IndexResult::AtPendingCap: {
+      at_cap = true;
+      std::lock_guard<std::mutex> guard(g_recovery_mutex);
+      g_recovery.push_front(entry);
+      return false;
+    }
+    case Wc0IndexResult::NotDone:
+      retry_later("could not be indexed now");
+      return false;
   }
-  return true;
+  return false;
 }
 
 // Background work while no block waits for the worker, bounded per call:
@@ -1714,7 +1786,9 @@ void index_queued_block(BlockToIndex& block) {
       // block-application path. The block keeps the recovery mark it was
       // given until it is indexed, so a read that fails or never answers
       // leaves it for startup recovery.
-      auto fetched = fetch_block(block.block_id, block.state_root.is_null());
+      // Block data only: a missing state is never waited for; the block's
+      // candidates then wait for a newer state.
+      auto fetched = fetch_block(block.block_id, false);
       if (fetched.is_error()) {
         LOG(WARNING) << "wc0-index: block " << block.block_id.id.to_str()
                      << " left marked for recovery: its data could not be read: " << fetched.error().message();
@@ -1727,9 +1801,6 @@ void index_queued_block(BlockToIndex& block) {
         return;
       }
       block.block_root = std::move(data.block_root);
-      if (block.state_root.is_null()) {
-        block.state_root = std::move(data.state_root);
-      }
     }
     index_with_admission(std::move(block.block_root), std::move(block.state_root), block.block_id);
   } catch (...) {
@@ -1756,6 +1827,10 @@ void set_wc0_index_state_fetcher(Wc0IndexStateFetcher fetcher) {
 
 void set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds pause) {
   g_parked_retry_pause_ms.store(pause.count());
+}
+
+void set_wc0_index_commit_faults_for_testing(int count) {
+  g_commit_faults.store(count);
 }
 
 void set_wc0_index_pending_block_limit_for_testing(uint64_t limit) {
@@ -1810,11 +1885,11 @@ bool start_wc0_index_worker(bool paused) {
   {
     // Blocks of earlier runs whose candidates were never extracted: the
     // worker indexes them first, reading them back from the archive.
-    std::deque<MarkedBlock> recovery;
+    std::deque<RecoveryEntry> recovery;
     auto collected = db->for_each_marked_block([&](const MarkedBlock& block) -> td::Status {
       TRY_RESULT(pending, db->get_pending_block(block.id));
       if (!pending) {
-        recovery.push_back(block);
+        recovery.push_back(RecoveryEntry{block, kRecoveryFirstPause / 2, {}});
       }
       return td::Status::OK();
     });
@@ -1922,6 +1997,10 @@ void stop_wc0_index_worker() {
     std::lock_guard<std::mutex> recovery_guard(g_recovery_mutex);
     g_recovery.clear();
   }
+  {
+    std::lock_guard<std::mutex> guard(g_inflight_mutex);
+    g_inflight_floors.clear();
+  }
   tos::validator::g_archive_gc_floor.store(tos::validator::kNoArchiveGcFloor);
   g_late_blocks.store(0);
   g_run_cleared.store(false);
@@ -1945,9 +2024,11 @@ void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> sta
     // recorded; the recorder marks it, and the run is not recorded as
     // finished while such a block exists.
     g_late_blocks.fetch_add(1);
+    protect_handed_over_block(gen_utime);
     g_producer_queue->record(MarkedBlock{block_id, gen_utime});
     return;
   }
+  protect_handed_over_block(gen_utime);
   if (!g_producer_queue->push(MarkedBlock{block_id, gen_utime},
                               BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
     g_dropped_blocks.fetch_add(1);

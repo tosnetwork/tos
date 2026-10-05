@@ -48,5 +48,25 @@ inline std::vector<size_t> archive_packages_to_delete(const std::vector<double>&
   return out;
 }
 
+// Delete the packages pruning selects, re-reading the floor immediately
+// before each deletion: a reader may lower it after the selection (it does so
+// before it hands over the block it then needs), and a package it now needs
+// is left alone. `read_floor` returns the current floor; `remove` deletes the
+// package at an index. Returns how many packages were deleted.
+template <class ReadFloor, class Remove>
+size_t prune_archive_packages(const std::vector<double>& first_ts, double gc_ts, double archive_ttl,
+                              ReadFloor&& read_floor, Remove&& remove) {
+  size_t removed = 0;
+  for (auto index : archive_packages_to_delete(first_ts, gc_ts, archive_ttl, read_floor())) {
+    auto still = archive_packages_to_delete(first_ts, gc_ts, archive_ttl, read_floor());
+    if (std::find(still.begin(), still.end(), index) == still.end()) {
+      continue;
+    }
+    remove(index);
+    ++removed;
+  }
+  return removed;
+}
+
 }  // namespace validator
 }  // namespace tos

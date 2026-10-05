@@ -1182,7 +1182,7 @@ TEST(WalletIndex, ARenominatedCandidateKeepsItsAttemptsAndItsSlot) {
   auto target = token_candidates(5000, 1)[0];
   {
     auto raw = td::RocksDb::open(path).move_as_ok();
-    std::string value(34, '\0');
+    std::string value(42, '\0');  // lt 0
     value[0] = static_cast<char>(target.kind);
     std::memcpy(&value[1], target.address.data(), 32);
     value[33] = 2;
@@ -1223,7 +1223,7 @@ TEST(WalletIndex, MalformedBacklogEntriesAreDroppedCountedAndDoNotBlockTheirCand
   auto unreadable = token_candidates(1, 1)[0];  // value truncated: its candidate cannot be read back
   {
     auto raw = td::RocksDb::open(path).move_as_ok();
-    std::string value(34, '\0');
+    std::string value(42, '\0');  // lt 0
     value[0] = static_cast<char>(readable.kind);
     std::memcpy(&value[1], readable.address.data(), 32);
     value[33] = static_cast<char>(0xff);
@@ -1267,7 +1267,7 @@ void write_broken_entry_beside_a_sibling(const std::string &path, const TokenCan
   auto broken_queue = raw_queue_key(0, 0);
   raw.set(broken_queue, std::string(5, '\x01')).ensure();
   raw.set(raw_index_key(broken), broken_queue.substr(1)).ensure();
-  std::string value(34, '\0');
+  std::string value(42, '\0');  // lt 0
   value[0] = static_cast<char>(sibling.kind);
   std::memcpy(&value[1], sibling.address.data(), 32);
   auto sibling_queue = raw_queue_key(0, 1);
@@ -3174,11 +3174,10 @@ struct FakeArchive {
     for (auto &entry : order) {
       first_ts.push_back(entry.first);
     }
-    auto doomed = tos::validator::archive_packages_to_delete(first_ts, gc_ts, ttl, floor);
-    for (auto index : doomed) {
-      blocks.erase(order[index].second);
-    }
-    return doomed.size();
+    (void)floor;
+    return tos::validator::prune_archive_packages(
+        first_ts, gc_ts, ttl, [] { return tos::validator::g_archive_gc_floor.load(); },
+        [&](size_t index) { blocks.erase(order[index].second); });
   }
   bool has(const tos::BlockIdExt &id) {
     std::lock_guard<std::mutex> lock(mutex);
@@ -3604,6 +3603,253 @@ TEST(WalletIndexWorker, BlocksWaitingAtTheBoundSurvivePruning) {
         std::chrono::seconds(120)));
   }
   tos_wallet_index::set_wc0_index_pending_block_limit_for_testing(tos_wallet_index::kMaxPendingTokenBlocks);
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// A floor lowered after pruning selected its packages still saves a package
+// it now covers: each deletion re-reads the floor.
+TEST(WalletIndex, ArchivePruningRereadsTheFloorBeforeEachDeletion) {
+  using tos::validator::kNoArchiveGcFloor;
+  std::vector<double> first_ts = {100, 200, 300, 400, 500};
+  int reads = 0;
+  std::vector<size_t> deleted;
+  auto removed = tos::validator::prune_archive_packages(
+      first_ts, 550, 100,
+      [&] {
+        // The selection sees no floor; a reader lowers it right after.
+        return reads++ == 0 ? kNoArchiveGcFloor : 250u;
+      },
+      [&](size_t index) { deleted.push_back(index); });
+  ASSERT_EQ(removed, static_cast<size_t>(1));
+  ASSERT_EQ(deleted, (std::vector<size_t>{0}));
+}
+
+namespace {
+
+// An archive whose block reads answer, but whose state reads never do.
+struct ArchiveWithoutStates {
+  FakeArchive *archive;
+  std::mutex mutex;
+  std::vector<std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)>> held;
+  std::atomic<int> state_requests{0};
+  tos_wallet_index::Wc0IndexBlockFetcher fetcher() {
+    return [this](const tos::BlockIdExt &id, bool need_state,
+                  std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
+      if (need_state) {
+        state_requests++;
+        std::lock_guard<std::mutex> lock(mutex);
+        held.push_back(std::move(done));
+        return;
+      }
+      archive->fetcher()(id, false, std::move(done));
+    };
+  }
+};
+
+}  // namespace
+
+// A block applied while the recorder's write is stalled is already kept by
+// the archive: pruning in that window leaves it, and once the recorder goes
+// on, the worker reads it back and indexes it.
+TEST(WalletIndexWorker, ABlockIsKeptByTheArchiveFromTheMomentItIsHandedOver) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-handover-floor");
+  td::rmrf(path).ignore();
+  const uint32_t base = 3000000;
+  auto block = overflowing_block(70, 5, 0, 5000);
+  FakeArchive archive;
+  archive.add(worker_block_id(68), wallet_index_fixture::block(68, 3000, base - 200000, {}), base - 200000);
+  archive.add(worker_block_id(69), wallet_index_fixture::block(69, 4000, base - 100000, {}), base - 100000);
+  archive.add(block.id, block.root, base);
+  // A later package, so the block's is not the newest one pruning reaches.
+  archive.add(worker_block_id(71), wallet_index_fixture::block(71, 5100, base + 10, {}), base + 10);
+  NewestState newest;
+  newest.set(70, 5000, block.state);
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(true);
+    // Handed over by id alone: the worker must read it from the archive.
+    tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, block.state, block.id, base);
+    // Not marked yet, and pruning runs.
+    ASSERT_TRUE(!db.has_incomplete_block(block.id).move_as_ok());
+    archive.prune(base + 1000000.0, 1000.0, 0);
+    ASSERT_TRUE(archive.has(block.id));
+    ASSERT_TRUE(!archive.has(worker_block_id(68)));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
+    ASSERT_TRUE(eventually([&] {
+      return processed_count(db, block) == block.wallets.size() && !db.has_incomplete_block(block.id).move_as_ok();
+    }));
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// Recovery reads a marked block without its state, and does not wait for a
+// state that never comes: newer states verify its candidates.
+TEST(WalletIndexWorker, RecoveryNeverWaitsForTheBlocksOwnState) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-recovery-block-only");
+  td::rmrf(path).ignore();
+  auto block = overflowing_block(71, 5, 0, 5000);
+  FakeArchive archive;
+  archive.add(block.id, block.root, 1000);
+  ArchiveWithoutStates reads;
+  reads.archive = &archive;
+  NewestState newest;
+  newest.set(90, 9000, wallet_index_fixture::shard_state({}));
+  {
+    auto &db = install_db(path);
+    db.mark_blocks_incomplete(std::vector<tos_wallet_index::MarkedBlock>{{block.id, 1000}}).ensure();
+    tos_wallet_index::set_wc0_index_fetch_timeout_for_testing(std::chrono::milliseconds(500));
+    tos_wallet_index::set_wc0_index_block_fetcher(reads.fetcher());
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually([&] {
+      return processed_count(db, block) == block.wallets.size() && !db.has_incomplete_block(block.id).move_as_ok();
+    }));
+    ASSERT_EQ(reads.state_requests.load(), 0);
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// A recovered block whose indexing fails once is tried again in the same run,
+// after a pause, while other recovered blocks go on.
+TEST(WalletIndexWorker, ARecoveredBlockThatFailsOnceIsRetried) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-recovery-retry");
+  td::rmrf(path).ignore();
+  auto first = overflowing_block(72, 5, 0, 5000);
+  auto second = overflowing_block(73, 5, 100, 5001);
+  FakeArchive archive;
+  archive.add(first.id, first.root, 1000);
+  archive.add(second.id, second.root, 1001);
+  NewestState newest;
+  newest.set(90, 9000, wallet_index_fixture::shard_state({}));
+  {
+    auto &db = install_db(path);
+    db.mark_blocks_incomplete(std::vector<tos_wallet_index::MarkedBlock>{{first.id, 1000}, {second.id, 1001}}).ensure();
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    tos_wallet_index::set_wc0_index_commit_faults_for_testing(1);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually([&] {
+      return processed_count(db, first) == first.wallets.size() &&
+             processed_count(db, second) == second.wallets.size() && !db.has_incomplete_block(first.id).move_as_ok() &&
+             !db.has_incomplete_block(second.id).move_as_ok();
+    }));
+  }
+  tos_wallet_index::set_wc0_index_commit_faults_for_testing(0);
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// One unfinished block holds more candidates than one pass examines, and the
+// first pass's worth belong to a shard whose state cannot be had. The rest
+// are still verified, across a restart and with no new nomination.
+TEST(WalletIndexWorker, AnUnavailablePrefixDoesNotStarveTheRestOfABlock) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-pending-rotation");
+  td::rmrf(path).ignore();
+  auto id = shard_block_id(kLeftShard, 80);
+  std::vector<td::Bits256> stuck, reachable;
+  for (uint32_t i = 0; i < kMaxTokenCandidatesPerBlock; ++i) {
+    stuck.push_back(token_address(i, 0x01));
+  }
+  for (uint32_t i = 0; i < 8; ++i) {
+    reachable.push_back(token_address(5000 + i, 0x81));
+  }
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::WalletIndexDb::PendingBlock pending;
+    pending.end_lt = 5000;
+    for (auto &a : stuck) {
+      pending.remaining.push_back({{TokenKind::Jetton, a}, 0, 5000});
+    }
+    for (auto &a : reachable) {
+      pending.remaining.push_back({{TokenKind::Jetton, a}, 0, 5000});
+    }
+    db.begin_batch().ensure();
+    db.put_pending_block(id, pending).ensure();
+    db.commit_batch().ensure();
+    db.put_incomplete_block(id, 1000).ensure();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  HalvesState newest;  // the left half's state never comes
+  auto reachable_done = [&](tos_wallet_index::WalletIndexDb &db) {
+    for (auto &a : reachable) {
+      if (!db.has_jetton_wallet_record(a).move_as_ok()) {
+        return false;
+      }
+    }
+    return true;
+  };
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually([&] { return newest.calls.load() >= 3; }));
+    ASSERT_TRUE(!reachable_done(db));
+    ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
+    tos_wallet_index::stop_wc0_index_worker();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  newest.set(true, wallet_index_fixture::shard_state({}), 6000);
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually([&] { return reachable_done(db); }, std::chrono::seconds(30)));
+    auto left = db.get_pending_block(id).move_as_ok();
+    ASSERT_TRUE(static_cast<bool>(left));
+    ASSERT_EQ(left.value().remaining.size(), stuck.size());
+    ASSERT_TRUE(!is_complete(db));
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// While a handed-over block waits for its marker, the index recomputes its
+// floor (another block is extracted meanwhile). The recomputation still
+// counts the waiting block, so pruning keeps it.
+TEST(WalletIndexWorker, RecomputingTheFloorKeepsBlocksNotYetMarked) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-floor-recompute");
+  td::rmrf(path).ignore();
+  const uint32_t base = 4000000;
+  auto earlier = overflowing_block(74, 3, 0, 4000);
+  auto waiting = overflowing_block(75, 3, 100, 5000);
+  FakeArchive archive;
+  archive.add(worker_block_id(73), wallet_index_fixture::block(73, 3000, base - 300000, {}), base - 300000);
+  archive.add(earlier.id, earlier.root, base - 200000);
+  archive.add(waiting.id, waiting.root, base);
+  archive.add(worker_block_id(76), wallet_index_fixture::block(76, 5100, base + 10, {}), base + 10);
+  NewestState newest;
+  newest.set(90, 9000, wallet_index_fixture::shard_state({}));
+  {
+    auto &db = install_db(path);
+    // Left unfinished by an earlier run.
+    db.mark_blocks_incomplete(std::vector<tos_wallet_index::MarkedBlock>{{earlier.id, base - 200000}}).ensure();
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(true);
+    tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, waiting.state, waiting.id, base);
+    tos_wallet_index::resume_wc0_index_worker();
+    // The earlier block is recovered and extracted, which recomputes the floor.
+    ASSERT_TRUE(eventually([&] { return !db.has_incomplete_block(earlier.id).move_as_ok(); }));
+    ASSERT_TRUE(!db.has_incomplete_block(waiting.id).move_as_ok());
+    archive.prune(base + 1000000.0, 1000.0, 0);
+    ASSERT_TRUE(archive.has(waiting.id));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
+    ASSERT_TRUE(eventually([&] {
+      return processed_count(db, waiting) == waiting.wallets.size() &&
+             !db.has_incomplete_block(waiting.id).move_as_ok();
+    }));
+  }
   reset_index_singletons();
   td::rmrf(path).ignore();
 }

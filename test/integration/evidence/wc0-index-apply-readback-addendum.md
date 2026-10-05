@@ -22,7 +22,9 @@ kept as the record of its own run at `b8a3f5350`.
 ## How a block without data reaches the index now
 
 - The hook is a bounded, non-waiting enqueue. It takes only a producer lock
-  that nothing holds across I/O or a wait; it does not log, mark, or sync.
+  and, to keep the block in the archive until its marker exists, a lock
+  around an in-memory set of generation times; nothing holds either across
+  I/O or a wait. It does not log, mark, or sync.
 - The recorder thread durably marks every handed-over block id before the
   worker may index it. A block the worker never finishes stays marked, and
   startup recovery re-indexes it.

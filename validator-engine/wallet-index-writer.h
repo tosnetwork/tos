@@ -180,8 +180,11 @@ bool wc0_index_degraded();
 // kWc0IndexQueueCapacity blocks behind, the block is not indexed now; it is
 // marked incomplete instead, and the startup recovery re-indexes marked
 // blocks.
-// `gen_utime` is the block's generation time (0 when unknown): it tells
-// archive pruning how far back to keep blocks the index has yet to read.
+// `gen_utime` is the block's generation time (0 when unknown). Before the
+// block is handed over, archive pruning is told to keep it (an in-memory
+// floor, lowered atomically; pruning re-reads it before each deletion), and
+// it stays kept until its marker is durable, after which the marker keeps it
+// until its candidates are extracted.
 void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
                              uint32_t gen_utime = 0);
 
@@ -193,6 +196,9 @@ void set_wc0_index_marking_fault_for_testing(bool fail);
 void set_wc0_index_marking_stall_for_testing(bool stall);
 // Tests only: how long the worker waits between rounds of parked retries.
 void set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds pause);
+// Tests only: make the next `count` block commits fail, as a failing write
+// would.
+void set_wc0_index_commit_faults_for_testing(int count);
 // Tests only: lower how many unfinished blocks the index may hold.
 void set_wc0_index_pending_block_limit_for_testing(uint64_t limit);
 // Tests only: shorten how long the worker waits for fetched block data.

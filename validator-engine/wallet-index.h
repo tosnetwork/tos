@@ -402,7 +402,6 @@ class WalletIndexDb {
 
   // --- Deferred token candidates ---
   //   0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1) + lt_be(8)
-  //     (an entry written by an older binary has no lt: it counts as lt 0)
   //   0x16 + kind(1) + address(32) -> bucket(1) + seq_be(8)   (its queue entry)
   //   0x1A + kind(1) + address(32) -> lt_be(8)                 (parked)
   // Choose the token candidates a block of wc=0 `shard` ending at `end_lt`

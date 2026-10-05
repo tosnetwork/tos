@@ -91,12 +91,8 @@ constexpr size_t kMetaKeyLen = 2;
 constexpr size_t kSingleHashKeyLen = 1 + 32;
 constexpr size_t kIncompleteBlockKeyLen = 1 + 4 + 8 + 4 + 32 + 32;
 constexpr size_t kIncompleteBlockValueLen = 1 + 4;  // sentinel(1) + gen_utime_be(4)
-// Written by older binaries: the sentinel alone, no generation time.
-constexpr size_t kIncompleteBlockValueLenWithoutTime = 1;
 constexpr size_t kTokenQueueKeyLen = 1 + 1 + 8;
 constexpr size_t kTokenQueueValueLen = 1 + 32 + 1 + 8;
-// Written by older binaries: no lt.
-constexpr size_t kTokenQueueValueLenWithoutLt = 1 + 32 + 1;
 constexpr size_t kTokenIndexKeyLen = 1 + 1 + 32;
 
 void put_u32_be(char* out, uint32_t v) {
@@ -1213,6 +1209,7 @@ td::Status WalletIndexDb::for_each_marked_block(std::function<td::Status(const M
     if (key.size() != kIncompleteBlockKeyLen) {
       return td::Status::OK();
     }
+    // A malformed value names no time: keep everything for it.
     uint32_t gen_utime = value.size() == kIncompleteBlockValueLen ? get_u32_be(value.data() + 1) : 0;
     return cb(MarkedBlock{parse_block_key(key), gen_utime});
   });
@@ -1306,8 +1303,7 @@ td::Status WalletIndexDb::for_each_incomplete_block(std::function<td::Status(con
                  << " raw key if it's stale";
       return td::Status::OK();
     }
-    if (key.size() != kIncompleteBlockKeyLen ||
-        (value.size() != kIncompleteBlockValueLen && value.size() != kIncompleteBlockValueLenWithoutTime)) {
+    if (key.size() != kIncompleteBlockKeyLen || value.size() != kIncompleteBlockValueLen) {
       LOG(WARNING) << "wc0-index: skipping malformed incomplete-block entry (key " << key.size()
                    << "B, value " << value.size() << "B)";
       return td::Status::OK();
@@ -1355,8 +1351,7 @@ std::string token_index_key(const TokenCandidate& candidate) {
 
 // The candidate a queue value names, if the value is intact enough to say.
 td::Result<TokenCandidate> token_queue_identity(td::Slice key, td::Slice value) {
-  if (key.size() != kTokenQueueKeyLen ||
-      (value.size() != kTokenQueueValueLen && value.size() != kTokenQueueValueLenWithoutLt)) {
+  if (key.size() != kTokenQueueKeyLen || value.size() != kTokenQueueValueLen) {
     return td::Status::Error("wc0-index: malformed token backlog entry");
   }
   auto kind = static_cast<uint8_t>(value[0]);
@@ -1377,7 +1372,7 @@ td::Result<ScheduledTokenCandidate> parse_token_queue_entry(td::Slice key, td::S
   if (static_cast<uint8_t>(key[1]) != token_bucket(candidate.address)) {
     return td::Status::Error("wc0-index: backlog entry is in the wrong queue");
   }
-  uint64_t lt = value.size() == kTokenQueueValueLen ? get_u64_be(value.data() + 1 + 32 + 1) : 0;
+  uint64_t lt = get_u64_be(value.data() + 1 + 32 + 1);
   return ScheduledTokenCandidate{candidate, attempts, lt};
 }
 
