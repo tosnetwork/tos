@@ -119,6 +119,12 @@ constexpr size_t kMaxPendingTokenBlocks = 1024;
 
 using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
 
+// An applied block the index has not finished, with its generation time.
+struct MarkedBlock {
+  tos::BlockIdExt id;
+  uint32_t gen_utime = 0;
+};
+
 enum class TokenKind : uint8_t { Jetton = 0, Nft = 1 };
 
 struct TokenCandidate {
@@ -143,6 +149,11 @@ struct ScheduledTokenCandidate {
   // least this new can verify it; an older one could only give a verdict the
   // nominating block has already overtaken.
   uint64_t lt = 0;
+  // Taken from the backlog: its queue slot stays reserved for it until it has
+  // an outcome, so it can always go back. A block's own candidate holds no
+  // slot; when it has to wait and the backlog is full, it stays with its
+  // block (overflow_block_candidates).
+  bool holds_reservation = false;
 };
 
 struct TokenBacklogStats {
@@ -150,9 +161,9 @@ struct TokenBacklogStats {
   // Candidates given up after their last attempt, refused for capacity, or
   // found malformed. Non-zero means the token index may be missing updates.
   uint64_t lost;
-  // Candidates whose verification needs another shard's state (a jetton
-  // master or NFT collection outside the shard being indexed). This index
-  // verifies against one shard's state, so they cannot be indexed here.
+  // Counted by older binaries for candidates whose verification needed
+  // another shard's state, which they could not keep. Such candidates are
+  // now parked with their identity and verified later.
   uint64_t unverifiable;
   // Whether any block is marked in progress: one being indexed right now, or
   // one whose indexing failed and was rolled back, leaving its updates
@@ -417,6 +428,11 @@ class WalletIndexDb {
   td::optional<TokenCandidate> first_unhandled_block_candidate() const {
     return token_batch_.first_unhandled;
   }
+  // After processing: the block's own candidates that must wait but found
+  // neither queue nor parking room. The caller keeps them with the block.
+  const std::vector<ScheduledTokenCandidate>& overflow_block_candidates() const {
+    return token_batch_.overflow;
+  }
   // Hand back a scheduled candidate whose verification was indeterminate: it
   // rejoins the end of its queue, or is parked after its last attempt. Joins
   // the open batch; requires schedule_token_candidates first.
@@ -435,11 +451,12 @@ class WalletIndexDb {
   // batch. Its writes join the batch; save_token_counters() ends it.
   td::Status begin_token_pass();
   td::Status save_token_counters();
-  // Within such a pass: park a candidate whose attempts are used up, count
-  // one that needs another shard's state, release a parked one that reached
-  // a definite result.
-  td::Status park_token_candidate(const ScheduledTokenCandidate& scheduled);
-  void count_unverifiable_token_candidate();
+  // Within such a pass: park a candidate whose attempts are used up or whose
+  // verification needs a state not at hand, release a parked one that
+  // reached a definite result.
+  // False when parking is full: the caller keeps the candidate in its own
+  // durable record instead.
+  td::Result<bool> park_token_candidate(const ScheduledTokenCandidate& scheduled);
   td::Status unpark_token_candidate(const TokenCandidate& candidate);
   // Within such a pass: up to `limit` parked candidates from the parked
   // cursor on, wrapping round at the end; `wrapped` tells whether this pass
@@ -463,8 +480,14 @@ class WalletIndexDb {
   // Calls `cb` for at most `limit` pending blocks, in key order (committed).
   td::Status for_each_pending_block(size_t limit,
                                     std::function<td::Status(const tos::BlockIdExt&, const PendingBlock&)> cb);
-  // The address of the first parked candidate (committed), if any.
-  td::optional<HashKey> first_parked_address();
+  // The first pending block after `after` in key order (from the start when
+  // `after` is empty), handed to `cb`; nothing when there is none after it.
+  td::Status next_pending_block(const td::optional<tos::BlockIdExt>& after,
+                                std::function<td::Status(const tos::BlockIdExt&, const PendingBlock&)> cb);
+  // The address of the first waiting candidate in queue `from_bucket` or a
+  // later one, wrapping round, with its queue (committed); nothing when the
+  // backlog is empty.
+  td::optional<std::pair<HashKey, size_t>> next_waiting_token_candidate(size_t from_bucket);
   // How many blocks are pending (committed).
   td::Result<uint64_t> pending_block_count();
   // Whether a verdict on `wallet` has been recorded (committed state).
@@ -496,11 +519,24 @@ class WalletIndexDb {
   // the wrong shard's block.
   // put_incomplete_block is durable on return (WAL-synced); delete_incomplete_block
   // joins the open write batch when one is active.
-  td::Status put_incomplete_block(const tos::BlockIdExt& block_id);
+  // The marker's value keeps the block's generation time: until the block's
+  // token candidates are extracted (indexed, or persisted with the block), the
+  // archive must keep the block, and the generation time tells archive
+  // pruning how far back to keep (see unextracted_block_floor). 0 means
+  // unknown, which keeps everything.
+  td::Status put_incomplete_block(const tos::BlockIdExt& block_id, uint32_t gen_utime = 0);
   // Mark several blocks in progress with one WAL sync. Writes through a
   // separate handle, so it neither joins nor waits for a write batch another
   // thread has open; safe to call without write_mutex().
+  td::Status mark_blocks_incomplete(const std::vector<MarkedBlock>& blocks);
   td::Status mark_blocks_incomplete(const std::vector<tos::BlockIdExt>& block_ids);
+  // The earliest generation time among marked blocks whose candidates are not
+  // yet extracted (no pending record beside the marker), or nothing when
+  // there is none (committed state). Archive pruning must keep every block
+  // generated at or after it.
+  td::Result<td::optional<uint32_t>> unextracted_block_floor();
+  // Every marker with its generation time (0 when unknown), committed state.
+  td::Status for_each_marked_block(std::function<td::Status(const MarkedBlock&)> cb);
   // Durably record that the index may be missing a block nothing can recover
   // (same separate handle; no write_mutex needed). Cleared only by rebuilding.
   td::Status mark_needs_rebuild();
@@ -606,6 +642,7 @@ class WalletIndexDb {
     // Chosen candidates not yet verified: each keeps room to go back.
     uint64_t reserved = 0;
     td::optional<TokenCandidate> first_unhandled;
+    std::vector<ScheduledTokenCandidate> overflow;
     std::map<std::string, std::string> index_overlay;
     // Queue rows already erased in the batch, which committed reads still see.
     std::set<std::string> queue_erased;

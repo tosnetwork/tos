@@ -17,12 +17,14 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <thread>
 #include <vector>
 
+#include "../validator/db/archive-gc-floor.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
@@ -83,12 +85,24 @@ class StateAccounts {
   bool ok() const {
     return dict_ != nullptr;
   }
+  // Where to look up accounts outside this shard; null for none.
+  void set_other_shards(std::function<StateAccounts*(const td::Bits256&)> other) {
+    other_shard_ = std::move(other);
+  }
   // Load the active-state code+data of `addr`. False for missing / uninit / frozen.
   LoadResult load(const td::Bits256& addr, tos::SmartContract::State& out) {
     if (!dict_) {
       return LoadResult::Indeterminate;
     }
     if (!wallet_index_state_contains(shard_, addr)) {
+      // Another shard's account (a jetton master or NFT collection beside
+      // the wallet or item): its own shard's state answers, when one is at
+      // hand.
+      if (other_shard_) {
+        if (auto* other = other_shard_(addr)) {
+          return other->load(addr, out);
+        }
+      }
       return LoadResult::OtherShard;
     }
     auto shard_acc_csr = dict_->lookup(addr.bits(), 256);
@@ -121,6 +135,7 @@ class StateAccounts {
  private:
   tos::ShardIdFull shard_;
   std::unique_ptr<vm::AugmentedDictionary> dict_;
+  std::function<StateAccounts*(const td::Bits256&)> other_shard_;
 };
 
 struct GetMethodResult {
@@ -615,649 +630,6 @@ void forget_context() {
   g_context = {};
 }
 
-// Verify the scheduled candidates against `state` (into the open batch).
-td::Status verify_scheduled(WalletIndexDb* db, StateAccounts& state,
-                            const std::vector<ScheduledTokenCandidate>& scheduled, uint64_t end_lt) {
-  WalletIndexVerificationBudget verification_budget;
-  // Each candidate is verified independently; one hostile contract must not
-  // be able to abort the rest of the block's token indexing.
-  return db->process_token_candidates(
-      scheduled, [&](const ScheduledTokenCandidate& scheduled_candidate, size_t remaining) {
-        verification_budget.begin_candidate(remaining);
-        const auto& candidate = scheduled_candidate.candidate;
-        if (candidate.kind == TokenKind::Jetton) {
-          return index_jetton_candidate(db, state, candidate.address, end_lt, verification_budget);
-        }
-        return index_nft_candidate(db, state, candidate.address, end_lt, verification_budget);
-      });
-}
-
-// Verify one candidate against `state` as of `end_lt` (into the open batch).
-TokenVerifyOutcome verify_one(WalletIndexDb* db, StateAccounts& state, const TokenCandidate& candidate, uint64_t end_lt,
-                              WalletIndexVerificationBudget& budget) {
-  try {
-    if (candidate.kind == TokenKind::Jetton) {
-      return index_jetton_candidate(db, state, candidate.address, end_lt, budget);
-    }
-    return index_nft_candidate(db, state, candidate.address, end_lt, budget);
-  } catch (...) {
-    // The node failed to finish, not a verdict on the contract.
-    return TokenVerifyOutcome::Retry;
-  }
-}
-
-// Verify up to one block's worth of a pending block's remaining candidates
-// against `context`'s state, which must be at least as new as the block.
-// A candidate the state cannot decide goes to the back with one more
-// attempt, and is parked once it has used them all; one of another shard
-// waits for that shard's state. When none remain, the block is finished.
-// The caller holds write_mutex. Returns whether anything moved.
-bool resume_pending_block_locked(WalletIndexDb* db, const tos::BlockIdExt& block_id,
-                                 const WalletIndexDb::PendingBlock& pending, const IndexContext& context) {
-  if (context.end_lt < pending.end_lt) {
-    return false;
-  }
-  tos::ShardIdFull shard{context.block_id.id.workchain, context.block_id.id.shard};
-  StateAccounts state{context.state_root, shard};
-  if (!state.ok() || !db->begin_batch().is_ok()) {
-    return false;
-  }
-  auto pass = [&]() -> td::Result<bool> {
-    TRY_STATUS(db->begin_token_pass());
-    WalletIndexDb::PendingBlock rest;
-    rest.end_lt = pending.end_lt;
-    std::vector<ScheduledTokenCandidate> later;
-    size_t take = std::min(pending.remaining.size(), kMaxTokenCandidatesPerBlock);
-    bool moved = false;
-    WalletIndexVerificationBudget budget;
-    for (size_t i = 0; i < pending.remaining.size(); ++i) {
-      const auto& entry = pending.remaining[i];
-      if (i >= take || !token_candidate_in_shard(shard, entry.candidate.address)) {
-        rest.remaining.push_back(entry);
-        continue;
-      }
-      budget.begin_candidate(take - i);
-      switch (verify_one(db, state, entry.candidate, context.end_lt, budget)) {
-        case TokenVerifyOutcome::Done:
-          moved = true;
-          break;
-        case TokenVerifyOutcome::Unverifiable:
-          db->count_unverifiable_token_candidate();
-          moved = true;
-          break;
-        case TokenVerifyOutcome::WriteFailed:
-          return td::Status::Error("an index write failed");
-        case TokenVerifyOutcome::Retry: {
-          moved = true;
-          auto attempts = static_cast<uint8_t>(entry.attempts + 1);
-          if (attempts >= kMaxTokenCandidateAttempts) {
-            TRY_STATUS(
-                db->park_token_candidate(ScheduledTokenCandidate{entry.candidate, entry.attempts, pending.end_lt}));
-          } else {
-            later.push_back(ScheduledTokenCandidate{entry.candidate, attempts, pending.end_lt});
-          }
-          break;
-        }
-      }
-    }
-    rest.remaining.insert(rest.remaining.end(), later.begin(), later.end());
-    if (rest.remaining.empty()) {
-      TRY_STATUS(db->delete_pending_block(block_id));
-      TRY_STATUS(db->delete_incomplete_block(block_id));
-    } else {
-      TRY_STATUS(db->put_pending_block(block_id, rest));
-    }
-    TRY_STATUS(db->save_token_counters());
-    return moved;
-  };
-  auto moved = pass();
-  if (moved.is_error()) {
-    LOG(WARNING) << "wc0-index: resuming block " << block_id.id.to_str() << " failed: " << moved.error().message();
-    db->abort_batch();
-    return false;
-  }
-  auto committed = db->commit_batch();
-  if (committed.is_error()) {
-    LOG(WARNING) << "wc0-index: resuming block " << block_id.id.to_str() << " failed: " << committed.message();
-    return false;
-  }
-  return moved.ok();
-}
-
-// Parked candidates retried per pass, and the pause after a full round.
-constexpr size_t kParkedRetryPerPass = 256;
-std::atomic<long long> g_parked_retry_pause_ms{10 * 60 * 1000};
-std::mutex g_parked_mutex;
-std::chrono::steady_clock::time_point g_parked_not_before{};  // guarded by g_parked_mutex
-
-// Retry the next parked candidates, in turn, against `context`'s state. A
-// definite result releases a candidate; one still undecided stays parked with
-// its identity. After a full round the next waits a pause. The caller holds
-// write_mutex. Returns whether any candidate was released.
-bool retry_parked_locked(WalletIndexDb* db, const IndexContext& context) {
-  {
-    std::lock_guard<std::mutex> guard(g_parked_mutex);
-    if (std::chrono::steady_clock::now() < g_parked_not_before) {
-      return false;
-    }
-  }
-  tos::ShardIdFull shard{context.block_id.id.workchain, context.block_id.id.shard};
-  StateAccounts state{context.state_root, shard};
-  if (!state.ok() || !db->begin_batch().is_ok()) {
-    return false;
-  }
-  bool wrapped = false;
-  auto pass = [&]() -> td::Result<bool> {
-    TRY_STATUS(db->begin_token_pass());
-    TRY_RESULT(parked, db->next_parked_token_candidates(kParkedRetryPerPass, wrapped));
-    bool released = false;
-    WalletIndexVerificationBudget budget;
-    size_t remaining = parked.size();
-    for (const auto& entry : parked) {
-      budget.begin_candidate(remaining--);
-      if (entry.lt > context.end_lt || !token_candidate_in_shard(shard, entry.candidate.address)) {
-        continue;
-      }
-      switch (verify_one(db, state, entry.candidate, context.end_lt, budget)) {
-        case TokenVerifyOutcome::Done:
-          TRY_STATUS(db->unpark_token_candidate(entry.candidate));
-          released = true;
-          break;
-        case TokenVerifyOutcome::Unverifiable:
-          TRY_STATUS(db->unpark_token_candidate(entry.candidate));
-          db->count_unverifiable_token_candidate();
-          released = true;
-          break;
-        case TokenVerifyOutcome::WriteFailed:
-          return td::Status::Error("an index write failed");
-        case TokenVerifyOutcome::Retry:
-          break;
-      }
-    }
-    TRY_STATUS(db->save_token_counters());
-    return released;
-  };
-  auto released = pass();
-  if (released.is_error()) {
-    LOG(WARNING) << "wc0-index: retrying parked candidates failed: " << released.error().message();
-    db->abort_batch();
-    return false;
-  }
-  if (db->commit_batch().is_error()) {
-    return false;
-  }
-  if (wrapped) {
-    std::lock_guard<std::mutex> guard(g_parked_mutex);
-    g_parked_not_before = std::chrono::steady_clock::now() + std::chrono::milliseconds(g_parked_retry_pause_ms.load());
-  }
-  return released.ok();
-}
-
-}  // namespace
-
-void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
-  auto* db = wallet_index_db();
-  // A block whose data could not be obtained keeps the recovery mark the
-  // queue gave it, so startup recovery retries it.
-  if (db == nullptr || block_root.is_null()) {
-    return;
-  }
-  // Index the basechain (wc=0) for now; masterchain accounts are handled later.
-  if (block_id.id.workchain != 0) {
-    return;
-  }
-  auto seqno = block_id.id.seqno;
-  // Indexing passes can come from the worker and from startup recovery, and
-  // the write batch below is a single unsynchronized object: serialize
-  // whole-block passes.
-  std::lock_guard<std::mutex> guard(db->write_mutex());
-  // A block indexed before whose remaining candidates are persisted with it:
-  // nothing of the block itself is needed again. Its state, being at hand,
-  // verifies them now.
-  auto pending_r = db->get_pending_block(block_id);
-  if (pending_r.is_error()) {
-    LOG(WARNING) << "wc0-index: could not read the remaining candidates of block seqno=" << seqno
-                 << ", skipping this pass: " << pending_r.error().message();
-    return;
-  }
-  if (pending_r.ok()) {
-    auto pending = pending_r.move_as_ok().value();
-    tos::ShardIdFull shard{block_id.id.workchain, block_id.id.shard};
-    if (state_root.not_null() && StateAccounts{state_root, shard}.ok()) {
-      IndexContext context{block_id, pending.end_lt, state_root};
-      resume_pending_block_locked(db, block_id, pending, context);
-      remember_context(block_id, pending.end_lt, std::move(state_root));
-    }
-    return;
-  }
-  // Crash recovery: durably mark the block in-progress before indexing; the
-  // marker delete joins the batch, so it disappears atomically with the
-  // entries. A marker left behind on restart flags a block whose indexing
-  // never committed. Keyed off the full block id (not just seqno): a
-  // different shard can reuse the same seqno after a split/merge, and the
-  // marker must identify exactly this block for crash recovery to re-fetch
-  // the right one. If this write fails there is no safety net for a crash
-  // during the indexing below, so the pass is skipped; the block keeps the
-  // mark the recorder gave it when it was queued.
-  auto marker_status = db->put_incomplete_block(block_id);
-  if (marker_status.is_error()) {
-    LOG(ERROR) << "wc0-index: failed to durably mark block seqno=" << seqno
-               << " in-progress, skipping indexing this pass: " << marker_status.message();
-    return;
-  }
-  if (!db->begin_batch().is_ok()) {
-    LOG(WARNING) << "wc0-index: begin_batch failed for block seqno=" << seqno
-                 << "; skipping indexing this pass (marker retained for retry)";
-    return;
-  }
-  bool ok = false;
-  std::set<td::Bits256> jetton_candidates, nft_candidates;
-  unsigned long long end_lt = 0;
-  uint32_t gen_utime = 0;
-  size_t age_rows_added = 0;
-  bool write_error = false;
-  td::optional<TokenCandidate> unhandled;
-  std::vector<TokenCandidate> spilled;
-  auto state_for_context = state_root;
-  bool state_usable = false;
-  try {
-    ok = index_block_walk(db, block_root, jetton_candidates, nft_candidates, end_lt, gen_utime, age_rows_added,
-                          write_error);
-    // Runs even when this block nominated nothing: deferred candidates from
-    // earlier blocks drain here.
-    tos::ShardIdFull shard{block_id.id.workchain, block_id.id.shard};
-    StateAccounts state{std::move(state_root), shard};
-    state_usable = state.ok();
-    if (ok) {
-      std::vector<TokenCandidate> block_candidates;
-      block_candidates.reserve(jetton_candidates.size() + nft_candidates.size());
-      for (const auto& wallet : jetton_candidates) {
-        block_candidates.push_back(TokenCandidate{TokenKind::Jetton, wallet});
-      }
-      for (const auto& item : nft_candidates) {
-        block_candidates.push_back(TokenCandidate{TokenKind::Nft, item});
-      }
-      // Without a usable post-apply state nothing can be verified; every
-      // candidate of the block is deferred instead.
-      size_t capacity = state.ok() ? kMaxTokenCandidatesPerBlock : 0;
-      if (!state.ok() && !block_candidates.empty()) {
-        LOG(WARNING) << "wc0-index: no usable post-apply state for block seqno=" << seqno << "; deferring "
-                     << block_candidates.size() << " token candidates (events still indexed)";
-      }
-      auto scheduled_r = db->schedule_token_candidates(block_candidates, shard, capacity, end_lt);
-      if (scheduled_r.is_error()) {
-        // Fail closed: committing without the schedule would drop the block's
-        // candidates. Keep the marker so a later pass retries the block.
-        LOG(WARNING) << "wc0-index: token scheduling failed for block seqno=" << seqno << ": "
-                     << scheduled_r.error().message();
-        write_error = true;
-      } else {
-        auto scheduled = scheduled_r.move_as_ok();
-        unhandled = db->first_unhandled_block_candidate();
-        if (unhandled) {
-          // Everything from the first candidate that found no room on, in
-          // candidate order, is persisted with the block.
-          auto from = unhandled.value();
-          std::set<TokenCandidate> rest;
-          for (const auto& candidate : block_candidates) {
-            if (!(candidate < from)) {
-              rest.insert(candidate);
-            }
-          }
-          spilled.assign(rest.begin(), rest.end());
-        }
-        auto process_status = verify_scheduled(db, state, scheduled, end_lt);
-        if (process_status.is_error()) {
-          LOG(WARNING) << "wc0-index: token indexing failed for block seqno=" << seqno << ": "
-                       << process_status.message();
-          write_error = true;
-        }
-      }
-    }
-  } catch (vm::VmError& err) {
-    LOG(WARNING) << "wc0-index: VmError while indexing block seqno=" << seqno << ": " << err.get_msg();
-    ok = false;
-  } catch (...) {
-    LOG(WARNING) << "wc0-index: unknown error while indexing block seqno=" << seqno;
-    ok = false;
-  }
-  if (!ok || write_error) {
-    // Never persist a partial block: a parse failure, or a half-written
-    // event/age pair. The retained incomplete-block marker triggers a re-index.
-    db->abort_batch();
-    return;
-  }
-  {
-    // Advance the retention watermark and prune expired events inside this
-    // block's batch. Fails closed: on any error -- a failed or would-be-regressed
-    // watermark, or a failed prune -- abort the block and keep the
-    // incomplete-block marker so a later pass retries, rather than commit event
-    // rows with a broken retention state.
-    auto retention_status = db->advance_retention(gen_utime, age_rows_added);
-    if (retention_status.is_error()) {
-      LOG(WARNING) << "wc0-index: retention maintenance failed for block seqno=" << seqno
-                   << ", aborting this pass (marker retained for retry): " << retention_status.message();
-      db->abort_batch();
-      return;
-    }
-  }
-  td::Status finish = td::Status::OK();
-  if (unhandled) {
-    // Some candidates found no room in the backlog: they are persisted with
-    // the block, which stays marked unfinished until the indexing worker has
-    // verified them all.
-    WalletIndexDb::PendingBlock pending;
-    pending.end_lt = end_lt;
-    for (const auto& candidate : spilled) {
-      pending.remaining.push_back(ScheduledTokenCandidate{candidate, 0, end_lt});
-    }
-    finish = db->put_pending_block(block_id, pending);
-  } else {
-    // Indexing completed for this block; clear its in-progress marker and
-    // commit the block's entries atomically with it.
-    finish = db->delete_pending_block(block_id);
-    if (finish.is_ok()) {
-      finish = db->delete_incomplete_block(block_id);
-    }
-  }
-  if (finish.is_error()) {
-    LOG(WARNING) << "wc0-index: recording the outcome of block seqno=" << seqno
-                 << " failed, aborting this pass (marker retained for retry): " << finish.message();
-    db->abort_batch();
-    return;
-  }
-  auto s = db->commit_batch();
-  if (s.is_error()) {
-    LOG(WARNING) << "wc0-index: commit failed for block seqno=" << seqno << ": " << s.message();
-    return;
-  }
-  if (state_usable) {
-    remember_context(block_id, end_lt, std::move(state_for_context));
-  }
-}
-
-namespace {
-
-// After a sweep that left legacy rows undecided, wait this long before the
-// next one, so rows that cannot be verified here do not keep the worker busy.
-constexpr auto kLegacySweepPause = std::chrono::seconds(30);
-std::mutex g_legacy_mutex;
-std::chrono::steady_clock::time_point g_legacy_not_before{};  // guarded by g_legacy_mutex
-
-}  // namespace
-
-bool reconstruct_legacy_jetton_rows(size_t row_limit) {
-  auto* db = wallet_index_db();
-  if (db == nullptr) {
-    return false;
-  }
-  {
-    std::lock_guard<std::mutex> guard(g_legacy_mutex);
-    if (std::chrono::steady_clock::now() < g_legacy_not_before) {
-      return false;
-    }
-  }
-  auto context_r = current_context();
-  if (!context_r) {
-    // Nothing to verify against yet: the rows stay unpublished.
-    return false;
-  }
-  auto context = context_r.value();
-  std::lock_guard<std::mutex> guard(db->write_mutex());
-  auto pending = db->legacy_jettons_pending();
-  if (pending.is_error() || !pending.ok()) {
-    return false;
-  }
-  if (!db->begin_batch().is_ok()) {
-    return false;
-  }
-  tos::ShardIdFull shard{context.block_id.id.workchain, context.block_id.id.shard};
-  StateAccounts state{context.state_root, shard};
-  uint64_t undecided = 0;
-  size_t decided = 0;
-  bool published = false;
-  bool reached_end = false;
-  auto pass = [&]() -> td::Status {
-    TRY_RESULT(rows, db->legacy_jetton_rows(row_limit));
-    reached_end = rows.reached_end;
-    WalletIndexVerificationBudget budget;
-    size_t remaining = rows.rows.size();
-    for (const auto& row : rows.rows) {
-      budget.begin_candidate(remaining--);
-      if (!row.has_wallet) {
-        // An unreadable row names no wallet to verify.
-        ++undecided;
-        continue;
-      }
-      TRY_RESULT(known, db->jetton_wallet_state(row.wallet));
-      WalletIndexDb::JettonVerdict verdict{false, HashKey::zero(), HashKey::zero(), {}};
-      uint64_t lt = context.end_lt;
-      if (known && known.value().lt >= context.end_lt) {
-        // A block at least as new as this state already decided the wallet;
-        // its verified record decides the row.
-        lt = known.value().lt;
-        if (known.value().present) {
-          verdict = {true, known.value().owner, known.value().master, make_jetton_value(row.wallet, lt)};
-        }
-      } else if (row.lt > context.end_lt || !state.ok()) {
-        // This state is older than the row, or unusable: it cannot say.
-        ++undecided;
-        continue;
-      } else {
-        td::Bits256 owner = td::Bits256::zero();
-        td::Bits256 master = td::Bits256::zero();
-        auto checked = verify_jetton_wallet(state, row.wallet, owner, master, budget);
-        if (checked == JettonVerification::Indeterminate || checked == JettonVerification::OtherShard) {
-          ++undecided;
-          continue;
-        }
-        if (checked == JettonVerification::Verified) {
-          verdict = {true, owner, master, make_jetton_value(row.wallet, lt)};
-        }
-      }
-      TRY_RESULT(done, db->decide_legacy_jetton(row, verdict, lt));
-      if (done) {
-        ++decided;
-      } else {
-        ++undecided;
-      }
-    }
-    TRY_RESULT(finished, db->finish_legacy_jetton_pass(rows, undecided));
-    published = finished;
-    return td::Status::OK();
-  };
-  td::Status status;
-  try {
-    status = pass();
-  } catch (...) {
-    status = td::Status::Error("legacy reconstruction threw");
-  }
-  if (status.is_error()) {
-    LOG(WARNING) << "wc0-index: legacy jetton reconstruction pass failed: " << status.message();
-    db->abort_batch();
-    return false;
-  }
-  auto committed = db->commit_batch();
-  if (committed.is_error()) {
-    LOG(WARNING) << "wc0-index: legacy jetton reconstruction commit failed: " << committed.message();
-    return false;
-  }
-  if (reached_end && !published) {
-    std::lock_guard<std::mutex> legacy_guard(g_legacy_mutex);
-    g_legacy_not_before = std::chrono::steady_clock::now() + kLegacySweepPause;
-    return decided > 0;
-  }
-  return true;
-}
-
-namespace {
-
-// One bounded backlog pass against `context`'s state: candidates nominated no
-// later than that state are verified, as a new block of the shard would.
-// Returns whether any candidate was taken.
-bool drain_backlog_once(WalletIndexDb* db, const IndexContext& context) {
-  std::lock_guard<std::mutex> guard(db->write_mutex());
-  if (!db->begin_batch().is_ok()) {
-    return false;
-  }
-  tos::ShardIdFull shard{context.block_id.id.workchain, context.block_id.id.shard};
-  StateAccounts state{context.state_root, shard};
-  if (!state.ok()) {
-    db->abort_batch();
-    return false;
-  }
-  bool took = false;
-  try {
-    auto scheduled_r = db->schedule_token_candidates({}, shard, kMaxTokenCandidatesPerBlock, context.end_lt);
-    if (scheduled_r.is_error()) {
-      LOG(WARNING) << "wc0-index: backlog pass failed: " << scheduled_r.error().message();
-      db->abort_batch();
-      return false;
-    }
-    auto scheduled = scheduled_r.move_as_ok();
-    took = !scheduled.empty();
-    auto processed = verify_scheduled(db, state, scheduled, context.end_lt);
-    if (processed.is_error()) {
-      LOG(WARNING) << "wc0-index: backlog pass failed: " << processed.message();
-      db->abort_batch();
-      return false;
-    }
-  } catch (...) {
-    LOG(WARNING) << "wc0-index: backlog pass threw";
-    db->abort_batch();
-    return false;
-  }
-  auto committed = db->commit_batch();
-  if (committed.is_error()) {
-    LOG(WARNING) << "wc0-index: backlog pass commit failed: " << committed.message();
-    return false;
-  }
-  return took;
-}
-
-}  // namespace
-
-namespace {
-
-struct BlockToIndex {
-  td::Ref<vm::Cell> block_root;
-  td::Ref<vm::Cell> state_root;
-  tos::BlockIdExt block_id;
-};
-
-using IndexQueue = BoundedWorkQueue<tos::BlockIdExt, BlockToIndex>;
-
-// Lifecycle (start, flush, stop) is serialized by g_index_queue_mutex, which
-// may be held across database writes and waits. The block-apply hook never
-// takes it: it takes only g_producer_mutex, which nothing holds across I/O or
-// a wait, so a stalled index cannot hold block application up.
-std::unique_ptr<IndexQueue> g_index_queue;
-std::mutex g_index_queue_mutex;
-std::mutex g_producer_mutex;
-IndexQueue* g_producer_queue = nullptr;  // guarded by g_producer_mutex
-// Set by flush_wc0_index_for_exit (under g_producer_mutex): a block handed
-// over from now on is only recorded for recovery, never indexed in this run.
-bool g_producers_closed = false;  // guarded by g_producer_mutex
-// Blocks handed over after the exit flush closed the queue.
-std::atomic<uint64_t> g_late_blocks{0};
-// The flush recorded the run as finished. Read and written under
-// g_run_marker_mutex together with the run marker itself.
-std::mutex g_run_marker_mutex;
-std::atomic<bool> g_run_cleared{false};
-// Blocks the hook could not queue because the worker was too far behind.
-std::atomic<uint64_t> g_dropped_blocks{0};
-std::atomic<uint64_t> g_dropped_blocks_logged{0};
-
-std::atomic<bool> g_marking_fault{false};
-std::mutex g_marking_stall_mutex;
-std::condition_variable g_marking_stall_cv;
-bool g_marking_stalled = false;  // guarded by g_marking_stall_mutex
-
-// Waits while a test holds the recorder's writes, as a stalled disk would.
-void wait_while_marking_stalled() {
-  std::unique_lock<std::mutex> lock(g_marking_stall_mutex);
-  g_marking_stall_cv.wait(lock, [] { return !g_marking_stalled; });
-}
-
-td::Status mark_blocks(WalletIndexDb& db, const std::vector<tos::BlockIdExt>& block_ids) {
-  wait_while_marking_stalled();
-  if (g_marking_fault.load()) {
-    return td::Status::Error("injected marking fault");
-  }
-  return db.mark_blocks_incomplete(block_ids);
-}
-
-td::Status record_needs_rebuild(WalletIndexDb& db) {
-  wait_while_marking_stalled();
-  if (g_marking_fault.load()) {
-    return td::Status::Error("injected marking fault");
-  }
-  return db.mark_needs_rebuild();
-}
-
-td::Status record_run_active(WalletIndexDb& db) {
-  wait_while_marking_stalled();
-  if (g_marking_fault.load()) {
-    return td::Status::Error("injected marking fault");
-  }
-  return db.begin_indexing_run();
-}
-
-// Durably mark queued blocks before any of them is indexed: a block the worker
-// never reaches (dropped, or the node stopped first) stays marked, startup
-// recovery re-indexes it, and RPC reports the index unfinished until then.
-bool mark_queued_blocks(const std::vector<tos::BlockIdExt>& block_ids) {
-  auto dropped = g_dropped_blocks.load();
-  auto logged = g_dropped_blocks_logged.exchange(dropped);
-  if (dropped > logged) {
-    LOG(WARNING) << "wc0-index: indexing fell " << kWc0IndexQueueCapacity << " blocks behind; " << dropped - logged
-                 << " block(s) left marked for re-indexing at the next start";
-  }
-  auto* db = wallet_index_db();
-  if (db == nullptr) {
-    return false;
-  }
-  {
-    std::lock_guard<std::mutex> run_guard(g_run_marker_mutex);
-    if (g_run_cleared.load()) {
-      // A block arrived after the exit flush recorded the run as finished:
-      // the run is active again before the block is marked, so even if the
-      // mark is lost the next start does not take the index for complete.
-      LOG(ERROR) << "wc0-index: a block was handed over after the index was flushed for exit; "
-                 << "recording the run as unfinished again";
-      auto rearmed = record_run_active(*db);
-      if (rearmed.is_error()) {
-        LOG(ERROR) << "wc0-index: could not record the run as unfinished, will retry: " << rearmed.message();
-        return false;
-      }
-      g_run_cleared.store(false);
-    }
-  }
-  auto status = mark_blocks(*db, block_ids);
-  if (status.is_error()) {
-    LOG(ERROR) << "wc0-index: could not mark " << block_ids.size()
-               << " queued block(s) for recovery, will retry: " << status.message();
-    return false;
-  }
-  return true;
-}
-
-// The queue lost track of a block: record durably that the index needs a
-// rebuild. Runs on the recorder thread, which retries until it succeeds.
-bool persist_index_degraded() {
-  LOG(ERROR) << "wc0-index: a block may have gone unindexed with no mark to recover it; the index needs a rebuild";
-  auto* db = wallet_index_db();
-  if (db == nullptr) {
-    return false;
-  }
-  auto status = record_needs_rebuild(*db);
-  if (status.is_error()) {
-    LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild, will retry: " << status.message();
-    return false;
-  }
-  return true;
-}
-
 // --- Fetching block data the hook did not have ---
 
 std::mutex g_fetcher_mutex;
@@ -1377,12 +749,6 @@ void abort_block_fetch() {
   }
 }
 
-// After the newest state could not be had, wait this long before asking
-// again, so an unanswerable request does not keep the worker busy.
-constexpr auto kStateRetryPause = std::chrono::seconds(5);
-std::mutex g_state_retry_mutex;
-std::chrono::steady_clock::time_point g_state_not_before{};  // guarded by g_state_retry_mutex
-
 // A state to verify `address`'s candidates against, at least as new as
 // `min_lt`: the newest one a block gave, or else the newest the node has.
 // With `refresh`, the node is asked for its newest state even when a usable
@@ -1397,16 +763,8 @@ td::optional<IndexContext> context_for(const td::Bits256& address, uint64_t min_
   if (usable && !refresh) {
     return context;
   }
-  {
-    std::lock_guard<std::mutex> guard(g_state_retry_mutex);
-    if (std::chrono::steady_clock::now() < g_state_not_before) {
-      return usable ? context : td::optional<IndexContext>{};
-    }
-  }
   auto newest = fetch_newest_state(address);
   if (newest.is_error() || newest.ok().state_root.is_null()) {
-    std::lock_guard<std::mutex> guard(g_state_retry_mutex);
-    g_state_not_before = std::chrono::steady_clock::now() + kStateRetryPause;
     return usable ? context : td::optional<IndexContext>{};
   }
   auto state = newest.move_as_ok();
@@ -1423,90 +781,924 @@ td::optional<IndexContext> context_for(const td::Bits256& address, uint64_t min_
 
 std::atomic<uint64_t> g_pending_block_limit{kMaxPendingTokenBlocks};
 
+// Archive blocks the index may still need to read: those marked but whose
+// candidates it has not extracted. The floor handed to archive pruning sits
+// this far before the earliest of them, as slack for packages filed by
+// masterchain time.
+constexpr uint32_t kArchiveFloorMargin = 3600;
+std::mutex g_floor_mutex;
+
+uint32_t floor_for(uint32_t gen_utime) {
+  return gen_utime > kArchiveFloorMargin ? gen_utime - kArchiveFloorMargin : 0;
+}
+
+// Lower the floor for newly marked blocks (the recorder, after their marks).
+void lower_archive_floor(const std::vector<MarkedBlock>& blocks) {
+  std::lock_guard<std::mutex> guard(g_floor_mutex);
+  auto floor = tos::validator::g_archive_gc_floor.load();
+  for (const auto& block : blocks) {
+    floor = std::min(floor, floor_for(block.gen_utime));
+  }
+  tos::validator::g_archive_gc_floor.store(floor);
+}
+
+// Recompute the floor from the durable markers.
+void publish_archive_floor(WalletIndexDb& db) {
+  std::lock_guard<std::mutex> guard(g_floor_mutex);
+  auto floor = db.unextracted_block_floor();
+  if (floor.is_error()) {
+    // Keep what is published: a floor too low only keeps data longer.
+    LOG(WARNING) << "wc0-index: could not read the archive floor: " << floor.error().message();
+    return;
+  }
+  tos::validator::g_archive_gc_floor.store(floor.ok() ? floor_for(floor.ok().value())
+                                                      : tos::validator::kNoArchiveGcFloor);
+}
+
+// After a block's candidates were extracted: when it may have been the one
+// holding the floor down, recompute it.
+void refresh_archive_floor(WalletIndexDb& db, uint32_t gen_utime) {
+  if (floor_for(gen_utime) <= tos::validator::g_archive_gc_floor.load()) {
+    publish_archive_floor(db);
+  }
+}
+
+// The states one pass verifies against, one per shard, found as candidates
+// need them: the newest a block gave, or the node's newest. A shard whose
+// state cannot be had is remembered as such for the rest of the pass, so one
+// unavailable shard costs one request, and candidates of other shards go on.
+// Accounts of another shard than the candidate's (a master or collection)
+// are looked up in that shard's state the same way.
+class PassStates {
+ public:
+  PassStates(uint64_t min_lt, bool refresh) : min_lt_(min_lt), refresh_(refresh) {
+  }
+  PassStates(const PassStates&) = delete;
+  PassStates& operator=(const PassStates&) = delete;
+  void seed(const IndexContext& context) {
+    add(context);
+  }
+  // The state for `address`'s shard, with its end lt; null when none can be
+  // had at least min_lt new.
+  StateAccounts* state_for(const td::Bits256& address, uint64_t& end_lt, tos::ShardIdFull* shard = nullptr) {
+    for (auto& entry : states_) {
+      if (token_candidate_in_shard(entry.shard, address)) {
+        end_lt = entry.end_lt;
+        if (shard != nullptr) {
+          *shard = entry.shard;
+        }
+        return entry.state.get();
+      }
+    }
+    for (const auto& missing : missing_) {
+      if (missing == address) {
+        return nullptr;
+      }
+    }
+    auto context = context_for(address, min_lt_, refresh_);
+    if (!context || !token_candidate_in_shard(shard_of(context.value()), address)) {
+      missing_.push_back(address);
+      return nullptr;
+    }
+    auto* state = add(context.value());
+    if (state == nullptr) {
+      missing_.push_back(address);
+      return nullptr;
+    }
+    end_lt = context.value().end_lt;
+    if (shard != nullptr) {
+      *shard = shard_of(context.value());
+    }
+    return state;
+  }
+
+ private:
+  struct Entry {
+    tos::ShardIdFull shard;
+    uint64_t end_lt;
+    std::unique_ptr<StateAccounts> state;
+  };
+  static tos::ShardIdFull shard_of(const IndexContext& context) {
+    return tos::ShardIdFull{context.block_id.id.workchain, context.block_id.id.shard};
+  }
+  StateAccounts* add(const IndexContext& context) {
+    auto state = std::make_unique<StateAccounts>(context.state_root, shard_of(context));
+    if (!state->ok()) {
+      return nullptr;
+    }
+    state->set_other_shards([this](const td::Bits256& other) {
+      uint64_t ignored = 0;
+      return state_for(other, ignored);
+    });
+    states_.push_back(Entry{shard_of(context), context.end_lt, std::move(state)});
+    return states_.back().state.get();
+  }
+  uint64_t min_lt_;
+  bool refresh_;
+  std::vector<Entry> states_;
+  std::vector<td::Bits256> missing_;
+};
+
+// Verify the scheduled candidates against `state` (into the open batch).
+td::Status verify_scheduled(WalletIndexDb* db, StateAccounts& state,
+                            const std::vector<ScheduledTokenCandidate>& scheduled, uint64_t end_lt) {
+  WalletIndexVerificationBudget verification_budget;
+  // Each candidate is verified independently; one hostile contract must not
+  // be able to abort the rest of the block's token indexing.
+  return db->process_token_candidates(
+      scheduled, [&](const ScheduledTokenCandidate& scheduled_candidate, size_t remaining) {
+        verification_budget.begin_candidate(remaining);
+        const auto& candidate = scheduled_candidate.candidate;
+        if (candidate.kind == TokenKind::Jetton) {
+          return index_jetton_candidate(db, state, candidate.address, end_lt, verification_budget);
+        }
+        return index_nft_candidate(db, state, candidate.address, end_lt, verification_budget);
+      });
+}
+
+// Verify one candidate against `state` as of `end_lt` (into the open batch).
+TokenVerifyOutcome verify_one(WalletIndexDb* db, StateAccounts& state, const TokenCandidate& candidate, uint64_t end_lt,
+                              WalletIndexVerificationBudget& budget) {
+  try {
+    if (candidate.kind == TokenKind::Jetton) {
+      return index_jetton_candidate(db, state, candidate.address, end_lt, budget);
+    }
+    return index_nft_candidate(db, state, candidate.address, end_lt, budget);
+  } catch (...) {
+    // The node failed to finish, not a verdict on the contract.
+    return TokenVerifyOutcome::Retry;
+  }
+}
+
+// Verify up to one block's worth of a pending block's remaining candidates,
+// each against its own shard's state, at least as new as the block. A
+// candidate no state can decide yet goes to the back with one more attempt,
+// and is parked once it has used them all, or stays here if parking is full;
+// one whose shard's state cannot be had now stays as it is. When none
+// remain, the block is finished. The caller holds write_mutex. Returns
+// whether anything moved.
+bool resume_pending_block_locked(WalletIndexDb* db, const tos::BlockIdExt& block_id,
+                                 const WalletIndexDb::PendingBlock& pending, PassStates& states) {
+  if (!db->begin_batch().is_ok()) {
+    return false;
+  }
+  auto pass = [&]() -> td::Result<bool> {
+    TRY_STATUS(db->begin_token_pass());
+    WalletIndexDb::PendingBlock rest;
+    rest.end_lt = pending.end_lt;
+    std::vector<ScheduledTokenCandidate> later;
+    size_t take = std::min(pending.remaining.size(), kMaxTokenCandidatesPerBlock);
+    bool moved = false;
+    WalletIndexVerificationBudget budget;
+    for (size_t i = 0; i < pending.remaining.size(); ++i) {
+      const auto& entry = pending.remaining[i];
+      uint64_t end_lt = 0;
+      StateAccounts* state = i < take ? states.state_for(entry.candidate.address, end_lt) : nullptr;
+      if (state == nullptr) {
+        rest.remaining.push_back(entry);
+        continue;
+      }
+      budget.begin_candidate(take - i);
+      switch (verify_one(db, *state, entry.candidate, end_lt, budget)) {
+        case TokenVerifyOutcome::Done:
+          moved = true;
+          break;
+        case TokenVerifyOutcome::WriteFailed:
+          return td::Status::Error("an index write failed");
+        case TokenVerifyOutcome::Unverifiable:
+        case TokenVerifyOutcome::Retry: {
+          moved = true;
+          auto attempts = static_cast<uint8_t>(entry.attempts + 1);
+          ScheduledTokenCandidate next{entry.candidate, attempts, pending.end_lt};
+          if (attempts >= kMaxTokenCandidateAttempts) {
+            TRY_RESULT(parked, db->park_token_candidate(next));
+            if (!parked) {
+              // No parking room: it keeps its place in this record.
+              next.attempts = static_cast<uint8_t>(kMaxTokenCandidateAttempts - 1);
+              later.push_back(next);
+            }
+          } else {
+            later.push_back(next);
+          }
+          break;
+        }
+      }
+    }
+    rest.remaining.insert(rest.remaining.end(), later.begin(), later.end());
+    if (rest.remaining.empty()) {
+      TRY_STATUS(db->delete_pending_block(block_id));
+      TRY_STATUS(db->delete_incomplete_block(block_id));
+    } else {
+      TRY_STATUS(db->put_pending_block(block_id, rest));
+    }
+    TRY_STATUS(db->save_token_counters());
+    return moved;
+  };
+  auto moved = pass();
+  if (moved.is_error()) {
+    LOG(WARNING) << "wc0-index: resuming block " << block_id.id.to_str() << " failed: " << moved.error().message();
+    db->abort_batch();
+    return false;
+  }
+  auto committed = db->commit_batch();
+  if (committed.is_error()) {
+    LOG(WARNING) << "wc0-index: resuming block " << block_id.id.to_str() << " failed: " << committed.message();
+    return false;
+  }
+  return moved.ok();
+}
+
+// Parked candidates retried per pass, and the pause after a full round.
+constexpr size_t kParkedRetryPerPass = 256;
+std::atomic<long long> g_parked_retry_pause_ms{10 * 60 * 1000};
+std::mutex g_parked_mutex;
+std::chrono::steady_clock::time_point g_parked_not_before{};  // guarded by g_parked_mutex
+
+// Retry the next parked candidates, in turn from the durable cursor, each
+// against the node's newest state of its own shard (and of any shard its
+// master or collection is in). A definite result releases a candidate; one
+// still undecided, or whose shard's state cannot be had, stays parked with
+// its identity, and the cursor moves past it either way. After a full round
+// the next waits a pause. The caller holds write_mutex. Returns whether any
+// candidate was released.
+bool retry_parked_locked(WalletIndexDb* db) {
+  {
+    std::lock_guard<std::mutex> guard(g_parked_mutex);
+    if (std::chrono::steady_clock::now() < g_parked_not_before) {
+      return false;
+    }
+  }
+  if (!db->begin_batch().is_ok()) {
+    return false;
+  }
+  bool wrapped = false;
+  auto pass = [&]() -> td::Result<bool> {
+    TRY_STATUS(db->begin_token_pass());
+    TRY_RESULT(parked, db->next_parked_token_candidates(kParkedRetryPerPass, wrapped));
+    bool released = false;
+    WalletIndexVerificationBudget budget;
+    size_t remaining = parked.size();
+    PassStates states(0, true);
+    for (const auto& entry : parked) {
+      budget.begin_candidate(remaining--);
+      uint64_t end_lt = 0;
+      auto* state = states.state_for(entry.candidate.address, end_lt);
+      if (state == nullptr || entry.lt > end_lt) {
+        continue;
+      }
+      switch (verify_one(db, *state, entry.candidate, end_lt, budget)) {
+        case TokenVerifyOutcome::Done:
+          TRY_STATUS(db->unpark_token_candidate(entry.candidate));
+          released = true;
+          break;
+        case TokenVerifyOutcome::WriteFailed:
+          return td::Status::Error("an index write failed");
+        case TokenVerifyOutcome::Unverifiable:
+        case TokenVerifyOutcome::Retry:
+          break;
+      }
+    }
+    TRY_STATUS(db->save_token_counters());
+    return released;
+  };
+  auto released = pass();
+  if (released.is_error()) {
+    LOG(WARNING) << "wc0-index: retrying parked candidates failed: " << released.error().message();
+    db->abort_batch();
+    return false;
+  }
+  if (db->commit_batch().is_error()) {
+    return false;
+  }
+  if (wrapped) {
+    std::lock_guard<std::mutex> guard(g_parked_mutex);
+    g_parked_not_before = std::chrono::steady_clock::now() + std::chrono::milliseconds(g_parked_retry_pause_ms.load());
+  }
+  return released.ok();
+}
+
+}  // namespace
+
+Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
+  auto* db = wallet_index_db();
+  // A block whose data could not be obtained keeps the recovery mark the
+  // queue gave it, so startup recovery retries it.
+  if (db == nullptr || block_root.is_null()) {
+    return Wc0IndexResult::NotDone;
+  }
+  // Index the basechain (wc=0) for now; masterchain accounts are handled later.
+  if (block_id.id.workchain != 0) {
+    return Wc0IndexResult::NotDone;
+  }
+  auto seqno = block_id.id.seqno;
+  // Indexing passes can come from the worker and from startup recovery, and
+  // the write batch below is a single unsynchronized object: serialize
+  // whole-block passes.
+  std::lock_guard<std::mutex> guard(db->write_mutex());
+  // A block indexed before whose remaining candidates are persisted with it:
+  // nothing of the block itself is needed again. Its state, being at hand,
+  // verifies them now.
+  auto pending_r = db->get_pending_block(block_id);
+  if (pending_r.is_error()) {
+    LOG(WARNING) << "wc0-index: could not read the remaining candidates of block seqno=" << seqno
+                 << ", skipping this pass: " << pending_r.error().message();
+    return Wc0IndexResult::NotDone;
+  }
+  if (pending_r.ok()) {
+    auto pending = pending_r.move_as_ok().value();
+    PassStates states(pending.end_lt, false);
+    if (state_root.not_null()) {
+      states.seed(IndexContext{block_id, pending.end_lt, state_root});
+      remember_context(block_id, pending.end_lt, state_root);
+    }
+    resume_pending_block_locked(db, block_id, pending, states);
+    return Wc0IndexResult::Done;
+  }
+  // Admission: the index holds at most a bounded number of blocks with
+  // persisted candidates. At the bound a new block is not started; it keeps
+  // its recovery mark (and with it the archive keeps its data), and the
+  // caller finishes pending blocks before trying it again.
+  auto pending_count = db->pending_block_count();
+  if (pending_count.is_error() || pending_count.ok() >= g_pending_block_limit.load()) {
+    return Wc0IndexResult::AtPendingCap;
+  }
+  uint32_t header_utime = 0;
+  {
+    block::gen::Block::Record header_blk;
+    block::gen::BlockInfo::Record header_info;
+    if (tlb::unpack_cell(block_root, header_blk) && tlb::unpack_cell(header_blk.info, header_info)) {
+      header_utime = header_info.gen_utime;
+    }
+  }
+  // Crash recovery: durably mark the block in-progress before indexing; the
+  // marker delete joins the batch, so it disappears atomically with the
+  // entries. A marker left behind on restart flags a block whose indexing
+  // never committed. Keyed off the full block id (not just seqno): a
+  // different shard can reuse the same seqno after a split/merge, and the
+  // marker must identify exactly this block for crash recovery to re-fetch
+  // the right one. If this write fails there is no safety net for a crash
+  // during the indexing below, so the pass is skipped; the block keeps the
+  // mark the recorder gave it when it was queued.
+  auto marker_status = db->put_incomplete_block(block_id, header_utime);
+  if (marker_status.is_error()) {
+    LOG(ERROR) << "wc0-index: failed to durably mark block seqno=" << seqno
+               << " in-progress, skipping indexing this pass: " << marker_status.message();
+    return Wc0IndexResult::NotDone;
+  }
+  if (!db->begin_batch().is_ok()) {
+    LOG(WARNING) << "wc0-index: begin_batch failed for block seqno=" << seqno
+                 << "; skipping indexing this pass (marker retained for retry)";
+    return Wc0IndexResult::NotDone;
+  }
+  bool ok = false;
+  std::set<td::Bits256> jetton_candidates, nft_candidates;
+  unsigned long long end_lt = 0;
+  uint32_t gen_utime = 0;
+  size_t age_rows_added = 0;
+  bool write_error = false;
+  td::optional<TokenCandidate> unhandled;
+  std::vector<TokenCandidate> spilled;
+  std::vector<ScheduledTokenCandidate> overflow;
+  auto state_for_context = state_root;
+  bool state_usable = false;
+  try {
+    ok = index_block_walk(db, block_root, jetton_candidates, nft_candidates, end_lt, gen_utime, age_rows_added,
+                          write_error);
+    // Runs even when this block nominated nothing: deferred candidates from
+    // earlier blocks drain here.
+    tos::ShardIdFull shard{block_id.id.workchain, block_id.id.shard};
+    StateAccounts state{std::move(state_root), shard};
+    state_usable = state.ok();
+    if (ok) {
+      std::vector<TokenCandidate> block_candidates;
+      block_candidates.reserve(jetton_candidates.size() + nft_candidates.size());
+      for (const auto& wallet : jetton_candidates) {
+        block_candidates.push_back(TokenCandidate{TokenKind::Jetton, wallet});
+      }
+      for (const auto& item : nft_candidates) {
+        block_candidates.push_back(TokenCandidate{TokenKind::Nft, item});
+      }
+      // Without a usable post-apply state nothing can be verified; every
+      // candidate of the block is deferred instead.
+      size_t capacity = state.ok() ? kMaxTokenCandidatesPerBlock : 0;
+      if (!state.ok() && !block_candidates.empty()) {
+        LOG(WARNING) << "wc0-index: no usable post-apply state for block seqno=" << seqno << "; deferring "
+                     << block_candidates.size() << " token candidates (events still indexed)";
+      }
+      auto scheduled_r = db->schedule_token_candidates(block_candidates, shard, capacity, end_lt);
+      if (scheduled_r.is_error()) {
+        // Fail closed: committing without the schedule would drop the block's
+        // candidates. Keep the marker so a later pass retries the block.
+        LOG(WARNING) << "wc0-index: token scheduling failed for block seqno=" << seqno << ": "
+                     << scheduled_r.error().message();
+        write_error = true;
+      } else {
+        auto scheduled = scheduled_r.move_as_ok();
+        unhandled = db->first_unhandled_block_candidate();
+        if (unhandled) {
+          // Everything from the first candidate that found no room on, in
+          // candidate order, is persisted with the block.
+          auto from = unhandled.value();
+          std::set<TokenCandidate> rest;
+          for (const auto& candidate : block_candidates) {
+            if (!(candidate < from)) {
+              rest.insert(candidate);
+            }
+          }
+          spilled.assign(rest.begin(), rest.end());
+        }
+        auto process_status = verify_scheduled(db, state, scheduled, end_lt);
+        if (process_status.is_error()) {
+          LOG(WARNING) << "wc0-index: token indexing failed for block seqno=" << seqno << ": "
+                       << process_status.message();
+          write_error = true;
+        } else {
+          overflow = db->overflow_block_candidates();
+        }
+      }
+    }
+  } catch (vm::VmError& err) {
+    LOG(WARNING) << "wc0-index: VmError while indexing block seqno=" << seqno << ": " << err.get_msg();
+    ok = false;
+  } catch (...) {
+    LOG(WARNING) << "wc0-index: unknown error while indexing block seqno=" << seqno;
+    ok = false;
+  }
+  if (!ok || write_error) {
+    // Never persist a partial block: a parse failure, or a half-written
+    // event/age pair. The retained incomplete-block marker triggers a re-index.
+    db->abort_batch();
+    return Wc0IndexResult::NotDone;
+  }
+  {
+    // Advance the retention watermark and prune expired events inside this
+    // block's batch. Fails closed: on any error -- a failed or would-be-regressed
+    // watermark, or a failed prune -- abort the block and keep the
+    // incomplete-block marker so a later pass retries, rather than commit event
+    // rows with a broken retention state.
+    auto retention_status = db->advance_retention(gen_utime, age_rows_added);
+    if (retention_status.is_error()) {
+      LOG(WARNING) << "wc0-index: retention maintenance failed for block seqno=" << seqno
+                   << ", aborting this pass (marker retained for retry): " << retention_status.message();
+      db->abort_batch();
+      return Wc0IndexResult::NotDone;
+    }
+  }
+  td::Status finish = td::Status::OK();
+  if (unhandled || !overflow.empty()) {
+    // Some candidates found no room in the backlog: they are persisted with
+    // the block, which stays marked unfinished until the indexing worker has
+    // verified them all.
+    WalletIndexDb::PendingBlock pending;
+    pending.end_lt = end_lt;
+    for (const auto& candidate : spilled) {
+      pending.remaining.push_back(ScheduledTokenCandidate{candidate, 0, end_lt});
+    }
+    pending.remaining.insert(pending.remaining.end(), overflow.begin(), overflow.end());
+    finish = db->put_pending_block(block_id, pending);
+  } else {
+    // Indexing completed for this block; clear its in-progress marker and
+    // commit the block's entries atomically with it.
+    finish = db->delete_pending_block(block_id);
+    if (finish.is_ok()) {
+      finish = db->delete_incomplete_block(block_id);
+    }
+  }
+  if (finish.is_error()) {
+    LOG(WARNING) << "wc0-index: recording the outcome of block seqno=" << seqno
+                 << " failed, aborting this pass (marker retained for retry): " << finish.message();
+    db->abort_batch();
+    return Wc0IndexResult::NotDone;
+  }
+  auto s = db->commit_batch();
+  if (s.is_error()) {
+    LOG(WARNING) << "wc0-index: commit failed for block seqno=" << seqno << ": " << s.message();
+    return Wc0IndexResult::NotDone;
+  }
+  if (state_usable) {
+    remember_context(block_id, end_lt, std::move(state_for_context));
+  }
+  // Its candidates are extracted now (indexed, or persisted with it): the
+  // archive need not keep it any longer.
+  refresh_archive_floor(*db, header_utime);
+  return Wc0IndexResult::Done;
+}
+
+namespace {
+
+// After a sweep that left legacy rows undecided, wait this long before the
+// next one, so rows that cannot be verified here do not keep the worker busy.
+constexpr auto kLegacySweepPause = std::chrono::seconds(30);
+std::mutex g_legacy_mutex;
+std::chrono::steady_clock::time_point g_legacy_not_before{};  // guarded by g_legacy_mutex
+
+}  // namespace
+
+bool reconstruct_legacy_jetton_rows(size_t row_limit) {
+  auto* db = wallet_index_db();
+  if (db == nullptr) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> guard(g_legacy_mutex);
+    if (std::chrono::steady_clock::now() < g_legacy_not_before) {
+      return false;
+    }
+  }
+  auto context_r = current_context();
+  if (!context_r) {
+    // Nothing to verify against yet: the rows stay unpublished.
+    return false;
+  }
+  auto context = context_r.value();
+  std::lock_guard<std::mutex> guard(db->write_mutex());
+  auto pending = db->legacy_jettons_pending();
+  if (pending.is_error() || !pending.ok()) {
+    return false;
+  }
+  if (!db->begin_batch().is_ok()) {
+    return false;
+  }
+  tos::ShardIdFull shard{context.block_id.id.workchain, context.block_id.id.shard};
+  StateAccounts state{context.state_root, shard};
+  uint64_t undecided = 0;
+  size_t decided = 0;
+  bool published = false;
+  bool reached_end = false;
+  auto pass = [&]() -> td::Status {
+    TRY_RESULT(rows, db->legacy_jetton_rows(row_limit));
+    reached_end = rows.reached_end;
+    WalletIndexVerificationBudget budget;
+    size_t remaining = rows.rows.size();
+    for (const auto& row : rows.rows) {
+      budget.begin_candidate(remaining--);
+      if (!row.has_wallet) {
+        // An unreadable row names no wallet to verify.
+        ++undecided;
+        continue;
+      }
+      TRY_RESULT(known, db->jetton_wallet_state(row.wallet));
+      WalletIndexDb::JettonVerdict verdict{false, HashKey::zero(), HashKey::zero(), {}};
+      uint64_t lt = context.end_lt;
+      if (known && known.value().lt >= context.end_lt) {
+        // A block at least as new as this state already decided the wallet;
+        // its verified record decides the row.
+        lt = known.value().lt;
+        if (known.value().present) {
+          verdict = {true, known.value().owner, known.value().master, make_jetton_value(row.wallet, lt)};
+        }
+      } else if (row.lt > context.end_lt || !state.ok()) {
+        // This state is older than the row, or unusable: it cannot say.
+        ++undecided;
+        continue;
+      } else {
+        td::Bits256 owner = td::Bits256::zero();
+        td::Bits256 master = td::Bits256::zero();
+        auto checked = verify_jetton_wallet(state, row.wallet, owner, master, budget);
+        if (checked == JettonVerification::Indeterminate || checked == JettonVerification::OtherShard) {
+          ++undecided;
+          continue;
+        }
+        if (checked == JettonVerification::Verified) {
+          verdict = {true, owner, master, make_jetton_value(row.wallet, lt)};
+        }
+      }
+      TRY_RESULT(done, db->decide_legacy_jetton(row, verdict, lt));
+      if (done) {
+        ++decided;
+      } else {
+        ++undecided;
+      }
+    }
+    TRY_RESULT(finished, db->finish_legacy_jetton_pass(rows, undecided));
+    published = finished;
+    return td::Status::OK();
+  };
+  td::Status status;
+  try {
+    status = pass();
+  } catch (...) {
+    status = td::Status::Error("legacy reconstruction threw");
+  }
+  if (status.is_error()) {
+    LOG(WARNING) << "wc0-index: legacy jetton reconstruction pass failed: " << status.message();
+    db->abort_batch();
+    return false;
+  }
+  auto committed = db->commit_batch();
+  if (committed.is_error()) {
+    LOG(WARNING) << "wc0-index: legacy jetton reconstruction commit failed: " << committed.message();
+    return false;
+  }
+  if (reached_end && !published) {
+    std::lock_guard<std::mutex> legacy_guard(g_legacy_mutex);
+    g_legacy_not_before = std::chrono::steady_clock::now() + kLegacySweepPause;
+    return decided > 0;
+  }
+  return true;
+}
+
+namespace {
+
+// One bounded backlog pass for the shard holding `address`, against that
+// shard's newest known state: candidates nominated no later than that state
+// are verified, as a new block of the shard would. Returns whether any
+// candidate was taken.
+bool drain_backlog_for(WalletIndexDb* db, const td::Bits256& address) {
+  std::lock_guard<std::mutex> guard(db->write_mutex());
+  PassStates states(0, false);
+  uint64_t end_lt = 0;
+  tos::ShardIdFull shard{0, tos::shardIdAll};
+  auto* state = states.state_for(address, end_lt, &shard);
+  if (state == nullptr) {
+    return false;
+  }
+  if (!db->begin_batch().is_ok()) {
+    return false;
+  }
+  bool took = false;
+  try {
+    auto scheduled_r = db->schedule_token_candidates({}, shard, kMaxTokenCandidatesPerBlock, end_lt);
+    if (scheduled_r.is_error()) {
+      LOG(WARNING) << "wc0-index: backlog pass failed: " << scheduled_r.error().message();
+      db->abort_batch();
+      return false;
+    }
+    auto scheduled = scheduled_r.move_as_ok();
+    took = !scheduled.empty();
+    auto processed = verify_scheduled(db, *state, scheduled, end_lt);
+    if (processed.is_ok() && !db->overflow_block_candidates().empty()) {
+      // Backlog entries keep their slots; only a block's own candidates can
+      // overflow, and this pass has none.
+      processed = td::Status::Error("a backlog entry lost its slot");
+    }
+    if (processed.is_error()) {
+      LOG(WARNING) << "wc0-index: backlog pass failed: " << processed.message();
+      db->abort_batch();
+      return false;
+    }
+  } catch (...) {
+    LOG(WARNING) << "wc0-index: backlog pass threw";
+    db->abort_batch();
+    return false;
+  }
+  auto committed = db->commit_batch();
+  if (committed.is_error()) {
+    LOG(WARNING) << "wc0-index: backlog pass commit failed: " << committed.message();
+    return false;
+  }
+  return took;
+}
+
+}  // namespace
+
+namespace {
+
+struct BlockToIndex {
+  td::Ref<vm::Cell> block_root;
+  td::Ref<vm::Cell> state_root;
+  tos::BlockIdExt block_id;
+};
+
+using IndexQueue = BoundedWorkQueue<MarkedBlock, BlockToIndex>;
+
+// Lifecycle (start, flush, stop) is serialized by g_index_queue_mutex, which
+// may be held across database writes and waits. The block-apply hook never
+// takes it: it takes only g_producer_mutex, which nothing holds across I/O or
+// a wait, so a stalled index cannot hold block application up.
+std::unique_ptr<IndexQueue> g_index_queue;
+std::mutex g_index_queue_mutex;
+std::mutex g_producer_mutex;
+IndexQueue* g_producer_queue = nullptr;  // guarded by g_producer_mutex
+// Set by flush_wc0_index_for_exit (under g_producer_mutex): a block handed
+// over from now on is only recorded for recovery, never indexed in this run.
+bool g_producers_closed = false;  // guarded by g_producer_mutex
+// Blocks handed over after the exit flush closed the queue.
+std::atomic<uint64_t> g_late_blocks{0};
+// The flush recorded the run as finished. Read and written under
+// g_run_marker_mutex together with the run marker itself.
+std::mutex g_run_marker_mutex;
+std::atomic<bool> g_run_cleared{false};
+// Blocks the hook could not queue because the worker was too far behind.
+std::atomic<uint64_t> g_dropped_blocks{0};
+std::atomic<uint64_t> g_dropped_blocks_logged{0};
+
+std::atomic<bool> g_marking_fault{false};
+std::mutex g_marking_stall_mutex;
+std::condition_variable g_marking_stall_cv;
+bool g_marking_stalled = false;  // guarded by g_marking_stall_mutex
+
+// Waits while a test holds the recorder's writes, as a stalled disk would.
+void wait_while_marking_stalled() {
+  std::unique_lock<std::mutex> lock(g_marking_stall_mutex);
+  g_marking_stall_cv.wait(lock, [] { return !g_marking_stalled; });
+}
+
+td::Status mark_blocks(WalletIndexDb& db, const std::vector<MarkedBlock>& block_ids) {
+  wait_while_marking_stalled();
+  if (g_marking_fault.load()) {
+    return td::Status::Error("injected marking fault");
+  }
+  return db.mark_blocks_incomplete(block_ids);
+}
+
+td::Status record_needs_rebuild(WalletIndexDb& db) {
+  wait_while_marking_stalled();
+  if (g_marking_fault.load()) {
+    return td::Status::Error("injected marking fault");
+  }
+  return db.mark_needs_rebuild();
+}
+
+td::Status record_run_active(WalletIndexDb& db) {
+  wait_while_marking_stalled();
+  if (g_marking_fault.load()) {
+    return td::Status::Error("injected marking fault");
+  }
+  return db.begin_indexing_run();
+}
+
+// Durably mark queued blocks before any of them is indexed: a block the worker
+// never reaches (dropped, or the node stopped first) stays marked, startup
+// recovery re-indexes it, and RPC reports the index unfinished until then.
+bool mark_queued_blocks(const std::vector<MarkedBlock>& block_ids) {
+  auto dropped = g_dropped_blocks.load();
+  auto logged = g_dropped_blocks_logged.exchange(dropped);
+  if (dropped > logged) {
+    LOG(WARNING) << "wc0-index: indexing fell " << kWc0IndexQueueCapacity << " blocks behind; " << dropped - logged
+                 << " block(s) left marked for re-indexing at the next start";
+  }
+  auto* db = wallet_index_db();
+  if (db == nullptr) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> run_guard(g_run_marker_mutex);
+    if (g_run_cleared.load()) {
+      // A block arrived after the exit flush recorded the run as finished:
+      // the run is active again before the block is marked, so even if the
+      // mark is lost the next start does not take the index for complete.
+      LOG(ERROR) << "wc0-index: a block was handed over after the index was flushed for exit; "
+                 << "recording the run as unfinished again";
+      auto rearmed = record_run_active(*db);
+      if (rearmed.is_error()) {
+        LOG(ERROR) << "wc0-index: could not record the run as unfinished, will retry: " << rearmed.message();
+        return false;
+      }
+      g_run_cleared.store(false);
+    }
+  }
+  auto status = mark_blocks(*db, block_ids);
+  if (status.is_error()) {
+    LOG(ERROR) << "wc0-index: could not mark " << block_ids.size()
+               << " queued block(s) for recovery, will retry: " << status.message();
+    return false;
+  }
+  // Marked, so recoverable from the archive: keep the archive from pruning
+  // them until their candidates are extracted.
+  lower_archive_floor(block_ids);
+  return true;
+}
+
+// The queue lost track of a block: record durably that the index needs a
+// rebuild. Runs on the recorder thread, which retries until it succeeds.
+bool persist_index_degraded() {
+  LOG(ERROR) << "wc0-index: a block may have gone unindexed with no mark to recover it; the index needs a rebuild";
+  auto* db = wallet_index_db();
+  if (db == nullptr) {
+    return false;
+  }
+  auto status = record_needs_rebuild(*db);
+  if (status.is_error()) {
+    LOG(ERROR) << "wc0-index: could not record that the index needs a rebuild, will retry: " << status.message();
+    return false;
+  }
+  return true;
+}
+
+// Blocks marked by an earlier run whose candidates were never extracted,
+// gathered when the worker starts and indexed by it before anything newer.
+std::mutex g_recovery_mutex;
+std::deque<MarkedBlock> g_recovery;  // guarded by g_recovery_mutex
+
+// Rotation points of the background passes, so that one shard or block that
+// cannot progress does not hold up the others. Worker thread only.
+size_t g_drain_bucket = 0;
+td::optional<tos::BlockIdExt> g_pending_after;
+
+// Index the next recovered block, read back from the archive (which keeps it
+// while it is marked). Without its state its candidates are deferred, so the
+// state is not needed. Returns whether a block was taken: false when none is
+// left, when the read failed (the block goes to the back and keeps its mark),
+// or when the index is at its bound of unfinished blocks.
+bool recover_one_marked_block(bool& at_cap) {
+  at_cap = false;
+  auto* db = wallet_index_db();
+  MarkedBlock block;
+  {
+    std::lock_guard<std::mutex> guard(g_recovery_mutex);
+    if (g_recovery.empty() || db == nullptr) {
+      return false;
+    }
+    block = g_recovery.front();
+    g_recovery.pop_front();
+  }
+  auto marked = db->has_incomplete_block(block.id);
+  if (marked.is_ok() && !marked.ok()) {
+    return true;  // finished meanwhile
+  }
+  auto fetched = fetch_block(block.id, true);
+  if (fetched.is_error() || fetched.ok().block_root.is_null()) {
+    LOG(WARNING) << "wc0-index: recovery: block " << block.id.id.to_str() << " could not be read now; it stays "
+                 << "marked and is tried again: "
+                 << (fetched.is_error() ? fetched.error().message().str() : std::string("no block data"));
+    std::lock_guard<std::mutex> guard(g_recovery_mutex);
+    g_recovery.push_back(block);
+    return false;
+  }
+  auto data = fetched.move_as_ok();
+  if (wc0_index_block(data.block_root, data.state_root, block.id) == Wc0IndexResult::AtPendingCap) {
+    at_cap = true;
+    std::lock_guard<std::mutex> guard(g_recovery_mutex);
+    g_recovery.push_front(block);
+    return false;
+  }
+  return true;
+}
+
 // Background work while no block waits for the worker, bounded per call:
-// drain the token backlog against the newest state the index knows, verify
-// the persisted remaining candidates of an unfinished block, reconstruct
-// legacy jetton rows, and retry parked candidates. Returns whether anything
-// moved.
+// recover a block from an earlier run, drain the token backlog of one shard
+// in turn, reconstruct legacy jetton rows, verify the persisted candidates of
+// one unfinished block in turn, and retry parked candidates. Returns whether
+// anything moved.
 bool index_idle_step() {
   auto* db = wallet_index_db();
   if (db == nullptr) {
     return false;
   }
   bool progress = false;
-  auto context = current_context();
-  if (context) {
-    auto stats = db->token_backlog_stats();
-    if (stats.is_ok() && stats.ok().entries > 0) {
-      progress = drain_backlog_once(db, context.value());
-    }
-    if (reconstruct_legacy_jetton_rows(kLegacyJettonRowsPerPass)) {
-      progress = true;
-    }
+  bool at_cap = false;
+  if (recover_one_marked_block(at_cap)) {
+    progress = true;
   }
-  // An unfinished block: its remaining candidates are persisted, so only a
-  // state at least as new as the block is needed, not the block itself.
-  td::optional<std::pair<tos::BlockIdExt, WalletIndexDb::PendingBlock>> pending;
-  auto scan = db->for_each_pending_block(1, [&](const tos::BlockIdExt& id, const WalletIndexDb::PendingBlock& p) {
-    pending = std::make_pair(id, p);
-    return td::Status::OK();
-  });
-  if (scan.is_ok() && pending && !pending.value().second.remaining.empty()) {
-    const auto& block = pending.value();
-    auto ctx = context_for(block.second.remaining.front().candidate.address, block.second.end_lt, false);
-    if (ctx) {
-      std::lock_guard<std::mutex> guard(db->write_mutex());
-      auto current = db->get_pending_block(block.first);
-      if (current.is_ok() && current.ok() &&
-          resume_pending_block_locked(db, block.first, current.ok().value(), ctx.value())) {
+  auto stats = db->token_backlog_stats();
+  if (stats.is_ok() && stats.ok().entries > 0) {
+    auto next = db->next_waiting_token_candidate(g_drain_bucket);
+    if (next) {
+      g_drain_bucket = (next.value().second + 1) % kTokenBacklogBuckets;
+      if (drain_backlog_for(db, next.value().first)) {
         progress = true;
       }
     }
   }
-  // Parked candidates, a bounded number per pass, against the node's newest
-  // state.
-  auto stats = db->token_backlog_stats();
+  if (current_context() && reconstruct_legacy_jetton_rows(kLegacyJettonRowsPerPass)) {
+    progress = true;
+  }
+  // An unfinished block, in turn: its remaining candidates are persisted, so
+  // only states at least as new as the block are needed, not the block.
+  td::optional<std::pair<tos::BlockIdExt, WalletIndexDb::PendingBlock>> pending;
+  auto scan =
+      db->next_pending_block(g_pending_after, [&](const tos::BlockIdExt& id, const WalletIndexDb::PendingBlock& p) {
+        pending = std::make_pair(id, p);
+        return td::Status::OK();
+      });
+  if (scan.is_ok()) {
+    g_pending_after = pending ? td::optional<tos::BlockIdExt>(pending.value().first) : td::optional<tos::BlockIdExt>{};
+  }
+  if (pending) {
+    std::lock_guard<std::mutex> guard(db->write_mutex());
+    PassStates states(pending.value().second.end_lt, false);
+    auto current = db->get_pending_block(pending.value().first);
+    if (current.is_ok() && current.ok() &&
+        resume_pending_block_locked(db, pending.value().first, current.ok().value(), states)) {
+      progress = true;
+    }
+  }
   if (stats.is_ok() && stats.ok().parked > 0) {
-    bool due = false;
-    {
-      std::lock_guard<std::mutex> guard(g_parked_mutex);
-      due = std::chrono::steady_clock::now() >= g_parked_not_before;
-    }
-    td::optional<td::Bits256> address;
-    if (due) {
-      std::lock_guard<std::mutex> guard(db->write_mutex());
-      address = db->first_parked_address();
-    }
-    if (address) {
-      auto ctx = context_for(address.value(), 0, true);
-      if (ctx) {
-        std::lock_guard<std::mutex> guard(db->write_mutex());
-        if (retry_parked_locked(db, ctx.value())) {
-          progress = true;
-        }
-      }
+    std::lock_guard<std::mutex> guard(db->write_mutex());
+    if (retry_parked_locked(db)) {
+      progress = true;
     }
   }
   return progress;
 }
 
-// While the index holds as many unfinished blocks as it may, finish them
-// before indexing another. Waits on the worker thread only; blocks applied
-// meanwhile wait in the queue or stay marked for recovery.
-void wait_for_pending_room(const tos::BlockIdExt& block_id) {
-  auto* db = wallet_index_db();
-  if (db == nullptr) {
-    return;
-  }
+// Index a block, first recovering blocks of earlier runs; at the bound of
+// unfinished blocks, finish some before trying again. Waits on the worker
+// thread only; blocks applied meanwhile wait in the queue or, past it, stay
+// marked, and the archive keeps them.
+void index_with_admission(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, const tos::BlockIdExt& block_id) {
   bool logged = false;
   while (!g_fetch_abort.load()) {
-    auto count = db->pending_block_count();
-    if (count.is_error() || count.ok() < g_pending_block_limit.load()) {
+    bool at_cap = false;
+    while (recover_one_marked_block(at_cap)) {
+    }
+    if (!at_cap && wc0_index_block(block_root, state_root, block_id) != Wc0IndexResult::AtPendingCap) {
       return;
     }
     if (!logged) {
-      LOG(WARNING) << "wc0-index: " << count.ok() << " blocks still have candidates to verify; block "
-                   << block_id.id.to_str() << " waits until one is finished";
+      LOG(WARNING) << "wc0-index: the index holds as many unfinished blocks as it may; block " << block_id.id.to_str()
+                   << " waits until one is finished";
       logged = true;
     }
     if (!index_idle_step()) {
@@ -1539,8 +1731,7 @@ void index_queued_block(BlockToIndex& block) {
         block.state_root = std::move(data.state_root);
       }
     }
-    wait_for_pending_room(block.block_id);
-    wc0_index_block(std::move(block.block_root), std::move(block.state_root), block.block_id);
+    index_with_admission(std::move(block.block_root), std::move(block.state_root), block.block_id);
   } catch (...) {
     LOG(ERROR) << "wc0-index: indexing block " << block.block_id.id.to_str() << " threw";
   }
@@ -1611,13 +1802,31 @@ bool start_wc0_index_worker(bool paused) {
   g_fetch_abort.store(false);
   forget_context();
   {
-    std::lock_guard<std::mutex> state_guard(g_state_retry_mutex);
-    g_state_not_before = {};
-  }
-  {
     std::lock_guard<std::mutex> parked_guard(g_parked_mutex);
     g_parked_not_before = {};
   }
+  g_drain_bucket = 0;
+  g_pending_after = {};
+  {
+    // Blocks of earlier runs whose candidates were never extracted: the
+    // worker indexes them first, reading them back from the archive.
+    std::deque<MarkedBlock> recovery;
+    auto collected = db->for_each_marked_block([&](const MarkedBlock& block) -> td::Status {
+      TRY_RESULT(pending, db->get_pending_block(block.id));
+      if (!pending) {
+        recovery.push_back(block);
+      }
+      return td::Status::OK();
+    });
+    if (collected.is_error()) {
+      LOG(ERROR) << "wc0-index: could not read the blocks earlier runs left unfinished: " << collected.message();
+    }
+    std::lock_guard<std::mutex> recovery_guard(g_recovery_mutex);
+    g_recovery = std::move(recovery);
+  }
+  // Before any block can be applied in this run: archive pruning keeps every
+  // block the index has yet to read.
+  publish_archive_floor(*db);
   {
     std::lock_guard<std::mutex> legacy_guard(g_legacy_mutex);
     g_legacy_not_before = {};
@@ -1709,6 +1918,11 @@ void stop_wc0_index_worker() {
   // as active again first).
   queue.reset();
   forget_context();
+  {
+    std::lock_guard<std::mutex> recovery_guard(g_recovery_mutex);
+    g_recovery.clear();
+  }
+  tos::validator::g_archive_gc_floor.store(tos::validator::kNoArchiveGcFloor);
   g_late_blocks.store(0);
   g_run_cleared.store(false);
 }
@@ -1718,7 +1932,8 @@ bool wc0_index_degraded() {
   return g_producer_queue != nullptr && g_producer_queue->degraded();
 }
 
-void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
+void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
+                             uint32_t gen_utime) {
   // Runs on the block-application path: no I/O, no logging, no lock that is
   // held across I/O or a wait anywhere else.
   std::lock_guard<std::mutex> guard(g_producer_mutex);
@@ -1730,10 +1945,11 @@ void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> sta
     // recorded; the recorder marks it, and the run is not recorded as
     // finished while such a block exists.
     g_late_blocks.fetch_add(1);
-    g_producer_queue->record(block_id);
+    g_producer_queue->record(MarkedBlock{block_id, gen_utime});
     return;
   }
-  if (!g_producer_queue->push(block_id, BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
+  if (!g_producer_queue->push(MarkedBlock{block_id, gen_utime},
+                              BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
     g_dropped_blocks.fetch_add(1);
   }
 }

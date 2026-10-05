@@ -79,7 +79,12 @@ class WalletIndexVerificationBudget {
 // `block_id` must be the full BlockIdExt (not just workchain+seqno): the
 // crash-recovery marker is keyed off it, and workchain+seqno alone is not
 // unique across a shard split/merge.
-void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
+// Returns AtPendingCap, without touching the block, when the index already
+// holds kMaxPendingTokenBlocks blocks with persisted candidates: the caller
+// finishes some first and tries again; the block keeps its recovery mark
+// meanwhile.
+enum class Wc0IndexResult { Done, AtPendingCap, NotDone };
+Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
 
 // One pass of legacy jetton reconstruction (see WalletIndexDb): verify up to
 // `row_limit` jetton rows written before pair records existed against the
@@ -175,7 +180,10 @@ bool wc0_index_degraded();
 // kWc0IndexQueueCapacity blocks behind, the block is not indexed now; it is
 // marked incomplete instead, and the startup recovery re-indexes marked
 // blocks.
-void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
+// `gen_utime` is the block's generation time (0 when unknown): it tells
+// archive pruning how far back to keep blocks the index has yet to read.
+void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id,
+                             uint32_t gen_utime = 0);
 
 // Tests only: make the recorder's writes (marking blocks for recovery, and
 // recording that the index needs a rebuild) fail, as a failing disk would.

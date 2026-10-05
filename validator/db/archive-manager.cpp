@@ -17,13 +17,14 @@
     Copyright 2019-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include "block/block-db.h"  // block::compute_file_hash
 #include "common/delay.h"
 #include "td/actor/MultiPromise.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/overloaded.h"
 
+#include "archive-gc-floor.h"
 #include "archive-manager.hpp"
-#include "block/block-db.h"  // block::compute_file_hash
 #include "files-async.hpp"
 
 namespace tos {
@@ -1142,6 +1143,8 @@ void ArchiveManager::run_gc(td::Ref<MasterchainState> shard_client_state, UnixTi
   to_delete.clear();
 
   if (archive_ttl > 0) {
+    std::vector<PackageId> candidates;
+    std::vector<double> first_ts;
     for (auto &f : files_) {
       auto &desc = f.second;
       if (desc.deleted) {
@@ -1151,17 +1154,15 @@ void ArchiveManager::run_gc(td::Ref<MasterchainState> shard_client_state, UnixTi
       if (it == desc.first_blocks.end()) {
         continue;
       }
-      if ((double)it->second.ts < (double)gc_ts - archive_ttl) {
-        to_delete.push_back(f.first);
-      }
+      candidates.push_back(f.first);
+      first_ts.push_back((double)it->second.ts);
     }
-    if (to_delete.size() > 1) {
-      to_delete.resize(to_delete.size() - 1, PackageId::empty(false, true));
-
-      for (auto &x : to_delete) {
-        LOG(ERROR) << "WARNING: deleting package " << x.id;
-        delete_package(x, [](td::Result<>) {});
-      }
+    // A reader that still needs older blocks (the wallet index) holds pruning
+    // back to the earliest of them.
+    for (auto index : archive_packages_to_delete(first_ts, (double)gc_ts, archive_ttl, g_archive_gc_floor.load())) {
+      auto &x = candidates[index];
+      LOG(ERROR) << "WARNING: deleting package " << x.id;
+      delete_package(x, [](td::Result<>) {});
     }
   }
 }

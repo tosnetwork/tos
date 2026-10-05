@@ -47,6 +47,7 @@
 #include "../validator-engine/wallet-index-queue.h"
 #include "../validator-engine/wallet-index-writer.h"
 #include "../validator-engine/wallet-index.h"
+#include "../validator/db/archive-gc-floor.h"
 #include "../validator/wc0-block-hook.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/filesystem.h"
@@ -1039,9 +1040,11 @@ TEST(WalletIndex, ProcessingRetriesCountsAndStopsOnAWriteFailure) {
   ASSERT_TRUE(status.is_ok());
   db->commit_batch().ensure();
   ASSERT_TRUE(remaining_seen == (std::vector<size_t>{4, 3, 2, 1}));
-  // Retry and the exception wait again; Unverifiable is counted.
+  // Retry and the exception wait again; Unverifiable is parked with its
+  // identity, not merely counted.
   ASSERT_EQ(backlog_size(*db), static_cast<size_t>(2));
-  ASSERT_EQ(backlog_stats(*db).unverifiable, static_cast<uint64_t>(1));
+  ASSERT_EQ(backlog_stats(*db).unverifiable, static_cast<uint64_t>(0));
+  ASSERT_EQ(backlog_stats(*db).parked, static_cast<uint64_t>(1));
 
   db->begin_batch().ensure();
   auto again = db->schedule_token_candidates({}, kWholeBasechain, kMaxTokenCandidatesPerBlock, kTestLt).move_as_ok();
@@ -2625,10 +2628,8 @@ TEST(WalletIndexWorker, AnOverflowingBlockIsFinishedAndOnlyThenComplete) {
   auto block = overflowing_block(5, kMaxTokenCandidatesPerBlock + 40);
   {
     auto &db = install_db(path);
-    // Smaller than the block's candidate set. A pass keeps room for each
-    // candidate it verifies to go back to the backlog, so this leaves room
-    // for 16 of the block's deferrals.
-    db.set_token_backlog_limit(kMaxTokenCandidatesPerBlock + 16);
+    // Room for 16 of the block's 40 deferrals.
+    db.set_token_backlog_limit(16);
     ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
     tos_wallet_index::enqueue_wc0_index_block(block.root, block.state, block.id);
     // Once the recorder has marked the block, the index is incomplete until
@@ -2657,7 +2658,7 @@ TEST(WalletIndexWorker, AnOverflowSurvivesRestartAndPruningWithNoLaterBlock) {
   auto block = overflowing_block(6, kMaxTokenCandidatesPerBlock + 40);
   {
     auto &db = install_db(path);
-    db.set_token_backlog_limit(kMaxTokenCandidatesPerBlock + 16);
+    db.set_token_backlog_limit(16);
     // Indexed as startup recovery does, synchronously and with no worker.
     tos_wallet_index::wc0_index_block(block.root, block.state, block.id);
     auto view = view_of(db, block);
@@ -2707,7 +2708,7 @@ TEST(WalletIndexWorker, UnfinishedBlocksAreBounded) {
   auto second = overflowing_block(8, kMaxTokenCandidatesPerBlock + 40, 5000, 5100);
   {
     auto &db = install_db(path);
-    db.set_token_backlog_limit(kMaxTokenCandidatesPerBlock + 16);
+    db.set_token_backlog_limit(16);
     tos_wallet_index::set_wc0_index_pending_block_limit_for_testing(1);
     ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
     tos_wallet_index::enqueue_wc0_index_block(first.root, first.state, first.id);
@@ -2750,14 +2751,14 @@ TEST(WalletIndexWorker, ParkedCandidatesAreRetriedWithoutANewNomination) {
   tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds(0));
   {
     auto &db = install_db(path);
-    db.set_token_backlog_limit(kMaxTokenCandidatesPerBlock + 16);
+    db.set_token_backlog_limit(16);
     tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
     ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
     tos_wallet_index::enqueue_wc0_index_block(failing.root, failing.state, failing.id);
     ASSERT_TRUE(
         eventually([&] { return backlog_stats(db).parked == failing.wallets.size(); }, std::chrono::seconds(60)));
     auto stats = backlog_stats(db);
-    ASSERT_TRUE(stats.parked > kMaxTokenCandidatesPerBlock + 16);
+    ASSERT_TRUE(stats.parked > 16);
     ASSERT_EQ(stats.lost, static_cast<uint64_t>(0));
     ASSERT_EQ(processed_count(db, failing), static_cast<size_t>(0));
     // Another block overflows while the parked candidates exceed the backlog
@@ -3101,6 +3102,508 @@ TEST(WalletIndexWorker, TheWorkerReconstructsLegacyRowsInTheBackground) {
     ASSERT_TRUE(eventually([&] { return !legacy_unverified(db); }));
     ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}}));
   }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+constexpr uint32_t kNftTransferOp = 0x5fcc3d14;
+const tos::ShardId kLeftShard = 0x4000000000000000ULL;
+const tos::ShardId kRightShard = 0xC000000000000000ULL;
+
+tos::BlockIdExt shard_block_id(tos::ShardId shard, tos::BlockSeqno seqno) {
+  return make_test_block_id(0, shard, seqno, 0x51, 0x52);
+}
+
+// The node's newest state of each basechain half, either of which the test
+// can make unavailable or replace.
+struct HalvesState {
+  std::mutex mutex;
+  td::Ref<vm::Cell> left, right;
+  uint64_t left_lt = 0, right_lt = 0;
+  std::atomic<int> calls{0};
+  void set(bool right_half, td::Ref<vm::Cell> state, uint64_t end_lt) {
+    std::lock_guard<std::mutex> lock(mutex);
+    (right_half ? right : left) = std::move(state);
+    (right_half ? right_lt : left_lt) = end_lt;
+  }
+  tos_wallet_index::Wc0IndexStateFetcher fetcher() {
+    return [this](const td::Bits256 &address, std::function<void(td::Result<tos_wallet_index::Wc0NewestState>)> done) {
+      calls++;
+      bool right_half = (address.data()[0] & 0x80) != 0;
+      td::Ref<vm::Cell> state;
+      uint64_t end_lt = 0;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        state = right_half ? right : left;
+        end_lt = right_half ? right_lt : left_lt;
+      }
+      if (state.is_null()) {
+        done(td::Status::Error("this shard's state is not available"));
+        return;
+      }
+      done(tos_wallet_index::Wc0NewestState{shard_block_id(right_half ? kRightShard : kLeftShard, 900), end_lt, state});
+    };
+  }
+};
+
+// An archive of blocks, each with its generation time, pruned the way the
+// node's archive is: by archive_packages_to_delete, honouring the floor the
+// index publishes.
+struct FakeArchive {
+  struct Stored {
+    td::Ref<vm::Cell> root;
+    uint32_t gen_utime;
+  };
+  std::mutex mutex;
+  std::map<tos::BlockIdExt, Stored> blocks;
+  void add(const tos::BlockIdExt &id, td::Ref<vm::Cell> root, uint32_t gen_utime) {
+    std::lock_guard<std::mutex> lock(mutex);
+    blocks[id] = Stored{std::move(root), gen_utime};
+  }
+  // Prunes as at `gc_ts` with `ttl`; returns how many blocks went.
+  size_t prune(double gc_ts, double ttl, uint32_t floor) {
+    std::lock_guard<std::mutex> lock(mutex);
+    std::vector<std::pair<uint32_t, tos::BlockIdExt>> order;
+    for (auto &entry : blocks) {
+      order.emplace_back(entry.second.gen_utime, entry.first);
+    }
+    std::sort(order.begin(), order.end());
+    std::vector<double> first_ts;
+    for (auto &entry : order) {
+      first_ts.push_back(entry.first);
+    }
+    auto doomed = tos::validator::archive_packages_to_delete(first_ts, gc_ts, ttl, floor);
+    for (auto index : doomed) {
+      blocks.erase(order[index].second);
+    }
+    return doomed.size();
+  }
+  bool has(const tos::BlockIdExt &id) {
+    std::lock_guard<std::mutex> lock(mutex);
+    return blocks.count(id) != 0;
+  }
+  tos_wallet_index::Wc0IndexBlockFetcher fetcher() {
+    return [this](const tos::BlockIdExt &id, bool,
+                  std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
+      td::Ref<vm::Cell> root;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto it = blocks.find(id);
+        if (it != blocks.end()) {
+          root = it->second.root;
+        }
+      }
+      if (root.is_null()) {
+        done(td::Status::Error("pruned"));
+        return;
+      }
+      // The block's own state is long gone; its candidates wait for a newer one.
+      done(tos_wallet_index::Wc0FetchedBlock{root, {}});
+    };
+  }
+};
+
+std::string complete_flag(tos_wallet_index::WalletIndexDb &db) {
+  return tos_wallet_index::format_token_index_state(backlog_stats(db));
+}
+
+bool is_complete(tos_wallet_index::WalletIndexDb &db) {
+  return complete_flag(db).find("\"complete\":true") != std::string::npos;
+}
+
+}  // namespace
+
+TEST(WalletIndex, ArchivePruningHonoursTheIndexFloor) {
+  using tos::validator::archive_packages_to_delete;
+  using tos::validator::kNoArchiveGcFloor;
+  std::vector<double> first_ts = {100, 200, 300, 400, 500};
+  // TTL alone: everything before 450 qualifies; the newest of those stays.
+  ASSERT_EQ(archive_packages_to_delete(first_ts, 550, 100, kNoArchiveGcFloor), (std::vector<size_t>{0, 1, 2}));
+  // A floor at 250 keeps every package that may hold a block from 250 on.
+  ASSERT_EQ(archive_packages_to_delete(first_ts, 550, 100, 250), (std::vector<size_t>{0}));
+  ASSERT_TRUE(archive_packages_to_delete(first_ts, 550, 100, 150).empty());
+}
+
+// A jetton wallet whose master, and an NFT item whose collection, live in the
+// other half of the basechain. The block's own shard state cannot verify
+// them, and the other half's state is not available at first: both are kept,
+// parked with their identity. Once that state is available, the worker
+// verifies both, with no further block or nomination.
+TEST(WalletIndexWorker, CrossShardCandidatesAreKeptThenVerified) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-cross-shard");
+  td::rmrf(path).ignore();
+  auto owner = token_address(1, 0x10);
+  auto wallet = token_address(2, 0x11);      // left
+  auto master = token_address(3, 0x91);      // right
+  auto item = token_address(4, 0x12);        // left
+  auto collection = token_address(5, 0x92);  // right
+  auto left_state = wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(wallet, owner, master),
+                                                       wallet_index_fixture::nft_item(item, collection, owner)});
+  auto right_state = wallet_index_fixture::shard_state(
+      {wallet_index_fixture::jetton_master(master, wallet), wallet_index_fixture::nft_collection(collection, item)});
+  auto root =
+      wallet_index_fixture::block(20, 5000, 1000, {{wallet, 10, kJettonTransferOp}, {item, 11, kNftTransferOp}});
+  HalvesState newest;
+  newest.set(false, left_state, 6000);
+  tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds(0));
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    tos_wallet_index::enqueue_wc0_index_block(root, left_state, shard_block_id(kLeftShard, 20), 1000);
+    ASSERT_TRUE(eventually([&] { return backlog_stats(db).parked == 2; }));
+    ASSERT_TRUE(!is_complete(db));
+    ASSERT_TRUE(jettons_of(db, owner).empty());
+    td::Bits256 recorded_owner;
+    ASSERT_TRUE(!db.get_nft_owner(item, recorded_owner).move_as_ok());
+    // The other half's state becomes available.
+    newest.set(true, right_state, 6000);
+    ASSERT_TRUE(eventually([&] { return backlog_stats(db).parked == 0; }, std::chrono::seconds(30)));
+    ASSERT_EQ(jettons_of(db, owner), (std::vector<std::pair<td::Bits256, td::Bits256>>{{master, wallet}}));
+    ASSERT_TRUE(db.get_nft_owner(item, recorded_owner).move_as_ok());
+    ASSERT_TRUE(recorded_owner == owner);
+    ASSERT_TRUE(eventually([&] { return is_complete(db); }));
+  }
+  tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::minutes(10));
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// Parked candidates and an unfinished block in each half. The left half can
+// never progress (its candidates stay indeterminate; its newest state is older
+// than its unfinished block); the right half can. Across a restart and with
+// no new block, the right half's work completes while the left half's stays
+// kept and the index incomplete.
+TEST(WalletIndexWorker, AShardThatCannotProgressDoesNotHoldUpAnother) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-rotation");
+  td::rmrf(path).ignore();
+  std::vector<td::Bits256> left_parked, right_parked, left_pending, right_pending;
+  for (uint32_t i = 0; i < 8; ++i) {
+    left_parked.push_back(token_address(100 + i, 0x05));
+    right_parked.push_back(token_address(200 + i, 0x85));
+    left_pending.push_back(token_address(300 + i, 0x06));
+    right_pending.push_back(token_address(400 + i, 0x86));
+  }
+  auto left_block = shard_block_id(kLeftShard, 30);
+  auto right_block = shard_block_id(kRightShard, 31);
+  {
+    auto &db = install_db(path);
+    db.begin_batch().ensure();
+    db.begin_token_pass().ensure();
+    for (auto &address : left_parked) {
+      ASSERT_TRUE(db.park_token_candidate({{TokenKind::Jetton, address}, 0, 100}).move_as_ok());
+    }
+    for (auto &address : right_parked) {
+      ASSERT_TRUE(db.park_token_candidate({{TokenKind::Jetton, address}, 0, 100}).move_as_ok());
+    }
+    tos_wallet_index::WalletIndexDb::PendingBlock left_pending_block, right_pending_block;
+    left_pending_block.end_lt = 9000;
+    for (auto &address : left_pending) {
+      left_pending_block.remaining.push_back({{TokenKind::Jetton, address}, 0, 9000});
+    }
+    right_pending_block.end_lt = 5000;
+    for (auto &address : right_pending) {
+      right_pending_block.remaining.push_back({{TokenKind::Jetton, address}, 0, 5000});
+    }
+    db.put_pending_block(left_block, left_pending_block).ensure();
+    db.put_pending_block(right_block, right_pending_block).ensure();
+    db.save_token_counters().ensure();
+    db.commit_batch().ensure();
+    db.put_incomplete_block(left_block, 1000).ensure();
+    db.put_incomplete_block(right_block, 1000).ensure();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  std::vector<wallet_index_fixture::Contract> codeless_left;
+  for (auto &address : left_parked) {
+    codeless_left.push_back(wallet_index_fixture::without_code(address));
+  }
+  HalvesState newest;
+  // The left half's newest state is older than its unfinished block, and
+  // runs no code for its parked wallets; the right half's is unavailable for
+  // now.
+  newest.set(false, wallet_index_fixture::shard_state(codeless_left), 5000);
+  tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds(0));
+  auto right_done = [&](tos_wallet_index::WalletIndexDb &db) {
+    for (auto &address : right_parked) {
+      if (!db.has_jetton_wallet_record(address).move_as_ok()) {
+        return false;
+      }
+    }
+    for (auto &address : right_pending) {
+      if (!db.has_jetton_wallet_record(address).move_as_ok()) {
+        return false;
+      }
+    }
+    return !db.has_incomplete_block(right_block).move_as_ok();
+  };
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually([&] { return newest.calls.load() >= 4; }));
+    ASSERT_TRUE(!right_done(db));
+    ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
+    tos_wallet_index::stop_wc0_index_worker();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  // After a restart the right half's state is available.
+  newest.set(true, wallet_index_fixture::shard_state({}), 6000);
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually([&] { return right_done(db); }, std::chrono::seconds(30)));
+    // The left half's work is all still kept.
+    ASSERT_EQ(backlog_stats(db).parked, left_parked.size());
+    auto left_left = db.get_pending_block(left_block).move_as_ok();
+    ASSERT_TRUE(static_cast<bool>(left_left));
+    ASSERT_EQ(left_left.value().remaining.size(), left_pending.size());
+    ASSERT_TRUE(db.has_incomplete_block(left_block).move_as_ok());
+    ASSERT_TRUE(!is_complete(db));
+  }
+  tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::minutes(10));
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// The backlog queue and parking are both full while candidates keep failing.
+// No transition overfills either: a backlog entry goes back only into the
+// slot it kept, a block's own candidate that cannot be queued or parked stays
+// with its block, and a parked candidate nominated again with no queue room
+// stays parked. After a restart, once a state decides them, every candidate
+// is verified with no new nomination.
+TEST(WalletIndexWorker, FullQueueAndParkingAreNeverOverfilled) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-both-full");
+  td::rmrf(path).ignore();
+  auto block = overflowing_block(40, 10);
+  auto filler = overflowing_block(43, 10, 1000, 5050);
+  auto failing = codeless(block);
+  auto more = codeless(filler);
+  failing.insert(failing.end(), more.begin(), more.end());
+  block.state = wallet_index_fixture::shard_state(failing);
+  NewestState newest;
+  newest.set(40, 5100, block.state);
+  tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds(0));
+  uint64_t most_entries = 0, most_parked = 0;
+  auto watch = [&](tos_wallet_index::WalletIndexDb &db) {
+    auto stats = backlog_stats(db);
+    most_entries = std::max(most_entries, stats.entries);
+    most_parked = std::max(most_parked, stats.parked);
+    return stats;
+  };
+  auto settle = [&](tos_wallet_index::WalletIndexDb &db) {
+    for (int i = 0; i < 100; ++i) {
+      watch(db);
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+  };
+  {
+    auto &db = install_db(path);
+    db.set_token_backlog_limit(4);
+    db.set_parked_token_limit(2);
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    tos_wallet_index::enqueue_wc0_index_block(block.root, block.state, block.id, 1000);
+    // Parking fills up; the block keeps what fits neither in the queue nor
+    // in parking.
+    ASSERT_TRUE(eventually([&] { return watch(db).parked == 2; }));
+    settle(db);
+    ASSERT_TRUE(static_cast<bool>(db.get_pending_block(block.id).move_as_ok()));
+    // Another block, applied without its state, can only defer: it fills the
+    // queue and keeps the rest.
+    tos_wallet_index::enqueue_wc0_index_block(filler.root, td::Ref<vm::Cell>{}, filler.id, 1001);
+    ASSERT_TRUE(eventually([&] { return watch(db).entries == 4; }));
+    settle(db);
+    // A parked candidate nominated again while the queue is full stays parked.
+    td::optional<td::Bits256> parked_wallet;
+    auto kept = db.get_pending_block(block.id).move_as_ok();
+    for (auto &wallet : block.wallets) {
+      bool elsewhere = false;
+      db.for_each_deferred_token_candidate(16, [&](const TokenCandidate &c) -> td::Status {
+          elsewhere = elsewhere || c.address == wallet;
+          return td::Status::OK();
+        }).ensure();
+      if (kept) {
+        for (auto &entry : kept.value().remaining) {
+          elsewhere = elsewhere || entry.candidate.address == wallet;
+        }
+      }
+      if (!elsewhere && !db.has_jetton_wallet_record(wallet).move_as_ok()) {
+        parked_wallet = wallet;
+      }
+    }
+    ASSERT_TRUE(static_cast<bool>(parked_wallet));
+    auto again = wallet_index_fixture::block(41, 5200, 1002, {{parked_wallet.value(), 20, kJettonTransferOp}});
+    tos_wallet_index::enqueue_wc0_index_block(again, td::Ref<vm::Cell>{}, worker_block_id(41), 1002);
+    ASSERT_TRUE(eventually([&] { return !db.has_incomplete_block(worker_block_id(41)).move_as_ok(); }));
+    settle(db);
+    ASSERT_EQ(watch(db).parked, static_cast<uint64_t>(2));
+    bool requeued = false;
+    db.for_each_deferred_token_candidate(16, [&](const TokenCandidate &c) -> td::Status {
+        requeued = requeued || c.address == parked_wallet.value();
+        return td::Status::OK();
+      }).ensure();
+    ASSERT_TRUE(!requeued);
+    ASSERT_TRUE(most_entries <= 4);
+    ASSERT_TRUE(most_parked <= 2);
+    ASSERT_EQ(backlog_stats(db).lost, static_cast<uint64_t>(0));
+    ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
+    tos_wallet_index::stop_wc0_index_worker();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  // Restarted, with a state that decides them (the wallets are gone).
+  newest.set(42, 9000, wallet_index_fixture::shard_state({}));
+  {
+    auto &db = install_db(path);
+    db.set_token_backlog_limit(4);
+    db.set_parked_token_limit(2);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually(
+        [&] {
+          watch(db);
+          return processed_count(db, block) == block.wallets.size() &&
+                 processed_count(db, filler) == filler.wallets.size() && is_complete(db);
+        },
+        std::chrono::seconds(30)));
+    ASSERT_TRUE(most_entries <= 4);
+    ASSERT_TRUE(most_parked <= 2);
+  }
+  tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::minutes(10));
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// Startup recovery finds more blocks with overflowing candidates than the
+// index may hold unfinished. It admits them through the same bound: never
+// more unfinished at once, and every candidate is verified in the end.
+TEST(WalletIndexWorker, RecoveryHonoursTheBoundOnUnfinishedBlocks) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-recovery-bound");
+  td::rmrf(path).ignore();
+  std::vector<OverflowingBlock> blocks;
+  for (uint32_t i = 0; i < 3; ++i) {
+    blocks.push_back(overflowing_block(50 + i, kMaxTokenCandidatesPerBlock + 40, 10000 * (i + 1), 5000 + i));
+  }
+  FakeArchive archive;
+  {
+    auto &db = install_db(path);
+    std::vector<tos_wallet_index::MarkedBlock> marked;
+    for (auto &b : blocks) {
+      archive.add(b.id, b.root, 1000);
+      marked.push_back({b.id, 1000});
+    }
+    // An earlier run applied them and stopped before indexing any.
+    db.mark_blocks_incomplete(marked).ensure();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  NewestState newest;
+  newest.set(90, 9000, wallet_index_fixture::shard_state({}));
+  {
+    auto &db = install_db(path);
+    db.set_token_backlog_limit(16);
+    tos_wallet_index::set_wc0_index_pending_block_limit_for_testing(1);
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    uint64_t most = 0;
+    ASSERT_TRUE(eventually(
+        [&] {
+          most = std::max(most, db.pending_block_count().move_as_ok());
+          for (auto &b : blocks) {
+            if (processed_count(db, b) != b.wallets.size() || db.has_incomplete_block(b.id).move_as_ok()) {
+              return false;
+            }
+          }
+          return true;
+        },
+        std::chrono::seconds(60)));
+    ASSERT_TRUE(most <= 1);
+  }
+  tos_wallet_index::set_wc0_index_pending_block_limit_for_testing(tos_wallet_index::kMaxPendingTokenBlocks);
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// The worker waits at the bound of unfinished blocks while blocks keep being
+// applied, so its queue saturates and later blocks are only marked. The
+// archive is then pruned and the node restarts. The index's floor kept every
+// marked block it has yet to read, so every candidate of every block is
+// verified in the end, with no new block or nomination.
+TEST(WalletIndexWorker, BlocksWaitingAtTheBoundSurvivePruning) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-bound-pruning");
+  td::rmrf(path).ignore();
+  const uint32_t base = 2000000;
+  // The first block's leftover candidates cannot be finished in this run.
+  auto first = overflowing_block(60, kMaxTokenCandidatesPerBlock + 40, 0, 5000);
+  first.state = wallet_index_fixture::shard_state(codeless(first));
+  std::vector<OverflowingBlock> later;
+  const size_t later_count = tos_wallet_index::kWc0IndexQueueCapacity + 20;
+  for (size_t i = 0; i < later_count; ++i) {
+    later.push_back(
+        overflowing_block(static_cast<tos::BlockSeqno>(61 + i), 1, static_cast<uint32_t>(100000 + i), 5001 + i));
+  }
+  // An old block, indexed long ago: pruning may take it.
+  auto old_id = worker_block_id(58);
+  FakeArchive archive;
+  archive.add(old_id, wallet_index_fixture::block(58, 3000, base - 200000, {}), base - 200000);
+  archive.add(worker_block_id(59), wallet_index_fixture::block(59, 4000, base - 100000, {}), base - 100000);
+  archive.add(first.id, first.root, base);
+  for (size_t i = 0; i < later.size(); ++i) {
+    archive.add(later[i].id, later[i].root, static_cast<uint32_t>(base + 1 + i));
+  }
+  NewestState newest;
+  newest.set(60, 5000, first.state);
+  {
+    auto &db = install_db(path);
+    db.set_token_backlog_limit(16);
+    db.set_parked_token_limit(0);
+    tos_wallet_index::set_wc0_index_pending_block_limit_for_testing(1);
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    tos_wallet_index::enqueue_wc0_index_block(first.root, first.state, first.id, base);
+    ASSERT_TRUE(eventually([&] { return db.get_pending_block(first.id).move_as_ok(); }));
+    // Applied with their data in hand; the worker cannot take them.
+    for (size_t i = 0; i < later.size(); ++i) {
+      tos_wallet_index::enqueue_wc0_index_block(later[i].root, later[i].state, later[i].id,
+                                                static_cast<uint32_t>(base + 1 + i));
+    }
+    ASSERT_TRUE(eventually([&] { return db.has_incomplete_block(later.back().id).move_as_ok(); }));
+    ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
+    // The archive is pruned as the node would, with the index's floor.
+    auto floor = tos::validator::g_archive_gc_floor.load();
+    ASSERT_TRUE(floor <= base);
+    ASSERT_EQ(archive.prune(base + 1000000.0, 1000.0, floor), static_cast<size_t>(1));
+    ASSERT_TRUE(!archive.has(old_id));
+    tos_wallet_index::stop_wc0_index_worker();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  // Restarted; a newer state now decides the first block's candidates.
+  newest.set(400, 9000, wallet_index_fixture::shard_state({}));
+  {
+    auto &db = install_db(path);
+    db.set_token_backlog_limit(16);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually(
+        [&] {
+          if (processed_count(db, first) != first.wallets.size()) {
+            return false;
+          }
+          for (auto &b : later) {
+            if (processed_count(db, b) != b.wallets.size()) {
+              return false;
+            }
+          }
+          return is_complete(db);
+        },
+        std::chrono::seconds(120)));
+  }
+  tos_wallet_index::set_wc0_index_pending_block_limit_for_testing(tos_wallet_index::kMaxPendingTokenBlocks);
   reset_index_singletons();
   td::rmrf(path).ignore();
 }

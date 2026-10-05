@@ -308,8 +308,10 @@ void ApplyBlock::applied_set() {
   if (g_wc0_block_index_hook && handle_->id().id.workchain == 0 && handle_->id().seqno() > 0) {
     auto block_root = block_.not_null() ? block_->root_cell() : td::Ref<vm::Cell>{};
     auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
-    call_index_hook(manager_, handle_->id(),
-                    [&] { g_wc0_block_index_hook(std::move(block_root), std::move(state_root), handle_->id()); });
+    UnixTime gen_utime = handle_->inited_unix_time() ? handle_->unix_time() : 0;
+    call_index_hook(manager_, handle_->id(), [&] {
+      g_wc0_block_index_hook(std::move(block_root), std::move(state_root), handle_->id(), gen_utime);
+    });
   }
   flush_applied();
 }

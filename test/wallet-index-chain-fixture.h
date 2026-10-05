@@ -239,6 +239,30 @@ inline Contract jetton_master(const td::Bits256 &address, const td::Bits256 &wal
   return Contract{address, code.finalize(), vm::CellBuilder{}.store_long(2, 8).finalize()};
 }
 
+// An NFT item whose get_nft_data answers (-1, 0, collection, owner, content).
+inline Contract nft_item(const td::Bits256 &address, const td::Bits256 &collection, const td::Bits256 &owner) {
+  vm::CellBuilder code;
+  // DROP (the method id), PUSHINT -1, PUSHINT 0, PUSHREFSLICE collection,
+  // PUSHREFSLICE owner, PUSHREF content
+  require(code.store_long_bool(0x30, 8) && code.store_long_bool(0x7F, 8) && code.store_long_bool(0x70, 8) &&
+              code.store_long_bool(0x89, 8) && code.store_long_bool(0x89, 8) && code.store_long_bool(0x88, 8) &&
+              code.store_ref_bool(address_cell(collection)) && code.store_ref_bool(address_cell(owner)) &&
+              code.store_ref_bool(vm::CellBuilder{}.finalize()),
+          "item code");
+  return Contract{address, code.finalize(), vm::CellBuilder{}.store_long(4, 8).finalize()};
+}
+
+// An NFT collection whose get_nft_address_by_index answers `item` for any
+// index.
+inline Contract nft_collection(const td::Bits256 &address, const td::Bits256 &item) {
+  vm::CellBuilder code;
+  // DROP (the method id), DROP (the index), PUSHREFSLICE item
+  require(code.store_long_bool(0x30, 8) && code.store_long_bool(0x30, 8) && code.store_long_bool(0x89, 8) &&
+              code.store_ref_bool(address_cell(item)),
+          "collection code");
+  return Contract{address, code.finalize(), vm::CellBuilder{}.store_long(5, 8).finalize()};
+}
+
 // The post-apply state of the whole basechain holding `contracts`.
 inline td::Ref<vm::Cell> shard_state(const std::vector<Contract> &contracts) {
   vm::AugmentedDictionary accounts{256, block::tlb::aug_ShardAccounts};

@@ -238,9 +238,10 @@ int main(int argc, char **argv) {
   for (size_t m = 0; m < modes.size(); m++) {
     const auto &mode = modes[m];
     g_read_delay_us.store(mode.delay_us);
-    g_wc0_block_index_hook = mode.hook ? std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, tos::BlockIdExt)>(
-                                             &tos_wallet_index::enqueue_wc0_index_block)
-                                       : nullptr;
+    g_wc0_block_index_hook =
+        mode.hook ? std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, tos::BlockIdExt, tos::UnixTime)>(
+                        &tos_wallet_index::enqueue_wc0_index_block)
+                  : nullptr;
     auto reads_before = g_reads.load();
     auto worker_reads_before = g_worker_reads.load();
     std::vector<double> durations;

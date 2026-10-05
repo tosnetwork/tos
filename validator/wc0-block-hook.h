@@ -26,7 +26,8 @@ namespace validator {
 // data itself, off the block-application path.
 // The callee must return without waiting (no I/O, no lock held across I/O)
 // and must not throw into the consensus path.
-extern std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, BlockIdExt)> g_wc0_block_index_hook;
+// The last argument is the block's generation time, 0 when not known.
+extern std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, BlockIdExt, UnixTime)> g_wc0_block_index_hook;
 
 }  // namespace validator
 }  // namespace tos

@@ -2531,9 +2531,6 @@ void ValidatorEngine::start_validator() {
   // unavailable instead.
   if (json_rpc_addr_ && tos_wallet_index::open_wallet_index_db(db_root_) &&
       tos_wallet_index::start_wc0_index_worker(true)) {
-    // Take the blocks earlier runs left unindexed before any block of this run
-    // can be marked; index them before the worker starts on this run's blocks.
-    collect_wc0_recovery_markers();
     tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
   }
 
@@ -2644,104 +2641,10 @@ void ValidatorEngine::finish_start_validator() {
   started_validator();
 }
 
-void ValidatorEngine::collect_wc0_recovery_markers() {
-  wc0_recovery_markers_.clear();
-  auto *db = tos_wallet_index::wallet_index_db();
-  if (!db) {
-    return;
-  }
-  auto scan_status = db->for_each_incomplete_block([this](const tos::BlockIdExt &id) -> td::Status {
-    wc0_recovery_markers_.push_back(id);
-    return td::Status::OK();
-  });
-  if (scan_status.is_error()) {
-    LOG(ERROR) << "wc0-index: recovery: failed to scan incomplete-block markers: " << scan_status.message();
-  }
-}
-
 void ValidatorEngine::recover_wc0_index() {
-  if (wc0_recovery_markers_.empty()) {
-    tos_wallet_index::resume_wc0_index_worker();
-    return;
-  }
-  LOG(WARNING) << "wc0-index: recovering " << wc0_recovery_markers_.size()
-              << " block(s) left incomplete by a previous crash/parse-failure";
-  wc0_recovery_index_ = 0;
-  recover_wc0_index_step();
-}
-
-// Continuation for recover_wc0_index(), one marker at a time. Deliberately
-// implemented as re-sending a message to this actor's own ActorId (via
-// wc0_recovery_markers_/wc0_recovery_index_ members) rather than a
-// shared_ptr<std::function<void()>> that captures itself — the latter is a
-// reference cycle (the closure stored *inside* the shared_ptr held a strong
-// copy of that same shared_ptr) that never gets freed. Re-sending to self
-// through the actor scheduler also means a destroyed ValidatorEngine simply
-// drops any in-flight continuation safely, with no lifetime bookkeeping
-// needed here at all.
-void ValidatorEngine::recover_wc0_index_step() {
-  if (wc0_recovery_index_ >= wc0_recovery_markers_.size()) {
-    wc0_recovery_markers_.clear();
-    wc0_recovery_markers_.shrink_to_fit();
-    // Every older block has had its turn; this run's blocks may go now.
-    tos_wallet_index::resume_wc0_index_worker();
-    return;
-  }
-  auto block_id = wc0_recovery_markers_[wc0_recovery_index_++];
-  auto manager = validator_manager_.get();
-  auto SelfId = actor_id(this);
-  // Exact lookup by full block id — deliberately not get_block_by_seqno_from_db
-  // (an account/shard-prefix search): after a shard split/merge, a different
-  // shard can reuse the same seqno, and a prefix search over the current
-  // shard layout is not guaranteed to land back on the one specific block
-  // this marker was written for.
-  td::actor::send_closure(
-      manager, &tos::validator::ValidatorManagerInterface::get_block_handle, block_id, false,
-      [SelfId, manager, block_id](td::Result<tos::validator::BlockHandle> R) {
-        if (R.is_error() || !R.ok()->is_applied()) {
-          LOG(WARNING) << "wc0-index: recovery: block " << block_id.id.to_str() << " not found/applied: "
-                      << (R.is_error() ? R.error().message().str() : "not yet applied");
-          td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-          return;
-        }
-        auto handle = R.move_as_ok();
-        td::actor::send_closure(
-            manager, &tos::validator::ValidatorManagerInterface::get_block_data_from_db, handle,
-            [SelfId, manager, handle, block_id](td::Result<td::Ref<tos::validator::BlockData>> R2) {
-              if (R2.is_error() || R2.ok().is_null()) {
-                LOG(WARNING) << "wc0-index: recovery: block data for " << block_id.id.to_str()
-                            << " unavailable: "
-                            << (R2.is_error() ? R2.error().message().str() : "null result");
-                td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                return;
-              }
-              auto block_root = R2.ok()->root_cell();
-              td::actor::send_closure(
-                  manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, handle,
-                  [SelfId, block_id, block_root](td::Result<td::Ref<tos::validator::ShardState>> R3) {
-                    if (R3.is_error() || R3.ok().is_null()) {
-                      // Do NOT call wc0_index_block() here: it would index
-                      // events-only (no token verification) and then delete
-                      // the marker on that partial success, permanently
-                      // losing the chance to backfill this block's jetton/NFT
-                      // data. Leave the marker so a later restart can retry
-                      // once state is available again.
-                      LOG(WARNING) << "wc0-index: recovery: state for " << block_id.id.to_str()
-                                  << " unavailable, leaving marker for a later attempt";
-                      td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                      return;
-                    }
-                    auto state_root = R3.ok()->root_cell();
-                    // wc0_index_block deletes the marker itself, atomically
-                    // with the block's entries, on success — and deliberately
-                    // leaves it if indexing fails again, so a repeated failure
-                    // stays visible instead of being masked here. Don't
-                    // duplicate or second-guess that decision.
-                    tos_wallet_index::wc0_index_block(block_root, state_root, block_id);
-                    td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                  });
-            });
-      });
+  // The worker indexes the blocks earlier runs left unfinished first, reading
+  // them back through the fetcher installed above, then this run's blocks.
+  tos_wallet_index::resume_wc0_index_worker();
 }
 
 void ValidatorEngine::started_validator() {

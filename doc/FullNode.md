@@ -87,12 +87,19 @@ truth.
   backlog is full, the rest of the block's candidates are stored with the
   block, which stays unfinished (`unfinished_block`); the indexing worker
   verifies them by itself, against the newest state the node has, also after
-  a restart, with no new block arriving, and however far the archive has been
-  pruned meanwhile. At most 1024 blocks can be unfinished this way; past that
-  the worker finishes them before indexing more. A candidate whose
-  verification stays indeterminate through every attempt is `parked`: it is
-  kept, retried by the worker in bounded rounds against the newest state, and
-  released only on a definite result. Any of these keeps `"complete": false`.
+  a restart and with no new block arriving. At most 1024 blocks can be
+  unfinished this way; past that the worker finishes them before indexing
+  more. A candidate whose verification stays indeterminate through every
+  attempt, or needs the state of another shard the node does not have yet
+  (a jetton master or NFT collection elsewhere), is `parked`: it is kept,
+  retried by the worker in bounded rounds against each shard's newest state,
+  and released only on a definite result. Any of these keeps
+  `"complete": false`.
+- **The index holds back archive pruning for blocks it has yet to read.** A
+  block applied but not yet indexed (still queued, or only marked because
+  the indexer was behind) is kept by the archive, past `--archive-ttl` if
+  need be, until its token candidates are indexed or stored with it. On the
+  next start the indexer reads such blocks back and indexes them first.
 - **Jetton rows from older index versions are not served until verified.**
   An index upgraded from a version that kept no pair record per jetton row
   may hold owner/master mappings that have since changed. Those rows are left
