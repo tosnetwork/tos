@@ -358,7 +358,9 @@ int need_p1_for(cell d) inline {
         e~skip_bits(2);
         slice payer = e~load_msg_addr();
         int fee = e~load_coins();
-        int refund = fee - small_fee(-1);
+        ;; The payment carries the refund, its forwarding and the cancellation's
+        ;; mandatory log; the bridge's own balance pays for none of them.
+        int refund = fee - small_fee(-1) - allowance(2, -1);
         if (refund > 0) {
             send_raw_message(begin_cell()
                 .store_uint(0x10, 6)
@@ -481,9 +483,12 @@ int need_p1_for(cell d) inline {
         } elseif (op == op::mint_completed) {
             (c_pending, _) = c_pending.udict_delete?(64, s);
         } elseif (op == op::mint_stranded) {
-            ;; The minter had reserved: the swap stays consumed, and its liability
-            ;; is the minter's logged strand.
-            b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_CONSUMED, 2));
+            ;; The minter had reserved: the swap is consumed, and its liability
+            ;; is the minter's logged strand. A committed swap is consumed
+            ;; already, and may have folded below the watermark.
+            if (status == PENDING_PREPARING) {
+                b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_CONSUMED, 2));
+            }
             (c_pending, _) = c_pending.udict_delete?(64, s);
         }
     }
@@ -741,8 +746,9 @@ int advance_need(int kind, int s) inline {
     if (flags & 1) {
         return ();  ;; no settlement message is bounceable; nothing to restore
     }
-
-    throw_if(error::inbound_message_has_empty_body, in_msg_body.slice_empty?());
+    if (in_msg_body.slice_empty?()) {
+        return ();  ;; a plain top-up: anyone may fund the bridge's storage
+    }
 
     (int op, int query_id) = in_msg_body~load_body_header();
 
