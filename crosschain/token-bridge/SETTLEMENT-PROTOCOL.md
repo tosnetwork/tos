@@ -691,7 +691,7 @@ destination, amount, recipient, outcome or life.**
 |---|---|---|---|---|
 | bridge | MINT `(minter, s)` | PREPARING: P1; COMMITTED: M1 | refuse | refuse |
 | bridge | BURN_RESULT `(minter, m)` | n/a | B3 (recorded result or default answer) | refuse |
-| minter | MINT `s` | AWAITING_OPEN: O1; RESERVED: P2; CREDITING: M2 | COUNTED: M4; REFUSED: `refused`; STRANDED: `mint_stranded` | refuse |
+| minter | MINT `s` | AWAITING_OPEN: O1, or the promotion of section 7.1 if the holder is already OPEN; RESERVED: P2; CREDITING: M2 | COUNTED: M4; REFUSED: `refused`; STRANDED: `mint_stranded` | refuse |
 | minter | STRAND `owner` | old-life records not yet terminal: process the next `FOLD_LIMIT` | refuse | refuse |
 | minter | OPEN `owner` | OPENING: O1 (same attempt) | OPEN: O1 (idempotent) | refuse |
 | minter | BURN `(owner, b)` | AWAITING: B2; REFUNDING: R1 | RECORDED: B4; ADMIT_REFUSED: B1r | refuse |
