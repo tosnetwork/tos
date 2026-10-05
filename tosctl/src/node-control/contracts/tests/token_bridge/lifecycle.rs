@@ -336,6 +336,15 @@ fn t_z1_old_locks_stay_ineligible_after_all_three_are_recreated() {
         }
     }
     assert_eq!(net.model.consumed.values().filter(|c| **c > 1).count(), 0, "no lock consumed twice");
+    // a payment, vote or cancellation naming the old generation with a nonce of
+    // the new range is refused by its generation alone
+    let fresh_n = net.next_nonce + 1;
+    refused_with(&net.pay_from(&payer, GENERATION, fresh_n, fee), err("wrong_generation"));
+    let v = net.swap_voting(GENERATION, fresh_n, &user, 1, 0x5a);
+    let v = net.vote(900, v);
+    refused_with(&net.send(v), err("wrong_generation"));
+    let c = net.vote(901, net.cancel_lock_vote(GENERATION, fresh_n));
+    refused_with(&net.send(c), err("wrong_generation"));
     // a fresh family serves only new locks, and new holders
     let newcomer = net.user(2);
     let n = net.next_nonce;
@@ -346,4 +355,60 @@ fn t_z1_old_locks_stay_ineligible_after_all_three_are_recreated() {
     net.send(vote);
     assert_eq!(net.tokens(&newcomer), 3, "the fresh family works for a new lock");
     let _ = (Message::default, MsgAddressInt::default);
+}
+
+/// T-X4: the first credit of a wallet's life, still in flight when the wallet
+/// is deleted, never lands in the recreated wallet: it names the old life.
+#[test]
+fn t_x4_an_old_life_credit_never_lands_in_the_new_life() {
+    let mut net = minted();
+    let holder = net.user(1);
+    net.start_swap_to(&holder, 50);
+    let credit = net.intercept(|m| body_op(m) == Some(op::CREDIT));
+    net.settle();
+    let wallet = net.wallet_of(&holder);
+    net.delete_account(&wallet);
+    net.recreate_wallet(&holder);
+    reopen(&mut net, &holder);
+    let before = net.state_hashes();
+    refused_with(&net.send(credit), err("life_mismatch"));
+    assert_eq!(net.state_hashes(), before);
+    assert_eq!(net.tokens(&holder), 0, "nothing reached the new life");
+    assert_eq!(stranded_logs(&net), 1, "the old credit was stranded once instead");
+}
+
+/// A settlement message like `m` that names another minter life.
+fn with_minter_life(m: &chain_block::Message, life: u64) -> chain_block::Cell {
+    let mut s = settlement_body(m);
+    let mut b = chain_block::BuilderData::new();
+    let head = s.get_next_bits(32 + 64).unwrap();
+    b.append_raw(&head, 32 + 64).unwrap();
+    s.get_next_u64().unwrap();
+    b.append_u64(life).unwrap();
+    let rest = s.remaining_bits();
+    let tail = s.get_next_bits(rest).unwrap();
+    b.append_raw(&tail, rest).unwrap();
+    for i in 0..s.remaining_references() {
+        b.checked_append_reference(s.reference(i).unwrap()).unwrap();
+    }
+    b.into_cell().unwrap()
+}
+
+/// T-Y6: a credit naming a newer minter life is not a recreated wallet's
+/// business: the wallet marks its minter terminal and credits nothing, then
+/// refuses everything from it.
+#[test]
+fn t_y6_a_newer_minter_life_is_terminal_at_the_wallet() {
+    let mut net = minted();
+    let user = net.user(0);
+    net.start_swap(40);
+    let credit = net.intercept(|m| body_op(m) == Some(op::CREDIT));
+    let minter = net.minter();
+    let wallet = net.wallet_of(&user);
+    let newer = net.minter_channels()[0] as u64 + 1;
+    let body = with_minter_life(&credit, newer);
+    net.send(forged(&minter, &wallet, 10 * TOS, body));
+    assert_eq!(net.tokens(&user), 1_000, "nothing credited from a newer life");
+    assert_eq!(net.wallet_state(&user)[2], 1, "the minter is terminal at the wallet");
+    refused_with(&net.send(credit), err("terminal"));
 }

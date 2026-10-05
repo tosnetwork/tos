@@ -163,10 +163,42 @@ fn t_m4_duplicate_and_old_mint_messages_repeat_no_effect() {
     let n = net.start_swap(1_000);
     let seen = settle_doubled(&mut net);
     assert_minted(&net, n, 1_000);
+    for m in seen.iter().cloned() {
+        net.send(m);
+    }
+    assert_minted(&net, n, 1_000);
+    // once the wallet has compacted the credit, the copies arrive below its
+    // floors: only the report is repeated
+    let user = net.user(0);
+    succeeded(&net.advance_minter_sync(channel::C2, Some(&user)));
+    assert_eq!(net.get(&net.wallet_of(&user), "get_credits_above_count", vec![]).int_at(0), 0, "compacted");
     for m in seen {
         net.send(m);
     }
     assert_minted(&net, n, 1_000);
+}
+
+/// T-M4: a duplicate report of a counted credit, arriving while an earlier
+/// mint holds the minter's watermark, so the counted record is still stored:
+/// it is counted once.
+#[test]
+fn t_m4_a_duplicate_report_behind_a_held_mint_is_counted_once() {
+    let mut net = Net::new();
+    let user = net.user(0);
+    net.swap(10);
+    let other = net.user(1);
+    net.start_swap_to(&other, 5);
+    let held = net.drop_op(op::PREPARE);
+    net.settle();
+    net.start_swap(100);
+    let report = net.intercept(|m| body_op(m) == Some(op::CREDIT_RECORDED));
+    net.send(report.clone());
+    assert_eq!(net.mint_status(2), mint_status::COUNTED, "stored behind the held mint");
+    net.send(report);
+    assert_eq!(net.supply_state(), (110, 0, 0, 0, 0), "counted once");
+    assert_eq!(net.tokens(&user), 110);
+    net.send(held);
+    assert_eq!(net.supply_state().0, 115);
 }
 
 /// T-M5: two mints to one holder delivered out of order on C1 and on C2.
@@ -243,6 +275,21 @@ fn t_m6_a_reused_identity_with_other_fields_is_refused() {
     assert_eq!(net.state_hashes(), before, "nothing applied");
     net.send(commit);
     assert_eq!(net.tokens(&user), 110, "the original commit still completes it");
+    // the same credit number with another amount, while the wallet still
+    // stores it, is refused at the wallet
+    let credit = net
+        .delivered
+        .iter()
+        .rev()
+        .find(|d| body_op(&d.msg) == Some(op::CREDIT))
+        .map(|d| d.msg.clone())
+        .expect("the credit was delivered");
+    let wallet = net.wallet_of(&user);
+    let before = net.state_hashes();
+    // op, query, two lives, k and floor: eleven 32-bit words
+    let altered = forged(&minter, &wallet, 10 * TOS, with_amount(&credit, 11, 999));
+    refused_with(&net.send(altered), err("operation_mismatch"));
+    assert_eq!(net.state_hashes(), before, "nothing credited or reported");
 
     // a vote for the consumed lock, and for a lock still being prepared
     let voting = net.swap_voting(GENERATION, n, &user, 100, 0x5a);

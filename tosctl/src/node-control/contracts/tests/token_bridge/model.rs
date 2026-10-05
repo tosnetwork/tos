@@ -624,6 +624,22 @@ impl Model {
                 }
             }
         }
+        // every result the bridge sends repeats the decision it first made
+        if op == Some(op::BURN_NOTICE) && !outcome(&d.tx).aborted {
+            let sender = key(&d.msg.src_ref().expect("a source").clone());
+            for result in d.outs.iter().filter(|x| body_op(x) == Some(op::BURN_RESULT)) {
+                let mut r = settlement_body(result);
+                r.get_next_u32().unwrap();
+                r.get_next_u64().unwrap();
+                r.get_next_u64().unwrap();
+                r.get_next_u64().unwrap();
+                let m = r.get_next_u64().unwrap();
+                let outcome = r.get_next_bit().unwrap() as i128;
+                if let Some(first) = self.decisions.get(&(life, sender.clone(), m)) {
+                    assert_eq!(*first, outcome, "I4: m={m} answered against its decision");
+                }
+            }
+        }
         if burn_logs > 0 {
             assert_eq!(op, Some(op::BURN_NOTICE), "LOG_BURN outside a burn notice");
             let mut s = settlement_body(&d.msg);
@@ -687,6 +703,11 @@ impl Model {
             if *state == swap_state::CANCELLED {
                 let logs = logs_with(&d.outs, declared("LOG_SWAP_CANCELLED") as u32);
                 self.atomic(logs == 1, format!("cancellation of {n} without its log"));
+                if before == swap_state::PAID {
+                    // the payment goes back in the same leg: a plain message
+                    let refunds = d.outs.iter().filter(|m| m.is_internal() && body_op(m).is_none()).count();
+                    self.atomic(refunds == 1, format!("cancellation of paid {n} without its refund"));
+                }
                 let c = self.cancelled.entry((life, *n)).or_insert(0);
                 *c += 1;
                 assert!(*c <= 1, "lock {n} cancelled twice");

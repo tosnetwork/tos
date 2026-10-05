@@ -370,3 +370,61 @@ fn t_b8_a_reused_burn_identity_with_other_fields_is_refused() {
     assert_eq!(net.state_hashes(), before);
     assert_eq!(net.burn_logs(), 0);
 }
+
+/// A burn admission like `m` with another amount in its descriptor and its
+/// cancellation flag set.
+fn admission_with_amount(m: &Message, amount: u128) -> chain_block::Cell {
+    let mut s = settlement_body(m);
+    let bits = s.remaining_bits();
+    let mut head = s.get_next_slice(bits).unwrap();
+    let mut b = chain_block::BuilderData::new();
+    // op, query, two lives, then the cancellation flag
+    let front = head.get_next_bits(32 + 64 + 64 + 64).unwrap();
+    b.append_raw(&front, 32 + 64 + 64 + 64).unwrap();
+    head.get_next_bit().unwrap();
+    b.append_bit_one().unwrap();
+    let rest = head.remaining_bits();
+    let tail = head.get_next_bits(rest).unwrap();
+    b.append_raw(&tail, rest).unwrap();
+    let mut d = SliceData::load_cell(s.reference(0).unwrap()).unwrap();
+    let tag = d.get_next_u32().unwrap();
+    let bn = d.get_next_u64().unwrap();
+    let _ = <chain_block::Coins as chain_block::Deserializable>::construct_from(&mut d).unwrap();
+    let dest = d.get_next_bits(160).unwrap();
+    let r = d.reference(0).unwrap();
+    b.checked_append_reference(cell(|x| {
+        x.append_u32(tag).unwrap();
+        x.append_u64(bn).unwrap();
+        coins(x, amount);
+        x.append_raw(&dest, 160).unwrap();
+        x.checked_append_reference(r.clone()).unwrap();
+    }))
+    .unwrap();
+    b.into_cell().unwrap()
+}
+
+/// T-B8: an admission repeating an admitted burn's number with another amount
+/// is refused at the minter: it neither answers nor marks the burn for
+/// cancellation.
+#[test]
+fn t_b8_a_reused_admission_with_other_fields_is_refused_by_the_minter() {
+    let mut net = minted();
+    let user = net.user(0);
+    net.start_burn(400);
+    net.drop_op(op::BURN_NOTICE);
+    net.settle();
+    let admission = net
+        .delivered
+        .iter()
+        .rev()
+        .find(|d| body_op(&d.msg) == Some(op::BURN_ADMIT))
+        .map(|d| d.msg.clone())
+        .expect("the admission was delivered");
+    let wallet = net.wallet_of(&user);
+    let minter = net.minter();
+    let before = net.state_hashes();
+    let altered = forged(&wallet, &minter, 10 * TOS, admission_with_amount(&admission, 999));
+    refused_with(&net.send(altered), err("operation_mismatch"));
+    assert_eq!(net.state_hashes(), before, "nothing marked");
+    assert_eq!(net.minter_burn(&user, 0).2, 0, "no cancellation requested");
+}

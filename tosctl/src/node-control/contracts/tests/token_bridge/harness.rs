@@ -1499,7 +1499,10 @@ pub fn bounced_copy(msg: &Message) -> Message {
         let bits = s.remaining_bits().min(256);
         b.append_bytestring(&s.get_next_slice(bits).unwrap()).unwrap();
     });
-    let mut bounce = MessageBuilder::internal(&header.dst, &header.src_ref().expect("a source").clone(), 1)
+    // a bounce returns the message's value less fees: enough to run, so a
+    // contract that reacted to it could
+    let value = header.value.coins.as_u128() as u64;
+    let mut bounce = MessageBuilder::internal(&header.dst, &header.src_ref().expect("a source").clone(), value)
         .bounce(false)
         .body(body)
         .build();

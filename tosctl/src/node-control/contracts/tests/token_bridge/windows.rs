@@ -420,3 +420,30 @@ fn t_x3_a_gap_closed_late_folds_in_bounded_steps() {
     assert_eq!(net.minter_channels()[3], (fold + 4) as i128, "the watermark reached the end");
     assert_eq!(net.swap_record(first).0, -1, "the late swap is consumed and folded");
 }
+
+/// T-Z3 (d): a holder's own credit window full of credits in flight refuses
+/// its next prepare, durably, with the lock left paid; once the credits land
+/// and a C2 sync reports the wallet's floor, the same lock mints.
+#[test]
+fn t_z3_a_full_holder_credit_window_refuses_the_next_prepare() {
+    let mut net = minted();
+    let x = net.user(1);
+    let window = declared("CREDIT_WINDOW") as usize;
+    let mut parked = Vec::new();
+    for _ in 0..window {
+        net.start_swap_to(&x, 2);
+        parked.push(net.intercept(|m| body_op(m) == Some(op::CREDIT)));
+        net.settle();
+    }
+    let n = net.start_swap_to(&x, 2);
+    net.settle();
+    assert_eq!(net.swap_record(n).0, swap_state::PAID, "refused: the lock stays paid");
+    assert_eq!(net.tokens(&x), 0);
+    for m in parked {
+        net.send(m);
+    }
+    succeeded(&net.advance_minter_sync(channel::C2, Some(&x)));
+    let vote = net.vote(n + 100, net.swap_voting(GENERATION, n, &x, 2, 0x5a));
+    net.send(vote);
+    assert_eq!(net.tokens(&x), 2 * (window as u128 + 1), "every credit landed once, the refused lock too");
+}

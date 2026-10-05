@@ -346,9 +346,15 @@ fn t_x7_a_send_above_the_balance_rolls_the_leg_back_whole() {
     let bridge = net.bridge.clone();
     net.set_balance(&bridge, 0);
     let before = net.state_hashes();
-    let cancel = net.vote(400, net.cancel_lock_vote(GENERATION, n));
+    // the vote carries its gas but less than the refund it causes
+    let mut cancel = net.vote(400, net.cancel_lock_vote(GENERATION, n));
+    let small = net.mint_fee / 2;
+    if let Some(h) = cancel.int_header_mut() {
+        h.value.coins = chain_block::Coins::from(small);
+    }
     let tx = net.send_one(cancel);
     net.queue.clear();
+    assert!(outcome(&tx).exit_code == Some(0), "the leg itself ran");
     assert!(!outcome(&tx).action_ok, "the refund exceeds the balance: the action phase fails");
     assert_eq!(net.state_hashes(), before, "rolled back whole");
     assert_eq!(net.logs_from(&bridge, declared("LOG_SWAP_CANCELLED") as u32), 0, "nothing logged");
