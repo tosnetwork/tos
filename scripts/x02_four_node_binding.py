@@ -15,6 +15,8 @@ BINARY_PATHS = (
     "crypto/pq/tos-pq-consensus-key",
     "utils/generate-random-id",
     "lite-client/lite-client",
+    # Authenticates the elected Config34 block from the network's zerostate.
+    "lite-client/proof-verify/tos-proof-verify",
     "validator-engine/validator-engine",
     "dht-server/dht-server",
     "validator-engine-console/validator-engine-console",
@@ -38,7 +40,14 @@ def repository_git_common_root():
     """Bind to this checkout's actual Git metadata, including linked worktrees."""
     repo = Path(__file__).resolve().parents[1]
     output = subprocess.check_output(
-        ["/usr/bin/git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        [
+            "/usr/bin/git",
+            "-C",
+            str(repo),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
         env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
         text=True,
         timeout=10,
