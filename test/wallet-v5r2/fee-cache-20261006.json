@@ -1,0 +1,95 @@
+{
+  "base_commit": "12fca29edcd43c2f689fe19d78af57955c8fe7af",
+  "scope": "Unix SDK immutable LMS-framed retry bytes and reserve-sign-verify-cache ordering. Tests use framing-only bytes and supplied callback fixtures, not a real LMS backend or chain-delivery acceptance.",
+  "tests": {
+    "passed": 18,
+    "failed": 0,
+    "ignored": 1,
+    "ignored_scope": "Child process helper explicitly executed twice by the parent test; not an omitted production gate.",
+    "controls": {
+      "lock": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::tests::durable_reservations_exclude_writers_and_restarts_wait"
+      },
+      "append": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::tests::durable_reservations_exclude_writers_and_restarts_wait"
+      },
+      "poison": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::tests::failed_write_poison_survives_repaired_handle"
+      },
+      "restore": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::tests::rollback_snapshot_cannot_resume_current_slot"
+      },
+      "cache_session": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::cache::tests::cache_cannot_be_written_using_a_receipt_from_another_session"
+      },
+      "cache_exclusive": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::cache::tests::partial_existing_cache_is_never_overwritten_and_poisons_writer"
+      },
+      "cache_reservation": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::cache::tests::damaged_cache_and_rolled_back_reservation_are_refused"
+      },
+      "cache_leaf": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::cache::tests::wrong_leaf_output_is_not_cached_and_reservation_stays_burned"
+      },
+      "cache_integrity": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::cache::tests::damaged_cache_and_rolled_back_reservation_are_refused"
+      },
+      "signing_order": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::cache::tests::signing_callback_runs_after_reservation_and_retry_never_calls_it"
+      },
+      "backend_verification": {
+        "exit": 101,
+        "semantic_witness": "lms_fee_journal::cache::tests::failed_signer_or_verification_never_releases_or_reuses_leaf"
+      }
+    },
+    "restored_cargo_exit": 0,
+    "rustfmt": "passed",
+    "ruff": "passed",
+    "diff_check": "passed"
+  },
+  "sources": [
+    {
+      "path": "tosctl/src/node-control/contracts/src/lms_fee_cache.rs",
+      "bytes": 14878,
+      "sha256": "21cdcadd9842f0fc64aab4f6445fda38476b60d69cef943c0279c381d720d8c0"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/lms_fee_journal.rs",
+      "bytes": 16120,
+      "sha256": "bfb9212a0a68774db2264769c0d1c09c45386c271436ca669da992fe42294f18"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/lms_fee_schedule.rs",
+      "bytes": 9440,
+      "sha256": "a17e1e230aee1ad9ef895980593af5073fcadb56909f0c6172a922164ea817ee"
+    },
+    {
+      "path": "test/wallet-v5r2/fee_journal_controls.py",
+      "bytes": 5245,
+      "sha256": "d6ed85f7fa30d0442f240a876f4e89ec622573c732dd8097eb49de23966a8480"
+    }
+  ],
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_ -- --nocapture",
+    "python3 test/wallet-v5r2/fee_journal_controls.py --output <artifacts>"
+  ],
+  "raw_artifacts": {
+    "root": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache",
+    "manifest": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache/MANIFEST.json",
+      "bytes": 1961,
+      "sha256": "f4c6a9d58ffe6941b892abf97738a4454097423079d7086f289b8214c0c432ef"
+    },
+    "retention": "Through review and at least 2027-01-06. Local host access required; existing CI job reproduces controls on x86 and actual SDK tests on both architectures."
+  }
+}

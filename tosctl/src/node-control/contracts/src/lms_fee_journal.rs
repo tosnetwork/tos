@@ -5,7 +5,7 @@
 //! A file lock excludes local writers only; this is not a hardware monotonic store.
 
 use crate::lms_fee_schedule::{
-    Continuity, FeeRoute, IntactState, LEAF_COUNT, ReservationPlan, RestoreBarrier,
+    Continuity, FeeRoute, IntactState, LEAF_COUNT, ReservationPlan, RestoreBarrier, ScheduleError,
     plan_reservation,
 };
 use fs2::FileExt;
@@ -18,7 +18,11 @@ use std::{
         unix::fs::{MetadataExt, OpenOptionsExt},
     },
     path::Path,
+    sync::Arc,
 };
+
+#[path = "lms_fee_cache.rs"]
+mod cache;
 
 const MAGIC: &[u8; 8] = b"TOSLMS01";
 const HEADER_SIZE: u64 = 112;
@@ -30,6 +34,8 @@ const RECORD_SIZE: u64 = 72;
 pub struct ReservedLeaf {
     leaf: u32,
     intent_hash: [u8; 32],
+    record_hash: [u8; 32],
+    session: Arc<()>,
 }
 
 impl ReservedLeaf {
@@ -43,9 +49,12 @@ impl ReservedLeaf {
 
 pub struct FeeJournal {
     file: File,
+    directory: File,
+    session: Arc<()>,
     route: FeeRoute,
     state: IntactState,
     barrier: Option<RestoreBarrier>,
+    resume_error: Option<ScheduleError>,
     hash: [u8; 32],
     poisoned: bool,
 }
@@ -103,8 +112,13 @@ impl FeeJournal {
             "journal file must be private, regular and unlinked elsewhere"
         );
         file.try_lock_exclusive()?;
-        let barrier = RestoreBarrier::new(route, proven_time)
-            .map_err(|e| anyhow::anyhow!("restore barrier: {e:?}"))?;
+        let (barrier, resume_error) = match RestoreBarrier::new(route, proven_time) {
+            Ok(barrier) => (Some(barrier), None),
+            Err(error @ (ScheduleError::Exhausted | ScheduleError::TimeOverflow)) => {
+                (None, Some(error))
+            }
+            Err(error) => anyhow::bail!("restore barrier: {error:?}"),
+        };
         let expected = header(route);
         let mut hash: [u8; 32] = Sha256::digest(&expected).into();
         if file.metadata()?.len() == 0 {
@@ -141,7 +155,17 @@ impl FeeJournal {
             state = plan.next_state;
         }
         anyhow::ensure!(proven_time >= state.last_proven_time, "stale opening proof");
-        Ok(Self { file, route, state, barrier: Some(barrier), hash, poisoned: false })
+        Ok(Self {
+            file,
+            directory: dir,
+            session: Arc::new(()),
+            route,
+            state,
+            barrier,
+            resume_error,
+            hash,
+            poisoned: false,
+        })
     }
 
     pub fn preview(
@@ -150,6 +174,11 @@ impl FeeJournal {
         chain_next_leaf: u32,
     ) -> anyhow::Result<ReservationPlan> {
         anyhow::ensure!(!self.poisoned, "journal requires recovery after uncertain write");
+        anyhow::ensure!(
+            self.resume_error.is_none(),
+            "new reservations unavailable: {:?}",
+            self.resume_error
+        );
         if let Some(barrier) = self.barrier {
             plan_reservation(
                 self.route,
@@ -193,7 +222,12 @@ impl FeeJournal {
         self.hash = next_hash;
         self.barrier = None;
         self.poisoned = false;
-        Ok(ReservedLeaf { leaf: plan.leaf, intent_hash })
+        Ok(ReservedLeaf {
+            leaf: plan.leaf,
+            intent_hash,
+            record_hash: next_hash,
+            session: Arc::clone(&self.session),
+        })
     }
 }
 

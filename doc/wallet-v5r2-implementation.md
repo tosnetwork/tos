@@ -653,3 +653,40 @@ signer atomically across its service boundary, enforce cross-device revocation,
 or provide CLI/mobile integration. Tests exercise process handoff and damaged
 records, not physical power-loss guarantees on every target filesystem. Those
 requirements and default-credit admission remain release gates.
+
+
+## Immutable signature retry cache and signing adapter
+
+The journal now consumes a session-bound reservation receipt to create an
+immutable per-leaf signature file. It stores the exact intent hash, reservation
+hash, fixed HSS L1 H20/W4 framing, signature bytes and integrity checksum. Creation
+uses descriptor-relative exclusive/no-follow opens; an existing or partial file
+is never overwritten. A receipt from a different reopened session is refused.
+Cache reads require the exact intent and its actual hash-chained reservation,
+check bounded size/framing/integrity and synchronize the cache and directory
+before returning identical bytes. Missing, damaged or rollback-orphaned cache
+files return errors and never trigger a signer invocation. Near calendar
+exhaustion the journal can still open for cached retries while new reservations
+remain refused; transport must independently enforce the intent's expiry.
+
+`FeeJournal::sign_once` calls caller-supplied LMS signing and verification
+primitives only after durable reservation. Failed backend calls or rejected
+verification outputs burn their leaf. Successful output is cached before return;
+a stale leaf request is refused before invoking the backend a second time.
+Retries use `cached_signature`, never `sign_once` on an old reservation.
+
+This is a storage/control-flow adapter, not a shipped LMS primitive or a vetted
+key-custody service. Tests use explicit framing-only signatures, not claims of
+cryptographic conformance. A production caller must verify real LMS backend
+output against the proven route's public key, reverify cached bytes before
+export, construct the exact fee intent and provide current finalized proofs and
+exclusive device custody. Neither the checksum nor the journal hash chain
+protects against a malicious owner who can rewrite both files.
+
+Eighteen SDK tests and eleven independent deletion/order controls cover
+reservation-before-signing, failed-signature burning, no backend recall on retry,
+immutable cache creation, session/intent/leaf/reservation binding, corruption,
+restart and last-slot retries. The child-process helper remains explicitly run
+by its parent test. Evidence is `test/wallet-v5r2/fee-cache-20261006.json`.
+Real signer/cache-to-chain delivery, proof freshness, cross-device revocation,
+CLI/mobile integration and production-credit admission remain open.
