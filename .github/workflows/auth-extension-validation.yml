@@ -8,6 +8,7 @@ on:
       - 'tosctl/src/node-control/contracts/**'
       - 'sdk/js/packages/wallets/src/codes.ts'
       - 'test/auth-extensions/**'
+      - 'test/wallet-v5r2/**'
       - 'scripts/update-auth-contract-code.py'
       - '.github/workflows/auth-extension-validation.yml'
     types: [opened, reopened, synchronize, ready_for_review]
@@ -43,4 +44,11 @@ jobs:
           python3 scripts/update-auth-contract-code.py --check
           python3 test/auth-extensions/test_auth.py
           python3 test/auth-extensions/mutations.py
+          python3 test/wallet-v5r2/test_v5r1_action_baseline.py --output "$RUNNER_TEMP/v5r1-baseline"
           git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: v5r1-action-baseline
+          path: ${{ runner.temp }}/v5r1-baseline/results.json
+          retention-days: 14

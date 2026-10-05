@@ -1,0 +1,51 @@
+;; Wallet V5 action-list engine; the full V5R2 implementation must reuse it.
+;; Keep wire format, action cap, error codes and mode validation identical.
+;; Authentication decides who may call this engine; it cannot replace its checks.
+const int v5_action::external_requires_ignore_errors = 137;
+const int v5_action::invalid_c5 = 147;
+const int v5_action::bad_operation = 1811;
+
+;;; returns the number of trailing zeroes in slice s.
+int count_trailing_zeroes(slice s) asm "SDCNTTRAIL0";
+
+;; `action_send_msg` has 0x0ec3c86d prefix
+slice enforce_and_remove_action_send_msg_prefix(slice body) impure asm "x{0ec3c86d} SDBEGINS";
+
+;;; put raw list of OutActions to C5 register.
+() set_c5_actions(cell action_list) impure asm "c5 POP";
+
+;;; transforms an ordinary or exotic cell into a Slice, as if it were an ordinary cell.
+(slice, int) begin_parse_raw(cell c) asm "XCTOS";
+
+cell verify_c5_actions(cell c5, int is_external) inline {
+  (slice cs, _) = c5.begin_parse_raw();
+  int count = 0;
+  while (~ cs.slice_empty?()) {
+    cs = cs.enforce_and_remove_action_send_msg_prefix();
+    throw_unless(v5_action::invalid_c5, cs.slice_bits() == 8);
+    throw_unless(v5_action::invalid_c5, cs.slice_refs() == 2);
+    throw_if(v5_action::external_requires_ignore_errors, is_external & (count_trailing_zeroes(cs.preload_bits(7)) > 0));
+    (cs, _) = cs.preload_ref().begin_parse_raw();
+    count += 1;
+  }
+  throw_unless(v5_action::invalid_c5, count <= 255);
+  throw_unless(v5_action::invalid_c5, cs.slice_refs() == 0);
+  return c5;
+}
+
+cell verify_auth_actions(cell actions) inline {
+  actions = verify_c5_actions(actions, true); ;; require +2 on every send
+  slice cs = actions.begin_parse();
+  while (~ cs.slice_empty?()) {
+    cs = cs.enforce_and_remove_action_send_msg_prefix();
+    int mode = cs~load_uint(8);
+    ;; No self-destruction: redeploying the original legacy StateInit would
+    ;; otherwise reopen old authentication. Raw SETCODE actions are already
+    ;; rejected by verify_c5_actions(). Keep mode combinations canonical.
+    throw_if(v5_action::bad_operation, (mode & 44) != 0); ;; bits 2, 3 and 5
+    throw_if(v5_action::bad_operation, (mode & 192) == 192);
+    cs = cs~load_ref().begin_parse();
+  }
+  return actions;
+}
+

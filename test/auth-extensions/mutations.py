@@ -23,6 +23,9 @@ def main():
             with tempfile.TemporaryDirectory() as work:
                 work = Path(work)
                 shutil.copy2(ROOT / 'crypto/smartcont' / source, work / source)
+                if impl == 'wallet-func':
+                    shutil.copy2(ROOT / 'crypto/smartcont/wallet-v5-action-list.fc',
+                                 work / 'wallet-v5-action-list.fc')
                 text = (ROOT / 'crypto/smartcont' / helper).read_text()
                 assert text.count(before) == 1
                 (work / helper).write_text(text.replace(before, after))

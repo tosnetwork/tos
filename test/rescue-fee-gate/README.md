@@ -1,5 +1,10 @@
 # Wallet V5R2 rescue — PROTOTYPE
 
+The product target is the complete V5R1 wallet baseline with the R2 protection
+model, not the simplified receiver in this research harness. See
+[the full-wallet implementation requirements](../../doc/wallet-v5r2-implementation.md).
+The experiments below validate individual boundaries and do not replace that gate.
+
 Prototype of the wallet rescue design: an ML-DSA-44 daily root, an SLH-DSA-SHA2-128s rescue
 root, and a per-wallet fee vault that admits an external message only after a native one-level
 HSS/LMS signature over the complete fee intent verifies, inside the external gas credit (10,000

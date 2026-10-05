@@ -51,38 +51,12 @@ const int prefix::extension_action = 0x6578746E;
 (slice, int) check_and_remove_remove_extension_prefix(slice body) impure asm "x{03} SDBEGINSQ";
 (slice, int) check_and_remove_set_signature_allowed_prefix(slice body) impure asm "x{04} SDBEGINSQ";
 
-;;; returns the number of trailing zeroes in slice s.
-int count_trailing_zeroes(slice s) asm "SDCNTTRAIL0";
-
 ;;; returns the last 0 ≤ l ≤ 1023 bits of s.
 slice get_last_bits(slice s, int l) asm "SDCUTLAST";
 ;;; returns all but the last 0 ≤ l ≤ 1023 bits of s.
 slice remove_last_bits(slice s, int l) asm "SDSKIPLAST";
 
-;; `action_send_msg` has 0x0ec3c86d prefix
-slice enforce_and_remove_action_send_msg_prefix(slice body) impure asm "x{0ec3c86d} SDBEGINS";
-
-;;; put raw list of OutActions to C5 register.
-() set_c5_actions(cell action_list) impure asm "c5 POP";
-
-;;; transforms an ordinary or exotic cell into a Slice, as if it were an ordinary cell.
-(slice, int) begin_parse_raw(cell c) asm "XCTOS";
-
-cell verify_c5_actions(cell c5, int is_external) inline {
-  (slice cs, _) = c5.begin_parse_raw();
-  int count = 0;
-  while (~ cs.slice_empty?()) {
-    cs = cs.enforce_and_remove_action_send_msg_prefix();
-    throw_unless(error::invalid_c5, cs.slice_bits() == 8);
-    throw_unless(error::invalid_c5, cs.slice_refs() == 2);
-    throw_if(error::external_send_message_must_have_ignore_errors_send_mode, is_external & (count_trailing_zeroes(cs.preload_bits(7)) > 0));
-    (cs, _) = cs.preload_ref().begin_parse_raw();
-    count += 1;
-  }
-  throw_unless(error::invalid_c5, count <= 255);
-  throw_unless(error::invalid_c5, cs.slice_refs() == 0);
-  return c5;
-}
+#include "wallet-v5-action-list.fc";
 
 cell wallet_auth_state() inline {
   slice ds = get_data().begin_parse().skip_bits(321);
@@ -108,22 +82,6 @@ cell wallet_auth_state() inline {
   }
   set_data(begin_cell().store_int(signature_allowed, 1).store_uint(seqno, 32)
     .store_slice(key_fields).store_dict(extensions).store_ref(auth).end_cell());
-}
-
-cell verify_auth_actions(cell actions) inline {
-  actions = verify_c5_actions(actions, true); ;; require +2 on every send
-  slice cs = actions.begin_parse();
-  while (~ cs.slice_empty?()) {
-    cs = cs.enforce_and_remove_action_send_msg_prefix();
-    int mode = cs~load_uint(8);
-    ;; No self-destruction: redeploying the original legacy StateInit would
-    ;; otherwise reopen old authentication. Raw SETCODE actions are already
-    ;; rejected by verify_c5_actions(). Keep mode combinations canonical.
-    throw_if(auth::bad_operation, (mode & 44) != 0); ;; bits 2, 3 and 5
-    throw_if(auth::bad_operation, (mode & 192) == 192);
-    cs = cs~load_ref().begin_parse();
-  }
-  return actions;
 }
 
 () wallet_process_auth(slice sender, slice body) impure {

@@ -1,0 +1,75 @@
+{
+  "scope": "V5R1 baseline and shared action engine only; not complete V5R2",
+  "code_hash": "086a86aa9913c0ec52277adbb7e4b5695964dbb8c817ad0c305cdd345bbfac69",
+  "sdk_code_unchanged": true,
+  "allowed_strict_send_modes": [
+    2,
+    3,
+    18,
+    19,
+    66,
+    67,
+    82,
+    83,
+    130,
+    131,
+    146,
+    147
+  ],
+  "cases": 266,
+  "mutations": {
+    "ignore_errors": "expected exit 137, got 0: {'exit': 0, 'gas': 9528, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+    "action_cap": "expected exit 147, got 0: {'exit': 0, 'gas': 316415, 'gas_limit': 1000000, 'compute_success': True, 'aborted': True, 'action': {'success': False, 'code': 33}}",
+    "unsafe_mode": "expected exit 1811, got 0: {'exit': 0, 'gas': 9596, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}"
+  },
+  "source_sha256": "3e437b82bc4b804c5c2096a4f39334c3053619d17ce1be75d92b4d53bcb07a27",
+  "base_commit": "e95470e3309d9b801764d9b5e60dee32fb0c1318",
+  "validation": {
+    "native_build": 0,
+    "auth_regression_methods_passed": 14,
+    "nonce_mutations_killed": 3,
+    "action_mutations_killed": 3,
+    "frozen_sdk_bytecode_check": 0,
+    "ruff": 0,
+    "workflow_yaml_parse": 0,
+    "remote_ci": "not run"
+  },
+  "source_files": {
+    "crypto/smartcont/wallet-v5-code.fc": "917e94aa078670997edf52b1a9d56565733ac040190160e76a94bcb80fb0ec77",
+    "crypto/smartcont/wallet-v5-action-list.fc": "86d23a7f6548bc4c69106f255df271baaab0a51559e9c179cdb629b633ddec83",
+    "test/wallet-v5r2/test_v5r1_action_baseline.py": "6ffbd23c0155edb9d061b9a3bcde4cf231bc3f4c1bbca623d71e319db8f466ff",
+    "test/auth-extensions/mutations.py": "9b4524cc518368f88736f50e7d653643ceec307b26508ac4d5919cac89facfbd"
+  },
+  "retained_artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-v5r1-baseline/actions/results.json",
+      "sha256": "55dd87cb87b8d7790c2621a319a940d35ae71e6f9bc71f2fc88f41fff4083293",
+      "bytes": 23074,
+      "retention": "90 days; local artifacts require access to this machine"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-v5r1-baseline/actions.log",
+      "sha256": "dc6e03b47064c90fe6d9310f580eeafd41a00a27bf2a0008ea8753b07a2b5c45",
+      "bytes": 991,
+      "retention": "90 days; local artifacts require access to this machine"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-v5r1-baseline/auth-regression.log",
+      "sha256": "e27da1a443734b5aec6b1019a4f3f8086a71af71378105db8da707a8f3c6bf79",
+      "bytes": 2116,
+      "retention": "90 days; local artifacts require access to this machine"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-v5r1-baseline/auth-mutations.log",
+      "sha256": "fdbf1f97760e37caa461887d44b17ed639ae9227495c715989b9a14e5f31598b",
+      "bytes": 116,
+      "retention": "90 days; local artifacts require access to this machine"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-v5r1-baseline/native-build.log",
+      "sha256": "c13116c4c1fec9fd56ef3f4633757329e5a582aa065e111a40a2326615c1a877",
+      "bytes": 9009,
+      "retention": "90 days; local artifacts require access to this machine"
+    }
+  ]
+}
