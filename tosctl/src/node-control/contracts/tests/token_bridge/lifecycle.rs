@@ -412,3 +412,40 @@ fn t_y6_a_newer_minter_life_is_terminal_at_the_wallet() {
     assert_eq!(net.wallet_state(&user)[2], 1, "the minter is terminal at the wallet");
     refused_with(&net.send(credit), err("terminal"));
 }
+
+/// T-Y6: stale opening messages after the minter's recreation, and after
+/// both the minter and the wallet are recreated. The new minter has no
+/// holder to bind them to and no bridge channel, so nothing is opened,
+/// credited or counted, and the old holder's tokens stay where they are.
+#[test]
+fn t_y6_stale_opening_messages_after_minter_recreation_change_nothing() {
+    for both in [false, true] {
+        let mut net = minted();
+        let holder = net.user(1);
+        net.start_swap_to(&holder, 5);
+        let open_a = net.intercept(|m| body_op(m) == Some(op::OPEN));
+        net.send_one(open_a.clone());
+        let opened_b = net.drop_op(op::OPENED);
+        net.send_one(opened_b.clone());
+        net.settle();
+        let minter = net.minter();
+        net.delete_account(&minter);
+        net.recreate_minter();
+        let wallet = net.wallet_of(&holder);
+        if both {
+            net.delete_account(&wallet);
+            net.recreate_wallet(&holder);
+        }
+        let expected_tokens = if both { 0 } else { 5 };
+        net.send(open_a);
+        net.send(opened_b);
+        assert_eq!(net.tokens(&holder), expected_tokens, "both={both}: no credit");
+        assert_eq!(net.supply_state(), (0, 0, 0, 0, 0), "both={both}: the new minter counts nothing");
+        assert_ne!(net.holder(&holder)[2], holder_state::OPEN, "both={both}: no holder opened at the new life");
+        // the new life serves nothing: the bridge's prepare is refused
+        let n = net.start_swap_to(&holder, 2);
+        net.settle();
+        assert_ne!(net.swap_record(n).0, swap_state::CONSUMED, "both={both}: nothing consumed for the new life");
+        assert_eq!(net.tokens(&holder), expected_tokens);
+    }
+}

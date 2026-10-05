@@ -344,7 +344,8 @@ fn t_x7_a_send_above_the_balance_rolls_the_leg_back_whole() {
     net.next_nonce += 1;
     succeeded(&net.pay(n));
     let bridge = net.bridge.clone();
-    net.set_balance(&bridge, 0);
+    // enough for every send of the leg but the refund: the refund alone fails
+    net.set_balance(&bridge, u128::from(TOS));
     let before = net.state_hashes();
     // the vote carries its gas but less than the refund it causes
     let mut cancel = net.vote(400, net.cancel_lock_vote(GENERATION, n));

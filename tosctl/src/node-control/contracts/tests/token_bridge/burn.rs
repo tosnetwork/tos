@@ -263,6 +263,28 @@ fn t_b5_recorded_or_cancelled_once_never_both() {
         }
     }
 
+    // (f) a cancelling notice for a burn recorded while an earlier notice is
+    // held, so the decision is still stored above the watermark: the stored
+    // decision answers it
+    let mut net = minted();
+    net.start_burn(100);
+    let earlier = net.drop_op(op::BURN_NOTICE);
+    net.settle();
+    net.start_burn(200);
+    let plain = net.drop_op(op::BURN_NOTICE);
+    net.settle();
+    let msg = cancel_message(&net, 1);
+    net.queue.push_back(msg);
+    let cancelling = net.drop_op(op::BURN_NOTICE);
+    net.settle();
+    net.send(plain);
+    assert_eq!(net.burn_logs(), 1, "the second burn is recorded");
+    net.send(cancelling);
+    assert_eq!(net.burn_logs(), 1);
+    assert_eq!(net.tokens(&net.user(0)), 700, "the recorded burn is never refunded");
+    net.send(earlier);
+    assert_eq!(net.burn_logs(), 2);
+
     // (e) a stranger cannot cancel
     let mut net = minted();
     net.start_burn(400);
