@@ -16,6 +16,10 @@ on:
     paths:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
+      # Proven pool snapshots run the shared proof verifier on recorded material.
+      - "lite-client/proof-verify/**"
+      - "lite-client/lite-client-common.*"
+      - "tosctl/src/node-control/common/src/app_config.rs"
       - "tosctl/src/sandbox/**"
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
@@ -60,6 +64,10 @@ on:
     paths:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
+      # Proven pool snapshots run the shared proof verifier on recorded material.
+      - "lite-client/proof-verify/**"
+      - "lite-client/lite-client-common.*"
+      - "tosctl/src/node-control/common/src/app_config.rs"
       - "tosctl/src/sandbox/**"
       # The executor and block crates decide every sandbox transaction's
       # outcome, including the outbound message size limits.
@@ -221,6 +229,13 @@ jobs:
       - name: Build the post-quantum producers the suites drive
         run: cmake --build build --target tos-pq-vote tos-pq-controller -j2
 
+      # Pool snapshots are computed by the proof verifier from proven state, never
+      # taken from an endpoint. Its suite re-verifies recorded proof material with
+      # the real verifier, so the verifier is built here; the suite fails, not
+      # skips, without it.
+      - name: Build the proof verifier the snapshot suite drives
+        run: cmake --build build --target tos-proof-verify -j2
+
       # Runs every file under contracts/tests/, which is where the sandbox
       # suites live. Do not narrow this to a single --test target: the point
       # is that adding a suite should not require editing CI to have it run.
@@ -242,6 +257,7 @@ jobs:
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
           CREATE_STATE_PATH: ${{ github.workspace }}/build/crypto/create-state
+          TOS_PROOF_VERIFY: ${{ github.workspace }}/build/lite-client/proof-verify/tos-proof-verify
         # --no-fail-fast is load-bearing, not tidiness. cargo stops after the
         # first test target that fails, so a single red unit test in --lib
         # means every suite under tests/ is never executed and the run reports

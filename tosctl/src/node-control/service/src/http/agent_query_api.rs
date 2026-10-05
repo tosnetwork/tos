@@ -931,6 +931,7 @@ mod tests {
             log: None,
             bookmarks: Default::default(),
             alerts: Default::default(),
+            proof_verifier: None,
         })
     }
 
