@@ -572,15 +572,34 @@ class Run:
             git_dir = str(meta)
         else:
             git_dir = self.mirror
-        self.base_sha = sh_out(
-            [
-                "git",
-                f"--git-dir={git_dir}",
-                "merge-base",
-                f"refs/remotes/origin/{a.base_branch}",
-                self.commit,
-            ]
-        )
+        if a.base:
+            # An explicit base, e.g. the first parent of a merge commit when
+            # replaying a merged pull request on the base branch.
+            if self.source_is_url:
+                sh(
+                    [
+                        "git",
+                        f"--git-dir={git_dir}",
+                        "fetch",
+                        "-q",
+                        "--filter=blob:none",
+                        self.source,
+                        a.base,
+                    ]
+                )
+            self.base_sha = sh_out(
+                ["git", f"--git-dir={git_dir}", "rev-parse", "--verify", f"{a.base}^{{commit}}"]
+            )
+        else:
+            self.base_sha = sh_out(
+                [
+                    "git",
+                    f"--git-dir={git_dir}",
+                    "merge-base",
+                    f"refs/remotes/origin/{a.base_branch}",
+                    self.commit,
+                ]
+            )
         names = sh_out(
             ["git", f"--git-dir={git_dir}", "diff", "--name-only", self.base_sha, self.commit]
         )
@@ -1767,6 +1786,12 @@ def main() -> int:
     )
     ap.add_argument("--skip-step", action="append", help="regex over 'workflow:job:step' to skip")
     ap.add_argument("--base-branch", default="main")
+    ap.add_argument(
+        "--base",
+        default=None,
+        help="base commit for path filters and changed-file checks (default: merge base with "
+        "origin/<base-branch>); give <merge>^1 to replay a merged pull request",
+    )
     ap.add_argument("--head-branch", default="")
     ap.add_argument("--pr", default="0", help="pull request number for github.event context")
     ap.add_argument(
