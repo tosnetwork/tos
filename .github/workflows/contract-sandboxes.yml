@@ -48,6 +48,7 @@ on:
       - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
       - ".github/actions/native-cache/**"
+      - ".github/scripts/*native_executor_check.py"
     types: [opened, reopened, synchronize, ready_for_review]
   # Restricted to the integration branches on purpose. Without this, a push to
   # a PR branch fires here *and* through pull_request, running the same SHA
@@ -91,6 +92,7 @@ on:
       - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
       - ".github/actions/native-cache/**"
+      - ".github/scripts/*native_executor_check.py"
   workflow_dispatch:
 
 concurrency:
@@ -107,6 +109,8 @@ jobs:
     # A cold native/vector build takes about 50 minutes before mutation tests.
     # Leave time for both complete assertion-sensitivity suites.
     timeout-minutes: 90
+    outputs:
+      executor_diagnostics: ${{ steps.executor.outputs.diagnostics }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -145,11 +149,19 @@ jobs:
       # The contracts depend on rules the executor enforces, not only on their own code.
       # `test-fift` holds those, and no workflow ran it, so a change to the executor that
       # invalidated one would have reached a green pull request.
+      - name: Check native executor diagnostic failure propagation
+        run: python3 .github/scripts/test_native_executor_check.py -v
       - name: Executor rules the contracts depend on
-        run: |
-          cmake --build build --target test-fift test-cells -j2
-          ./build/test-fift
-          ./build/test-cells
+        id: executor
+        run: python3 .github/scripts/native_executor_check.py
+      - name: Retain bounded native executor diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-executor-${{ github.sha }}
+          path: ${{ runner.temp }}/native-executor-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
 
       # The message bodies the node sends to the governance contracts, and the parsing
       # of the subject an operator names. The contracts' side of these bytes is covered
@@ -314,3 +326,19 @@ jobs:
       - name: Compile cache statistics
         if: always()
         run: ccache --show-stats
+
+  # This only displays evidence; it never overrides the failing sandbox job.
+  executor_diagnostic:
+    needs: sandboxes
+    if: ${{ always() && needs.sandboxes.outputs.executor_diagnostics != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        diagnostic: ${{ fromJSON(needs.sandboxes.outputs.executor_diagnostics) }}
+    name: "Executor diagnostic — ${{ matrix.diagnostic }}"
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Display native executor evidence without changing the gate
+        env:
+          DIAGNOSTIC: ${{ matrix.diagnostic }}
+        run: printf '%s\n' "$DIAGNOSTIC"

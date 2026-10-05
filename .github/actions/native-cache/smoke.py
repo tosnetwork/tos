@@ -8,7 +8,6 @@ import tempfile
 import time
 from pathlib import Path
 
-
 REQUIRED_COUNTERS = {"cache_miss", "direct_cache_hit", "preprocessed_cache_hit"}
 
 

@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 import smoke
 
-
 # Counter names and values observed in the hosted 4.9.1 warm-build failure.
 WARM_OUTPUT = """cache_miss\t0
 direct_cache_hit\t2
@@ -33,7 +32,9 @@ class CacheCounterTests(unittest.TestCase):
     def test_missing_counters_are_not_silently_zero(self):
         for key in sorted(smoke.REQUIRED_COUNTERS):
             with self.subTest(key=key):
-                output = "\n".join(line for line in WARM_OUTPUT.splitlines() if not line.startswith(key + "\t"))
+                output = "\n".join(
+                    line for line in WARM_OUTPUT.splitlines() if not line.startswith(key + "\t")
+                )
                 with self.assertRaisesRegex(RuntimeError, "Missing required ccache counters"):
                     smoke.parse_stats(output)
                 counters = smoke.parse_stats(WARM_OUTPUT)
