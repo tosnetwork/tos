@@ -56,6 +56,7 @@ jobs:
           python3 test/wallet-v5r2/test_fee_identity.py --output "$RUNNER_TEMP/r2-fee-identity"
           python3 test/wallet-v5r2/test_fee_cells.py --output "$RUNNER_TEMP/r2-fee-cells"
           python3 test/wallet-v5r2/test_fee_bounds.py --output "$RUNNER_TEMP/r2-fee-bounds"
+          python3 test/wallet-v5r2/test_fee_gas_config.py --output "$RUNNER_TEMP/r2-fee-gas-config"
           python3 test/wallet-v5r2/test_wallet.py --output "$RUNNER_TEMP/r2-wallet"
           build/test-config-transition
           python3 test/wallet-v5r2/policy_native_mutations.py --build build --output "$RUNNER_TEMP/auth-policy-native"
@@ -85,5 +86,6 @@ jobs:
             ${{ runner.temp }}/r2-fee-identity/
             ${{ runner.temp }}/r2-fee-cells/
             ${{ runner.temp }}/r2-fee-bounds/
+            ${{ runner.temp }}/r2-fee-gas-config/
             ${{ runner.temp }}/r2-wallet/
           retention-days: 14

@@ -13,6 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 sys.path.insert(0, str(ROOT / "test/rescue-fee-gate"))
+import fee_failure_controls  # noqa: E402
 import native  # noqa: E402
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 from test_auth_policy import policy as global_policy  # noqa: E402
@@ -40,7 +41,15 @@ def main():
         action="store_true",
         help="Sensitivity control: delete the selected class constructor guard",
     )
+    p.add_argument(
+        "--fault",
+        choices=fee_failure_controls.FAULTS,
+        help="Inject a post-ACCEPT failure into a private copy of the vault",
+    )
     options = p.parse_args()
+    assert not (options.fault and options.delete_payload_guard), (
+        "run independent controls separately"
+    )
     out = options.output
     out.mkdir(parents=True, exist_ok=True)
     # Public deterministic test key only. Never use this tree or seed for funds.
@@ -64,6 +73,9 @@ def main():
             guard = f"throw_unless(2012, payload_tag == {tag});"
             assert source.count(guard) == 1
             src.write_text(source.replace(guard, ""))
+        if options.fault:
+            src = work / "wallet-v5r2-fee-vault.fc"
+            src.write_text(fee_failure_controls.inject(src.read_text(), options.fault))
         vault = native.compile_contract(str(work / "wallet-v5r2-fee-vault.fc"), out / "vault.boc")
         const = f'cell compiled_vault() asm "B{{{vault.boc().hex()}}} B>boc PUSHREF";\n'
         (work / "module.fc").write_text(
@@ -166,6 +178,24 @@ def main():
         ext = sign_fee(intent)
         entries = read_dict(native.config(17), 32)
         entries[48] = Cell().ref(global_policy())
+        cap = {
+            "low-gas-cap": 12000,
+            "low-gas-cap-unguarded": 12000,
+            "gas-cap-below-minimum": 65535,
+            "gas-cap-minimum": 65536,
+        }.get(options.fault)
+        if cap is not None:
+            original_prices = entries[21].refs[0]
+            entries[21] = Cell().ref(
+                Cell(
+                    bits=original_prices.bits[:208]
+                    + format(cap, "064b")
+                    + original_prices.bits[272:],
+                    refs=original_prices.refs,
+                )
+            )
+        if options.fault == "oversized-ignore":
+            entries[43] = Cell().ref(native.size_limits(256))
         # Independently decode the fixture's current tariffs. This mirrors the
         # protocol fee formulas, not the optimized contract arithmetic/branches.
         gas_prices = entries[21].refs[0].slice()
@@ -183,9 +213,12 @@ def main():
             + (max(downstream_gas - flat_limit, 0) * gas_price + 65535) // 65536
             + 2 * forwarding
         )
-        initial = native.active_account(va, vault, vd, balance=10**15)
+        initial_balance = (
+            amount if options.fault and options.fault.startswith("unfunded-") else 10**15
+        )
+        initial = native.active_account(va, vault, vd, balance=initial_balance)
         credit_probe = None
-        if options.credit_probe:
+        if options.credit_probe and options.fault not in ("low-gas-cap", "gas-cap-below-minimum"):
             original = entries[21].refs[0]
             assert int(original.bits[:8], 2) == 0xD1 and int(original.bits[136:144], 2) == 0xDE
             offset = 336
@@ -216,7 +249,10 @@ def main():
                 finally:
                     probe.close()
                 if result["success"]:
-                    assert result["details"]["exit"] == 0, result["details"]
+                    expected_exit = (
+                        fee_failure_controls.expected_exit(options.fault) if options.fault else 0
+                    )
+                    assert result["details"]["exit"] == expected_exit, result["details"]
                     high = credit
                 else:
                     assert result.get("vm_exit_code") == -14, {
@@ -242,7 +278,7 @@ def main():
         with patch.object(native, "config", return_value=make_dict(entries, 32)):
             e = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
         try:
-            paid = e.send(native.active_account(va, vault, vd, balance=10**15), ext)
+            paid = e.send(initial, ext)
             (out / "vault-result.json").write_text(json.dumps(paid, indent=2) + "\n")
             if options.gas_trace and paid["success"]:
                 initial_credit = (
@@ -269,6 +305,9 @@ def main():
                     "instruction_totals": dict(sorted(costs.items(), key=lambda item: -item[1])),
                 }
                 (out / "gas-profile.json").write_text(json.dumps(profile, indent=2) + "\n")
+            if options.fault:
+                fee_failure_controls.verify(options.fault, e, initial, ext, paid, out)
+                return
             assert paid["success"], paid
             assert paid["details"]["exit"] == 0 and not paid["details"]["aborted"], paid
             failures = {}
@@ -383,10 +422,72 @@ def main():
             assert not replay["success"] and replay.get("vm_exit_code") == 2004, replay
             (out / "replay-result.json").write_text(json.dumps(replay, indent=2) + "\n")
 
+            # A fresh fee leaf pays for a deliberately invalid inner signature.
+            # Exercise the actual module-generated bounce, not a fabricated deposit.
+            inner_signature = submit.refs[1]
+            flipped = ("1" if inner_signature.bits[0] == "0" else "0") + inner_signature.bits[1:]
+            broken_submit = Cell(
+                bits=submit.bits, refs=[req, Cell(bits=flipped, refs=inner_signature.refs)]
+            )
+            failed_external = sign_fee(make_intent(leaf=9, payload=broken_submit), 9)
+            funded_failure = e.send(from_boc(paid["shard_account"]), failed_external)
+            assert (
+                funded_failure["success"]
+                and funded_failure["details"]["exit"] == 0
+                and not funded_failure["details"]["aborted"]
+            )
+            funded_messages = native.outgoing(from_boc(funded_failure["transaction"]))
+            assert len(funded_messages) == 1
+            rejected_module = e.send(from_boc(relayed["shard_account"]), funded_messages[0])
+            assert (
+                rejected_module["success"]
+                and rejected_module["details"]["exit"] == 1808
+                and rejected_module["details"]["aborted"]
+            ), rejected_module
+            bounces = native.outgoing(from_boc(rejected_module["transaction"]))
+            assert len(bounces) == 1 and bounces[0].slice().uint(4) & 1, (
+                "module must emit a real bounce"
+            )
+            before_return, before_return_balance = native.account_data(
+                from_boc(funded_failure["shard_account"])
+            )
+            returned = e.send(from_boc(funded_failure["shard_account"]), bounces[0])
+            assert (
+                returned["success"]
+                and returned["details"]["exit"] == 0
+                and not returned["details"]["aborted"]
+            )
+            after_return, after_return_balance = native.account_data(
+                from_boc(returned["shard_account"])
+            )
+            assert (
+                after_return.hash == before_return.hash
+                and after_return_balance > before_return_balance
+            )
+            assert not native.outgoing(from_boc(returned["transaction"]))
+            returned_state = after_return.slice()
+            assert returned_state.uint(8) == 3 and returned_state.uint(32) == 10
+            bounced_replay = e.send(from_boc(returned["shard_account"]), failed_external)
+            assert not bounced_replay["success"] and bounced_replay.get("vm_exit_code") == 2004
+            for name, receipt in [
+                ("funded-failure", funded_failure),
+                ("module-rejection", rejected_module),
+                ("bounce-return", returned),
+                ("bounce-replay", bounced_replay),
+            ]:
+                (out / f"{name}.json").write_text(json.dumps(receipt, indent=2) + "\n")
+            bounce_recovery = {
+                "module_exit": 1808,
+                "fee_leaf_after_return": 10,
+                "returned_balance_gain": after_return_balance - before_return_balance,
+                "replay_exit": 2004,
+            }
+
             report = {
                 "scope": __doc__,
                 "pop_role": options.pop_role,
                 "credit_probe": credit_probe,
+                "bounce_recovery": bounce_recovery,
                 "vault": paid["details"],
                 "module": relayed["details"],
                 "wallet": executed["details"] if executed else None,

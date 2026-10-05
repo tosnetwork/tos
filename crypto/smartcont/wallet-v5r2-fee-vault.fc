@@ -6,6 +6,7 @@
 #include "pq.fc";
 int r2fee_cells() asm "18 GETPARAMLONG" "2 INDEX";
 int r2fee_global() asm "GLOBALID";
+slice r2fee_gas_prices() asm "14 GETPARAMLONG" "3 INDEX";
 (slice, int) r2fee_raw(cell c) asm "XCTOS";
 int r2fee_level(cell c) asm "CLEVEL";
 slice r2fee_ordinary(cell c) impure inline {
@@ -30,12 +31,27 @@ const int r2fee::state_cells = 128;
 const int r2fee::state_bits = 128 * 1023;
 const int r2fee::storage_horizon = 33554432;
 
+;; Trusted basechain ConfigParam 21 from the VM's unpacked configuration. Money
+;; alone cannot buy more gas than this cap; admission must leave enough budget
+;; to persist the consumed leaf even after a governance price/limit change.
+int r2fee_gas_limit() impure inline {
+  slice prices = r2fee_gas_prices();
+  int tag = prices~load_uint(8);
+  if (tag == 0xd1) {
+    prices~skip_bits(128);
+    tag = prices~load_uint(8);
+  }
+  throw_unless(2017, (tag == 0xdd) | (tag == 0xde));
+  return prices.skip_bits(64).preload_uint(64);
+}
+
 () r2fee_address(slice s) impure inline {
   throw_unless(2016, s.preload_uint(11) == 1024);
 }
 () recv_internal(slice body) impure { } ;; deposit/bounce only; no leaf rollback
 
 () recv_external(int balance, int value_in, cell full, slice body) impure {
+  throw_unless(2017, r2fee_gas_limit() >= r2fee::compute_bound);
   throw_unless(2015, r2fee_cells() <= r2fee::max_cells);
   cell intent = body~load_ref();
   cell signature = body~load_ref();

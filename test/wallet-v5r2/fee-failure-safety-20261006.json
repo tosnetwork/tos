@@ -1,0 +1,836 @@
+{
+  "base_commit": "915f739c8ad7d4dfcc2581a0c608651ef7c45214",
+  "scope": "Native Release local candidate diagnostics; no production release or both-VM claim. Prior unguarded cap failure belongs to base_commit. Current source hashes bind the fix and tests.",
+  "release_gate": "FAILED: default external credit 10000; AUTH needs 12289 and both POP routes 12652.",
+  "retention": "Retain local raw artifacts through release review and at least 2027-01-06. Local paths require access to this machine; hashes alone are not independent evidence. Public deterministic LMS test trees remain outside Git.",
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/test_fee_delivery.py --credit-probe --output OUT/auth",
+    "Same command with --pop-role 1 or --pop-role 2, each using a separate OUT directory.",
+    "Same command with --fault NAME for each of the 12 scenario names below, each using a separate OUT directory. Safe low-cap scenarios skip the credit probe internally.",
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/test_fee_gas_config.py --output OUT/gas-config"
+  ],
+  "validation": {
+    "fault_scenarios": 12,
+    "route_runs": 3,
+    "trusted_config_cases": 12,
+    "trusted_config_deletion_controls": 3,
+    "runner_exit_status": 0,
+    "routes": {
+      "auth": {
+        "minimum_accept_credit": 12289,
+        "bounce_recovery": {
+          "module_exit": 1808,
+          "fee_leaf_after_return": 10,
+          "returned_balance_gain": 4215728000,
+          "replay_exit": 2004
+        },
+        "negative_cases": 13,
+        "accepted_boundaries": 4
+      },
+      "pop1": {
+        "minimum_accept_credit": 12652,
+        "bounce_recovery": {
+          "module_exit": 1808,
+          "fee_leaf_after_return": 10,
+          "returned_balance_gain": 4923699000,
+          "replay_exit": 2004
+        },
+        "negative_cases": 13,
+        "accepted_boundaries": 4
+      },
+      "pop2": {
+        "minimum_accept_credit": 12652,
+        "bounce_recovery": {
+          "module_exit": 1808,
+          "fee_leaf_after_return": 10,
+          "returned_balance_gain": 4214868000,
+          "replay_exit": 2004
+        },
+        "negative_cases": 13,
+        "accepted_boundaries": 4
+      }
+    },
+    "faults": {
+      "low-gas-cap": {
+        "scope": "Actual candidate rejects insufficient configured gas cap before ACCEPT",
+        "fault": "low-gas-cap",
+        "accepted": false,
+        "exit": 2017,
+        "replay_accepted": false
+      },
+      "gas-cap-below-minimum": {
+        "scope": "Actual candidate rejects insufficient configured gas cap before ACCEPT",
+        "fault": "gas-cap-below-minimum",
+        "accepted": false,
+        "exit": 2017,
+        "replay_accepted": false
+      },
+      "gas-cap-minimum": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "gas-cap-minimum",
+        "transaction": {
+          "exit": 0,
+          "gas": 14440,
+          "gas_limit": 0,
+          "compute_success": true,
+          "aborted": false,
+          "action": {
+            "success": true,
+            "code": 0
+          }
+        },
+        "leaf_after": 9,
+        "balance_loss": 5185307000,
+        "outgoing_count": 1,
+        "unsafe_repeated_charge_control": false,
+        "replay_accepted": false,
+        "replay_exit": 2004
+      },
+      "low-gas-cap-unguarded": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "low-gas-cap-unguarded",
+        "transaction": {
+          "exit": -14,
+          "gas": 12000,
+          "gas_limit": 0,
+          "compute_success": false,
+          "aborted": true,
+          "action": null
+        },
+        "leaf_after": 0,
+        "balance_loss": 110415000,
+        "outgoing_count": 0,
+        "unsafe_repeated_charge_control": true,
+        "replay_accepted": true,
+        "replay_exit": -14
+      },
+      "throw-before-commit": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "throw-before-commit",
+        "transaction": {
+          "exit": 78,
+          "gas": 13093,
+          "gas_limit": 0,
+          "compute_success": false,
+          "aborted": true,
+          "action": null
+        },
+        "leaf_after": 0,
+        "balance_loss": 111508000,
+        "outgoing_count": 0,
+        "unsafe_repeated_charge_control": true,
+        "replay_accepted": true,
+        "replay_exit": 78
+      },
+      "throw-after-commit": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "throw-after-commit",
+        "transaction": {
+          "exit": 77,
+          "gas": 13119,
+          "gas_limit": 0,
+          "compute_success": true,
+          "aborted": false,
+          "action": {
+            "success": true,
+            "code": 0
+          }
+        },
+        "leaf_after": 9,
+        "balance_loss": 111534000,
+        "outgoing_count": 0,
+        "unsafe_repeated_charge_control": false,
+        "replay_accepted": false,
+        "replay_exit": 2004
+      },
+      "gas-before-commit": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "gas-before-commit",
+        "transaction": {
+          "exit": -14,
+          "gas": 13053,
+          "gas_limit": 0,
+          "compute_success": false,
+          "aborted": true,
+          "action": null
+        },
+        "leaf_after": 0,
+        "balance_loss": 111468000,
+        "outgoing_count": 0,
+        "unsafe_repeated_charge_control": true,
+        "replay_accepted": true,
+        "replay_exit": -14
+      },
+      "gas-after-commit": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "gas-after-commit",
+        "transaction": {
+          "exit": -14,
+          "gas": 13079,
+          "gas_limit": 0,
+          "compute_success": true,
+          "aborted": false,
+          "action": {
+            "success": true,
+            "code": 0
+          }
+        },
+        "leaf_after": 9,
+        "balance_loss": 111494000,
+        "outgoing_count": 0,
+        "unsafe_repeated_charge_control": false,
+        "replay_accepted": false,
+        "replay_exit": 2004
+      },
+      "unfunded-ignore": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "unfunded-ignore",
+        "transaction": {
+          "exit": 0,
+          "gas": 14003,
+          "gas_limit": 0,
+          "compute_success": true,
+          "aborted": false,
+          "action": {
+            "success": true,
+            "code": 0
+          }
+        },
+        "leaf_after": 9,
+        "balance_loss": 114118000,
+        "outgoing_count": 0,
+        "unsafe_repeated_charge_control": false,
+        "replay_accepted": false,
+        "replay_exit": 2004
+      },
+      "unfunded-strict": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "unfunded-strict",
+        "transaction": {
+          "exit": 0,
+          "gas": 14003,
+          "gas_limit": 0,
+          "compute_success": true,
+          "aborted": true,
+          "action": {
+            "success": false,
+            "code": 37
+          }
+        },
+        "leaf_after": 0,
+        "balance_loss": 114118000,
+        "outgoing_count": 0,
+        "unsafe_repeated_charge_control": true,
+        "replay_accepted": true,
+        "replay_exit": 0
+      },
+      "oversized-ignore": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "oversized-ignore",
+        "transaction": {
+          "exit": 0,
+          "gas": 208610,
+          "gas_limit": 0,
+          "compute_success": true,
+          "aborted": false,
+          "action": {
+            "success": true,
+            "code": 0
+          }
+        },
+        "leaf_after": 9,
+        "balance_loss": 313425000,
+        "outgoing_count": 0,
+        "unsafe_repeated_charge_control": false,
+        "replay_accepted": false,
+        "replay_exit": 2004
+      },
+      "oversized-control": {
+        "scope": "Injected failure semantics, not production-credit or reachability evidence",
+        "fault": "oversized-control",
+        "transaction": {
+          "exit": 0,
+          "gas": 208610,
+          "gas_limit": 0,
+          "compute_success": true,
+          "aborted": false,
+          "action": {
+            "success": true,
+            "code": 0
+          }
+        },
+        "leaf_after": 9,
+        "balance_loss": 5419077000,
+        "outgoing_count": 1,
+        "unsafe_repeated_charge_control": false,
+        "replay_accepted": false,
+        "replay_exit": 2004
+      }
+    }
+  },
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-auth.fc",
+      "sha256": "e8e0b134d2229e4b0c97725d53afa707bb71bec5941fa85531d274d8df2a2799",
+      "bytes": 4861
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-code.fc",
+      "sha256": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f",
+      "bytes": 4499
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-common.fc",
+      "sha256": "042a1b054523a5838bc3cfff999dedfd4bcdf130eb92c18aed0d28b598c7ba14",
+      "bytes": 759
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-identity.fc",
+      "sha256": "78889a4e42080b052a687198f4fbe54990be4e1c0694de66cabfc47eb6d796dc",
+      "bytes": 3056
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "sha256": "c7107c7b287940060bf2c9b315d09e1703eb1b806a921dc5f371191a9e0ec27d",
+      "bytes": 5759
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-identity.fc",
+      "sha256": "b6eeb0d91a46522f892c3e66a4ce37ebe0b2b242d5560e0dbe73c59561f5cbeb",
+      "bytes": 2471
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-module.fc",
+      "sha256": "94a56c978d6d68d57462c0cb76c898464e285f0049b44a19363e993bbeda4738",
+      "bytes": 5018
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-pop.fc",
+      "sha256": "910f25e84aa4338829907d5bb57e58233d15b71c7f58b33883313770852cdd4d",
+      "bytes": 1965
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-state.fc",
+      "sha256": "71b1855f4ad9d836b9365b9618feeef53d9c1e6e30496b7d3211cd773d1eeb95",
+      "bytes": 3270
+    },
+    {
+      "path": "crypto/smartcont/pq.fc",
+      "sha256": "04c582149605adbeeb7d0ab0733ebcc2d3af15b44455162255541be6aebf3bf3",
+      "bytes": 857
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "sha256": "376f0a84deca4bb34acb08674782e649ee71cdf3c8cc85beb4fb184d1346b4a2",
+      "bytes": 24665
+    },
+    {
+      "path": "test/wallet-v5r2/fee_failure_controls.py",
+      "sha256": "30c3ef3bef3dd206411ce67cb11509de760f8f9780fa7f47631148c9bf1f8475",
+      "bytes": 4600
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_gas_config.py",
+      "sha256": "52a2a99fa4fb63c357b09daf504a408f6fd1dd375adfebbd1ef2c75c8fd1ef67",
+      "bytes": 3797
+    }
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/summary.json",
+      "sha256": "7f1498ba2b8836fd4d15dc092153ac7e7f52263a105c529a3dd9fda22a58e25c",
+      "bytes": 14351
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-config/results.json",
+      "sha256": "d370e63cd7cf80886bd2e3cc674e5edca0a74ed940e00cbf58d1d2bbd9da653a",
+      "bytes": 2348
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap/fault-results.json",
+      "sha256": "c88a9b7ce57c1972a391eb76e9875fcb4bc0db98366fd2e19df1082120011448",
+      "bytes": 179
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap/vault-result.json",
+      "sha256": "c67d66e7a3804e7fefd889e2547ea1f4a023853dfef5078fad48efc3ee0f63c8",
+      "bytes": 865
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap/fault-replay.json",
+      "sha256": "dd5bdc08c7f463185faa92c6ff107538cefe96d8a640a2dbec40f1a2905d14b7",
+      "bytes": 864
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap/run.log",
+      "sha256": "c88a9b7ce57c1972a391eb76e9875fcb4bc0db98366fd2e19df1082120011448",
+      "bytes": 179
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-below-minimum/fault-results.json",
+      "sha256": "0b60fb8cae129ae54f8539c79af877be228d2d26a2c3f4b0c1e8e5e2233e8e6e",
+      "bytes": 189
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-below-minimum/vault-result.json",
+      "sha256": "75b374fecd586edb307178953d1a628e71e4f057e9bbbb54e08742a64692b72a",
+      "bytes": 865
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-below-minimum/fault-replay.json",
+      "sha256": "0faafc91773917719450998d869e5c29c7377f5b3c926d50081f566e8191970c",
+      "bytes": 864
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-below-minimum/run.log",
+      "sha256": "0b60fb8cae129ae54f8539c79af877be228d2d26a2c3f4b0c1e8e5e2233e8e6e",
+      "bytes": 189
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-minimum/fault-results.json",
+      "sha256": "c01cf222b965e95d6d96d5f7ed0ad52f9c409ea794a9ed540df1af25a6df17e7",
+      "bytes": 477
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-minimum/vault-result.json",
+      "sha256": "fbe17c3a6be369ca242d7fbae332c2238d1af28dee6bcd08d67acd627ab7503c",
+      "bytes": 33013
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-minimum/fault-replay.json",
+      "sha256": "5c7d135589e6cf1c067f98fd59188f6e88af88acec80cea5fbe6735236d02e74",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-minimum/default-credit-result.json",
+      "sha256": "86c1f8f933cb05a7e8a656893f6ab9ac40eff98333804a575d2498c57ad7229a",
+      "bytes": 4287
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-minimum/credit-probe.json",
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-cap-minimum/run.log",
+      "sha256": "4978f1e5abd4df48c34d804465e04c5e6a701e0132052af0ec5d4b443e5b3f67",
+      "bytes": 612
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap-unguarded/fault-results.json",
+      "sha256": "3f5f126e68e37e2aa87361c20bcff9c798b82ee5aecdf9b86ba3a0172fc5e8c7",
+      "bytes": 439
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap-unguarded/vault-result.json",
+      "sha256": "9b3c133efb91923a77771d5f650d1aa3295e76b175355234bdb15f82350fbd28",
+      "bytes": 20712
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap-unguarded/fault-replay.json",
+      "sha256": "e144e8904135b4fdeb83c5c53302083666de2ba138c951819408859e958d5e6e",
+      "bytes": 20712
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap-unguarded/default-credit-result.json",
+      "sha256": "00b6c28f48307d5fe72314998042d01512209946a8aa22c0dcd166e26f9219a7",
+      "bytes": 3734
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap-unguarded/credit-probe.json",
+      "sha256": "50b0dc2a92cbafd4fb90767d32d2b2ade44aba790fc17ac3ba7a156f55a98bf2",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/low-gas-cap-unguarded/run.log",
+      "sha256": "ed7b268b3647c0efe335db29ca39a3275be2c1f09fa6b292ab86e427095d1564",
+      "bytes": 574
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-before-commit/fault-results.json",
+      "sha256": "2666f1137c87c338fb7137352b88256c016e44528fb089a493fc9fd00fa63420",
+      "bytes": 435
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-before-commit/vault-result.json",
+      "sha256": "88bc788c298868d13009a0d5a3ae7155abcec29edc9d4fa86ecd170fb9c314e8",
+      "bytes": 21368
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-before-commit/fault-replay.json",
+      "sha256": "a28959ac572fd3ffebac451a96140520aebcfd3db95f02a1dea8b2571e59ff36",
+      "bytes": 21368
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-before-commit/default-credit-result.json",
+      "sha256": "2606ec772cc313f59dd41f5e4107810d361769c0c8d75aca9d567711541ca0b4",
+      "bytes": 4287
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-before-commit/credit-probe.json",
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-before-commit/run.log",
+      "sha256": "98fcbd0eb4c45e57d698937b86a0fdfc6fc3b422a24feb2024d226e3c60592ab",
+      "bytes": 570
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-after-commit/fault-results.json",
+      "sha256": "932b0e82265e6045a547d9c2d663f8aded416d478e4b680ecaef2ffe368633ce",
+      "bytes": 480
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-after-commit/vault-result.json",
+      "sha256": "beaff5db4bbb6333d3b06e37ca31ed59aca32920919e9fd066c6036f8543d9c9",
+      "bytes": 21516
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-after-commit/fault-replay.json",
+      "sha256": "90e1b8a238477d672e43bb67b829dc601a300fecfd918d9250bf52baee410a33",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-after-commit/default-credit-result.json",
+      "sha256": "c16f242d1440ec7d086c32d5ff2a13d9d98794bc8a60bb7255c03639d50be4b9",
+      "bytes": 4287
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-after-commit/credit-probe.json",
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/throw-after-commit/run.log",
+      "sha256": "bd83f9099c3ac7829f6fc5ec7e634c01d858e9f668a39c72032f06050a7d6c06",
+      "bytes": 615
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-before-commit/fault-results.json",
+      "sha256": "9406325eac58f14247d7d60f0d7ea602ddb1caeb99b825582a5db50e54592622",
+      "bytes": 435
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-before-commit/vault-result.json",
+      "sha256": "3463ba43a833e9eafbccd7a0bf891e6cb205e4b5b8e74493ffac6c18cc3521ae",
+      "bytes": 21401
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-before-commit/fault-replay.json",
+      "sha256": "8efb85140582c5d72ecc11f07c68f42117f5852ff5a96c7116f9a3ab1287a59e",
+      "bytes": 21401
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-before-commit/default-credit-result.json",
+      "sha256": "f9160e58225e05b0807b276e6c62fc99e8ec35d596659c05c7f9ec04acf4282a",
+      "bytes": 4286
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-before-commit/credit-probe.json",
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-before-commit/run.log",
+      "sha256": "447daa28885c0e5ef87e1fcbbc3cde791582d4f50b0f8c555120dae6810670e5",
+      "bytes": 570
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-after-commit/fault-results.json",
+      "sha256": "b66d7d4dec089b520924773ae0e50d38b7942fe94b12d1b0a0ad8d1fc1dbd64d",
+      "bytes": 479
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-after-commit/vault-result.json",
+      "sha256": "56cdd170b01521158e41f44174a45dbabf3273dc2bec5f20b78653400129e8f2",
+      "bytes": 21544
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-after-commit/fault-replay.json",
+      "sha256": "f13318e7ea5787840f0afc87a0c58b7f305660799879e2410f2674b1b713c397",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-after-commit/default-credit-result.json",
+      "sha256": "c1bfc1fd5dce1463791236c622bc7d51c087ec7a270e52ce73230a263ab683e1",
+      "bytes": 4287
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-after-commit/credit-probe.json",
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/gas-after-commit/run.log",
+      "sha256": "9253139fa90cd333d4a5dc3904e73dd77b0710c7d62323f0f80a9ee7f8638f91",
+      "bytes": 614
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-ignore/fault-results.json",
+      "sha256": "ffc800262894b9b4bcb3e2d0a8ab012cd70636eeea15178fcb6f10b66d8f5dc3",
+      "bytes": 476
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-ignore/vault-result.json",
+      "sha256": "916282733ad469579932ed32ecdd2524f861128c78244187f742cc02d386cfe5",
+      "bytes": 32553
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-ignore/fault-replay.json",
+      "sha256": "d81455061b25b99891376bce620967078d2edd89fd7fbf735f9cb781f1bcd3e3",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-ignore/default-credit-result.json",
+      "sha256": "3c1706d73564a7b56abbbc15f420ac4dc5d966e67766b3ac6aa5a572f952b25f",
+      "bytes": 4026
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-ignore/credit-probe.json",
+      "sha256": "cea09f3b737ec610d1920bf8cf6c455210f395838d8961abe0be96ae0da62ee1",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-ignore/run.log",
+      "sha256": "3927499fd1db57a358b2877c9548f50666d6f6ee7864d8c6d38590f0c63eaaa5",
+      "bytes": 611
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-strict/fault-results.json",
+      "sha256": "0fddf31f49b44b2b9122aedea544b45df7dbfe70ce6501720c8d372dab0284b4",
+      "bytes": 472
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-strict/vault-result.json",
+      "sha256": "7c9ee3a0b6ee0af7d6040996494892731fc0c43f0621bb0f8c29f679485396d0",
+      "bytes": 32550
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-strict/fault-replay.json",
+      "sha256": "595a99f77bb2e8fdc0e06f56d5424f9645c064c00f2c536d901789267cc8e73f",
+      "bytes": 32550
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-strict/default-credit-result.json",
+      "sha256": "9f5b8a5a845a5b52a2ca95c39bb5067a50a351d640370b908db835aed4693f24",
+      "bytes": 4026
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-strict/credit-probe.json",
+      "sha256": "cea09f3b737ec610d1920bf8cf6c455210f395838d8961abe0be96ae0da62ee1",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/unfunded-strict/run.log",
+      "sha256": "1b7e61e9e8ec9d1402c22f6ee75efe389eba519c83e57036fb473c7ec7960c8b",
+      "bytes": 607
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-ignore/fault-results.json",
+      "sha256": "8a9790fc7b4efd620195b7aedcdc14883ffed1f9f96070758f4225cfe57362a8",
+      "bytes": 478
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-ignore/vault-result.json",
+      "sha256": "4bd0448accde985f852bdf9a354d5335dda15475a28c286bfacca7a67fe7afed",
+      "bytes": 84780
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-ignore/fault-replay.json",
+      "sha256": "5c7d135589e6cf1c067f98fd59188f6e88af88acec80cea5fbe6735236d02e74",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-ignore/default-credit-result.json",
+      "sha256": "c1bfc1fd5dce1463791236c622bc7d51c087ec7a270e52ce73230a263ab683e1",
+      "bytes": 4287
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-ignore/credit-probe.json",
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-ignore/run.log",
+      "sha256": "4f489add3acfe02130dcba3a3b5559af645bff0e82d687b9e5965c7c2e541999",
+      "bytes": 613
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-control/fault-results.json",
+      "sha256": "7f43dbff949d13ccbee6fbab4297483bd79a683b833fa539cd818e700380a97c",
+      "bytes": 480
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-control/vault-result.json",
+      "sha256": "810684b15ac69b6fb5e1496c6584ff91616a6b1d2a6de69e6ff93e5d00e8f104",
+      "bytes": 88268
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-control/fault-replay.json",
+      "sha256": "a78327a0b9eb1009ed8f0f29a4aae1de476a9ac87883c9eba595d22f9eb10f10",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-control/default-credit-result.json",
+      "sha256": "9e44fe13508c54339fc482f9e1064add2fc2fada1395b0a41630db2e21a7db51",
+      "bytes": 4287
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-control/credit-probe.json",
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/oversized-control/run.log",
+      "sha256": "622d60634e24585a3aeb6f6da07fd854641ea4e2eecb9836c5f36631390d97d8",
+      "bytes": 615
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/auth/vault-result.json",
+      "sha256": "432b9b54753d2fe99f8ccd4e1c77161c57d0cc49ec251ba34f3161460842860b",
+      "bytes": 33015
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/auth/default-credit-result.json",
+      "sha256": "f15ae2238c3514a57b35c0aa7d00b8fe528ed779a41d53d17c133882a9f1e63e",
+      "bytes": 4287
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/auth/credit-probe.json",
+      "sha256": "d7f78e0bafed7608905ebc23fa07164d868769e905a9006f464914ee0130d8b6",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/auth/funded-failure.json",
+      "sha256": "1e8639343adebe3e7ab8a7a17737eb665670db1c1d0869fcf5908918d8e4031e",
+      "bytes": 33015
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/auth/module-rejection.json",
+      "sha256": "b061d1aa2db0e5a02d9d71549bdbc4326778393fca7a41f077b847ae240d69cd",
+      "bytes": 30402
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/auth/bounce-return.json",
+      "sha256": "3bc01a7d8cdbed50e7b99fa84385572b1a93cba1ea5b319a58006a630b8c3463",
+      "bytes": 2276
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/auth/bounce-replay.json",
+      "sha256": "3598d567f3d1db09fcd8f5cadc8ecadf56090074d9b97a09ce891f38e312a7cc",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/auth/run.log",
+      "sha256": "13bf103a964dddbe6a916ee028864999db49ec707849b2fe1b27aa0a4fce10ba",
+      "bytes": 3005
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop1/vault-result.json",
+      "sha256": "80308e65daf252c80c250dba31d0c6ee91d9abf3d33ed6cbaec6fdc94e9f765a",
+      "bytes": 18401
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop1/default-credit-result.json",
+      "sha256": "65495077d7afc2e315494c498ffba02ff718b28b25465375c6fec9f8cdbaa97d",
+      "bytes": 4565
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop1/credit-probe.json",
+      "sha256": "960461cd3236b9bdbff8eff50b7cbd8cb4869e9a435a1bd5b9da1ceda85b8908",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop1/funded-failure.json",
+      "sha256": "d0d85b9f0986a4ffa68085d90a1952859b4b53922c39a3b58bdb0a444b90fe88",
+      "bytes": 18401
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop1/module-rejection.json",
+      "sha256": "9967d58dbb186643e78089726d0ba637ed28991114416d507f3ac349a7c6e3bf",
+      "bytes": 23294
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop1/bounce-return.json",
+      "sha256": "de26e874a7c4af581a0a7c4fbc8c4f026451ee9419ad536b86f8a9ff8dea801a",
+      "bytes": 2280
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop1/bounce-replay.json",
+      "sha256": "90e1b8a238477d672e43bb67b829dc601a300fecfd918d9250bf52baee410a33",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop1/run.log",
+      "sha256": "1b033d3fff306ed7761b12c6db1ffc7ad387293c84ecb198d0d19fd1f4cc9f88",
+      "bytes": 2658
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop2/vault-result.json",
+      "sha256": "6abaeeb7395c7435586ddf06c1bc4834bf8b8b1398c91076b167b0640393e185",
+      "bytes": 33237
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop2/default-credit-result.json",
+      "sha256": "5da7479cb6e6047ba321752c595cac8472735377eca011a52f5f4178c7803df4",
+      "bytes": 4565
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop2/credit-probe.json",
+      "sha256": "960461cd3236b9bdbff8eff50b7cbd8cb4869e9a435a1bd5b9da1ceda85b8908",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop2/funded-failure.json",
+      "sha256": "cd8fdeabec5fd7a5a6488a1b693cf0bd5467f22ef1663f426e2fdf14553a5306",
+      "bytes": 33237
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop2/module-rejection.json",
+      "sha256": "658de8b8ded46a3e2f2226b99b407213f76d8048953ad46d1d42e19e25be02ba",
+      "bytes": 30820
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop2/bounce-return.json",
+      "sha256": "e974ee540ef33e6fc975065d99272f95ab0f5ce7e400e97997c29c69c12b05ab",
+      "bytes": 2276
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop2/bounce-replay.json",
+      "sha256": "588d58e138480775322c9b1943013d48e5906697b0e77e1d8c8d55d6a93e403a",
+      "bytes": 2247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/final/pop2/run.log",
+      "sha256": "016be1979a1eebe81d3ce94c90a8fcfc19ce85bd1cfd65a2d2d354413370797c",
+      "bytes": 2659
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/low-gas-cap-before/credit-probe.json",
+      "sha256": "50b0dc2a92cbafd4fb90767d32d2b2ade44aba790fc17ac3ba7a156f55a98bf2",
+      "bytes": 145
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/low-gas-cap-before/default-credit-result.json",
+      "sha256": "6189983b43b04a30a4934c201912d6a1923f39b4874930e16f4cb6f24e07d55a",
+      "bytes": 3734
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/low-gas-cap-before/fault-replay.json",
+      "sha256": "b8248ff55b5a7fed6aff99a5f25330188abeda66d9aadd01116651ddc1bc091d",
+      "bytes": 20712
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/low-gas-cap-before/fault-results.json",
+      "sha256": "c555a706df58f46675503345a4991001ae694042849849616d935dbec918d637",
+      "bytes": 429
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-r2-failures/low-gas-cap-before/vault-result.json",
+      "sha256": "c9c1311df045e314af6651aefb49056710d4f3a799daf111346a29cf4b0ca1ba",
+      "bytes": 20712
+    }
+  ]
+}

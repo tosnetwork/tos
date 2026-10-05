@@ -288,7 +288,7 @@ parties hash derived by `r2pair_data`; wallet/module witness validation compares
 whole reconstructed data hash. Arbitrary caches cannot be installed as a paired
 route. The public tree id and full metadata remain committed by the config hash.
 
-The measured SUB3 path requires **11,435 gas to reach ACCEPT**, exceeding the
+The measured SUB3 path requires **12,289 gas to reach ACCEPT**, exceeding the
 unchanged default **10,000**. This is a failed release gate. No credit or tariff
 change is made to production configuration and no check is moved after ACCEPT.
 The 1024-cell envelope, compute/storage bounds and class limits are provisional
@@ -326,7 +326,7 @@ The native AUTH workflow now runs and retains both suites; wiring is not evidenc
 that remote CI has passed on this revision.
 
 The delivery runner's `--pop-role 1` and `--pop-role 2` now exercise actual fee vault
-payments for ML-DSA and SLH POP. Both require **11,898 gas** at ACCEPT, still exceeding
+payments for ML-DSA and SLH POP. Both require **12,652 gas** at ACCEPT, still exceeding
 default credit. Diagnostic 20,000-credit transactions verify POP without module
 data changes, outgoing authorization messages or spending its pre-message funds.
 Both also reject replay, corrupt LMS signatures and insufficient reserves. Wallet
@@ -334,11 +334,10 @@ and recipient receipt fields are null for POP, rather than claiming a payment.
 The class-1 four-hop AUTH delivery remains separately checked. These are candidate
 bounds, not worst-case production headroom or both-VM acceptance.
 
-`--gas-trace` retains instruction accounting. LMSCHECKFEEHASH remains 6,135 gas;
-other execution before ACCEPT is 5,274 for AUTH and 5,737 for POP, plus 26 for ACCEPT.
-The native opcode includes byte-chain parsing and cryptographic work; this is not
-a hardware repricing justification. See
-`test/wallet-v5r2/fee-admission-paths-20261006.json` for source-bound receipts.
+`--gas-trace` can retain instruction accounting. Historical instruction totals in
+`test/wallet-v5r2/fee-admission-paths-20261006.json` apply to that indexed source,
+before the configured-gas-cap guard; they are not current admission measurements.
+No hardware repricing justification is inferred from these diagnostics.
 
 The next admission optimization shares the existing class dispatch with the
 constructor check, computes the doubled forwarding bound once, and derives the
@@ -357,3 +356,44 @@ leaf 8 advances to 9. These are fee-admission sensitivity controls, not claims
 that an invalid inner request gains wallet authority. All positive and negative
 path diagnostics use copied 20,000-credit configuration while the default-credit
 receipts remain failed. See `test/wallet-v5r2/fee-envelope-20261006.json`.
+
+## Fee failure safety and configured gas cap
+
+A copied configuration with 20,000 external credit but a 12,000 execution cap
+exposed a real conditional defect in the previous candidate: ACCEPT succeeded,
+execution exhausted gas before COMMIT, and the leaf remained unused while the
+vault paid fees. The identical request could be charged again. This is not a
+claim that the candidate admitted under unchanged 10,000 default credit.
+
+The vault now reads trusted basechain ConfigParam 21 from the VM unpacked
+configuration and rejects caps below its provisional 65,536 compute bound with
+error 2017 before ACCEPT. A balance reserve cannot compensate for a configured
+execution cap. Tests cover flat-prefixed extended, bare extended and legacy gas
+price encodings, each at 65,535, 65,536 and 1,000,000. Three deletion controls admit
+the forbidden lower cap. The native AUTH CI runs these 12 trusted-config cases.
+Actual fee transactions reject caps 12,000 and 65,535; the 65,536 boundary admits
+the vault transaction. Removing the production guard reproduces repeated charging
+at cap 12,000. This boundary result does not establish downstream SLH execution
+under the same low cap or prove worst-case compute coverage.
+
+`test_fee_delivery.py --fault NAME` exercises 12 cap/failure scenarios in private
+contract copies, including throw and out-of-gas before/after COMMIT, insufficient
+funds with and without ignore-errors send mode, and oversized outgoing messages
+with a matching permissive-limit control. Injected pre-COMMIT faults and strict
+unfunded sends demonstrate state rollback and repeated charges; post-COMMIT
+compute failures and ignored send failures retain the consumed leaf. These are
+sensitivity controls, not assertions that every injected fault is reachable in
+the candidate. COMMIT alone does not protect against all action-phase rollback.
+
+Normal AUTH and both POP routes also submit a genuine LMS-funded request with a
+corrupted inner PQ signature. The actual module rejects it with 1808 and emits a
+bounce; the actual vault receives the returned funds without changing its data
+or rolling back leaf 10. Exact fee replay fails with 2004. This verifies refund
+handling and replay protection, not successful authorization of the failed inner
+request. All three routes still require diagnostic 20,000 credit. Current minimum
+admission values are 12,289 for AUTH and 12,652 for either POP route.
+
+Source hashes, commands and retained before/after, deletion, action and bounce
+receipts are indexed in `test/wallet-v5r2/fee-failure-safety-20261006.json`.
+Default-credit admission, worst-case compute/action bounds and both-VM parity
+remain release gates. No production configuration is changed by this fix.
