@@ -1,7 +1,6 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-#include "slhdsa128s.h"
-
 #include "slh_dsa.h"
+#include "slhdsa128s.h"
 
 namespace tos::pq {
 VerifyResult verify_slhdsa128s(std::string_view message, std::string_view context, std::string_view signature,
@@ -11,8 +10,8 @@ VerifyResult verify_slhdsa128s(std::string_view message, std::string_view contex
     return VerifyResult::malformed_input;
   }
   auto bytes = [](std::string_view v) { return reinterpret_cast<const uint8_t*>(v.data()); };
-  switch (slh_verify(bytes(message), message.size(), bytes(signature), signature.size(), bytes(context),
-                     context.size(), bytes(public_key), &slh_dsa_sha2_128s)) {
+  switch (slh_verify(bytes(message), message.size(), bytes(signature), signature.size(), bytes(context), context.size(),
+                     bytes(public_key), &slh_dsa_sha2_128s)) {
     case 1:
       return VerifyResult::valid;
     case 0:

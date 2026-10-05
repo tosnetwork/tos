@@ -45,7 +45,6 @@
 #include "downloaders/wait-block-state.hpp"
 #include "impl/applied-ext-message-cleanup.hpp"
 #include "impl/config.hpp"
-#include "auth-policy-admission.h"
 #include "interfaces/validator-full-id.h"
 #include "lite-client/lite-ext-query-failure.h"
 #include "metrics/chain-anchor-snapshot.h"
@@ -72,6 +71,7 @@
 #include "validator/consensus/validator-cleanup-store.h"
 #include "validator/stats-merger.h"
 
+#include "auth-policy-admission.h"
 #include "checksum.h"
 #include "fabric.h"
 #include "finality-cache-policy.h"
@@ -2169,7 +2169,7 @@ void ValidatorManagerImpl::written_handle(BlockHandle handle, td::Promise<td::Un
 }
 
 namespace {
-td::Result<td::Ref<vm::Cell>> auth_policy_config(const MasterchainState& state) {
+td::Result<td::Ref<vm::Cell>> auth_policy_config(const MasterchainState &state) {
   TRY_RESULT(holder, state.get_config_holder());
   if (holder.is_null()) {
     return td::Status::Error("AUTH configuration holder is missing");
@@ -2177,15 +2177,15 @@ td::Result<td::Ref<vm::Cell>> auth_policy_config(const MasterchainState& state) 
   return holder->get_auth_policy_config_root();
 }
 
-td::Status admit_auth_policy_state(const MasterchainState& candidate,
-                                  const td::Ref<MasterchainState>& previous) {
+td::Status admit_auth_policy_state(const MasterchainState &candidate, const td::Ref<MasterchainState> &previous) {
   try {
-    return validate_auth_policy_admission(auth_policy_config(candidate),
+    return validate_auth_policy_admission(
+        auth_policy_config(candidate),
         previous.not_null() ? auth_policy_config(*previous) : td::Result<td::Ref<vm::Cell>>{td::Ref<vm::Cell>{}},
         previous.not_null());
-  } catch (vm::VmError& error) {
+  } catch (vm::VmError &error) {
     return error.as_status("cannot admit AUTH policy state: ");
-  } catch (vm::VmVirtError& error) {
+  } catch (vm::VmVirtError &error) {
     return error.as_status("cannot admit AUTH policy proof: ");
   }
 }
@@ -2220,7 +2220,7 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
           CHECK(it == pending_masterchain_states_.begin());
           auto auth_status = admit_auth_policy_state(*std::get<1>(it->second), last_masterchain_state_);
           if (auth_status.is_error()) {
-            for (auto& pending : std::get<2>(it->second)) {
+            for (auto &pending : std::get<2>(it->second)) {
               pending.set_error(auth_status.clone());
             }
             pending_masterchain_states_.erase(it);

@@ -164,8 +164,7 @@ int exec_pq_suite(VmState* st) {
     }
     case pq_suite_slhdsa128s: {
       st->consume_gas_chk(pq_slhdsa128s_base_gas);
-      const auto key =
-          read_pq_bytes(st, public_key_cell, tos::pq::slhdsa128s_public_key_bytes, pq_slhdsa128s_byte_gas);
+      const auto key = read_pq_bytes(st, public_key_cell, tos::pq::slhdsa128s_public_key_bytes, pq_slhdsa128s_byte_gas);
       const auto signature =
           read_pq_bytes(st, signature_cell, tos::pq::slhdsa128s_signature_bytes, pq_slhdsa128s_byte_gas);
       const auto context =
@@ -219,8 +218,7 @@ int exec_lms_fee_hash(VmState* st) {
   auto result = tos::pq::verify_lms_fee(message, signature, key);
   if (result == tos::pq::VerifyResult::valid) {
     const auto* p = reinterpret_cast<const unsigned char*>(signature.data() + 4);
-    const auto q = (std::uint32_t{p[0]} << 24) | (std::uint32_t{p[1]} << 16) |
-                   (std::uint32_t{p[2]} << 8) | p[3];
+    const auto q = (std::uint32_t{p[0]} << 24) | (std::uint32_t{p[1]} << 16) | (std::uint32_t{p[2]} << 8) | p[3];
     if (q != static_cast<std::uint32_t>(leaf)) {
       result = tos::pq::VerifyResult::invalid;
     }

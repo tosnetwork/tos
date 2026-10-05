@@ -17,10 +17,10 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include "block/auth-policy.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
-#include "block/auth-policy.h"
 #include "block/mc-config.h"
 #include "block/workchain-execution-dispatch.h"
 #include "common/bigexp.h"

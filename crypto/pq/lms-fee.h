@@ -10,7 +10,7 @@
 // Verification of one-level HSS (RFC 8554) signatures for the request-bound rescue fee gate.
 // Exactly one profile is admitted: LMS_SHA256_M32_H20 / LMOTS_SHA256_N32_W4, SHA-256, n = m = 32.
 namespace tos::pq {
-inline constexpr std::size_t lms_fee_public_key_bytes = 4 + 4 + 4 + 16 + 32;  // HSS L=1
+inline constexpr std::size_t lms_fee_public_key_bytes = 4 + 4 + 4 + 16 + 32;                          // HSS L=1
 inline constexpr std::size_t lms_fee_max_signature_bytes = 4 + 4 + (4 + 32 + 67 * 32) + 4 + 20 * 32;  // 2,832
 inline constexpr std::size_t lms_fee_max_message_bytes = 8192;
 

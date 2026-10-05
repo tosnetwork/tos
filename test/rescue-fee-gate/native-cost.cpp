@@ -7,10 +7,10 @@
 #include <string>
 #include <vector>
 
+#include "pq/lms-fee.h"
 #include "td/utils/logging.h"
 #include "vm/boc.h"
 #include "vm/pqops.h"
-#include "pq/lms-fee.h"
 #include "vm/vm.h"
 
 namespace {
@@ -45,7 +45,8 @@ void push(td::Ref<vm::Stack>& stack, const std::string& field) {
   if (field.rfind("hash:", 0) == 0) {
     auto bytes = unhex(field.substr(5));
     td::RefInt256 value{true};
-    if (bytes.size() != 32 || !value.write().import_bytes(reinterpret_cast<const unsigned char*>(bytes.data()), 32, false)) {
+    if (bytes.size() != 32 ||
+        !value.write().import_bytes(reinterpret_cast<const unsigned char*>(bytes.data()), 32, false)) {
       throw std::runtime_error("invalid uint256");
     }
     stack.write().push_int(std::move(value));
@@ -73,8 +74,8 @@ int main(int argc, char** argv) {
       // Import fees exclude the root cell and its bits.
       auto result = stat.compute_used_storage(root.move_as_ok(), true, 3);
       const bool accepted = result.is_ok() && (!cells || stat.cells <= cells) && (!bits || stat.bits <= bits);
-      std::cout << "{\"accepted\":" << (accepted ? "true" : "false")
-                << ",\"cells\":" << stat.cells << ",\"bits\":" << stat.bits << "}\n";
+      std::cout << "{\"accepted\":" << (accepted ? "true" : "false") << ",\"cells\":" << stat.cells
+                << ",\"bits\":" << stat.bits << "}\n";
       return 0;
     }
     if (argc == 3 && std::string(argv[1]) == "--tariff") {
@@ -82,8 +83,7 @@ int main(int argc, char** argv) {
       if (!worst) {
         throw std::runtime_error("unsupported key");
       }
-      std::cout << "{\"worst_compressions\":" << *worst
-                << ",\"base_gas\":" << vm::pq_lms_fee_base_gas
+      std::cout << "{\"worst_compressions\":" << *worst << ",\"base_gas\":" << vm::pq_lms_fee_base_gas
                 << ",\"per_compression_gas\":" << vm::pq_lms_fee_gas_per_compression
                 << ",\"cell_load_gas\":" << vm::VmState::cell_load_gas_price
                 << ",\"cell_reload_gas\":" << vm::VmState::cell_reload_gas_price << "}\n";
