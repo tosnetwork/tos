@@ -424,6 +424,8 @@ pub struct Net {
     pub model: Model,
     /// The most gas each (contract, opcode, advance kind) used in this run.
     pub gas_seen: BTreeMap<(&'static str, u32, u8), u64>,
+    /// Record gas without holding it to the declarations: for measuring.
+    pub gas_measuring: bool,
     pub next_nonce: u64,
     pub burn_fee: u64,
     pub mint_fee: u64,
@@ -523,6 +525,7 @@ impl Net {
             logs: Vec::new(),
             model: Model { enabled: true, ..Model::default() },
             gas_seen: BTreeMap::new(),
+            gas_measuring: false,
             next_nonce: 0,
             burn_fee: BURN_FEE,
             mint_fee: MINT_FEE,
@@ -797,6 +800,9 @@ impl Net {
             }
             _ => declared("MINTER_STEP_GAS"),
         } as u64;
+        if self.gas_measuring {
+            return;
+        }
         assert!(gas <= budget, "{kind} op {op}/{sub} used {gas} gas, over its declared {budget}");
     }
 

@@ -196,6 +196,12 @@ MUTATIONS = [
       "    while (more & (steps < FOLD_LIMIT)) {\n        (int b, slice e, int found) = first ?",
       "    while (more & (steps < FOLD_LIMIT + 4)) {\n        (int b, slice e, int found) = first ?",
       "t_z4_stranding", "strand"),
+    M("M36", "the minter's step gas misses the deepest holder path", f"{C}/settlement.fc",
+      "const int MINTER_STEP_GAS = 300000;", "const int MINTER_STEP_GAS = 120000;",
+      "deep::every_minter_step", "over its declared"),
+    M("M37", "a minter batch's gas misses the deepest holder path", f"{C}/settlement.fc",
+      "const int MINTER_BATCH_GAS = 400000;", "const int MINTER_BATCH_GAS = 180000;",
+      "deep::every_minter_step", "over its declared"),
     # EVM
     M("E01", "lock without an active generation", f"{SOL}/Bridge.sol",
       '        require(generation != 0, "No active generation");\n', "",

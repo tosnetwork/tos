@@ -149,14 +149,18 @@ const int BRIDGE_RESERVE = 1000000000;    ;; 1
 ;; current prices; the sandbox measures every step on contracts filled to their
 ;; limits and fails if one exceeds its declaration.
 const int WALLET_STEP_GAS = 40000;
-const int MINTER_STEP_GAS = 120000;
+;; A minter step reads and rewrites its holder's record in the holders
+;; dictionary, keyed by the owner's address hash, which a swap's recipient
+;; makes anyone's choice: the record can sit under a fork at every one of the
+;; 256 bits. The sandbox measures every step on that shape (token_bridge/deep.rs).
+const int MINTER_STEP_GAS = 300000;
 const int BRIDGE_STEP_GAS = 70000;
 ;; An oracle vote at the bridge: a swap vote that deploys a minter computes
 ;; its state's forwarding fee, the dearest bridge step (69698 gas at most
 ;; in the sandbox suite). The oracles' message pays for it.
 const int BRIDGE_VOTE_GAS = 100000;
 ;; A minter step that also promotes or strands FOLD_LIMIT records.
-const int MINTER_BATCH_GAS = 250000;
+const int MINTER_BATCH_GAS = 400000;
 
 ;; Seconds of storage a quote sets aside.
 const int STORAGE_QUOTE_HORIZON = 86400;

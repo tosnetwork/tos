@@ -395,6 +395,10 @@ impl Model {
         let after_balance = net.balance(&d.addr) as i128;
         let before_balance = d.balance_before as i128;
         let spent = before_balance + value - o.storage_fees as i128 - after_balance;
+        if net.gas_measuring && spent > value + allowed {
+            eprintln!("I7 MEASURE: op {op:?} spent {spent} of an incoming {value}");
+            return;
+        }
         assert!(
             spent <= value + allowed,
             "I7: op {op:?} spent {spent} of an incoming {value} (allowed beyond it: {allowed})"

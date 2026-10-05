@@ -18,6 +18,8 @@
 
 #[path = "token_bridge/burn.rs"]
 mod burn;
+#[path = "token_bridge/deep.rs"]
+mod deep;
 #[path = "token_bridge/extended.rs"]
 mod extended;
 #[path = "token_bridge/gauge.rs"]
