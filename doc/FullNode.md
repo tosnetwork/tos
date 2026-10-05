@@ -99,15 +99,15 @@ truth.
   block applied but not yet indexed (still queued, or only marked because
   the indexer was behind) is kept by the archive, past `--archive-ttl` if
   need be, until its token candidates are indexed or stored with it. On the
-  next start the indexer reads such blocks back and indexes them first.
-- **Jetton rows from older index versions are not served until verified.**
-  An index upgraded from a version that kept no pair record per jetton row
-  may hold owner/master mappings that have since changed. Those rows are left
-  out of `getAccountJettons` (`"legacy_unverified": true`) while the indexing
-  worker verifies each row's wallet against chain state, removes the stale
-  ones, and records the rest; the verified rows are published together once
-  none is left undecided. A row that cannot be verified on this node keeps
-  them all unpublished and the index incomplete.
+  next start the indexer reads such blocks back and indexes them first. If
+  pruning had already committed to deleting a block's package when the block
+  was handed over, the indexer works from the copy it holds; if it holds
+  none, it reports `"needs_rebuild": true` rather than claiming completeness.
+- **An index written by another schema version is reset.** When the node
+  opens an index database of any other layout, it empties it and starts a
+  fresh, forward-only index from the blocks applied from then on. Nothing of
+  the old database is imported or served, and no earlier history is
+  recovered.
 - **Stopping the node marks the index as incomplete.** Only an exit that
   happens after block application has stopped records the indexing run as
   finished. `systemctl stop` (SIGTERM), a crash, an out-of-memory kill and a

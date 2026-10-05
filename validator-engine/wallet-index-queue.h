@@ -71,8 +71,10 @@ class BoundedWorkQueue {
     recorder_.join();
   }
 
-  // Returns at once. False when the item was dropped.
-  bool push(Id id, Item item) {
+  // Returns at once. False when the item was dropped. A `pinned` item may use
+  // `pinned_extra` places beyond the capacity: its work cannot be redone
+  // later, so it is kept while that allowance lasts.
+  bool push(Id id, Item item, bool pinned = false, size_t pinned_extra = 0) {
     bool kept = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -82,7 +84,7 @@ class BoundedWorkQueue {
       } else {
         latch_degraded();
       }
-      if (items_.size() < capacity_) {
+      if (items_.size() < capacity_ || (pinned && items_.size() < capacity_ + pinned_extra)) {
         items_.emplace_back(seq, std::move(item));
         kept = true;
       } else {
@@ -104,6 +106,16 @@ class BoundedWorkQueue {
       } else {
         latch_degraded();
       }
+    }
+    wake_.notify_all();
+  }
+
+  // Returns at once. Records that some work was lost beyond recovery: the
+  // queue latches degraded, and the recorder persists it.
+  void latch_lost() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      latch_degraded();
     }
     wake_.notify_all();
   }

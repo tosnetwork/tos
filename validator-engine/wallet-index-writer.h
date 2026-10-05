@@ -86,17 +86,11 @@ class WalletIndexVerificationBudget {
 enum class Wc0IndexResult { Done, AtPendingCap, NotDone };
 Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id);
 
-// One pass of legacy jetton reconstruction (see WalletIndexDb): verify up to
-// `row_limit` jetton rows written before pair records existed against the
-// newest state the index has indexed a block with, record each verdict, and
-// publish the reconstructed rows once a full sweep leaves none undecided.
-// Without such a state nothing is verified and the rows stay unpublished.
-// The indexing worker runs it in the background; it returns whether the pass
-// moved anything.
-bool reconstruct_legacy_jetton_rows(size_t row_limit);
-
 // Blocks waiting to be indexed at most. Each holds its block and state cells.
 constexpr size_t kWc0IndexQueueCapacity = 256;
+// Blocks the queue keeps beyond its capacity when they cannot be read back
+// later (archive pruning already gave up their package).
+constexpr size_t kWc0IndexPinnedExtra = 64;
 // How long the worker waits for block data it asked the fetcher for. A block
 // whose data does not come in time stays marked for recovery.
 constexpr std::chrono::seconds kWc0IndexFetchTimeout{60};
@@ -196,6 +190,10 @@ void set_wc0_index_marking_fault_for_testing(bool fail);
 void set_wc0_index_marking_stall_for_testing(bool stall);
 // Tests only: how long the worker waits between rounds of parked retries.
 void set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds pause);
+// Tests only: how many handed-over blocks are tracked one by one before the
+// rest fold into one floor, and how many are tracked now.
+void set_wc0_index_tracking_capacity_for_testing(size_t capacity);
+size_t wc0_index_tracked_handovers_for_testing();
 // Tests only: make the next `count` block commits fail, as a failing write
 // would.
 void set_wc0_index_commit_faults_for_testing(int count);

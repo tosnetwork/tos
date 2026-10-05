@@ -1158,14 +1158,13 @@ void ArchiveManager::run_gc(td::Ref<MasterchainState> shard_client_state, UnixTi
       first_ts.push_back((double)it->second.ts);
     }
     // A reader that still needs older blocks (the wallet index) holds pruning
-    // back to the earliest of them, checked again before each deletion.
-    prune_archive_packages(
-        first_ts, (double)gc_ts, archive_ttl, [] { return g_archive_gc_floor.load(); },
-        [&](size_t index) {
-          auto &x = candidates[index];
-          LOG(ERROR) << "WARNING: deleting package " << x.id;
-          delete_package(x, [](td::Result<>) {});
-        });
+    // back to the earliest of them; each deletion is admitted against it
+    // under the retention lock (see archive-gc-floor.h).
+    prune_archive_packages(first_ts, (double)gc_ts, archive_ttl, [&](size_t index) {
+      auto &x = candidates[index];
+      LOG(ERROR) << "WARNING: deleting package " << x.id;
+      delete_package(x, [](td::Result<>) {});
+    });
   }
 }
 

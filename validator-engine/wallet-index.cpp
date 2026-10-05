@@ -56,12 +56,6 @@ constexpr uint8_t kMetaNeedsRebuildSub = 0x09;
 constexpr uint8_t kMetaRunActiveSub = 0x0A;
 // 0x00 0x0B -> parked token candidates (u64_be; absent means 0).
 constexpr uint8_t kMetaTokenParkedSub = 0x0B;
-// Legacy jetton reconstruction: 0x00 0x0C -> 1 while pending; 0x00 0x0D -> the
-// last jetton row key examined in the current sweep; 0x00 0x0E -> legacy rows
-// left undecided earlier in the sweep (u64_be).
-constexpr uint8_t kMetaLegacyJettonsSub = 0x0C;
-constexpr uint8_t kMetaLegacyCursorSub = 0x0D;
-constexpr uint8_t kMetaLegacyUndecidedSub = 0x0E;
 // 0x00 0x0F -> pending blocks (u64_be); 0x00 0x10 -> the last parked key a
 // retry pass took.
 constexpr uint8_t kMetaPendingBlocksSub = 0x0F;
@@ -372,17 +366,13 @@ struct JettonPairRecord {
   bool present = false;
   HashKey wallet;
   uint64_t lt = 0;
-  // Claimed by legacy reconstruction; served only once it is published.
-  bool reconstructed = false;
 };
 
 constexpr uint8_t kPairPresentFlag = 1;
-constexpr uint8_t kPairReconstructedFlag = 2;
 
 std::string encode_jetton_pair_record(const JettonPairRecord& record) {
   char value[kJettonPairRecordLen];
-  value[0] =
-      static_cast<char>((record.present ? kPairPresentFlag : 0) | (record.reconstructed ? kPairReconstructedFlag : 0));
+  value[0] = static_cast<char>(record.present ? kPairPresentFlag : 0);
   std::memcpy(value + 1, record.wallet.data(), 32);
   put_u64_be(value + 1 + 32, record.lt);
   return std::string(value, kJettonPairRecordLen);
@@ -395,7 +385,6 @@ td::Result<JettonPairRecord> decode_jetton_pair_record(const std::string& value)
   JettonPairRecord record;
   auto flags = static_cast<uint8_t>(value[0]);
   record.present = (flags & kPairPresentFlag) != 0;
-  record.reconstructed = (flags & kPairReconstructedFlag) != 0;
   record.wallet.as_slice().copy_from(td::Slice{value.data() + 1, 32});
   record.lt = get_u64_be(value.data() + 1 + 32);
   return record;
@@ -442,7 +431,6 @@ td::Result<WalletIndexDb::JettonPairDecision> WalletIndexDb::jetton_pair_decisio
     TRY_RESULT(decoded, decode_jetton_pair_record(record));
     decision.known = true;
     decision.has_record = true;
-    decision.reconstructed = decoded.reconstructed;
     decision.present = decoded.present;
     decision.wallet = decoded.wallet;
     decision.lt = decoded.lt;
@@ -471,19 +459,15 @@ td::Result<WalletIndexDb::JettonPairDecision> WalletIndexDb::jetton_pair_decisio
 }
 
 td::Status WalletIndexDb::claim_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
-                                            td::Ref<vm::Cell> value, uint64_t end_lt, bool reconstructed) {
+                                            td::Ref<vm::Cell> value, uint64_t end_lt) {
   TRY_RESULT(decision, jetton_pair_decision(owner, master));
   if (decision.known && decision.lt > end_lt) {
     // A later block already decided this pair.
     return td::Status::OK();
   }
-  // A pair decided only by a legacy row, or by an unpublished reconstruction,
-  // stays unpublished when reconstruction claims it. A block's own verdict is
-  // a fresh, verified fact and is served at once.
-  bool unpublished = reconstructed && (!decision.has_record || decision.reconstructed);
   TRY_STATUS(put_jetton(owner, master, std::move(value)));
   return put_jetton_record(jetton_pair_key(kJettonPairTag, owner, master),
-                           encode_jetton_pair_record(JettonPairRecord{true, wallet, end_lt, unpublished}));
+                           encode_jetton_pair_record(JettonPairRecord{true, wallet, end_lt}));
 }
 
 td::Status WalletIndexDb::release_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
@@ -503,8 +487,7 @@ td::Status WalletIndexDb::release_jetton_pair(const HashKey& owner, const HashKe
                            encode_jetton_pair_record(JettonPairRecord{false, wallet, end_lt}));
 }
 
-td::Status WalletIndexDb::apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt,
-                                               bool reconstructed) {
+td::Status WalletIndexDb::apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt) {
   auto wallet_key = jetton_wallet_key(wallet);
   std::string stored;
   TRY_RESULT(found, get_jetton_record(wallet_key, stored));
@@ -527,7 +510,7 @@ td::Status WalletIndexDb::apply_jetton_verdict(const HashKey& wallet, const Jett
   if (verdict.present) {
     next.owner = verdict.owner;
     next.master = verdict.master;
-    TRY_STATUS(claim_jetton_pair(verdict.owner, verdict.master, wallet, verdict.value, end_lt, reconstructed));
+    TRY_STATUS(claim_jetton_pair(verdict.owner, verdict.master, wallet, verdict.value, end_lt));
   } else {
     // Kept even when nothing was recorded before: an older block indexed later
     // (recovered at a later start, or fetched late) must find this.
@@ -564,134 +547,20 @@ td::Result<td::optional<WalletIndexDb::JettonWalletState>> WalletIndexDb::jetton
 
 td::Status WalletIndexDb::for_each_current_jetton(const HashKey& owner, size_t limit,
                                                   std::function<td::Status(const HashKey&, td::Ref<vm::Cell>)> cb) {
-  TRY_RESULT(unpublished, legacy_jettons_pending());
   return for_each_jetton(owner, limit, [&](const HashKey& master, td::Ref<vm::Cell> value) -> td::Status {
     std::string stored;
     TRY_RESULT(status, db_->get(td::Slice{jetton_pair_key(kJettonPairTag, owner, master)}, stored));
     if (status != td::KeyValue::GetStatus::Ok) {
-      // Written before pair records existed: never served as current.
+      // A row without the pair record that decided it is not a verified
+      // fact: never served as current.
       return td::Status::OK();
     }
     auto record = decode_jetton_pair_record(stored);
-    if (record.is_error() || !record.ok().present || (record.ok().reconstructed && unpublished)) {
+    if (record.is_error() || !record.ok().present) {
       return td::Status::OK();
     }
     return cb(master, std::move(value));
   });
-}
-
-td::Result<bool> WalletIndexDb::legacy_jettons_pending() {
-  char key[kMetaKeyLen];
-  make_meta_key(kMetaLegacyJettonsSub, key);
-  std::string value;
-  TRY_RESULT(status, db_->get(td::Slice{key, kMetaKeyLen}, value));
-  return status == td::KeyValue::GetStatus::Ok;
-}
-
-td::Result<WalletIndexDb::LegacyJettonRows> WalletIndexDb::legacy_jetton_rows(size_t limit) {
-  if (!batch_open_) {
-    return td::Status::Error("wc0-index: legacy reconstruction needs an open batch");
-  }
-  char cursor_key[kMetaKeyLen];
-  make_meta_key(kMetaLegacyCursorSub, cursor_key);
-  std::string cursor;
-  TRY_RESULT(cursor_status, db_->get(td::Slice{cursor_key, kMetaKeyLen}, cursor));
-  const std::string begin_all(1, static_cast<char>(kJettonTag));
-  const std::string end_all(1, static_cast<char>(kJettonTag + 1));
-  std::string begin = begin_all;
-  if (cursor_status == td::KeyValue::GetStatus::Ok && cursor.size() == kOwnerPairKeyLen &&
-      static_cast<uint8_t>(cursor[0]) == kJettonTag) {
-    begin = cursor + std::string(1, '\0');
-  }
-  LegacyJettonRows pass;
-  size_t examined = 0;
-  bool limit_hit = false;
-  auto status = db_->for_each_in_range(td::Slice{begin}, td::Slice{end_all}, [&](td::Slice key, td::Slice value) {
-    if (examined >= limit) {
-      limit_hit = true;
-      return td::Status::Error("wc0-index: pass complete");
-    }
-    ++examined;
-    pass.last_key = key.str();
-    if (key.size() != kOwnerPairKeyLen) {
-      return td::Status::OK();
-    }
-    LegacyJettonRow row;
-    row.owner.as_slice().copy_from(td::Slice{key.data() + 1, 32});
-    row.master.as_slice().copy_from(td::Slice{key.data() + 1 + 32, 32});
-    std::string pair;
-    TRY_RESULT(pair_status, db_->get(td::Slice{jetton_pair_key(kJettonPairTag, row.owner, row.master)}, pair));
-    if (pair_status == td::KeyValue::GetStatus::Ok) {
-      return td::Status::OK();  // a current row, not a legacy one
-    }
-    auto cell = vm::std_boc_deserialize(value);
-    if (cell.is_ok()) {
-      vm::CellSlice cs = vm::load_cell_slice(cell.move_as_ok());
-      unsigned long long lt = 0;
-      if (cs.fetch_bits_to(row.wallet.bits(), 256) && cs.fetch_ulong_bool(64, lt)) {
-        row.has_wallet = true;
-        row.lt = lt;
-      }
-    }
-    pass.rows.push_back(row);
-    return td::Status::OK();
-  });
-  if (!limit_hit) {
-    TRY_STATUS(std::move(status));
-    pass.reached_end = true;
-  }
-  return pass;
-}
-
-td::Result<bool> WalletIndexDb::decide_legacy_jetton(const LegacyJettonRow& row, const JettonVerdict& verdict,
-                                                     uint64_t lt) {
-  if (!batch_open_) {
-    return td::Status::Error("wc0-index: legacy reconstruction needs an open batch");
-  }
-  if (!row.has_wallet || row.lt > lt) {
-    // No wallet to verify, or the verdict is older than the row itself.
-    return false;
-  }
-  bool keeps_row = verdict.present && verdict.owner == row.owner && verdict.master == row.master;
-  if (!keeps_row) {
-    TRY_STATUS(release_jetton_pair(row.owner, row.master, row.wallet, lt));
-  }
-  TRY_STATUS(apply_jetton_verdict(row.wallet, verdict, lt, true));
-  // Decided once the pair has a record of its own (claimed or removed).
-  std::string pair;
-  TRY_RESULT(has_pair, get_jetton_record(jetton_pair_key(kJettonPairTag, row.owner, row.master), pair));
-  return has_pair;
-}
-
-td::Result<bool> WalletIndexDb::finish_legacy_jetton_pass(const LegacyJettonRows& pass, uint64_t undecided) {
-  if (!batch_open_) {
-    return td::Status::Error("wc0-index: legacy reconstruction needs an open batch");
-  }
-  char cursor_key[kMetaKeyLen];
-  make_meta_key(kMetaLegacyCursorSub, cursor_key);
-  char undecided_key[kMetaKeyLen];
-  make_meta_key(kMetaLegacyUndecidedSub, undecided_key);
-  TRY_RESULT(earlier, get_meta_u64(kMetaLegacyUndecidedSub));
-  uint64_t total = earlier > std::numeric_limits<uint64_t>::max() - undecided ? std::numeric_limits<uint64_t>::max()
-                                                                              : earlier + undecided;
-  if (!pass.reached_end) {
-    TRY_STATUS(db_->set(td::Slice{cursor_key, kMetaKeyLen}, td::Slice{pass.last_key}));
-    TRY_STATUS(put_meta_u64(kMetaLegacyUndecidedSub, total));
-    return false;
-  }
-  TRY_STATUS(db_->erase(td::Slice{cursor_key, kMetaKeyLen}));
-  TRY_STATUS(db_->erase(td::Slice{undecided_key, kMetaKeyLen}));
-  if (total != 0) {
-    // Some row could not be decided: sweep again, still unpublished.
-    LOG(WARNING) << "wc0-index: " << total << " legacy jetton row(s) could not be verified in this sweep; "
-                 << "legacy jetton rows stay unpublished";
-    return false;
-  }
-  char pending_key[kMetaKeyLen];
-  make_meta_key(kMetaLegacyJettonsSub, pending_key);
-  TRY_STATUS(db_->erase(td::Slice{pending_key, kMetaKeyLen}));
-  LOG(WARNING) << "wc0-index: every legacy jetton row is verified; the reconstructed rows are published";
-  return true;
 }
 
 TokenVerifyOutcome record_jetton_wallet_check(WalletIndexDb& db, const HashKey& wallet, JettonWalletCheck check,
@@ -910,17 +779,6 @@ td::Status WalletIndexDb::put_event_watermark(uint32_t gen_utime) {
   return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
 }
 
-td::Status WalletIndexDb::clear_namespace(uint8_t tag) {
-  // A single range tombstone: O(1) work and memory regardless of how many keys
-  // the namespace holds. Enumerating them here would defeat the purpose -- the
-  // 0x12 event namespace this clears is exactly the one that could have grown
-  // without bound, so loading all of it into memory to delete could OOM the very
-  // node the migration exists to fix.
-  const char begin[1] = {static_cast<char>(tag)};
-  const char end[1] = {static_cast<char>(static_cast<uint8_t>(tag + 1))};
-  return db_->erase_range(td::Slice{begin, 1}, td::Slice{end, 1});
-}
-
 td::Status WalletIndexDb::advance_retention(uint32_t gen_utime, size_t age_rows_added) {
   // The watermark, the age rows, and the prune together define the retention
   // invariant, so any error must propagate and let the caller abort the block
@@ -957,50 +815,18 @@ td::Status WalletIndexDb::migrate_schema() {
                                        << " is newer than supported " << kWalletIndexSchemaVersion
                                        << "; refusing to open");
   }
-  // Upgrade path. The pre-version event index (0x12) had only per-account
-  // retention, so it can carry unbounded one-transaction-account history; drop
-  // it together with the (as-yet-empty) age index (0x14) and record the new
-  // version, atomically and WAL-synced, before the DB is used. The index
-  // rebuilds forward as new blocks are applied -- it does not replay archive
-  // history (a derived, non-consensus RPC index), so pre-upgrade event history,
-  // including recent history, is not available until re-indexed. Jetton/NFT/
-  // nft-owner/incomplete-block namespaces are left intact.
-  //
-  // Version 2 adds the jetton wallet record (0x17), the reverse of each 0x10
-  // jetton entry, and version 3 the rule that only rows with a pair record
-  // (0x18) are served. Jetton rows written before pair records existed may
-  // name a mapping that has since changed and that nothing could retract, so
-  // when any jetton row exists, legacy reconstruction is recorded as pending.
-  LOG(WARNING) << "wc0-index: migrating schema " << version << " -> " << kWalletIndexSchemaVersion;
-  bool has_unrecorded_jettons = false;
-  if (version < 3) {
-    const char begin[1] = {static_cast<char>(kJettonTag)};
-    const char end[1] = {static_cast<char>(static_cast<uint8_t>(kJettonTag + 1))};
-    auto scan = db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice, td::Slice) {
-      has_unrecorded_jettons = true;
-      return td::Status::Error("wc0-index: found a jetton entry");
-    });
-    if (scan.is_error() && !has_unrecorded_jettons) {
-      return scan;
-    }
-  }
+  // Any other version, or none, is reset: the index is dropped whole and
+  // starts again, fresh and forward-only, from the blocks applied from now
+  // on. Nothing written under another layout is imported or served; the
+  // index is derived data outside consensus, and keeps no history it did not
+  // index itself. Atomic and WAL-synced, before the index is used.
+  LOG(WARNING) << "wc0-index: on-disk schema version " << version << " is not " << kWalletIndexSchemaVersion
+               << "; resetting the index (it restarts empty and forward-only from new blocks)";
   TRY_STATUS(db_->begin_write_batch());
   auto migrate = [&]() -> td::Status {
-    if (version < 1) {
-      LOG(WARNING) << "wc0-index: clearing event history (rebuilds forward from new blocks)";
-      TRY_STATUS(clear_namespace(kEventTag));
-      TRY_STATUS(clear_namespace(kEventAgeTag));
-    }
-    if (has_unrecorded_jettons) {
-      // Rows without a pair record may name stale owner/master mappings. They
-      // are left out of every answer until reconstruction has verified each
-      // and published the result.
-      LOG(WARNING) << "wc0-index: jetton rows predate their pair records; they are not served until reconstructed";
-      char legacy_key[kMetaKeyLen];
-      make_meta_key(kMetaLegacyJettonsSub, legacy_key);
-      const char one[1] = {1};
-      TRY_STATUS(db_->set(td::Slice{legacy_key, kMetaKeyLen}, td::Slice{one, 1}));
-    }
+    const char begin[1] = {static_cast<char>(0x00)};
+    const char end[1] = {static_cast<char>(0xff)};
+    TRY_STATUS(db_->erase_range(td::Slice{begin, 1}, td::Slice{end, 1}));
     char v[4];
     put_u32_be(v, kWalletIndexSchemaVersion);
     return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
@@ -2298,10 +2124,8 @@ td::Result<TokenBacklogStats> WalletIndexDb::token_backlog_stats() {
   std::string rebuild_value;
   TRY_RESULT(rebuild_status, db_->get(td::Slice{rebuild_key, kMetaKeyLen}, rebuild_value));
   bool needs_rebuild = rebuild_status == td::KeyValue::GetStatus::Ok;
-  TRY_RESULT(legacy_unverified, legacy_jettons_pending());
   TokenBacklogStats stats{entries, lost, unverifiable, unfinished_block, needs_rebuild};
   stats.parked = parked;
-  stats.legacy_unverified = legacy_unverified;
   return stats;
 }
 

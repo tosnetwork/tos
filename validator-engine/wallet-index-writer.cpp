@@ -794,38 +794,71 @@ uint32_t floor_for(uint32_t gen_utime) {
   return gen_utime > kArchiveFloorMargin ? gen_utime - kArchiveFloorMargin : 0;
 }
 
-// Blocks handed over but not yet durably marked: the floor values that keep
-// them in the archive until their markers can. Guarded by g_inflight_mutex,
-// which nothing holds across I/O, so the block-apply hook may take it.
+// Blocks handed over but not yet durably marked, so their markers cannot yet
+// keep them in the archive. Bounded however many are handed over: up to
+// g_tracking_capacity are tracked one by one, in hand-over order; past that,
+// the rest fold into one overflow floor, kept until every block handed over
+// up to the last folded one is marked. Guarded by g_inflight_mutex, which
+// nothing holds across I/O, so the block-apply hook may take it.
+struct TrackedHandover {
+  uint64_t seq;
+  uint32_t floor;
+};
 std::mutex g_inflight_mutex;
-std::multiset<uint32_t> g_inflight_floors;
+std::deque<TrackedHandover> g_tracked;
+uint32_t g_overflow_floor = tos::validator::kNoArchiveGcFloor;
+uint64_t g_overflow_through_seq = 0;
+uint64_t g_next_handover_seq = 1;
+std::atomic<size_t> g_tracking_capacity{4096};
 
-void lower_floor_atomically(uint32_t value) {
-  auto current = tos::validator::g_archive_gc_floor.load();
-  while (value < current && !tos::validator::g_archive_gc_floor.compare_exchange_weak(current, value)) {
+uint32_t inflight_floor_locked() {
+  uint32_t value = g_overflow_floor;
+  for (const auto& entry : g_tracked) {
+    value = std::min(value, entry.floor);
   }
+  return value;
 }
 
 // The block-apply hook, before it hands a block over: from here on archive
-// pruning keeps the block. No I/O; the lock is held for a set insertion.
-void protect_handed_over_block(uint32_t gen_utime) {
+// pruning keeps the block, unless pruning had already given up a package
+// that may hold it (then false). No I/O; both locks it takes are held for a
+// few comparisons. Fills in the block's hand-over order.
+bool protect_handed_over_block(MarkedBlock& block) {
   std::lock_guard<std::mutex> guard(g_inflight_mutex);
-  auto value = floor_for(gen_utime);
-  g_inflight_floors.insert(value);
-  lower_floor_atomically(value);
+  block.handover_seq = g_next_handover_seq++;
+  auto value = floor_for(block.gen_utime);
+  if (!tos::validator::archive_retain(value, block.gen_utime)) {
+    return false;
+  }
+  if (g_tracked.size() < g_tracking_capacity.load()) {
+    g_tracked.push_back(TrackedHandover{block.handover_seq, value});
+  } else {
+    g_overflow_floor = std::min(g_overflow_floor, value);
+    g_overflow_through_seq = block.handover_seq;
+  }
+  return true;
 }
 
 // The recorder, once the blocks' markers are durable: the markers keep them
-// from now on. Under g_floor_mutex, so a recomputation either reads the
+// from now on. Ids are recorded in hand-over order, so everything handed over
+// up to the last of them is marked, or was lost and is already recorded as
+// needing a rebuild. Under g_floor_mutex, so a recomputation either reads the
 // markers or still counts these blocks as handed over.
 void release_handed_over_blocks(const std::vector<MarkedBlock>& blocks) {
+  uint64_t through = 0;
+  for (const auto& block : blocks) {
+    through = std::max(through, block.handover_seq);
+  }
+  if (through == 0) {
+    return;
+  }
   std::lock_guard<std::mutex> floor_guard(g_floor_mutex);
   std::lock_guard<std::mutex> guard(g_inflight_mutex);
-  for (const auto& block : blocks) {
-    auto it = g_inflight_floors.find(floor_for(block.gen_utime));
-    if (it != g_inflight_floors.end()) {
-      g_inflight_floors.erase(it);
-    }
+  while (!g_tracked.empty() && g_tracked.front().seq <= through) {
+    g_tracked.pop_front();
+  }
+  if (g_overflow_floor != tos::validator::kNoArchiveGcFloor && g_overflow_through_seq <= through) {
+    g_overflow_floor = tos::validator::kNoArchiveGcFloor;
   }
 }
 
@@ -841,16 +874,13 @@ void publish_archive_floor(WalletIndexDb& db) {
   }
   auto value = floor.ok() ? floor_for(floor.ok().value()) : tos::validator::kNoArchiveGcFloor;
   std::lock_guard<std::mutex> guard(g_inflight_mutex);
-  if (!g_inflight_floors.empty()) {
-    value = std::min(value, *g_inflight_floors.begin());
-  }
-  tos::validator::g_archive_gc_floor.store(value);
+  tos::validator::archive_set_floor(std::min(value, inflight_floor_locked()));
 }
 
 // After a block's candidates were extracted: when it may have been the one
 // holding the floor down, recompute it.
 void refresh_archive_floor(WalletIndexDb& db, uint32_t gen_utime) {
-  if (floor_for(gen_utime) <= tos::validator::g_archive_gc_floor.load()) {
+  if (floor_for(gen_utime) <= tos::validator::archive_floor()) {
     publish_archive_floor(db);
   }
 }
@@ -1331,120 +1361,6 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
 
 namespace {
 
-// After a sweep that left legacy rows undecided, wait this long before the
-// next one, so rows that cannot be verified here do not keep the worker busy.
-constexpr auto kLegacySweepPause = std::chrono::seconds(30);
-std::mutex g_legacy_mutex;
-std::chrono::steady_clock::time_point g_legacy_not_before{};  // guarded by g_legacy_mutex
-
-}  // namespace
-
-bool reconstruct_legacy_jetton_rows(size_t row_limit) {
-  auto* db = wallet_index_db();
-  if (db == nullptr) {
-    return false;
-  }
-  {
-    std::lock_guard<std::mutex> guard(g_legacy_mutex);
-    if (std::chrono::steady_clock::now() < g_legacy_not_before) {
-      return false;
-    }
-  }
-  auto context_r = current_context();
-  if (!context_r) {
-    // Nothing to verify against yet: the rows stay unpublished.
-    return false;
-  }
-  auto context = context_r.value();
-  std::lock_guard<std::mutex> guard(db->write_mutex());
-  auto pending = db->legacy_jettons_pending();
-  if (pending.is_error() || !pending.ok()) {
-    return false;
-  }
-  if (!db->begin_batch().is_ok()) {
-    return false;
-  }
-  tos::ShardIdFull shard{context.block_id.id.workchain, context.block_id.id.shard};
-  StateAccounts state{context.state_root, shard};
-  uint64_t undecided = 0;
-  size_t decided = 0;
-  bool published = false;
-  bool reached_end = false;
-  auto pass = [&]() -> td::Status {
-    TRY_RESULT(rows, db->legacy_jetton_rows(row_limit));
-    reached_end = rows.reached_end;
-    WalletIndexVerificationBudget budget;
-    size_t remaining = rows.rows.size();
-    for (const auto& row : rows.rows) {
-      budget.begin_candidate(remaining--);
-      if (!row.has_wallet) {
-        // An unreadable row names no wallet to verify.
-        ++undecided;
-        continue;
-      }
-      TRY_RESULT(known, db->jetton_wallet_state(row.wallet));
-      WalletIndexDb::JettonVerdict verdict{false, HashKey::zero(), HashKey::zero(), {}};
-      uint64_t lt = context.end_lt;
-      if (known && known.value().lt >= context.end_lt) {
-        // A block at least as new as this state already decided the wallet;
-        // its verified record decides the row.
-        lt = known.value().lt;
-        if (known.value().present) {
-          verdict = {true, known.value().owner, known.value().master, make_jetton_value(row.wallet, lt)};
-        }
-      } else if (row.lt > context.end_lt || !state.ok()) {
-        // This state is older than the row, or unusable: it cannot say.
-        ++undecided;
-        continue;
-      } else {
-        td::Bits256 owner = td::Bits256::zero();
-        td::Bits256 master = td::Bits256::zero();
-        auto checked = verify_jetton_wallet(state, row.wallet, owner, master, budget);
-        if (checked == JettonVerification::Indeterminate || checked == JettonVerification::OtherShard) {
-          ++undecided;
-          continue;
-        }
-        if (checked == JettonVerification::Verified) {
-          verdict = {true, owner, master, make_jetton_value(row.wallet, lt)};
-        }
-      }
-      TRY_RESULT(done, db->decide_legacy_jetton(row, verdict, lt));
-      if (done) {
-        ++decided;
-      } else {
-        ++undecided;
-      }
-    }
-    TRY_RESULT(finished, db->finish_legacy_jetton_pass(rows, undecided));
-    published = finished;
-    return td::Status::OK();
-  };
-  td::Status status;
-  try {
-    status = pass();
-  } catch (...) {
-    status = td::Status::Error("legacy reconstruction threw");
-  }
-  if (status.is_error()) {
-    LOG(WARNING) << "wc0-index: legacy jetton reconstruction pass failed: " << status.message();
-    db->abort_batch();
-    return false;
-  }
-  auto committed = db->commit_batch();
-  if (committed.is_error()) {
-    LOG(WARNING) << "wc0-index: legacy jetton reconstruction commit failed: " << committed.message();
-    return false;
-  }
-  if (reached_end && !published) {
-    std::lock_guard<std::mutex> legacy_guard(g_legacy_mutex);
-    g_legacy_not_before = std::chrono::steady_clock::now() + kLegacySweepPause;
-    return decided > 0;
-  }
-  return true;
-}
-
-namespace {
-
 // One bounded backlog pass for the shard holding `address`, against that
 // shard's newest known state: candidates nominated no later than that state
 // are verified, as a new block of the shard would. Returns whether any
@@ -1700,7 +1616,7 @@ bool recover_one_marked_block(bool& at_cap) {
 
 // Background work while no block waits for the worker, bounded per call:
 // recover a block from an earlier run, drain the token backlog of one shard
-// in turn, reconstruct legacy jetton rows, verify the persisted candidates of
+// in turn, verify the persisted candidates of
 // one unfinished block in turn, and retry parked candidates. Returns whether
 // anything moved.
 bool index_idle_step() {
@@ -1722,9 +1638,6 @@ bool index_idle_step() {
         progress = true;
       }
     }
-  }
-  if (current_context() && reconstruct_legacy_jetton_rows(kLegacyJettonRowsPerPass)) {
-    progress = true;
   }
   // An unfinished block, in turn: its remaining candidates are persisted, so
   // only states at least as new as the block are needed, not the block.
@@ -1829,6 +1742,15 @@ void set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds paus
   g_parked_retry_pause_ms.store(pause.count());
 }
 
+void set_wc0_index_tracking_capacity_for_testing(size_t capacity) {
+  g_tracking_capacity.store(capacity);
+}
+
+size_t wc0_index_tracked_handovers_for_testing() {
+  std::lock_guard<std::mutex> guard(g_inflight_mutex);
+  return g_tracked.size();
+}
+
 void set_wc0_index_commit_faults_for_testing(int count) {
   g_commit_faults.store(count);
 }
@@ -1902,10 +1824,6 @@ bool start_wc0_index_worker(bool paused) {
   // Before any block can be applied in this run: archive pruning keeps every
   // block the index has yet to read.
   publish_archive_floor(*db);
-  {
-    std::lock_guard<std::mutex> legacy_guard(g_legacy_mutex);
-    g_legacy_not_before = {};
-  }
   g_index_queue = std::make_unique<IndexQueue>(kWc0IndexQueueCapacity, mark_queued_blocks, index_queued_block,
                                                persist_index_degraded, 0, paused, index_idle_step);
   std::lock_guard<std::mutex> producers(g_producer_mutex);
@@ -1999,9 +1917,11 @@ void stop_wc0_index_worker() {
   }
   {
     std::lock_guard<std::mutex> guard(g_inflight_mutex);
-    g_inflight_floors.clear();
+    g_tracked.clear();
+    g_overflow_floor = tos::validator::kNoArchiveGcFloor;
+    g_overflow_through_seq = 0;
   }
-  tos::validator::g_archive_gc_floor.store(tos::validator::kNoArchiveGcFloor);
+  tos::validator::archive_set_floor(tos::validator::kNoArchiveGcFloor);
   g_late_blocks.store(0);
   g_run_cleared.store(false);
 }
@@ -2024,13 +1944,30 @@ void enqueue_wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> sta
     // recorded; the recorder marks it, and the run is not recorded as
     // finished while such a block exists.
     g_late_blocks.fetch_add(1);
-    protect_handed_over_block(gen_utime);
-    g_producer_queue->record(MarkedBlock{block_id, gen_utime});
+    MarkedBlock late{block_id, gen_utime, 0};
+    if (!protect_handed_over_block(late)) {
+      // Not recorded for a later read: it could not be read back.
+      g_producer_queue->latch_lost();
+      return;
+    }
+    g_producer_queue->record(late);
     return;
   }
-  protect_handed_over_block(gen_utime);
-  if (!g_producer_queue->push(MarkedBlock{block_id, gen_utime},
-                              BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
+  MarkedBlock marked{block_id, gen_utime, 0};
+  if (!protect_handed_over_block(marked)) {
+    // Archive pruning already gave up a package that may hold this block, so
+    // it cannot be read back later: it is indexed from what the hook holds
+    // now, which the queue keeps even past its capacity (within a bound).
+    // Without the block's data, or past that bound, it is lost beyond
+    // recovery and the index is recorded as needing a rebuild.
+    if (block_root.is_null() ||
+        !g_producer_queue->push(marked, BlockToIndex{std::move(block_root), std::move(state_root), block_id}, true,
+                                kWc0IndexPinnedExtra)) {
+      g_producer_queue->latch_lost();
+    }
+    return;
+  }
+  if (!g_producer_queue->push(marked, BlockToIndex{std::move(block_root), std::move(state_root), block_id})) {
     g_dropped_blocks.fetch_add(1);
   }
 }

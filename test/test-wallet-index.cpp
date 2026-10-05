@@ -563,68 +563,6 @@ TEST(WalletIndex, EventHistoryIsGloballyBoundedByAge) {
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, MigrationClearsEventNamespacesPreservesOthers) {
-  // A database written before schema versioning (no version key) can hold an
-  // unbounded 0x12 event namespace. Opening it migrates v0 -> v1, range-deleting
-  // the 0x12 and 0x14 namespaces (bounded work, not an enumerate-all that could
-  // OOM the very node this fixes), while leaving jetton (0x10), NFT (0x11),
-  // nft-owner (0x13) and incomplete-block (0x1E) data intact.
-  auto path = std::string("test-wallet-index-db-migration");
-  td::rmrf(path).ignore();
-  auto put_raw = [](td::RocksDb &raw, std::initializer_list<uint8_t> key) {
-    std::string k;
-    for (uint8_t b : key) {
-      k.push_back(static_cast<char>(b));
-    }
-    char v[1] = {0};
-    raw.set(td::Slice{k}, td::Slice{v, 1}).ensure();
-  };
-  auto count_raw_prefix = [](td::RocksDb &raw, uint8_t tag) {
-    size_t n = 0;
-    char begin[1] = {static_cast<char>(tag)};
-    char end[1] = {static_cast<char>(static_cast<uint8_t>(tag + 1))};
-    raw.for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice, td::Slice) {
-         n++;
-         return td::Status::OK();
-       }).ensure();
-    return n;
-  };
-  {
-    auto raw_r = td::RocksDb::open(path);
-    ASSERT_TRUE(raw_r.is_ok());
-    auto raw = raw_r.move_as_ok();
-    for (uint8_t i = 0; i < 5; i++) {
-      put_raw(raw, {0x12, i});  // old event rows (unbounded namespace)
-      put_raw(raw, {0x14, i});  // old age rows
-    }
-    put_raw(raw, {0x10, 0x01});  // jetton
-    put_raw(raw, {0x11, 0x01});  // nft
-    put_raw(raw, {0x13, 0x01});  // nft-owner
-    put_raw(raw, {0x1E, 0x01});  // incomplete-block marker
-    // No 0x00 schema key -> version 0.
-  }
-
-  {
-    auto db_r = tos_wallet_index::WalletIndexDb::open(path);  // triggers migration
-    ASSERT_TRUE(db_r.is_ok());
-  }
-
-  auto raw_r = td::RocksDb::open(path);
-  ASSERT_TRUE(raw_r.is_ok());
-  auto raw = raw_r.move_as_ok();
-  ASSERT_EQ(count_raw_prefix(raw, 0x12), 0u);  // event namespace cleared
-  ASSERT_EQ(count_raw_prefix(raw, 0x14), 0u);  // age namespace cleared
-  ASSERT_EQ(count_raw_prefix(raw, 0x10), 1u);  // jetton preserved
-  ASSERT_EQ(count_raw_prefix(raw, 0x11), 1u);  // nft preserved
-  ASSERT_EQ(count_raw_prefix(raw, 0x13), 1u);  // nft-owner preserved
-  ASSERT_EQ(count_raw_prefix(raw, 0x1E), 1u);  // marker preserved
-  // The schema version key, and the rebuild mark: the jetton row predates the
-  // jetton wallet records that let a stale jetton row be removed.
-  ASSERT_EQ(count_raw_prefix(raw, 0x00), 2u);
-
-  td::rmrf(path).ignore();
-}
-
 TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWatermarkReadError) {
   // The retention watermark must be non-decreasing; a read failure must never
   // fall back to 0 and let a block write a lower watermark. advance_retention
@@ -639,6 +577,10 @@ TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWatermarkReadError) {
     auto raw = raw_r.move_as_ok();
     char bad[3] = {0x01, 0x02, 0x03};  // not 4 bytes -> get_event_watermark errors
     raw.set(td::Slice{wm_key}, td::Slice{bad, 3}).ensure();
+    // The current schema, so the database is kept as it is.
+    const char version_key[2] = {0x00, 0x01};
+    const char current[4] = {0, 0, 0, static_cast<char>(tos_wallet_index::kWalletIndexSchemaVersion)};
+    raw.set(td::Slice{version_key, 2}, td::Slice{current, 4}).ensure();
   }
 
   auto db_r = tos_wallet_index::WalletIndexDb::open(path);
@@ -1062,29 +1004,24 @@ TEST(WalletIndex, TokenIndexStateSaysWhenItIsIncomplete) {
   using tos_wallet_index::format_token_index_state;
   ASSERT_EQ(format_token_index_state({0, 0, 0, false}),
             std::string("{\"complete\":true,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
   ASSERT_EQ(format_token_index_state({3, 0, 0, false}),
             std::string("{\"complete\":false,\"pending\":3,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
   ASSERT_EQ(format_token_index_state({0, 1, 0, false}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":1,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
   ASSERT_EQ(format_token_index_state({0, 0, 2, false}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":2,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
   tos_wallet_index::TokenBacklogStats parked{0, 0, 0, false};
   parked.parked = 2;
   ASSERT_EQ(format_token_index_state(parked),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":2,\"legacy_unverified\":false}"));
-  tos_wallet_index::TokenBacklogStats legacy{0, 0, 0, false};
-  legacy.legacy_unverified = true;
-  ASSERT_EQ(format_token_index_state(legacy),
-            std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":false,"
-                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":true}"));
+                        "\"needs_rebuild\":false,\"parked\":2}"));
   ASSERT_EQ(format_token_index_state({0, 0, 0, true}),
             std::string("{\"complete\":false,\"pending\":0,\"lost\":0,\"unverifiable\":0,\"unfinished_block\":true,"
-                        "\"needs_rebuild\":false,\"parked\":0,\"legacy_unverified\":false}"));
+                        "\"needs_rebuild\":false,\"parked\":0}"));
 }
 
 TEST(WalletIndex, ABlockWhoseIndexingDidNotCommitLeavesTheIndexIncomplete) {
@@ -1946,38 +1883,6 @@ TEST(WalletIndex, AnInconclusiveJettonCheckIsNotADisappearance) {
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, UpgradingJettonRowsLeavesThemUnpublishedUntilReconstructed) {
-  auto write_old = [](const std::string &path, char version, bool with_jetton) {
-    td::rmrf(path).ignore();
-    auto raw = td::RocksDb::open(path).move_as_ok();
-    const char version_key[2] = {0x00, 0x01};
-    const char old_version[4] = {0, 0, 0, version};
-    raw.set(td::Slice{version_key, 2}, td::Slice{old_version, 4}).ensure();
-    if (with_jetton) {
-      std::string key(65, '\x01');
-      key[0] = 0x10;
-      raw.set(key, "x").ensure();
-    }
-  };
-  auto path = std::string("test-wallet-index-db-jetton-upgrade");
-  for (char version : {char(1), char(2)}) {
-    write_old(path, version, true);
-    {
-      auto db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
-      auto stats = backlog_stats(*db);
-      ASSERT_TRUE(stats.legacy_unverified);
-      ASSERT_TRUE(!stats.needs_rebuild);
-      ASSERT_TRUE(tos_wallet_index::format_token_index_state(stats).find("\"complete\":false") != std::string::npos);
-    }
-    write_old(path, version, false);
-    {
-      auto db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
-      ASSERT_TRUE(!backlog_stats(*db).legacy_unverified);
-    }
-  }
-  td::rmrf(path).ignore();
-}
-
 TEST(WalletIndex, AnOlderWalletVerdictNeverReplacesANewerPairDecision) {
   auto path = std::string("test-wallet-index-db-jetton-pair-order");
   auto db = open_fresh_db(path);
@@ -2095,6 +2000,7 @@ tos::BlockIdExt worker_block_id(tos::BlockSeqno seqno) {
 
 // Leaves the process-wide index state as a fresh process would have it.
 void reset_index_singletons() {
+  tos::validator::reset_archive_retention_for_testing();
   tos_wallet_index::set_wc0_index_marking_fault_for_testing(false);
   tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
   tos_wallet_index::stop_wc0_index_worker();
@@ -2858,256 +2764,6 @@ TEST(WalletIndex, AnOlderStateNeverTakesANewerNomination) {
 
 namespace {
 
-// A database exactly as a binary before pair records left it: schema version
-// 1 and bare jetton rows (owner, master) -> (wallet, lt), with no wallet or
-// pair record beside them.
-struct LegacyRow {
-  td::Bits256 owner;
-  td::Bits256 master;
-  td::Bits256 wallet;
-  uint64_t lt;
-};
-
-void write_legacy_database(const std::string &path, const std::vector<LegacyRow> &rows) {
-  td::rmrf(path).ignore();
-  auto raw = td::RocksDb::open(path).move_as_ok();
-  const char version_key[2] = {0x00, 0x01};
-  const char v1[4] = {0, 0, 0, 1};
-  raw.set(td::Slice{version_key, 2}, td::Slice{v1, 4}).ensure();
-  for (const auto &row : rows) {
-    std::string key(65, '\0');
-    key[0] = 0x10;
-    std::memcpy(&key[1], row.owner.data(), 32);
-    std::memcpy(&key[33], row.master.data(), 32);
-    vm::CellBuilder cb;
-    cb.store_bits(row.wallet.bits(), 256);
-    cb.store_long(static_cast<long long>(row.lt), 64);
-    auto value = vm::std_boc_serialize(cb.finalize()).move_as_ok();
-    raw.set(key, value.as_slice()).ensure();
-  }
-}
-
-// What getAccountJettons lists for `owner`: master -> wallet, read through a
-// snapshot as the RPC does.
-std::map<td::Bits256, td::Bits256> current_jettons(tos_wallet_index::WalletIndexDb &db, const td::Bits256 &owner) {
-  auto view = tos_wallet_index::WalletIndexSnapshot::of(db).move_as_ok();
-  std::map<td::Bits256, td::Bits256> out;
-  view.for_each_current_jetton(owner, 64,
-                               [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
-                                 td::Bits256 wallet;
-                                 vm::CellSlice cs = vm::load_cell_slice(value);
-                                 CHECK(cs.prefetch_bits_to(wallet.bits(), 256));
-                                 out[master] = wallet;
-                                 return td::Status::OK();
-                               })
-      .ensure();
-  return out;
-}
-
-size_t stored_jetton_rows(tos_wallet_index::WalletIndexDb &db, const td::Bits256 &owner) {
-  size_t n = 0;
-  db.for_each_jetton(owner, 64, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
-      ++n;
-      return td::Status::OK();
-    }).ensure();
-  return n;
-}
-
-bool legacy_unverified(tos_wallet_index::WalletIndexDb &db) {
-  return backlog_stats(db).legacy_unverified;
-}
-
-// Index an empty block of `shard` ending at `end_lt` with `state` as its
-// post-state, synchronously, as startup recovery does: the state becomes the
-// one reconstruction verifies against.
-void index_state(tos::BlockSeqno seqno, uint64_t end_lt, td::Ref<vm::Cell> state,
-                 tos::ShardId shard = tos::shardIdAll) {
-  auto root = wallet_index_fixture::block(seqno, end_lt, 2000, {});
-  tos_wallet_index::wc0_index_block(root, std::move(state), make_test_block_id(0, shard, seqno, 0x71, 0x72));
-}
-
-// Run reconstruction passes of `rows` rows until it publishes or `passes`
-// run out.
-bool reconstruct_until_published(tos_wallet_index::WalletIndexDb &db, size_t rows, int passes) {
-  for (int i = 0; i < passes && legacy_unverified(db); ++i) {
-    tos_wallet_index::reconstruct_legacy_jetton_rows(rows);
-  }
-  return !legacy_unverified(db);
-}
-
-struct LegacyWorld {
-  td::Bits256 owner_a = token_address(1, 0x20);
-  td::Bits256 owner_b = token_address(2, 0x20);
-  td::Bits256 master_1 = token_address(11, 0x21);
-  td::Bits256 master_2 = token_address(12, 0x21);
-  td::Bits256 master_3 = token_address(13, 0x21);
-  td::Bits256 wallet_1 = token_address(21, 0x22);
-  td::Bits256 wallet_2 = token_address(22, 0x22);
-  td::Bits256 wallet_3 = token_address(23, 0x22);
-};
-
-}  // namespace
-
-// A legacy database maps owner A to three wallets. Since then wallet 2 moved
-// to owner B and wallet 3 was deleted. No answer shows any legacy row before
-// it is verified, none shows a reconstructed one before the whole
-// reconstruction is published, a restart in between resumes it, and verdicts
-// from older blocks arriving afterwards change nothing.
-TEST(WalletIndexWorker, LegacyJettonRowsAreServedOnlyAfterVerifiedReconstruction) {
-  reset_index_singletons();
-  auto path = std::string("test-wallet-index-db-legacy-reconstruction");
-  LegacyWorld w;
-  write_legacy_database(path, {{w.owner_a, w.master_1, w.wallet_1, 100},
-                               {w.owner_a, w.master_2, w.wallet_2, 100},
-                               {w.owner_a, w.master_3, w.wallet_3, 100}});
-  auto state =
-      wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(w.wallet_1, w.owner_a, w.master_1),
-                                         wallet_index_fixture::jetton_master(w.master_1, w.wallet_1),
-                                         wallet_index_fixture::jetton_wallet(w.wallet_2, w.owner_b, w.master_2),
-                                         wallet_index_fixture::jetton_master(w.master_2, w.wallet_2)});
-  {
-    auto &db = install_db(path);
-    // Before: the stale rows are stored, and none is served.
-    ASSERT_EQ(stored_jetton_rows(db, w.owner_a), static_cast<size_t>(3));
-    ASSERT_TRUE(current_jettons(db, w.owner_a).empty());
-    ASSERT_TRUE(legacy_unverified(db));
-    ASSERT_TRUE(tos_wallet_index::format_token_index_state(backlog_stats(db)).find("\"complete\":false") !=
-                std::string::npos);
-    // Without a state to verify against, reconstruction does nothing.
-    ASSERT_TRUE(!tos_wallet_index::reconstruct_legacy_jetton_rows(1));
-    index_state(7, 5000, state);
-    // During: the first row is verified and recorded, but nothing is served
-    // until the reconstruction is published.
-    ASSERT_TRUE(tos_wallet_index::reconstruct_legacy_jetton_rows(1));
-    ASSERT_TRUE(legacy_unverified(db));
-    ASSERT_TRUE(current_jettons(db, w.owner_a).empty());
-    ASSERT_TRUE(current_jettons(db, w.owner_b).empty());
-    tos_wallet_index::set_wallet_index_db(nullptr);
-  }
-  // The node restarts mid-reconstruction.
-  reset_index_singletons();
-  {
-    auto &db = install_db(path);
-    ASSERT_TRUE(legacy_unverified(db));
-    ASSERT_TRUE(current_jettons(db, w.owner_a).empty());
-    index_state(8, 6000, state);
-    ASSERT_TRUE(reconstruct_until_published(db, 1, 10));
-    // After: wallet 1 is still A's; wallet 2 is now B's; wallet 3 is gone.
-    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}}));
-    ASSERT_EQ(current_jettons(db, w.owner_b), (std::map<td::Bits256, td::Bits256>{{w.master_2, w.wallet_2}}));
-    ASSERT_EQ(stored_jetton_rows(db, w.owner_a), static_cast<size_t>(1));
-    ASSERT_TRUE(!legacy_unverified(db));
-    // Verdicts from blocks older than the reconstruction change nothing.
-    db.begin_batch().ensure();
-    db.apply_jetton_verdict(w.wallet_2, jetton_present(w.wallet_2, w.owner_a, w.master_2, 200), 200).ensure();
-    db.apply_jetton_verdict(w.wallet_3, jetton_present(w.wallet_3, w.owner_a, w.master_3, 300), 300).ensure();
-    db.apply_jetton_verdict(w.wallet_1, jetton_absent(), 300).ensure();
-    db.commit_batch().ensure();
-    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}}));
-    ASSERT_EQ(current_jettons(db, w.owner_b), (std::map<td::Bits256, td::Bits256>{{w.master_2, w.wallet_2}}));
-    // A newer block's verdict is served at once.
-    db.begin_batch().ensure();
-    db.apply_jetton_verdict(w.wallet_2, jetton_present(w.wallet_2, w.owner_a, w.master_2, 9000), 9000).ensure();
-    db.commit_batch().ensure();
-    ASSERT_EQ(current_jettons(db, w.owner_a),
-              (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}, {w.master_2, w.wallet_2}}));
-    ASSERT_TRUE(current_jettons(db, w.owner_b).empty());
-  }
-  reset_index_singletons();
-  td::rmrf(path).ignore();
-}
-
-// Blocks newer than the reconstruction's state decided two legacy rows'
-// wallets first: wallet 1 was found gone, wallet 3 was claimed afresh. The
-// reconstruction follows those newer verdicts, not its older state, and an
-// older verdict arriving afterwards does not restore the removed row.
-TEST(WalletIndexWorker, LegacyReconstructionDefersToNewerVerdicts) {
-  reset_index_singletons();
-  auto path = std::string("test-wallet-index-db-legacy-newer");
-  LegacyWorld w;
-  write_legacy_database(path, {{w.owner_a, w.master_1, w.wallet_1, 100}, {w.owner_a, w.master_3, w.wallet_3, 100}});
-  // The reconstruction's (older) state still shows wallet 1 as A's.
-  auto state =
-      wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(w.wallet_1, w.owner_a, w.master_1),
-                                         wallet_index_fixture::jetton_master(w.master_1, w.wallet_1)});
-  {
-    auto &db = install_db(path);
-    db.begin_batch().ensure();
-    db.apply_jetton_verdict(w.wallet_1, jetton_absent(), 7000).ensure();
-    db.apply_jetton_verdict(w.wallet_3, jetton_present(w.wallet_3, w.owner_a, w.master_3, 7000), 7000).ensure();
-    db.commit_batch().ensure();
-    // The fresh claim is served at once; the legacy row of wallet 1 is not.
-    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_3, w.wallet_3}}));
-    index_state(9, 5000, state);
-    ASSERT_TRUE(reconstruct_until_published(db, 1, 10));
-    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_3, w.wallet_3}}));
-    ASSERT_EQ(stored_jetton_rows(db, w.owner_a), static_cast<size_t>(1));
-    db.begin_batch().ensure();
-    db.apply_jetton_verdict(w.wallet_1, jetton_present(w.wallet_1, w.owner_a, w.master_1, 6000), 6000).ensure();
-    db.commit_batch().ensure();
-    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_3, w.wallet_3}}));
-  }
-  reset_index_singletons();
-  td::rmrf(path).ignore();
-}
-
-// A legacy row that cannot be verified here (its wallet is outside the shard
-// whose state the node has, or its value is unreadable) keeps the
-// reconstruction unpublished: every legacy row stays out of answers and the
-// index stays explicitly incomplete, sweep after sweep.
-TEST(WalletIndexWorker, ALegacyRowThatCannotBeVerifiedKeepsReconstructionUnpublished) {
-  reset_index_singletons();
-  auto path = std::string("test-wallet-index-db-legacy-unavailable");
-  LegacyWorld w;
-  const tos::ShardId left = 0x4000000000000000ULL;
-  auto far_wallet = token_address(30, 0xC0);  // in the right half
-  write_legacy_database(path, {{w.owner_a, w.master_1, w.wallet_1, 100}, {w.owner_a, w.master_2, far_wallet, 100}});
-  auto state =
-      wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(w.wallet_1, w.owner_a, w.master_1),
-                                         wallet_index_fixture::jetton_master(w.master_1, w.wallet_1)});
-  {
-    install_db(path);
-    index_state(10, 5000, state, left);
-    for (int sweep = 0; sweep < 3; ++sweep) {
-      ASSERT_TRUE(!reconstruct_until_published(*tos_wallet_index::wallet_index_db(), 16, 4));
-      reset_index_singletons();
-      tos_wallet_index::set_wallet_index_db(tos_wallet_index::WalletIndexDb::open(path).move_as_ok());
-      index_state(static_cast<tos::BlockSeqno>(11 + sweep), 5000, state, left);
-    }
-    auto &reopened = *tos_wallet_index::wallet_index_db();
-    ASSERT_TRUE(legacy_unverified(reopened));
-    ASSERT_TRUE(current_jettons(reopened, w.owner_a).empty());
-    ASSERT_TRUE(tos_wallet_index::format_token_index_state(backlog_stats(reopened)).find("\"complete\":false") !=
-                std::string::npos);
-  }
-  reset_index_singletons();
-  td::rmrf(path).ignore();
-}
-
-// The indexing worker reconstructs legacy rows by itself once it has indexed
-// a block, with no further block arriving.
-TEST(WalletIndexWorker, TheWorkerReconstructsLegacyRowsInTheBackground) {
-  reset_index_singletons();
-  auto path = std::string("test-wallet-index-db-legacy-worker");
-  LegacyWorld w;
-  write_legacy_database(path, {{w.owner_a, w.master_1, w.wallet_1, 100}, {w.owner_a, w.master_3, w.wallet_3, 100}});
-  auto state =
-      wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(w.wallet_1, w.owner_a, w.master_1),
-                                         wallet_index_fixture::jetton_master(w.master_1, w.wallet_1)});
-  {
-    auto &db = install_db(path);
-    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
-    auto root = wallet_index_fixture::block(12, 5000, 2000, {});
-    tos_wallet_index::enqueue_wc0_index_block(root, state, worker_block_id(12));
-    ASSERT_TRUE(eventually([&] { return !legacy_unverified(db); }));
-    ASSERT_EQ(current_jettons(db, w.owner_a), (std::map<td::Bits256, td::Bits256>{{w.master_1, w.wallet_1}}));
-  }
-  reset_index_singletons();
-  td::rmrf(path).ignore();
-}
-
-namespace {
-
 constexpr uint32_t kNftTransferOp = 0x5fcc3d14;
 const tos::ShardId kLeftShard = 0x4000000000000000ULL;
 const tos::ShardId kRightShard = 0xC000000000000000ULL;
@@ -3162,9 +2818,13 @@ struct FakeArchive {
     std::lock_guard<std::mutex> lock(mutex);
     blocks[id] = Stored{std::move(root), gen_utime};
   }
-  // Prunes as at `gc_ts` with `ttl`; returns how many blocks went.
-  size_t prune(double gc_ts, double ttl, uint32_t floor) {
-    std::lock_guard<std::mutex> lock(mutex);
+  // Prunes as at `gc_ts` with `ttl`, through the node's own admission;
+  // returns how many blocks went. `after_admission` runs once, after the
+  // first deletion is admitted and before it is carried out; `before_admission`
+  // before each admission.
+  size_t prune(double gc_ts, double ttl, uint32_t floor, std::function<void()> after_admission = nullptr,
+               std::function<void()> before_admission = nullptr) {
+    std::unique_lock<std::mutex> lock(mutex);
     std::vector<std::pair<uint32_t, tos::BlockIdExt>> order;
     for (auto &entry : blocks) {
       order.emplace_back(entry.second.gen_utime, entry.first);
@@ -3176,8 +2836,24 @@ struct FakeArchive {
     }
     (void)floor;
     return tos::validator::prune_archive_packages(
-        first_ts, gc_ts, ttl, [] { return tos::validator::g_archive_gc_floor.load(); },
-        [&](size_t index) { blocks.erase(order[index].second); });
+        first_ts, gc_ts, ttl,
+        [&](size_t index) {
+          if (after_admission) {
+            lock.unlock();
+            after_admission();
+            after_admission = nullptr;
+            lock.lock();
+          }
+          blocks.erase(order[index].second);
+        },
+        [&](size_t) {
+          if (before_admission) {
+            lock.unlock();
+            before_admission();
+            before_admission = nullptr;
+            lock.lock();
+          }
+        });
   }
   bool has(const tos::BlockIdExt &id) {
     std::lock_guard<std::mutex> lock(mutex);
@@ -3575,7 +3251,7 @@ TEST(WalletIndexWorker, BlocksWaitingAtTheBoundSurvivePruning) {
     ASSERT_TRUE(eventually([&] { return db.has_incomplete_block(later.back().id).move_as_ok(); }));
     ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
     // The archive is pruned as the node would, with the index's floor.
-    auto floor = tos::validator::g_archive_gc_floor.load();
+    auto floor = tos::validator::archive_floor();
     ASSERT_TRUE(floor <= base);
     ASSERT_EQ(archive.prune(base + 1000000.0, 1000.0, floor), static_cast<size_t>(1));
     ASSERT_TRUE(!archive.has(old_id));
@@ -3607,22 +3283,29 @@ TEST(WalletIndexWorker, BlocksWaitingAtTheBoundSurvivePruning) {
   td::rmrf(path).ignore();
 }
 
-// A floor lowered after pruning selected its packages still saves a package
-// it now covers: each deletion re-reads the floor.
-TEST(WalletIndex, ArchivePruningRereadsTheFloorBeforeEachDeletion) {
-  using tos::validator::kNoArchiveGcFloor;
+// A floor lowered after pruning selected its packages, but before it admits
+// a deletion, saves a package it now covers.
+TEST(WalletIndex, ArchivePruningAdmitsEachDeletionAgainstTheCurrentFloor) {
+  tos::validator::reset_archive_retention_for_testing();
   std::vector<double> first_ts = {100, 200, 300, 400, 500};
-  int reads = 0;
   std::vector<size_t> deleted;
+  bool lowered = false;
   auto removed = tos::validator::prune_archive_packages(
-      first_ts, 550, 100,
-      [&] {
-        // The selection sees no floor; a reader lowers it right after.
-        return reads++ == 0 ? kNoArchiveGcFloor : 250u;
-      },
-      [&](size_t index) { deleted.push_back(index); });
+      first_ts, 550, 100, [&](size_t index) { deleted.push_back(index); },
+      [&](size_t) {
+        // A reader retains from 250 on, between the selection and the first
+        // admission.
+        if (!lowered) {
+          ASSERT_TRUE(tos::validator::archive_retain(250, 3600 + 250));
+          lowered = true;
+        }
+      });
   ASSERT_EQ(removed, static_cast<size_t>(1));
   ASSERT_EQ(deleted, (std::vector<size_t>{0}));
+  // What pruning gave up is now refused to a later reader.
+  ASSERT_TRUE(!tos::validator::archive_retain(150, 3600 + 150));
+  ASSERT_TRUE(tos::validator::archive_retain(200, 3600 + 200));
+  tos::validator::reset_archive_retention_for_testing();
 }
 
 namespace {
@@ -3850,6 +3533,308 @@ TEST(WalletIndexWorker, RecomputingTheFloorKeepsBlocksNotYetMarked) {
              !db.has_incomplete_block(waiting.id).move_as_ok();
     }));
   }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+size_t count_raw_prefix(td::RocksDb &raw, uint8_t tag) {
+  size_t n = 0;
+  char begin[1] = {static_cast<char>(tag)};
+  char end[1] = {static_cast<char>(static_cast<uint8_t>(tag + 1))};
+  raw.for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1},
+                        [&](td::Slice, td::Slice) {
+                          n++;
+                          return td::Status::OK();
+                        })
+      .ensure();
+  return n;
+}
+
+}  // namespace
+
+// A database written under any other schema is reset when opened: nothing of
+// it is imported or served, and the index starts fresh and forward-only.
+TEST(WalletIndex, AnOldSchemaIsResetToAFreshIndex) {
+  auto path = std::string("test-wallet-index-db-reset");
+  auto owner = token_address(1, 0x40);
+  for (int version : {-1, 1, 2}) {
+    td::rmrf(path).ignore();
+    {
+      auto raw = td::RocksDb::open(path).move_as_ok();
+      if (version >= 0) {
+        const char version_key[2] = {0x00, 0x01};
+        const char v[4] = {0, 0, 0, static_cast<char>(version)};
+        raw.set(td::Slice{version_key, 2}, td::Slice{v, 4}).ensure();
+      }
+      // A jetton row, with the pair record a current binary would write, an
+      // NFT row, events, a marker, a backlog entry and a needs-rebuild mark.
+      std::string jetton(65, '\x02');
+      jetton[0] = 0x10;
+      std::memcpy(&jetton[1], owner.data(), 32);
+      vm::CellBuilder cb;
+      cb.store_bits(token_address(3, 0x40).bits(), 256);
+      cb.store_long(5, 64);
+      raw.set(jetton, vm::std_boc_serialize(cb.finalize()).move_as_ok().as_slice()).ensure();
+      std::string pair = jetton;
+      pair[0] = 0x18;
+      raw.set(pair, std::string(1 + 32 + 8, '\x01')).ensure();
+      for (int tag : {0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x1E}) {
+        raw.set(std::string(1, static_cast<char>(tag)) + std::string(40, '\x03'), "x").ensure();
+      }
+      raw.set(std::string("\x00\x09", 2), std::string(1, '\x01')).ensure();
+    }
+    {
+      auto db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+      size_t served = 0;
+      db->for_each_current_jetton(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+          ++served;
+          return td::Status::OK();
+        }).ensure();
+      ASSERT_EQ(served, static_cast<size_t>(0));
+      auto stats = backlog_stats(*db);
+      ASSERT_TRUE(!stats.needs_rebuild && !stats.unfinished_block);
+    }
+    auto raw = td::RocksDb::open(path).move_as_ok();
+    for (uint8_t tag = 0x01; tag < 0xff; ++tag) {
+      ASSERT_EQ(count_raw_prefix(raw, tag), 0u);
+    }
+    ASSERT_EQ(count_raw_prefix(raw, 0x00), 1u);  // the schema version only
+  }
+  td::rmrf(path).ignore();
+}
+
+// A database of the current schema is kept as it is across a restart: the
+// unfinished work of the run before survives.
+TEST(WalletIndex, ACurrentSchemaRestartKeepsUnfinishedWork) {
+  auto path = std::string("test-wallet-index-db-keep");
+  auto db = open_fresh_db(path);
+  auto id = make_test_block_id(0, tos::shardIdAll, 9, 0x11, 0x22);
+  ASSERT_TRUE(schedule_block(*db, token_candidates(0, 3), kWholeBasechain, 0).empty());
+  db->begin_batch().ensure();
+  db->begin_token_pass().ensure();
+  ASSERT_TRUE(db->park_token_candidate({token_candidates(10, 1)[0], 0, 100}).move_as_ok());
+  tos_wallet_index::WalletIndexDb::PendingBlock pending;
+  pending.end_lt = 100;
+  pending.remaining.push_back({token_candidates(20, 1)[0], 1, 100});
+  db->put_pending_block(id, pending).ensure();
+  db->save_token_counters().ensure();
+  db->commit_batch().ensure();
+  db->put_incomplete_block(id, 1000).ensure();
+  db.reset();
+  db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
+  auto stats = backlog_stats(*db);
+  ASSERT_EQ(stats.entries, static_cast<uint64_t>(3));
+  ASSERT_EQ(stats.parked, static_cast<uint64_t>(1));
+  ASSERT_TRUE(stats.unfinished_block);
+  auto kept = db->get_pending_block(id).move_as_ok();
+  ASSERT_TRUE(static_cast<bool>(kept));
+  ASSERT_EQ(kept.value().remaining.size(), static_cast<size_t>(1));
+  td::rmrf(path).ignore();
+}
+
+// A jetton row with no pair record beside it is not a verified fact: it is
+// never served.
+TEST(WalletIndex, AJettonRowWithoutItsPairRecordIsNeverServed) {
+  auto path = std::string("test-wallet-index-db-unverified-row");
+  auto db = open_fresh_db(path);
+  auto owner = token_address(1, 0x40);
+  vm::CellBuilder cb;
+  cb.store_bits(token_address(3, 0x40).bits(), 256);
+  cb.store_long(5, 64);
+  db->begin_batch().ensure();
+  db->put_jetton(owner, token_address(2, 0x40), cb.finalize()).ensure();
+  db->commit_batch().ensure();
+  size_t served = 0;
+  db->for_each_current_jetton(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+      ++served;
+      return td::Status::OK();
+    }).ensure();
+  ASSERT_EQ(served, static_cast<size_t>(0));
+  td::rmrf(path).ignore();
+}
+
+// Pruning has admitted the deletion of a package (it read the floor for the
+// last time and recorded the package as given up) but not yet carried it out
+// when a block from that package is handed over. The index is refused
+// retention for it, so it never relies on the archive for that block: with
+// the block's data in hand, it indexes the block from memory; without it, it
+// records that the index needs a rebuild instead of claiming completeness.
+TEST(WalletIndexWorker, ABlockHandedOverAfterItsPackageWasGivenUpNeverReliesOnIt) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-after-admission");
+  td::rmrf(path).ignore();
+  const uint32_t base = 5000000;
+  auto in_hand = overflowing_block(81, 3, 0, 5000);
+  auto without_data = overflowing_block(82, 3, 100, 5001);
+  FakeArchive archive;
+  archive.add(in_hand.id, in_hand.root, base);
+  archive.add(without_data.id, without_data.root, base + 1);
+  archive.add(worker_block_id(83), wallet_index_fixture::block(83, 5002, base + 100000, {}), base + 100000);
+  archive.add(worker_block_id(84), wallet_index_fixture::block(84, 5003, base + 200000, {}), base + 200000);
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    archive.prune(base + 1000000.0, 1000.0, 0, [&] {
+      // The first package is admitted for deletion, not yet deleted.
+      tos_wallet_index::enqueue_wc0_index_block(in_hand.root, in_hand.state, in_hand.id, base);
+      tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, without_data.state, without_data.id, base + 1);
+    });
+    ASSERT_TRUE(!archive.has(in_hand.id));
+    // Indexed from what the hook held.
+    ASSERT_TRUE(eventually([&] {
+      return processed_count(db, in_hand) == in_hand.wallets.size() &&
+             !db.has_incomplete_block(in_hand.id).move_as_ok();
+    }));
+    // The other could not be kept anywhere: the index says so.
+    ASSERT_TRUE(eventually([&] { return backlog_stats(db).needs_rebuild; }));
+    ASSERT_TRUE(!is_complete(db));
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// A block is handed over after pruning selected its package but before the
+// deletion is admitted: the admission sees the lowered floor and the package
+// survives, so the worker reads the block from it.
+TEST(WalletIndexWorker, ABlockHandedOverBeforeAdmissionKeepsItsPackage) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-before-admission");
+  td::rmrf(path).ignore();
+  const uint32_t base = 6000000;
+  auto block = overflowing_block(85, 3, 0, 5000);
+  FakeArchive archive;
+  archive.add(worker_block_id(80), wallet_index_fixture::block(80, 3000, base - 200000, {}), base - 200000);
+  archive.add(worker_block_id(84), wallet_index_fixture::block(84, 4000, base - 100000, {}), base - 100000);
+  archive.add(block.id, block.root, base);
+  archive.add(worker_block_id(86), wallet_index_fixture::block(86, 5002, base + 100000, {}), base + 100000);
+  archive.add(worker_block_id(87), wallet_index_fixture::block(87, 5003, base + 200000, {}), base + 200000);
+  {
+    auto &db = install_db(path);
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(true);
+    archive.prune(base + 1000000.0, 1000.0, 0, nullptr,
+                  [&] { tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, block.state, block.id, base); });
+    ASSERT_TRUE(archive.has(block.id));
+    ASSERT_TRUE(!archive.has(worker_block_id(80)));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
+    ASSERT_TRUE(eventually([&] {
+      return processed_count(db, block) == block.wallets.size() && !db.has_incomplete_block(block.id).move_as_ok();
+    }));
+  }
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// Far more blocks are handed over than are tracked one by one, and more than
+// the worker's queue holds, while the recorder's writes are stalled. The
+// bookkeeping that keeps them in the archive stays bounded, the hook never
+// waits, every one of them is kept through pruning, and after the recorder
+// recovers and the node restarts, every candidate is verified.
+TEST(WalletIndexWorker, RetentionBookkeepingIsBoundedWhileRecordingStalls) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-bounded-tracking");
+  td::rmrf(path).ignore();
+  const uint32_t base = 7000000;
+  const size_t count = tos_wallet_index::kWc0IndexQueueCapacity + 64;
+  std::vector<OverflowingBlock> blocks;
+  FakeArchive archive;
+  archive.add(worker_block_id(99), wallet_index_fixture::block(99, 3000, base - 300000, {}), base - 300000);
+  archive.add(worker_block_id(98), wallet_index_fixture::block(98, 3001, base - 200000, {}), base - 200000);
+  for (size_t i = 0; i < count; ++i) {
+    blocks.push_back(
+        overflowing_block(static_cast<tos::BlockSeqno>(100 + i), 1, static_cast<uint32_t>(10 * i), 6000 + i));
+    archive.add(blocks.back().id, blocks.back().root, static_cast<uint32_t>(base + 100 * i));
+  }
+  archive.add(worker_block_id(5000), wallet_index_fixture::block(5000, 9000, base + 100000, {}), base + 100000);
+  // Left unfinished by an earlier run; recovering it during the stall makes
+  // the index recompute its floor.
+  auto earlier = overflowing_block(97, 1, 900000, 2000);
+  archive.add(earlier.id, earlier.root, base - 50000);
+  NewestState newest;
+  newest.set(5000, 9000, wallet_index_fixture::shard_state({}));
+  tos_wallet_index::set_wc0_index_tracking_capacity_for_testing(8);
+  {
+    auto &db = install_db(path);
+    db.mark_blocks_incomplete(std::vector<tos_wallet_index::MarkedBlock>{{earlier.id, base - 50000}}).ensure();
+    tos_wallet_index::set_wc0_index_block_fetcher(archive.fetcher());
+    tos_wallet_index::set_wc0_index_state_fetcher(newest.fetcher());
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(true);
+    auto started = std::chrono::steady_clock::now();
+    // Newest first, so the blocks handed over once tracking is full are the
+    // oldest: only the overflow floor keeps them.
+    for (size_t k = 0; k < count; ++k) {
+      size_t i = count - 1 - k;
+      tos_wallet_index::enqueue_wc0_index_block(blocks[i].root, blocks[i].state, blocks[i].id,
+                                                static_cast<uint32_t>(base + 100 * i));
+      ASSERT_TRUE(tos_wallet_index::wc0_index_tracked_handovers_for_testing() <= 8);
+    }
+    ASSERT_TRUE(std::chrono::steady_clock::now() - started < std::chrono::seconds(2));
+    tos_wallet_index::resume_wc0_index_worker();
+    ASSERT_TRUE(eventually([&] { return !db.has_incomplete_block(earlier.id).move_as_ok(); }));
+    ASSERT_TRUE(tos::validator::archive_floor() <= base);
+    ASSERT_EQ(archive.prune(base + 1000000.0, 1000.0, 0), static_cast<size_t>(2));
+    for (auto &b : blocks) {
+      ASSERT_TRUE(archive.has(b.id));
+    }
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
+    // Every hand-over recorded: nothing is tracked any more.
+    ASSERT_TRUE(eventually([&] { return tos_wallet_index::wc0_index_tracked_handovers_for_testing() == 0; }));
+    ASSERT_TRUE(tos_wallet_index::flush_wc0_index_for_exit(Producers::Quiesced));
+    tos_wallet_index::stop_wc0_index_worker();
+    tos_wallet_index::set_wallet_index_db(nullptr);
+  }
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(false));
+    ASSERT_TRUE(eventually(
+        [&] {
+          for (auto &b : blocks) {
+            if (processed_count(db, b) != b.wallets.size()) {
+              return false;
+            }
+          }
+          return is_complete(db);
+        },
+        std::chrono::seconds(120)));
+  }
+  tos_wallet_index::set_wc0_index_tracking_capacity_for_testing(4096);
+  reset_index_singletons();
+  td::rmrf(path).ignore();
+}
+
+// More blocks are handed over than even the recorder's id list holds while
+// its writes are stalled. Memory stays bounded and the hook never waits; the
+// blocks whose ids found no room cannot be found again, and the index records
+// that it needs a rebuild rather than claiming completeness.
+TEST(WalletIndexWorker, HandOversBeyondTheRecorderStayBoundedAndAreReported) {
+  reset_index_singletons();
+  auto path = std::string("test-wallet-index-db-beyond-recorder");
+  td::rmrf(path).ignore();
+  tos_wallet_index::set_wc0_index_tracking_capacity_for_testing(8);
+  {
+    auto &db = install_db(path);
+    ASSERT_TRUE(tos_wallet_index::start_wc0_index_worker(true));
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(true);
+    const size_t count = 16 * tos_wallet_index::kWc0IndexQueueCapacity + 1000;
+    auto started = std::chrono::steady_clock::now();
+    for (size_t i = 0; i < count; ++i) {
+      tos_wallet_index::enqueue_wc0_index_block(td::Ref<vm::Cell>{}, td::Ref<vm::Cell>{},
+                                                worker_block_id(static_cast<tos::BlockSeqno>(1 + i)),
+                                                static_cast<uint32_t>(8000000 + i));
+    }
+    ASSERT_TRUE(std::chrono::steady_clock::now() - started < std::chrono::seconds(2));
+    ASSERT_TRUE(tos_wallet_index::wc0_index_tracked_handovers_for_testing() <= 8);
+    ASSERT_TRUE(tos::validator::archive_floor() <= 8000000);
+    ASSERT_TRUE(tos_wallet_index::wc0_index_degraded());
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
+    ASSERT_TRUE(eventually([&] { return backlog_stats(db).needs_rebuild; }));
+  }
+  tos_wallet_index::set_wc0_index_tracking_capacity_for_testing(4096);
   reset_index_singletons();
   td::rmrf(path).ignore();
 }

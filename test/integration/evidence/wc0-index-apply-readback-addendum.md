@@ -21,10 +21,12 @@ kept as the record of its own run at `b8a3f5350`.
 
 ## How a block without data reaches the index now
 
-- The hook is a bounded, non-waiting enqueue. It takes only a producer lock
-  and, to keep the block in the archive until its marker exists, a lock
-  around an in-memory set of generation times; nothing holds either across
-  I/O or a wait. It does not log, mark, or sync.
+- The hook is a bounded, non-waiting enqueue. Besides the producer lock it
+  takes two small locks to keep the block in the archive until its marker
+  exists: one around a bounded list of handed-over blocks, and the archive's
+  retention lock, which pruning holds only to admit a deletion, never across
+  the deletion's I/O. Nothing holds any of them across I/O or a wait. The
+  hook does not log, mark, or sync.
 - The recorder thread durably marks every handed-over block id before the
   worker may index it. A block the worker never finishes stays marked, and
   startup recovery re-indexes it.
