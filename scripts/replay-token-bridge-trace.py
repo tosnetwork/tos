@@ -66,7 +66,7 @@ class Engine:
         self.lib.emulator_set_verbosity_level(0)
         self.emulators: dict[str, int] = {}
 
-    def run(self, config: str, unixtime: int, shard_account: str, message: str) -> dict:
+    def run(self, config: str, unixtime: int, shard_account: str, message: str, lt: int) -> dict:
         if config not in self.emulators:
             ptr = self.lib.transaction_emulator_create(complete_config(config), 0)
             if not ptr:
@@ -74,7 +74,7 @@ class Engine:
             self.emulators[config] = ptr
         ptr = self.emulators[config]
         self.lib.transaction_emulator_set_unixtime(ptr, unixtime)
-        self.lib.transaction_emulator_set_lt(ptr, 2_000_000_000)
+        self.lib.transaction_emulator_set_lt(ptr, lt)
         out = self.lib.transaction_emulator_emulate_transaction(
             ptr, shard_account.encode(), message.encode()
         )
@@ -335,8 +335,15 @@ def main() -> int:
     kept_deployments = []
     for path in records:
         record = json.loads(path.read_text())
+        # A contract may read its transaction's logical time (a participant's
+        # life is the time of its first transaction), so each transaction is
+        # replayed at the time it ran, when the recording says.
         result = engine.run(
-            record["config"], record["unixtime"], record["shard_account"], record["message"]
+            record["config"],
+            record["unixtime"],
+            record["shard_account"],
+            record["message"],
+            int(record.get("lt", 2_000_000_000)),
         )
         expect = record["expect"]
         if not result.get("success"):

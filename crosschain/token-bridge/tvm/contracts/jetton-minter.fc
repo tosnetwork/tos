@@ -545,6 +545,9 @@ int mint_capacity?(int amount) inline {
     }
     holder_load(owner);
     if (status == MINT_AWAITING_OPEN) {
+        ;; The message continuing this mint paid for its `prepared` at the
+        ;; current prices; the escrow follows them.
+        mint_put(s, status, life, k, escrow_p2(), hash, owner, amount, d);
         if (h_open == HOLDER_OPEN) {
             promote(s);
         } elseif (h_open == HOLDER_OPENING) {

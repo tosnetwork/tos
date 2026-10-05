@@ -225,10 +225,11 @@ int open_fee_for(slice recipient) inline {
     return fee_of(calculate_jetton_wallet_state_init(recipient, minter_address(), b_wallet_code), 0) + described_fee(0);
 }
 
-;; What P1 carries: everything its minter needs, including opening the wallet.
+;; What P1 carries: everything its minter needs, including opening the wallet,
+;; and the minter's reserve while P1 may still be the message that deploys it.
 int need_p1_for(cell d) inline {
     (_, _, _, _, _, _, _, slice recipient) = parse_mint_descriptor(d);
-    return need_p1_opening(open_fee_for(recipient));
+    return need_p1_opening(open_fee_for(recipient)) + (c_minter_life ? 0 : MINTER_RESERVE);
 }
 
 ;; P1, with the minter's initial state while the minter has not answered yet.
@@ -909,5 +910,5 @@ int get_mint_fee_floor(cell wrapped_token_data, slice recipient) method_id {
     (slice minter, cell state_init) = calculate_minter_address(wrapped_token_data);
     (_, int hash) = parse_std_addr(minter);
     c_minter = hash;
-    return bridge_gas() + described_fee(-1) + fee_of(state_init, -1) + need_p1_opening(open_fee_for(recipient));
+    return bridge_gas() + described_fee(-1) + fee_of(state_init, -1) + need_p1_opening(open_fee_for(recipient)) + MINTER_RESERVE;
 }

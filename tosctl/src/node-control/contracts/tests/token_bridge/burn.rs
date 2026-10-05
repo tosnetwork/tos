@@ -7,13 +7,14 @@
 //! Burns: owner -> wallet (hold) -> burn_admit -> minter -> burn_notice ->
 //! bridge (LOG_BURN) -> burn_result -> minter -> burn_outcome -> wallet.
 
+use chain_block::IBitstring;
+
 use crate::harness::*;
 
 /// T-B1: a burn, in one pass.
 #[test]
 fn t_b1_a_burn_is_recorded_once_and_logged_once() {
     let mut net = Net::new();
-    net.model.enabled = true;
     let user = net.user(0);
     net.swap(1_000);
     net.start_burn(400);

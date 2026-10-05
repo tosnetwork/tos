@@ -504,7 +504,7 @@ impl Net {
             queue: VecDeque::new(),
             delivered: Vec::new(),
             logs: Vec::new(),
-            model: Model::default(),
+            model: Model { enabled: true, ..Model::default() },
             next_nonce: 0,
             burn_fee: BURN_FEE,
             mint_fee: MINT_FEE,
@@ -749,6 +749,42 @@ impl Net {
 
     pub fn drop_op(&mut self, op: u32) -> Message {
         self.intercept(|m| body_op(m) == Some(op))
+    }
+
+    /// The data hash of every bridge, minter and wallet account.
+    pub fn state_hashes(&self) -> Vec<(String, Option<UInt256>)> {
+        let mut all: Vec<MsgAddressInt> = vec![self.bridge.clone(), self.minter()];
+        all.extend(self.minters.values().cloned());
+        for u in &self.users {
+            all.push(self.wallet_of(u.address()));
+        }
+        all.push(self.wallet_of(self.stranger.address()));
+        all.iter()
+            .map(|a| (a.to_string(), self.bc.get_account(a).and_then(|x| x.get_data_hash())))
+            .collect()
+    }
+
+    /// Every transaction since `from` that exited with `code`.
+    pub fn exits_since(&self, from: usize, code: i32) -> usize {
+        self.delivered[from..].iter().filter(|d| outcome(&d.tx).exit_code == Some(code)).count()
+    }
+
+    /// No settlement message was ever bounced: none is bounceable.
+    pub fn assert_no_settlement_bounce(&self) {
+        for d in &self.delivered {
+            for m in &d.outs {
+                if let Some(h) = m.int_header() {
+                    if h.bounced {
+                        let mut s = m.body().unwrap().clone();
+                        s.get_next_u32().ok();
+                        let op = s.get_next_u32().ok().unwrap_or(0);
+                        // advance and cancel_burn are a caller's own messages and may bounce
+                        let callers = op == op::ADVANCE || op == op::CANCEL_BURN;
+                        assert!(callers || !(40..=63).contains(&op), "a settlement message bounced: op {op}");
+                    }
+                }
+            }
+        }
     }
 
     /// Prints every delivered transaction: where, which opcode, and how it ended.
@@ -1002,13 +1038,22 @@ impl Net {
 
     pub fn pay_from(&mut self, payer: &MsgAddressInt, generation: u32, n: u64, value: u64) -> Transaction {
         let pay = MessageBuilder::internal(payer, &self.bridge, value)
+            .bounce(true)
             .body(cell(|b| {
                 b.append_u32(OP_PAY_SWAP).unwrap().append_u64(0).unwrap();
                 b.append_u32(generation).unwrap();
                 b.append_u64(n).unwrap();
             }))
             .build();
-        self.send(pay)
+        // Only the payment: whatever else is queued keeps waiting.
+        let d = self.execute(pay);
+        let bounced: Vec<Message> = d.outs.iter().filter(|m| m.is_internal()).cloned().collect();
+        for m in bounced {
+            let index = self.queue.iter().rposition(|q| *q == m).expect("the queued answer");
+            let m = self.queue.remove(index).expect("the answer");
+            self.execute(m);
+        }
+        d.tx
     }
 
     pub fn swap_voting(&self, generation: u32, n: u64, recipient: &MsgAddressInt, amount: u128, token: u8) -> Cell {
@@ -1068,6 +1113,7 @@ impl Net {
         let wallet = self.wallet_of(owner);
         let user = owner.clone();
         MessageBuilder::internal(&user, &wallet, value)
+            .bounce(true)
             .body(cell(|b| {
                 b.append_u32(OP_BURN).unwrap().append_u64(7).unwrap();
                 coins(b, amount);
@@ -1095,6 +1141,7 @@ impl Net {
     pub fn cancel_message(&self, owner: &MsgAddressInt, b: u64, value: u64) -> Message {
         let wallet = self.wallet_of(owner);
         MessageBuilder::internal(owner, &wallet, value)
+            .bounce(true)
             .body(cell(|x| {
                 x.append_u32(op::CANCEL_BURN).unwrap().append_u64(0).unwrap();
                 x.append_u64(b).unwrap();
@@ -1105,6 +1152,7 @@ impl Net {
     /// An advance from the stranger to `to`, of `value`, with `args` after the kind.
     pub fn advance_message(&self, to: &MsgAddressInt, kind: u8, value: u64, args: impl FnOnce(&mut BuilderData)) -> Message {
         MessageBuilder::internal(self.stranger.address(), to, value)
+            .bounce(true)
             .body(cell(|b| {
                 b.append_u32(op::ADVANCE).unwrap().append_u64(0).unwrap();
                 b.append_u8(kind).unwrap();
@@ -1311,6 +1359,7 @@ impl Net {
         let after = self.bc.get_account(addr);
         let record = serde_json::json!({
             "unixtime": self.bc.now(),
+            "lt": tx.logical_time().to_string(),
             "config": boc(config),
             "shard_account": boc(shard_account.serialize().expect("a shard account cell")),
             "message": boc(msg.serialize().expect("a message cell")),
@@ -1379,4 +1428,28 @@ pub fn bounced_copy(msg: &Message) -> Message {
         h.bounced = true;
     }
     bounce
+}
+
+/// Every account that held state before still holds the same state. A failed
+/// deployment is exempt: one engine leaves an empty account behind, the other
+/// creates none, and neither holds anything a later message could use.
+pub fn assert_unchanged(net: &Net, before: &[(String, Option<UInt256>)], what: &str) {
+    let after = net.state_hashes();
+    for ((addr, b), (_, a)) in before.iter().zip(after.iter()) {
+        if b.is_some() {
+            assert_eq!(b, a, "{what} changed the state of {addr}");
+        }
+    }
+}
+
+/// A leg stopped for funds: its funding check refused it, or it ran out of gas
+/// before it got there. Either way it applied nothing.
+pub fn stopped_for_funds(tx: &Transaction) {
+    let o = outcome(tx);
+    assert!(o.aborted, "the leg went through");
+    assert!(
+        o.exit_code == Some(err("underfunded")) || o.exit_code == Some(-14),
+        "stopped for another reason: {:?}",
+        o.exit_code
+    );
 }
