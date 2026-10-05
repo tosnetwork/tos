@@ -71,7 +71,7 @@ def main():
             "wallet-v5r2-fee-identity.fc",
             "wallet-v5r2-state.fc",
             "wallet-v5r2-identity.fc",
-            "auth-extension.fc",
+            "wallet-v5r2-common.fc",
             "pq-bytes.fc",
         ]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)

@@ -3,10 +3,10 @@
 ;; passing these identity fields; caller assertions are not initialization proofs.
 ;; Validation is read-only. The caller validates operation payloads and actions,
 ;; then persists the returned counters and the complete authority tuple together.
-#include "auth-extension.fc";
+#include "wallet-v5r2-common.fc";
 #include "auth-policy.fc";
 
-const int r2::relay = 0x41553242;
+const int r2::relay = 0x41553342;
 const int r2::request = 0x41553252;
 const int r2::primary = 1;
 const int r2::rescue = 2;
@@ -37,15 +37,14 @@ int r2_payload_tag(int kind) impure inline {
 }
 
 (int, int, cell) r2_validate_request(int mode, int root, int network, int daily, int policy,
-    int local_retired, int epoch, int primary_nonce, int rescue_nonce, int classical_key,
+    int local_retired, int epoch, int primary_nonce, int rescue_nonce,
     int vault, slice sender, slice body) impure inline_ref {
-  throw_unless(auth::bad_mode, (mode == 2) | (mode == 3));
+  throw_unless(auth::bad_mode, mode == 2);
   throw_unless(auth::bad_mode, (daily == 1) & ((policy == 1) | (policy == 2)));
   int account = r2_basechain_hash(my_address(), auth::wrong_account);
   throw_unless(auth::not_module, (r2_basechain_hash(sender, auth::not_module) == root) & (root != account));
   throw_unless(auth::bad_operation, body~load_uint(32) == r2::relay);
   cell request = body~load_ref();
-  cell cosignature = body~load_maybe_ref();
   int funder = r2_basechain_hash(body~load_msg_addr(), auth::wrong_account);
   body.end_parse();
 
@@ -80,17 +79,6 @@ int r2_payload_tag(int kind) impure inline {
     throw_unless(auth::bad_nonce, nonce == rescue_nonce);
   }
 
-  if ((mode == 3) & ((kind == r2::execute) | (kind == r2::configure))) {
-    auth_require_strong_classical_key(classical_key);
-    throw_if(auth::bad_signature, cell_null?(cosignature));
-    slice sig = auth_policy_ordinary(cosignature);
-    throw_unless(auth::bad_signature, (sig.slice_bits() == 512) & (sig.slice_refs() == 0));
-    throw_unless(auth::bad_signature, check_signature(auth_request_hash(request), sig, classical_key));
-  } else {
-    ;; Narrow recovery never needs the old Ed25519 key and never accepts an
-    ;; unrelated optional proof. Mode 2 uses the same canonical null encoding.
-    throw_unless(auth::bad_signature, cell_null?(cosignature));
-  }
   return (role, kind, payload);
 }
 

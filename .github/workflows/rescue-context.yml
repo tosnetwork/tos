@@ -19,6 +19,7 @@ on:
       - 'tosctl/src/**'
       - 'test/auth-extensions/**'
       - 'test/rescue-fee-gate/**'
+      - 'test/wallet-v5r2/**'
 
 permissions:
   contents: read
@@ -64,6 +65,10 @@ jobs:
           sh test/rescue-fee-gate/tools/build.sh build-signers
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
             --example fee-native-cost --example suite-parity --example pq-tx-parity
+      - name: PQ-only complete receiver delivery
+        run: |
+          python -m pip install cryptography==46.0.4
+          python test/wallet-v5r2/test_module_delivery.py --output artifacts/context/r2-module
       - name: Verify context, opcode, complete transactions and legacy pricing
         run: |
           build/crypto/tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb

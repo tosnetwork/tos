@@ -41,7 +41,7 @@ def fee(version=1, profile=1, slot=3600, per_slot=4, key=None, tree_id=456):
 def state(
     module,
     metadata=None,
-    version=3,
+    version=4,
     mode=2,
     retired=0xFFFF,
     seqno=0xFFFFFFFF,
@@ -105,7 +105,7 @@ def main():
             "wallet-v5r2-state.fc",
             "wallet-v5r2-identity.fc",
             "pq-bytes.fc",
-            "auth-extension.fc",
+            "wallet-v5r2-common.fc",
         ]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
         shutil.copyfile(ROOT / "test/wallet-v5r2/state-driver.fc", work / "driver.fc")
@@ -113,7 +113,7 @@ def main():
         module_code = compile_contract("rescue-dual-module.fc", out / "module.boc")
         module = state_init(module_code, module_data())
         cases = {"saturated_roundtrip": run(code, module_code, state(module), 0)}
-        cases["hybrid_roundtrip"] = run(code, module_code, state(module, mode=3, key=KEY), 0)
+        cases["classical_key_refused"] = run(code, module_code, state(module, key=KEY), 1819)
         cases["fresh_roundtrip"] = run(
             code, module_code, state(module, seqno=0, epoch=0, primary=0, rescue=0, retired=0), 0
         )
@@ -133,9 +133,10 @@ def main():
             ("legacy_flag", {"flag": 1}, 1819),
             ("extensions", {"extensions": Cell()}, 1819),
             ("old_version", {"version": 2}, 1819),
+            ("hybrid_storage_version", {"version": 3}, 1819),
             ("mode0", {"mode": 0}, 1806),
             ("mode1", {"mode": 1}, 1806),
-            ("weak_hybrid", {"mode": 3}, 1808),
+            ("mode3_refused", {"mode": 3}, 1806),
         ]:
             cases[name] = run(code, module_code, state(module, **kwargs), error)
         for name, kwargs in [
@@ -158,7 +159,7 @@ def main():
         for name, old, new, candidate, expected in [
             (
                 "strict_mode",
-                "  throw_unless(auth::bad_mode, (mode == 2) | (mode == 3));",
+                "  throw_unless(auth::bad_mode, mode == 2);",
                 "",
                 state(module, mode=1),
                 1806,

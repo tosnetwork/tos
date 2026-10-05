@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 import native  # noqa: E402
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
-from test_auth import KEY  # noqa: E402
 from test_auth_policy import policy as global_policy  # noqa: E402
 from test_fee_identity import vault_data  # noqa: E402
 from test_identity import module_data  # noqa: E402
@@ -69,7 +68,7 @@ def main():
             "wallet-v5r2-fee-identity.fc",
             "wallet-v5r2-state.fc",
             "wallet-v5r2-identity.fc",
-            "auth-extension.fc",
+            "wallet-v5r2-common.fc",
             "auth-policy.fc",
             "pq-bytes.fc",
             "wallet-v5-action-list.fc",
@@ -88,9 +87,12 @@ def main():
             if hasattr(e, "stderr"):
                 print(e.stderr.decode())
             raise
+        for compiled in ["wallet.fif"]:
+            assembly = (out / compiled).read_text()
+            assert "CHKSIGN" not in assembly and "auth_require_strong_classical_key" not in assembly
         module = native.state_init(module_code, module_data())
         root = int.from_bytes(module.hash, "big")
-        base = state(module, seqno=0, epoch=1, primary=0, rescue=0, retired=0, key=KEY)
+        base = state(module, seqno=0, epoch=1, primary=0, rescue=0, retired=0, key=0)
         cases = 0
         for mode in range(256):
             req = request(root=root, body=payload(send_mode=mode))
@@ -105,13 +107,13 @@ def main():
         mig = Cell().uint(0x4D494752, 32).ref(successor).ref(new_fee).ref(new_vault)
         locked = state(
             module,
-            mode=3,
+            mode=2,
             seqno=2**32 - 1,
             epoch=1,
             primary=2**64 - 1,
             rescue=2**64 - 1,
             retired=0xFFFF,
-            key=KEY,
+            key=0,
         )
         req = request(root=root, role=2, kind=4, nonce=2**64 - 1, body=mig)
         after, shard, count = run(code, locked, module, req)
@@ -124,7 +126,7 @@ def main():
             primary=0,
             rescue=0,
             retired=0xFFFF,
-            key=KEY,
+            key=0,
         )
         assert after.hash == expected.hash and count == 0
         cases += 1
@@ -159,22 +161,22 @@ def main():
             1815,
         )
         cases += 1
-        hybrid = state(module, mode=3, seqno=0, epoch=1, primary=0, rescue=0, retired=0, key=KEY)
+        pq_only = state(module, mode=2, seqno=0, epoch=1, primary=0, rescue=0, retired=0, key=0)
         conf = Cell().uint(0x434F4E46, 32).uint(2, 2).maybe(None)
         configure = request(root=root, role=2, kind=1, body=conf)
-        configured, _, n = run(code, hybrid, module, configure, signature=cosign(configure))
+        configured, _, n = run(code, pq_only, module, configure)
         assert (
             configured.hash
-            == state(module, mode=2, seqno=1, epoch=2, primary=0, rescue=0, retired=0, key=KEY).hash
+            == state(module, mode=2, seqno=1, epoch=2, primary=0, rescue=0, retired=0, key=0).hash
             and n == 0
         )
-        run(code, hybrid, module, configure, 1808)
+        run(code, pq_only, module, configure, 9, signature=cosign(configure))
         cases += 2
         lock = request(root=root, role=2, kind=3)
-        locked_after, _, n = run(code, hybrid, module, lock)
+        locked_after, _, n = run(code, pq_only, module, lock)
         assert (
             locked_after.hash
-            == state(module, mode=3, seqno=0, epoch=2, primary=0, rescue=0, retired=2, key=KEY).hash
+            == state(module, mode=2, seqno=0, epoch=2, primary=0, rescue=0, retired=2, key=0).hash
             and n == 0
         )
         cases += 1

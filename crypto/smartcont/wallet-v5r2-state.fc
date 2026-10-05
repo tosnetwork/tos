@@ -2,7 +2,7 @@
 ;; Module identity comes from a compiled dependency supplied by the caller.
 ;; Fee metadata contains no vault address: construction is module -> wallet -> vault.
 #include "wallet-v5r2-identity.fc";
-#include "auth-extension.fc";
+#include "wallet-v5r2-common.fc";
 
 const int r2state::invalid = 1819;
 
@@ -37,13 +37,13 @@ const int r2state::invalid = 1819;
   int seqno = s~load_uint(32);
   int wallet_id = s~load_uint(32);
   int key = s~load_uint(256);
+  throw_unless(r2state::invalid, key == 0); ;; inert V5-shaped field; never an authority
   throw_unless(r2state::invalid, cell_null?(s~load_dict()));
   slice a = r2id_ordinary(s~load_ref());
   s.end_parse();
-  throw_unless(r2state::invalid, a~load_uint(8) == 3);
+  throw_unless(r2state::invalid, a~load_uint(8) == 4);
   int mode = a~load_uint(2);
-  throw_unless(auth::bad_mode, (mode == 2) | (mode == 3));
-  if (mode == 3) { auth_require_strong_classical_key(key); }
+  throw_unless(auth::bad_mode, mode == 2);
   int retired = a~load_uint(16);
   int epoch = a~load_uint(64);
   int primary_nonce = a~load_uint(64);
@@ -59,7 +59,7 @@ const int r2state::invalid = 1819;
 ;; Validation belongs to load/admission before apply; stores retain every field.
 cell r2state_store(int seqno, int wallet_id, int key, int mode, int retired,
     int epoch, int primary_nonce, int rescue_nonce, cell module, cell fee) inline {
-  cell a = begin_cell().store_uint(3, 8).store_uint(mode, 2).store_uint(retired, 16)
+  cell a = begin_cell().store_uint(4, 8).store_uint(mode, 2).store_uint(retired, 16)
       .store_uint(epoch, 64).store_uint(primary_nonce, 64).store_uint(rescue_nonce, 64)
       .store_ref(module).store_ref(fee).end_cell();
   return begin_cell().store_uint(0, 1).store_uint(seqno, 32).store_uint(wallet_id, 32)

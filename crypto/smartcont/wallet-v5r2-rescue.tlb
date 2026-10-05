@@ -3,6 +3,7 @@
 // per-wallet fee vault. Basechain only: every MsgAddressInt below must be addr_std, no anycast,
 // workchain 0, and every contract refuses anything else. Trailing bits or references after any
 // constructor are rejected. Tags are ASCII where possible.
+// Owner v6: PQ-only. Mode 3 and classical cosignatures are not supported.
 // Checked with: tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb
 
 // ---- Enumerations (exact values; unknown values are rejected, never defaulted)
@@ -43,7 +44,7 @@ auth_request_v2#41553252
 // Payloads, selected by kind; the module and the account both check the match.
 auth_execute_v2#45584543 actions:^Cell = AuthPayload;          // "EXEC": V5 action list
 auth_configure_v2#434f4e46 new_mode:(## 2) fee_replacement:(Maybe ^FeeReplacement)
-  = AuthPayload;                                                // "CONF": mode 2 or 3 only
+  = AuthPayload;                                                // "CONF": mode 2 only
 auth_lock_primary#4c4f434b suite:DailySuite = AuthPayload;     // "LOCK": no successor, no value
 // Full signed witnesses commit to both whole StateInit hashes and all fields.
 // Policy, daily suite and addresses are derived, not duplicated assertions.
@@ -56,11 +57,14 @@ auth_recover_migrate#4d494752
 // Vault -> module: the fee-funded submission. The module verifies `signature` with the root
 // named by request.role and never ACCEPTs external input.
 rescue_submit_v1#53554231 request:^AuthRequestV2 signature:^Cell = InternalMsgBody;   // "SUB1"
+// Complete PQ-only module uses SUB3. SUB1 remains a historical probe constructor.
+rescue_submit_v3#53554233 request:^AuthRequestV2 signature:^Cell = InternalMsgBody;
+// No Maybe cosignature field. SUB1/SUB2 are refused by the complete module.
 // Module -> account: relays a verified request with the funded remainder (mode 64).
 // funded_by is the module's view of who paid; the account refuses PRIMARY funded by its own
 // fee vault, keeping that route RESCUE-only without spending the vault's external credit.
-auth_relay_v2#41553242 request:^AuthRequestV2 cosignature:(Maybe ^Cell) funded_by:MsgAddressInt
-  = InternalMsgBody; // "AU2B"
+auth_relay_v3#41553342 request:^AuthRequestV2 funded_by:MsgAddressInt
+  = InternalMsgBody; // "AU3B": PQ-only; old AU2B refused
 
 // ---- Module (immutable StateInit data; no admin, no withdrawal of earlier balance)
 // Module code pins the fee-vault code hash; there is no editable code list.
@@ -85,12 +89,13 @@ fee_route_v1#01
 fee_metadata_v1#01 fee_profile:uint8 fee_tree_id:bits256 epoch0:uint32 slot_seconds:uint32 per_slot:uint16
   fee_public_key:^Cell = FeeMetadata;
 // Admitted profile: 1, slot_seconds=3600, per_slot=4, canonical HSS L1/H20/W4 key.
-auth_state_v3#03 mode:(## 2) local_retired:uint16
+auth_state_v4#04 mode:(## 2) local_retired:uint16
   epoch:uint64 primary_nonce:uint64 rescue_nonce:uint64
-  module_init:^StateInit fee_metadata:^FeeMetadata = AuthStateV3;
+  module_init:^StateInit fee_metadata:^FeeMetadata = AuthStateV4;
 wallet_v5r2_data$_ signature_allowed:Bool seqno:uint32 wallet_id:uint32
-  public_key:bits256 extensions:(HashmapE 256 int1) auth:^AuthStateV3 = WalletV5R2Data;
-// signature_allowed must be false, extensions empty, and mode exactly 2 or 3.
+  public_key:bits256 extensions:(HashmapE 256 int1) auth:^AuthStateV4 = WalletV5R2Data;
+// signature_allowed must be false, extensions empty, and mode exactly 2.
+// public_key is canonically zero and grants no authority.
 // No missing-state fallback. Stored local_retired bits survive every transition.
 
 // Canonical paired-vault storage candidate, separate from the historical fee

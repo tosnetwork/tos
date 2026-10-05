@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 import native  # noqa: E402
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
-from test_auth import KEY, OTHER_SECRET, SECRET  # noqa: E402
+from test_auth import SECRET  # noqa: E402
 from test_auth_policy import policy as global_policy  # noqa: E402
 
 ACCOUNT, MODULE, RELAYER, VAULT, TARGET = [(0, i) for i in (100, 101, 102, 103, 104)]
@@ -21,7 +21,7 @@ MAX = (1 << 64) - 1
 TAGS = {0: 0x45584543, 1: 0x434F4E46, 3: 0x4C4F434B, 4: 0x4D494752}
 
 
-def state(mode=2, policy=1, retired=0, epoch=1, primary=0, rescue=0, seqno=0, key=KEY, daily=1):
+def state(mode=2, policy=1, retired=0, epoch=1, primary=0, rescue=0, seqno=0, key=0, daily=1):
     auth = (
         Cell()
         .uint(mode, 2)
@@ -109,7 +109,10 @@ def cosign(req, secret=SECRET):
 
 
 def relay(req, signature=None, funder=RELAYER):
-    return Cell().uint(0x41553242, 32).ref(req).maybe(signature).addr(funder)
+    body = Cell().uint(0x41553342, 32).ref(req).addr(funder)
+    if signature is not None:
+        body.ref(signature)  # forbidden extra classical-signature field
+    return body
 
 
 def run(
@@ -164,7 +167,7 @@ def run(
 def compile_driver(work, output, mutation=None):
     for name in [
         "wallet-v5r2-auth.fc",
-        "auth-extension.fc",
+        "wallet-v5r2-common.fc",
         "auth-policy.fc",
         "wallet-v5-action-list.fc",
     ]:
@@ -199,13 +202,13 @@ def main():
             return answer
 
         for role in (1, 2):
-            for mode in (2, 3):
+            for mode in (2,):
                 req = request(role=role)
                 r = case(
                     f"execute_{role}_{mode}",
                     state(mode=mode),
                     req,
-                    signature=cosign(req) if mode == 3 else None,
+                    signature=None,
                 )
                 assert (
                     r[0]["primary"] == (role == 1)
@@ -219,7 +222,7 @@ def main():
             case(f"unknown_role_{role}", req=request(role=role), expected=1812)
         for kind in (2, 5, 255):
             case(f"unknown_kind_{kind}", req=request(role=2, kind=kind), expected=1812)
-        for mode in (0, 1):
+        for mode in (0, 1, 3):
             case(f"non_strict_{mode}", state(mode=mode), expected=1806)
         for policy in (0, 3):
             case(f"unknown_policy_{policy}", state(policy=policy), expected=1806)
@@ -254,46 +257,21 @@ def main():
             case(f"policy_rescue_{name}", req=request(role=2), config=cfg)
         case("fee_primary", funder=VAULT, expected=1818)
         case("fee_rescue", req=request(role=2), funder=VAULT)
-        for role in (1, 2):
-            req = request(role=role)
-            case(f"missing_cosig_{role}", state(mode=3), req, expected=1808)
-            case(
-                f"wrong_cosig_{role}",
-                state(mode=3),
-                req,
-                signature=cosign(req, OTHER_SECRET),
-                expected=1808,
-            )
         req = request()
-        case(
-            "cosig_request_binding",
-            state(mode=3),
-            req,
-            signature=cosign(request(body=payload(count=0))),
-            expected=1808,
-        )
-        case("mode2_extra_cosig", req=req, signature=cosign(req), expected=1808)
-        for bad in (Cell().uint(0, 511), Cell().uint(0, 513), Cell().uint(0, 512).ref(Cell())):
-            case(
-                f"cosig_shape_{len(bad.bits)}_{len(bad.refs)}",
-                state(mode=3),
-                req,
-                signature=bad,
-                expected=1808,
-            )
-        weak = state(mode=3, key=0)
-        case("weak_ed_key", weak, req, signature=cosign(req), expected=1808)
+        case("extra_classical_signature", req=req, signature=cosign(req), expected=9)
+        old = Cell().uint(0x41553242, 32).ref(req).maybe(None).addr(RELAYER)
+        case("legacy_hybrid_envelope", req=req, envelope=old, expected=1811)
         for kind in (3, 4):
             req = request(role=2, kind=kind, nonce=MAX)
             r = case(
                 f"saturated_recovery_{kind}",
-                state(mode=3, primary=MAX, rescue=MAX, seqno=(1 << 32) - 1),
+                state(mode=2, primary=MAX, rescue=MAX, seqno=(1 << 32) - 1),
                 req,
                 config=None,
             )
             assert r[0]["epoch"] == 2 and r[0]["primary"] == r[0]["rescue"] == 0
             assert r[0]["seqno"] == ((1 << 32) - 1 if kind == 3 else 0)
-            assert r[0]["mode"] == 3 and r[1] == 0  # harness migration is counters only
+            assert r[0]["mode"] == 2 and r[1] == 0  # harness migration is counters only
             case(
                 f"epoch_exhausted_{kind}",
                 state(epoch=MAX),
@@ -309,8 +287,8 @@ def main():
             )
         case("seqno_exhausted", state(seqno=(1 << 32) - 1), expected=1810)
         conf = request(role=2, kind=1)
-        case("configure_needs_ed", state(mode=3), conf, expected=1808)
-        r = case("configure_with_ed", state(mode=3), conf, signature=cosign(conf))
+        case("configure_mode3_refused", state(mode=3), conf, expected=1806)
+        r = case("configure_pq_only", state(), conf)
         assert r[0]["epoch"] == 2 and r[0]["mode"] == 2 and r[0]["seqno"] == 1
         # Actual follow-up messages against the committed receiver state.
         locked = case("lock_commit", req=request(role=2, kind=3))
@@ -359,16 +337,10 @@ def main():
                 lambda c: run(c, state(), request(nonce=1), expected=1804),
             ),
             (
-                "hybrid",
-                "    throw_unless(auth::bad_signature, check_signature(auth_request_hash(request), sig, classical_key));",
+                "pq_only_mode",
+                "  throw_unless(auth::bad_mode, mode == 2);",
                 "",
-                lambda c: run(
-                    c,
-                    state(mode=3),
-                    request(),
-                    signature=cosign(request(), OTHER_SECRET),
-                    expected=1808,
-                ),
+                lambda c: run(c, state(mode=3), request(), expected=1806),
             ),
         ]
         killed = {}

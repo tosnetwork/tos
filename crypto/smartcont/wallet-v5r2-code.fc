@@ -35,7 +35,7 @@ cell r2wallet_vault_code();
   cell vault = r2pair_init(r2wallet_vault_code(), auth_global_id(), r2wallet_network(),
       my_address(), r2pair_address(cell_hash(module)), fee);
   var (role, kind, payload) = r2_validate_request(mode, cell_hash(module), r2wallet_network(),
-      1, policy, retired, epoch, primary, rescue, key, cell_hash(vault), sender, body);
+      1, policy, retired, epoch, primary, rescue, cell_hash(vault), sender, body);
   slice ps = payload.begin_parse().skip_bits(32);
   cell actions = null();
   if (kind == r2::execute) {
@@ -49,8 +49,7 @@ cell r2wallet_vault_code();
     int next_mode = ps~load_uint(2);
     cell replacement = ps~load_maybe_ref();
     ps.end_parse();
-    throw_unless(auth::bad_mode, (next_mode == 2) | (next_mode == 3));
-    if (next_mode == 3) { auth_require_strong_classical_key(key); }
+    throw_unless(auth::bad_mode, next_mode == 2);
     ifnot (cell_null?(replacement)) {
       slice fs = r2id_ordinary(replacement);
       cell next_fee = fs~load_ref();

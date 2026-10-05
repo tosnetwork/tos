@@ -1,0 +1,21 @@
+;; R2-only error/domain primitives. No classical verifier or legacy mode helpers.
+const int auth::max_counter = 18446744073709551615;
+
+const int auth::not_module = 1800;
+const int auth::wrong_network = 1801;
+const int auth::wrong_account = 1802;
+const int auth::stale_epoch = 1803;
+const int auth::bad_nonce = 1804;
+const int auth::expired = 1805;
+const int auth::bad_mode = 1806;
+const int auth::legacy_disabled = 1807;
+const int auth::bad_signature = 1808;
+const int auth::bad_module = 1809;
+const int auth::counter_exhausted = 1810;
+const int auth::bad_operation = 1811;
+
+int auth_global_id() asm "GLOBALID";
+
+int auth_request_hash(cell request) inline {
+  return cell_hash(begin_cell().store_uint(0x544f532d41555448, 64).store_ref(request).end_cell());
+}

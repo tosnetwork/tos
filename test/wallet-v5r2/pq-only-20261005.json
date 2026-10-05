@@ -1,0 +1,623 @@
+{
+  "base_commit": "8179e030b49d44827bde5a3feb595533985cd286",
+  "owner_design_commit": "memo ab136478",
+  "scope": "PQ-only complete receiver and real PQ module delivery; fee-vault stub remains, no fee origination or production readiness claim.",
+  "results": {
+    "receiver_auth": {
+      "cases": 324,
+      "mutations": {
+        "global_retirement": "expected exit 1813, got 0: {'exit': 0, 'gas': 12534, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+        "fee_route": "expected exit 1818, got 0: {'exit': 0, 'gas': 14476, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+        "primary_nonce": "expected exit 1804, got 0: {'exit': 0, 'gas': 14520, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+        "pq_only_mode": "expected exit 1806, got 0: {'exit': 0, 'gas': 14494, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}"
+      }
+    },
+    "state": {
+      "cases": 23,
+      "mutations": {
+        "strict_mode": "expected exit 1806, got 0",
+        "fee_profile": "expected exit 1819, got 0"
+      }
+    },
+    "identity": {
+      "cases": 29,
+      "mutations": {
+        "ordinary_cells": "expected exit 1815, got 0",
+        "depth": "expected exit 1815, got 0",
+        "address": "expected exit 1815, got 0",
+        "code": "expected exit 1815, got 0",
+        "namespace": "expected exit 1815, got 0"
+      }
+    },
+    "fee_identity": {
+      "cases": 15,
+      "mutations": {
+        "pairing": "expected exit 1815, got 0"
+      }
+    },
+    "wallet": {
+      "cases": 269,
+      "mutations": {
+        "successor_retirement": "expected exit 1813, got 0",
+        "preserve_retired_bits": "mutant successful migration lost retirement bits; canonical state assertion fails"
+      }
+    },
+    "module_delivery": {
+      "cases": 9,
+      "mutations": {
+        "primary_signature": "guard deletion changed corrupted signature rejection 1808 to successful relay"
+      }
+    }
+  },
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-auth.fc",
+      "sha256": "e8e0b134d2229e4b0c97725d53afa707bb71bec5941fa85531d274d8df2a2799",
+      "bytes": 4861
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-code.fc",
+      "sha256": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f",
+      "bytes": 4499
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-common.fc",
+      "sha256": "042a1b054523a5838bc3cfff999dedfd4bcdf130eb92c18aed0d28b598c7ba14",
+      "bytes": 759
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-identity.fc",
+      "sha256": "9338d13e56394e1f5636d7a6a08239f090eb61c8f024c1bd2da4db9ab454ebd4",
+      "bytes": 2320
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-identity.fc",
+      "sha256": "b6eeb0d91a46522f892c3e66a4ce37ebe0b2b242d5560e0dbe73c59561f5cbeb",
+      "bytes": 2471
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-module.fc",
+      "sha256": "d76a98a08b20df5dd5bb061dadf124073b43797a73b8227cd61de4618c34e49c",
+      "bytes": 4739
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-rescue.tlb",
+      "sha256": "e4509ee814242c991127a914b71ac2530d601581d422f0f047ca51e2f55233e4",
+      "bytes": 9885
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-state.fc",
+      "sha256": "71b1855f4ad9d836b9365b9618feeef53d9c1e6e30496b7d3211cd773d1eeb95",
+      "bytes": 3270
+    },
+    {
+      "path": "test/rescue-fee-gate/test_rescue_e2e.py",
+      "sha256": "f30e8fca3b6ca4aeff4e41f897d7832ebdaa5627359a5e98ce03ce40c969dc59",
+      "bytes": 17335
+    },
+    {
+      "path": "test/wallet-v5r2/receiver-auth-driver.fc",
+      "sha256": "816c8644ac83f57ed1b00450741a3862c79e0aa59c5cda3fb39f621d10768e3d",
+      "bytes": 2680
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_identity.py",
+      "sha256": "94b2638e2f91e9ad61ae022161972e2f4422ef797c208599cd2cb929559b126b",
+      "bytes": 5662
+    },
+    {
+      "path": "test/wallet-v5r2/test_identity.py",
+      "sha256": "ab81580339bbf4e851ba85d3ca16b88f1369110069f76ffe796178f34344d95e",
+      "bytes": 8323
+    },
+    {
+      "path": "test/wallet-v5r2/test_module_delivery.py",
+      "sha256": "55d21e711e6d7256baba3ff27b1b022da44c2bdf8f086e2ea8ee492e8204c7ee",
+      "bytes": 12483
+    },
+    {
+      "path": "test/wallet-v5r2/test_receiver_auth.py",
+      "sha256": "23d1e3d42b9836f0123614b0e182ea8498ec646e1786f24e15f8baffe2bf312e",
+      "bytes": 13462
+    },
+    {
+      "path": "test/wallet-v5r2/test_state.py",
+      "sha256": "dd06bed7dfdcd42e557b548b544de755e5374ca6e72571219829a97fc89a7ffd",
+      "bytes": 6997
+    },
+    {
+      "path": "test/wallet-v5r2/test_wallet.py",
+      "sha256": "83cb9593a70c52abb881fb311ce763d37b048bf2a10f35ad0c797e41129ef127",
+      "bytes": 9972
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/fee_route.boc",
+      "sha256": "959d236c5a6988494c5606891266009c2c3573bb5d0dd4ce2374aeead5c56e8e",
+      "bytes": 1120
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/fee_route.fif",
+      "sha256": "77ecad65ccf158efd3212d4619c17c7c8f22065805c80b0044958bf932aefe98",
+      "bytes": 36278
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/fee_route.run.fif",
+      "sha256": "220e13421cf41fa39507906c64df45efaa9511d5997ad0dda43154327cd44401",
+      "bytes": 222
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/global_retirement.boc",
+      "sha256": "3e5b92ef3ba42ca24b98c5d6c4ff4885ad24d650941fb5be823b212af5c808e2",
+      "bytes": 927
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/global_retirement.fif",
+      "sha256": "f4a6e60458e5b474bb10fbdaaf314423b382081f9e6db9e5c044af04c62006fd",
+      "bytes": 36775
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/global_retirement.run.fif",
+      "sha256": "4e8f53b6d09510f37c9336c21aa9bb2d75d49f1737510e51c72852e0b824aaa3",
+      "bytes": 238
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/pq_only_mode.boc",
+      "sha256": "72b9156d92bda7dce0e5fd83265e099ff1ccdb16c5d311e6ee27a596329e2496",
+      "bytes": 1119
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/pq_only_mode.fif",
+      "sha256": "7158b2e44550699c210a26c9e6762ba4d492ee15f15e382378083542fcc09fe5",
+      "bytes": 37104
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/pq_only_mode.run.fif",
+      "sha256": "0e20045cb519c9ce7caf548fd4a74c409e08ab1c9d07f706dbefbd30e0aa14a1",
+      "bytes": 228
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/primary_nonce.boc",
+      "sha256": "46612c0fd8af7f9424074ce7189e187041930f30a97c00f08382f4eed0fcabb2",
+      "bytes": 1119
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/primary_nonce.fif",
+      "sha256": "88b57f217e182457e02ada378ca70ca98e5b9c5b90abacd5d7e7fffd5240b2ba",
+      "bytes": 35966
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/primary_nonce.run.fif",
+      "sha256": "0e2220a64ee4f5b045cfbacdc4f77754ffee6ca95b4d6a2b67ae43a663eca01d",
+      "bytes": 230
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/receiver.boc",
+      "sha256": "50f97ce78ae91d6e77fb8e59495e11f4735c269ce18e56a24590a98e0feccb9b",
+      "bytes": 1125
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/receiver.fif",
+      "sha256": "b3cb0b0592011950a204b6f803487216aad0619caf7f042480804bbdcc636445",
+      "bytes": 37244
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/receiver.run.fif",
+      "sha256": "2183e3d633d091ad082a57701432cb0531d44542205daabe2094ead555906959",
+      "bytes": 220
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/receiver_auth/results.json",
+      "sha256": "68a5778133a49e94eb5f777ba44c149801889c4761a6f0dca6320baceffa9618",
+      "bytes": 72478
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/fee_profile.boc",
+      "sha256": "100c688e5f5e51bb9f93efb909998ea8a3eafd9efc0782b7b8d988123993fd0f",
+      "bytes": 621
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/fee_profile.fif",
+      "sha256": "b996ebfb68af11490e315080041a67ffc6f80c25c92d282e8b6870aceed04169",
+      "bytes": 16056
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/fee_profile.run.fif",
+      "sha256": "355125015c6d4f225b54d848ab2a186f9dc31399c648a7a5a3f5cf59cb556d89",
+      "bytes": 210
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/module.boc",
+      "sha256": "b31e38d5e3e427e1fcc69fee75ae5ccaefac52bda2f3662edcc2a2906f959abf",
+      "bytes": 493
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/module.fif",
+      "sha256": "2646bb500fd3f62f26accdddc8441d491152ff08088ed1ad8fa30df4afd89d45",
+      "bytes": 15786
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/module.run.fif",
+      "sha256": "67986ba451113cd001ef7d7cfb7d3b9f9c1228aa7967ca52aad2c394fa69ea8e",
+      "bytes": 200
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/results.json",
+      "sha256": "56303e8e1245926d73249a875892e6c4d78c8c87baa0bfe2362b756c8102d5e9",
+      "bytes": 4302
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/state.boc",
+      "sha256": "e394e4024d7dfffa73e65450d211fe35ef138cdc028febe3a5e5ce346b95922e",
+      "bytes": 626
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/state.fif",
+      "sha256": "f34b0f49b812625bed96344993798dbe138280f3b8fec96655646ebed4d19a0c",
+      "bytes": 16101
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/state.run.fif",
+      "sha256": "fdee752d51d8aecbb61c5805f55c72d51009a5e30b07d0338d402fcbb121a9d1",
+      "bytes": 198
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/strict_mode.boc",
+      "sha256": "d22795eb8da6cce16b5c92f6b1cfde53a6a37bf26edecbbb3715c34d09d78e4b",
+      "bytes": 620
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/strict_mode.fif",
+      "sha256": "d1e318494ae7ade16b9524625b2d9a4a7d4b4e2208afb7730988d3d118a901b9",
+      "bytes": 15929
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/state/strict_mode.run.fif",
+      "sha256": "97e2683c54ff03c8ccc7f89a13d21492a1cfbc1bbf098adfc5cc86c30e583a51",
+      "bytes": 210
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/address.boc",
+      "sha256": "2ee49349eb81d0e8a45399a95f3715f21944b851491ff63162857c62f8d99ba9",
+      "bytes": 365
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/address.fif",
+      "sha256": "3c2b59d927e9b71517be242608985e12f0cabf8f7284286eb4fcdb6f60511d23",
+      "bytes": 9414
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/address.run.fif",
+      "sha256": "e6bde80d9e8c4bf1d9d39850e72a0d03c3ffb968185037e2e0db404bd0b56aca",
+      "bytes": 208
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/code.boc",
+      "sha256": "3cd6f14ace9b896a1974bd26538d4057e004cb87355e8676bb4319d2131d7b16",
+      "bytes": 366
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/code.fif",
+      "sha256": "e3b1e6cc4bdbbdaed01b2a3673927bb37f739952c2b2af95f26fdaed3b5aa5d6",
+      "bytes": 9508
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/code.run.fif",
+      "sha256": "7d9918f6ce2e204c132fb30d2cb9b8b9433355ec68212c0ebdbdbadfb14f6f77",
+      "bytes": 202
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/depth.boc",
+      "sha256": "57c39e9c28cc9bb62bb53b529cd1bfeceb59fe4c2945c8135d64ed2fea96f294",
+      "bytes": 368
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/depth.fif",
+      "sha256": "c41c34287f5aa2c2f39b81229701ff332f1434008d7e20f9fbe88f8e218a7cbc",
+      "bytes": 9766
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/depth.run.fif",
+      "sha256": "bd830db103808bab44e62bc260f77c5dbdc8210800f4827148cae1a7e87e0697",
+      "bytes": 204
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/identity.boc",
+      "sha256": "a34aa1babfaec86f415d6e8cc2a82c8898947506dca9294da681ac2aef60acc6",
+      "bytes": 373
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/identity.fif",
+      "sha256": "a4798fc043262bdb0d7656be6655408237f62c95738c1586ef488bff18bd0721",
+      "bytes": 9897
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/identity.run.fif",
+      "sha256": "3169326e263759a9306bdaee5ce7454da8faa601ea55887214f666e3fc09ec95",
+      "bytes": 210
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/module.boc",
+      "sha256": "b31e38d5e3e427e1fcc69fee75ae5ccaefac52bda2f3662edcc2a2906f959abf",
+      "bytes": 493
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/module.fif",
+      "sha256": "2646bb500fd3f62f26accdddc8441d491152ff08088ed1ad8fa30df4afd89d45",
+      "bytes": 15786
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/module.run.fif",
+      "sha256": "6b0ae295db7321468a2e7237b67258ef941b5ee7c742c019a6240eadbc26f3b4",
+      "bytes": 206
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/namespace.boc",
+      "sha256": "b00b84865f4e2b04a661f34f2c239a8bbac4460505463b2be9ce62090dfbf9bf",
+      "bytes": 370
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/namespace.fif",
+      "sha256": "22d83520709b94a56cab553fa87b0ebe71408c00d1818143dee042cd686fde08",
+      "bytes": 9815
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/namespace.run.fif",
+      "sha256": "9a03de09b6049b70f0cf46a19639048ef3f99aa7747c5a333442ff066a7ee8b2",
+      "bytes": 212
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/ordinary_cells.boc",
+      "sha256": "6e4470b62213f317a9f54e2d321687ec6954fb5155859be8f2be59cfe97f9dd4",
+      "bytes": 349
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/ordinary_cells.fif",
+      "sha256": "b2b24fe383428c6d5a427348541070e8ee0c2ff21363071b0f77b63d26dee472",
+      "bytes": 9729
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/ordinary_cells.run.fif",
+      "sha256": "4029f66e9262a4c8b62edd46900afc71ca417ebe3610f2893579bbb2ddd31003",
+      "bytes": 222
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/identity/results.json",
+      "sha256": "c373df9efb3e91414e5ccaf48476816cc3c2df65bbfc7fd068366f22f346d334",
+      "bytes": 5467
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/pairing-mutant.boc",
+      "sha256": "c35f89e90f7846733904e8c38e899b507f89e515da6ee53788d8184ba366c318",
+      "bytes": 581
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/pairing-mutant.fif",
+      "sha256": "ff55eb0eefe39ef06a87271f9995e2acac88d9a9fc4f0727be49cd5120c2d965",
+      "bytes": 20033
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/pairing-mutant.run.fif",
+      "sha256": "3f496587add5244a1a24b3946dad0d34e4869dedae28c4559186b28691d40496",
+      "bytes": 230
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/pairing.boc",
+      "sha256": "1ceaf8f4eb851d31630844edefe137fe8467555748e63365081c300be600df8b",
+      "bytes": 591
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/pairing.fif",
+      "sha256": "58533b0149d2a14c1d39c48407b76e11f0ddd43a503ab03810d497a14b629f4a",
+      "bytes": 20156
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/pairing.run.fif",
+      "sha256": "0cddc718db6e9d1bad369ecf9d7dbfa9734bb689c7e3cf3ddd2529dc7477933c",
+      "bytes": 216
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/results.json",
+      "sha256": "823596a2abfd5ae55b05a39182485823b31ae588f818e1a3010e920bb62a2aaa",
+      "bytes": 3032
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/vault-fixture.fif",
+      "sha256": "108a4a342fe240971693af529965160aa236823f187d92fea68497b076c7855d",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/fee_identity/vault-fixture.run.fif",
+      "sha256": "b3f025b2a05b3f70f5dce6f6e5946c79d3990dcfe35ec3195eb53a2b031f3b7a",
+      "bytes": 228
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/module-fixture.boc",
+      "sha256": "b31e38d5e3e427e1fcc69fee75ae5ccaefac52bda2f3662edcc2a2906f959abf",
+      "bytes": 493
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/module-fixture.fif",
+      "sha256": "2646bb500fd3f62f26accdddc8441d491152ff08088ed1ad8fa30df4afd89d45",
+      "bytes": 15786
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/module-fixture.run.fif",
+      "sha256": "ec735434fe7cc65874a6897afc2a2e91006c9db417c9cac0e186dae2e1284d97",
+      "bytes": 218
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/restored.boc",
+      "sha256": "dc25d121080151d7864938f29280041cf51ddaaa75aadae6ec1bb2eca56d5bc3",
+      "bytes": 2323
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/restored.fif",
+      "sha256": "416f88f4cf0ab024e3c2f90c61f42f03a671a75304215e1c273a90dd5560c8cf",
+      "bytes": 60863
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/restored.run.fif",
+      "sha256": "931314a4a4f7933757cb53da214332f3153607bd2adc9646f98f13205337e733",
+      "bytes": 206
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/results.json",
+      "sha256": "1a38ca460b6c6d35772e81ca4435ba2357299bacd1bdaf5d5f30623f4f1716df",
+      "bytes": 406
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/retired-bits-mutant.boc",
+      "sha256": "c9eece10e579167a3a439fb1807191a1fe4ab03bacabdc77ec1f659bb57c9f1c",
+      "bytes": 2335
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/retired-bits-mutant.fif",
+      "sha256": "863f67bdfb8876bd4819d816ba13a71e1d312c8b1f388dde5e90b210689f1380",
+      "bytes": 60731
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/retired-bits-mutant.run.fif",
+      "sha256": "4969f4ecbd697e45339deb85a05a15e469748406c7a2e24cefec495a995bccfa",
+      "bytes": 228
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/retirement-mutant.boc",
+      "sha256": "3c3b221b63b904f578461b3978ab27ff54ca1f245366e5db2a7dbfe30141909a",
+      "bytes": 2317
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/retirement-mutant.fif",
+      "sha256": "277c7ebe09e77011e26c6cfeefa6aceca46d873b1057ac8438461c3b63d58df9",
+      "bytes": 60679
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/retirement-mutant.run.fif",
+      "sha256": "b1ef05b943363ba688a6913babd5db0c700f6774998e7646374dffe1ad3a5344",
+      "bytes": 224
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/vault-fixture.fif",
+      "sha256": "a3e92506ef42b088c6840267914806a63cc31a94c56f7354911757c6433de9f1",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/vault-fixture.run.fif",
+      "sha256": "6ff18628e95203699e507db12c924ed83647ec536b130913d2145ff216563469",
+      "bytes": 216
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/wallet.boc",
+      "sha256": "dc25d121080151d7864938f29280041cf51ddaaa75aadae6ec1bb2eca56d5bc3",
+      "bytes": 2323
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/wallet.fif",
+      "sha256": "416f88f4cf0ab024e3c2f90c61f42f03a671a75304215e1c273a90dd5560c8cf",
+      "bytes": 60863
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/wallet/wallet.run.fif",
+      "sha256": "f417a5133110abb145a3cbec922dbf0be48b5553634fe9ff42752e3d4cd89999",
+      "bytes": 202
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/module.boc",
+      "sha256": "292347203cfabbe2d17b6c4969471404b606d4b13a2d613677fc8c62e0bb4b24",
+      "bytes": 1552
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/module.fif",
+      "sha256": "aa502c94ece9ee0cf8525af1ea8649fb1b3726d933fe56783efe3569036a621a",
+      "bytes": 62338
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/module.run.fif",
+      "sha256": "53aa58e0c030a087ffc08f000cecd85a8cd61e41d1c35d37dd912ade3d780fe9",
+      "bytes": 220
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/restored-module.boc",
+      "sha256": "292347203cfabbe2d17b6c4969471404b606d4b13a2d613677fc8c62e0bb4b24",
+      "bytes": 1552
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/restored-module.fif",
+      "sha256": "aa502c94ece9ee0cf8525af1ea8649fb1b3726d933fe56783efe3569036a621a",
+      "bytes": 62338
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/restored-module.run.fif",
+      "sha256": "df2c5fe3576d533dd97b2022a951381a7b35368a9d4ddb4c5f27e4058b462560",
+      "bytes": 238
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/results.json",
+      "sha256": "728d981bd4d5eee889fe9cc726c2c50df38a5489c6f265f66b87f6dfa11ebef7",
+      "bytes": 3301
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/signature-mutant.boc",
+      "sha256": "53daa8e1dbb2652c79bb2b0750173ca95e40225b8edc9e186a3ba3587d8b6f2b",
+      "bytes": 1514
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/signature-mutant.fif",
+      "sha256": "39010125716b5bbb38d3fe73177d3f79c7dfc67f560af8f2a34354cdca0fbdfb",
+      "bytes": 60679
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/signature-mutant.run.fif",
+      "sha256": "2a66404d23d28e39594972735eb14dd31edbd634d01863c4600ccf8cce74244e",
+      "bytes": 240
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/vault-fixture.fif",
+      "sha256": "eeae4a9ed4019c5c72f94e5087521a238c8ae05e01d4f7693da7345e0cc111fe",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/vault-fixture.run.fif",
+      "sha256": "549d314dbc94621a797936a5835734221060ee9bd462685fcf56bfa3e7fe787c",
+      "bytes": 234
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/wallet.boc",
+      "sha256": "45fdebaf1fcd16fecc086b0951c6a6a6c12e0372b78796299a1ca3598c5ee33b",
+      "bytes": 2323
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/wallet.fif",
+      "sha256": "d1cd028239481aacc3a3f3c910e3d95bb2ee05423b7605dfa7a53c8791ed4c9a",
+      "bytes": 60863
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-pq-only/module_delivery/wallet.run.fif",
+      "sha256": "016d312e47d6060516cadda263faf2e5286da69d74e53c5651c3c967748b64cb",
+      "bytes": 220
+    }
+  ],
+  "checks": [
+    "R2 wallet and module generated assembly excludes CHKSIGN and classical-key helper",
+    "V5R1 frozen bytecode unchanged",
+    "14 existing authentication regression methods passed",
+    "TL-B compilation and Python lint passed"
+  ],
+  "retention": "Local raw artifacts retained through PR review and release acceptance; CI 14 days. Fixture BOCs must not be published as production artifacts."
+}

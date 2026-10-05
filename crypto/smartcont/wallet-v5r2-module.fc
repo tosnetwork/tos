@@ -1,0 +1,99 @@
+;; Dual-root module candidate for the complete R2 wallet. Immutable data and
+;; compiled vault dependency. Fee preparation and POP are separate entry points
+;; still to be integrated; this file implements signed wallet submissions only.
+cell r2module_vault_code();
+#include "pq.fc";
+#include "wallet-v5r2-auth.fc";
+#include "wallet-v5r2-fee-identity.fc";
+cell r2module_code() asm "MYCODE";
+
+() r2module_pair(cell module, cell metadata, cell vault, slice account, int network) impure inline_ref {
+  var (policy, _, _) = r2id_module(module, cell_hash(r2module_code()), cell_hash(module),
+      auth_global_id(), network);
+  if (policy == 1) { auth_policy_require_primary(network, 1); }
+  r2pair_validate(vault, cell_hash(r2module_vault_code()), cell_hash(vault), auth_global_id(),
+      network, account, r2pair_address(cell_hash(module)), metadata);
+}
+
+() recv_external(slice body) impure { throw(1900); }
+() recv_internal(int balance, int value, cell full, slice body) impure {
+  slice ms = full.begin_parse();
+  if (ms~load_uint(4) & 1) { return (); }
+  slice funded_by = ms~load_msg_addr();
+  int root = r2pair_basechain(my_address());
+  if (body.slice_empty?()) { return (); }
+  r2pair_basechain(funded_by);
+  ;; SUB3 is PQ-only; earlier submission/cosignature envelopes are refused.
+  throw_unless(1902, body~load_uint(32) == 0x53554233);
+  cell request = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+  slice ds = r2id_ordinary(get_data());
+  throw_unless(1902, ds~load_uint(8) == 1);
+  throw_unless(auth::wrong_network, ds~load_int(32) == auth_global_id());
+  int network = ds~load_uint(256);
+  throw_unless(1902, ds~load_uint(8) == 1);
+  cell primary_key = ds~load_ref();
+  int rescue_key = ds~load_uint(256);
+  int policy = ds~load_uint(8);
+  ds.end_parse();
+  throw_unless(1902, (policy == 1) | (policy == 2));
+  pq::check_chain_bytes(primary_key, 1312);
+  slice rs = r2id_ordinary(request);
+  throw_unless(1902, rs~load_uint(32) == r2::request);
+  throw_unless(auth::wrong_network, rs~load_int(32) == auth_global_id());
+  throw_unless(auth::wrong_network, rs~load_uint(256) == network);
+  slice account = rs~load_msg_addr();
+  throw_if(auth::wrong_account, r2pair_basechain(account) == root);
+  throw_unless(auth::not_module, rs~load_uint(256) == root);
+  int role = rs~load_uint(8);
+  rs~skip_bits(128); ;; receiver alone owns epoch/nonce state
+  int deadline = rs~load_uint(32);
+  throw_unless(auth::expired, (deadline > now()) & (deadline <= now() + 3600));
+  int kind = rs~load_uint(8);
+  cell payload = rs~load_ref();
+  rs.end_parse();
+  slice ps = r2id_ordinary(payload);
+  throw_unless(r2::bad_payload, ps~load_uint(32) == r2_payload_tag(kind));
+  cell digest = begin_cell().store_uint(auth_request_hash(request), 256).end_cell();
+  if (role == r2::primary) {
+    throw_unless(r2::requires_rescue, policy == 1);
+    throw_unless(r2::bad_kind, kind == r2::execute);
+    auth_policy_require_primary(network, 1);
+    cell context = begin_cell().store_uint(0x544f532d415554482d56322d4d4c2d4453412d34342d7631, 192).end_cell();
+    throw_unless(auth::bad_signature, pq_check_suite(digest, context, signature, primary_key, 1));
+  } else {
+    throw_unless(1901, role == r2::rescue);
+    cell context = begin_cell().store_uint(0x544f532d415554482d534c482d4453412d534841322d313238532d7631, 232).end_cell();
+    cell key = begin_cell().store_uint(rescue_key, 256).end_cell();
+    throw_unless(auth::bad_signature, pq_check_suite(digest, context, signature, key, 3));
+  }
+  if (kind == r2::execute) {
+    ps~load_ref(); ;; full action policy is enforced by the receiving wallet.
+  } elseif (kind == r2::lock) {
+    throw_unless(r2::bad_payload, ps~load_uint(8) == 1);
+  } elseif (kind == r2::configure) {
+    int mode = ps~load_uint(2);
+    throw_unless(auth::bad_mode, mode == 2);
+    cell replacement = ps~load_maybe_ref();
+    ifnot (cell_null?(replacement)) {
+      slice fs = r2id_ordinary(replacement);
+      cell metadata = fs~load_ref();
+      cell vault = fs~load_ref();
+      fs.end_parse();
+      cell self = begin_cell().store_uint(6, 5).store_ref(r2module_code()).store_ref(get_data()).end_cell();
+      r2module_pair(self, metadata, vault, account, network);
+    }
+  } else {
+    cell module = ps~load_ref();
+    cell metadata = ps~load_ref();
+    cell vault = ps~load_ref();
+    r2module_pair(module, metadata, vault, account, network);
+  }
+  ps.end_parse();
+  raw_reserve(max(0, balance - value), 2);
+  cell relay = begin_cell().store_uint(r2::relay, 32).store_ref(request)
+      .store_slice(funded_by).end_cell();
+  send_raw_message(begin_cell().store_uint(0x18, 6).store_slice(account).store_coins(0)
+      .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1).store_ref(relay).end_cell(), 64);
+}

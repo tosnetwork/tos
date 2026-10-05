@@ -31,7 +31,7 @@
   state.end_parse();
   int vault = fee.begin_parse().preload_uint(256);
   var (role, kind, payload) = r2_validate_request(mode, root, network, daily, policy,
-      retired, epoch, primary_nonce, rescue_nonce, key, vault, sender, body);
+      retired, epoch, primary_nonce, rescue_nonce, vault, sender, body);
   slice ps = payload.begin_parse().skip_bits(32);
   cell actions = null();
   if (kind == r2::execute) {
@@ -44,8 +44,7 @@
   } elseif (kind == r2::configure) {
     mode = ps~load_uint(2);
     ps.end_parse();
-    throw_unless(auth::bad_mode, (mode == 2) | (mode == 3));
-    if (mode == 3) { auth_require_strong_classical_key(key); }
+    throw_unless(auth::bad_mode, mode == 2);
   } else {
     ;; Counter-only migration fixture: no root changes or successor claims.
     ps.end_parse();

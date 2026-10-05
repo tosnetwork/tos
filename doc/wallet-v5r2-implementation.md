@@ -15,15 +15,15 @@ The shared `wallet-v5-action-list.fc` is extracted directly from that implementa
 the extraction produces exactly the same V5R1 code hash and frozen SDK BOC.
 
 The R2 implementation must use that shared full action engine. It must not replace
-OutList with an ad-hoc one-message operation, accept arbitrary send modes, omit
-hybrid cosignatures, or substitute a fee credential for wallet authority.
+OutList with an ad-hoc one-message operation, accept arbitrary send modes, add
+classical authorization, or substitute a fee credential for wallet authority.
 `rescue-v5r2-account.fc` remains a historical research receiver; its gas/lock results
 are not acceptance of a complete V5R2 wallet. The complete receiver candidate has a separate
 implementation and test boundary. No default template or SDK code is switched here.
 
 Equal strictness does not mean restoring legacy bypasses that the accepted R2
 security design deliberately removes. V5R1 is retained unchanged. V5R2 starts in
-strict mode 2 or 3 and rejects legacy v1 AUTH, legacy signed messages and unbound
+PQ-only mode 2 and rejects legacy v1 AUTH, legacy signed messages and unbound
 extension authority. Ordinary account fields/getters and complete V5 transfer
 behavior remain part of the R2 implementation, subject to those explicit
 superseding authentication rules. Missing/truncated R2 AUTH never selects legacy.
@@ -35,7 +35,7 @@ superseding authentication rules. Missing/truncated R2 AUTH never selects legacy
 | Transfer payload | Full linked OutList; 0–255 send actions; exact cell shape | Use the shared validator and real action phase for both roles |
 | Strict send policy | Every send has +2; reject bits 2/3/5 and combined 64+128 | No weaker alternate execute or recovery transfer path |
 | Code/lifetime | No raw SETCODE, destruction, malformed action tail or arbitrary action | Lock/migration cannot reopen authority by deleting/redeploying the wallet |
-| Hybrid mode | Ed25519 AND installed module; exact-request cosignature; strong classical key | Same requirement for ordinary mode-3 execute/configure; narrowly specified SLH recovery exceptions only |
+| Authorization | Preserve strict authenticated authority and fail-closed behavior | Owner v6 supersedes classical compatibility: ML-DSA/SLH only, mode 2 only, no Ed25519 or cosignature fields |
 | Replay | Bound account, network, expiry, epoch, nonce; checked counters | Bound root and role; separate primary/rescue nonces; epoch barrier on authority change |
 | State changes | Authentication precedes state/actions; rejection does not mutate authority | Validate complete successor tuple before installation; no partial fee-route/root update |
 | Seqno/getters | Ordinary wallet fields and observable state | Saturated ordinary seqno cannot block narrow rescue; explicit migration reset only |
@@ -48,7 +48,7 @@ superseding authentication rules. Missing/truncated R2 AUTH never selects legacy
 The full R2 state layout, codecs, initialization DAG, module relay and fee route
 must be implemented together. In particular, genesis wallet data contains fee
 metadata rather than a circular vault address; the runtime cache is derived and
-validated. Policy, retirement, hybrid behavior and canonical witnesses are not
+validated. Policy, retirement, PQ-only authorization and canonical witnesses are not
 optional follow-up hardening of a supposedly complete wallet.
 
 The original policy distinction is retained: RESCUE_READY permits the daily key
@@ -62,7 +62,7 @@ wallet authority. Changing that signature policy is a separate protocol change.
 2. Implement the full R2 receiver on this baseline and port equivalent behavior
    tests through the v2 message codec, including every send-mode byte and action
    list boundaries. A passing test of the shared engine alone is insufficient.
-3. Implement strict initialization, global/local retirement, ordinary hybrid mode,
+3. Implement strict initialization, global/local retirement, PQ-only admission,
    canonical successor/fee-route validation and the full recovery handoff together.
 4. Exercise real primary/SLH signatures and every transaction hop in both VMs;
    verify recipient state, failed actions, bounces, queued old relays and replay.
@@ -108,9 +108,8 @@ need integration and end-to-end evidence.
 `wallet-v5r2-auth.fc` implements read-only AUTH v2 receiver validation and checked
 counter transitions. It binds the installed sender, account, network, role,
 epoch, nonce, expiry and operation; checks retirement again at receipt; forbids
-primary use of the rescue fee route; and requires an exact-request Ed25519
-cosignature for ordinary mode-3 operations. Narrow lock/migration recovery uses
-a canonical absent cosignature. The caller must validate its installed identity
+primary use of the rescue fee route. The PQ-only AU3B relay has no classical
+cosignature field; AU2B and extra fields are rejected. The caller must validate its installed identity
 and the complete operation payload before committing state or actions.
 
 `wallet-v5r2-identity.fc` validates canonical module StateInit witnesses against
@@ -120,7 +119,7 @@ DAG traversal to 1024 reference visits and depth 128. These limits still require
 validation against the final compiled dependency graph and release gas pricing.
 The expected code must never be obtained from the untrusted witness itself.
 
-Native action-phase component tests cover 333 receiver cases and 29 identity
+The pre-v6 native action-phase component tests covered 333 receiver cases and 29 identity
 cases, with four and five guard-deletion mutation controls respectively. The
 receiver test uses a fixture entry point: migration exercises counters only,
 not successor installation. The identity test pins research module code as a
@@ -139,10 +138,10 @@ opt into decoding level-zero library-reference cells without resolving them.
 
 ## Strict complete-wallet storage candidate
 
-`wallet-v5r2-state.fc` implements the `AuthStateV3` storage candidate in
+`wallet-v5r2-state.fc` implements the `AuthStateV4` storage candidate in
 `wallet-v5r2-rescue.tlb`. The ordinary V5 fields remain present; signature authority
-is disabled and the extension dictionary must be empty. Modes 0/1, missing AUTH,
-trailing fields and weak mode-3 classical keys fail admission. The installed module
+is disabled and the extension dictionary must be empty. Modes 0/1/3, missing AUTH,
+trailing fields and nonzero inert classical-key fields fail admission. The installed module
 StateInit is validated against the caller's compiled dependency and expected
 network. Root address, policy and keys are derived from that witness rather than
 separately writable assertions.
@@ -198,8 +197,8 @@ module code hash and vault code; no mutable allowlist or witness-selected code
 is used. There is not yet a release dependency bundle. The test compiles the
 receiver with a research module and a non-paying vault stub as explicit fixtures.
 
-Execute processes the complete V5 OutList. Configure uses ordinary hybrid
-cosigning and an optional validated fee replacement. Lock preserves mode and
+Execute processes the complete V5 OutList. Configure uses SLH authorization
+and an optional validated fee replacement. Lock preserves mode and
 sets retirement irreversibly. Migration validates the complete successor module,
 metadata and vault before writing any state, enters mode 2, advances epoch,
 resets nonces/seqno and preserves all retirement bits. READY successors are
@@ -210,7 +209,7 @@ now carry the actual witnesses so identity assertions cannot diverge from them.
 The receiver exposes ordinary V5 getters plus an R2 AUTH tuple getter and refuses
 external legacy signatures. Empty internal transfers are deposits only. The
 native integration runner covers all 256 send modes, action counts 0/1/254/255/256,
-hybrid configure, lock, saturated migration, old-module rejection, successor
+PQ-only configure, lock, saturated migration, old-module rejection, successor
 rescue execution and failed successor pairing without partial installation.
 Two mutations cover successor retirement and retirement-bit preservation.
 
@@ -223,3 +222,30 @@ never be published as a production code artifact.
 ```sh
 python test/wallet-v5r2/test_wallet.py --output /path/to/r2-wallet
 ```
+
+## Owner v6 correction: PQ-only, 2026-10-05
+
+The authoritative owner clarification in memo commit `ab136478` supersedes all
+previous R2 hybrid behavior and evidence. Complete V5 capabilities do not imply
+Ed25519 compatibility. R2 accepts mode 2 only, requires the legacy-shaped public-key
+field to be zero, and uses storage version 4. SUB3 submits a PQ signature without
+any classical field; AU3B relays the request and funder without a cosignature.
+AU2B and SUB1/SUB2 do not select the new parsers. The signed AUTH request/domain
+remains unchanged; the installed module code/address binds the revised protocol.
+V5R1 and its frozen bytecode remain unchanged.
+
+`wallet-v5r2-common.fc` contains only error/domain primitives. R2 no longer includes
+legacy AUTH or classical verification helpers; tests assert that generated wallet
+and module assembly contain no CHKSIGN instruction or strong-classical-key helper.
+Historical evidence files retain their original source hashes and scope. They are
+not acceptance of the current PQ-only ABI; fresh evidence is recorded separately.
+
+`wallet-v5r2-module.fc` now verifies actual ML-DSA/SLH submissions, rechecks global
+retirement for primary authorization, validates migration/configuration witnesses
+against MYCODE and its compiled vault dependency, and reserves its earlier balance
+before relaying only incoming funds. Real native transactions exercise primary,
+rescue, lock and migration through the actual outgoing module message into the
+complete wallet, plus invalid primary signature and retired-primary refusal. A
+signature-check deletion control must turn rejection into an authorization relay.
+This still uses a fee-vault stub: fee origination, POP, preparation, actual recipient
+execution, both-VM delivery and production acceptance remain outstanding.
