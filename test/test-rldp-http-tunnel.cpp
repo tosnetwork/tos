@@ -208,13 +208,18 @@ class FakeRldp : public tos::adnl::AdnlSenderInterface {
     held_count_ = static_cast<int>(held_.size());
   }
 
-  void reply_held(td::BufferSlice data, bool last) {
+  void reply_held(td::BufferSlice data, bool last, td::Promise<td::Unit> done) {
     CHECK(held_.size() == 1);
     auto promise = std::move(held_.front().second);
     held_.clear();
     held_count_ = 0;
     promise.set_result(tos::create_serialize_tl_object<tos::tos_api::http_payloadPart>(
         std::move(data), std::vector<tos::tl_object_ptr<tos::tos_api::http_header>>(), last));
+    done.set_value(td::Unit());
+  }
+
+  void get_held_count(td::Promise<int> result) {
+    result.set_value(static_cast<int>(held_.size()));
   }
 
  private:
@@ -551,10 +556,17 @@ class TunnelFlowHarness {
   }
   void reply(std::size_t bytes, bool last = false) {
     CHECK(held_ == 1);
+    bool done = false;
     scheduler_.run_in_context([&] {
-      td::actor::send_closure(transport_, &FakeRldp::reply_held, td::BufferSlice(std::string(bytes, 'p')), last);
+      td::actor::send_closure(transport_, &FakeRldp::reply_held, td::BufferSlice(std::string(bytes, 'p')), last,
+                              [&](td::Result<td::Unit> result) {
+                                result.ensure();
+                                done = true;
+                              });
     });
-    pump();
+    // A scheduler pass need not consume this reply. Wait before inspecting the
+    // tunnel or replying again, otherwise the same pending query can be used twice.
+    until([&] { return done; });
   }
   void query(td::int32 bytes) {
     CHECK(!waiting_);
@@ -598,8 +610,15 @@ class TunnelFlowHarness {
     CHECK(::shutdown(backend_, SHUT_WR) == 0);
     pump();
   }
-  int held() const {
-    return held_.load();
+  int held() {
+    int count = -1;
+    scheduler_.run_in_context([&] {
+      td::actor::send_closure(transport_, &FakeRldp::get_held_count,
+                              [&](td::Result<int> result) { count = result.move_as_ok(); });
+    });
+    // Observe requests already sent by the tunnel, not a stale atomic snapshot.
+    until([&] { return count >= 0; });
+    return count;
   }
   bool closed() const {
     return registered_ == 0;
@@ -642,9 +661,15 @@ TEST(RldpHttpTunnel, a_backend_that_stops_reading_stops_payload_fetches) {
   TunnelFlowHarness h;
   const auto limit = RldpTcpTunnel::max_buffer_bytes;
   std::size_t sent = 0;
-  for (int i = 0; i < 10 && h.held() != 0; i++) {
+  for (int i = 0; i < 10; i++) {
     h.reply(limit);
     sent += limit;
+    // Socket capacity varies by platform. Each reply must either stall in the
+    // output buffer or drain and cause the tunnel to request another chunk.
+    h.until([&] { return h.buffered().second != 0 || h.held() == 1; });
+    if (h.buffered().second != 0) {
+      break;
+    }
   }
   ASSERT_TRUE(h.buffered().second > 0);
   ASSERT_TRUE(h.buffered().second <= limit);
