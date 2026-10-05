@@ -1115,27 +1115,27 @@ td::Status WalletIndexDb::for_each_incomplete_block(std::function<td::Status(con
   // for_each_with_prefix (which BOC-deserializes every value).
   char begin[1] = {static_cast<char>(kIncompleteBlockTag)};
   char end[1] = {static_cast<char>(kIncompleteBlockTag + 1)};
-  return db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1},
-                                [&](td::Slice key, td::Slice value) -> td::Status {
-    if (key.size() == kLegacySeqnoOnlyKeyLen) {
-      // A pre-full-BlockIdExt marker: not enough information here (no
-      // shard, no hash) to safely resolve to one specific block, so it
-      // can't be auto-recovered. Surface it loudly rather than silently
-      // dropping it — an operator needs to check whether this seqno's
-      // block actually has incomplete jetton/NFT data.
-      LOG(ERROR) << "wc0-index: found a legacy seqno-only incomplete-block marker (seqno="
-                 << get_u64_be(key.data() + 1) << ") predating full-BlockIdExt markers; cannot"
-                 << " auto-recover it — verify this block's index data manually, then delete the"
-                 << " raw key if it's stale";
-      return td::Status::OK();
-    }
-    if (key.size() != kIncompleteBlockKeyLen || value.size() != kIncompleteBlockValueLen) {
-      LOG(WARNING) << "wc0-index: skipping malformed incomplete-block entry (key " << key.size()
-                   << "B, value " << value.size() << "B)";
-      return td::Status::OK();
-    }
-    return cb(parse_block_key(key));
-  });
+  return db_->for_each_in_range(
+      td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice key, td::Slice value) -> td::Status {
+        if (key.size() == kLegacySeqnoOnlyKeyLen) {
+          // A pre-full-BlockIdExt marker: not enough information here (no
+          // shard, no hash) to safely resolve to one specific block, so it
+          // can't be auto-recovered. Surface it loudly rather than silently
+          // dropping it — an operator needs to check whether this seqno's
+          // block actually has incomplete jetton/NFT data.
+          LOG(ERROR) << "wc0-index: found a legacy seqno-only incomplete-block marker (seqno="
+                     << get_u64_be(key.data() + 1) << ") predating full-BlockIdExt markers; cannot"
+                     << " auto-recover it — verify this block's index data manually, then delete the"
+                     << " raw key if it's stale";
+          return td::Status::OK();
+        }
+        if (key.size() != kIncompleteBlockKeyLen || value.size() != kIncompleteBlockValueLen) {
+          LOG(WARNING) << "wc0-index: skipping malformed incomplete-block entry (key " << key.size() << "B, value "
+                       << value.size() << "B)";
+          return td::Status::OK();
+        }
+        return cb(parse_block_key(key));
+      });
 }
 
 // --- deferred token candidates ---
