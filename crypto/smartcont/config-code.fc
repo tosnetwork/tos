@@ -7,6 +7,7 @@
 #include "pq-bytes.fc";
 #include "pq-validator.fc";
 #include "pq-launch-limits.fc";
+#include "auth-policy.fc";
 
 int validator_set_counts_fit?(cell vset, int max_validators, int max_main_validators,
                               int min_validators) inline_ref {
@@ -311,6 +312,20 @@ int valid_controller_policy?(cell value) inline_ref {
   ;; proposal pending and every later vote on it aborting.
   if (param_id == config::appoint_administrator_param) {
     return (cfg_dict, false);
+  }
+  if ((param_id == 9) | (param_id == 10)) {
+    ifnot (cell_null?(cfg_dict.idict_get_ref(32, auth_policy::parameter))) {
+      ifnot (auth_policy_membership_valid(param_val)) {
+        return (cfg_dict, false);
+      }
+    }
+  }
+  if (param_id == auth_policy::parameter) {
+    ifnot (auth_policy_transition_valid(cfg_dict.idict_get_ref(32, param_id), param_val)
+      & auth_policy_membership_valid(cfg_dict.idict_get_ref(32, 9))
+      & auth_policy_membership_valid(cfg_dict.idict_get_ref(32, 10))) {
+      return (cfg_dict, false);
+    }
   }
   if (param_id == config::validator_controller_policy) {
     ifnot (valid_controller_policy?(param_val)) {

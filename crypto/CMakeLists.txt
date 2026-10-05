@@ -204,6 +204,7 @@ set(BLOCK_SOURCE
   block/Binlog.h
   block/Binlog.cpp
   block/block.cpp
+  block/auth-policy.cpp
   block/block-db.cpp
   block/block-parse.cpp
   block/check-proof.cpp
@@ -548,7 +549,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   endfunction()
 
   GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config
-    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/auth-policy.fc smartcont/pq-launch-limits.fc)
   GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
   GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
   GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)

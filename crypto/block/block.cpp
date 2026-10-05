@@ -20,6 +20,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/auth-policy.h"
 #include "block/mc-config.h"
 #include "block/workchain-execution-dispatch.h"
 #include "common/bigexp.h"
@@ -1901,6 +1902,9 @@ bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool c
       return false;
     }
   }
+  if (validate_auth_policy_config(cell).is_error()) {
+    return false;
+  }
   vm::Dictionary dict{std::move(cell), 32};
   if (!dict.check_for_each(std::bind(check_one_config_param, _1, _2, addr.cbits(), relax_par0))) {
     return false;
@@ -1920,6 +1924,7 @@ td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new
     return td::Status::Error("configuration root is missing");
   }
   try {
+    TRY_STATUS(validate_auth_policy_transition(old_cfg_root, new_cfg_root));
     vm::Dictionary old_dict{std::move(old_cfg_root), 32};
     vm::Dictionary new_dict{std::move(new_cfg_root), 32};
     TRY_RESULT_PREFIX(old_workchains, Config::unpack_workchain_list(old_dict.lookup_ref(td::BitArray<32>{12})),

@@ -1,0 +1,134 @@
+{
+  "base_commit": "56e52b914ac9887310458094a35fb95d7954d171",
+  "scope": "AUTH policy governance installer, shared PRIMARY reader, native config validity and transition, ConfigParam48 schema; not full V5R2 or release approval",
+  "transaction_cases_passed": 51,
+  "func_mutations_killed": {
+    "bootstrap_membership": "expected exit 1999, got 0: {'exit': 0, 'gas': 8856, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+    "clear_bits": "expected exit 1999, got 0: {'exit': 0, 'gas': 11828, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+    "remove_deadline": "expected exit 1999, got 0: {'exit': 0, 'gas': 12760, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+    "sequence": "expected exit 1999, got 0: {'exit': 0, 'gas': 11841, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+    "primary_gate": "expected exit 1813, got 0: {'exit': 0, 'gas': 3443, 'gas_limit': 1000000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}"
+  },
+  "native_tests_passed": 17,
+  "native_mutations_killed": {
+    "retired": {
+      "exit": 1,
+      "target_test": "Test_AuthPolicy_absorbing_retirement_and_sequence",
+      "output_sha256": "a8baddeb21264213bb6b66cfcb77e8937018329f5db8c8af01ab38680e71bda3"
+    },
+    "deadline": {
+      "exit": 1,
+      "target_test": "Test_AuthPolicy_deadlines_cannot_disappear_or_move_later",
+      "output_sha256": "96ff5d090799d9e844d9ae937ec4dece5461e4142bd95c6d45a31fd6da1567d4"
+    },
+    "membership": {
+      "exit": 1,
+      "target_test": "Test_AuthPolicy_mandatory_version_and_membership",
+      "output_sha256": "3a4de90c4a20c8731d783be952cb118ae79db32f1415d1f80a1e6a04b0e2152f"
+    }
+  },
+  "schema_control": "old schema builds successfully and rejects the candidate at schema_admits_the_frozen_record; new schema accepts it",
+  "checks": {
+    "native_release_build": 0,
+    "config_contract_build": 0,
+    "schema_compile": 0,
+    "ruff": 0,
+    "remote_ci": "not run"
+  },
+  "commands": [
+    "python test/wallet-v5r2/test_auth_policy.py --output <artifact-directory>",
+    "cmake --build build --target test-config-transition emulator gen_fif_smartcont_auto_config_code -j4",
+    "build/test-config-transition",
+    "python test/wallet-v5r2/policy_native_mutations.py --build build --output <artifact-directory>/native-mutations",
+    "build/crypto/tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb"
+  ],
+  "source_sha256": {
+    "crypto/block/auth-policy.cpp": "722acf336fd42298b98dd8e9f3771f50425ca62ae20260897755c9f1ce04881a",
+    "crypto/block/auth-policy.h": "3bb87b2764bfea3877fcc2eefbcd1d81e7ca535ab7127efd224e13f8e1a34ae7",
+    "crypto/block/block.cpp": "db642d2dacdbbb90f9cd09ab0bafbbcb90b8cc393774cfaaf1b452d28c00edeb",
+    "crypto/block/block.h": "058fd0a25adddaf5d3bb2920f464b3288efd6eac9d6fa556b1530025cac4675a",
+    "crypto/block/block.tlb": "b6885c1cedd4cb8d86433634488578825b2b7f9003a9b625bfccb2fbf0d8842a",
+    "crypto/smartcont/auth-policy.fc": "8cbe92ade5089e39785292cdc7643246c6e17a4001773366e7d5c3f260769e10",
+    "crypto/smartcont/config-code.fc": "938da7060bce81a1b97cb588cfff818653a4356740d19e7404b47eb7ece6169e",
+    "crypto/smartcont/wallet-v5r2-rescue.tlb": "b375a43151580e4025bb7a7f9b8558412da5f71efe0da5f4e393132ccc9bb2ef",
+    "crypto/CMakeLists.txt": "5b85602d263a939584fff90d742b19dd606bac85ac4f973de06595da9de727db",
+    "test/test-config-transition.cpp": "b412ea636c3e0a737333b58c406317ace08c1700933bdde7b0e9be9eb0c708a4",
+    "test/wallet-v5r2/test_auth_policy.py": "eb49ce9b15bc8e3c6a299b2567bdc37fd34c04a39309fa38454c505922e4101b",
+    "test/wallet-v5r2/policy_native_mutations.py": "62b8cc95d3af576d5380bddcb3d3e45a52b6b60611680aa0f4c3563418651994",
+    ".github/workflows/auth-extension-validation.yml": "86c83e5ddfe41d5ef217e8e68a3a44fcdd9a54d8647a76e6648c709f4a24c5a3"
+  },
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/results.json",
+      "sha256": "b3cfea073017f201cab54c385eebc884d913eb95daf8bdd528fb73f9bdf1b0e9",
+      "bytes": 10990,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/transactions.log",
+      "sha256": "8bfe7c1111feefb6e58be9a8fa2fe661f3337e2bcd00345ea9b846f5fb301972",
+      "bytes": 1149,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/native-build.log",
+      "sha256": "54860d50addbda03ae90d67baf3a2086afd1aad0e2da3cd4061e0e0ed4406a31",
+      "bytes": 9293,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/config-contract-build.log",
+      "sha256": "9d98dfbdbccdb575fb269c6e9e7a66a637ba680eb34b7702448fd960dd1eff5b",
+      "bytes": 630,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/schema-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/schema-red.log",
+      "sha256": "c725750272df5d8f63458ac3c52039fc8a856268225d2e1e2fbfb9a32ce4af59",
+      "bytes": 12306,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/native-mutations/results.json",
+      "sha256": "d41a1e097d833386a62fedcaef371e1d33382656877d90238b842ada55f0ae21",
+      "bytes": 598,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/native-mutations/restored.log",
+      "sha256": "ce683dcd428a20ed5b610e5e6589a1c30574b3241940a3f78741cc2f339c7ae8",
+      "bytes": 9355,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/native-mutations/retired.log",
+      "sha256": "a8baddeb21264213bb6b66cfcb77e8937018329f5db8c8af01ab38680e71bda3",
+      "bytes": 10443,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/native-mutations/deadline.log",
+      "sha256": "96ff5d090799d9e844d9ae937ec4dece5461e4142bd95c6d45a31fd6da1567d4",
+      "bytes": 12177,
+      "retention": "90 days, local machine access required"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-auth-policy/native-mutations/membership.log",
+      "sha256": "3a4de90c4a20c8731d783be952cb118ae79db32f1415d1f80a1e6a04b0e2152f",
+      "bytes": 8739,
+      "retention": "90 days, local machine access required"
+    }
+  ],
+  "remaining": [
+    "Genesis construction and trusted-state admission",
+    "Full R2 module and receiver integration including current-policy recheck of queued relays",
+    "Shard propagation evidence",
+    "Complete wallet recovery, clients, release benchmarks and independent review"
+  ]
+}

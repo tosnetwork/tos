@@ -718,6 +718,7 @@ bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool c
 bool config_params_present(vm::Dictionary& dict, Ref<vm::Cell> param_dict_root);
 // Checks the rules that constrain how a configuration may change from one
 // key block to the next (currently: workchain execution descriptors in
+// ConfigParam 48 retirement is mandatory at version 17 and irreversible;
 // ConfigParam 12 cannot change their execution key, version, vm_mode,
 // address-length shape, or zerostate hashes, and cannot disappear).
 // Both the collator and the validator must consult this predicate so that a

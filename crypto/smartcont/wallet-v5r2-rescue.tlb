@@ -128,12 +128,8 @@ fee_prepare_v1#50524550 global_id:int32 network_tag:bits256
 fee_prepare_submit_v1#50524553 prepare:^FeePrepare signature:^Cell = InternalMsgBody; // "PREPS"
 
 // ---- Global AUTH retirement policy (mandatory, monotonic)
-auth_policy_v1#a1 network_tag:bits256 policy_sequence:uint64
-  retired:uint16                                // absorbing bitset of daily suites
-  retire_at:(HashmapE 8 uint32)                 // suite -> unixtime; may move earlier only
-  policy_spec_hash:bits256
-  = AuthPolicy;
-// Proposed: _ AuthPolicy = ConfigParam 48;  (free on main at the R0a baseline)
+// AuthPolicy and ConfigParam 48 are defined in crypto/block/block.tlb.
+// See doc/auth-policy-v1.md for the frozen profile and monotonic rules.
 
 // ---- Separate experimental version-17 contextual vault; not the layouts above.
 // Header bytes are the fixed 17-byte domain "TOS-RESCUE-FEE-v1", then these fields.

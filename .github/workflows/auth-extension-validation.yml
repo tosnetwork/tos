@@ -5,6 +5,10 @@ on:
     paths:
       - 'crypto/smartcont/**'
       - 'crypto/CMakeLists.txt'
+      - 'crypto/block/auth-policy.*'
+      - 'crypto/block/block.cpp'
+      - 'crypto/block/block.tlb'
+      - 'test/test-config-transition.cpp'
       - 'tosctl/src/node-control/contracts/**'
       - 'sdk/js/packages/wallets/src/codes.ts'
       - 'test/auth-extensions/**'
@@ -31,7 +35,7 @@ jobs:
       - name: Configure and build native contract tools
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift tol emulator -j2
+          cmake --build build --target func fift tol emulator test-config-transition -j2
       - name: Install deterministic-signature test dependency
         run: python3 -m pip install cryptography==46.0.4
       - name: Native action-phase authentication tests and mutation checks
@@ -45,10 +49,21 @@ jobs:
           python3 test/auth-extensions/test_auth.py
           python3 test/auth-extensions/mutations.py
           python3 test/wallet-v5r2/test_v5r1_action_baseline.py --output "$RUNNER_TEMP/v5r1-baseline"
+          python3 test/wallet-v5r2/test_auth_policy.py --output "$RUNNER_TEMP/auth-policy"
+          build/test-config-transition
+          python3 test/wallet-v5r2/policy_native_mutations.py --build build --output "$RUNNER_TEMP/auth-policy-native"
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: v5r1-action-baseline
           path: ${{ runner.temp }}/v5r1-baseline/results.json
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: auth-policy-validation
+          path: |
+            ${{ runner.temp }}/auth-policy/results.json
+            ${{ runner.temp }}/auth-policy-native/
           retention-days: 14
