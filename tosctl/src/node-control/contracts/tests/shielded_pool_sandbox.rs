@@ -35,7 +35,7 @@ use tos_sandbox::{Blockchain, MessageBuilder, SendResult, compile_func_with_stdl
 mod shielded_pool_library;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 const DEPTH: usize = 12;
 const ARITY: usize = 7;
 
@@ -372,7 +372,7 @@ impl Pool {
     /// different contract.
     fn deploy_with(denominations: &[u64]) -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         bc.set_workchain(0);
         let payer = bc.treasury("depositor", 100_000 * TOS).expect("treasury");
         let code = compile_func_with_stdlib(&shielded_pool_library::pool_sources())

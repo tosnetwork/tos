@@ -27,7 +27,7 @@ use chain_block::{tos_method_id, Cell, MsgAddressInt, Serializable, StateInit};
 use tos_sandbox::{compile_func, Blockchain, MessageBuilder};
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 
 /// An instruction, and the price it already carries if it has one.
 struct Subject {

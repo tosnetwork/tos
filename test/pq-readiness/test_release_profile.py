@@ -13,12 +13,11 @@ different ceiling from the same source is a second answer to "what does this
 binary implement", and the activation evidence then has to carry which one was
 built. One source commit, one ceiling.
 
-With more than one gated instruction the rule is no longer "the two numbers are
-equal". Each instruction keeps the minimum it shipped with -- moving an older
-gate forward would retire an instruction a running network may already rely on
--- so what must hold is that the ceiling is exactly the highest of them. Below
-that, the shipped tools cannot reach an instruction this build implements;
-above it, the binary claims a version it has nothing to show for.
+The prelaunch instruction gates share the version-16 activation boundary. The
+ceiling must equal the highest gate. Below that, the shipped tools cannot reach
+an instruction this build implements; above it, the binary claims a version it
+has nothing to show for. This source profile requires a fresh development
+genesis rather than reinterpreting execution history from earlier profiles.
 """
 
 import os
@@ -39,13 +38,13 @@ int main() {
 }
 """
 
-# Every version-gated instruction this binary implements, by the minimum it
-# shipped with. Adding one here is how a new gate joins the invariant below.
+# Every version-gated instruction this binary implements, with independently
+# fixed expected minima. Adding one here joins the invariant below.
 GATES = {
     "PQCHECKSIG_MLDSA44": 16,
-    "POSEIDON2_PERM8/POSEIDON2_HASH7": 17,
-    "POSEIDON2_PATH7": 18,
-    "PQCHECKSIG_FALCON512_PADDED": 19,
+    "POSEIDON2_PERM8/POSEIDON2_HASH7": 16,
+    "POSEIDON2_PATH7": 16,
+    "PQCHECKSIG_FALCON512_PADDED": 16,
 }
 
 

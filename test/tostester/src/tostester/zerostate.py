@@ -66,7 +66,7 @@ class NetworkConfig:
     global_id: int = 3
     monitor_min_split: int = 0
     split: int = 0
-    global_version: int = 18
+    global_version: int = 16
     shard_validators: int = 1  # DEV-SPECIFIC: single-validator bootstrap rehearsal
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
@@ -554,8 +554,8 @@ def create_zerostate(
             f"shard validator count {config.shard_validators} is outside the enforced launch "
             f"range 1..{MAX_SHARD_COMMITTEE}"
         )
-    if pq_validators and config.global_version < 18:
-        raise ValueError("PQ genesis requires global version 18 or newer")
+    if pq_validators and config.global_version < 16:
+        raise ValueError("PQ genesis requires global version 16 or newer")
     if pq_validators and validator_keys:
         raise ValueError(
             "a bootstrap validator set cannot mix classical and post-quantum descriptors"

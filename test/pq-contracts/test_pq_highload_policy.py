@@ -22,7 +22,7 @@ import test_pq_highload as wallet
 Cell = wallet.Cell
 pqtest = wallet.pqtest
 native = wallet.native
-VERSIONS = (16, 18)
+VERSIONS = (16,)
 EXTRA_BUDGET = 8
 REPORT = {}
 

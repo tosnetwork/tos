@@ -278,7 +278,7 @@ async def prepare(args):
     if (data / "testnet").exists():
         raise RuntimeError("existing network; use setup-testnet.sh --clean to reinitialize")
     async with Network(Install(args.build, REPO), data / "testnet", base_port=2000) as network:
-        network.config.global_version = 18
+        network.config.global_version = 16
         network.config.deployment_fee_schedule = True
         network.config.shard_validators = 4
         rotating = args.rotate
@@ -423,7 +423,7 @@ async def prepare(args):
                 "validators": VALIDATOR_COUNT,
                 "observers": OBSERVER_COUNT,
                 "global_id": 3,
-                "global_version": 18,
+                "global_version": 16,
                 "genesis_wallet_address": zs.main_wallet_address.to_str(is_user_friendly=False),
                 "zerostate_root": zs.masterchain.root_hash.hex(),
                 "zerostate_file": zs.masterchain.file_hash.hex(),
@@ -502,8 +502,8 @@ async def wait_network(args):
                 ]
             )
             version_cell = Cell.one_from_boc(base64.b64decode(version["config"]["bytes"]))
-            if ConfigParam8.deserialize(version_cell.begin_parse()).version != 18:
-                raise RuntimeError("live ConfigParam8 version must be 18")
+            if ConfigParam8.deserialize(version_cell.begin_parse()).version != 16:
+                raise RuntimeError("live ConfigParam8 version must be 16")
             validator_cell = Cell.one_from_boc(base64.b64decode(validators["config"]["bytes"]))
             decoded = decode_validator_set(validator_cell)
             if any(n.get("role") == "candidate" for n in ports):
@@ -525,7 +525,7 @@ async def wait_network(args):
                 "block_id": headers[0]["id"],
                 "nodes": len(ports),
                 "observers": len(observer_ports),
-                "global_version": 18,
+                "global_version": 16,
                 "pq_validators": decoded,
             }
         except (OSError, RuntimeError, KeyError, ValueError) as exc:

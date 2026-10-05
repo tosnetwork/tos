@@ -33,8 +33,8 @@
 ;;   140 valid_until is already in the past
 ;;   141 valid_until is beyond the one-hour window
 ;;
-;; Requires domains.fc and notes.fc, and a VM at global version 17 or above:
-;; PQCHECKSIG_MLDSA44 arrives at version 16 and POSEIDON2_HASH7 at version 17.
+;; Requires domains.fc and notes.fc, and a VM at global version 16 or above:
+;; Both PQCHECKSIG_MLDSA44 and POSEIDON2_HASH7 activate at version 16.
 
 ;; The operand order is the one crypto/vm/pqops.cpp pops: the public key is on
 ;; top of the stack.

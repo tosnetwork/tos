@@ -36,7 +36,7 @@ remain visible within their respective interfaces.
 
 The canonical genesis profile uses:
 
-- ConfigParam 8 **version 18** and four equally weighted PQ validators;
+- ConfigParam 8 **version 16** and four equally weighted PQ validators;
 - `validator_pq_addr#b3` descriptors with **ML-DSA-44** public keys;
 - **Simplex version 2 over QUIC**, distinct from the VM/global protocol version;
 - independent controller, consensus-key and ADNL transport identities;

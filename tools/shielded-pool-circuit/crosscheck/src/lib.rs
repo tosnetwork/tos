@@ -28,7 +28,7 @@ use tos_vm::stack::integer::IntegerData;
 use tos_vm::stack::StackItem;
 
 pub(crate) const TOS: u64 = 1_000_000_000;
-pub const ACTIVE_VERSION: u32 = 18;
+pub const ACTIVE_VERSION: u32 = 16;
 
 pub mod acceptance;
 pub mod anchor_probe;
@@ -113,7 +113,7 @@ pub fn stdlib_path() -> PathBuf {
 }
 
 impl Probe {
-    /// Compiles the library with the probe and deploys it at global version 17.
+    /// Compiles the library with the probe and deploys it at global version 16.
     pub fn deploy() -> Result<Self> {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)?;
         let payer = bc.treasury("deployer", 1_000 * TOS)?;

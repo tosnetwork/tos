@@ -12,7 +12,7 @@ use super::{
 use crate::stack::{integer::IntegerData, StackItem};
 use chain_block::{fail, poseidon2, Cell, ExceptionCode, Result, Status};
 
-pub(super) const MIN_VERSION: u32 = 17;
+pub(super) const MIN_VERSION: u32 = 16;
 /// Measured against instructions whose price is already fixed, and matching
 /// `poseidon2_perm8_gas_price` in the C++ VM. See the note there; the two are
 /// changed at once.
@@ -94,7 +94,7 @@ pub(super) fn execute_poseidon2_hash7(engine: &mut Engine) -> Status {
 
 /// PATH7 is newer than the two above; a node built for 17 implements them and
 /// not it.
-pub(super) const PATH7_MIN_VERSION: u32 = 18;
+pub(super) const PATH7_MIN_VERSION: u32 = 16;
 /// Matching `poseidon2_path7_*_gas_price` in the C++ VM, and changed with it.
 /// One HASH7 a level plus the two cells the level's siblings live in, so
 /// moving the loop into the VM buys nothing cheaply. Neither figure is
