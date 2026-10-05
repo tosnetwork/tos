@@ -60,6 +60,7 @@ def main():
     )
     p.add_argument("--recovery-delete-transition", choices=("lock", "migrate"))
     options = p.parse_args()
+    assert not options.gas_trace or options.credit_probe, "--gas-trace requires --credit-probe"
     assert not options.recovery_delete_transition or options.recovery
     assert not options.recovery or options.prepare
     assert not options.delete_preparation_guard or options.prepare
@@ -423,26 +424,12 @@ def main():
                 initial_credit = (
                     credit_probe["downstream_diagnostic_credit"] if credit_probe else 10000
                 )
-                remaining = initial_credit
-                costs = {}
-                instruction = None
-                for line in paid["vm_log"].splitlines():
-                    if line.startswith("execute "):
-                        instruction = line.removeprefix("execute ").split()[0]
-                        if instruction == "ACCEPT":
-                            break
-                    if line.startswith("gas remaining:"):
-                        current = int(line.split(":", 1)[1])
-                        assert instruction is not None and current <= remaining
-                        costs[instruction] = costs.get(instruction, 0) + remaining - current
-                        remaining = current
-                assert instruction == "ACCEPT", "trace omitted admission or was truncated"
-                profile = {
-                    "before_accept": initial_credit - remaining,
-                    "lms_opcode": costs["LMSCHECKFEEHASH"],
-                    "other_admission": initial_credit - remaining - costs["LMSCHECKFEEHASH"],
-                    "instruction_totals": dict(sorted(costs.items(), key=lambda item: -item[1])),
-                }
+                from admission_profile import profile as trace_profile
+
+                assert credit_probe is not None, "--gas-trace requires --credit-probe"
+                profile = trace_profile(
+                    paid["vm_log"], initial_credit, credit_probe["minimum_accept_credit"]
+                )
                 (out / "gas-profile.json").write_text(json.dumps(profile, indent=2) + "\n")
             if options.fault:
                 fee_failure_controls.verify(options.fault, e, initial, ext, paid, out)

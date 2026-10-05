@@ -541,3 +541,33 @@ local emulator/executor evidence at diagnostic credit 20,000, not public-network
 acceptance. Default-credit admission, worst-case envelope/pricing validation,
 restart/partial-deployment recovery, durable fee-key anti-rollback and device/SDK
 restore integration, independent review and final-head CI remain release gates.
+
+
+## Admission cost decomposition
+
+The `--credit-probe --gas-trace` delivery diagnostic reconciles instruction charges
+with the independently binary-searched minimum credit, including the 26 gas for
+ACCEPT itself. At the source indexed in `admission-profile-20261006.json`:
+
+| Route | LMS instruction | Other checks before ACCEPT | ACCEPT | Minimum credit | Shortfall against 10,000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| AUTH | 6,135 | 6,439 | 26 | 12,600 | 2,600 |
+| SLH POP | 6,135 | 7,029 | 26 | 13,190 | 3,190 |
+| Preparation | 6,135 | 7,354 | 26 | 13,515 | 3,515 |
+
+The LMS instruction charge includes its native verifier/parsing work. Its current
+compression tariff charges the fixed profile's worst-case compression count;
+these numbers do not show that charging only the observed signature's work is
+safe. Non-LMS charges include dispatch, cell reads, shape/identity checks,
+replay/time gates, configuration and reserve calculations, and stack operations.
+The total is for these fixtures, not all hostile envelopes or every legitimate
+future configuration. Do not treat this as wall-clock benchmarking.
+
+`check_admission_profiles.py --artifacts <directory>` checks the retained `auth`,
+`pop` and `prepare` delivery traces. Nine evidence controls require rejection of
+missing ACCEPT, missing LMS verifier and a one-gas mismatch with probed admission.
+The profile provides an optimization baseline; it does not justify removing a
+check, accepting unauthenticated requests early, discounting verification or
+raising network credit without node-cost and abuse-budget validation. The
+contract must save 3,515 gas on this preparation fixture alone to meet the current
+default, with additional worst-case headroom still required.
