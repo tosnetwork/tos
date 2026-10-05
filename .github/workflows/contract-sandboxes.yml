@@ -17,6 +17,10 @@ on:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
       - "tosctl/src/sandbox/**"
+      # The executor and block crates decide every sandbox transaction's
+      # outcome, including the outbound message size limits.
+      - "tosctl/src/executor/**"
+      - "tosctl/src/block/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
       - "scripts/replay-token-bridge-trace.py"
@@ -54,6 +58,10 @@ on:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
       - "tosctl/src/sandbox/**"
+      # The executor and block crates decide every sandbox transaction's
+      # outcome, including the outbound message size limits.
+      - "tosctl/src/executor/**"
+      - "tosctl/src/block/**"
       # The token-bridge sandbox compiles these sources when it runs.
       - "crosschain/token-bridge/tvm/**"
       - "scripts/replay-token-bridge-trace.py"
@@ -211,6 +219,13 @@ jobs:
         # that broke four deploy sandbox tests showed up here as three stale
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
+
+      # The action phase refuses an outbound message over max_msg_cells or
+      # max_msg_bits, or over the cells the sender can be fined for, as the
+      # native engine does. These tests hold each limit at its exact value and
+      # one past it; restoring the saturating counter turns them red.
+      - name: Outbound message size limits hold on both sides
+        run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_message_size_limits
 
       # The token bridge's completion guarantees rest on fee arithmetic and on
       # how send modes 1, 2, 16 and 64 fail and bounce. The sandbox runs the Rust
