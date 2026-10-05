@@ -1,13 +1,17 @@
-//! Ed25519 public keys an attestor or settlement authority must not be given.
+//! Ed25519 public keys an attestor or settlement authority must not be given:
+//! small-order points and non-canonical encodings, prohibited as a set.
 //!
-//! Anyone can forge a signature that verifies under a key in the 8-torsion
-//! subgroup. The list holds, in this order:
+//! For a key in the 8-torsion subgroup a signature can be forged with no
+//! secret; [`forge`] finds one where it exists, and tests use only keys it
+//! succeeds for. Not every key below takes a forgery in the VM, which refuses
+//! the all-zero key and the canonical identity itself. The list holds, in this
+//! order:
 //! - the eight canonical encodings of that subgroup (indices 0-7);
 //! - four encodings whose y is at least 2^255 - 19, with and without x's sign
 //!   bit, which name a point under a second, non-canonical spelling (8-11);
 //! - the identity and the order-2 point with the sign bit set (12-13). Both
 //!   have x = 0, so the sign bit names no other point: these are non-canonical
-//!   aliases of indices 0 and 4 whose y is in range, and verifiers accept them.
+//!   aliases of indices 0 and 4 whose y is in range, and the VM accepts them.
 //!
 //! Bytes are in the order a contract loads them with `load_uint(256)`.
 

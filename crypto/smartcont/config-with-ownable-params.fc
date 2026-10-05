@@ -14,8 +14,9 @@ const slice ADMIN_ADDRESS_FOR_CUSTOM_PARAMS = "EQA_o6NFLu73wozeYNERTsW8lkU5OarbR
 const int OP_SET_CUSTOM_PARAM = 0x6e43536c;
 const int ERR_WEAK_VALIDATOR_KEY = 45;
 
-;; A validator key anyone can sign for casts no vote: refused before the vote's
-;; signature is checked, so an external vote under one is refused before acceptance.
+;; A weak or non-canonical validator key (strong-ed25519-key.fc) casts no
+;; vote: refused before the vote's signature is checked, so an external vote
+;; under one is refused before acceptance.
 () require_strong_validator_key(int public_key) impure inline {
   if (ed25519_key_may_be_weak?(public_key)) {
     throw_if(ERR_WEAK_VALIDATOR_KEY, weak_ed25519_key?(public_key));

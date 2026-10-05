@@ -367,8 +367,8 @@ td::Result<block::PublicKey> get_public_key(td::Slice public_key) {
 }
 
 // The key a contract's owner signs with, for a wallet, resolver or channel
-// state this client builds, deploys or watches: refused when anyone can sign
-// for it, since such a contract would have no owner.
+// state this client builds, deploys or watches: refused when it is a
+// prohibited weak or non-canonical encoding (block::PublicKey).
 td::Result<block::PublicKey> get_owner_public_key(td::Slice public_key) {
   TRY_RESULT(key, get_public_key(public_key));
   if (key.is_forgeable_ed25519()) {

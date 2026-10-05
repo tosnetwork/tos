@@ -935,7 +935,7 @@ TEST(Toslib, AutoDnsFiftScript) {
 namespace {
 // The fourteen encodings of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs:
 // the eight torsion points, y >= 2^255 - 19 with either sign bit, and the identity and
-// order-2 point with the sign bit set. Anyone can sign for each of them.
+// order-2 point with the sign bit set: the prohibited weak and non-canonical set.
 const char* const kForgeableEd25519Keys[] = {
     "0100000000000000000000000000000000000000000000000000000000000000",
     "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
@@ -1010,7 +1010,7 @@ TEST(Toslib, RestrictedWalletScriptsRefuseForgeableKeys) {
       auto status = run_restricted_wallet_script(script, serialized_pubkey(hex));
       LOG_IF(ERROR, status.is_ok()) << script << " accepted " << hex;
       CHECK(status.is_error());
-      CHECK(status.message().str().find("anyone can sign for") != std::string::npos);
+      CHECK(status.message().str().find("weak or non-canonical Ed25519") != std::string::npos);
     }
   }
 }
@@ -1045,7 +1045,7 @@ TEST(Toslib, CreateStateWalletsRefuseForgeableKeys) {
     for (auto hex : kForgeableEd25519Keys) {
       auto refused = run(PSTRING() << strong << " rwallet-init-pubkey ! 0x" << hex << " 1000000000 " << word << "\n");
       CHECK(refused.first != 0);
-      CHECK(refused.second.find("anyone can sign for") != std::string::npos);
+      CHECK(refused.second.find("weak or non-canonical Ed25519") != std::string::npos);
     }
   }
   // The restricted wallet v3 initializer key is an owner key too.
@@ -1053,7 +1053,7 @@ TEST(Toslib, CreateStateWalletsRefuseForgeableKeys) {
     auto refused =
         run(PSTRING() << "0x" << hex << " rwallet-init-pubkey ! " << strong << " 1000000000 create-wallet3\n");
     CHECK(refused.first != 0);
-    CHECK(refused.second.find("anyone can sign for") != std::string::npos);
+    CHECK(refused.second.find("weak or non-canonical Ed25519") != std::string::npos);
   }
 }
 

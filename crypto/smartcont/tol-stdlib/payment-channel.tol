@@ -86,8 +86,8 @@ fun slice5PaymentChannelId(partyA: uint256, partyB: uint256, salt: uint256): uin
         .hash();
 }
 
-/// A party key anyone can sign for (`@stdlib/strong-ed25519-key`): a forged
-/// signature under it would close the channel at any balance. Refused when a
+/// A weak or non-canonical party key (`@stdlib/strong-ed25519-key`): where a
+/// signature can be forged under it, it would close the channel at any balance. Refused when a
 /// config is built and again before any signature is checked against a key,
 /// since a config loaded from storage never went through the builder.
 fun slice5PaymentPartyKeyIsWeak(partyKey: uint256): bool {

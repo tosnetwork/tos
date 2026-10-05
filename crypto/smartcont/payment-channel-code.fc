@@ -80,10 +80,11 @@ _ unpack_config(cell config) inline {
   return res;
 }
 
-;; A party key anyone can sign for authorizes nothing. Checked before every
-;; signature check against a stored key, so an external message signed under
-;; one is refused before the contract accepts it. Only the key being used is
-;; refused: the other party can still sign, and the timeout path needs no key.
+;; A weak or non-canonical party key (strong-ed25519-key.fc) authorizes
+;; nothing. Checked before every signature check against a stored key, so an
+;; external message signed under one is refused before the contract accepts
+;; it. Only the key being used is refused: the other party can still sign,
+;; and the timeout path needs no key.
 () require_strong_key(int public_key) impure inline {
   if (ed25519_key_may_be_weak?(public_key)) {
     throw_if(err:weak_key(), weak_ed25519_key?(public_key));

@@ -153,7 +153,7 @@ static auto sync_send = [](auto &client, auto query) {
 
 // The fourteen encodings of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs:
 // the eight torsion points, y >= 2^255 - 19 with either sign bit, and the identity and
-// order-2 point with the sign bit set. Anyone can sign for each of them.
+// order-2 point with the sign bit set: the prohibited weak and non-canonical set.
 static const char *const forgeable_ed25519_keys[] = {
     "0100000000000000000000000000000000000000000000000000000000000000",
     "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
@@ -206,7 +206,7 @@ TEST(Toslib, ForgeableEd25519Keys) {
 }
 
 // Every client entry point that turns a raw public key into an owned contract's
-// address refuses a key anyone can sign for, and still works for a real key.
+// address refuses a weak or non-canonical key, and still works for a real key.
 TEST(Toslib, RefusesForgeableOwnerKeys) {
   using toslib_api::make_object;
   auto address_of = [](toslib_api::object_ptr<toslib_api::InitialAccountState> state) {

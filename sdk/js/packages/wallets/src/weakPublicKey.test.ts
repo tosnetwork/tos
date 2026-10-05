@@ -16,7 +16,7 @@ function fromHex(value: string): Uint8Array {
 
 // The fourteen encodings of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs:
 // the eight torsion points, y >= 2^255 - 19 with either sign bit, and the identity and
-// order-2 point with the sign bit set. A wallet under any of them has no owner.
+// order-2 point with the sign bit set, all prohibited as wallet keys.
 const WEAK_ED25519_KEYS: readonly string[] = [
   "0100000000000000000000000000000000000000000000000000000000000000",
   "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
@@ -51,10 +51,10 @@ const FACTORIES = [
 
 describe("wallet creation from a raw public key", () => {
   for (const [name, create] of FACTORIES) {
-    it(`${name} refuses every key anyone can sign for`, () => {
+    it(`${name} refuses every weak or non-canonical key`, () => {
       for (const key of WEAK_ED25519_KEYS) {
         expect(() => create(fromHex(key)), key).toThrow(
-          `${name}: refusing a public key anyone can sign for`,
+          `${name}: refusing a weak or non-canonical Ed25519 public key`,
         );
       }
     });

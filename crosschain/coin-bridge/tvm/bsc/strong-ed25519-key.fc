@@ -1,8 +1,14 @@
-;; Ed25519 public keys a contract must not accept as an independent authority.
+;; Ed25519 public keys a contract must not accept as an independent authority:
+;; small-order points and non-canonical encodings, prohibited as a set.
 ;;
-;; A key in the Ed25519 8-torsion subgroup lets anyone forge a signature that
-;; verifies under it (R = a torsion point, S = 0 verifies whenever R equals
-;; -[k]A), and the verifiers behind CHKSIGNU accept every encoding below. A
+;; For a key in the 8-torsion subgroup a signature can be forged with no
+;; secret (R = a torsion point, S = 0 verifies whenever R equals -[k]A). Such
+;; forgeries are demonstrated in this repository's tests for the identity and
+;; the order-2 point with the sign bit set and for the canonical order-2
+;; point; other torsion encodings verify for a fraction of messages. Not every
+;; encoding below takes a forgery: CHKSIGNU itself refuses the all-zero key
+;; and the canonical identity. They are refused here regardless, so the policy
+;; does not depend on which encodings a given verifier happens to reject. A
 ;; contract that checks a signature against a stored key on behalf of someone
 ;; else (an attestor, a verifier, a settlement authority) must refuse these,
 ;; or whoever configures the key can name one nobody needs a secret for.

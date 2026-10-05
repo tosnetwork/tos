@@ -175,8 +175,8 @@ fun Slice6CapabilityConstraintsV1.constraintsHash(self): uint256 {
     return self.toCell().hash();
 }
 
-/// A grantee key anyone can sign for (`@stdlib/strong-ed25519-key`) would
-/// let anyone exercise the grant. Refused when a grant is built, and treated
+/// A weak or non-canonical grantee key (`@stdlib/strong-ed25519-key`; some
+/// take signatures forged with no secret) would let anyone exercise the grant. Refused when a grant is built, and treated
 /// as an invalid signature before any signature is checked against it, since
 /// a grant loaded from storage never went through the builder.
 fun slice6CapabilityGranteeKeyIsWeak(granteePubkey: uint256): bool {

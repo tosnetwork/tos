@@ -16,8 +16,9 @@
 
 #include "strong-ed25519-key.fc";
 
-;; An owner key anyone can sign for: refused as the stored key before its
-;; signature is checked, and as the new key of an OSet before acceptance.
+;; A weak or non-canonical owner key (strong-ed25519-key.fc): refused as the
+;; stored key before its signature is checked, and as the new key of an OSet
+;; before acceptance.
 const int err::weak_owner_key = 46;
 
 ;; Expired query ids forgotten per accepted message.

@@ -1,12 +1,16 @@
-// Ed25519 public keys a contract must not accept as an independent authority.
+// Ed25519 public keys a contract must not accept as an independent authority:
+// small-order points and non-canonical encodings, prohibited as a set.
 //
 // Tol counterpart of crypto/smartcont/strong-ed25519-key.fc, with the same
 // keys read the same way: the 256-bit integer `loadUint(256)` produces from
-// the 32 encoded bytes. A key in the Ed25519 8-torsion subgroup lets anyone
-// forge a signature that verifies under it, and the verifiers behind
-// signature checks accept every encoding below. A contract that counts a
-// stored key's signature toward an authorization must refuse them, or
-// whoever configured the key can name one nobody needs a secret for.
+// the 32 encoded bytes. For a key in the 8-torsion subgroup a signature can be
+// forged with no secret; this repository's tests demonstrate it for the
+// identity and order-2 point with the sign bit set and for the canonical
+// order-2 point. Not every encoding below takes a forgery (the VM's signature
+// check itself refuses the all-zero key and the canonical identity), but all
+// are refused regardless. A contract that counts a stored key's signature
+// toward an authorization must refuse them, or whoever configured the key can
+// name one nobody needs a secret for.
 //
 // Refused:
 //   - the eight canonical encodings of the torsion subgroup;

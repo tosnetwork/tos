@@ -78,8 +78,10 @@ pub struct NativePolicy {
 }
 
 /// Encodings of the Ed25519 8-torsion points, and the sign-bit aliases of the
-/// two with x = 0, as stored: anyone can produce a signature that verifies
-/// under them. The contract's `weak_ed25519_key?` refuses the same set.
+/// two with x = 0, as stored: prohibited weak and non-canonical keys. For some
+/// a signature can be forged with no secret; the VM itself refuses the
+/// all-zero key and the canonical identity. The contract's `weak_ed25519_key?`
+/// refuses the same set.
 const FORGEABLE_ED25519_KEYS: [&str; 10] = [
     "0100000000000000000000000000000000000000000000000000000000000000",
     "0100000000000000000000000000000000000000000000000000000000000080",

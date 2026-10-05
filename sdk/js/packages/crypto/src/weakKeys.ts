@@ -1,11 +1,16 @@
 /**
  * Ed25519 public keys that must not become a wallet's or any other
- * authority's key.
+ * authority's key: small-order points and non-canonical encodings,
+ * prohibited as a set.
  *
- * Anyone can forge a signature that verifies under a key in the 8-torsion
- * subgroup (R a torsion point, S = 0), and the on-chain verifier accepts
- * every encoding below. This is the same set the contracts refuse
- * (crypto/smartcont/strong-ed25519-key.fc), compared on the 32 encoded bytes:
+ * For a key in the 8-torsion subgroup a signature can be forged with no
+ * secret (R a torsion point, S = 0); the repository's contract tests
+ * demonstrate it for the identity and order-2 point with the sign bit set and
+ * for the canonical order-2 point. Not every encoding below takes a forgery
+ * (the on-chain signature check refuses the all-zero key and the canonical
+ * identity itself), but all are refused. This is the same set the contracts
+ * refuse (crypto/smartcont/strong-ed25519-key.fc), compared on the 32 encoded
+ * bytes:
  *
  * - the eight canonical encodings of the torsion subgroup;
  * - the identity and the order-2 point with the sign bit set (x = 0, so the
@@ -31,7 +36,7 @@ function hex(bytes: Uint8Array): string {
 }
 
 /**
- * True when `publicKey` is one of the 32-byte encodings anyone can sign for.
+ * True when `publicKey` is one of the prohibited weak or non-canonical encodings.
  *
  * @param publicKey - A 32-byte Ed25519 public key
  * @throws Error if `publicKey` is not 32 bytes
