@@ -84,8 +84,8 @@ now 86400 / 1+ 86400 * rwallet-start-at !
 { over check-owner-pubkey drop
   over ."Key " pubkey>$ type ." -> "
   RWCode2  // code
-  <b 1 32 u, 3 pick 256 u, rwallet-start-at @ 32 u,
-     3 roll make-rdict dict, b>  // data
+  <b 1 32 u, 3 roll 256 u, rwallet-start-at @ 32 u,
+     2 pick make-rdict dict, b>  // data
   empty_cell  // libs
   3 roll  // balance
   0 // split_depth

@@ -1035,13 +1035,9 @@ TEST(Toslib, CreateStateWalletsRefuseForgeableKeys) {
   auto strong = PSTRING() << "0x" << strong_owner_key_hex();
   auto words = {"create-wallet0", "create-wallet0a", "create-wallet1", "create-wallet2", "create-wallet3"};
   for (auto word : words) {
-    // create-wallet2 cannot build its data from a bare `pubkey amount` stack (it picks
-    // one element too deep), so only its refusal is checked.
-    if (td::Slice(word) != "create-wallet2") {
-      auto ok = run(PSTRING() << strong << " rwallet-init-pubkey ! " << strong << " 1000000000 " << word << "\n");
-      LOG_IF(ERROR, ok.first != 0) << word << ": " << ok.second;
-      CHECK(ok.first == 0);
-    }
+    auto ok = run(PSTRING() << strong << " rwallet-init-pubkey ! " << strong << " 1000000000 " << word << "\n");
+    LOG_IF(ERROR, ok.first != 0) << word << ": " << ok.second;
+    CHECK(ok.first == 0);
     for (auto hex : kForgeableEd25519Keys) {
       auto refused = run(PSTRING() << strong << " rwallet-init-pubkey ! 0x" << hex << " 1000000000 " << word << "\n");
       CHECK(refused.first != 0);
@@ -1055,6 +1051,44 @@ TEST(Toslib, CreateStateWalletsRefuseForgeableKeys) {
     CHECK(refused.first != 0);
     CHECK(refused.second.find("weak or non-canonical Ed25519") != std::string::npos);
   }
+}
+
+// create-wallet2 registers a restricted lockup wallet whose data holds the owner key and
+// a vesting schedule over the amount, with the amount as its balance. The address it
+// prints must be that of a StateInit whose data is built here independently from the
+// same key and amount.
+TEST(Toslib, CreateStateWallet2EncodesKeyAndAmount) {
+  auto temp_dir = td::mkdtemp("/tmp", "tos-create-wallet2").move_as_ok();
+  SCOPE_EXIT {
+    td::rmrf(temp_dir).ignore();
+  };
+  auto include_path = PSTRING() << fift_lib_dir() << ":" << generated_smartcont_dir() << ":" << smartcont_dir();
+  auto key = PSTRING() << "0x" << strong_owner_key_hex();
+  auto script = PSTRING() << "wc_master setworkchain 1 setglobalid ' make-rdict1 'make-rdict !\n"
+                          << key << " 777000000000 create-wallet2\n"
+                          << "<b 1 32 u, " << key << " 256 u, rwallet-start-at @ 32 u, "
+                          << "777000000000 make-rdict1 dict, b> =: expected-data\n"
+                          << "<b b{0011} s, RWCode2 ref, expected-data ref, null dict, b> hashu\n"
+                          << ".\"expected \" Masterchain swap 6 .Addr cr\n";
+  auto script_path = temp_dir + TD_DIR_SLASH + "wallet2.fif";
+  td::write_file(script_path, script).ensure();
+  auto stdout_path = temp_dir + TD_DIR_SLASH + "stdout.txt";
+  auto command = PSTRING() << "cd " << shell_quote(temp_dir) << " && " << shell_quote(create_state_binary()) << " -I "
+                           << shell_quote(include_path) << " " << shell_quote(script_path) << " > "
+                           << shell_quote(stdout_path) << " 2>&1";
+  auto rc = std::system(command.c_str());
+  auto out = td::read_file_str(stdout_path).move_as_ok();
+  LOG_IF(ERROR, rc != 0) << out;
+  CHECK(rc == 0);
+  // "Key <pubkey> -> <address>" from create-wallet2, then "expected <address>".
+  auto registered_at = out.find(" -> ");
+  auto expected_at = out.find("expected ");
+  CHECK(registered_at != std::string::npos && expected_at != std::string::npos);
+  auto registered = td::trim(td::Slice(out).substr(registered_at + 4, 48)).str();
+  auto expected = td::trim(td::Slice(out).substr(expected_at + 9, 48)).str();
+  LOG_IF(ERROR, registered != expected) << out;
+  CHECK(registered.size() == 48);
+  CHECK(registered == expected);
 }
 
 TEST(Toslib, ManualDnsFiftScript) {
