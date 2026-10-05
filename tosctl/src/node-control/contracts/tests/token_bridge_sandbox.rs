@@ -28,3 +28,7 @@ mod burn;
 mod state;
 #[path = "token_bridge/extended.rs"]
 mod extended;
+#[path = "token_bridge/windows.rs"]
+mod windows;
+#[path = "token_bridge/recovery.rs"]
+mod recovery;

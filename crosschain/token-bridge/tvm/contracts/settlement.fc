@@ -109,8 +109,10 @@ const int MAX_ATTEMPT = 0xfffffffe;
 ;; The largest amount Coins can hold, bounding supply plus every reservation.
 const int MAX_SUPPLY = 0xffffffffffffffffffffffffffffff;
 
-;; Work per transaction on folds, compaction, promotions and stranding.
-const int FOLD_LIMIT = 8;
+;; Work per transaction on folds, compaction, promotions and stranding. It is
+;; smaller than the C1 and C4 windows, so a backlog can outgrow one
+;; transaction; the rest is folded by later transactions and by `sync`.
+const int FOLD_LIMIT = 4;
 
 ;; Window sizes per channel, and admission limits. The account cell limit is
 ;; checked against the measured worst case at every admission: the token-bridge
