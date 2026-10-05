@@ -55,6 +55,12 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
         static_cast<td::uint64>(bus.config.max_block_size) + bus.config.max_collated_data_size + (1U << 20);
     LOG_CHECK(max_broadcast_size_wide <= std::numeric_limits<td::uint32>::max())
         << "Configured consensus broadcast limit overflows uint32";
+    // This limit comes from network configuration, so no fixed transport budget
+    // is guaranteed to hold it. The overlay installs it as a per-peer allowance on
+    // bus.adnl_sender, which the validator manager always sets to its QUIC sender.
+    // If it were ever routed to RLDP2, RLDP2 would refuse an allowance whose
+    // largest transfer does not fit one peer identity's inbound share, and log
+    // the required and available sizes (rldp2::rldp_check_transfer_allowance).
     // This authorized broadcast size also raises the per-peer transport MTU
     // (OverlayImpl::update_peers_mtu sets it to max_broadcast_size + 1024), which is what a
     // direct Simplex message -- a post-quantum vote or certificate -- travels under. It is

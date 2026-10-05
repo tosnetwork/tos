@@ -47,6 +47,12 @@ class BlockSyncOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor
                                                bus.config.max_collated_data_size + (1U << 20);
     LOG_CHECK(max_broadcast_size_wide <= std::numeric_limits<td::uint32>::max())
         << "Configured block-sync broadcast limit overflows uint32";
+    // This limit comes from network configuration, so no fixed transport budget
+    // is guaranteed to hold it. The overlay installs it as a per-peer allowance on
+    // bus.adnl_sender, which the validator manager always sets to its QUIC sender.
+    // If it were ever routed to RLDP2, RLDP2 would refuse an allowance whose
+    // largest transfer does not fit one peer identity's inbound share, and log
+    // the required and available sizes (rldp2::rldp_check_transfer_allowance).
     const td::uint32 max_broadcast_size = static_cast<td::uint32>(max_broadcast_size_wide);
     for (const auto& peer : bus.validator_set) {
       adnl_pubkey_to_peer_.emplace(peer.adnl_id.pubkey_hash(), peer);

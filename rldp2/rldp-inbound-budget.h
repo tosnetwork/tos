@@ -19,6 +19,7 @@
 #include <mutex>
 #include <optional>
 
+#include "td/utils/Status.h"
 #include "td/utils/logging.h"
 
 namespace tos::rldp2 {
@@ -59,6 +60,13 @@ namespace tos::rldp2 {
 // unsolicited transfers for answers to the node's own requests: see
 // RldpInboundLimits below.
 inline constexpr std::size_t rldp_max_active_decoders = 16384;
+
+// How an RLDP2 sender cuts a transfer: parts of this many bytes (the last one
+// shorter), each sent as RaptorQ symbols of this many bytes. The receiver
+// refuses any other symbol size, and the FEC parameters it accepts fix a
+// part's symbol count to its size divided by the symbol size, rounded up.
+inline constexpr std::size_t rldp_part_size = 2000000;
+inline constexpr std::size_t rldp_symbol_size = 768;
 inline constexpr std::size_t rldp_max_inbound_bytes = std::size_t{512} << 20;
 
 // Bookkeeping per retained symbol beyond its bytes: its vector entry, its
@@ -74,13 +82,13 @@ inline constexpr std::size_t rldp_decoder_fixed_bytes = std::size_t{4} << 10;
 inline constexpr std::size_t rldp_solver_fixed_bytes = std::size_t{128} << 10;
 
 namespace detail {
-inline std::optional<std::size_t> checked_mul(std::size_t a, std::size_t b) {
+constexpr std::optional<std::size_t> checked_mul(std::size_t a, std::size_t b) {
   if (a != 0 && b > std::numeric_limits<std::size_t>::max() / a) {
     return std::nullopt;
   }
   return a * b;
 }
-inline std::optional<std::size_t> checked_add(std::size_t a, std::size_t b) {
+constexpr std::optional<std::size_t> checked_add(std::size_t a, std::size_t b) {
   if (b > std::numeric_limits<std::size_t>::max() - a) {
     return std::nullopt;
   }
@@ -96,8 +104,8 @@ inline std::optional<std::size_t> checked_add(std::size_t a, std::size_t b) {
 // to `2 * symbols_count + 10` symbols. Decoding produces `data_size` bytes,
 // which stay held once the part is finished. Returns nothing if the size
 // cannot be represented.
-inline std::optional<std::size_t> rldp_decoder_reservation_bytes(std::size_t data_size, std::size_t symbol_size,
-                                                                 std::size_t symbols_count) {
+constexpr std::optional<std::size_t> rldp_decoder_reservation_bytes(std::size_t data_size, std::size_t symbol_size,
+                                                                    std::size_t symbols_count) {
   auto twice = detail::checked_mul(symbols_count, 2);
   if (!twice) {
     return std::nullopt;
@@ -122,7 +130,7 @@ inline std::optional<std::size_t> rldp_decoder_reservation_bytes(std::size_t dat
 // the solver's matrices, about six symbols' worth per source symbol plus a
 // fixed part. It exists only during the attempt, so it is reserved just
 // before and released just after. Returns nothing if it cannot be represented.
-inline std::optional<std::size_t> rldp_solver_working_bytes(std::size_t symbol_size, std::size_t symbols_count) {
+constexpr std::optional<std::size_t> rldp_solver_working_bytes(std::size_t symbol_size, std::size_t symbols_count) {
   auto per_symbol = detail::checked_mul(symbol_size, 6);
   if (!per_symbol) {
     return std::nullopt;
@@ -164,17 +172,26 @@ using RldpPeerIdentity = std::array<unsigned char, 32>;
 // the decoder slots and half of the bytes: 1024 decoders and 128 MiB of the
 // production budget.
 //
-// The byte share is sized to the largest unsolicited transfer the node
-// accepts, not to an average peer. A peer whose MTU an overlay raised may send
-// a transfer of 16 MiB plus a small envelope; the sender keeps every part of
-// it in flight at once, and the receiver charges, all at once, a decoder for
-// each of its nine parts (about 53.5 MB for the eight full ones), the buffer
-// they are assembled into (16 MiB) and one decode attempt's working memory
-// (about 12.1 MB): about 81 MiB. A share of 32 MiB could not hold that even
+// The byte share is sized to the largest transfer at the supported overlay
+// limit, not to an average peer. Overlays raise a peer's RLDP2 allowance to
+// their broadcast limit plus an envelope; the fixed limit is 16 MiB (plus at
+// most 4096 bytes), and a transfer of that size, with every part in flight,
+// charges a decoder for each of its nine parts (about 53.5 MB for the eight
+// full ones), the buffer they are assembled into (16 MiB) and one decode
+// attempt's working memory (about 12.1 MB): about 81 MiB
+// (rldp_transfer_peak_bytes). A share of 32 MiB could not hold that even
 // after the earlier parts finished, so such a transfer was refused part by
 // part until it outlived the ten-second unsolicited lifetime. 128 MiB holds it
 // with room for smaller transfers from the same peer beside it. The share is
 // a fixed number, never derived from a size the peer advertises.
+//
+// Some overlays derive their limit from network configuration instead (the
+// consensus overlays size theirs from the maximum block and collated-data
+// sizes), so no fixed share covers every limit a configuration can produce.
+// Those overlays travel on QUIC, not RLDP2. RLDP2 itself refuses, when it is
+// installed, any allowance whose largest transfer would not fit the share
+// (rldp_check_transfer_allowance), so a configuration routed to RLDP2 that it
+// cannot carry is reported instead of being relied on.
 //
 // The decoder share, 1024, is above what an honest peer uses on one local id:
 // RldpConnection::MAX_INBOUND_TRANSFERS (256).
@@ -205,7 +222,7 @@ struct RldpInboundLimits {
   static constexpr std::size_t identity_byte_share_divisor = 2;
 
   // The production division of `max_decoders` and `max_bytes`.
-  static RldpInboundLimits split(std::size_t max_decoders, std::size_t max_bytes) {
+  static constexpr RldpInboundLimits split(std::size_t max_decoders, std::size_t max_bytes) {
     RldpInboundLimits limits;
     limits.max_decoders = max_decoders;
     limits.max_bytes = max_bytes;
@@ -218,6 +235,96 @@ struct RldpInboundLimits {
     return limits;
   }
 };
+
+// The most a receiver can charge one transfer of `size` bytes at a time:
+// every part's decoder open at once (the sender keeps up to twenty parts in
+// flight, more than any transfer this budget can hold has), the buffer the
+// parts are assembled into if there are several, and the largest part's
+// decode attempt, which must fit beside them. Nothing if it cannot be
+// represented.
+constexpr std::optional<std::size_t> rldp_transfer_peak_bytes(std::size_t size) {
+  // Full parts all cost the same; at most one shorter part ends the transfer.
+  auto part_cost = [](std::size_t part) -> std::optional<std::size_t> {
+    auto symbols = part / rldp_symbol_size + (part % rldp_symbol_size != 0 ? 1 : 0);
+    return rldp_decoder_reservation_bytes(part, rldp_symbol_size, symbols);
+  };
+  auto part_solver = [](std::size_t part) -> std::optional<std::size_t> {
+    auto symbols = part / rldp_symbol_size + (part % rldp_symbol_size != 0 ? 1 : 0);
+    return rldp_solver_working_bytes(rldp_symbol_size, symbols);
+  };
+  std::size_t full_parts = size / rldp_part_size;
+  std::size_t last_part = size % rldp_part_size;
+  std::size_t parts = full_parts + (last_part != 0 ? 1 : 0);
+  std::size_t charge = 0;
+  std::size_t headroom = 0;
+  if (full_parts != 0) {
+    auto cost = part_cost(rldp_part_size);
+    auto solver = part_solver(rldp_part_size);
+    if (!cost || !solver) {
+      return std::nullopt;
+    }
+    auto all = detail::checked_mul(full_parts, *cost);
+    if (!all) {
+      return std::nullopt;
+    }
+    charge = *all;
+    headroom = *solver;
+  }
+  if (last_part != 0) {
+    auto cost = part_cost(last_part);
+    auto solver = part_solver(last_part);
+    if (!cost || !solver) {
+      return std::nullopt;
+    }
+    auto sum = detail::checked_add(charge, *cost);
+    if (!sum) {
+      return std::nullopt;
+    }
+    charge = *sum;
+    headroom = std::max(headroom, *solver);
+  }
+  auto with_assembly = detail::checked_add(charge, parts > 1 ? size : 0);
+  if (!with_assembly) {
+    return std::nullopt;
+  }
+  return detail::checked_add(*with_assembly, headroom);
+}
+
+// The bytes one peer identity's unsolicited transfers may hold under the
+// production budget.
+inline constexpr std::size_t rldp_identity_byte_share =
+    RldpInboundLimits::split(rldp_max_active_decoders, rldp_max_inbound_bytes).per_identity_bytes;
+
+// Whether a peer may be allowed unsolicited transfers of up to `max_transfer`
+// bytes: the most such a transfer can charge must fit one identity's share.
+// An allowance that does not fit would let a valid transfer be refused part by
+// part until it expired, so it is refused instead -- never shrunk to fit and
+// never met by enlarging the share.
+constexpr bool rldp_transfer_allowance_fits(std::size_t max_transfer,
+                                            std::size_t identity_bytes = rldp_identity_byte_share) {
+  auto peak = rldp_transfer_peak_bytes(max_transfer);
+  return peak && *peak <= identity_bytes;
+}
+
+// As rldp_transfer_allowance_fits, with the sizes in the error.
+inline td::Status rldp_check_transfer_allowance(td::uint64 max_transfer,
+                                                std::size_t identity_bytes = rldp_identity_byte_share) {
+  if (max_transfer > std::numeric_limits<std::size_t>::max()) {
+    return td::Status::Error(PSLICE() << "an RLDP2 transfer allowance of " << max_transfer
+                                      << " bytes cannot be represented");
+  }
+  auto peak = rldp_transfer_peak_bytes(static_cast<std::size_t>(max_transfer));
+  if (!peak) {
+    return td::Status::Error(PSLICE() << "an RLDP2 transfer allowance of " << max_transfer
+                                      << " bytes needs more inbound budget than can be represented");
+  }
+  if (*peak > identity_bytes) {
+    return td::Status::Error(PSLICE() << "an RLDP2 transfer allowance of " << max_transfer << " bytes needs " << *peak
+                                      << " bytes of one peer identity's inbound budget, which allows " << identity_bytes
+                                      << " bytes");
+  }
+  return td::Status::OK();
+}
 
 class RldpInboundBudget {
  public:

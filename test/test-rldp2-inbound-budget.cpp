@@ -35,6 +35,7 @@
 #include "fec/fec.h"
 #include "rldp2/InboundTransfer.h"
 #include "rldp2/RldpConnection.h"
+#include "rldp2/rldp-in.hpp"
 #include "rldp2/rldp-inbound-budget.h"
 #include "td/fec/fec.h"
 #include "td/utils/Random.h"
@@ -157,28 +158,12 @@ size_t open_part_solver() {
   return rldp_solver_working_bytes(768, open_part_symbols()).value();
 }
 
-// The largest unsolicited transfer a peer can be allowed: an overlay raises a
-// peer's MTU to its 16 MiB broadcast limit plus a small envelope (4096 bytes
-// is the larger of the two envelopes overlays add).
+// The largest transfer at the supported overlay limit: overlays with the
+// fixed limit raise a peer's allowance to 16 MiB plus an envelope, at most
+// 4096 bytes. Overlays that derive their limit from network configuration can
+// produce other sizes; see RldpInboundLimits.
 size_t largest_unsolicited_transfer() {
   return (size_t{16} << 20) + 4096;
-}
-
-// What the receiver charges for a transfer of `size` bytes with every part's
-// decoder open at once, the buffer the parts are assembled into, and the
-// largest part's decode attempt as headroom.
-size_t all_parts_open_charge(size_t size) {
-  size_t charge = 0;
-  size_t parts = 0;
-  size_t headroom = 0;
-  for (size_t offset = 0; offset < size; offset += OutboundTransfer::part_size()) {
-    auto part = std::min(OutboundTransfer::part_size(), size - offset);
-    auto symbols = (part + 767) / 768;
-    charge += rldp_decoder_reservation_bytes(part, 768, symbols).value();
-    headroom = std::max(headroom, rldp_solver_working_bytes(768, symbols).value());
-    parts++;
-  }
-  return charge + (parts > 1 ? size : 0) + headroom;
 }
 
 TEST(Rldp2InboundBudget, CostsMatchTheDocumentedMeasurements) {
@@ -197,17 +182,26 @@ TEST(Rldp2InboundBudget, CostsMatchTheDocumentedMeasurements) {
   // Half is kept for solicited transfers. One identity's share of the rest is
   // an eighth of the decoders and half of the bytes: 1024 decoders and
   // 128 MiB -- room for a full connection of default-size transfers, and for
-  // the largest unsolicited transfer the node accepts with every part open.
+  // the largest transfer at the supported overlay limit with every part open.
   auto &limits = budget->limits();
   ASSERT_EQ(rldp_max_active_decoders / 2, limits.unsolicited_decoders);
   ASSERT_EQ(rldp_max_inbound_bytes / 2, limits.unsolicited_bytes);
   ASSERT_EQ(1024u, limits.per_identity_decoders);
   ASSERT_EQ(size_t{128} << 20, limits.per_identity_bytes);
-  // The largest unsolicited transfer, 16 MiB plus an envelope, charged with
-  // every part open, its assembly buffer and one decode attempt: about 81 MiB,
-  // which leaves the share more than 40 MiB of margin.
-  ASSERT_EQ(84984576u, all_parts_open_charge(largest_unsolicited_transfer()));
-  ASSERT_TRUE(all_parts_open_charge(largest_unsolicited_transfer()) + (size_t{40} << 20) <= limits.per_identity_bytes);
+  // The largest transfer at the supported overlay limit, charged with every
+  // part open, its assembly buffer and one decode attempt: about 81 MiB, which
+  // leaves the share more than 40 MiB of margin. The same function decides
+  // whether RLDP2 accepts an allowance.
+  ASSERT_EQ(84984576u, rldp_transfer_peak_bytes(largest_unsolicited_transfer()).value());
+  ASSERT_TRUE(rldp_transfer_peak_bytes(largest_unsolicited_transfer()).value() + (size_t{40} << 20) <=
+              limits.per_identity_bytes);
+  ASSERT_EQ(rldp_identity_byte_share, limits.per_identity_bytes);
+  // It cuts transfers as the sender does.
+  ASSERT_EQ(OutboundTransfer::part_size(), rldp_part_size);
+  ASSERT_EQ(OutboundTransfer::symbol_size(), rldp_symbol_size);
+  ASSERT_EQ(rldp_decoder_reservation_bytes(2000000, 768, 2605).value() + rldp_solver_working_bytes(768, 2605).value(),
+            rldp_transfer_peak_bytes(2000000).value());
+  ASSERT_TRUE(!rldp_transfer_peak_bytes(std::numeric_limits<size_t>::max()));
   ASSERT_TRUE(limits.per_identity_decoders >= RldpConnection::MAX_INBOUND_TRANSFERS);
   ASSERT_TRUE(limits.per_identity_bytes >= RldpConnection::MAX_INBOUND_TRANSFERS * open_part_cost());
   ASSERT_TRUE(limits.per_identity_bytes >= rldp_decoder_reservation_bytes(2000000, 768, 2605).value() +
@@ -884,7 +878,7 @@ struct UnsolicitedRun {
   double seconds{0};
 };
 
-// The largest unsolicited transfer the node accepts, two smaller ones from
+// The largest transfer at the supported overlay limit, two smaller ones from
 // the same peer overlapping it, and an unrelated peer's transfer at the same
 // time, all through real connections against `budget`. Runs until every
 // transfer has finished one way or the other, or well past the unsolicited
@@ -932,9 +926,12 @@ UnsolicitedRun run_largest_unsolicited(std::shared_ptr<RldpInboundBudget> budget
   return run;
 }
 
-// Production budgets carry the largest unsolicited transfer a peer can be
-// allowed, beside smaller ones from the same peer and an unrelated peer's,
+// Production budgets carry the largest transfer at the supported overlay
+// limit, beside smaller ones from the same peer and an unrelated peer's,
 // within the unsolicited lifetime, and give back everything afterwards.
+// Overlays that size their limit from network configuration can allow larger
+// transfers; RLDP2 refuses those it cannot hold when the allowance is
+// installed (RldpRefusesAnAllowanceItCannotHold).
 TEST(Rldp2InboundBudget, LargestUnsolicitedTransferCompletesUnderProductionBudgets) {
   auto budget = std::make_shared<RldpInboundBudget>(rldp_max_active_decoders, rldp_max_inbound_bytes);
   ASSERT_EQ(size_t{128} << 20, budget->limits().per_identity_bytes);
@@ -966,6 +963,105 @@ TEST(Rldp2InboundBudget, LargestUnsolicitedTransferFailsAtTheOldShare) {
   ASSERT_TRUE(run.failed >= 1);
   ASSERT_EQ(0u, budget->active_decoders());
   ASSERT_EQ(0u, budget->reserved_bytes());
+}
+
+// RLDP2 as the transport an overlay raises a peer's allowance on. Its
+// allowance setters are the ones a node calls; the probe only reads the
+// allowance back.
+class AllowanceProbe : public RldpIn {
+ public:
+  AllowanceProbe() : RldpIn(td::actor::ActorId<adnl::AdnlPeerTable>{}) {
+  }
+  td::uint64 allowance(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id) {
+    return get_peer_mtu(local_id, peer_id);
+  }
+};
+
+// A transport with no inbound budget of this kind accepts any allowance.
+class UnbudgetedSender : public adnl::AdnlSenderEx {
+ public:
+  void add_id(adnl::AdnlNodeIdShort) override {
+  }
+  void send_message(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, td::BufferSlice) override {
+  }
+  void send_query(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, std::string, td::Promise<td::BufferSlice>,
+                  td::Timestamp, td::BufferSlice) override {
+  }
+  void send_query_ex(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, std::string, td::Promise<td::BufferSlice>,
+                     td::Timestamp, td::BufferSlice, td::uint64) override {
+  }
+  void get_conn_ip_str(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, td::Promise<td::string>) override {
+  }
+  td::uint64 allowance(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id) {
+    return get_peer_mtu(local_id, peer_id);
+  }
+
+ protected:
+  void on_mtu_updated(td::optional<adnl::AdnlNodeIdShort>, td::optional<adnl::AdnlNodeIdShort>) override {
+  }
+};
+
+adnl::AdnlNodeIdShort node(td::uint32 n) {
+  td::Bits256 bits;
+  bits.set_zero();
+  bits.as_slice().copy_from(td::Slice{reinterpret_cast<const td::uint8 *>(&n), sizeof(n)});
+  return adnl::AdnlNodeIdShort{bits};
+}
+
+// An allowance is installed on RLDP2 only if its largest transfer fits one
+// identity's share: the fixed overlay limit and a configuration above 16 MiB
+// whose cost still fits are installed; one whose cost does not is refused, with
+// the sizes, and the peer keeps the allowance it had.
+TEST(Rldp2InboundBudget, RldpRefusesAnAllowanceItCannotHold) {
+  const td::uint64 fixed_limit = (td::uint64{16} << 20) + 1024;
+  // A configuration-derived limit above 16 MiB that still fits: about 116 MiB.
+  const td::uint64 larger_fitting = (td::uint64{26} << 20) + 1024;
+  // One that does not: about 150 MiB.
+  const td::uint64 over_budget = (td::uint64{32} << 20) + 1024;
+  ASSERT_TRUE(rldp_transfer_peak_bytes(larger_fitting).value() <= rldp_identity_byte_share);
+  ASSERT_TRUE(rldp_transfer_peak_bytes(over_budget).value() > rldp_identity_byte_share);
+
+  AllowanceProbe rldp;
+  auto local = node(1);
+  auto default_allowance = rldp.allowance(local, node(2));
+
+  rldp.add_peer_mtu(local, node(2), fixed_limit);
+  ASSERT_EQ(fixed_limit, rldp.allowance(local, node(2)));
+  rldp.add_peer_mtu(local, node(3), larger_fitting);
+  ASSERT_EQ(larger_fitting, rldp.allowance(local, node(3)));
+
+  rldp.add_peer_mtu(local, node(4), over_budget);
+  ASSERT_EQ(default_allowance, rldp.allowance(local, node(4)));
+  // A peer that already had an allowance keeps it, unenlarged and unshrunk.
+  rldp.add_peer_mtu(local, node(2), over_budget);
+  ASSERT_EQ(fixed_limit, rldp.allowance(local, node(2)));
+  // Removing what was refused leaves what was installed.
+  rldp.remove_peer_mtu(local, node(2), over_budget);
+  ASSERT_EQ(fixed_limit, rldp.allowance(local, node(2)));
+  rldp.remove_peer_mtu(local, node(2), fixed_limit);
+  ASSERT_EQ(default_allowance, rldp.allowance(local, node(2)));
+  // The same holds for the allowances that apply to every peer.
+  rldp.set_local_id_mtu(local, over_budget);
+  ASSERT_EQ(default_allowance, rldp.allowance(local, node(5)));
+  rldp.set_default_mtu(over_budget);
+  ASSERT_EQ(default_allowance, rldp.allowance(node(9), node(5)));
+  rldp.set_local_id_mtu(local, larger_fitting);
+  ASSERT_EQ(larger_fitting, rldp.allowance(local, node(5)));
+
+  // The refusal names the allowance, what it needs and what is available.
+  auto refused = rldp_check_transfer_allowance(over_budget);
+  ASSERT_TRUE(refused.is_error());
+  auto message = refused.message().str();
+  ASSERT_TRUE(message.find(std::to_string(over_budget)) != std::string::npos);
+  ASSERT_TRUE(message.find(std::to_string(rldp_transfer_peak_bytes(over_budget).value())) != std::string::npos);
+  ASSERT_TRUE(message.find(std::to_string(rldp_identity_byte_share)) != std::string::npos);
+  ASSERT_TRUE(rldp_check_transfer_allowance(larger_fitting).is_ok());
+
+  // A transport without this budget, such as the one the consensus overlays
+  // use, carries the same allowance.
+  UnbudgetedSender other;
+  other.add_peer_mtu(local, node(4), over_budget);
+  ASSERT_EQ(over_budget, other.allowance(local, node(4)));
 }
 
 }  // namespace

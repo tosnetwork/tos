@@ -547,6 +547,11 @@ std::unique_ptr<adnl::Adnl::Callback> RldpIn::make_adnl_callback() {
   return std::make_unique<Callback>(actor_id(this));
 }
 
+RldpIn::RldpIn(td::actor::ActorId<adnl::AdnlPeerTable> adnl) : adnl_(adnl) {
+}
+
+RldpIn::~RldpIn() = default;
+
 td::actor::ActorOwn<Rldp> Rldp::create(td::actor::ActorId<adnl::Adnl> adnl) {
   return td::actor::create_actor<RldpIn>("rldp", td::actor::actor_dynamic_cast<adnl::AdnlPeerTable>(adnl));
 }
