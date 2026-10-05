@@ -1,7 +1,14 @@
 //! Secondary fact frames of the native poll: fixed gauge parsing and frame identity.
-use tos_health_core::{native::parse_native, native_facts::NativeFactState, rules::FactId};
+use sha2::{Digest, Sha256};
+use tos_health_core::{
+    native::{canonical_hash, parse_native, NativeEnvelope, NativeRecord},
+    native_facts::NativeFactState,
+    rules::FactId,
+    wire::U64,
+};
 use tos_health_services::manager_poll::{
-    native_fact_frame, quic_backlog_bytes, secondary_frame, stagger_ms, storage_write_stopped,
+    native_fact_frame, paired_gauge_facts, quic_backlog_bytes, secondary_frame, stagger_ms,
+    storage_write_stopped,
 };
 
 const METRICS: &str = "# TYPE tos_quic_summary_unsent_bytes gauge\n\
@@ -81,4 +88,46 @@ fn storage_write_stopped_is_a_strict_zero_or_one_gauge_or_absent() {
     assert_eq!(storage_write_stopped("tos_health_storage_write_stopped 2\n"), None);
     assert_eq!(storage_write_stopped("tos_health_storage_write_stopped_total 5\n"), None);
     assert_eq!(storage_write_stopped(METRICS), None);
+}
+
+/// A native record whose payload commits to exactly `body`.
+fn committed_to(body: &str) -> NativeRecord {
+    let mut value: NativeEnvelope =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
+            .unwrap();
+    value.payload.openmetrics_hash = format!("{:x}", Sha256::digest(body.as_bytes()));
+    value.payload.bytes = u32::try_from(body.len()).unwrap();
+    value.content_hash = canonical_hash(&value.payload).unwrap();
+    NativeRecord::V1(value)
+}
+
+#[test]
+fn gauges_are_read_only_from_the_body_the_record_committed_to() {
+    let sampled = format!("{METRICS}tos_health_storage_write_stopped 0\n# EOF\n");
+    let record = committed_to(&sampled);
+    let facts = paired_gauge_facts(&record, sampled.as_bytes()).unwrap();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].id, FactId::QuicBacklogBytes);
+    assert_eq!(facts[0].value, U64(3072));
+    assert_eq!(facts[1].id, FactId::RocksdbWriteStopped);
+    assert_eq!(facts[1].value, U64(0));
+
+    // The edge completed a newer generation between the snapshot and the
+    // metrics request: its body must not travel under the sampled generation.
+    let newer = sampled.replace("unsent_bytes 1024", "unsent_bytes 4096");
+    assert_ne!(quic_backlog_bytes(&newer), quic_backlog_bytes(&sampled));
+    let refused = paired_gauge_facts(&record, newer.as_bytes()).unwrap_err();
+    assert!(refused.contains("pairing mismatch"), "{refused}");
+
+    let mut invalid = sampled.into_bytes();
+    invalid[0] = 0xff;
+    assert_eq!(paired_gauge_facts(&record, &invalid).unwrap_err(), "edge metrics body not UTF-8");
+}
+
+#[test]
+fn a_paired_body_without_catalog_gauges_yields_no_fact() {
+    let body = include_str!("../../health-core/tests/fixtures/native-core.prom");
+    let record =
+        parse_native(include_bytes!("../../health-core/tests/fixtures/native-core.json")).unwrap();
+    assert!(paired_gauge_facts(&record, body.as_bytes()).unwrap().is_empty());
 }
