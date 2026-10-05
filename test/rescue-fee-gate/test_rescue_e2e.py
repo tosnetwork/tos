@@ -76,8 +76,18 @@ class Signers:
         return s.read_bytes()
 
 
-def request(role, kind, payload, epoch=0, nonce=0, root=MODULE, account=ACCOUNT, now=NOW,
-            valid_until=None, network_tag=NETWORK_TAG):
+def request(
+    role,
+    kind,
+    payload,
+    epoch=0,
+    nonce=0,
+    root=MODULE,
+    account=ACCOUNT,
+    now=NOW,
+    valid_until=None,
+    network_tag=NETWORK_TAG,
+):
     return (
         Cell()
         .uint(AU2R, 32)
@@ -215,7 +225,9 @@ class RescueLoopTests(unittest.TestCase):
     def test_primary_spends_until_locked_then_is_refused(self):
         mod, acc = self.module(), self.account()
         req = request(PRIMARY, K_EXECUTE, pay(PAYEE, 1_000_000_000))
-        msg = internal(RELAYER, MODULE, submission(req, self.sign.ml(digest(req))), value=1_000_000_000)
+        msg = internal(
+            RELAYER, MODULE, submission(req, self.sign.ml(digest(req))), value=1_000_000_000
+        )
         mr, ar, mod, acc = self.hop(mod, acc, msg, "primary execute direct")
         self.assertTrue(ar["details"]["compute_success"], ar["details"])
         self.assertEqual(len(outgoing(from_boc(ar["transaction"]))), 1)
@@ -226,7 +238,9 @@ class RescueLoopTests(unittest.TestCase):
         self.assertEqual(again["details"]["exit"], 1804)
         # RESCUE locks the daily suite.
         lock = request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8))
-        mr, ar, mod, acc = self.hop(mod, acc, self.through_vault(submission(lock, self.sign.slh(digest(lock)))), "lock")
+        mr, ar, mod, acc = self.hop(
+            mod, acc, self.through_vault(submission(lock, self.sign.slh(digest(lock)))), "lock"
+        )
         self.assertTrue(ar["details"]["compute_success"])
         # The lock's own relay, delivered again, is stale: the epoch moved.
         (relay,) = outgoing(from_boc(mr["transaction"]))
@@ -234,7 +248,9 @@ class RescueLoopTests(unittest.TestCase):
         self.assertEqual(again["details"]["exit"], 1803)
         # A PRIMARY request with every other field current is refused by the local bit.
         req = request(PRIMARY, K_EXECUTE, pay(PAYEE, 1_000_000_000), epoch=1, nonce=0)
-        msg = internal(RELAYER, MODULE, submission(req, self.sign.ml(digest(req))), value=1_000_000_000)
+        msg = internal(
+            RELAYER, MODULE, submission(req, self.sign.ml(digest(req))), value=1_000_000_000
+        )
         _, ar, _, _ = self.hop(mod, acc, msg, "primary after lock")
         self.assertFalse(ar["details"]["compute_success"])
         self.assertEqual(ar["details"]["exit"], 1813)
@@ -249,23 +265,57 @@ class RescueLoopTests(unittest.TestCase):
     def test_signature_role_and_key_binding_at_the_module(self):
         cases = []
         lock = request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8))
-        cases.append(("ML-DSA signature claiming RESCUE", submission(lock, self.sign.ml(digest(lock))), 9))
-        cases.append(("another SLH key", submission(lock, self.sign.slh(digest(lock), self.sign.other_slh_sk)), 1808))
+        cases.append(
+            ("ML-DSA signature claiming RESCUE", submission(lock, self.sign.ml(digest(lock))), 9)
+        )
+        cases.append(
+            (
+                "another SLH key",
+                submission(lock, self.sign.slh(digest(lock), self.sign.other_slh_sk)),
+                1808,
+            )
+        )
         bad = request(PRIMARY, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8))
-        cases.append(("PRIMARY control operation", submission(bad, self.sign.ml(digest(bad))), 1812))
+        cases.append(
+            ("PRIMARY control operation", submission(bad, self.sign.ml(digest(bad))), 1812)
+        )
         mismatch = request(RESCUE, K_LOCK, Cell().uint(EXEC, 32))
-        cases.append(("payload of another kind", submission(mismatch, self.sign.slh(digest(mismatch))), 1814))
+        cases.append(
+            ("payload of another kind", submission(mismatch, self.sign.slh(digest(mismatch))), 1814)
+        )
         for name, req, code in (
-            ("request for another root", request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), root=(0, 5)), 1802),
-            ("expired request", request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), valid_until=NOW), 1805),
-            ("ttl beyond one hour", request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), valid_until=NOW + 3601), 1805),
-            ("other network tag", request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), network_tag=bytes(32)), 1801),
-            ("masterchain account", request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), account=(-1, 7)), 1802),
+            (
+                "request for another root",
+                request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), root=(0, 5)),
+                1802,
+            ),
+            (
+                "expired request",
+                request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), valid_until=NOW),
+                1805,
+            ),
+            (
+                "ttl beyond one hour",
+                request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), valid_until=NOW + 3601),
+                1805,
+            ),
+            (
+                "other network tag",
+                request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), network_tag=bytes(32)),
+                1801,
+            ),
+            (
+                "masterchain account",
+                request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8), account=(-1, 7)),
+                1802,
+            ),
         ):
             cases.append((name, submission(req, self.sign.slh(digest(req))), code))
         for name, sub, code in cases:
             with self.subTest(case=name):
-                mr, _ = self.deliver(self.module(), internal(RELAYER, MODULE, sub, value=2_000_000_000))
+                mr, _ = self.deliver(
+                    self.module(), internal(RELAYER, MODULE, sub, value=2_000_000_000)
+                )
                 self.assertTrue(mr["success"])
                 self.assertFalse(mr["details"]["compute_success"], name)
                 self.assertEqual(mr["details"]["exit"], code, name)
@@ -273,11 +323,17 @@ class RescueLoopTests(unittest.TestCase):
         req = request(PRIMARY, K_EXECUTE, pay(PAYEE, 1))
         sig = bytearray(self.sign.ml(digest(req)))
         sig[100] ^= 1
-        mr, _ = self.deliver(self.module(), internal(RELAYER, MODULE, submission(req, bytes(sig)), value=2_000_000_000))
+        mr, _ = self.deliver(
+            self.module(),
+            internal(RELAYER, MODULE, submission(req, bytes(sig)), value=2_000_000_000),
+        )
         self.assertEqual(mr["details"]["exit"], 1808, "tampered ML-DSA signature")
         # REQUIRED policy: PRIMARY refused at the module even for execute.
         req = request(PRIMARY, K_EXECUTE, pay(PAYEE, 1))
-        mr, _ = self.deliver(self.module(policy=REQUIRED), internal(RELAYER, MODULE, submission(req, self.sign.ml(digest(req)))))
+        mr, _ = self.deliver(
+            self.module(policy=REQUIRED),
+            internal(RELAYER, MODULE, submission(req, self.sign.ml(digest(req)))),
+        )
         self.assertEqual(mr["details"]["exit"], 1817)
 
     @unittest.skipUnless(os.environ.get("OPENSSL"), "OPENSSL (3.5+) not set")
@@ -290,8 +346,18 @@ class RescueLoopTests(unittest.TestCase):
 
         def openssl_sign(message, context):
             (d / "o.msg").write_bytes(message)
-            args = [openssl, "pkeyutl", "-sign", "-rawin", "-inkey", d / "o.pem", "-in", d / "o.msg",
-                    "-out", d / "o.sig"]
+            args = [
+                openssl,
+                "pkeyutl",
+                "-sign",
+                "-rawin",
+                "-inkey",
+                d / "o.pem",
+                "-in",
+                d / "o.msg",
+                "-out",
+                d / "o.sig",
+            ]
             if context:
                 args += ["-pkeyopt", "context-string:" + context.decode("ascii")]
             run(*args)
@@ -300,10 +366,17 @@ class RescueLoopTests(unittest.TestCase):
         lock = request(RESCUE, K_LOCK, Cell().uint(LOCK, 32).uint(1, 8))
         # Without the AUTH context the same key and message must not verify.
         no_ctx = submission(lock, openssl_sign(digest(lock), b""))
-        mr, _ = self.deliver(self.module(slh_pk=slh_pk), internal(RELAYER, MODULE, no_ctx, value=2_000_000_000))
+        mr, _ = self.deliver(
+            self.module(slh_pk=slh_pk), internal(RELAYER, MODULE, no_ctx, value=2_000_000_000)
+        )
         self.assertEqual(mr["details"]["exit"], 1808, "context must be bound")
         sub = submission(lock, openssl_sign(digest(lock), CTX_RESCUE))
-        _, ar, _, acc = self.hop(self.module(slh_pk=slh_pk), self.account(), self.through_vault(sub), "openssl rescue lock")
+        _, ar, _, acc = self.hop(
+            self.module(slh_pk=slh_pk),
+            self.account(),
+            self.through_vault(sub),
+            "openssl rescue lock",
+        )
         self.assertTrue(ar["details"]["compute_success"], ar["details"])
         self.assertEqual(self.state(acc)["retired"], 1 << 1)
 
@@ -323,7 +396,12 @@ class RescueLoopTests(unittest.TestCase):
     def test_rescue_execute_and_migration_cut_the_old_root(self):
         mod, acc = self.module(), self.account()
         req = request(RESCUE, K_EXECUTE, pay(PAYEE, 3_000_000_000))
-        _, ar, mod, acc = self.hop(mod, acc, self.through_vault(submission(req, self.sign.slh(digest(req)))), "rescue execute")
+        _, ar, mod, acc = self.hop(
+            mod,
+            acc,
+            self.through_vault(submission(req, self.sign.slh(digest(req)))),
+            "rescue execute",
+        )
         self.assertTrue(ar["details"]["compute_success"], ar["details"])
         (paid,) = outgoing(from_boc(ar["transaction"]))
         s = paid.slice()
@@ -342,19 +420,30 @@ class RescueLoopTests(unittest.TestCase):
             .ref(Cell().uint(0xFEE, 256))
         )
         # A successor whose address is not the hash of its StateInit is refused.
-        bad_payload = Cell().uint(MIGR, 32).uint(new_root, 256).uint(new_root + 1, 256).uint(REQUIRED, 8)
+        bad_payload = (
+            Cell().uint(MIGR, 32).uint(new_root, 256).uint(new_root + 1, 256).uint(REQUIRED, 8)
+        )
         bad_payload.uint(1, 8).uint(0, 256).ref(Cell().uint(0xFEE, 256))
         bad = request(RESCUE, K_MIGRATE, bad_payload, nonce=1)
-        _, ar, _, _ = self.hop(mod, acc, self.through_vault(submission(bad, self.sign.slh(digest(bad)))), "bad successor")
+        _, ar, _, _ = self.hop(
+            mod,
+            acc,
+            self.through_vault(submission(bad, self.sign.slh(digest(bad)))),
+            "bad successor",
+        )
         self.assertEqual(ar["details"]["exit"], 1815)
         mig = request(RESCUE, K_MIGRATE, payload, nonce=1)
-        _, ar, mod, acc = self.hop(mod, acc, self.through_vault(submission(mig, self.sign.slh(digest(mig)))), "migrate")
+        _, ar, mod, acc = self.hop(
+            mod, acc, self.through_vault(submission(mig, self.sign.slh(digest(mig)))), "migrate"
+        )
         self.assertTrue(ar["details"]["compute_success"], ar["details"])
         st = self.state(acc)
         self.assertEqual((st["root"], st["policy"], st["epoch"]), (new_root, REQUIRED, 1))
         # The old module is no longer the root: its relays are refused.
         req = request(RESCUE, K_EXECUTE, pay(PAYEE, 1), epoch=1)
-        _, ar, _, _ = self.hop(mod, acc, self.through_vault(submission(req, self.sign.slh(digest(req)))), "old root")
+        _, ar, _, _ = self.hop(
+            mod, acc, self.through_vault(submission(req, self.sign.slh(digest(req)))), "old root"
+        )
         self.assertFalse(ar["details"]["compute_success"])
         self.assertEqual(ar["details"]["exit"], 1800)
 

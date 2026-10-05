@@ -55,8 +55,11 @@ def main():
             path = None
             try:
                 with tempfile.NamedTemporaryFile(
-                    mode="w", prefix="admission-probe-", suffix=".fc",
-                    dir=SOURCE.parent, delete=False,
+                    mode="w",
+                    prefix="admission-probe-",
+                    suffix=".fc",
+                    dir=SOURCE.parent,
+                    delete=False,
                 ) as f:
                     f.write(source)
                     path = Path(f.name)
@@ -121,11 +124,10 @@ def main():
         budget_end = candidate.index("  set_data(", budget_start)
         budget_code = candidate[budget_start:budget_end]
         current_budget = replace_once(candidate, budget_code, "")
-        balance_guard = (
-            "  throw_unless(fee::insufficient_balance, value + budget <= get_balance().pair_first());"
-        )
+        balance_guard = "  throw_unless(fee::insufficient_balance, value + budget <= get_balance().pair_first());"
         current_budget = replace_once(
-            current_budget, balance_guard,
+            current_budget,
+            balance_guard,
             budget_code + balance_guard.replace("value + budget", "value + fresh_budget"),
         )
         compile_variant("current-budget", current_budget)

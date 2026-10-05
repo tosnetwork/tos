@@ -66,7 +66,9 @@ def fee_info(network_tag, global_id, account_index, key_generation, fee_tree_id)
 def derive_fee_seed(master, network_tag, global_id, account_index, key_generation, fee_tree_id):
     if not isinstance(master, bytes) or len(master) != 32:
         raise ValueError("master must be 32 bytes")
-    material = hkdf(master, fee_info(network_tag, global_id, account_index, key_generation, fee_tree_id), 48)
+    material = hkdf(
+        master, fee_info(network_tag, global_id, account_index, key_generation, fee_tree_id), 48
+    )
     return material[:32], material[32:]
 
 
@@ -128,9 +130,7 @@ class LmsKey:
             raise ValueError("randomizer must be 32 bytes")
         digest = sha256(self.I, struct.pack(">IH", q, D_MESG), randomizer, message)
         qc = digest + checksum(digest, self.w, self.ls)
-        ys = b"".join(
-            self.chain(q, i, self.x(q, i), 0, coef(qc, i, self.w)) for i in range(self.p)
-        )
+        ys = b"".join(self.chain(q, i, self.x(q, i), 0, coef(qc, i, self.w)) for i in range(self.p))
         ots = struct.pack(">I", self.ots_type) + randomizer + ys
         node, path = (1 << self.h) + q, b""
         while node > 1:
@@ -153,13 +153,17 @@ def vectors():
     out = []
     for account_index, key_generation, tree_byte in ((0, 0, 0xA5), (0, 0, 0xA6), (1, 1, 0xA5)):
         fee_tree_id = bytes([tree_byte]) * 32
-        seed, ident = derive_fee_seed(master, network_tag, -239, account_index, key_generation, fee_tree_id)
+        seed, ident = derive_fee_seed(
+            master, network_tag, -239, account_index, key_generation, fee_tree_id
+        )
         out.append(
             {
                 "account_index": account_index,
                 "key_generation": key_generation,
                 "fee_tree_id_hex": fee_tree_id.hex(),
-                "info_hex": fee_info(network_tag, -239, account_index, key_generation, fee_tree_id).hex(),
+                "info_hex": fee_info(
+                    network_tag, -239, account_index, key_generation, fee_tree_id
+                ).hex(),
                 "SEED_hex": seed.hex(),
                 "I_hex": ident.hex(),
                 "hss_public_key_hex": tool_public_key(seed, ident, 20).hex(),
@@ -171,7 +175,11 @@ def vectors():
         "label": FEE_LABEL,
         "info_encoding": "0x01 || uint8(len(label)) || ASCII(label) || network_tag[32] || int32be(global_id) || uint32be(account_index) || uint32be(key_generation) || fee_tree_id[32]",
         "keygen": "RFC 8554 Appendix A; LMS_SHA256_M32_H20 / LMOTS_SHA256_N32_W4; one-level HSS public key",
-        "inputs": {"master_hex": master.hex(), "network_tag_hex": network_tag.hex(), "global_id": -239},
+        "inputs": {
+            "master_hex": master.hex(),
+            "network_tag_hex": network_tag.hex(),
+            "global_id": -239,
+        },
         "vectors": out,
     }
 
@@ -181,8 +189,12 @@ def tool_public_key(seed, ident, height):
     if not tool:
         raise SystemExit("LMS_TOOL is required (build with tools/build.sh)")
     with tempfile.TemporaryDirectory() as tmp:
-        out = subprocess.run([tool, "keygen", seed.hex(), ident.hex(), str(height), str(Path(tmp) / "tree")],
-                             check=True, capture_output=True, text=True).stdout
+        out = subprocess.run(
+            [tool, "keygen", seed.hex(), ident.hex(), str(height), str(Path(tmp) / "tree")],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
     return bytes.fromhex(out.strip())
 
 

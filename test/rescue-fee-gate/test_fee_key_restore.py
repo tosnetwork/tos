@@ -32,21 +32,38 @@ class Derived:
     count = 0
 
     def __init__(self, master, tree=TREE, account_index=0):
-        seed, ident = fee_key.derive_fee_seed(master, NETWORK_TAG, slot.GLOBAL_ID, account_index, 0, tree)
+        seed, ident = fee_key.derive_fee_seed(
+            master, NETWORK_TAG, slot.GLOBAL_ID, account_index, 0, tree
+        )
         # Each instance builds its own tree: a restored device shares nothing with the lost one.
         Derived.count += 1
         self.dir = Path(self.workdir) / f"device{Derived.count}"
         self.dir.mkdir()
         self.args = [seed.hex(), ident.hex(), "20", str(self.dir / "tree")]
-        out = subprocess.run([os.environ["LMS_TOOL"], "keygen", *self.args], check=True,
-                             capture_output=True, text=True).stdout
+        out = subprocess.run(
+            [os.environ["LMS_TOOL"], "keygen", *self.args],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
         self.public = bytes.fromhex(out.strip())
 
     def sign_at(self, leaf, message):
         path = self.dir / f"msg{leaf}"
         path.write_bytes(message)
-        subprocess.run([os.environ["LMS_TOOL"], "sign", *self.args, str(leaf), str(path),
-                        os.urandom(32).hex(), str(path) + ".sig"], check=True, capture_output=True)
+        subprocess.run(
+            [
+                os.environ["LMS_TOOL"],
+                "sign",
+                *self.args,
+                str(leaf),
+                str(path),
+                os.urandom(32).hex(),
+                str(path) + ".sig",
+            ],
+            check=True,
+            capture_output=True,
+        )
         return Path(str(path) + ".sig").read_bytes()
 
 
@@ -91,7 +108,9 @@ class FeeKeyRestoreTests(unittest.TestCase):
         # Negative control: the same signer with one master bit changed is refused.
         wrong = Derived(bytes([MASTER[0] ^ 1]) + MASTER[1:])
         k = slot.intent(slot.START_SLOT + 1, value=5, now=t)
-        bad = self.h.submit(self.h.vault(self.phone), slot.body(k, wrong.sign_at(slot.START_SLOT + 1, k.hash)))
+        bad = self.h.submit(
+            self.h.vault(self.phone), slot.body(k, wrong.sign_at(slot.START_SLOT + 1, k.hash))
+        )
         self.assertFalse(bad["success"])
         self.assertEqual(bad.get("vm_exit_code"), 2007)
 

@@ -14,7 +14,6 @@ Environment: as test_slot_vault.py.
 """
 
 # ruff: noqa: E402
-import os
 import sys
 import tempfile
 import unittest
@@ -203,15 +202,32 @@ class VaultFailureTests(unittest.TestCase):
         # The question: does an action-phase failure roll back the leaf that COMMIT saved?
         for name in ("unfunded-strict", "unfunded-strict-no-commit"):
             with self.subTest(variant=name):
-                shard, message, result = self.run_case(name, value=slot.MAX_VALUE, balance=1_000_000_000)
+                shard, message, result = self.run_case(
+                    name, value=slot.MAX_VALUE, balance=1_000_000_000
+                )
                 after, leaf, _ = self.record(name, result, shard)
                 self.assertTrue(result["success"])
                 action = result["details"]["action"]
                 self.assertIsNotNone(action)
                 self.assertFalse(action["success"], "the send cannot be funded")
                 again = self.helper.submit(after, message)
-                replay_leaf = self.leaf_and_balance(from_boc(again["shard_account"]))[0] if again["success"] else None
-                RESULTS.append((name + " replay", again["success"], None, again.get("vm_exit_code"), None, None, replay_leaf, None))
+                replay_leaf = (
+                    self.leaf_and_balance(from_boc(again["shard_account"]))[0]
+                    if again["success"]
+                    else None
+                )
+                RESULTS.append(
+                    (
+                        name + " replay",
+                        again["success"],
+                        None,
+                        again.get("vm_exit_code"),
+                        None,
+                        None,
+                        replay_leaf,
+                        None,
+                    )
+                )
                 if leaf == 0:
                     # Leaf rolled back: the same signed intent is admitted and charged again.
                     self.assertTrue(again["success"], "rolled-back leaf must be re-admissible")
@@ -220,13 +236,26 @@ class VaultFailureTests(unittest.TestCase):
         shard, _, result = self.run_case("base")
         after = from_boc(result["shard_account"])
         leaf_before, balance_before = self.leaf_and_balance(after)
-        bounced = internal(slot.TARGET, slot.VAULT, Cell().uint(0xFFFFFFFF, 32), value=900_000_000, bounced=True)
+        bounced = internal(
+            slot.TARGET, slot.VAULT, Cell().uint(0xFFFFFFFF, 32), value=900_000_000, bounced=True
+        )
         r = self.emulator.send(after, bounced)
         self.assertTrue(r["success"])
         leaf_after, balance_after = self.leaf_and_balance(from_boc(r["shard_account"]))
         self.assertEqual(leaf_after, leaf_before, "a bounce must not roll the leaf back")
         self.assertGreater(balance_after, balance_before)
-        RESULTS.append(("bounce", True, r["details"]["compute_success"], r["details"]["exit"], None, None, leaf_after, balance_before - balance_after))
+        RESULTS.append(
+            (
+                "bounce",
+                True,
+                r["details"]["compute_success"],
+                r["details"]["exit"],
+                None,
+                None,
+                leaf_after,
+                balance_before - balance_after,
+            )
+        )
 
 
 if __name__ == "__main__":

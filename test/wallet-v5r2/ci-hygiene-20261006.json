@@ -1,0 +1,156 @@
+{
+  "base_commit": "61d5e62c547a4e67efb3923f8bedb02fed639949",
+  "trigger": {
+    "run": 37332183626,
+    "head": "fe3d92b3fd2d9f717baeb85b02add4268772a5a4",
+    "failures": [
+      "changed Python lint/format",
+      "vendored SLH C conversion diagnostics under -Werror"
+    ]
+  },
+  "checks": [
+    "Ruff check and format --check for all 38 Python files changed against origin/main passed",
+    "AST comparison against base commit passed after removing import nodes and normalizing unused _size/_code names",
+    "All 13 vendored SHA256SUMS entries match",
+    "All four imported C translation units pass local Clang syntax checks with strict warnings and private -Wno-error=conversion; conversion warnings remain visible",
+    "Release emulator and test-fee-native-cost rebuilt",
+    "14 existing native authentication tests passed",
+    "20 cell cases and 524 bound cases passed",
+    "Actual fee-funded AUTH four-hop regression passed at diagnostic credit; default credit still fails at 11689"
+  ],
+  "sources": [
+    {
+      "path": "crypto/pq/CMakeLists.txt",
+      "sha256": "3795ab76b61098b28b77f63029d025e9c33f94ffccd4ac048c61d64124ed786f",
+      "bytes": 30450
+    },
+    {
+      "path": "test/auth-extensions/cells.py",
+      "sha256": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281",
+      "bytes": 7222
+    },
+    {
+      "path": "test/auth-extensions/mutations.py",
+      "sha256": "6d6fb2901f053d414795f95c7d0b00c58b0f86e392dc30e56ba9ce5c0cadc27c",
+      "bytes": 2640
+    },
+    {
+      "path": "test/auth-extensions/native.py",
+      "sha256": "a6d49fd2d17aa7c191881e65b08c95e6205dcf8423c9315147782d686c185809",
+      "bytes": 7854
+    },
+    {
+      "path": "test/rescue-fee-gate/fee_key.py",
+      "sha256": "c8ab8abd2ff020abacf2209fd45523ec35240c501144108c8e4e33bba81351a1",
+      "bytes": 8719
+    },
+    {
+      "path": "test/rescue-fee-gate/mutations.py",
+      "sha256": "edf16125c6a35e856d1d82f480e3747ee72f71559ed30183434184c0c226e11a",
+      "bytes": 9051
+    },
+    {
+      "path": "test/rescue-fee-gate/probe_compact_admission.py",
+      "sha256": "0bc7943c92e21d5d78d688b7ac76f42b66929802b1cc32cc37b405e3d47ac684",
+      "bytes": 7034
+    },
+    {
+      "path": "test/rescue-fee-gate/suite_parity_mutations.py",
+      "sha256": "4d6892e9ab1ab9bcb838a49b88c16aebf1f1fe67037b297ef090576400a7ba62",
+      "bytes": 3336
+    },
+    {
+      "path": "test/rescue-fee-gate/suite_scenarios.py",
+      "sha256": "ea693df87f104c110b8b4c37713a3e393692e21d79f60e542ea371c8f7ef8a80",
+      "bytes": 7272
+    },
+    {
+      "path": "test/rescue-fee-gate/test_fee_key_restore.py",
+      "sha256": "bc0e67eb6f690d94d88fcea0bff57b741985d2813142eb86fb23e3fd2f5b9431",
+      "bytes": 4557
+    },
+    {
+      "path": "test/rescue-fee-gate/test_rescue_e2e.py",
+      "sha256": "b53b1adfc50287bfc0e2e5111200524049e2eac8d208dfb710f298277f34bf05",
+      "bytes": 18428
+    },
+    {
+      "path": "test/rescue-fee-gate/test_slot_vault.py",
+      "sha256": "328b788734d61b83814c4aca3e5660db4cce5f7581c0e13b7a41b91e29748bad",
+      "bytes": 25840
+    },
+    {
+      "path": "test/rescue-fee-gate/test_vault_failures.py",
+      "sha256": "b5d5d9e56726dea6abe633ffa731dc659245fcae0ed6475bd934de18f6403ec9",
+      "bytes": 11689
+    },
+    {
+      "path": "third-party/slhdsa-c/PROVENANCE.md",
+      "sha256": "a87ae5b7926e2f5829a1b54f2c666d99b3046cafdf5190a8ade23b866640fbbc",
+      "bytes": 2082
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/build.log",
+      "sha256": "08e689817c408a38237c8f00dedf00b2fd2f580d5f4f71bd545593f655ba5790",
+      "bytes": 38997
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/auth.log",
+      "sha256": "9c18778514c88b028691a3b8c703f038a30298e0b46a3ce4fe8700b3f3647529",
+      "bytes": 2116
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/slh_dsa.c.log",
+      "sha256": "8613e99ce5890925d4cf77c23df3d941217be2233c3f0536d952448d3f782a86",
+      "bytes": 7014
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/slh_sha2.c.log",
+      "sha256": "7975016ef6941cbfe806f8a2ed77ca9a336c7b86b54a77245c6207fbaa74993d",
+      "bytes": 6575
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/sha2_256.c.log",
+      "sha256": "8725b3c183f0e1b90ef20100f2b29007706e86a293a8ad58b3a8e6edf9ead192",
+      "bytes": 6084
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/sha2_512.c.log",
+      "sha256": "23aec3199416081611b4fc10b711993871635ab9bb86ea858e576ab1cb983c14",
+      "bytes": 6084
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/cells/results.json",
+      "sha256": "5706a61d9e183bc61c534ec55ad30e0b35a0416a34e37a2dac6be1a96ce1bd80",
+      "bytes": 3951
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/bounds/results.json",
+      "sha256": "0200ef15f896db9f83e57c9804bf140cf83fab3109f91a673e0ad4635b4f7426",
+      "bytes": 243
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/delivery/results.json",
+      "sha256": "79c3f60bc3260cadfd4cb3cf0a1a04d58874d40bf7a474e589442bdb8b889bdf",
+      "bytes": 1531
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lint-regression/delivery/default-credit-result.json",
+      "sha256": "d7e8422330b6bcfff67a0e12dd2cb32cfca23358c280e64b41864020ecdf3c5e",
+      "bytes": 26060
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-ranges/ci-lint-failed.log",
+      "sha256": "8b3271708eaa44c605bfdeb728d7a38958fb7f91d6033022242be1b655ec1567",
+      "bytes": 1500789
+    }
+  ],
+  "retention": "Keep local logs and receipts through PR review and release acceptance. No large artifacts are committed.",
+  "limitations": [
+    "Local Clang is not Linux CI Clang 21; remote strict build still needs confirmation",
+    "No production-credit or release acceptance claim",
+    "Independent SLH conformance, parity, symbol and security review gates remain open"
+  ]
+}

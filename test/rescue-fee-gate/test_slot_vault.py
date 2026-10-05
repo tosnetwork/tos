@@ -79,8 +79,12 @@ class Device:
         tree_dir = self.workdir / f"{name}.d"
         tree_dir.mkdir()
         self.args = [seed.hex(), ident.hex(), "20", str(tree_dir / "tree")]
-        out = subprocess.run([os.environ["LMS_TOOL"], "keygen", *self.args], check=True,
-                             capture_output=True, text=True).stdout
+        out = subprocess.run(
+            [os.environ["LMS_TOOL"], "keygen", *self.args],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
         self.public = bytes.fromhex(out.strip())
         assert len(self.public) == 60
 
@@ -98,8 +102,19 @@ class Device:
         path = self.workdir / f"{self.name}_m{leaf}_{message.hex()[:8]}"
         path.write_bytes(message)
         signature_path = path.with_name(path.name + ".sig")
-        subprocess.run([os.environ["LMS_TOOL"], "sign", *self.args, str(leaf), str(path),
-                        os.urandom(32).hex(), str(signature_path)], check=True, capture_output=True)
+        subprocess.run(
+            [
+                os.environ["LMS_TOOL"],
+                "sign",
+                *self.args,
+                str(leaf),
+                str(path),
+                os.urandom(32).hex(),
+                str(signature_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
         signature = signature_path.read_bytes()
         assert int.from_bytes(signature[4:8], "big") == leaf
         self.leaf = leaf + 1
@@ -284,9 +299,7 @@ class SlotVaultTests(unittest.TestCase):
                 RESULTS.append((params, len(key.public), gas, result["details"]["gas"]))
 
     def solvency_case(self, balance, key, message, budget=BUDGET):
-        return self.submit(
-            self.vault(key, balance=balance, budget=budget), message
-        )
+        return self.submit(self.vault(key, balance=balance, budget=budget), message)
 
     def test_solvency_edge_pays_in_full(self):
         # Bisect the smallest balance the vault admits; at that edge the send must go out with
@@ -341,7 +354,9 @@ class SlotVaultTests(unittest.TestCase):
         self.clock(at_slot(START_SLOT + 1))
         j = intent(START_SLOT + 1, value=MAX_VALUE, now=at_slot(START_SLOT + 1))
         self.assert_refused(
-            self.submit(after, body(j, key.sign_at(START_SLOT + 1, j.hash))), 2008, "refreshed budget"
+            self.submit(after, body(j, key.sign_at(START_SLOT + 1, j.hash))),
+            2008,
+            "refreshed budget",
         )
 
     def test_real_size_rescue_payload(self):
@@ -445,7 +460,11 @@ class SlotVaultTests(unittest.TestCase):
         swapped_b = intent(START_SLOT, value=MAX_VALUE)
         for name, message, code in (
             ("signature bit flip", body(signed_a, bytes(flipped)), 2007),
-            ("signed digest attached to another intent", body(swapped_b, a_sig, signed_a.hash), 2006),
+            (
+                "signed digest attached to another intent",
+                body(swapped_b, a_sig, signed_a.hash),
+                2006,
+            ),
         ):
             with self.subTest(case=name):
                 self.assert_refused(self.submit(self.vault(forged), message), code, name)
@@ -457,7 +476,9 @@ class SlotVaultTests(unittest.TestCase):
         )
         # Positive control for the shared shape: an untouched intent is admitted.
         good = intent(START_SLOT)
-        self.assertTrue(self.admitted(self.submit(shard, body(good, key.sign_at(START_SLOT, good.hash)))))
+        self.assertTrue(
+            self.admitted(self.submit(shard, body(good, key.sign_at(START_SLOT, good.hash))))
+        )
 
     def test_restore_from_mnemonic_waits_for_next_slot(self):
         phone = self.device()
@@ -472,7 +493,9 @@ class SlotVaultTests(unittest.TestCase):
         # Hazard the wait prevents: signing in the current slot reuses the phone's leaf.
         hazard = intent(slot_now, value=2)
         hazard_sig = phone.restore("hazard").sign_at(slot_now, hazard.hash)
-        first_sig = (Path(self.tmp.name) / f"{phone.name}_m{START_SLOT}_{paid.hash.hex()[:8]}.sig").read_bytes()
+        first_sig = (
+            Path(self.tmp.name) / f"{phone.name}_m{START_SLOT}_{paid.hash.hex()[:8]}.sig"
+        ).read_bytes()
         self.assertEqual(hazard_sig[:8], first_sig[:8], "same leaf: one-time key reused")
         self.assertNotEqual(hazard_sig, first_sig)
         self.assert_refused(self.submit(shard, body(hazard, hazard_sig)), 2004, "reused leaf")
@@ -528,7 +551,9 @@ class SlotVaultTests(unittest.TestCase):
         self.assert_refused(
             self.submit(self.vault(too_old, per_slot=k), body(old, old_sig)), 2009, "two slots old"
         )
-        self.assertTrue(self.admitted(self.submit(self.vault(other, per_slot=k), body(late, late_sig))))
+        self.assertTrue(
+            self.admitted(self.submit(self.vault(other, per_slot=k), body(late, late_sig)))
+        )
 
     def test_unmined_signature_expires_with_its_window(self):
         key = self.device()
@@ -553,11 +578,15 @@ class SlotVaultTests(unittest.TestCase):
         # The honest signer has nothing more to sign this slot; the next slot works.
         self.clock(at_slot(START_SLOT + 1))
         j = intent(START_SLOT + 1, now=at_slot(START_SLOT + 1))
-        self.assertTrue(self.admitted(self.submit(after, body(j, key.sign_at(START_SLOT + 1, j.hash)))))
+        self.assertTrue(
+            self.admitted(self.submit(after, body(j, key.sign_at(START_SLOT + 1, j.hash))))
+        )
 
 
 if __name__ == "__main__":
     program = unittest.main(verbosity=2, exit=False)
     for params, pk, accept_gas, total_gas in RESULTS:
-        print(f"profile H/W={params}: pk={pk}B gas at ACCEPT={accept_gas} total compute gas={total_gas}")
+        print(
+            f"profile H/W={params}: pk={pk}B gas at ACCEPT={accept_gas} total compute gas={total_gas}"
+        )
     sys.exit(0 if program.result.wasSuccessful() else 1)

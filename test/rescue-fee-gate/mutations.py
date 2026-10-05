@@ -62,7 +62,10 @@ VAULTS = {
                 "  int leaf_slot = leaf / per_slot;\n",
                 "  int leaf_slot = leaf;\n",
             ),
-            "widen slot window": ("const int fee::slot_window = 1;", "const int fee::slot_window = 2;"),
+            "widen slot window": (
+                "const int fee::slot_window = 1;",
+                "const int fee::slot_window = 2;",
+            ),
             "drop value cap": ("  throw_unless(fee::value_too_high, value <= max_value);\n", ""),
             "drop rescue-only payload": (
                 "  throw_unless(fee::not_rescue, ps.preload_uint(32) == fee::rescue_submit);\n",
@@ -73,12 +76,18 @@ VAULTS = {
                 "value <= get_balance().pair_first()",
             ),
             "keep the stale budget": (".store_coins(fresh_budget)", ".store_coins(budget)"),
-            "drop compute budget": ("  int fresh_budget = get_compute_fee(0, fee::max_gas)\n", "  int fresh_budget = 0\n"),
+            "drop compute budget": (
+                "  int fresh_budget = get_compute_fee(0, fee::max_gas)\n",
+                "  int fresh_budget = 0\n",
+            ),
             "drop storage floor": (
                 "    + get_storage_fee(0, fee::storage_horizon, fee::state_bits, fee::state_cells);\n",
                 ";\n",
             ),
-            "drop q == leaf": ("  throw_unless(fee::leaf_mismatch, ss~load_uint(32) == leaf);\n", ""),
+            "drop q == leaf": (
+                "  throw_unless(fee::leaf_mismatch, ss~load_uint(32) == leaf);\n",
+                "",
+            ),
             "drop balance check": (
                 "  throw_unless(fee::insufficient_balance, value + budget <= get_balance().pair_first());\n",
                 "",
@@ -126,7 +135,10 @@ VAULTS = {
                 "    throw_unless(dual::bad_signature, pq_check_suite(digest, context, signature, primary_key, dual::suite_mldsa44));\n",
                 "",
             ),
-            "relay without funded_by": (".store_slice(funded_by).end_cell())", ".store_slice(my_address()).end_cell())"),
+            "relay without funded_by": (
+                ".store_slice(funded_by).end_cell())",
+                ".store_slice(my_address()).end_cell())",
+            ),
         },
     ),
     "account": (
@@ -137,9 +149,18 @@ VAULTS = {
                 "  throw_unless(acc::not_module, (sender_wc == 0) & (sender_hash == root));\n",
                 "",
             ),
-            "drop epoch check": ("  throw_unless(acc::stale_epoch, rs~load_uint(64) == epoch);\n", "  rs~load_uint(64);\n"),
-            "drop primary nonce": ("    throw_unless(acc::bad_nonce, nonce == primary_nonce);\n", ""),
-            "drop local retirement": ("    throw_if(acc::primary_retired, (local_retired >> daily) & 1);\n", ""),
+            "drop epoch check": (
+                "  throw_unless(acc::stale_epoch, rs~load_uint(64) == epoch);\n",
+                "  rs~load_uint(64);\n",
+            ),
+            "drop primary nonce": (
+                "    throw_unless(acc::bad_nonce, nonce == primary_nonce);\n",
+                "",
+            ),
+            "drop local retirement": (
+                "    throw_if(acc::primary_retired, (local_retired >> daily) & 1);\n",
+                "",
+            ),
             "drop fee-route PRIMARY refusal": (
                 "    throw_if(acc::primary_on_fee_route,\n",
                 "    throw_if(0 & acc::primary_on_fee_route,\n",
@@ -165,7 +186,9 @@ SOURCE_VARIABLE = {
 def run(test, source_name, variable="VAULT_SOURCE"):
     env = dict(os.environ, NO_COLOR="1", PYTHON_COLORS="0")
     env[variable] = source_name
-    return subprocess.run([sys.executable, str(HERE / test)], capture_output=True, text=True, env=env)
+    return subprocess.run(
+        [sys.executable, str(HERE / test)], capture_output=True, text=True, env=env
+    )
 
 
 def check(label, source_name, test, mutations):

@@ -17,3 +17,17 @@ yet.
 
 This import is a prototype for the wallet rescue design. Conformance (NIST ACVP), independent
 interoperability (OpenSSL 3.5) and the symbol audit are release gates, not claims made here.
+
+Build policy: the imported C target keeps conversion warnings visible but does not
+promote them to errors (`-Wno-error=conversion`, private to `tos_slhdsa_native`).
+The backend's integer-to-byte packing predates this integration. The TOS C++
+adapter and all other targets retain the repository's strict warning policy;
+no imported source bytes or SHA256SUMS entries are changed by this build setting.
+This exception does not establish conformance or discharge the release audit.
+
+The reviewed local conversion diagnostics cover endian byte stores/16-bit loads,
+parameter-derived digest lengths and indices, and MGF counters. For the adapter's
+fixed 128s profile (`h=63`, `hp=9`, `m=30`), digest index lengths are 7 and 2 bytes;
+the leaf input fits uint32 and the MGF counter is bounded by the fixed digest size.
+These observations explain the scoped warning policy; they are not a general
+approval of other parameter sets or unbounded caller-supplied parameters.

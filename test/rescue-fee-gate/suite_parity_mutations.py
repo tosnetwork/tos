@@ -17,15 +17,31 @@ PQ = CARGO / "vm/src/executor/pq.rs"
 LMS = CARGO / "vm/src/executor/lms_fee.rs"
 
 MUTATIONS = {
-    "LMS tariff 3 -> 4 gas per compression": (PQ, "const LMS_GAS_PER_COMPRESSION: i64 = 3;", "const LMS_GAS_PER_COMPRESSION: i64 = 4;"),
+    "LMS tariff 3 -> 4 gas per compression": (
+        PQ,
+        "const LMS_GAS_PER_COMPRESSION: i64 = 3;",
+        "const LMS_GAS_PER_COMPRESSION: i64 = 4;",
+    ),
     "LMS path: sibling order swapped": (
         LMS,
         "        tmp = if node & 1 == 1 {",
         "        tmp = if node & 1 == 0 {",
     ),
-    "Falcon suite accepts a non-empty context": (PQ, "            read_bytes(engine, context, 0)?;", "            read_bytes(engine, context, 1)?;"),
-    "suite enabled before version 16": (PQ, "const SUITE_MIN_VERSION: u32 = 16;", "const SUITE_MIN_VERSION: u32 = 15;"),
-    "suite enabled only from version 17": (PQ, "const SUITE_MIN_VERSION: u32 = 16;", "const SUITE_MIN_VERSION: u32 = 17;"),
+    "Falcon suite accepts a non-empty context": (
+        PQ,
+        "            read_bytes(engine, context, 0)?;",
+        "            read_bytes(engine, context, 1)?;",
+    ),
+    "suite enabled before version 16": (
+        PQ,
+        "const SUITE_MIN_VERSION: u32 = 16;",
+        "const SUITE_MIN_VERSION: u32 = 15;",
+    ),
+    "suite enabled only from version 17": (
+        PQ,
+        "const SUITE_MIN_VERSION: u32 = 16;",
+        "const SUITE_MIN_VERSION: u32 = 17;",
+    ),
     "Falcon generic gate differs from the dedicated gate": (
         PQ,
         "const FALCON512_MIN_VERSION: u32 = 16;",
@@ -41,10 +57,19 @@ MUTATIONS = {
 
 def rust_output(scenarios, target):
     env = dict(os.environ, CARGO_TARGET_DIR=str(target))
-    subprocess.run(["cargo", "build", "--locked", "-q", "-p", "tos_vm", "--example", "suite-parity"], cwd=CARGO,
-                   env=env, check=True, capture_output=True)
-    return subprocess.run([str(Path(target) / "debug/examples/suite-parity"), str(scenarios)],
-                          check=True, capture_output=True, text=True).stdout
+    subprocess.run(
+        ["cargo", "build", "--locked", "-q", "-p", "tos_vm", "--example", "suite-parity"],
+        cwd=CARGO,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    return subprocess.run(
+        [str(Path(target) / "debug/examples/suite-parity"), str(scenarios)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
 
 
 def main(scenarios, cpp_output, target):

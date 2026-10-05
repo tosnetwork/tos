@@ -4,19 +4,20 @@ It rejects exotic cells by default. An explicit fixture-only option admits
 level-zero library references without resolving them; this is not an SDK.
 The transaction and account layouts are read from crypto/block/block.tlb.
 """
+
 import base64
 import hashlib
 from functools import cached_property
 
 
 class Cell:
-    def __init__(self, bits='', refs=()):
+    def __init__(self, bits="", refs=()):
         self.bits, self.refs = bits, list(refs)
         assert len(bits) <= 1023 and len(self.refs) <= 4
 
     def uint(self, value, width):
         assert 0 <= value < (1 << width)
-        self.bits += f'{value:0{width}b}' if width else ''
+        self.bits += f"{value:0{width}b}" if width else ""
         assert len(self.bits) <= 1023
         return self
 
@@ -24,7 +25,7 @@ class Cell:
         return self.uint(value % (1 << width), width)
 
     def raw(self, data):
-        return self.uint(int.from_bytes(data, 'big'), len(data) * 8)
+        return self.uint(int.from_bytes(data, "big"), len(data) * 8)
 
     def ref(self, cell):
         self.refs.append(cell)
@@ -55,8 +56,8 @@ class Cell:
         n = len(self.bits)
         bits = self.bits
         if n % 8:
-            bits += '1' + '0' * (7 - n % 8)
-        data = int(bits or '0', 2).to_bytes(len(bits) // 8, 'big')
+            bits += "1" + "0" * (7 - n % 8)
+        data = int(bits or "0", 2).to_bytes(len(bits) // 8, "big")
         return bytes([len(self.refs), n // 8 + (n + 7) // 8]) + data
 
     @cached_property
@@ -65,11 +66,15 @@ class Cell:
 
     @cached_property
     def hash(self):
-        return hashlib.sha256(self.prefix() + b''.join(c.depth.to_bytes(2, 'big') for c in self.refs)
-                              + b''.join(c.hash for c in self.refs)).digest()
+        return hashlib.sha256(
+            self.prefix()
+            + b"".join(c.depth.to_bytes(2, "big") for c in self.refs)
+            + b"".join(c.hash for c in self.refs)
+        ).digest()
 
     def boc(self):
         cells, seen = [], set()
+
         def visit(c):
             if id(c) in seen:
                 return
@@ -77,14 +82,25 @@ class Cell:
             for r in c.refs:
                 visit(r)
             cells.append(c)
+
         visit(self)
         cells.reverse()
         indices = {id(c): i for i, c in enumerate(cells)}
         w = max(1, (len(cells).bit_length() + 7) // 8)
-        data = b''.join(c.prefix() + b''.join(indices[id(r)].to_bytes(w, 'big') for r in c.refs) for c in cells)
+        data = b"".join(
+            c.prefix() + b"".join(indices[id(r)].to_bytes(w, "big") for r in c.refs) for c in cells
+        )
         ow = max(1, (len(data).bit_length() + 7) // 8)
-        return (bytes.fromhex('b5ee9c72') + bytes([w, ow]) + len(cells).to_bytes(w, 'big')
-                + (1).to_bytes(w, 'big') + bytes(w) + len(data).to_bytes(ow, 'big') + bytes(w) + data)
+        return (
+            bytes.fromhex("b5ee9c72")
+            + bytes([w, ow])
+            + len(cells).to_bytes(w, "big")
+            + (1).to_bytes(w, "big")
+            + bytes(w)
+            + len(data).to_bytes(ow, "big")
+            + bytes(w)
+            + data
+        )
 
     def b64(self):
         return base64.b64encode(self.boc())
@@ -92,6 +108,7 @@ class Cell:
 
 class LibraryReference(Cell):
     """Level-zero exotic library-reference fixture; never resolves code."""
+
     def __init__(self, code_hash):
         super().__init__()
         self.uint(2, 8).uint(code_hash, 256)
@@ -108,7 +125,7 @@ class Slice:
 
     def uint(self, width):
         assert len(self.bits) >= width
-        v = int(self.bits[:width] or '0', 2)
+        v = int(self.bits[:width] or "0", 2)
         self.bits = self.bits[width:]
         return v
 
@@ -139,16 +156,18 @@ class Slice:
 def from_boc(data, *, allow_library=False):
     if isinstance(data, str):
         data = base64.b64decode(data)
-    assert data[:4] == bytes.fromhex('b5ee9c72')
+    assert data[:4] == bytes.fromhex("b5ee9c72")
     flags, ow = data[4:6]
     w = flags & 7
     pos = 6
+
     def read(n):
         nonlocal pos
-        v = int.from_bytes(data[pos:pos+n], 'big')
+        v = int.from_bytes(data[pos : pos + n], "big")
         pos += n
         return v
-    count, roots, absent, size = read(w), read(w), read(w), read(ow)
+
+    count, roots, absent, _size = read(w), read(w), read(w), read(ow)
     assert roots == 1 and absent == 0
     root = read(w)
     if flags & 128:
@@ -157,17 +176,21 @@ def from_boc(data, *, allow_library=False):
     for _ in range(count):
         d1, d2 = read(1), read(1)
         exotic = bool(d1 & 8)
-        assert not exotic or (allow_library and d1 & ~16 == 8), 'exotic cells are outside this harness'
+        assert not exotic or (allow_library and d1 & ~16 == 8), (
+            "exotic cells are outside this harness"
+        )
         if d1 & 16:
             pos += (1 + (d1 >> 5).bit_count()) * 34
-        b = data[pos:pos+(d2+1)//2]
+        b = data[pos : pos + (d2 + 1) // 2]
         pos += len(b)
-        bits = ''.join(f'{x:08b}' for x in b)
+        bits = "".join(f"{x:08b}" for x in b)
         if d2 & 1:
-            assert '1' in bits
-            bits = bits[:bits.rfind('1')]
+            assert "1" in bits
+            bits = bits[: bits.rfind("1")]
         if exotic:
-            assert len(bits) == 264 and bits[:8] == '00000010', 'only library references are admitted'
+            assert len(bits) == 264 and bits[:8] == "00000010", (
+                "only library references are admitted"
+            )
             cells.append(LibraryReference(int(bits[8:], 2)))
         else:
             cells.append(Cell(bits))
@@ -179,6 +202,7 @@ def from_boc(data, *, allow_library=False):
 
 def read_dict(root, width):
     result = {}
+
     def walk(c, n, prefix):
         s = c.slice()
         if s.uint(1) == 0:
@@ -196,8 +220,9 @@ def read_dict(root, width):
         if k == n:
             result[p] = Cell(s.bits, s.refs)
         else:
-            walk(s.ref(), n-k-1, p << 1)
-            walk(s.ref(), n-k-1, (p << 1) | 1)
+            walk(s.ref(), n - k - 1, p << 1)
+            walk(s.ref(), n - k - 1, (p << 1) | 1)
+
     if root is not None:
         walk(root, width, 0)
     return result
@@ -209,13 +234,19 @@ def make_dict(entries, width):
         k = n
         if len(keys) > 1:
             k = n - (min(keys) ^ max(keys)).bit_length()
-        label = keys[0] >> (n-k)
+        label = keys[0] >> (n - k)
         c = Cell().uint(2, 2).uint(k, n.bit_length()).uint(label, k)
         if k == n:
             v = items[keys[0]]
             return Cell(c.bits + v.bits, v.refs)
-        rem = n-k-1
+        rem = n - k - 1
         for bit in (0, 1):
-            c.ref(build({x & ((1 << rem)-1): v for x, v in items.items() if ((x >> rem) & 1) == bit}, rem))
+            c.ref(
+                build(
+                    {x & ((1 << rem) - 1): v for x, v in items.items() if ((x >> rem) & 1) == bit},
+                    rem,
+                )
+            )
         return c
+
     return build(entries, width) if entries else None

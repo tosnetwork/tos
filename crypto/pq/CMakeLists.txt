@@ -348,6 +348,11 @@ set(TOS_SLHDSA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/slhdsa-
 add_library(tos_slhdsa_native STATIC "${TOS_SLHDSA_SOURCE_DIR}/slh_dsa.c" "${TOS_SLHDSA_SOURCE_DIR}/slh_sha2.c"
   "${TOS_SLHDSA_SOURCE_DIR}/sha2_256.c" "${TOS_SLHDSA_SOURCE_DIR}/sha2_512.c")
 set_target_properties(tos_slhdsa_native PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+# Preserve the byte-for-byte imported backend. Its byte packing uses intentional
+# narrowing conversions; keep those diagnostics visible without promoting them
+# to errors. This exception is private to the upstream C target, not our adapter.
+target_compile_options(tos_slhdsa_native PRIVATE
+  "$<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-error=conversion>")
 target_include_directories(tos_slhdsa_native PUBLIC "${TOS_SLHDSA_SOURCE_DIR}")
 add_library(tos_slhdsa128s STATIC slhdsa128s.cpp)
 target_compile_features(tos_slhdsa128s PUBLIC cxx_std_17)

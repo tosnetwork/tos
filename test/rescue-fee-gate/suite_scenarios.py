@@ -63,8 +63,17 @@ def main(out):
             return boc(v)
 
         rows.append(
-            [name, str(version), str(budget), expect, suite,
-             field(message), field(context), field(signature), field(key)]
+            [
+                name,
+                str(version),
+                str(budget),
+                expect,
+                suite,
+                field(message),
+                field(context),
+                field(signature),
+                field(key),
+            ]
         )
 
     tmp = Path(tempfile.mkdtemp())
@@ -75,8 +84,10 @@ def main(out):
     (tmp / "m").write_bytes(msg)
     run(os.environ["MLDSA_TOOL"], "sign", tmp / "ml.sk", CTX_ML.hex(), tmp / "m", tmp / "ml.sig")
     mpk, msig = (tmp / "ml.pk").read_bytes(), (tmp / "ml.sig").read_bytes()
+
     def flip(b, i=10):
         return b[:i] + bytes([b[i] ^ 1]) + b[i + 1 :]
+
     add("s1-valid", "V", "int:1", msg, CTX_ML, msig, mpk)
     add("s1-bitflip", "I", "int:1", msg, CTX_ML, flip(msig), mpk)
     add("s1-other-context", "I", "int:1", msg, CTX_AUTH, msig, mpk)
@@ -116,18 +127,51 @@ def main(out):
     add("s4-nonempty-context", "E9", "int:4", msg, b"x", lsig, lpk)
     add("s4-trailing-byte", "E9", "int:4", msg, b"", lsig + b"\0", lpk)
     add("s4-nspk-1", "I", "int:4", msg, b"", b"\0\0\0\1" + lsig[4:], lpk)
-    add("s4-q-out-of-range", "I", "int:4", msg, b"", lsig[:4] + (1 << 20).to_bytes(4, "big") + lsig[8:], lpk)
-    add("s4-unsupported-lms-type", "E9", "int:4", msg, b"", lsig, lpk[:4] + (9).to_bytes(4, "big") + lpk[8:])
+    add(
+        "s4-q-out-of-range",
+        "I",
+        "int:4",
+        msg,
+        b"",
+        lsig[:4] + (1 << 20).to_bytes(4, "big") + lsig[8:],
+        lpk,
+    )
+    add(
+        "s4-unsupported-lms-type",
+        "E9",
+        "int:4",
+        msg,
+        b"",
+        lsig,
+        lpk[:4] + (9).to_bytes(4, "big") + lpk[8:],
+    )
     add("s4-l2-key", "E9", "int:4", msg, b"", lsig, (2).to_bytes(4, "big") + lpk[4:])
     add("s4-out-of-gas-before-signature", "E-14", "int:4", msg, b"", lsig, lpk, budget=3_000)
-    for params, expect in (("20/4", "V"), ("5/8", "E9"), ("10/4", "E9"), ("15/2", "E9"), ("20/2", "E9")):
+    for params, expect in (
+        ("20/4", "V"),
+        ("5/8", "E9"),
+        ("10/4", "E9"),
+        ("15/2", "E9"),
+        ("20/2", "E9"),
+    ):
         name = "k" + params.replace("/", "_")
         run(os.environ["HASH_SIGS_DEMO"], "genkey", tmp / name, params)
         (tmp / "m4").write_bytes(msg)
-        subprocess.run([os.environ["HASH_SIGS_DEMO"], "sign", name, "m4"], cwd=tmp, check=True,
-                       capture_output=True)
-        add(f"s4-h{params.replace('/', 'w')}-random-key", expect, "int:4", msg, b"",
-            (tmp / "m4.sig").read_bytes(), (tmp / f"{name}.pub").read_bytes())
+        subprocess.run(
+            [os.environ["HASH_SIGS_DEMO"], "sign", name, "m4"],
+            cwd=tmp,
+            check=True,
+            capture_output=True,
+        )
+        add(
+            f"s4-h{params.replace('/', 'w')}-random-key",
+            expect,
+            "int:4",
+            msg,
+            b"",
+            (tmp / "m4.sig").read_bytes(),
+            (tmp / f"{name}.pub").read_bytes(),
+        )
 
     # Dispatcher.
     add("unknown-suite-0", "E5", "int:0", msg, CTX_ML, msig, mpk)
