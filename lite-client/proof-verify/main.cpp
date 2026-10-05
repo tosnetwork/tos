@@ -144,6 +144,25 @@ td::Result<std::optional<LiveState>> load_state(const std::string& path, const A
   return std::optional<LiveState>{state};
 }
 
+td::Status sync_directory_of(const std::string& path) {
+  const auto slash = path.rfind('/');
+  const std::string directory = slash == std::string::npos ? "." : slash == 0 ? "/" : path.substr(0, slash);
+  int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (fd < 0) {
+    return td::Status::PosixError(errno, "cannot open live state directory");
+  }
+  const bool synced = ::fsync(fd) == 0;
+  const int sync_errno = errno;
+  const bool closed = ::close(fd) == 0;
+  if (!synced) {
+    return td::Status::PosixError(sync_errno, "cannot sync live state directory");
+  }
+  if (!closed) {
+    return td::Status::Error("cannot close live state directory");
+  }
+  return td::Status::OK();
+}
+
 td::Status commit_state(const std::string& path, const LiveState& state) {
   const auto temporary = path + ".tmp";
   ::unlink(temporary.c_str());
@@ -164,13 +183,17 @@ td::Status commit_state(const std::string& path, const LiveState& state) {
     }
     done += static_cast<std::size_t>(written);
   }
-  if (::fsync(fd) != 0 || ::close(fd) != 0) {
+  const bool synced = ::fsync(fd) == 0;
+  const bool closed = ::close(fd) == 0;
+  if (!synced || !closed) {
     return td::Status::Error("cannot flush live state record");
   }
   if (::rename(temporary.c_str(), path.c_str()) != 0) {
     return td::Status::PosixError(errno, "cannot commit live state record");
   }
-  return td::Status::OK();
+  // The replacement is durable only once the directory entry is: without this
+  // a power loss can bring back the previous head and reopen a rollback.
+  return sync_directory_of(path);
 }
 
 int run_anchor(int argc, char** argv) {
