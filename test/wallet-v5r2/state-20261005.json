@@ -26,8 +26,8 @@
     },
     {
       "path": "test/wallet-v5r2/test_state.py",
-      "sha256": "26444f5d39290a9f59f7faca6f03e92c7226e3378704b81d689e55f169f3ad02",
-      "bytes": 6875
+      "sha256": "902354050a28f9ae4abc84dbec36dbc9115eeaf65535cace8decd7b66e99111d",
+      "bytes": 6904
     }
   ],
   "artifacts": [
@@ -38,7 +38,7 @@
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state/fee_profile.fif",
-      "sha256": "8b145b3ef36e7c048064960153270a8bd63e326fc9d01be92938ada90ddd5941",
+      "sha256": "500044174b08702519b0be526fe8fcd3e067f0e28f4418806ff4881eff53dec6",
       "bytes": 30411
     },
     {
@@ -73,7 +73,7 @@
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state/state.fif",
-      "sha256": "4b8acc79d0f16696f106af356068c9f703f229b694ec7ef8d04267fb0096c52d",
+      "sha256": "d6f5beb8e0cf09b9e88e5bc7872e0214253ec57b956d4b08683fe6a177a169bd",
       "bytes": 30456
     },
     {
@@ -88,7 +88,7 @@
     },
     {
       "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-state/strict_mode.fif",
-      "sha256": "03824fb2a2ca206928b0c48d9b5a2d400fbc30ac56dd5971ec9c305ed41fffb2",
+      "sha256": "9fb5df9be8ffbe7946b7b86e2c1de44665a27fc163c93d554401ff01aec9b302",
       "bytes": 30049
     },
     {

@@ -11,7 +11,14 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 
 from cells import Cell, from_boc  # noqa: E402
-from native import Emulator, account_data, active_account, compile_contract, internal, state_init  # noqa: E402
+from native import (  # noqa: E402
+    Emulator,
+    account_data,
+    active_account,
+    compile_contract,
+    internal,
+    state_init,
+)
 from test_auth import KEY  # noqa: E402
 from test_identity import chain, module_data  # noqa: E402
 
