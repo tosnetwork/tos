@@ -11,10 +11,13 @@ SOURCE = ROOT / "tosctl/src/node-control/contracts/src/wallet_v5r2.rs"
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pop", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    source = SOURCE.read_text()
+    source_path = SOURCE.with_name("wallet_v5r2_pop.rs") if args.pop else SOURCE
+    module = "wallet_v5r2_pop" if args.pop else "wallet_v5r2"
+    source = source_path.read_text()
     cases = [
         ("parties", "binding.account != binding.module", "true", "wallet_cannot_be_its_own_module"),
         (
@@ -26,7 +29,7 @@ def main():
         ("ttl", "(1..=3600).contains(&ttl)", "true", "deadline_and_signature_framing_are_strict"),
         (
             "signature_width",
-            "signature.len() == self.role.signature_bytes()",
+            "signature.len() == role.signature_bytes()",
             "true",
             "deadline_and_signature_framing_are_strict",
         ),
@@ -37,6 +40,35 @@ def main():
             "independent_python_wire_vectors",
         ),
     ]
+
+    if args.pop:
+        cases = [
+            (
+                "challenge",
+                "binding.challenge != [0; 32]",
+                "true",
+                "zero_challenge_and_equal_parties_refused",
+            ),
+            (
+                "parties",
+                "binding.account != binding.module",
+                "true",
+                "zero_challenge_and_equal_parties_refused",
+            ),
+            ("ttl", "(1..=3600).contains(&ttl)", "true", "pop_deadline_boundaries"),
+            (
+                "domain",
+                'domain.append_raw(b"TOS-POP1", 64)?;',
+                'domain.append_raw(b"BAD-POP1", 64)?;',
+                "independent_pop_vectors",
+            ),
+            (
+                "context",
+                'b"TOS-RESCUE-POP-v1"\n',
+                'b"BAD-RESCUE-POP-v1"\n',
+                "independent_pop_vectors",
+            ),
+        ]
 
     def test(label):
         result = subprocess.run(
@@ -49,7 +81,7 @@ def main():
                 "-p",
                 "contracts",
                 "--lib",
-                "wallet_v5r2::tests",
+                module + "::tests",
             ],
             capture_output=True,
             text=True,
@@ -64,16 +96,16 @@ def main():
         assert code == 0
         for name, old, new, witness in cases:
             assert source.count(old) == 1
-            SOURCE.write_text(source.replace(old, new))
+            source_path.write_text(source.replace(old, new))
             code, log = test(name)
-            assert code != 0 and f"wallet_v5r2::tests::{witness} ... FAILED" in log, log[-3000:]
+            assert code != 0 and f"{module}::tests::{witness} ... FAILED" in log, log[-3000:]
             results[name] = {"exit": code, "semantic_witness": witness}
     finally:
-        SOURCE.write_text(source)
+        source_path.write_text(source)
         code, log = test("restored")
         assert code == 0, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("Five AUTH SDK semantic deletion controls detected; restored tests pass")
+    print(f"Five {module} SDK semantic deletion controls detected; restored tests pass")
 
 
 if __name__ == "__main__":

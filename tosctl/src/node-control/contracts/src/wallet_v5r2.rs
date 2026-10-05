@@ -154,27 +154,33 @@ impl AuthRequest {
     /// Encode SUB3 for an internal message to the module. This checks framing,
     /// not cryptographic validity; it must not be treated as signature approval.
     pub fn encode_submission(&self, signature: &[u8]) -> anyhow::Result<Cell> {
-        anyhow::ensure!(
-            signature.len() == self.role.signature_bytes(),
-            "wrong PQ signature length"
-        );
-        let mut tail = None;
-        for chunk in signature.chunks(127).rev() {
-            let mut b = BuilderData::new();
-            let bits =
-                chunk.len().checked_mul(8).ok_or_else(|| anyhow::anyhow!("size overflow"))?;
-            b.append_raw(chunk, bits)?;
-            if let Some(cell) = tail {
-                b.checked_append_reference(cell)?;
-            }
-            tail = Some(b.into_cell()?);
-        }
-        let mut b = BuilderData::new();
-        b.append_u32(0x53554233)?;
-        b.checked_append_reference(self.cell.clone())?;
-        b.checked_append_reference(tail.ok_or_else(|| anyhow::anyhow!("empty signature"))?)?;
-        b.into_cell()
+        encode_pq_submission(0x53554233, &self.cell, self.role, signature)
     }
+}
+
+/// Framing only; callers must verify cryptographic signatures separately.
+pub(crate) fn encode_pq_submission(
+    tag: u32,
+    request: &Cell,
+    role: AuthRole,
+    signature: &[u8],
+) -> anyhow::Result<Cell> {
+    anyhow::ensure!(signature.len() == role.signature_bytes(), "wrong PQ signature length");
+    let mut tail = None;
+    for chunk in signature.chunks(127).rev() {
+        let mut b = BuilderData::new();
+        let bits = chunk.len().checked_mul(8).ok_or_else(|| anyhow::anyhow!("size overflow"))?;
+        b.append_raw(chunk, bits)?;
+        if let Some(cell) = tail {
+            b.checked_append_reference(cell)?;
+        }
+        tail = Some(b.into_cell()?);
+    }
+    let mut b = BuilderData::new();
+    b.append_u32(tag)?;
+    b.checked_append_reference(request.clone())?;
+    b.checked_append_reference(tail.ok_or_else(|| anyhow::anyhow!("empty signature"))?)?;
+    b.into_cell()
 }
 
 #[cfg(test)]

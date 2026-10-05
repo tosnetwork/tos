@@ -790,6 +790,32 @@ restoring source and rerunning them. CI runs wire and transaction checks on both
 architectures and deletion controls on x86-64. Evidence:
 `test/wallet-v5r2/auth-sdk-20261006.json`.
 
-POP, preparation, fee-intent and genesis SDK codecs, trusted chain-view binding,
+Preparation, fee-intent and genesis SDK codecs, trusted chain-view binding,
 real custody and user-facing create/restore flows remain to be integrated.
 Default-credit admission remains a separate failed release gate.
+
+### Separate per-key POP SDK encoding
+
+`contracts::wallet_v5r2_pop` encodes POP3/PPS3 for either ML-DSA-44 or SLH,
+with explicit READY/REQUIRED policy. It binds the namespace, wallet/module,
+canonical primary-key cell hash, rescue key, role, nonzero challenge and
+one-hour deadline. Its immutable digest uses `TOS-POP1` and the separate
+`TOS-RESCUE-POP-v1` context. There are no action, transfer or authority-update
+fields. Exact signature sizes and canonical chunks share the AUTH framing
+helper; no classic or hybrid signature path is introduced.
+
+The caller still supplies a fresh random challenge, trusted chain time and
+verified module/key identity. Nonzero is only a shape check, not randomness or
+freshness evidence. Successful POP is a non-authorizing transaction, never an
+enrollment token; application verification must bind its own outstanding
+challenge to an authenticated result. The SDK does not perform that verification.
+
+Four independent Python vectors cover both roles and both policies. Real
+fixture signing checks compare the Rust challenge, digest, context and complete
+PPS3 body against Python. SDK-encoded signature cells are used in both POP fee
+routes and the retimed successor proof within the continuous recovery chain.
+Native/Rust parity remains diagnostic-credit evidence. Five POP semantic
+controls check challenge, party, TTL, domain and context sensitivity; AUTH
+controls also rerun after sharing the signature-framing helper. Evidence:
+`test/wallet-v5r2/pop-sdk-20261006.json`. Production custody, verified challenge
+receipts and default-credit admission remain open.

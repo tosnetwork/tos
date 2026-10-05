@@ -1,0 +1,127 @@
+{
+  "base_commit": "0a8cc7b85b9deac35da9090232766db2252f142a",
+  "scope": "PQ-only non-authorizing POP encoder; both roles/policies independently encoded. Real public-fixture proofs compare SDK/Python requests, digests, contexts and signed PPS3; SDK signature cells submitted through actual fees and retimed recovery. Controlled time and diagnostic 20000 credit, not production custody/proof verification.",
+  "source_sha256": {
+    ".github/workflows/rescue-context.yml": "8c5a94ed3c3f008618677b325772228f7f5a947e772f047d853eb8cbf0a6fed3",
+    "tosctl/src/node-control/contracts/src/lib.rs": "4d4f525b7a377936c682d31684559e67ef02b1a4c05e4eeb01fc756e3540a4c8",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2.rs": "e96c66f0580d45b89dc09eea93cb1f6889771e83e81e8551a7427ff81ba45783",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs": "076db7d771bace60b76b5702b37cc9b42db1bf26c4db94dfabc7989f2d1f36d5",
+    "tosctl/src/node-control/contracts/examples/v5r2_pop_encode.rs": "be59412ef6fe2f65b91baf5da091f3302714d022b4dde8969f846b8eef587fa3",
+    "tosctl/src/node-control/contracts/tests/fixtures/v5r2/pop-wire.json": "431da18e7af8a044f971906223e74b75960b63cc62aaeb7061691b4cbc7504ea",
+    "test/wallet-v5r2/sdk_auth_controls.py": "991ad28cb0316fe9da92dace698324d77082fb9626db93abe93d74d5448290c9",
+    "test/wallet-v5r2/sdk_auth_parity.py": "0253977c0ef711081468ecab22372351212ab338d3c0100ceb2580609547c8bc",
+    "test/wallet-v5r2/sdk_pop_fixture.py": "40dcd8593f12ed840e9af118c8709915be05de7142df93d136541daa52086c17",
+    "test/wallet-v5r2/sdk_pop_vectors.py": "fcf7b91df41e962282db6b256ee70a7fbf8fb2beed000bd3c82868327d13915d",
+    "test/wallet-v5r2/funded_recovery.py": "8d94b9c3f42e94be0ebc2c41a892454e7641e80b42a58b5dfd2eac1917ef172b",
+    "test/wallet-v5r2/test_fee_delivery.py": "be03d22b868a1d88e976ea2a786fb64348b5515e7ebfcacd3d459b65374748d5"
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python test/wallet-v5r2/sdk_pop_vectors.py --output tosctl/src/node-control/contracts/tests/fixtures/v5r2/pop-wire.json",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example v5r2_pop_encode --example v5r2_auth_encode",
+    "python test/wallet-v5r2/sdk_auth_parity.py --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-sdk/prepare",
+    "python test/wallet-v5r2/sdk_auth_parity.py --pop-role 1 --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-sdk/pop1",
+    "python test/wallet-v5r2/sdk_auth_parity.py --pop-role 2 --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-sdk/pop2",
+    "python test/wallet-v5r2/sdk_auth_controls.py --pop --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-sdk/pop-controls",
+    "python test/wallet-v5r2/sdk_auth_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-sdk/auth-controls"
+  ],
+  "all_commands_exit": 0,
+  "pop_vectors": 4,
+  "pop_unit_tests": 3,
+  "auth_unit_tests": 4,
+  "parity": {
+    "prepare": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": null,
+      "prepare": true,
+      "recovery": true,
+      "sdk_cache": true,
+      "expected_transactions": 62,
+      "observed_transactions": 62,
+      "differences": [],
+      "success": true
+    },
+    "pop1": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": 1,
+      "prepare": false,
+      "recovery": false,
+      "sdk_cache": true,
+      "expected_transactions": 24,
+      "observed_transactions": 24,
+      "differences": [],
+      "success": true
+    },
+    "pop2": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": 2,
+      "prepare": false,
+      "recovery": false,
+      "sdk_cache": true,
+      "expected_transactions": 24,
+      "observed_transactions": 24,
+      "differences": [],
+      "success": true
+    }
+  },
+  "sdk_pop_signatures": {
+    "prepare": 2,
+    "pop1": 1,
+    "pop2": 1
+  },
+  "pop_controls": {
+    "challenge": {
+      "exit": 101,
+      "semantic_witness": "zero_challenge_and_equal_parties_refused"
+    },
+    "parties": {
+      "exit": 101,
+      "semantic_witness": "zero_challenge_and_equal_parties_refused"
+    },
+    "ttl": {
+      "exit": 101,
+      "semantic_witness": "pop_deadline_boundaries"
+    },
+    "domain": {
+      "exit": 101,
+      "semantic_witness": "independent_pop_vectors"
+    },
+    "context": {
+      "exit": 101,
+      "semantic_witness": "independent_pop_vectors"
+    }
+  },
+  "auth_controls": {
+    "parties": {
+      "exit": 101,
+      "semantic_witness": "wallet_cannot_be_its_own_module"
+    },
+    "primary_authority": {
+      "exit": 101,
+      "semantic_witness": "primary_cannot_change_authority"
+    },
+    "ttl": {
+      "exit": 101,
+      "semantic_witness": "deadline_and_signature_framing_are_strict"
+    },
+    "signature_width": {
+      "exit": 101,
+      "semantic_witness": "deadline_and_signature_framing_are_strict"
+    },
+    "domain": {
+      "exit": 101,
+      "semantic_witness": "independent_python_wire_vectors"
+    }
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-sdk",
+    "retain_until": "2027-01-06",
+    "manifest": {
+      "sha256": "57333118b2b22c5813f83c54e8f3195e11fd2d76c6f43e2351b641cf7cd65651",
+      "bytes": 43346
+    },
+    "files": 292,
+    "total_bytes": 410322180
+  },
+  "remaining": "Preparation/fee/genesis SDK encoders, proof-bound challenge receipts, fresh chain proofs, custody/device recovery, default-credit admission, measured worst-case resources, independent review and final-head CI remain open."
+}

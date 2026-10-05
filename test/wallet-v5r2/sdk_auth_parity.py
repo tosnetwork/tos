@@ -6,6 +6,7 @@ import json
 import runpy
 import subprocess
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,6 +20,8 @@ from test_rescue_e2e import digest  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pop-driver", type=Path)
+    parser.add_argument("--pop-role", type=int, choices=(1, 2))
     parser.add_argument("--auth-driver", type=Path, required=True)
     parser.add_argument("--cache-driver", type=Path, required=True)
     parser.add_argument("--driver", type=Path, required=True)
@@ -76,8 +79,6 @@ def main():
 
     argv = [
         "fee_tx_parity.py",
-        "--prepare",
-        "--recovery",
         "--driver",
         str(args.driver),
         "--cache-driver",
@@ -85,11 +86,23 @@ def main():
         "--output",
         str(out),
     ]
-    with patch.object(test_receiver_auth, "request", request), patch.object(sys, "argv", argv):
+    argv += ["--pop-role", str(args.pop_role)] if args.pop_role else ["--prepare", "--recovery"]
+    with ExitStack() as stack:
+        if args.pop_driver:
+            import test_pop
+            from sdk_pop_fixture import PopEncoder
+
+            pop_encoder = PopEncoder(args.pop_driver, test_pop.signed)
+            stack.enter_context(patch.object(test_pop, "signed", pop_encoder.signed))
+        stack.enter_context(patch.object(test_receiver_auth, "request", request))
+        stack.enter_context(patch.object(sys, "argv", argv))
         runpy.run_path(str(Path(__file__).with_name("fee_tx_parity.py")), run_name="__main__")
-    assert len(calls) == 4 and [call["input"]["kind"] for call in calls] == [0, 3, 4, 0]
+    assert [call["input"]["kind"] for call in calls] == ([0] if args.pop_role else [0, 3, 4, 0])
+    if args.pop_driver:
+        assert len(pop_encoder.calls) == (1 if args.pop_role else 2)
+        (out / "sdk-pop.json").write_text(json.dumps(pop_encoder.calls, indent=2) + "\n")
     (out / "sdk-auth.json").write_text(json.dumps(calls, indent=2) + "\n")
-    print("SDK AUTH bytes match Python; lock, migration and payment execute in both VMs")
+    print("SDK wire bytes match Python and execute in both VMs")
 
 
 if __name__ == "__main__":
