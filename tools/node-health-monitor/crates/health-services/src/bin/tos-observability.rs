@@ -4,6 +4,36 @@ use hyper_util::rt::TokioIo;
 use std::{os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration};
 use tower::ServiceExt;
 
+/// Binds a unix socket, first clearing one a previous instance left behind.
+/// Nothing unlinks the socket when the process stops, so every restart finds
+/// the old path; a socket that still accepts a connection belongs to a live
+/// instance and is never taken over, and a path that is not a socket is never
+/// removed. The private parent directory is checked by the caller first.
+fn bind_unix(path: &Path) -> std::io::Result<tokio::net::UnixListener> {
+    use std::{io::ErrorKind, os::unix::fs::FileTypeExt};
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_socket() => {
+            return Err(std::io::Error::new(
+                ErrorKind::AlreadyExists,
+                "socket path is occupied by a non-socket file",
+            ));
+        }
+        Ok(_) => match std::os::unix::net::UnixStream::connect(path) {
+            Ok(_) => {
+                return Err(std::io::Error::new(
+                    ErrorKind::AddrInUse,
+                    "socket is served by another live process",
+                ));
+            }
+            Err(e) if e.kind() == ErrorKind::ConnectionRefused => std::fs::remove_file(path)?,
+            Err(e) => return Err(e),
+        },
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    tokio::net::UnixListener::bind(path)
+}
+
 #[cfg(feature = "mcp")]
 async fn bounded_mcp_body<B>(body: B) -> Result<axum::body::Bytes, ()>
 where
@@ -312,13 +342,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 || path == socket_path {
             return Err("MCP socket must differ from control and have a private parent".into());
         }
-        let listener = tokio::net::UnixListener::bind(path)?;
+        let listener = bind_unix(path)?;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         Some(listener)
     } else {
         None
     };
-    let control = tokio::net::UnixListener::bind(socket_path)?;
+    let control = bind_unix(socket_path)?;
     std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
     let listener = tokio::net::TcpListener::bind(tos_health_services::loopback(&args[2])?).await?;
     let tcp = axum::serve(listener, tos_health_services::observability::router(state.clone()));
@@ -364,6 +394,33 @@ mod tests {
         assert_eq!(bounded_mcp_body(at_limit).await.unwrap().len(), 32_768);
         let over_limit = Full::new(axum::body::Bytes::from(vec![b'x'; 32_769]));
         assert!(bounded_mcp_body(over_limit).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn restart_clears_a_dead_socket_but_never_a_live_one_or_a_file() {
+        let (path, listener) = socket();
+        // A live instance keeps its socket.
+        let refused = bind_unix(&path).unwrap_err();
+        assert_eq!(refused.kind(), std::io::ErrorKind::AddrInUse);
+        // Stopping leaves the socket file behind; the next start takes it over.
+        drop(listener);
+        assert!(path.exists());
+        assert_eq!(
+            tokio::net::UnixListener::bind(&path).unwrap_err().kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+        let rebound = bind_unix(&path).unwrap();
+        drop(rebound);
+        std::fs::remove_file(&path).unwrap();
+        // A regular file at the path is neither removed nor replaced.
+        std::fs::write(&path, b"keep").unwrap();
+        let occupied = bind_unix(&path).unwrap_err();
+        assert_eq!(occupied.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep");
+        std::fs::remove_file(&path).unwrap();
+        // A missing path binds as before.
+        drop(bind_unix(&path).unwrap());
+        std::fs::remove_file(&path).unwrap();
     }
 
     fn socket() -> (std::path::PathBuf, tokio::net::UnixListener) {

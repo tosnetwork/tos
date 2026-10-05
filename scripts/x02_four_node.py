@@ -333,7 +333,31 @@ VERIFIER_TIMEOUT_SECONDS = 120
 VERIFIER_STREAM_MAX_BYTES = 1 << 20
 
 
-def verifier_sandbox_argv(binding, output, command):
+ANCHORED_VERIFIER = "lite-client/proof-verify/tos-proof-verify"
+
+
+def zerostate_anchor(manifest):
+    """The network's masterchain zerostate identity, from the frozen readiness manifest."""
+    zero = manifest["network"]["zero_state"]["masterchain"]
+    require(
+        zero.get("workchain") == -1
+        and all(
+            isinstance(zero.get(key), str) and re.fullmatch("[0-9a-fA-F]{64}", zero[key])
+            for key in ("root_hash_hex", "file_hash_hex")
+        ),
+        "readiness manifest has no full masterchain zerostate identity",
+    )
+    return {
+        "kind": "zerostate",
+        "workchain": -1,
+        "shard": "8000000000000000",
+        "seqno": 0,
+        "root_hash": zero["root_hash_hex"].lower(),
+        "file_hash": zero["file_hash_hex"].lower(),
+    }
+
+
+def verifier_sandbox_argv(binding, output, command, binds=()):
     """The pinned U24 rootfs and loader, read-only and without network, for one verifier process.
 
     Same mounts as Stage A's own sandbox (U24 root, source, runtime and dependency roots),
@@ -367,6 +391,8 @@ def verifier_sandbox_argv(binding, output, command):
     for root in [*binding["runtime_roots"], *binding["dependency_roots"]]:
         argv += ["--ro-bind", root, root]
     argv += ["--ro-bind", binding["interpreter"], binding["interpreter"]]
+    for path in binds:
+        argv += ["--ro-bind", str(path), str(path)]
     argv += [
         "--ro-bind",
         str(output),
@@ -452,12 +478,16 @@ def config34_proof_check(
     binding,
     context,
     output,
-    expected_rpcs,
+    anchor,
     launcher=verifier_sandbox_argv,
     deadline=None,
     clock=time.monotonic,
 ):
     """Re-verify Stage A's retained bundle in the pinned U24 rootfs, as a separate bounded process.
+
+    The block is authenticated by the compiled anchored verifier from `anchor`, the network's
+    masterchain zerostate identity frozen in the readiness manifest -- never from the bundle.
+    The verifier executable is the one indexed by digest in the binding's frozen closure.
 
     With a service deadline, a verifier that could not finish its full bound before it, with
     the cleanup reserve still left, is refused before it starts instead of overrunning the unit.
@@ -474,6 +504,13 @@ def config34_proof_check(
             ["git", "-C", str(REPO), "show", context["source_sha"] + ":scripts/" + script.name]
         )
         require(raw == frozen, "Config34 proof verifier differs from fixed source")
+        verifier = Path(binding["build_root"]) / ANCHORED_VERIFIER
+        receipt = binding["files"].get(str(verifier))
+        require(
+            isinstance(receipt, dict)
+            and hashlib.sha256(verifier.read_bytes()).hexdigest() == receipt.get("sha256"),
+            "anchored proof verifier is not the binary indexed in the frozen closure",
+        )
         name = f"config34-proof-{election['election_id']}"
         request = output / f"{name}.request.json"
         write_once(
@@ -481,7 +518,7 @@ def config34_proof_check(
             {
                 "base": str(readiness_parent / "artifacts"),
                 "election_id": election["election_id"],
-                "expected_rpcs": list(expected_rpcs),
+                "anchor": anchor,
                 "bundle": election["config34_proof"],
                 "frozen_rows": declared,
             },
@@ -495,10 +532,12 @@ def config34_proof_check(
             str(REPO),
             "--request",
             str(request),
+            "--verifier",
+            str(verifier),
         ]
         for root in binding["dependency_roots"]:
             command += ["--dependency-root", root]
-        record = run_bounded(launcher(binding, output, command), output, name)
+        record = run_bounded(launcher(binding, output, command, [verifier]), output, name)
         write_once(output / f"{name}.terminal.json", record)
         require(
             not (
@@ -1836,7 +1875,7 @@ def run(args, context):
                 binding,
                 context,
                 args.output,
-                [rpc_endpoint(node) for node in nodes],
+                zerostate_anchor(manifest),
                 deadline=invocation + service,
             ),
         )

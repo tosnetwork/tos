@@ -9,6 +9,7 @@
 
 use super::*;
 use chain_rpc_client::v2::data_models::{AccountState, ShortTxId, TransactionId};
+use contracts::NominatorPoolSnapshot;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 use tl_api::tos::tvm::{
@@ -67,7 +68,11 @@ pub(super) struct ChainState {
     /// Pinned reads below this masterchain seqno fail, like a node that has
     /// pruned older state.
     pub(super) oldest_servable_seqno: u32,
-    pub(super) wrong_identity_method: Option<String>,
+    /// The snapshot source answers for a block other than the one asked for.
+    pub(super) snapshot_for_another_block: bool,
+    /// Pool get-method stacks the endpoint served. A dishonest endpoint
+    /// answers with fabricated balances under the right block identity.
+    pub(super) endpoint_pool_reads: usize,
     pub(super) fail_get_shards: bool,
     pub(super) fail_parents_of: HashSet<Key>,
     /// Fail the n-th (1-based) masterchain identity lookup.
@@ -111,7 +116,14 @@ impl FakeChain {
 
     /// Masterchain block `seqno` on `fork`, referencing `heads`.
     pub(super) fn add_master(&self, seqno: u32, fork: u8, heads: &[&BlockIdExt]) -> BlockIdExt {
-        let id = self.add_block(-1, MC, seqno, fork);
+        self.add_master_with_id(block_id(-1, MC, seqno, fork), heads)
+    }
+
+    /// A masterchain block with an exact identity, such as one a proof
+    /// verifier can authenticate.
+    pub(super) fn add_master_with_id(&self, id: BlockIdExt, heads: &[&BlockIdExt]) -> BlockIdExt {
+        let seqno = id.seqno;
+        self.with(|s| s.blocks.insert(key(&id), (id.clone(), Vec::new())));
         let heads = heads.iter().map(|h| (*h).clone()).collect();
         self.with(|s| {
             s.shards.insert(seqno, heads);
@@ -217,24 +229,70 @@ fn nominators_stack(fixture: &PoolFixture) -> common::tvm_stack_parser::TvmStack
     )])
 }
 
-#[async_trait::async_trait]
-impl ChainProvider for FakeChain {
-    async fn run_get_method(
-        &self,
-        _address: String,
-        _method: &str,
-        _stack: Vec<StackEntry>,
-    ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
-        anyhow::bail!("latest-state get-methods are not scripted")
+/// What the dishonest endpoint reports instead of the pool's real state.
+fn fabricated(fixture: &PoolFixture) -> PoolFixture {
+    PoolFixture {
+        state: fixture.state,
+        nominators: fixture
+            .nominators
+            .iter()
+            .map(|(key, amount, pending)| (*key, amount.saturating_mul(1000), *pending))
+            .collect(),
     }
+}
 
-    async fn run_get_method_at(
+fn snapshot_of(fixture: &PoolFixture, checkpoint: MasterchainCheckpoint) -> NominatorPoolSnapshot {
+    NominatorPoolSnapshot {
+        checkpoint,
+        pool: contracts::NominatorPoolData {
+            state: fixture.state,
+            nominators_count: u32::try_from(fixture.nominators.len()).unwrap(),
+            stake_amount_sent: 0,
+            validator_amount: 2000,
+            validator_address: [0xab; 32],
+            controller_address: [0xcd; 32],
+            validator_reward_share: 4000,
+            max_nominators_count: 40,
+            min_validator_stake: 1000,
+            min_nominator_stake: 100,
+            stake_at: 999,
+            saved_validator_set_hash: [0x11; 32],
+            validator_set_changes_count: 0,
+            validator_set_change_time: 1234,
+            stake_held_for: 3600,
+        },
+        nominators: fixture
+            .nominators
+            .iter()
+            .map(|(key, amount, pending)| contracts::NominatorPosition {
+                address: format!("0:{}", hex::encode(key)),
+                amount: *amount,
+                pending_deposit: *pending,
+                withdraw_requested: false,
+            })
+            .collect(),
+        proof: contracts::NominatorPoolSnapshotProof {
+            live: false,
+            block_gen_utime: 0,
+            account_state_hash: "00".repeat(32),
+            account_balance: "0".to_owned(),
+            request_sha256: "00".repeat(32),
+        },
+    }
+}
+
+/// Stands in for the proof verifier: it answers only for the exact block the
+/// scripted chain holds at the checkpoint, from the pool's real state.
+#[async_trait::async_trait]
+impl PoolSnapshotSource for FakeChain {
+    async fn nominator_pool_snapshot(
         &self,
-        address: String,
-        method: &str,
-        _stack: Vec<StackEntry>,
-        checkpoint: &MasterchainCheckpoint,
-    ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+        address: &MsgAddressInt,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<NominatorPoolSnapshot> {
+        let ReadPolicy::Historical(checkpoint) = policy else {
+            anyhow::bail!("the indexer reads pools at an explicit historical block");
+        };
         let mut s = self.state.lock().unwrap();
         anyhow::ensure!(
             s.historical_get_methods && checkpoint.seqno >= s.oldest_servable_seqno,
@@ -247,20 +305,65 @@ impl ChainProvider for FakeChain {
             .ok_or_else(|| anyhow::anyhow!("no masterchain block {}", checkpoint.seqno))?;
         anyhow::ensure!(
             hex::encode(&master.root_hash) == checkpoint.root_hash
-                && hex::encode(&master.file_hash) == checkpoint.file_hash
-                && s.wrong_identity_method.as_deref() != Some(method),
-            "checkpoint get-method returned another block"
+                && hex::encode(&master.file_hash) == checkpoint.file_hash,
+            "the checkpoint is not the authenticated block at its height"
         );
-        s.pinned_reads.push((method.to_owned(), checkpoint.seqno));
+        for method in contracts::NOMINATOR_POOL_SNAPSHOT_METHODS {
+            s.pinned_reads.push((method.to_owned(), checkpoint.seqno));
+        }
+        let address = address.to_string();
         let fixture = s
             .pools
             .get(&address)
             .and_then(|history| history.range(..=checkpoint.seqno).next_back())
             .map(|(_, fixture)| fixture.clone())
             .ok_or_else(|| anyhow::anyhow!("account {address} is not active at the checkpoint"))?;
+        let mut answered = checkpoint.clone();
+        if s.snapshot_for_another_block {
+            answered.root_hash = "ab".repeat(32);
+        }
+        Ok(snapshot_of(&fixture, answered))
+    }
+}
+
+#[async_trait::async_trait]
+impl ChainProvider for FakeChain {
+    async fn run_get_method(
+        &self,
+        address: String,
+        method: &str,
+        _stack: Vec<StackEntry>,
+    ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+        let tip = self.with(|s| s.tip);
+        let checkpoint = MasterchainCheckpoint {
+            seqno: tip,
+            root_hash: String::new(),
+            file_hash: String::new(),
+        };
+        self.run_get_method_at_unverified(address, method, Vec::new(), &checkpoint).await
+    }
+
+    /// A dishonest endpoint: it reports the exact requested block and a
+    /// stack that pays every depositor a thousand times what the pool holds.
+    async fn run_get_method_at_unverified(
+        &self,
+        address: String,
+        method: &str,
+        _stack: Vec<StackEntry>,
+        checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+        let mut s = self.state.lock().unwrap();
+        let fixture = s
+            .pools
+            .get(&address)
+            .and_then(|history| history.range(..=checkpoint.seqno).next_back())
+            .map(|(_, fixture)| fixture.clone())
+            .ok_or_else(|| anyhow::anyhow!("account {address} is not active at the checkpoint"))?;
+        s.endpoint_pool_reads += 1;
+        let fabricated = fabricated(&fixture);
         match method {
-            "get_pool_data" => Ok(pool_data_stack(&fixture)),
-            "list_nominators" => Ok(nominators_stack(&fixture)),
+            "get_pool_data" => Ok(pool_data_stack(&fabricated)),
+            "list_nominators" => Ok(nominators_stack(&fabricated)),
             other => anyhow::bail!("unexpected get-method {other}"),
         }
     }
@@ -396,8 +499,19 @@ pub(super) async fn run_tick(
     store: &IndexerStore,
     limits: &ScanLimits,
 ) -> anyhow::Result<ScanOutcome> {
+    run_tick_with(chain, chain.as_ref(), store, limits).await
+}
+
+/// One tick whose pool snapshots come from `pool_snapshots`.
+pub(super) async fn run_tick_with(
+    chain: &Arc<FakeChain>,
+    pool_snapshots: &dyn PoolSnapshotSource,
+    store: &IndexerStore,
+    limits: &ScanLimits,
+) -> anyhow::Result<ScanOutcome> {
     scan_new_blocks(
         &chain.dyn_chain(),
+        pool_snapshots,
         store,
         &KnownCodeHashes::compute()?,
         &ProbeBudget::new(),
@@ -975,6 +1089,7 @@ async fn pruning_right_behind_the_watermark_never_costs_traversal_progress() {
     for _ in 0..5 {
         let outcome = tick(
             &chain.dyn_chain(),
+            chain.as_ref(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -1210,19 +1325,11 @@ async fn without_historical_state_the_ledger_stays_unavailable() {
 }
 
 #[tokio::test]
-async fn a_pool_data_read_from_the_wrong_block_is_never_folded_in() {
+async fn a_snapshot_answering_for_another_block_is_never_folded_in() {
     let chain = FakeChain::new();
-    chain.with(|s| s.wrong_identity_method = Some("get_pool_data".to_owned()));
+    chain.with(|s| s.snapshot_for_another_block = true);
     assert_ledger_stays_unavailable(&chain).await;
-}
-
-#[tokio::test]
-async fn a_nominator_list_read_from_the_wrong_block_is_never_folded_in() {
-    let chain = FakeChain::new();
-    chain.with(|s| s.wrong_identity_method = Some("list_nominators".to_owned()));
-    assert_ledger_stays_unavailable(&chain).await;
-    // The first half of the snapshot was read, and still nothing was kept.
-    assert!(chain.with(|s| s.pinned_reads.iter().any(|(method, _)| method == "get_pool_data")));
+    assert!(chain.with(|s| !s.pinned_reads.is_empty()), "the snapshot was taken and refused");
 }
 
 #[tokio::test]
@@ -1320,4 +1427,256 @@ async fn a_pool_backlog_drains_while_the_pool_is_touched_every_block() {
             .collect()
     });
     assert_eq!(reads, (1..=34).collect::<Vec<u32>>());
+}
+
+// ─── Pool snapshots never come from the endpoint ──────────────────────────
+
+#[tokio::test]
+async fn an_endpoint_stack_never_reaches_the_ledger() {
+    let chain = FakeChain::new();
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    pool_height(&chain, 2, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_200, 0)]));
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(10, 100), 2, 2).await;
+    let response = api(&store, ALICE_KEY);
+    assert_eq!(response.0, 200, "{}", response.1);
+    assert_eq!(response.1["result"][0]["amount"], "1200");
+    assert_eq!(chain.with(|s| s.endpoint_pool_reads), 0, "no endpoint stack was read");
+    // The endpoint is reachable and dishonest: asked, it reports the exact
+    // block and a fabricated position.
+    let pinned = MasterchainCheckpoint {
+        seqno: 2,
+        root_hash: hex_of(&block_id(-1, MC, 2, 0)),
+        file_hash: hex::encode(&block_id(-1, MC, 2, 0).file_hash),
+    };
+    let stack = chain
+        .run_get_method_at_unverified(pool_address(), "list_nominators", Vec::new(), &pinned)
+        .await
+        .unwrap();
+    let positions = stack.list_or_empty(0).unwrap();
+    assert_eq!(positions.tuple(0).unwrap().u64(1).unwrap(), 1_200_000);
+}
+
+fn fake_verifier_fixtures() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../contracts/tests/fixtures/proven-reads")
+        .canonicalize()
+        .unwrap()
+}
+
+fn on_path(program: &str) -> std::path::PathBuf {
+    let path = std::env::var_os("PATH").expect("PATH");
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("{program} is needed on PATH"))
+}
+
+/// Decimal of a 256-bit big-endian integer, as the verifier renders it.
+fn decimal_of(bytes: [u8; 32]) -> String {
+    let mut digits = Vec::new();
+    let mut value = bytes.to_vec();
+    while value.iter().any(|byte| *byte != 0) {
+        let mut remainder = 0u32;
+        for byte in value.iter_mut() {
+            let current = (remainder << 8) | u32::from(*byte);
+            *byte = u8::try_from(current / 10).unwrap();
+            remainder = current % 10;
+        }
+        digits.push(char::from(b'0' + u8::try_from(remainder).unwrap()));
+    }
+    if digits.is_empty() {
+        return "0".to_owned();
+    }
+    digits.iter().rev().collect()
+}
+
+/// The production provider, running a stand-in verifier whose every answer
+/// says Alice holds `amount` in the pool.
+fn verifier_backed_provider(
+    dir: &std::path::Path,
+    mutation: &str,
+    amount: u64,
+) -> contracts::ProvenGetterProvider {
+    let int = |value: &str| serde_json::json!({"type": "int", "value": value});
+    let nil = serde_json::json!({"type": "null"});
+    let behaviour = serde_json::json!({
+        "mutation": mutation,
+        "gen_utime": 1_000,
+        "log": dir.join("requests.jsonl").display().to_string(),
+        "stacks": {
+            "get_pool_data": [
+                int("0"), int("1"), int("0"), int("2000"), int("171"), int("205"), int("4000"),
+                int("40"), int("1000"), int("100"), nil.clone(), nil.clone(), int("999"),
+                int("17"), int("0"), int("1234"), int("3600"), nil.clone(),
+            ],
+            "list_nominators": [{"type": "tuple", "items": [
+                {"type": "tuple", "items": [
+                    int(&decimal_of(ALICE_KEY)), int(&amount.to_string()), int("0"), int("0"),
+                ]},
+                nil,
+            ]}],
+        },
+    });
+    let behaviour_path = dir.join("behaviour.json");
+    std::fs::write(&behaviour_path, behaviour.to_string()).unwrap();
+    // Installed by another process, so no write descriptor of this one can
+    // leak into a concurrently forked child and make the file busy.
+    let source = dir.join("verifier.source");
+    std::fs::write(
+        &source,
+        format!(
+            "#!/bin/sh\nexec '{}' '{}' '{}' \"$@\"\n",
+            on_path("python3").display(),
+            fake_verifier_fixtures().join("fake_verifier.py").display(),
+            behaviour_path.display()
+        ),
+    )
+    .unwrap();
+    let executable = dir.join("verifier");
+    assert!(
+        std::process::Command::new(on_path("install"))
+            .args(["-m", "755"])
+            .arg(&source)
+            .arg(&executable)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let material = dir.join("material");
+    std::fs::create_dir_all(&material).unwrap();
+    contracts::ProvenGetterProvider::new(&common::app_config::ProofVerifierConfig {
+        executable,
+        anchor_file: fake_verifier_fixtures().join("anchor.json"),
+        liteserver_config: None,
+        material_dir: Some(material),
+        live_state_file: None,
+        live_max_age_seconds: None,
+        timeout_seconds: 60,
+        min_interval_ms: 0,
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_indexer_takes_pool_snapshots_only_from_the_proof_verifier() {
+    let chain = FakeChain::new();
+    // The chain's real state says 5; the endpoint reports 5000; the proof
+    // verifier computed 1000.
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 5, 0)]));
+    pool_height(&chain, 2, 0, 0, None);
+    let dir = tempfile::tempdir().unwrap();
+    let provider = verifier_backed_provider(dir.path(), "none", 1_000);
+    let store = IndexerStore::open_in_memory().unwrap();
+    for _ in 0..3 {
+        run_tick_with(&chain, &provider, &store, &limits(10, 100)).await.unwrap();
+    }
+    let response = api(&store, ALICE_KEY);
+    assert_eq!(response.0, 200, "{}", response.1);
+    assert_eq!(response.1["result"][0]["amount"], "1000", "the proven value, nothing else");
+    assert_eq!(chain.with(|s| s.endpoint_pool_reads), 0, "no endpoint stack was read");
+    // The verifier was asked for the pool at the exact canonical block.
+    let requests = std::fs::read_to_string(dir.path().join("requests.jsonl")).unwrap();
+    let first: serde_json::Value = serde_json::from_str(requests.lines().next().unwrap()).unwrap();
+    assert_eq!(first["request"]["mode"], "historical");
+    assert_eq!(first["request"]["account"], pool_address());
+    assert_eq!(first["request"]["target"]["seqno"], 1);
+    assert_eq!(first["request"]["target"]["root_hash"], hex_of(&block_id(-1, MC, 1, 0)));
+}
+
+#[tokio::test]
+async fn an_unbound_verifier_answer_leaves_the_pool_pending_without_fallback() {
+    let chain = FakeChain::new();
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 5, 0)]));
+    pool_height(&chain, 2, 0, 0, None);
+    let dir = tempfile::tempdir().unwrap();
+    let provider = verifier_backed_provider(dir.path(), "request_hash", 1_000);
+    let store = IndexerStore::open_in_memory().unwrap();
+    for _ in 0..3 {
+        run_tick_with(&chain, &provider, &store, &limits(10, 100)).await.unwrap();
+    }
+    assert_eq!(store.published_mc_seqno().unwrap(), 2, "the explorer is not held back");
+    let response = api(&store, ALICE_KEY);
+    assert_eq!(response.0, 503, "{}", response.1);
+    assert!(store.nominator_ledger_entries(&nominator(ALICE_KEY)).unwrap().is_empty());
+    assert_eq!(store.address_refresh_queue(10).unwrap().len(), 1, "the observation is retried");
+    assert_eq!(chain.with(|s| s.endpoint_pool_reads), 0, "no fallback to the endpoint");
+}
+
+/// The real proof verifier, with the signed synthetic chain whose target block
+/// holds a pool running the current pool code. The scripted chain carries
+/// that exact block at height 3 and a dishonest endpoint that reports the
+/// pool's positions a thousand times larger.
+#[tokio::test]
+#[ignore = "needs the proof verifier: set TOS_PROOF_VERIFY (the contract-sandboxes job runs it)"]
+async fn the_indexer_folds_a_current_code_pool_snapshot_proven_by_the_real_verifier() {
+    let verifier = std::path::PathBuf::from(
+        std::env::var_os("TOS_PROOF_VERIFY").expect("TOS_PROOF_VERIFY names the proof verifier"),
+    );
+    let fixtures = fake_verifier_fixtures().join("synthetic-pool");
+    let target: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixtures.join("target.json")).unwrap()).unwrap();
+    let hash = |field: &str| hex::decode(target[field].as_str().unwrap()).unwrap();
+    const PROVEN_POOL_HEX: &str =
+        "7777777777777777777777777777777777777777777777777777777777777777";
+    let pool = format!("-1:{PROVEN_POOL_HEX}");
+
+    let chain = FakeChain::new();
+    chain.add_master(1, 0, &[]);
+    chain.add_master(2, 0, &[]);
+    let master = chain.add_master_with_id(
+        BlockIdExt {
+            r#type: "tos.blockIdExt".to_owned(),
+            workchain: -1,
+            shard: MC,
+            seqno: 3,
+            root_hash: hash("root_hash"),
+            file_hash: hash("file_hash"),
+        },
+        &[],
+    );
+    chain.add_tx(&master, PROVEN_POOL_HEX, "tx-proven-pool");
+    // What the endpoint believes; it reports a thousand times these.
+    chain.with(|s| {
+        s.pools.entry(pool.clone()).or_default().insert(
+            3,
+            PoolFixture { state: 1, nominators: vec![(ALICE_KEY, 7, 0), (BOB_KEY, 9, 0)] },
+        )
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let material = dir.path().join("material");
+    std::fs::create_dir_all(&material).unwrap();
+    for (from, to) in [
+        ("chain-0000.tl", "chain-0000.tl"),
+        ("exec-config.tl", "exec-config.tl"),
+        ("pool-account.tl", "account.tl"),
+    ] {
+        std::fs::copy(fixtures.join(from), material.join(to)).unwrap();
+    }
+    let provider = contracts::ProvenGetterProvider::new(&common::app_config::ProofVerifierConfig {
+        executable: verifier,
+        anchor_file: fixtures.join("anchor.json"),
+        liteserver_config: None,
+        material_dir: Some(material),
+        live_state_file: None,
+        live_max_age_seconds: None,
+        timeout_seconds: 60,
+        min_interval_ms: 0,
+    })
+    .unwrap();
+    let store = IndexerStore::open_in_memory().unwrap();
+    for _ in 0..3 {
+        run_tick_with(&chain, &provider, &store, &limits(10, 100)).await.unwrap();
+    }
+    assert_eq!(chain.with(|s| s.endpoint_pool_reads), 0, "no endpoint stack was read");
+    let alice = api(&store, ALICE_KEY);
+    record_response("ledger-proven-current-code-pool", &alice);
+    assert_eq!(alice.0, 200, "{}", alice.1);
+    assert_eq!(alice.1["result"][0]["amount"], "1000000000000", "{}", alice.1);
+    assert_eq!(alice.1["as_of_mc_seqno"], 3);
+    assert_eq!(alice.1["as_of_mc_root_hash"], target["root_hash"]);
+    let bob = api(&store, BOB_KEY);
+    assert_eq!(bob.1["result"][0]["amount"], "250000000000", "{}", bob.1);
+    assert_eq!(bob.1["result"][0]["pending_deposit"], "5000000000", "{}", bob.1);
 }

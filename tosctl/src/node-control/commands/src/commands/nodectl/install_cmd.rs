@@ -185,6 +185,7 @@ impl InstallWizardCmd {
                 log: Some(LogConfig::default()),
                 bookmarks: HashMap::new(),
                 alerts: Default::default(),
+                proof_verifier: None,
             };
 
             super::utils::save_config(&config, config_path)?;

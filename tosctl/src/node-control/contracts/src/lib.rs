@@ -37,6 +37,7 @@ pub mod nominator;
 pub mod nominator_pool;
 pub mod prediction_market;
 pub mod proof_attestation;
+pub mod proven_getters;
 pub mod provider;
 pub mod service_actor;
 pub mod smart_contract;
@@ -88,8 +89,9 @@ pub use native_registry::{
 };
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{
-    NominatorData, NominatorPoolData, NominatorPoolSnapshot, NominatorPoolWrapper,
-    NominatorPoolWrapperImpl, NominatorPosition, read_nominator_pool_snapshot_at,
+    NOMINATOR_POOL_SNAPSHOT_METHODS, NominatorData, NominatorPoolData, NominatorPoolSnapshot,
+    NominatorPoolSnapshotProof, NominatorPoolWrapper, NominatorPoolWrapperImpl, NominatorPosition,
+    PoolSnapshotSource, read_proven_nominator_pool_snapshot,
 };
 pub use prediction_market::{
     PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE, PredictionLiquidityRoleV1,
@@ -100,6 +102,10 @@ pub use prediction_market::{
     PredictionResolutionContextsV1, PredictionResolutionOutcomeV1,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
+pub use proven_getters::{
+    GetMethodArg, GetMethodCall, ProvenAccount, ProvenGetMethod, ProvenGetterProvider,
+    ProvenGetterResults, ReadPolicy,
+};
 pub use provider::ContractProvider;
 pub use service_actor::{
     PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,

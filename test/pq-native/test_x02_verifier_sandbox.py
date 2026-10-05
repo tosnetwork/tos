@@ -18,12 +18,14 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-ROOTFS = "/datax/n6-unit-agents/Z02/u24-rootfs"
-PREFIX = "/datax/n6-unit-agents/Z02/u24-runtime-f1f912-v2"
-VENV = "/datax/n6-unit-agents/Z02/u24-runtime-f1f912-recovery-v8"
-INTERPRETER = PREFIX + "/python/bin/python3.14"  # the indexed, regular interpreter file
-STDLIB = PREFIX + "/python/lib/python3.14"
-SITE = VENV + "/venv/lib/python3.14/site-packages"
+# The sandbox inputs come from the committed frozen binding, not from constants here.
+FROZEN = json.loads((REPO / "scripts/x02_four_node_inputs.json").read_text())
+ROOTFS = FROZEN["rootfs_root"]
+INTERPRETER = FROZEN["interpreter"]  # the indexed, regular interpreter file
+STDLIB = FROZEN["interpreter_stdlib_root"]
+SITE = FROZEN["dependency_roots"][0]
+VERSION = ".".join(str(part) for part in FROZEN["python_version"])
+SCRATCH = Path(FROZEN["build_root"]).parent / "sandbox-tests"
 PROBE = "import os, platform; print(platform.python_version(), os.confstr('CS_GNU_LIBC_VERSION'))"
 
 
@@ -38,7 +40,7 @@ def coordinator():
 
 
 four_node = coordinator()
-# The same roots as the Stage A binding draft: stdlib only, and the venv's site-packages.
+# The same roots as the frozen Stage A binding: stdlib only, and its site-packages.
 BINDING = {
     "bwrap_path": "/usr/bin/bwrap",
     "rootfs_root": ROOTFS,
@@ -54,7 +56,8 @@ BINDING = {
 )
 class VerifierSandbox(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(dir="/datax/cc-n6-20260925/x02-hf")
+        SCRATCH.mkdir(exist_ok=True)
+        self.directory = tempfile.TemporaryDirectory(dir=SCRATCH)
         self.output = Path(os.path.realpath(self.directory.name))
         (self.output / "artifacts").mkdir()
         (self.output / "artifacts" / "probe.boc").write_bytes(b"x")
@@ -90,7 +93,7 @@ class VerifierSandbox(unittest.TestCase):
         )
         self.assertEqual(
             (self.output / "interpreter.stdout.raw").read_text().split(),
-            ["3.14.7", "glibc", "2.39"],
+            [VERSION, "glibc", "2.39"],
         )
 
     def test_without_the_interpreter_file_bind_the_sandbox_cannot_start_it(self):
@@ -121,7 +124,7 @@ class VerifierSandbox(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         version = result.stdout.decode().split()
-        self.assertEqual(version[:2], ["3.14.7", "glibc"])
+        self.assertEqual(version[:2], [VERSION, "glibc"])
         self.assertNotEqual(version[2], "2.39")
         self.assertEqual(version[2], os.confstr("CS_GNU_LIBC_VERSION").split()[1])
 
@@ -154,7 +157,7 @@ class VerifierSandbox(unittest.TestCase):
             os.killpg(record["pid"], 0)
 
     def test_a_bwrap_setup_failure_is_not_a_verifier_outcome(self):
-        binding = dict(BINDING, runtime_roots=[PREFIX, VENV, "/nonexistent-runtime-root"])
+        binding = dict(BINDING, runtime_roots=[STDLIB, "/nonexistent-runtime-root"])
         argv = four_node.verifier_sandbox_argv(binding, self.output, ["/usr/bin/true"])
         record = four_node.run_bounded(argv, self.output, "setup")
         self.assertTrue(record["sandbox_setup_failed"])

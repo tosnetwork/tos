@@ -1825,13 +1825,25 @@ mod wallet_secret_input_tests {
 
     #[test]
     fn legacy_mnemonic_argument_is_a_hard_error_that_does_not_echo_it() {
-        let phrase = super::super::tos_mnemonic::generate(12).expect("generate").join(" ");
-        let cmd = mnemonic_import(&["--mnemonic", &phrase]);
-        let text = format!("{:#}", cmd.read_mnemonic().expect_err("must refuse"));
+        // The refusal must not depend on the phrase at all: two different phrases
+        // give the same text. Matching individual words would be unsound, because
+        // the message's own English words ("process", "file", "own") are mnemonic
+        // words too.
+        let refusal = |phrase: &str| {
+            let cmd = mnemonic_import(&["--mnemonic", phrase]);
+            format!("{:#}", cmd.read_mnemonic().expect_err("must refuse"))
+        };
+        let first = super::super::tos_mnemonic::generate(12).expect("generate").join(" ");
+        let second = loop {
+            let candidate = super::super::tos_mnemonic::generate(12).expect("generate").join(" ");
+            if candidate != first {
+                break candidate;
+            }
+        };
+        let text = refusal(&first);
         assert!(text.contains("--mnemonic-file"), "{text}");
-        for word in phrase.split(' ') {
-            assert!(!text.split_whitespace().any(|token| token == word), "{text}");
-        }
+        assert_eq!(text, refusal(&second));
+        assert!(!text.contains(&first) && !text.contains(&second), "{text}");
     }
 
     #[test]

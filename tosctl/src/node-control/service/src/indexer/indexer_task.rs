@@ -42,8 +42,8 @@ use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_for
 use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
     AgentAccountContract, CapabilityRegistryContract, ChainProvider, DisputeContract,
-    MasterchainCheckpoint, ServiceActorContract, TaskEscrowContract,
-    read_nominator_pool_snapshot_at,
+    MasterchainCheckpoint, PoolSnapshotSource, ProvenGetterProvider, ReadPolicy,
+    ServiceActorContract, TaskEscrowContract,
 };
 
 const DNS_ITEM_CODE_HASH: &str = "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78";
@@ -166,6 +166,7 @@ pub async fn run(
     indexer_store: Arc<IndexerStore>,
 ) -> anyhow::Result<()> {
     let chain_provider = runtime_cfg.chain_provider();
+    let pool_snapshots = pool_snapshot_source(&app_config);
     let known = KnownCodeHashes::compute()?;
     let probe_budget = ProbeBudget::new();
     let mut interval = tokio::time::interval(Duration::from_secs(app_config.tick_interval));
@@ -180,6 +181,7 @@ pub async fn run(
             _ = interval.tick() => {
                 if let Err(e) = tick(
                     &chain_provider,
+                    pool_snapshots.as_ref(),
                     &indexer_store,
                     &known,
                     &probe_budget,
@@ -196,6 +198,41 @@ pub async fn run(
                 tracing::info!(target: "indexer", "cancel received");
                 return Ok(());
             }
+        }
+    }
+}
+
+/// Pool snapshots when no proof verifier is usable: there are none. Every
+/// pool refresh then stays pending rather than folding in an observation the
+/// indexer cannot prove.
+struct UnprovisionedPoolSnapshots {
+    reason: String,
+}
+
+#[async_trait::async_trait]
+impl PoolSnapshotSource for UnprovisionedPoolSnapshots {
+    async fn nominator_pool_snapshot(
+        &self,
+        _address: &MsgAddressInt,
+        _policy: &ReadPolicy,
+    ) -> anyhow::Result<contracts::NominatorPoolSnapshot> {
+        anyhow::bail!("no authoritative pool snapshot: {}", self.reason)
+    }
+}
+
+/// The only production source of pool snapshots: the locally configured
+/// proof verifier. The chain RPC endpoint is never one.
+fn pool_snapshot_source(app_config: &AppConfig) -> Arc<dyn PoolSnapshotSource> {
+    let Some(config) = &app_config.proof_verifier else {
+        return Arc::new(UnprovisionedPoolSnapshots {
+            reason: "no proof_verifier is configured".to_owned(),
+        });
+    };
+    match ProvenGetterProvider::new(config) {
+        Ok(provider) => Arc::new(provider),
+        Err(e) => {
+            tracing::error!(target: "indexer", "proof verifier unusable: {:#}", e);
+            Arc::new(UnprovisionedPoolSnapshots { reason: format!("{e:#}") })
         }
     }
 }
@@ -291,8 +328,10 @@ impl PruneState {
 
 /// One indexer tick: scan, then prune strictly below the published
 /// watermark.
+#[allow(clippy::too_many_arguments)]
 async fn tick(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
@@ -300,7 +339,8 @@ async fn tick(
     retention_blocks: u32,
     prune: &mut PruneState,
 ) -> anyhow::Result<ScanOutcome> {
-    let outcome = scan_new_blocks(chain_provider, store, known, probe_budget, limits).await?;
+    let outcome =
+        scan_new_blocks(chain_provider, pool_snapshots, store, known, probe_budget, limits).await?;
     if let Err(e) = prune_after_scan(store, retention_blocks, outcome.published_mc_seqno, prune) {
         tracing::error!(target: "indexer", "prune error: {:#}", e);
     }
@@ -335,6 +375,7 @@ fn prune_after_scan(
 
 async fn scan_new_blocks(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
@@ -387,7 +428,15 @@ async fn scan_new_blocks(
         }
     }
     // Touches published before an interruption are refreshed first.
-    drain_address_refresh(chain_provider, store, known, probe_budget, &limits.refresh).await?;
+    drain_address_refresh(
+        chain_provider,
+        pool_snapshots,
+        store,
+        known,
+        probe_budget,
+        &limits.refresh,
+    )
+    .await?;
 
     let mut published_now = 0u32;
     let mut work_left = limits.max_shard_work;
@@ -422,8 +471,15 @@ async fn scan_new_blocks(
                 }
                 store.publish_batch(master_shard, &batch.anchor)?;
                 published_now = published_now.saturating_add(1);
-                drain_address_refresh(chain_provider, store, known, probe_budget, &limits.refresh)
-                    .await?;
+                drain_address_refresh(
+                    chain_provider,
+                    pool_snapshots,
+                    store,
+                    known,
+                    probe_budget,
+                    &limits.refresh,
+                )
+                .await?;
             }
         }
     }
@@ -775,6 +831,7 @@ async fn scan_exact_block(
 /// take the whole pass.
 async fn drain_address_refresh(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
@@ -792,7 +849,15 @@ async fn drain_address_refresh(
             };
             work_left = remaining;
             let address = refresh.address.clone();
-            if refresh_one_height(chain_provider, store, known, probe_budget, refresh).await?
+            if refresh_one_height(
+                chain_provider,
+                pool_snapshots,
+                store,
+                known,
+                probe_budget,
+                refresh,
+            )
+            .await?
                 == HeightOutcome::Observed
                 && let Some(next) = store.next_address_refresh(&address)?
             {
@@ -818,6 +883,7 @@ enum HeightOutcome {
 /// Observes one address at one queued height.
 async fn refresh_one_height(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
@@ -833,7 +899,9 @@ async fn refresh_one_height(
     // the heights below it.
     if !ledger_relevant {
         let latest = store.latest_address_refresh(&refresh.address)?.unwrap_or(refresh);
-        if let Err(e) = visit_address(chain_provider, store, known, &latest, probe_budget).await {
+        if let Err(e) =
+            visit_address(chain_provider, pool_snapshots, store, known, &latest, probe_budget).await
+        {
             tracing::warn!(
                 target: "indexer",
                 address = %latest.address,
@@ -846,7 +914,8 @@ async fn refresh_one_height(
     }
     // A pool is folded in strictly in height order: an unreadable height
     // keeps it (and the ledger) waiting rather than being skipped.
-    match visit_address(chain_provider, store, known, &refresh, probe_budget).await {
+    match visit_address(chain_provider, pool_snapshots, store, known, &refresh, probe_budget).await
+    {
         Ok(()) => {
             store.complete_address_refresh(&refresh)?;
             Ok(HeightOutcome::Observed)
@@ -867,6 +936,7 @@ async fn refresh_one_height(
 
 async fn visit_address(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     refresh: &AddressRefresh,
@@ -907,7 +977,7 @@ async fn visit_address(
     };
 
     if kind == NOMINATOR_POOL_KIND {
-        return refresh_nominator_pool(chain_provider, store, address, refresh).await;
+        return refresh_nominator_pool(pool_snapshots, store, address, refresh).await;
     }
     if kind == "dns_domain" {
         return decode_dns_domain(
@@ -1093,24 +1163,34 @@ async fn decode_and_store(
     }
 }
 
-/// Refreshes one nominator pool from a snapshot pinned to the exact
-/// published masterchain block its touches became canonical in, and folds
-/// that snapshot into the lifetime ledger. Any failure -- including a node
-/// that cannot serve the historical state -- leaves the refresh pending, so
-/// the ledger never advances past an observation it could not make.
+/// Refreshes one nominator pool from a proven snapshot taken explicitly at
+/// the exact published masterchain block its touches became canonical in,
+/// and folds that snapshot into the lifetime ledger. The snapshot comes only
+/// from `pool_snapshots`, which computes both get-methods locally on the
+/// pool's proven state; the chain RPC endpoint is not consulted for it at
+/// all. Any failure -- a block the verifier cannot authenticate from its
+/// anchor, missing proof material, a local execution failure -- leaves the
+/// refresh pending, so the ledger never advances past an observation it
+/// could not prove.
 async fn refresh_nominator_pool(
-    chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     address: &str,
     refresh: &AddressRefresh,
 ) -> anyhow::Result<()> {
     let address_value = address.parse::<MsgAddressInt>()?;
-    let snapshot = read_nominator_pool_snapshot_at(
-        chain_provider.as_ref(),
-        &address_value,
-        &refresh.checkpoint,
-    )
-    .await?;
+    let snapshot = pool_snapshots
+        .nominator_pool_snapshot(
+            &address_value,
+            &ReadPolicy::Historical(refresh.checkpoint.clone()),
+        )
+        .await?;
+    anyhow::ensure!(
+        snapshot.checkpoint == refresh.checkpoint,
+        "pool snapshot answers for masterchain {} instead of {}",
+        snapshot.checkpoint.seqno,
+        refresh.checkpoint.seqno
+    );
     let data = snapshot.pool;
     let nominators = snapshot.nominators;
     let nominator_stake = nominators.iter().fold(0u64, |total, position| {
@@ -1208,7 +1288,7 @@ async fn decode_dns_domain(
     anyhow::ensure!(mc_seqno > 0, "DNS observation lacks a masterchain checkpoint");
     anyhow::ensure!(checkpoint.seqno == mc_seqno, "DNS checkpoint seqno mismatch");
     let nft = chain_provider
-        .run_get_method_at(address.to_owned(), "get_nft_data", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_nft_data", vec![], checkpoint)
         .await?;
     anyhow::ensure!(nft.bool(0)?, "DNS Domain Item is not initialized");
     let index = nft.decimal_string(1)?.to_owned();
@@ -1226,7 +1306,7 @@ async fn decode_dns_domain(
     let content = nft.cell(4)?;
 
     let domain_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_domain", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_domain", vec![], checkpoint)
         .await?;
     let domain_slice = domain_stack.slice(0)?;
     anyhow::ensure!(
@@ -1261,7 +1341,7 @@ async fn decode_dns_domain(
     );
 
     let auction_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_auction_info", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_auction_info", vec![], checkpoint)
         .await?;
     let auction_end_time = auction_stack.i64(2)?;
     let max_bid_amount = auction_stack.decimal_string(1)?.parse::<u128>()?;
@@ -1274,7 +1354,12 @@ async fn decode_dns_domain(
         auction_end_time,
     });
     let fill_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_last_fill_up_time", vec![], checkpoint)
+        .run_get_method_at_unverified(
+            address.to_owned(),
+            "get_last_fill_up_time",
+            vec![],
+            checkpoint,
+        )
         .await?;
     let last_fill_up_time = fill_stack.i64(0)?;
     anyhow::ensure!(last_fill_up_time > 0, "DNS Domain Item lacks a renewal clock");
@@ -1578,6 +1663,12 @@ async fn refresh_service_request_lifecycle(
         store.set_service_scan_high_water(address, high_water)?;
     }
     Ok(())
+}
+
+/// A source that never yields a pool snapshot, for tests that index no pool.
+#[cfg(test)]
+fn no_pool_snapshots() -> UnprovisionedPoolSnapshots {
+    UnprovisionedPoolSnapshots { reason: "not provisioned in this test".to_owned() }
 }
 
 #[cfg(test)]
@@ -2240,6 +2331,7 @@ mod tests {
 
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2260,6 +2352,7 @@ mod tests {
 
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2295,6 +2388,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2335,6 +2429,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider;
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2370,6 +2465,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider;
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
@@ -2399,6 +2495,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
@@ -2412,6 +2509,7 @@ mod tests {
         provider.set_masterchain_info(2, shard);
         let err = scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
@@ -2454,6 +2552,7 @@ mod tests {
         for _ in 0..4 {
             let outcome = tick(
                 &dyn_provider,
+                &no_pool_snapshots(),
                 &store,
                 &known,
                 &ProbeBudget::new(),
@@ -2494,6 +2593,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         scan_new_blocks(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known,
             &ProbeBudget::new(),
@@ -2945,6 +3045,7 @@ mod tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         drain_address_refresh(
             &dyn_provider,
+            &no_pool_snapshots(),
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
@@ -2965,7 +3066,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ChainProvider for NotFoundLifecycleProvider {
-        async fn run_get_method_at(
+        async fn run_get_method_at_unverified(
             &self,
             _address: String,
             _method: &str,
@@ -3307,6 +3408,7 @@ mod refresh_drain_tests {
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         drain_address_refresh(
             &dyn_provider,
+            &no_pool_snapshots(),
             store,
             &KnownCodeHashes::compute().unwrap(),
             &ProbeBudget::new(),

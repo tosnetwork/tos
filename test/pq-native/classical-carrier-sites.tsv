@@ -76,3 +76,6 @@ validator/impl/liteserver.cpp	*	3	historical	forward-proof generation emits #13 
 validator/impl/top-shard-descr.cpp	*	3	historical	TopBlockDescr cell parsing supports #13 and verifies it through the trusted-session boundary
 validator/manager.cpp	verify	2	historical	verify sites at lines 629 and 631 run only after the explicit !is_pq branch and admit classical carriers only for an explicitly classical validator set
 validator/validate-broadcast.cpp	*	2	historical	broadcast verification has a separate trusted-context PQ branch; these calls are the classical branch
+test/pq-native/proof-verify-test.cpp	cpp_lite_tl	1	historical	proof-verifier negative control substitutes an ordinary classical set for the PQ carrier on a forward link and requires refusal; nothing accepts or emits it
+test/pq-native/proof-verify-test.cpp	raw_tag_write	1	historical	synthetic chain fixture writes validators_ext#12 for ConfigParam 34 in a test state; a validator-set tag, not a finality carrier
+test/proven-snapshot/pool-snapshot-fixture.cpp	raw_tag_write	1	historical	proven pool snapshot fixture writes validators_ext#12 for ConfigParam 34 in a synthetic state; a validator-set tag, not a finality carrier
