@@ -222,3 +222,82 @@ execution and reference-hardware measurements remain open. The next architecture
 work must address the measured admission cost while retaining these checks.
 This diagnostic experiment does not establish that raising protocol credit or
 reducing verifier prices is an acceptable solution.
+
+### Native cost floor and the next executor boundary
+
+The raw native controls in `probe_native_cost.py` omit all identity parsing,
+solvency checks and state persistence. They execute existing `CDATASIZE` and
+`PQCHECKSIG_SUITE` instructions; they do not register an admission opcode.
+C++ and Rust agree exactly on exit, gas and value for all 12 scenarios:
+
+| Control | Gas | Result |
+| --- | ---: | --- |
+| LMS verification alone | 6,340 | Valid and invalid signatures cost the same |
+| Count the complete 95-cell message | 9,567 | Includes the external wrapper |
+| One full-message scan, then LMS verification | 14,045 | Fails at 10,000 credit |
+| Full-message and payload scans, then verification | 15,750 | Diagnostic only |
+
+The existing fixed-profile compute charge is 500 + 1,067 × 3 = 3,701 gas.
+The valid fixture has 86 distinct cells across its SLH signature, HSS signature
+and fee public key. Even an ideal single-load implementation costs at least
+86 × 100 + 3,701 = **12,301 gas** if it loads those cold cells under the existing
+VM cell tariff. Including the full message and key gives 96 cells and a **13,301**
+floor before opcode overhead. This is a conditional lower bound for the measured
+representation and load model, not a claim about every possible protocol or
+hardware tariff. It rules out solving this fixture by merely fusing parsing and
+scanning into an opcode while retaining those loads and charges.
+
+```sh
+cmake --build build --target test-fee-native-cost -j8
+cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm --example fee-native-cost
+python3 test/rescue-fee-gate/probe_native_cost.py \
+  --cpp build/crypto/pq/test-fee-native-cost \
+  --rust /path/to/cargo-target/debug/examples/fee-native-cost \
+  --output /path/to/retained-native-cost-results
+```
+
+There is a more promising boundary to investigate: both transaction executors
+already count external-message storage before starting the VM, to calculate
+import fees. The C++ path is `Transaction::unpack_input_msg` in
+`crypto/block/transaction.cpp`; the Rust path is the import-fee block in
+`tosctl/src/executor/src/ordinary_transaction.rs`. Reusing a complete, authenticated
+result avoids a second traversal; it does not discount suite-4 verification.
+Eight host-counter cases now compare referenced/inline bodies and a shared-cell
+graph, including exact, one-cell-short and one-bit-short limits. Valid counts and
+accept/reject decisions agree; partial counts on rejected graphs need not agree
+and must never become trusted statistics.
+
+This investigation found and fixed a prerequisite in Rust `StorageUsageCalc`:
+it previously stopped before incrementing past a limit, returning a truncated
+count that the executor's `count > limit` rejection predicates could accept.
+It now preserves the first excess, stops further accounting, and uses checked
+addition. The regression fails on the original code at the intended assertion.
+Replacing checked addition with wrapping addition is also detected. This proves
+the counter/caller-predicate defect; it is not a separately reproduced full
+transaction exploit. Full block-library and executor validation is recorded in
+`native-cost-20261005.json`, including the temporary-directory test rerun.
+
+The next proposed integration is **executor-authenticated incoming storage
+statistics**, not another cell-scanning verifier. Before implementation, freeze:
+
+- A versioned optional context value binding the exact incoming-message hash to
+  successful import statistics. State whether cells/bits exclude the root, and
+  convert to full-message bounds with checked arithmetic. Preserve old c7 fields;
+  do not reuse a message-supplied fee field as trusted size evidence.
+- A consensus-version gate and identical C++/Rust construction in validator,
+  executor and emulator. Get methods, unsupported transaction types, old versions,
+  missing metadata and hash mismatches must fail closed for this wallet path.
+- A proof connecting whole-message bounds to the generated outgoing message and
+  its fee reserve. Whole-message statistics do **not** establish the separate
+  72-cell payload cap. Preserve that check or explicitly specify and validate a
+  conservative replacement; the current candidate's policy has not changed.
+- Runtime tests for forged/stale metadata, root-count conventions, sharing,
+  inline/reference bodies, StateInit, oversize messages and rejection before
+  ACCEPT. Only complete successful statistics may be exposed.
+- A measured native identity parser and complete admission transaction after the
+  size boundary is resolved. The 11,188-gas no-size control still exceeds credit;
+  exposing statistics alone does not complete the wallet.
+
+No context field, new opcode, network credit or revised verifier price is
+activated by this work. Reference CPU pricing, all worst-case invalid paths,
+successor/POP/funding completion and production activation remain open.

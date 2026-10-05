@@ -1,0 +1,290 @@
+{
+  "scope": "native scan plus HSS only; not an admission implementation or hardware benchmark",
+  "global_version": 16,
+  "external_credit": 10000,
+  "cross_vm_scenarios": 12,
+  "exact_exit_gas_value_parity": true,
+  "host_import_counter_cases": {
+    "external-exact": {
+      "cpp": {
+        "accepted": true,
+        "cells": 94,
+        "bits": 88512
+      },
+      "rust": {
+        "accepted": true,
+        "cells": 94,
+        "bits": 88512
+      }
+    },
+    "external-bits-short": {
+      "cpp": {
+        "accepted": false,
+        "cells": 94,
+        "bits": 88512
+      },
+      "rust": {
+        "accepted": false,
+        "cells": 94,
+        "bits": 88512
+      }
+    },
+    "external-cells-short": {
+      "cpp": {
+        "accepted": false,
+        "cells": 94,
+        "bits": 88512
+      },
+      "rust": {
+        "accepted": false,
+        "cells": 94,
+        "bits": 88512
+      }
+    },
+    "inline_body-exact": {
+      "cpp": {
+        "accepted": true,
+        "cells": 93,
+        "bits": 88512
+      },
+      "rust": {
+        "accepted": true,
+        "cells": 93,
+        "bits": 88512
+      }
+    },
+    "inline_body-bits-short": {
+      "cpp": {
+        "accepted": false,
+        "cells": 93,
+        "bits": 88512
+      },
+      "rust": {
+        "accepted": false,
+        "cells": 93,
+        "bits": 88512
+      }
+    },
+    "inline_body-cells-short": {
+      "cpp": {
+        "accepted": false,
+        "cells": 93,
+        "bits": 88512
+      },
+      "rust": {
+        "accepted": false,
+        "cells": 93,
+        "bits": 88512
+      }
+    },
+    "shared-exact": {
+      "cpp": {
+        "accepted": true,
+        "cells": 1,
+        "bits": 8
+      },
+      "rust": {
+        "accepted": true,
+        "cells": 1,
+        "bits": 8
+      }
+    },
+    "shared-bits-short": {
+      "cpp": {
+        "accepted": false,
+        "cells": 1,
+        "bits": 8
+      },
+      "rust": {
+        "accepted": false,
+        "cells": 1,
+        "bits": 8
+      }
+    }
+  },
+  "tariff": {
+    "worst_compressions": 1067,
+    "base_gas": 500,
+    "per_compression_gas": 3,
+    "cell_load_gas": 100,
+    "cell_reload_gas": 25
+  },
+  "verification_compute_charge": 3701,
+  "signature_and_key_distinct_cells": 86,
+  "signature_and_key_cold_load_floor": 12301,
+  "full_message_and_key_distinct_cells": 96,
+  "full_graph_cold_load_floor": 13301,
+  "rows": {
+    "verify-valid": {
+      "exit": 0,
+      "gas": 6340,
+      "value": -1
+    },
+    "verify-invalid": {
+      "exit": 0,
+      "gas": 6340,
+      "value": 0
+    },
+    "full-count": {
+      "exit": 0,
+      "gas": 9567,
+      "value": 95
+    },
+    "full-count-exact": {
+      "exit": 0,
+      "gas": 9567,
+      "value": 95
+    },
+    "full-count-one-short": {
+      "exit": 8,
+      "gas": 9476,
+      "value": 99
+    },
+    "scan-verify": {
+      "exit": 0,
+      "gas": 14045,
+      "value": -1
+    },
+    "scan-verify-credit": {
+      "exit": -14,
+      "gas": 13465,
+      "value": 99
+    },
+    "scan-verify-invalid": {
+      "exit": 0,
+      "gas": 14045,
+      "value": 0
+    },
+    "both-scans-verify": {
+      "exit": 0,
+      "gas": 15750,
+      "value": -1
+    },
+    "removed-verifier-accepts-invalid": {
+      "exit": 0,
+      "gas": 113,
+      "value": -1
+    },
+    "with-input-bound-rejects": {
+      "exit": 8,
+      "gas": 9476,
+      "value": 99
+    },
+    "removed-input-bound-accepts": {
+      "exit": 0,
+      "gas": 6376,
+      "value": -1
+    }
+  },
+  "source_hashes": {
+    "test/rescue-fee-gate/probe_native_cost.py": "15c7602d1581473dd84e0df50ae9cd0fc41be4d6a5d0b4922abe1bab56ff803d",
+    "test/rescue-fee-gate/native-cost.cpp": "61c37423ee6f03e0fd63bb1b486f07706f3912e253d00b6c6ac3be76a5ee1e30",
+    "tosctl/src/vm/examples/fee-native-cost.rs": "4d68833f2c965f4bfb3908e4d8f904931594c7daa0f7a2a0f52f809bda33f629",
+    "crypto/vm/pqops.h": "4ab1ef3eb93956f236cb13e933662ce82a59e44578d0204596cf919ac00750d7",
+    "crypto/pq/lms-fee.cpp": "633f91c629eab24363f5cc62b6ecf56580c2d79852f60082591dd70993684ec7",
+    "tosctl/src/block/src/accounts.rs": "973f05ed7c1476b4fbeb462483e010a61184b1913245375d3d2913c95a926ad5"
+  },
+  "artifact_hashes": {
+    "native-cost-scenarios.tsv": "1bb23b68286e74a27af4c350bc56a2745c13b8c296d776226738cee7c4706b3f",
+    "native-cost-cpp.tsv": "583cb1ab74162bf7d27ac701ce7d8695d2cedd6433ac3ef4d2a74618fe17a877",
+    "native-cost-rust.tsv": "583cb1ab74162bf7d27ac701ce7d8695d2cedd6433ac3ef4d2a74618fe17a877"
+  },
+  "experiment_base_commit": "41b63b637",
+  "storage_fix_commit": "9657f8ee04de761afa21f1e721b5741a2ef28886",
+  "host": "Darwin arm64",
+  "validation": {
+    "native_probe_exit": 0,
+    "cpp_driver_build_exit": 0,
+    "rust_driver_build_exit": 0,
+    "storage_regression_original_exit": 101,
+    "storage_regression_original_failure": "cell overflow must remain visible to the caller",
+    "storage_overflow_mutation_exit": 101,
+    "restored_storage_regressions": {
+      "exit": 0,
+      "passed": 2
+    },
+    "block_library_full_run": {
+      "passed": 635,
+      "failed": 1,
+      "ignored": 2,
+      "failure": "BOC stack writer temporary directory absent; unrelated to storage accounting"
+    },
+    "block_library_failed_test_rerun": {
+      "exit": 0,
+      "passed": 1,
+      "environment_fix": "created ignored tosctl/src/target directory required by existing test"
+    },
+    "executor_library": {
+      "exit": 0,
+      "passed": 44,
+      "ignored": 6
+    },
+    "ruff_exit": 0,
+    "rust_example_format_exit": 0,
+    "hosted_ci": "not run",
+    "full_transaction_exploit_reproduction": false,
+    "new_admission_opcode_implemented": false,
+    "trusted_context_metadata_exposed": false,
+    "reference_hardware_pricing": "not run",
+    "production_acceptance": false
+  },
+  "retained_artifacts": {
+    "directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-native-cost",
+    "retention": "retain until superseded by reproduced native admission and counter validation",
+    "files": {
+      "block-tests.log": {
+        "sha256": "61d888e412c2515aef87ac331f0f2527a2b4ee7a64be8f586c0cf9cb55955a52",
+        "bytes": 43595
+      },
+      "boc-stack-diagnostic.log": {
+        "sha256": "a94f2e071aeab3f7063ef2580fa61069dfe1cea96af2be2dfaa3ad701cb6800b",
+        "bytes": 1166
+      },
+      "boc-stack-green.log": {
+        "sha256": "d0b11c088c930495471c052300f1329a67067072d7ebb6c7b0a52d3a9e635d65",
+        "bytes": 982
+      },
+      "executor-tests.log": {
+        "sha256": "b52ea0fe77ffd459f961e0f7a98d0e057a6d432650ac0ede9ead99db9a6ea87b",
+        "bytes": 10152
+      },
+      "native-cost-cpp.tsv": {
+        "sha256": "583cb1ab74162bf7d27ac701ce7d8695d2cedd6433ac3ef4d2a74618fe17a877",
+        "bytes": 355
+      },
+      "native-cost-rust.tsv": {
+        "sha256": "583cb1ab74162bf7d27ac701ce7d8695d2cedd6433ac3ef4d2a74618fe17a877",
+        "bytes": 355
+      },
+      "native-cost-scenarios.tsv": {
+        "sha256": "1bb23b68286e74a27af4c350bc56a2745c13b8c296d776226738cee7c4706b3f",
+        "bytes": 276975
+      },
+      "native-rust-build.log": {
+        "sha256": "f9642d1aa59ea4d667d6f3ba8f60f2843f41cae6190b5287009ff5367771b77d",
+        "bytes": 1572
+      },
+      "storage-limit-green.log": {
+        "sha256": "48280eb256555ea5f6fa5cb468d51873e3ddeb724736c5e1f96aebeceed34c88",
+        "bytes": 2845
+      },
+      "storage-limit-red.log": {
+        "sha256": "cc8fd754b586e85c61f6693f1639ae03dd7bf0ed6a0caf4d633ed5e6c62383c0",
+        "bytes": 1561
+      },
+      "storage-limit-restored.log": {
+        "sha256": "9e296a58b86d8650efffa0aea32f26941b897136f8e5283fc949e7c9f4169d15",
+        "bytes": 1162
+      },
+      "storage-overflow-mutation.log": {
+        "sha256": "8ed40da0bf3c2d5bcb38e72afa477ba7b6e55595df54c14efd50dee4d666a4af",
+        "bytes": 1588
+      }
+    }
+  },
+  "raw_receipt": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/native-cost.json",
+    "sha256": "03fb5d6cc774abe57ec677723e0e080327e81ac3c270087e0db6a0e2778a5155",
+    "bytes": 4654
+  }
+}
