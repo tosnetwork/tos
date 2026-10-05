@@ -3,7 +3,9 @@
 Prototype of the wallet rescue design: an ML-DSA-44 daily root, an SLH-DSA-SHA2-128s rescue
 root, and a per-wallet fee vault that admits an external message only after a native one-level
 HSS/LMS signature over the complete fee intent verifies, inside the external gas credit (10,000
-gas, as in genesis). Everything runs at the development genesis global version **16**.
+gas, as in genesis). The original prototypes run at development genesis global version **16**.
+The contextual admission candidate below requires experimental version **17**, without
+changing genesis or activating a network.
 **Not for production merge.**
 
 Adopted parameters (2026-10-04 design, with the later development-version integration):
@@ -277,8 +279,9 @@ the counter/caller-predicate defect; it is not a separately reproduced full
 transaction exploit. Full block-library and executor validation is recorded in
 `native-cost-20261005.json`, including the temporary-directory test rerun.
 
-The next proposed integration is **executor-authenticated incoming storage
-statistics**, not another cell-scanning verifier. Before implementation, freeze:
+At the preceding `016920deb` checkpoint, the proposed next integration was
+**executor-authenticated incoming storage statistics**, with these requirements
+(now addressed by the experimental implementation below):
 
 - A versioned optional context value binding the exact incoming-message hash to
   successful import statistics. State whether cells/bits exclude the root, and
@@ -290,7 +293,7 @@ statistics**, not another cell-scanning verifier. Before implementation, freeze:
 - A proof connecting whole-message bounds to the generated outgoing message and
   its fee reserve. Whole-message statistics do **not** establish the separate
   72-cell payload cap. Preserve that check or explicitly specify and validate a
-  conservative replacement; the current candidate's policy has not changed.
+  conservative replacement; the version-16 bounded candidate retained that policy.
 - Runtime tests for forged/stale metadata, root-count conventions, sharing,
   inline/reference bodies, StateInit, oversize messages and rejection before
   ACCEPT. Only complete successful statistics may be exposed.
@@ -301,3 +304,66 @@ statistics**, not another cell-scanning verifier. Before implementation, freeze:
 No context field, new opcode, network credit or revised verifier price is
 activated by this work. Reference CPU pricing, all worst-case invalid paths,
 successor/POP/funding completion and production activation remain open.
+
+
+## Version-17 contextual admission (2026-10-05)
+
+The next experiment is implemented in `rescue-fee-vault-context.fc`, both executors,
+and both VMs. See [the interface and wire specification](../../doc/tvm-lms-fee-hash.md).
+`c7[18]` exposes complete successful import statistics, and `F93103 LMSCHECKFEEHASH`
+verifies a fixed 32-byte digest and explicit leaf with the existing H20/W4 tariff.
+Neither the 10000 external credit nor the compression/cell prices are reduced.
+`.github/workflows/rescue-context.yml` wires these checks to Linux x86-64 and
+AArch64; it has not been run remotely for this local snapshot.
+Genesis remains version 16; the candidate is a new experimental layout.
+
+The strict fixture reaches ACCEPT at **9771 gas**, with **11866 total compute gas**.
+This includes complete-input bounds, exact domain/network/wallet/module/profile/tree
+binding, RESCUE role and eligible class, LMS/q, monotonic/slot/expiry checks, exact
+configured forwarding value, and current-price solvency checks. It is not merely an
+isolated verifier benchmark. The real SLH lock reaches the receiver and retires the
+primary path. A fee-valid but SLH-invalid submission is paid, refused by the module,
+and bounced back without restoring the consumed fee leaf.
+
+The whole-input cap is 128 unique cells. The derived outgoing bound replaces the
+previous prototype's independent 72-cell payload cap explicitly. Amount is fixed
+per vault rather than only upper-capped; production downstream funding calibration
+remains open. There is only 229 gas of measured admission margin, so this is not a
+claim that future guards or extensions fit unchanged.
+
+Local evidence (`context-admission-20261005.json`):
+
+- 37 exact C++/Rust opcode result/exit/gas cases, including versions 0–19,
+  wrong leaf/digest/types/profile, malformed lengths and exhaustion.
+- 45 full transaction comparisons: compute/action exits, emitted message hashes,
+  final balance and data hash. Includes actual SLH/module/account lock and failure
+  bounce, eligible kinds, final tree leaf, root counts, sharing, inline/reference
+  bodies, StateInit and null internal context. Native getter null context and
+  version-16 refusal are separately asserted.
+- Exactly 128 cells admitted; 129 rejected before ACCEPT. Removing the bound
+  incorrectly admits an oversized signed message. C++ and Rust mutations of leaf
+  binding, version gating and root counting must also fail at intended outcomes.
+- Existing version-16 frozen suite and vault regression results are in the index.
+
+With the signer/compiler environment documented above (set `TOS_ROOT` explicitly
+for a worktree), run:
+
+```sh
+cmake --build build --target func fift emulator test-fee-native-cost test-pq-suite-parity -j4
+cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
+  --example fee-native-cost --example pq-tx-parity
+python3 test/rescue-fee-gate/test_context_admission.py \
+  --cpp build/crypto/pq/test-fee-native-cost \
+  --rust "$CARGO_TARGET_DIR/debug/examples/fee-native-cost" \
+  --rust-tx "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+  --output /path/to/retained-context-results
+python3 test/rescue-fee-gate/context_mutations.py \
+  --artifacts /path/to/retained-context-results --target "$CARGO_TARGET_DIR"
+```
+
+Mutation builds restore sources and binaries. Their retained input fixtures are
+public signatures, never signing seeds or private keys. The result index records
+source hashes and a local raw-artifact path; those local files are not remotely
+published or independent CI evidence. This work does not finish the canonical
+successor/POP/funding handoff, complete V5 action semantics/global retirement,
+durable signer, or reference-hardware approval gates listed above.

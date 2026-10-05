@@ -364,3 +364,46 @@ pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
         _ => fail!(ExceptionCode::RangeCheckError, "unknown PQ suite"),
     }
 }
+
+/// Version-17 fixed-profile verifier: hash, leaf, signature, key -> bool.
+/// Eliminates caller-created digest/context cells, not verification work or tariff.
+pub(super) fn execute_lms_fee_hash(engine: &mut Engine) -> Status {
+    if engine.block_version() < 17 {
+        if engine.block_version() >= 4 {
+            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
+        } else {
+            engine.use_gas(Gas::basic_gas_price(0, 0));
+        }
+        fail!(ExceptionCode::InvalidOpcode);
+    }
+    engine.load_instruction(Instruction::new("LMSCHECKFEEHASH"))?;
+    if engine.cc.stack.depth() < 4 {
+        fail!(ExceptionCode::StackUnderflow);
+    }
+    fetch_stack(engine, 4)?;
+    let key = engine.cmd.var(0).as_cell()?.clone();
+    let signature = engine.cmd.var(1).as_cell()?.clone();
+    let leaf = engine.cmd.var(2).as_integer_value(0..=((1 << 20) - 1))? as u32;
+    let message = engine.cmd.var(3).as_integer()?.as_u256()?;
+    let key = read_bytes_priced(engine, key, lms_fee::PUBLIC_KEY_BYTES, 0)?;
+    let Some(worst) = lms_fee::worst_compressions(&key, 32) else {
+        fail!(ExceptionCode::CellUnderflow, "unsupported LMS fee profile");
+    };
+    let charge = i64::try_from(worst)
+        .ok()
+        .and_then(|w| w.checked_mul(LMS_GAS_PER_COMPRESSION))
+        .and_then(|g| g.checked_add(LMS_BASE_GAS));
+    let Some(charge) = charge else {
+        fail!(ExceptionCode::OutOfGas);
+    };
+    engine.try_use_gas(charge)?;
+    let signature = read_bytes_priced(engine, signature, lms_fee::MAX_SIGNATURE_BYTES, 0)?;
+    match lms_fee::verify(message.as_slice(), &signature, &key) {
+        lms_fee::Outcome::Valid => {
+            let q = u32::from_be_bytes([signature[4], signature[5], signature[6], signature[7]]);
+            push_outcome(engine, Some(q == leaf), "LMS fee hash")
+        }
+        lms_fee::Outcome::Invalid => push_outcome(engine, Some(false), "LMS fee hash"),
+        lms_fee::Outcome::Malformed => push_outcome(engine, None, "LMS fee hash"),
+    }
+}

@@ -194,9 +194,45 @@ int exec_pq_suite(VmState* st) {
       throw VmError{Excno::range_chk, "unknown PQ suite"};
   }
 }
+int exec_lms_fee_hash(VmState* st) {
+  VM_LOG(st) << "execute LMSCHECKFEEHASH";
+  auto& stack = st->get_stack();
+  stack.check_underflow(4);
+  auto key_cell = stack.pop_cell();
+  auto signature_cell = stack.pop_cell();
+  auto leaf = stack.pop_smallint_range((1 << 20) - 1);
+  auto digest = stack.pop_int_finite();
+  if (!digest->unsigned_fits_bits(256)) {
+    throw VmError{Excno::range_chk, "fee hash must be uint256"};
+  }
+  std::string message(32, '\0');
+  if (!digest->export_bytes(reinterpret_cast<unsigned char*>(message.data()), 32, false)) {
+    throw VmError{Excno::range_chk, "invalid fee hash"};
+  }
+  const auto key = read_pq_bytes(st, key_cell, tos::pq::lms_fee_public_key_bytes, pq_lms_fee_byte_gas);
+  const auto worst = tos::pq::lms_fee_worst_compressions(key, message.size());
+  if (!worst) {
+    throw VmError{Excno::cell_und, "unsupported LMS fee profile"};
+  }
+  st->consume_gas_chk(pq_lms_fee_base_gas + pq_lms_fee_gas_per_compression * static_cast<long long>(*worst));
+  const auto signature = read_pq_bytes(st, signature_cell, tos::pq::lms_fee_max_signature_bytes, pq_lms_fee_byte_gas);
+  auto result = tos::pq::verify_lms_fee(message, signature, key);
+  if (result == tos::pq::VerifyResult::valid) {
+    const auto* p = reinterpret_cast<const unsigned char*>(signature.data() + 4);
+    const auto q = (std::uint32_t{p[0]} << 24) | (std::uint32_t{p[1]} << 16) |
+                   (std::uint32_t{p[2]} << 8) | p[3];
+    if (q != static_cast<std::uint32_t>(leaf)) {
+      result = tos::pq::VerifyResult::invalid;
+    }
+  }
+  push_verify_result(stack, result, "LMS fee hash");
+  return 0;
+}
 }  // namespace
 
 void register_pq_ops(OpcodeTable& table) {
+  table.insert(OpcodeInstr::mksimple(pq_lms_fee_hash_opcode, 24, "LMSCHECKFEEHASH", exec_lms_fee_hash)
+                   ->require_version(pq_lms_fee_hash_min_version));
   table.insert(OpcodeInstr::mksimple(pq_suite_opcode, 24, "PQCHECKSIG_SUITE", exec_pq_suite)
                    ->require_version(pq_suite_min_version));
   table.insert(OpcodeInstr::mksimple(pq_falcon512_opcode, 24, "PQCHECKSIG_FALCON512_PADDED", exec_pq_falcon512)

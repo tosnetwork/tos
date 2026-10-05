@@ -65,6 +65,9 @@ pub struct SmartContractInfo {
     pub config_params: ConfigParams,
     pub mycode: Cell,
     pub in_msg: Option<Message>,
+    /// Complete, successful external import statistics. Counts include the root.
+    /// Only the transaction executor supplies this; RPC/get contexts leave it absent.
+    pub incoming_storage: Option<(UInt256, u64, u64)>,
     pub incoming_value: CurrencyCollection, // remaining value
     pub storage_fees_collected: u128,
     pub prev_blocks_info: PrevBlocksInfo,
@@ -367,6 +370,17 @@ impl SmartContractInfo {
         ];
         if version >= 11 {
             params.push(msg_info);
+        }
+        if version >= 17 {
+            params.push(match &self.incoming_storage {
+                Some((hash, cells, bits)) => StackItem::tuple(vec![
+                    StackItem::int(1),
+                    StackItem::int(IntegerData::from_unsigned_bytes_be(hash.as_slice())),
+                    StackItem::int(*cells),
+                    StackItem::int(*bits),
+                ]),
+                None => StackItem::None,
+            });
         }
         StackItem::tuple(vec![StackItem::tuple(params)])
     }

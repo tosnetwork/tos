@@ -1055,6 +1055,7 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
     };
   }
   auto cs = vm::load_cell_slice(in_msg);
+  const auto incoming_root_bits = cs.size();
   int tag = gen::t_CommonMsgInfo.get_tag(cs);
   switch (tag) {
     case gen::CommonMsgInfo::int_msg_info: {
@@ -1135,6 +1136,16 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
       if (cell_info.max_merkle_depth > max_allowed_merkle_depth) {
         LOG(DEBUG) << "inbound external message has too big merkle depth, invalid";
         return false;
+      }
+      if (!account.is_special) {
+        td::RefInt256 hash{true};
+        FAIL_UNLESS(hash.write().import_bits(in_msg->get_hash().bits(), 256, false));
+        auto cells = td::make_refint(sstat.cells);
+        auto bits = td::make_refint(sstat.bits);
+        cells += 1;
+        bits += incoming_root_bits;
+        incoming_storage_stats = td::make_cnt_ref<std::vector<vm::StackEntry>>(
+            std::vector<vm::StackEntry>{td::make_refint(1), std::move(hash), std::move(cells), std::move(bits)});
       }
       // fetch message pricing info
       FAIL_UNLESS(cfg);
@@ -1757,6 +1768,9 @@ Ref<vm::Tuple> Transaction::prepare_vm_c7(const ComputePhaseConfig& cfg) const {
     // in_msg_params:[...]
     tuple.push_back(prepare_in_msg_params_tuple(trans_type == tr_ord ? &in_msg_info : nullptr, in_msg_state,
                                                 msg_balance_remaining));
+  }
+  if (cfg.global_version >= 17) {
+    tuple.push_back(vm::StackEntry::maybe(incoming_storage_stats));
   }
   auto tuple_ref = td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple));
   LOG(DEBUG) << "SmartContractInfo initialized with " << vm::StackEntry(tuple_ref).to_string();

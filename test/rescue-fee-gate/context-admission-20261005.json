@@ -1,0 +1,595 @@
+{
+  "scope": "local experimental version-17 executor context and contextual fee admission; not production activation",
+  "base_commit": "016920deb4ca96c80ce4682dee4485f4bce17302",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "build_profiles": {
+    "native": "Release",
+    "rust": "debug"
+  },
+  "development_genesis_version": 16,
+  "candidate_version": 17,
+  "external_credit": 10000,
+  "results": {
+    "valid": {
+      "gas_at_accept": 9771,
+      "total_gas": 11866,
+      "cells": 93,
+      "receiver_locked": true
+    },
+    "replay": 2004,
+    "poor": 2008,
+    "future_slot": 2009,
+    "old_slot": 2009,
+    "zero_value": 2010,
+    "expired": 2003,
+    "far_deadline": 2003,
+    "wrong_vault": 2002,
+    "wrong_class": 9,
+    "wrong_constructor": 9,
+    "value_cap": 2010,
+    "header_domain": 2013,
+    "header_network": 2013,
+    "header_wallet": 2013,
+    "header_module": 2013,
+    "header_profile": 2013,
+    "header_tree": 2013,
+    "auth_network": 9,
+    "auth_wallet": 9,
+    "auth_module": 9,
+    "primary": 9,
+    "wrong_kind": 2012,
+    "trailing_sub": 9,
+    "trailing_req": 9,
+    "oversize": 2015,
+    "exact_limit_gas": 11866,
+    "one_cell_over": 2015,
+    "bound_mutation_admitted": true,
+    "wrong_state_init_pre_vm": true,
+    "tampered": 2007,
+    "fee_does_not_bypass_slh": true,
+    "version_16_missing_context": 5,
+    "native_getter_context_absent": true,
+    "transaction_parity": 45,
+    "opcode_parity": 37,
+    "opcode_valid_gas": 6140
+  },
+  "mutation_controls": {
+    "cpp_leaf": {
+      "row": "wrong_leaf",
+      "expected": [
+        0,
+        6140,
+        0
+      ],
+      "mutant": [
+        0,
+        6140,
+        -1
+      ],
+      "caught": true
+    },
+    "cpp_version": {
+      "row": "version_16",
+      "expected": [
+        6,
+        60,
+        99
+      ],
+      "mutant": [
+        0,
+        6140,
+        -1
+      ],
+      "caught": true
+    },
+    "cpp_count": {
+      "row": "stats_ref",
+      "expected": [
+        "0",
+        "0",
+        "-",
+        "99997659000",
+        "e95b92fa62571997b0f072c3fbd0bbeca55c3559d957f6c7d7282a6c7b53285b"
+      ],
+      "mutant": [
+        "0",
+        "0",
+        "-",
+        "99997659000",
+        "25114d604e701ea8332fe6f9b3e9bf1f8c1763a5dfb3cd562ae95bf4033e7f50"
+      ],
+      "caught": true
+    },
+    "rust_leaf": {
+      "row": "wrong_leaf",
+      "expected": [
+        0,
+        6140,
+        0
+      ],
+      "mutant": [
+        0,
+        6140,
+        -1
+      ],
+      "caught": true
+    },
+    "rust_version": {
+      "row": "version_16",
+      "expected": [
+        6,
+        60,
+        99
+      ],
+      "mutant": [
+        0,
+        6140,
+        -1
+      ],
+      "caught": true
+    },
+    "rust_count": {
+      "row": "stats_ref",
+      "expected": [
+        "0",
+        "0",
+        "-",
+        "99997659000",
+        "e95b92fa62571997b0f072c3fbd0bbeca55c3559d957f6c7d7282a6c7b53285b"
+      ],
+      "mutant": [
+        "0",
+        "0",
+        "-",
+        "99997659000",
+        "25114d604e701ea8332fe6f9b3e9bf1f8c1763a5dfb3cd562ae95bf4033e7f50"
+      ],
+      "caught": true
+    }
+  },
+  "other_checks": {
+    "legacy_frozen_suite": {
+      "passed": 39,
+      "exact_exit_gas_result_parity": true
+    },
+    "legacy_vault_and_failures": {
+      "passed": 20
+    },
+    "rust_executor_lib": {
+      "passed": 44,
+      "ignored": 6
+    },
+    "rust_context_version_optional_unit": {
+      "passed": 1
+    },
+    "assembler_round_trip": {
+      "passed": 1,
+      "targeted_red": "fee mnemonic missing: .blob x00f9310330"
+    },
+    "getter_version_control": {
+      "version16_exit": 5,
+      "version17_exit": 0,
+      "version17_null": true
+    },
+    "restored_fixture_replay": {
+      "native_transactions": 45,
+      "rust_transactions": 45,
+      "opcode_cases_per_vm": 37
+    },
+    "tlb": "parsed with tlbc",
+    "python_lint": "ruff passed",
+    "workflow": "YAML parsed; remote jobs not run"
+  },
+  "boundary_to_test": {
+    "executor_import_count_hash": "stats_ref, stats_inline, stats_init, cpp_count, rust_count",
+    "absent_and_versioned_context": "stats_internal, getter.json, getter-version-control.json, Rust context unit, version_16_missing_context",
+    "fixed_hash_lms_opcode": "37 cross-VM cases, version/leaf mutations, assembler red-green",
+    "contract_admission_and_actions": "45 full transaction fixtures; exact size/oversize + bound removal; actual lock and bad-SLH bounce",
+    "legacy_compatibility": "39 frozen suite vectors, 20 vault tests, 44 executor lib tests"
+  },
+  "source_sha256": {
+    ".github/workflows/rescue-context.yml": "27f4a40e5664639c232949635676614d10b8eeb520d06f36cbd3ab6b324e43cf",
+    "crypto/block/transaction.cpp": "d0493ad8bdacd38e02b9f1addb12d393512c5f292f622875b5876ae9a025c8be",
+    "crypto/block/transaction.h": "2b596fc2a203152afea2013244079f5e36467cbfcd05726c38d9322fc27f48eb",
+    "crypto/fift/lib/Asm.fif": "a1df048428646f7f5ea2addc206a0cb2089982d967d589d5408aba90d2fedc4e",
+    "crypto/smartcont/pq.fc": "04c582149605adbeeb7d0ab0733ebcc2d3af15b44455162255541be6aebf3bf3",
+    "crypto/smartcont/rescue-fee-vault-context.fc": "17dd89895b15c46df8b1bd2031ec1c087762275a2763177de795d7436f4902bf",
+    "crypto/smartcont/wallet-v5r2-rescue.tlb": "b69ba5506d3b65af665d7c24dd6e20b4501a9f0ac60fde1e25f47bf3f809fa1c",
+    "crypto/smc-envelope/SmartContract.cpp": "12f4b9e97ca10a604787ef4cc27b929038bb0b95985bae86551b29c9a6a2635d",
+    "crypto/vm/pqops.cpp": "75b9d43dd7f105a7eab3829cfdadbd70f6faa04e607e383f5ec46ded37e20951",
+    "crypto/vm/pqops.h": "189dc9b0adb9b35a1917c01beb12360d91a20ab1dc60ce2d53aa5fc895283cf2",
+    "doc/tvm-lms-fee-hash.md": "e839b211e61ea7f981d184b30aa6a44abaa39644a9f5e760440852a2dffd3c42",
+    "test/rescue-fee-gate/README.md": "69238a152b488ae7911bde986d074856f7eef0f236c566068c3ba1ea7fa67cf2",
+    "test/rescue-fee-gate/context-stats.fc": "9867b541acedfc558580575f745f45a359c8151bda400809d3076598cd8c0d52",
+    "test/rescue-fee-gate/context_mutations.py": "483a41abbd48a59ea7146857566f36ab53aa32141895606a3f9e21d631939872",
+    "test/rescue-fee-gate/context_transactions.py": "79797890323a8adff2aaef2e63a5081ee24e3839e5e91f8aaecf84ec85716f8b",
+    "test/rescue-fee-gate/native-cost.cpp": "5c0e9d9c460d7416ca4865d1f0af1659e7628751b37bc6e82bd6d1ccc6c6dc7d",
+    "test/rescue-fee-gate/test_context_admission.py": "4bd98543a4aa00f5c9d3b70d8db885e920638a7837371a5781ba64482dea5581",
+    "tosctl/src/assembler/src/disasm/handlers.rs": "b3a5c403659d02efe5f7302d8fe33bf650c2421902a4e4b3ad3cac170fe8c604",
+    "tosctl/src/assembler/src/disasm/loader.rs": "35f9542f949a79c051922ccb7649f5121f31a60f95a6e66d1e3aba9c767ed7d6",
+    "tosctl/src/assembler/src/lib.rs": "d57510ae70e49efbb7a7a21c31f23e838e06990387b276f722d27b575ba053cf",
+    "tosctl/src/assembler/src/simple.rs": "58160ac58be4e13ff3217341c98210b990797e5f11cb24453359d9d66b512a4c",
+    "tosctl/src/executor/examples/pq-tx-parity.rs": "9510112a5b405d2ffccb13a07779559a492a2e7e4ac2ab14ecd1794bb84a24a3",
+    "tosctl/src/executor/src/ordinary_transaction.rs": "ee4a62a5f21c565c3d253da429127c38fb6316ba7976db9713c379c073d9ac4b",
+    "tosctl/src/vm/examples/fee-native-cost.rs": "2d1e13af15b61592886416d8c8762687c97aaef9266c8677b34235d0533c3b05",
+    "tosctl/src/vm/src/executor/engine/handlers.rs": "d1c230a43c7043d6e688dbe505d0d9d259f2fbd43d651537451060e8381b253e",
+    "tosctl/src/vm/src/executor/pq.rs": "9079fa0cdea7ac17c6f81ee127a7470085539a451ad8321d95d36bd0e8435fbe",
+    "tosctl/src/vm/src/smart_contract_info.rs": "c2cb9fc73706f42b8b4d87b013b9d4fc344a19c26cf17b85ffd8a31b518c79ce",
+    "tosctl/src/vm/src/tests/test_smart_contract_info.rs": "beebdbe949c874b81f7facc51c7eb1a446d2f27267998933f127bd64d6fba0fc"
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-context-entry",
+    "retention": "retain locally for at least 90 days; no automatic deletion configured",
+    "publication": "local only; hashes do not make the files independently accessible",
+    "files": {
+      "assembler-green.log": {
+        "sha256": "9a88fe667760ce16e3d9f91dcb303da513093ac1cf4670b23d68af31368a1f10",
+        "bytes": 2080
+      },
+      "assembler-red.log": {
+        "sha256": "6b7d7c03aee4c28044d04c028e579f9e394a266d7df09319b86b257065bee85f",
+        "bytes": 3080
+      },
+      "auth_module.json": {
+        "sha256": "a559fbf35f3b4aded3e98c8e9653bce452bd8044b265117fd39f2dc25a725c56",
+        "bytes": 1908
+      },
+      "auth_network.json": {
+        "sha256": "324624e3d01846574cc578f33a6939cff8b6caba18a56028601195f5d30eeba2",
+        "bytes": 1908
+      },
+      "auth_wallet.json": {
+        "sha256": "e9fbcedd05984e6a5d3129d98b0068f0770df6fd789c29c50ba01f66aca1507c",
+        "bytes": 1908
+      },
+      "bad_slh_bounce.json": {
+        "sha256": "bf9d1b4b5167a0354e9984b0bd58c0d835f6164d5bb4c9f4b8b24812f873ca1a",
+        "bytes": 1888
+      },
+      "bad_slh_fee_paid.json": {
+        "sha256": "6714b9e139c5310dbca13b403515b9fae33929963ad891ae7beaec9023f16fae",
+        "bytes": 30639
+      },
+      "bad_slh_module.json": {
+        "sha256": "662996b95623a6ba936c5f56cab2f16d5da08802200ae349610c0f4f1422bcbd",
+        "bytes": 17825
+      },
+      "bound_mutation.json": {
+        "sha256": "89468a88c4ad33ad3f152294d5df647d1e5c995e80f74b36ffd7275e70e803d6",
+        "bytes": 31468
+      },
+      "config.boc": {
+        "sha256": "4cd1e78c2e2cd50a38095aef4997cecfe43bd412d34b3e072367d1a6829a5ce5",
+        "bytes": 828
+      },
+      "context-unit.log": {
+        "sha256": "aac114292e03e9c7e880ade02d98c9ea676d54c6aba809780e3cdd787b2caf70",
+        "bytes": 2204
+      },
+      "context.boc": {
+        "sha256": "6dc964968afb9cd9e939a3db8c0a8736033e0fc333754320646432d9605ad325",
+        "bytes": 293
+      },
+      "context.fif": {
+        "sha256": "7809225621e40a7a25122843ec73ad8047eff2a70b85a98554a72833d03dbbc2",
+        "bytes": 11088
+      },
+      "context.run.fif": {
+        "sha256": "bf2fbad2dc05fc1e062d82237124cf14549c4a732b8f22b9006390858c0dfc91",
+        "bytes": 202
+      },
+      "cpp.tsv": {
+        "sha256": "c312ee012b1c3576255508541553132a3addbdd1eadea326841da531b06a970d",
+        "bytes": 765
+      },
+      "eligible_kind_0.json": {
+        "sha256": "42f21b0caeba007cb1f2bb8524b7129b5def982e387dfe5880c102973b4400fb",
+        "bytes": 30638
+      },
+      "eligible_kind_1.json": {
+        "sha256": "83a3ab607723b5ffbf2766736cdb09cde6a91ca5c80e2569ceb1fdc3bc044c0d",
+        "bytes": 30640
+      },
+      "eligible_kind_3.json": {
+        "sha256": "4e2e06a7fb3e630a4ff3ae025d93403bcfa928ca0b7cdfe4f9f504fcc715438f",
+        "bytes": 30640
+      },
+      "eligible_kind_4.json": {
+        "sha256": "a2bba1dced19e4bb396a90454e59e4d1cbc57a8851d2c74d93bcbaa031996ef2",
+        "bytes": 30640
+      },
+      "exact_cell_limit.json": {
+        "sha256": "d46c10a3d4f59c28116b388dabeeedc578492a1068ed7ee41f031705869cdb4e",
+        "bytes": 31276
+      },
+      "executor-tests.log": {
+        "sha256": "1a98491a48460429aa4be4caa1f8830b423949a014f96dbf4fcc7a734a098810",
+        "bytes": 6883
+      },
+      "expired.json": {
+        "sha256": "670f356c624878718e5eca28e08609ba8f0097538a4cc07f79e3c26bf8a01312",
+        "bytes": 1345
+      },
+      "far_deadline.json": {
+        "sha256": "84ce08a4181e3a395eaee793462b3cb1d8c90773a9022ebf04f570ede3a2e25a",
+        "bytes": 1344
+      },
+      "future_slot.json": {
+        "sha256": "c63e9420ee5cfc2527ae93dd9be1bbbb132b0e964e269a4bacf155d236e23254",
+        "bytes": 1587
+      },
+      "getter-version-control.json": {
+        "sha256": "afba115b3d55888a62dd9e4f31817896f1a7ab24d67964c9357ea9527f59655d",
+        "bytes": 75
+      },
+      "getter.json": {
+        "sha256": "2b664c663e09c1cf895b64c1d61b01e6baec10c0989a2ea7d951c5587095a67c",
+        "bytes": 302
+      },
+      "header_domain.json": {
+        "sha256": "a11bc4a9770edba440be09b478fe0c6e0456688eeecc755f1005639eeded3839",
+        "bytes": 1022
+      },
+      "header_module.json": {
+        "sha256": "ae86febfd02bdf2c1bcc4d274916f93ce8370cdf4e9120e52a8d30b248fdcbb9",
+        "bytes": 1022
+      },
+      "header_network.json": {
+        "sha256": "80d787ae9182a6a4390507140f0e44f379027aa55b7489769dbee4c9fafdbfa1",
+        "bytes": 1022
+      },
+      "header_profile.json": {
+        "sha256": "4ae4b7d498327da168da7ea14e36ea5f93a61d5aad0fb20f198a3fa46a22e6e5",
+        "bytes": 1022
+      },
+      "header_tree.json": {
+        "sha256": "4361dc649f481ae8f5e9e77f31fb7b03885269d962452ba766395e6958abe2e1",
+        "bytes": 1022
+      },
+      "header_wallet.json": {
+        "sha256": "888edb0d6736811b1e75fe747a10ec29494e26450f8e07a1fa70651fd1cef669",
+        "bytes": 1021
+      },
+      "last_leaf.json": {
+        "sha256": "cfee443d384f7c8b633a6dcf90a824eb00c4b35c39219dc99a44ef3f2b8349f6",
+        "bytes": 30640
+      },
+      "legacy-cpp.tsv": {
+        "sha256": "b0aaee12f1acc93a7572280ca9f441a8c862811929f4ff3567e8561e517f8ded",
+        "bytes": 1028
+      },
+      "legacy-rust.tsv": {
+        "sha256": "b0aaee12f1acc93a7572280ca9f441a8c862811929f4ff3567e8561e517f8ded",
+        "bytes": 1028
+      },
+      "locked_account.json": {
+        "sha256": "3d51b9ce7ccc3623b1ca20ae9e06af4fde84dc496bfb5b6b298478823ca1de99",
+        "bytes": 5965
+      },
+      "mutations/cpp_count-build.log": {
+        "sha256": "f7c6951e4f63dc6765b690aeaf374de441ffcb5585043c8f353a0f19d361e094",
+        "bytes": 6916
+      },
+      "mutations/cpp_count-restored-build.log": {
+        "sha256": "1f4e8ea8a8237a13e627f501a2d80c7a532642974fba208807000ba4e35f7fdd",
+        "bytes": 6916
+      },
+      "mutations/cpp_leaf-build.log": {
+        "sha256": "b3f6b7dfb78d3114eabddb352d2f8a1ce2bf889d2da11b683a5701aed28e8c25",
+        "bytes": 7348
+      },
+      "mutations/cpp_leaf-restored-build.log": {
+        "sha256": "4d20718be1fdff0664c9311ae1a0ae2c096ce6e8df0375efa1897eed7d922021",
+        "bytes": 6909
+      },
+      "mutations/cpp_leaf.tsv": {
+        "sha256": "8c909172d05dc88dda50679bb12ce95f10d4cd43135dc31ae858e8d1d6bec85b",
+        "bytes": 766
+      },
+      "mutations/cpp_version-build.log": {
+        "sha256": "16c5f1ebdec8c8558259dbd12b6bdfc9f26bbef4df6fc6f1beab12dc32ed890d",
+        "bytes": 7102
+      },
+      "mutations/cpp_version-restored-build.log": {
+        "sha256": "687b7be5dba6ab9a715358aa7c0147b72c9b9784b466c6d8f8ffbab885cdaa2f",
+        "bytes": 7102
+      },
+      "mutations/cpp_version.tsv": {
+        "sha256": "9a084a8c6c92a0f765fb2d1b5cc74e2ede100981e5a0bd7ef33755f276608004",
+        "bytes": 767
+      },
+      "mutations/rust_count-build.log": {
+        "sha256": "a4c37a82bf80a0b559fb7f14aa3eda633a4940ec1ab05892f41be3ef2b2634ff",
+        "bytes": 1675
+      },
+      "mutations/rust_count-restored-build.log": {
+        "sha256": "8f2ce5ded4673d6b7aff5cc164803b39540a491889f22f2d1bf57d740c2b45e5",
+        "bytes": 1675
+      },
+      "mutations/rust_leaf-build.log": {
+        "sha256": "9280824364efa334d34b1dfc543f4631c15676018295e9a9e0bdc28b5113c45e",
+        "bytes": 2843
+      },
+      "mutations/rust_leaf-restored-build.log": {
+        "sha256": "80f26a7019e162a486be8e515c9aa4c99d4eb2c17dd1a825d861e3cc4157aa6d",
+        "bytes": 1868
+      },
+      "mutations/rust_leaf.tsv": {
+        "sha256": "8c909172d05dc88dda50679bb12ce95f10d4cd43135dc31ae858e8d1d6bec85b",
+        "bytes": 766
+      },
+      "mutations/rust_version-build.log": {
+        "sha256": "80f26a7019e162a486be8e515c9aa4c99d4eb2c17dd1a825d861e3cc4157aa6d",
+        "bytes": 1868
+      },
+      "mutations/rust_version-restored-build.log": {
+        "sha256": "80f26a7019e162a486be8e515c9aa4c99d4eb2c17dd1a825d861e3cc4157aa6d",
+        "bytes": 1868
+      },
+      "mutations/rust_version.tsv": {
+        "sha256": "9a084a8c6c92a0f765fb2d1b5cc74e2ede100981e5a0bd7ef33755f276608004",
+        "bytes": 767
+      },
+      "mutations/summary.json": {
+        "sha256": "2c328cd76faa3d8893c9c4b8d312e4975f8d4f27d8f661e59c33f18ca4cd68a8",
+        "bytes": 1432
+      },
+      "mutations.log": {
+        "sha256": "2c328cd76faa3d8893c9c4b8d312e4975f8d4f27d8f661e59c33f18ca4cd68a8",
+        "bytes": 1432
+      },
+      "no-bound.boc": {
+        "sha256": "d7c9e70146d20e87165085df6532481de457c2c768eea621c3fda8e957c7e8a6",
+        "bytes": 282
+      },
+      "no-bound.fif": {
+        "sha256": "f19339144d0b481e4dcf088d1092966a9688789258571d4cecc6fc5e2ef2165c",
+        "bytes": 10944
+      },
+      "no-bound.run.fif": {
+        "sha256": "77ccc23f99433b0cf4864afa5cebc8cf73e0bb0c5db4d3cac6a4c49d28694f0c",
+        "bytes": 204
+      },
+      "old_slot.json": {
+        "sha256": "93a842878f53a00bb3aa4508f9f118a499f35c6361ed3658b134613a67e1a494",
+        "bytes": 1587
+      },
+      "one_cell_over.json": {
+        "sha256": "75562ac0e0af436f97d712697250e21d5f16d12b09690df47c788433b03f374a",
+        "bytes": 444
+      },
+      "opcodes.tsv": {
+        "sha256": "5f5e4b4eb25182918d0fca281d308bca57d397d4962c7e4bfe2bd24a9267af96",
+        "bytes": 230202
+      },
+      "outer_state_init.json": {
+        "sha256": "8d2d5c53390617ad435fc689de15a491af2a0ca187c96637e0d90079494e0ae2",
+        "bytes": 182
+      },
+      "oversize.json": {
+        "sha256": "d9cdc9485bf75d3d4319375aeea30bc374cc60046fdbe38b2ecd15819cd9f425",
+        "bytes": 444
+      },
+      "poor.json": {
+        "sha256": "5b38730ff79c325ba9cedb9ebf172d069ef40414bbca9cde13d4cf1d6c05b021",
+        "bytes": 2408
+      },
+      "previous_slot.json": {
+        "sha256": "5b2f201ea06822995ad39275f9e7a308cbc75801f7cbc1b9e955eb9809a4b936",
+        "bytes": 30640
+      },
+      "primary.json": {
+        "sha256": "e75950595c64c6313bad68472008a3d3325cd7cd94d669aa604b485c48212bc9",
+        "bytes": 1908
+      },
+      "replay.json": {
+        "sha256": "621f6b666ef11e875478bb95bac7780e2a631d61b17426acea14342c11576974",
+        "bytes": 1403
+      },
+      "rust-transactions.tsv": {
+        "sha256": "a52253d3619dcb3544e2626852ecab5c9e35379de413aa26b8c5080eb79ff47a",
+        "bytes": 3088
+      },
+      "rust.tsv": {
+        "sha256": "c312ee012b1c3576255508541553132a3addbdd1eadea326841da531b06a970d",
+        "bytes": 765
+      },
+      "slh_module.json": {
+        "sha256": "7e29ec20446603702a2a1ad0e179ab279fde66655c3aa7607e6f14b359d01b8f",
+        "bytes": 19034
+      },
+      "stats.boc": {
+        "sha256": "7fbdfa70705015f5194ad96b55d3e7390f6761cd0153aee352324c49fc3bdc80",
+        "bytes": 92
+      },
+      "stats.fif": {
+        "sha256": "d4a001a2e3ec9ba352f0464872221ff5276d6fd2d30fb646c43a32e9f5ba5598",
+        "bytes": 964
+      },
+      "stats.run.fif": {
+        "sha256": "5815f90d4f294999d96425f60e66940ae0450cc99bad262e5ee8d0e67553117a",
+        "bytes": 198
+      },
+      "stats_init.json": {
+        "sha256": "135a15ad6e1c04cdaea9ead39547f4e492cb50ab3e959c8627074f6a9c8ae76a",
+        "bytes": 1623
+      },
+      "stats_inline.json": {
+        "sha256": "fd86daac7ecf1caba2e5aca1e50ea3121905917fcc47ad5f643550349ec1265c",
+        "bytes": 1503
+      },
+      "stats_internal.json": {
+        "sha256": "a9a37d83ce0806980ff204adfd814f8f3a1ad863e31d4794ce9880f9c961cfd8",
+        "bytes": 1453
+      },
+      "stats_ref.json": {
+        "sha256": "69f0fc79fb16bbaeccc388ffc388374d9d5a33bf5bc46c930b7c057b77f58275",
+        "bytes": 1507
+      },
+      "summary.json": {
+        "sha256": "6578f1c707b96a85632ad7b788cb24723f5067ce45a5283153e390137671debd",
+        "bytes": 992
+      },
+      "tampered.json": {
+        "sha256": "6296e4ad953c437e3a1f2014ced442a5f9ca046eb42d465070d4a0f386836c40",
+        "bytes": 1182
+      },
+      "trailing_req.json": {
+        "sha256": "a6c87e8cf419b71abc989013aef557eb4d10e22d1fc55dd47978ab44eec2a149",
+        "bytes": 2090
+      },
+      "trailing_sub.json": {
+        "sha256": "88a8549dbac69eb62f511aaa5492f0dcad0cc52d1eca1e7c2fc2c77735902b4b",
+        "bytes": 1865
+      },
+      "transactions.tsv": {
+        "sha256": "ef201798f8a9f890e817b8cd7323b2e808480a1587d502a6d4a611cc1b589f72",
+        "bytes": 935485
+      },
+      "valid.json": {
+        "sha256": "4c2d45b8a3fdacfe5384b287cb2257f507db48a4416d7cf383d07b0af7cfad4f",
+        "bytes": 30640
+      },
+      "value_cap.json": {
+        "sha256": "cd2977f92cf83aa3c9163031c0917fd2e0e10ba101387c55e6eea63010b598b8",
+        "bytes": 1646
+      },
+      "vault-regression.log": {
+        "sha256": "4004541e196f1c99f641c21e013c4af0ae97a6bbb4573514c0984405060dc259",
+        "bytes": 121
+      },
+      "wrong_class.json": {
+        "sha256": "7b921d49812f145e43c27eea40ad428f9b8f6ae51a540f171a6aef87d56690e3",
+        "bytes": 825
+      },
+      "wrong_constructor.json": {
+        "sha256": "5fb7d0db77534ad6ac503f7031d226cfd1d1f3664910a307656f2a67e64afe71",
+        "bytes": 824
+      },
+      "wrong_kind.json": {
+        "sha256": "25bb4c36498eee1843ddad4cbed0e0d66960bde3f38e6761c4bc097ac81d7a1f",
+        "bytes": 1984
+      },
+      "wrong_state_init.json": {
+        "sha256": "4ff2f04c475d89e6bed6880ba67e30a7378d10a67ebb9c23ee2700077e35efdd",
+        "bytes": 180
+      },
+      "wrong_vault.json": {
+        "sha256": "eab1e45f6e63919e08d24b45df902182925c7b0369ebda47417a1cfd8eacf72b",
+        "bytes": 852
+      },
+      "zero_value.json": {
+        "sha256": "3c8f25d3726b0e9a005e969ab29518661ff63f9985ec87f2c016a3aa255a7a21",
+        "bytes": 1647
+      }
+    }
+  },
+  "open_gates": [
+    "canonical factory and successor witnesses",
+    "successor module/vault POP and funding handoff",
+    "full V5 action semantics and global retirement",
+    "durable anti-rollback signer",
+    "reference-hardware release tariff approval and independent review",
+    "remote CI on the final pushed head"
+  ]
+}

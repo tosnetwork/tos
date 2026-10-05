@@ -42,6 +42,15 @@ void push(td::Ref<vm::Stack>& stack, const std::string& field) {
     stack.write().push_smallint(std::stoll(field.substr(4)));
     return;
   }
+  if (field.rfind("hash:", 0) == 0) {
+    auto bytes = unhex(field.substr(5));
+    td::RefInt256 value{true};
+    if (bytes.size() != 32 || !value.write().import_bytes(reinterpret_cast<const unsigned char*>(bytes.data()), 32, false)) {
+      throw std::runtime_error("invalid uint256");
+    }
+    stack.write().push_int(std::move(value));
+    return;
+  }
   auto bytes = unhex(field);
   auto c = vm::std_boc_deserialize(td::Slice(bytes), false, true);
   if (c.is_error()) {

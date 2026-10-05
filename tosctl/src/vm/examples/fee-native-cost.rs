@@ -16,6 +16,12 @@ fn push(stack: &mut Stack, field: &str) -> anyhow::Result<()> {
         stack.push(StackItem::int(IntegerData::from_i64(value.parse::<i64>()?)));
         return Ok(());
     }
+    if let Some(value) = field.strip_prefix("hash:") {
+        let bytes = hex::decode(value)?;
+        anyhow::ensure!(bytes.len() == 32, "invalid uint256");
+        stack.push(StackItem::int(IntegerData::from_unsigned_bytes_be(&bytes)));
+        return Ok(());
+    }
     stack.push(StackItem::Cell(read_single_root_boc(hex::decode(field)?)?));
     Ok(())
 }

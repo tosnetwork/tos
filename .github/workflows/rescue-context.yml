@@ -1,0 +1,100 @@
+name: Experimental rescue context parity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/rescue-context.yml'
+      - 'crypto/block/transaction.*'
+      - 'crypto/smc-envelope/SmartContract.cpp'
+      - 'crypto/vm/**'
+      - 'crypto/pq/**'
+      - 'crypto/fift/lib/Asm.fif'
+      - 'crypto/smartcont/**'
+      - 'crypto/CMakeLists.txt'
+      - 'CMakeLists.txt'
+      - 'emulator/**'
+      - 'third-party/slhdsa-c/**'
+      - 'third-party/mldsa-native/**'
+      - 'tosctl/src/**'
+      - 'test/auth-extensions/**'
+      - 'test/rescue-fee-gate/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rescue-context-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  parity:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      TOS_ROOT: ${{ github.workspace }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/build-cargo
+      FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+      FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+      EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+      SLH_TOOL: ${{ github.workspace }}/build-signers/slh_tool
+      MLDSA_TOOL: ${{ github.workspace }}/build-signers/mldsa_tool
+      LMS_TOOL: ${{ github.workspace }}/build-signers/lms_tool
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - name: Build native Release tools and both Rust drivers
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift tlbc emulator test-fee-native-cost test-pq-suite-parity -j2
+          sh test/rescue-fee-gate/tools/build.sh build-signers
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
+            --example fee-native-cost --example suite-parity --example pq-tx-parity
+      - name: Verify context, opcode, complete transactions and legacy pricing
+        run: |
+          build/crypto/tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb
+          python test/rescue-fee-gate/test_context_admission.py \
+            --cpp build/crypto/pq/test-fee-native-cost \
+            --rust "$CARGO_TARGET_DIR/debug/examples/fee-native-cost" \
+            --rust-tx "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" --output artifacts/context
+          build/crypto/pq/test-pq-suite-parity test/rescue-fee-gate/suite-scenarios.tsv > artifacts/context/legacy-cpp.tsv
+          "$CARGO_TARGET_DIR/debug/examples/suite-parity" test/rescue-fee-gate/suite-scenarios.tsv > artifacts/context/legacy-rust.tsv
+          python test/rescue-fee-gate/compare.py test/rescue-fee-gate/suite-scenarios.tsv \
+            artifacts/context/legacy-cpp.tsv artifacts/context/legacy-rust.tsv test/rescue-fee-gate/suite-expected.tsv
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm --lib incoming_storage_context_is_versioned_and_optional
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_assembler --lib lms_fee_hash_mnemonic_round_trip
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib
+      - name: Require meaningful mutation failures and restore binaries
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/rescue-fee-gate/context_mutations.py --artifacts artifacts/context --target "$CARGO_TARGET_DIR"
+          python test/rescue-fee-gate/context_transactions.py --output artifacts/context \
+            --rust "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
+          git diff --exit-code
+      - name: Record exact source and public evidence hashes
+        if: always()
+        run: |
+          mkdir -p artifacts/context
+          git rev-parse HEAD > artifacts/context/source-commit.txt
+          uname -a > artifacts/context/platform.txt
+          find artifacts/context -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > artifacts/context/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rescue-context-${{ matrix.runner }}
+          path: artifacts/context
+          retention-days: 14

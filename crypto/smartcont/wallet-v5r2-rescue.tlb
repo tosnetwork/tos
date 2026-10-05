@@ -134,3 +134,18 @@ auth_policy_v1#a1 network_tag:bits256 policy_sequence:uint64
   policy_spec_hash:bits256
   = AuthPolicy;
 // Proposed: _ AuthPolicy = ConfigParam 48;  (free on main at the R0a baseline)
+
+// ---- Separate experimental version-17 contextual vault; not the layouts above.
+// Header bytes are the fixed 17-byte domain "TOS-RESCUE-FEE-v1", then these fields.
+// The actual vault address is bound by the signed intent to avoid an init-hash fixed point.
+context_fee_parties$_ wallet:MsgAddressInt module:MsgAddressInt = ContextFeeParties;
+context_fee_header$_ domain:bits136 global_id:int32 network_tag:bits256
+  fee_profile:uint8 public_key_digest:bits256 parties:^ContextFeeParties
+  = ContextFeeHeader;
+context_fee_intent#46454533 class:uint8 vault:MsgAddressInt
+  leaf:uint32 valid_until:uint32 value:Tomis payload:^Cell header:^ContextFeeHeader
+  = ContextFeeIntent;  // class must be 1; payload is canonical rescue SUB1
+context_fee_external$_ intent:^ContextFeeIntent signature:^Cell = ContextFeeExternal;
+context_fee_data$_ next_leaf:uint32 gas_at_accept:uint32 epoch0:uint32
+  fixed_value:Tomis header_hash:bits256 target:MsgAddressInt
+  public_key:^Cell auth_prefix:^Cell = ContextFeeData;

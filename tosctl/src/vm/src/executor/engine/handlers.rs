@@ -999,7 +999,8 @@ impl Handlers {
                     Handlers::new()
                         .set(0x00, execute_pq_mldsa44)
                         .set(0x01, execute_pq_falcon512)
-                        .set(0x02, execute_pq_suite),
+                        .set(0x02, execute_pq_suite)
+                        .set(0x03, execute_lms_fee_hash),
                 )
                 .add_subset(
                     0x32,

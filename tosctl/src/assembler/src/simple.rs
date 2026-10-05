@@ -762,6 +762,7 @@ impl Engine {
         SGN                                  => 0xB8
         SHA256U                              => 0xF9, 0x02
         PQCHECKSIG_FALCON512_PADDED           => 0xF9, 0x31, 0x01
+        LMSCHECKFEEHASH                      => 0xF9, 0x31, 0x03
         PQCHECKSIG_MLDSA44                    => 0xF9, 0x31, 0x00
         POSEIDON2_PERM8                       => 0xF9, 0x32, 0x00
         POSEIDON2_HASH7                       => 0xF9, 0x32, 0x01

@@ -52,7 +52,8 @@ fn main() -> anyhow::Result<()> {
         let now = f[1].parse::<u32>()?;
         let lt = f[2].parse::<u64>()?;
         let mut account = Account::construct_from_cell(hex_cell(f[3])?)?;
-        let message = chain_block::Message::construct_from_cell(hex_cell(f[4])?)?;
+        // Import hash/statistics must cover the original wire graph, including inline bodies.
+        let message = hex_cell(f[4])?;
         let executor = OrdinaryTransactionExecutor::new(blockchain.clone());
         let params = ExecuteParams {
             block_unixtime: now,
@@ -60,8 +61,7 @@ fn main() -> anyhow::Result<()> {
             last_tr_lt: lt,
             ..ExecuteParams::default()
         };
-        let outcome =
-            executor.execute_with_params(Some(message.serialize()?), &mut account, params);
+        let outcome = executor.execute_with_params(Some(message), &mut account, params);
         let (exit, action, messages, account_hash) = match outcome {
             Ok(transaction) => summarize(&transaction, &account)?,
             // A rejected transaction is a result, not a driver failure.

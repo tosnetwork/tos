@@ -255,6 +255,10 @@ td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> cod
   if (global_version >= 11) {
     tuple.push_back(prepare_emulator_in_msg_params_tuple(args));
   }
+  if (global_version >= 17) {
+    // No authenticated external import occurs in a getter/compute-only context.
+    tuple.push_back(vm::StackEntry{});
+  }
   auto tuple_ref = td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple));
   //LOG(DEBUG) << "SmartContractInfo initialized with " << vm::StackEntry(tuple).to_string();
   return vm::make_tuple_ref(std::move(tuple_ref));

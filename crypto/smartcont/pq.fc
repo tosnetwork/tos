@@ -8,3 +8,8 @@ int pq_check_falcon512_padded(cell message, cell signature, cell public_key) asm
 ;; PROTOTYPE generic verifier: suite 1 ML-DSA-44, 2 Falcon-512 padded, 4 rescue-fee HSS/LMS.
 int pq_check_suite(cell message, cell context, cell signature, cell public_key, int suite)
   asm "PQCHECKSIG_SUITE";
+
+;; Experimental TVM version 17: fixed H20W4 profile, 32-byte hash, empty context.
+;; Checks that the verified signature leaf equals the supplied uint20 leaf.
+int lms_check_fee_hash(int digest, int leaf, cell signature, cell public_key)
+  asm "LMSCHECKFEEHASH";
