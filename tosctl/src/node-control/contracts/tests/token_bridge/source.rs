@@ -70,7 +70,8 @@ fn vectors_path() -> std::path::PathBuf {
 fn write_tos_fields(net: &Net, user: &chain_block::MsgAddressInt) {
     let text = std::fs::read_to_string(vectors_path()).expect("the shared vectors");
     let mut v: serde_json::Value = serde_json::from_str(&text).expect("json");
-    v["activation"]["tos_bridge"] = serde_json::json!(format!("0x{}", hex::encode(account_hash(&net.bridge))));
+    v["activation"]["tos_bridge"] =
+        serde_json::json!(format!("0x{}", hex::encode(account_hash(&net.bridge))));
     v["activation"]["tos_life"] = serde_json::json!(net.bridge_life().to_string());
     for lock in v["locks"].as_array_mut().expect("locks") {
         lock["to"] = serde_json::json!(format!("0x{}", hex::encode(account_hash(user))));
@@ -127,13 +128,23 @@ fn coupled_vectors_activate_the_bridge_and_mint_each_lock_once() {
     let activation = net.activation(&v.tos_bridge, v.tos_life, v.generation, v.start);
     let vote = net.vote(1, activation);
     succeeded(&net.send(vote));
-    let r = net.get(&net.bridge, "get_minter_address", vec![tos_vm::stack::StackItem::cell(wrapped_token(&v))]);
+    let r = net.get(
+        &net.bridge,
+        "get_minter_address",
+        vec![tos_vm::stack::StackItem::cell(wrapped_token(&v))],
+    );
     let minter = MsgAddressInt::construct_from(&mut r.slice_at(0)).expect("a minter");
     let wallet = net.wallet_in(&minter, &user);
-    let tokens = |net: &Net| net.try_get(&wallet, "get_wallet_data", vec![]).map(|r| r.int_at(0) as u128).unwrap_or(0);
+    let tokens = |net: &Net| {
+        net.try_get(&wallet, "get_wallet_data", vec![]).map(|r| r.int_at(0) as u128).unwrap_or(0)
+    };
     let mut total = 0u128;
     for (i, (n, to, amount)) in v.locks.iter().enumerate() {
-        assert_eq!(to.as_slice(), account_hash(&user).as_slice(), "the lock names a sandbox holder");
+        assert_eq!(
+            to.as_slice(),
+            account_hash(&user).as_slice(),
+            "the lock names a sandbox holder"
+        );
         succeeded(&net.pay_from(&net.stranger.address().clone(), v.generation, *n, net.mint_fee));
         let vote = net.vote(100 + i as u64, vote_from_lock(&v, *n, to, *amount));
         net.queue.push_back(vote.clone());
@@ -210,7 +221,10 @@ fn t_y5_an_unpaid_early_lock_blocks_the_window_until_it_is_cancelled() {
     succeeded(&net.send(cancel));
     assert_eq!(cancel_logs(&net), 2);
     let returned = net.balance(&payer).checked_sub(balance).expect("the payer was refunded");
-    assert!(returned > 0 && returned < u128::from(fee), "the payer got the fee back once: {returned}");
+    assert!(
+        returned > 0 && returned < u128::from(fee),
+        "the payer got the fee back once: {returned}"
+    );
     let vote = net.vote(206, net.swap_voting(GENERATION, 2, &net.user(0), 5, 0x5a));
     assert!(outcome(&net.send(vote)).aborted, "a cancelled lock is never voted");
 

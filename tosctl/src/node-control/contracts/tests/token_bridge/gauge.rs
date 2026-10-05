@@ -52,7 +52,9 @@ fn distinct_cells(c: &Cell, counted: &mut HashSet<UInt256>) -> usize {
 fn bound(code: &Cell, data: &Cell) -> usize {
     let codes = codes();
     let roots: HashSet<UInt256> =
-        [codes.bridge.repr_hash(), codes.minter.repr_hash(), codes.wallet.repr_hash()].into_iter().collect();
+        [codes.bridge.repr_hash(), codes.minter.repr_hash(), codes.wallet.repr_hash()]
+            .into_iter()
+            .collect();
     let mut counted = HashSet::new();
     distinct_cells(code, &mut counted) + tree_cells(data, &roots, &mut counted)
 }
@@ -252,7 +254,11 @@ fn worst(s: &Samples, holders: u64, channels: u64) -> Worst {
     let bridge = b.build();
     let bridge_bound = bound(&code_of(net, &net.bridge), &bridge);
 
-    Worst { wallet: (wallet, wallet_bound), minter: (minter, minter_bound), bridge: (bridge, bridge_bound) }
+    Worst {
+        wallet: (wallet, wallet_bound),
+        minter: (minter, minter_bound),
+        bridge: (bridge, bridge_bound),
+    }
 }
 
 /// T-G: at every window full, the holder and channel limits reached and an
@@ -286,7 +292,10 @@ fn t_g_worst_case_cells_fit_the_declared_bound_and_the_account_limit() {
         ("bridge", w.bridge.1, "BRIDGE_WORST_CELLS", limits.max_mc_acc_state_cells),
     ] {
         let declared_cells = declared(declared_name) as usize;
-        assert!(measured <= declared_cells, "{name}: {measured} cells exceed the declared {declared_cells}");
+        assert!(
+            measured <= declared_cells,
+            "{name}: {measured} cells exceed the declared {declared_cells}"
+        );
         assert!(
             declared_cells <= limit as usize,
             "{name}: the declared {declared_cells} cells exceed the account limit {limit}"

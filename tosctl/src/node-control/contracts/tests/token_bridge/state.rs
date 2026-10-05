@@ -216,7 +216,20 @@ impl Holder {
         let burns = dict_of(&mut s);
         let awaiting = dict_of(&mut s);
         let old = dict_of(&mut s);
-        Self { wallet_life, open, attempt, opening_life, next_credit, credit_ack, burn_wm, burn_cf, credits, burns, awaiting, old }
+        Self {
+            wallet_life,
+            open,
+            attempt,
+            opening_life,
+            next_credit,
+            credit_ack,
+            burn_wm,
+            burn_cf,
+            credits,
+            burns,
+            awaiting,
+            old,
+        }
     }
 
     pub fn build(&self) -> Cell {
@@ -274,7 +287,23 @@ impl WalletData {
         let next_burn = t.get_next_u64().unwrap();
         let burn_ack = t.get_next_u64().unwrap();
         let burns = dict_of(&mut t);
-        Self { balance, owner, master, code, born, minter_life, terminal, attempt, credit_wm, credit_cf, credit_high, credits_above, next_burn, burn_ack, burns }
+        Self {
+            balance,
+            owner,
+            master,
+            code,
+            born,
+            minter_life,
+            terminal,
+            attempt,
+            credit_wm,
+            credit_cf,
+            credit_high,
+            credits_above,
+            next_burn,
+            burn_ack,
+            burns,
+        }
     }
 
     pub fn build(&self) -> Cell {
@@ -334,7 +363,21 @@ impl BridgeData {
         let swaps = dict_of(&mut t);
         let channels = dict_of(&mut t);
         let channels_count = t.get_next_u32().unwrap();
-        Self { born, evm_chain, evm_bridge, generation, gen_start, gen_state, collector, minter_code, wallet_code, swap_wm, swaps, channels, channels_count }
+        Self {
+            born,
+            evm_chain,
+            evm_bridge,
+            generation,
+            gen_start,
+            gen_state,
+            collector,
+            minter_code,
+            wallet_code,
+            swap_wm,
+            swaps,
+            channels,
+            channels_count,
+        }
     }
 
     pub fn build(&self) -> Cell {
@@ -397,7 +440,18 @@ impl Channel {
         let token_data = s.checked_drain_reference().unwrap();
         let pending = dict_of(&mut s);
         let burns = dict_of(&mut s);
-        Self { terminal, minter_life, next_mint, mint_ack, burn_wm, burn_cf, burn_high, token_data, pending, burns }
+        Self {
+            terminal,
+            minter_life,
+            next_mint,
+            mint_ack,
+            burn_wm,
+            burn_cf,
+            burn_high,
+            token_data,
+            pending,
+            burns,
+        }
     }
 
     pub fn build(&self) -> Cell {
@@ -426,7 +480,12 @@ impl Net {
         assert!(account.set_data(data), "the data is replaced");
         // the account's recorded usage follows its state, as after a
         // transaction: rent and the size limit see the patched state
-        let min = self.bc.config_params().size_limits_config().expect("limits").acc_state_cells_for_storage_dict;
+        let min = self
+            .bc
+            .config_params()
+            .size_limits_config()
+            .expect("limits")
+            .acc_state_cells_for_storage_dict;
         account.update_storage_stat(min).expect("the usage is recomputed");
         self.bc.set_account(addr.clone(), account);
     }
@@ -479,7 +538,11 @@ impl Net {
         let account = self.bc.get_account(addr).expect("deployed");
         let mut seen = std::collections::HashSet::new();
         let mut bits = 0usize;
-        fn visit(c: &Cell, seen: &mut std::collections::HashSet<chain_block::UInt256>, bits: &mut usize) {
+        fn visit(
+            c: &Cell,
+            seen: &mut std::collections::HashSet<chain_block::UInt256>,
+            bits: &mut usize,
+        ) {
             if seen.insert(c.repr_hash()) {
                 *bits += c.bit_length();
                 for i in 0..c.references_count() {

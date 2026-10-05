@@ -35,7 +35,11 @@ fn t_y8_a_lowered_cell_limit_stops_admission_before_any_effect() {
     net.configure_limits(declared("MINTER_WORST_CELLS") as u32 - 1, mc);
     let n = net.start_swap(10);
     net.settle();
-    assert_eq!(net.swap_record(n).0, swap_state::PAID, "refused at the minter, the lock stays paid");
+    assert_eq!(
+        net.swap_record(n).0,
+        swap_state::PAID,
+        "refused at the minter, the lock stays paid"
+    );
     assert_eq!(net.tokens(&user), 1_000);
     assert_eq!(net.supply_state(), (1_000, 0, 0, 0, 0), "no supply reserved");
     net.configure_limits(base, mc);

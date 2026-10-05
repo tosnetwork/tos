@@ -44,7 +44,11 @@ fn t_y2_full_downstream_windows_refuse_new_admissions_and_complete_the_admitted(
     let s = net.swap_record(last).2 as u64;
     succeeded(&net.advance_minter_mint(s));
     let done: Vec<bool> = locks.iter().map(|n| consumed(net.swap_record(*n).0)).collect();
-    assert_eq!(done.iter().filter(|x| **x).count(), window, "the window's worth completed: {done:?}");
+    assert_eq!(
+        done.iter().filter(|x| **x).count(),
+        window,
+        "the window's worth completed: {done:?}"
+    );
     assert_eq!(net.swap_record(last).0, swap_state::PAID, "the next was refused, still paid");
     assert_eq!(net.tokens(&user), 10 * window as u128);
 
@@ -72,7 +76,11 @@ fn t_y3_a_refusal_is_stored_and_delivered_when_admission_storage_is_full() {
     net.patch_minter(|m| m.holders_count = limit);
     let newcomer = net.user(2);
     let n = net.swap_to(&newcomer, 5);
-    assert_eq!(net.swap_record(n).0, swap_state::PAID, "refused: no holder capacity, the lock stays paid");
+    assert_eq!(
+        net.swap_record(n).0,
+        swap_state::PAID,
+        "refused: no holder capacity, the lock stays paid"
+    );
     assert_eq!(net.mint_status(1), mint_status::REFUSED);
     // the account cell limit below the minter's measured worst case
     let mut net = minted();
@@ -187,7 +195,11 @@ fn t_y4_sync_alone_reopens_every_window() {
     let b = net.wallet_state(&user)[6] as u64;
     net.start_burn_from(&user, 1);
     net.settle();
-    assert_eq!(net.minter_burn(&user, b).1, burn_status::ADMIT_REFUSED, "the notice window is full");
+    assert_eq!(
+        net.minter_burn(&user, b).1,
+        burn_status::ADMIT_REFUSED,
+        "the notice window is full"
+    );
     net.remove_config();
     succeeded(&net.advance_minter_sync(channel::C4, None));
     net.configure();
@@ -243,7 +255,11 @@ fn t_z2_compaction_ahead_of_folding_never_admits_an_old_number() {
         let altered = crate::mint::with_amount(m, 11, 777);
         let tx = net.send(forged(&bridge, &minter, 10 * TOS, altered));
         let o = outcome(&tx);
-        assert!(!o.aborted || o.exit_code == Some(err("operation_mismatch")), "an altered replay: {:?}", o.exit_code);
+        assert!(
+            !o.aborted || o.exit_code == Some(err("operation_mismatch")),
+            "an altered replay: {:?}",
+            o.exit_code
+        );
         assert_eq!(net.state_hashes(), before, "an altered replay applied something");
     }
     assert_eq!(net.supply_state().0, 4_000 + 7);
@@ -312,7 +328,9 @@ fn t_z3_a_stuck_mint_backs_up_the_shared_window_and_storage_stays_bounded() {
         net.swap_to(&y, 1);
         succeeded(&net.advance_minter_sync(channel::C2, Some(&y)));
     }
-    assert!(net.model.credits.keys().filter(|k| k.0 == account_hash(&net.wallet_of(&y))).count() > 10);
+    assert!(
+        net.model.credits.keys().filter(|k| k.0 == account_hash(&net.wallet_of(&y))).count() > 10
+    );
 }
 
 /// T-Z7: more mints waiting for one unopened holder than its credit window:
@@ -346,7 +364,11 @@ fn t_z7_waiting_mints_beyond_the_credit_window_are_refused_not_prepared() {
     let consumed_count = locks.iter().filter(|n| consumed(net.swap_record(**n).0)).count();
     assert_eq!(consumed_count, credits, "only the credit window's worth was prepared");
     assert_eq!(net.tokens(&holder), 3 * credits as u128);
-    assert_eq!(net.supply_state(), (3 * credits as i128, 0, 0, 0, 0), "the refused released their reservations");
+    assert_eq!(
+        net.supply_state(),
+        (3 * credits as i128, 0, 0, 0, 0),
+        "the refused released their reservations"
+    );
     for n in &locks {
         let s = net.swap_record(*n).0;
         assert!(consumed(s) || s == swap_state::PAID);
@@ -445,5 +467,9 @@ fn t_z3_a_full_holder_credit_window_refuses_the_next_prepare() {
     succeeded(&net.advance_minter_sync(channel::C2, Some(&x)));
     let vote = net.vote(n + 100, net.swap_voting(GENERATION, n, &x, 2, 0x5a));
     net.send(vote);
-    assert_eq!(net.tokens(&x), 2 * (window as u128 + 1), "every credit landed once, the refused lock too");
+    assert_eq!(
+        net.tokens(&x),
+        2 * (window as u128 + 1),
+        "every credit landed once, the refused lock too"
+    );
 }

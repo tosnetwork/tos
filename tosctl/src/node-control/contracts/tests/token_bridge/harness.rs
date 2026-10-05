@@ -33,7 +33,10 @@ pub const CHAIN_ID: u32 = 1;
 pub const CONFIG_PARAM: u32 = 79;
 /// The EVM bridge this TOS bridge serves: where the Hardhat suite's coupled
 /// vector test deploys `Bridge.sol` (crosschain/token-bridge/tests/vectors).
-pub const EVM_BRIDGE: [u8; 20] = [0xd3, 0x25, 0x53, 0x46, 0xb2, 0xed, 0x5b, 0xc6, 0x23, 0x70, 0x8c, 0x33, 0x4b, 0x1d, 0x56, 0xda, 0x1a, 0xd9, 0xd6, 0x3a];
+pub const EVM_BRIDGE: [u8; 20] = [
+    0xd3, 0x25, 0x53, 0x46, 0xb2, 0xed, 0x5b, 0xc6, 0x23, 0x70, 0x8c, 0x33, 0x4b, 0x1d, 0x56, 0xda,
+    0x1a, 0xd9, 0xd6, 0x3a,
+];
 pub const GENERATION: u32 = 1;
 pub const DESTINATION: [u8; 20] = [0x77; 20];
 
@@ -483,9 +486,11 @@ impl Net {
 
         let (bridge, fund, deploy) = match how {
             Deployment::Direct => {
-                let init = StateInit::with_code_and_data(codes().bridge.clone(), initial_bridge_data());
+                let init =
+                    StateInit::with_code_and_data(codes().bridge.clone(), initial_bridge_data());
                 let bridge_hash = init.serialize().expect("a state init").repr_hash();
-                let bridge = MsgAddressInt::with_params(-1, bridge_hash).expect("the bridge address");
+                let bridge =
+                    MsgAddressInt::with_params(-1, bridge_hash).expect("the bridge address");
                 let deploy = MessageBuilder::internal(deployer.address(), &bridge, 50 * TOS)
                     .bounce(false)
                     .state_init(init)
@@ -543,14 +548,24 @@ impl Net {
             succeeded(&net.send(poke));
         }
         let code = net.bc.get_account(&bridge).and_then(|a| a.get_code()).expect("deployed");
-        assert_eq!(code.repr_hash(), codes().bridge.repr_hash(), "the bridge runs jetton-bridge.fc");
+        assert_eq!(
+            code.repr_hash(),
+            codes().bridge.repr_hash(),
+            "the bridge runs jetton-bridge.fc"
+        );
         net
     }
 
     /// ConfigParam 79, naming this bridge, the oracles and the counterparty.
     pub fn configure(&mut self) {
         let bridge = self.bridge.clone();
-        self.configure_with(&bridge, self.state_flags, self.burn_fee, self.mint_fee, Some(EVM_BRIDGE));
+        self.configure_with(
+            &bridge,
+            self.state_flags,
+            self.burn_fee,
+            self.mint_fee,
+            Some(EVM_BRIDGE),
+        );
     }
 
     pub fn configure_with(
@@ -592,7 +607,9 @@ impl Net {
         if config.config(0).expect("param 0").is_none() {
             let config_addr = config.config_addr.clone();
             config
-                .set_config(ConfigParamEnum::ConfigParam0(chain_block::ConfigParam0 { config_addr }))
+                .set_config(ConfigParamEnum::ConfigParam0(chain_block::ConfigParam0 {
+                    config_addr,
+                }))
                 .expect("param 0");
         }
         if config.config(31).expect("param 31").is_none() {
@@ -631,7 +648,9 @@ impl Net {
         let mut gv = config.get_global_version().expect("param 8");
         gv.version = version;
         config
-            .set_config(ConfigParamEnum::ConfigParam8(chain_block::ConfigParam8 { global_version: gv }))
+            .set_config(ConfigParamEnum::ConfigParam8(chain_block::ConfigParam8 {
+                global_version: gv,
+            }))
             .expect("param 8");
         self.bc.set_config(config).expect("the chain adopts it");
     }
@@ -705,8 +724,17 @@ impl Net {
         }
         self.check_gas(&addr, &msg, &tx);
         // G2: no transaction strands, or logs, more than FOLD_LIMIT records
-        let stranded = outs.iter().filter(|m| !m.is_internal() && crate::model::ext_topic(m) == Some(declared("LOG_LIABILITY_STRANDED") as u32)).count();
-        assert!(stranded <= declared("FOLD_LIMIT") as usize, "a transaction logged {stranded} strandings");
+        let stranded = outs
+            .iter()
+            .filter(|m| {
+                !m.is_internal()
+                    && crate::model::ext_topic(m) == Some(declared("LOG_LIABILITY_STRANDED") as u32)
+            })
+            .count();
+        assert!(
+            stranded <= declared("FOLD_LIMIT") as usize,
+            "a transaction logged {stranded} strandings"
+        );
         let after = self.model.snapshot(self, &addr);
         let balance_before = account.balance().map(|b| b.coins.as_u128()).unwrap_or(0);
         let delivery = Delivery { balance_before, addr, msg, tx, outs };
@@ -764,7 +792,9 @@ impl Net {
             "bridge" if op == OP_EXECUTE_VOTING => declared("BRIDGE_VOTE_GAS"),
             "bridge" => declared("BRIDGE_STEP_GAS"),
             "wallet" => declared("WALLET_STEP_GAS"),
-            _ if op == op::OPENED || (op == op::ADVANCE && sub == advance::STRAND) => declared("MINTER_BATCH_GAS"),
+            _ if op == op::OPENED || (op == op::ADVANCE && sub == advance::STRAND) => {
+                declared("MINTER_BATCH_GAS")
+            }
             _ => declared("MINTER_STEP_GAS"),
         } as u64;
         assert!(gas <= budget, "{kind} op {op}/{sub} used {gas} gas, over its declared {budget}");
@@ -857,7 +887,10 @@ impl Net {
                         let op = s.get_next_u32().ok().unwrap_or(0);
                         // advance and cancel_burn are a caller's own messages and may bounce
                         let callers = op == op::ADVANCE || op == op::CANCEL_BURN;
-                        assert!(callers || !(40..=63).contains(&op), "a settlement message bounced: op {op}");
+                        assert!(
+                            callers || !(40..=63).contains(&op),
+                            "a settlement message bounced: op {op}"
+                        );
                     }
                 }
             }
@@ -940,7 +973,11 @@ impl Net {
         if let Some(m) = self.minters.get(&token) {
             return m.clone();
         }
-        let r = self.get(&self.bridge, "get_minter_address", vec![StackItem::cell(wrapped_token_data(token))]);
+        let r = self.get(
+            &self.bridge,
+            "get_minter_address",
+            vec![StackItem::cell(wrapped_token_data(token))],
+        );
         MsgAddressInt::construct_from(&mut r.slice_at(0)).expect("a minter")
     }
 
@@ -960,9 +997,7 @@ impl Net {
 
     pub fn tokens(&self, owner: &MsgAddressInt) -> u128 {
         let wallet = self.wallet_of(owner);
-        self.try_get(&wallet, "get_wallet_data", vec![])
-            .map(|r| r.int_at(0) as u128)
-            .unwrap_or(0)
+        self.try_get(&wallet, "get_wallet_data", vec![]).map(|r| r.int_at(0) as u128).unwrap_or(0)
     }
 
     pub fn wallet_state(&self, owner: &MsgAddressInt) -> Vec<i128> {
@@ -1048,12 +1083,14 @@ impl Net {
     }
 
     pub fn pending(&self, s: u64) -> i128 {
-        let r = self.get(&self.bridge, "get_pending_mint", vec![addr_arg(&self.minter()), int_arg(s)]);
+        let r =
+            self.get(&self.bridge, "get_pending_mint", vec![addr_arg(&self.minter()), int_arg(s)]);
         r.int_at(0)
     }
 
     pub fn burn_outcome(&self, m: u64) -> i128 {
-        let r = self.get(&self.bridge, "get_burn_outcome", vec![addr_arg(&self.minter()), int_arg(m)]);
+        let r =
+            self.get(&self.bridge, "get_burn_outcome", vec![addr_arg(&self.minter()), int_arg(m)]);
         r.int_at(0)
     }
 
@@ -1086,7 +1123,8 @@ impl Net {
         MessageBuilder::internal(self.oracles.address(), &self.bridge, 2 * TOS)
             .body(cell(|b| {
                 b.append_u32(OP_EXECUTE_VOTING).unwrap().append_u64(query).unwrap();
-                b.checked_append_references_and_data(&SliceData::load_cell(voting).unwrap()).unwrap();
+                b.checked_append_references_and_data(&SliceData::load_cell(voting).unwrap())
+                    .unwrap();
             }))
             .build()
     }
@@ -1114,7 +1152,13 @@ impl Net {
         self.pay_from(&payer, GENERATION, n, self.mint_fee)
     }
 
-    pub fn pay_from(&mut self, payer: &MsgAddressInt, generation: u32, n: u64, value: u64) -> Transaction {
+    pub fn pay_from(
+        &mut self,
+        payer: &MsgAddressInt,
+        generation: u32,
+        n: u64,
+        value: u64,
+    ) -> Transaction {
         let pay = MessageBuilder::internal(payer, &self.bridge, value)
             .bounce(true)
             .body(cell(|b| {
@@ -1134,7 +1178,14 @@ impl Net {
         d.tx
     }
 
-    pub fn swap_voting(&self, generation: u32, n: u64, recipient: &MsgAddressInt, amount: u128, token: u8) -> Cell {
+    pub fn swap_voting(
+        &self,
+        generation: u32,
+        n: u64,
+        recipient: &MsgAddressInt,
+        amount: u128,
+        token: u8,
+    ) -> Cell {
         cell(|b| {
             b.append_u8(0).unwrap();
             b.append_u32(generation).unwrap();
@@ -1228,7 +1279,13 @@ impl Net {
     }
 
     /// An advance from the stranger to `to`, of `value`, with `args` after the kind.
-    pub fn advance_message(&self, to: &MsgAddressInt, kind: u8, value: u64, args: impl FnOnce(&mut BuilderData)) -> Message {
+    pub fn advance_message(
+        &self,
+        to: &MsgAddressInt,
+        kind: u8,
+        value: u64,
+        args: impl FnOnce(&mut BuilderData),
+    ) -> Message {
         MessageBuilder::internal(self.stranger.address(), to, value)
             .bounce(true)
             .body(cell(|b| {
@@ -1250,7 +1307,11 @@ impl Net {
     }
 
     pub fn minter_advance_cost(&self, kind: u8, owner: &MsgAddressInt) -> (u64, u64) {
-        let r = self.get(&self.minter(), "get_advance_cost", vec![int_arg(kind as u64), addr_arg(owner)]);
+        let r = self.get(
+            &self.minter(),
+            "get_advance_cost",
+            vec![int_arg(kind as u64), addr_arg(owner)],
+        );
         (r.int_at(0) as u64, r.int_at(1) as u64)
     }
 
@@ -1300,7 +1361,12 @@ impl Net {
         self.send(msg)
     }
 
-    pub fn advance_minter(&mut self, kind: u8, owner: &MsgAddressInt, extra: Option<u64>) -> Transaction {
+    pub fn advance_minter(
+        &mut self,
+        kind: u8,
+        owner: &MsgAddressInt,
+        extra: Option<u64>,
+    ) -> Transaction {
         let (_, quote) = self.minter_advance_cost(kind, owner);
         let minter = self.minter();
         let owner = owner.clone();
@@ -1313,7 +1379,11 @@ impl Net {
         self.send(msg)
     }
 
-    pub fn advance_minter_sync(&mut self, channel: u8, owner: Option<&MsgAddressInt>) -> Transaction {
+    pub fn advance_minter_sync(
+        &mut self,
+        channel: u8,
+        owner: Option<&MsgAddressInt>,
+    ) -> Transaction {
         let probe = owner.cloned().unwrap_or_else(|| self.user(0));
         let (_, quote) = self.minter_advance_cost(advance::SYNC, &probe);
         let minter = self.minter();
@@ -1327,7 +1397,12 @@ impl Net {
         self.send(msg)
     }
 
-    pub fn advance_wallet(&mut self, owner: &MsgAddressInt, kind: u8, arg: Option<u64>) -> Transaction {
+    pub fn advance_wallet(
+        &mut self,
+        owner: &MsgAddressInt,
+        kind: u8,
+        arg: Option<u64>,
+    ) -> Transaction {
         let (_, quote) = self.wallet_advance_cost(owner, kind);
         let wallet = self.wallet_of(owner);
         let msg = self.advance_message(&wallet, kind, quote, |b| {
@@ -1502,10 +1577,11 @@ pub fn bounced_copy(msg: &Message) -> Message {
     // a bounce returns the message's value less fees: enough to run, so a
     // contract that reacted to it could
     let value = header.value.coins.as_u128() as u64;
-    let mut bounce = MessageBuilder::internal(&header.dst, &header.src_ref().expect("a source").clone(), value)
-        .bounce(false)
-        .body(body)
-        .build();
+    let mut bounce =
+        MessageBuilder::internal(&header.dst, &header.src_ref().expect("a source").clone(), value)
+            .bounce(false)
+            .body(body)
+            .build();
     if let Some(h) = bounce.int_header_mut() {
         h.bounced = true;
     }
@@ -1539,7 +1615,12 @@ pub fn stopped_for_funds(tx: &Transaction) {
 /// What forwarding `msg` costs as the network charges it: every cell but the
 /// root, at the masterchain's prices when `masterchain`.
 pub fn forward_fee_of(net: &Net, msg: &Message, masterchain: bool) -> u128 {
-    fn visit(c: &Cell, seen: &mut std::collections::HashSet<UInt256>, cells: &mut u128, bits: &mut u128) {
+    fn visit(
+        c: &Cell,
+        seen: &mut std::collections::HashSet<UInt256>,
+        cells: &mut u128,
+        bits: &mut u128,
+    ) {
         for i in 0..c.references_count() {
             let child = c.reference(i).expect("a reference");
             if seen.insert(child.repr_hash()) {
@@ -1554,7 +1635,8 @@ pub fn forward_fee_of(net: &Net, msg: &Message, masterchain: bool) -> u128 {
     visit(&root, &mut std::collections::HashSet::new(), &mut cells, &mut bits);
     let prices = net.bc.config_params().fwd_prices(masterchain).expect("forward prices");
     u128::from(prices.lump_price)
-        + ((u128::from(prices.bit_price) * bits + u128::from(prices.cell_price) * cells + 0xffff) >> 16)
+        + ((u128::from(prices.bit_price) * bits + u128::from(prices.cell_price) * cells + 0xffff)
+            >> 16)
 }
 
 /// A minter's initial state: utils.fc, pack_minter_initial_data, with the
@@ -1586,9 +1668,11 @@ impl Net {
     /// Deploys `init` at its address with a plain top-up: what any sender of a
     /// StateInit-carrying message does to an account that does not exist.
     pub fn deploy_initial(&mut self, init: StateInit, workchain: i32) -> MsgAddressInt {
-        let addr = MsgAddressInt::with_params(workchain, init.serialize().unwrap().repr_hash()).unwrap();
+        let addr =
+            MsgAddressInt::with_params(workchain, init.serialize().unwrap().repr_hash()).unwrap();
         let from = self.deployer.address().clone();
-        let msg = MessageBuilder::internal(&from, &addr, 5 * TOS).bounce(false).state_init(init).build();
+        let msg =
+            MessageBuilder::internal(&from, &addr, 5 * TOS).bounce(false).state_init(init).build();
         self.send(msg);
         addr
     }

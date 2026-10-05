@@ -16,29 +16,29 @@
 //! native engine. The test names refer to the matrix in
 //! crosschain/token-bridge/SETTLEMENT-PROTOCOL.md.
 
-#[path = "token_bridge/harness.rs"]
-mod harness;
-#[path = "token_bridge/model.rs"]
-mod model;
-#[path = "token_bridge/mint.rs"]
-mod mint;
 #[path = "token_bridge/burn.rs"]
 mod burn;
-#[path = "token_bridge/state.rs"]
-mod state;
 #[path = "token_bridge/extended.rs"]
 mod extended;
-#[path = "token_bridge/windows.rs"]
-mod windows;
-#[path = "token_bridge/recovery.rs"]
-mod recovery;
-#[path = "token_bridge/lifecycle.rs"]
-mod lifecycle;
-#[path = "token_bridge/source.rs"]
-mod source;
 #[path = "token_bridge/gauge.rs"]
 mod gauge;
-#[path = "token_bridge/storage.rs"]
-mod storage;
+#[path = "token_bridge/harness.rs"]
+mod harness;
+#[path = "token_bridge/lifecycle.rs"]
+mod lifecycle;
 #[path = "token_bridge/limits.rs"]
 mod limits;
+#[path = "token_bridge/mint.rs"]
+mod mint;
+#[path = "token_bridge/model.rs"]
+mod model;
+#[path = "token_bridge/recovery.rs"]
+mod recovery;
+#[path = "token_bridge/source.rs"]
+mod source;
+#[path = "token_bridge/state.rs"]
+mod state;
+#[path = "token_bridge/storage.rs"]
+mod storage;
+#[path = "token_bridge/windows.rs"]
+mod windows;

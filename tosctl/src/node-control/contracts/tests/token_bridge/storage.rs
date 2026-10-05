@@ -291,7 +291,10 @@ fn t_l_a_quote_covers_the_reserve_shortfall_and_a_day_of_rent() {
     let reserve = declared("WALLET_RESERVE") as u64;
     net.set_balance(&wallet, u128::from(reserve / 2));
     let (need, quote) = net.wallet_advance_cost(&user, advance::BURN);
-    assert!(quote >= need + reserve / 2, "the quote adds the shortfall: need {need}, quote {quote}");
+    assert!(
+        quote >= need + reserve / 2,
+        "the quote adds the shortfall: need {need}, quote {quote}"
+    );
     net.advance_time(43_200);
     let before = net.state_hashes();
     let short = wallet_advance(&net, &user, 0, need);
@@ -322,7 +325,8 @@ fn t_l_a_plain_top_up_pays_a_debt() {
     let tx = net.send_one(msg);
     net.queue.clear();
     assert!(outcome(&tx).storage_fees == 0 && !net.is_frozen(&wallet), "a small debt, not frozen");
-    let top_up = MessageBuilder::internal(net.stranger.address(), &wallet, TOS).bounce(false).build();
+    let top_up =
+        MessageBuilder::internal(net.stranger.address(), &wallet, TOS).bounce(false).build();
     succeeded(&net.send(top_up));
     let due = net.bc.get_account(&wallet).and_then(|a| a.due_payment().cloned());
     assert!(due.is_none_or(|d| d.is_zero()), "the debt is paid");
@@ -359,7 +363,8 @@ fn t_x7_a_send_above_the_balance_rolls_the_leg_back_whole() {
     assert!(!outcome(&tx).action_ok, "the refund exceeds the balance: the action phase fails");
     assert_eq!(net.state_hashes(), before, "rolled back whole");
     assert_eq!(net.logs_from(&bridge, declared("LOG_SWAP_CANCELLED") as u32), 0, "nothing logged");
-    let top_up = MessageBuilder::internal(net.stranger.address(), &bridge, 50 * TOS).bounce(false).build();
+    let top_up =
+        MessageBuilder::internal(net.stranger.address(), &bridge, 50 * TOS).bounce(false).build();
     succeeded(&net.send(top_up));
     let cancel = net.vote(401, net.cancel_lock_vote(GENERATION, n));
     succeeded(&net.send(cancel));

@@ -27,12 +27,11 @@ pub fn reopen(net: &mut Net, owner: &MsgAddressInt) {
         let from = net.delivered.len();
         succeeded(&net.advance_minter(advance::STRAND, owner, None));
         for d in &net.delivered[from..] {
-            let logs = d
-                .outs
-                .iter()
-                .filter(|m| !m.is_internal())
-                .count();
-            assert!(logs <= declared("FOLD_LIMIT") as usize, "a transaction strands at most FOLD_LIMIT records");
+            let logs = d.outs.iter().filter(|m| !m.is_internal()).count();
+            assert!(
+                logs <= declared("FOLD_LIMIT") as usize,
+                "a transaction strands at most FOLD_LIMIT records"
+            );
         }
     }
     succeeded(&net.open_wallet(owner));
@@ -171,7 +170,11 @@ fn t_y6_stale_opening_messages_after_recreation_are_ignored() {
     let before = net.state_hashes();
     net.send(open_a);
     net.send(opened_b);
-    assert_eq!(net.state_hashes()[1..], before[1..], "stale opens changed nothing at the minter or bridge");
+    assert_eq!(
+        net.state_hashes()[1..],
+        before[1..],
+        "stale opens changed nothing at the minter or bridge"
+    );
     assert_eq!(net.tokens(&holder), 0);
     assert_eq!(net.holder(&holder)[2], holder_state::OPEN);
     net.swap_to(&holder, 2);
@@ -184,7 +187,8 @@ fn t_y6_stale_opening_messages_after_recreation_are_ignored() {
 /// and no credit reaches the new life.
 #[test]
 fn t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once() {
-    let points: [Option<u32>; 4] = [Some(op::PREPARE), Some(op::PREPARED), Some(op::COMMIT), Some(op::CREDIT)];
+    let points: [Option<u32>; 4] =
+        [Some(op::PREPARE), Some(op::PREPARED), Some(op::COMMIT), Some(op::CREDIT)];
     for (i, point) in points.iter().enumerate() {
         for reorder in [false, true] {
             let mut net = minted();
@@ -211,7 +215,11 @@ fn t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once() {
                 }
             }
             let (supply, in_flight, mint_reserve, _, stranded) = net.supply_state();
-            assert_eq!((supply, in_flight, mint_reserve, stranded), (1_000, 0, 0, 200), "point {i}");
+            assert_eq!(
+                (supply, in_flight, mint_reserve, stranded),
+                (1_000, 0, 0, 200),
+                "point {i}"
+            );
             assert_eq!(stranded_logs(&net), 1, "point {i}: logged once");
             assert_eq!(net.channel()[10], 0, "point {i}: the bridge finalized the mint");
             assert_eq!(net.tokens(&user), 0, "point {i}: nothing reached the new life");
@@ -256,7 +264,10 @@ fn old_life_to_strand() -> (Net, MsgAddressInt, usize) {
 /// The cells an outbound message is charged for, as both engines count them:
 /// every distinct cell of its serialized form but the root.
 fn charged_cells(m: &Message) -> u32 {
-    fn walk(c: &chain_block::Cell, seen: &mut std::collections::HashSet<chain_block::UInt256>) -> u32 {
+    fn walk(
+        c: &chain_block::Cell,
+        seen: &mut std::collections::HashSet<chain_block::UInt256>,
+    ) -> u32 {
         let mut n = 0;
         for i in 0..c.references_count() {
             let r = c.reference(i).expect("a reference");
@@ -348,7 +359,8 @@ fn t_z1_old_locks_stay_ineligible_after_all_three_are_recreated() {
     net.drop_op(op::PREPARE);
     net.settle();
     let life = net.bridge_life();
-    let old_activation = net.vote(1, net.activation(&account_hash(&net.bridge), life, GENERATION, 0));
+    let old_activation =
+        net.vote(1, net.activation(&account_hash(&net.bridge), life, GENERATION, 0));
 
     for addr in [net.bridge.clone(), net.minter(), net.wallet_of(&user)] {
         net.delete_account(&addr);
@@ -386,7 +398,11 @@ fn t_z1_old_locks_stay_ineligible_after_all_three_are_recreated() {
             assert!(outcome(&tx).aborted, "refused after activation, generation {generation}");
         }
     }
-    assert_eq!(net.model.consumed.values().filter(|c| **c > 1).count(), 0, "no lock consumed twice");
+    assert_eq!(
+        net.model.consumed.values().filter(|c| **c > 1).count(),
+        0,
+        "no lock consumed twice"
+    );
     // a payment, vote or cancellation naming the old generation with a nonce of
     // the new range is refused by its generation alone
     let fresh_n = net.next_nonce + 1;
@@ -491,12 +507,24 @@ fn t_y6_stale_opening_messages_after_minter_recreation_change_nothing() {
         net.send(open_a);
         net.send(opened_b);
         assert_eq!(net.tokens(&holder), expected_tokens, "both={both}: no credit");
-        assert_eq!(net.supply_state(), (0, 0, 0, 0, 0), "both={both}: the new minter counts nothing");
-        assert_ne!(net.holder(&holder)[2], holder_state::OPEN, "both={both}: no holder opened at the new life");
+        assert_eq!(
+            net.supply_state(),
+            (0, 0, 0, 0, 0),
+            "both={both}: the new minter counts nothing"
+        );
+        assert_ne!(
+            net.holder(&holder)[2],
+            holder_state::OPEN,
+            "both={both}: no holder opened at the new life"
+        );
         // the new life serves nothing: the bridge's prepare is refused
         let n = net.start_swap_to(&holder, 2);
         net.settle();
-        assert_ne!(net.swap_record(n).0, swap_state::CONSUMED, "both={both}: nothing consumed for the new life");
+        assert_ne!(
+            net.swap_record(n).0,
+            swap_state::CONSUMED,
+            "both={both}: nothing consumed for the new life"
+        );
         assert_eq!(net.tokens(&holder), expected_tokens);
     }
 }

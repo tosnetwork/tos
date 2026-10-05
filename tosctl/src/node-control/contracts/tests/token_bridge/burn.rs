@@ -253,7 +253,8 @@ fn t_b5_recorded_or_cancelled_once_never_both() {
         net.queue.push_back(msg);
         let cancelling = net.drop_op(op::BURN_NOTICE);
         net.settle();
-        let (first, second) = if recorded_first { (plain, cancelling) } else { (cancelling, plain) };
+        let (first, second) =
+            if recorded_first { (plain, cancelling) } else { (cancelling, plain) };
         net.send(first);
         net.send(second);
         if recorded_first {
@@ -292,10 +293,15 @@ fn t_b5_recorded_or_cancelled_once_never_both() {
     net.settle();
     let wallet = net.wallet_of(&net.user(0));
     let stranger = net.stranger.address().clone();
-    let msg = forged(&stranger, &wallet, TOS, cell(|x| {
-        x.append_u32(op::CANCEL_BURN).unwrap().append_u64(0).unwrap();
-        x.append_u64(0).unwrap();
-    }));
+    let msg = forged(
+        &stranger,
+        &wallet,
+        TOS,
+        cell(|x| {
+            x.append_u32(op::CANCEL_BURN).unwrap().append_u64(0).unwrap();
+            x.append_u64(0).unwrap();
+        }),
+    );
     refused_with(&net.send(msg), err("not_owner"));
 }
 

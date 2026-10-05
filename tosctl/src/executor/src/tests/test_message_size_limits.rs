@@ -49,7 +49,12 @@ fn body() -> Cell {
 /// serialized form but the root, and their bits. Counted here from the
 /// message as the handler left it, independently of the counter under test.
 fn counted(msg: &Message) -> (u64, u64) {
-    fn walk(c: &Cell, seen: &mut std::collections::HashSet<UInt256>, cells: &mut u64, bits: &mut u64) {
+    fn walk(
+        c: &Cell,
+        seen: &mut std::collections::HashSet<UInt256>,
+        cells: &mut u64,
+        bits: &mut u64,
+    ) {
         for i in 0..c.references_count() {
             let r = c.reference(i).unwrap();
             if seen.insert(r.repr_hash()) {
@@ -71,9 +76,18 @@ fn addr(byte: u8) -> MsgAddressInt {
 
 /// Sends the three-cell message with `balance` and returns the handler's
 /// result and the fine it charged.
-fn send(cfg: &BlockchainConfig, balance: u64, special: bool, mode: u8) -> (std::result::Result<CurrencyCollection, i32>, Coins, Message) {
+fn send(
+    cfg: &BlockchainConfig,
+    balance: u64,
+    special: bool,
+    mode: u8,
+) -> (std::result::Result<CurrencyCollection, i32>, Coins, Message) {
     let b = body();
-    let header = InternalMessageHeader::with_addresses(addr(1), addr(2), CurrencyCollection::with_coins(VALUE));
+    let header = InternalMessageHeader::with_addresses(
+        addr(1),
+        addr(2),
+        CurrencyCollection::with_coins(VALUE),
+    );
     let mut msg = Message::with_int_header_and_body(header, SliceData::load_cell(b).unwrap());
     let mut phase = TrActionPhase::default();
     let mut acc_balance = CurrencyCollection::with_coins(balance);
@@ -156,6 +170,7 @@ fn the_cells_a_sender_can_fine_for_bound_the_message() {
 #[test]
 fn ignore_errors_skips_an_oversized_message() {
     let (cells, bits) = size();
-    let (res, _, _) = send(&config(cells as u32 - 1, bits as u32), PLENTY, false, SENDMSG_IGNORE_ERROR);
+    let (res, _, _) =
+        send(&config(cells as u32 - 1, bits as u32), PLENTY, false, SENDMSG_IGNORE_ERROR);
     assert_eq!(res, Err(RESULT_CODE_SKIPPED));
 }

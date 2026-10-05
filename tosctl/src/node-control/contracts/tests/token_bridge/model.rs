@@ -210,7 +210,12 @@ impl Model {
     /// After a transaction on `addr` that held `exposure` before: if the chain
     /// froze or deleted it, its holdings leave the live sums; if it came back
     /// (unfrozen into the same life), they return.
-    pub fn lifecycle(&mut self, net: &Net, addr: &MsgAddressInt, exposure: Option<(bool, i128, i128)>) {
+    pub fn lifecycle(
+        &mut self,
+        net: &Net,
+        addr: &MsgAddressInt,
+        exposure: Option<(bool, i128, i128)>,
+    ) {
         if !self.enabled {
             return;
         }
@@ -254,9 +259,8 @@ impl Model {
                 let owner = wallet_owner(net, addr);
                 let mut lost = w.balance;
                 for (b, amount) in &w.holds {
-                    let admitted = self
-                        .admitted
-                        .contains_key(&(key(&minter), key(&owner), w.born, *b));
+                    let admitted =
+                        self.admitted.contains_key(&(key(&minter), key(&owner), w.born, *b));
                     if !admitted {
                         lost += amount;
                     }
@@ -278,7 +282,11 @@ impl Model {
             return;
         }
         let o = outcome(&d.tx);
-        let op = if d.msg.int_header().map(|h| h.bounced).unwrap_or(false) { None } else { body_op(&d.msg) };
+        let op = if d.msg.int_header().map(|h| h.bounced).unwrap_or(false) {
+            None
+        } else {
+            body_op(&d.msg)
+        };
         match (&before, &after) {
             (_, Snap::Wallet(a)) => {
                 self.wallets.insert(d.addr.to_string());
@@ -331,7 +339,8 @@ impl Model {
     fn check_funded(&self, net: &Net, d: &Delivery, before: &Snap, after: &Snap) {
         let op = body_op(&d.msg);
         let bounced = d.msg.int_header().map(|h| h.bounced).unwrap_or(false);
-        let protocol = !bounced && op.is_some_and(|o| (40..=63).contains(&o) || o == OP_BURN || o == OP_EXECUTE_VOTING);
+        let protocol = !bounced
+            && op.is_some_and(|o| (40..=63).contains(&o) || o == OP_BURN || o == OP_EXECUTE_VOTING);
         if !protocol {
             return;
         }
@@ -363,14 +372,18 @@ impl Model {
                 for (s, e) in &b.escrows {
                     let was = b.mints.get(s).map(|x| x.0);
                     let now = a.mints.get(s).map(|x| x.0);
-                    if was == Some(mint_status::AWAITING_OPEN) && now != Some(mint_status::AWAITING_OPEN) {
+                    if was == Some(mint_status::AWAITING_OPEN)
+                        && now != Some(mint_status::AWAITING_OPEN)
+                    {
                         allowed += e;
                     }
                 }
             }
             (Snap::Bridge(b), Snap::Bridge(a)) => {
                 for (n, fee) in &b.fees {
-                    if b.swaps.get(n) == Some(&swap_state::PAID) && a.swaps.get(n) != Some(&swap_state::PAID) {
+                    if b.swaps.get(n) == Some(&swap_state::PAID)
+                        && a.swaps.get(n) != Some(&swap_state::PAID)
+                    {
                         allowed += fee;
                     }
                 }
@@ -402,10 +415,21 @@ impl Model {
         if let Some(c) = net.try_get(&net.bridge, "get_channel", vec![addr_arg(&minter)]) {
             // floors bind one pair of lives; a recreated minter starts a new
             // relationship the bridge treats as terminal
-            let same_lives = c.int_at(2) == ch.int_at(0) && ch.int_at(1) == net.bridge_life() as i128;
+            let same_lives =
+                c.int_at(2) == ch.int_at(0) && ch.int_at(1) == net.bridge_life() as i128;
             if c.int_at(0) != 0 && same_lives {
-                assert!(c.int_at(4) <= ch.int_at(6), "C1: the bridge's acknowledged floor {} exceeds the minter's storage floor {}", c.int_at(4), ch.int_at(6));
-                assert!(ch.int_at(8) <= c.int_at(9), "C4: the minter's acknowledged floor {} exceeds the bridge's storage floor {}", ch.int_at(8), c.int_at(9));
+                assert!(
+                    c.int_at(4) <= ch.int_at(6),
+                    "C1: the bridge's acknowledged floor {} exceeds the minter's storage floor {}",
+                    c.int_at(4),
+                    ch.int_at(6)
+                );
+                assert!(
+                    ch.int_at(8) <= c.int_at(9),
+                    "C4: the minter's acknowledged floor {} exceeds the bridge's storage floor {}",
+                    ch.int_at(8),
+                    c.int_at(9)
+                );
             }
         }
         for owner in known_owners(net) {
@@ -413,14 +437,28 @@ impl Model {
             if h.int_at(0) == 0 || h.int_at(2) != holder_state::OPEN {
                 continue;
             }
-            assert!(h.int_at(14) <= declared("HOLDER_BURN_WINDOW"), "I9: a holder stores {} burns", h.int_at(14));
+            assert!(
+                h.int_at(14) <= declared("HOLDER_BURN_WINDOW"),
+                "I9: a holder stores {} burns",
+                h.int_at(14)
+            );
             let wallet = net.wallet_of(&owner);
             let Some(st) = net.try_get(&wallet, "get_settlement_state", vec![]) else { continue };
             if st.int_at(0) != h.int_at(1) {
                 continue; // another life of this wallet
             }
-            assert!(h.int_at(6) <= st.int_at(8), "C2: the minter's acknowledged floor {} exceeds the wallet's storage floor {}", h.int_at(6), st.int_at(8));
-            assert!(st.int_at(7) <= h.int_at(11), "C3: the wallet's acknowledged floor {} exceeds the holder's storage floor {}", st.int_at(7), h.int_at(11));
+            assert!(
+                h.int_at(6) <= st.int_at(8),
+                "C2: the minter's acknowledged floor {} exceeds the wallet's storage floor {}",
+                h.int_at(6),
+                st.int_at(8)
+            );
+            assert!(
+                st.int_at(7) <= h.int_at(11),
+                "C3: the wallet's acknowledged floor {} exceeds the holder's storage floor {}",
+                st.int_at(7),
+                h.int_at(11)
+            );
             let above = net.get(&wallet, "get_credits_above_count", vec![]).int_at(0);
             assert!(above <= declared("CREDIT_WINDOW"), "I9: a wallet stores {above} credits");
         }
@@ -436,7 +474,15 @@ impl Model {
         }
     }
 
-    fn observe_wallet(&mut self, net: &Net, d: &Delivery, op: Option<u32>, b: &WalletSnap, a: &WalletSnap, aborted: bool) {
+    fn observe_wallet(
+        &mut self,
+        net: &Net,
+        d: &Delivery,
+        op: Option<u32>,
+        b: &WalletSnap,
+        a: &WalletSnap,
+        aborted: bool,
+    ) {
         if aborted {
             return;
         }
@@ -463,7 +509,10 @@ impl Model {
                     let entry = self.landed.entry((key(&minter), minter_life, sn)).or_insert(0);
                     assert_eq!(*entry, 0, "I6: mint s={sn} landed twice");
                     *entry += gained;
-                    self.atomic(outs_with_op(&d.outs, op::CREDIT_RECORDED) == 1, format!("credit {k} without its report"));
+                    self.atomic(
+                        outs_with_op(&d.outs, op::CREDIT_RECORDED) == 1,
+                        format!("credit {k} without its report"),
+                    );
                 }
             }
             Some(op::REFUND) | Some(op::ADMIT_REFUSED) => {
@@ -481,7 +530,10 @@ impl Model {
                         self.refunded_burns.insert((wallet.clone(), life, bn));
                         self.landed_refunds.insert((key(&minter), key(&owner), life, bn), gained);
                         self.admitted.remove(&(key(&minter), key(&owner), life, bn));
-                        self.atomic(outs_with_op(&d.outs, op::REFUND_RECORDED) == 1, format!("refund {bn} without its report"));
+                        self.atomic(
+                            outs_with_op(&d.outs, op::REFUND_RECORDED) == 1,
+                            format!("refund {bn} without its report"),
+                        );
                     }
                 }
             }
@@ -492,14 +544,25 @@ impl Model {
             }
             Some(OP_BURN) | Some(op::CANCEL_BURN) => {
                 if a.holds.len() > b.holds.len() || op == Some(op::CANCEL_BURN) {
-                    self.atomic(outs_with_op(&d.outs, op::BURN_ADMIT) == 1, "a hold without its admission request".into());
+                    self.atomic(
+                        outs_with_op(&d.outs, op::BURN_ADMIT) == 1,
+                        "a hold without its admission request".into(),
+                    );
                 }
             }
             _ => {}
         }
     }
 
-    fn observe_minter(&mut self, net: &Net, d: &Delivery, _op: Option<u32>, b: &MinterSnap, a: &MinterSnap, aborted: bool) {
+    fn observe_minter(
+        &mut self,
+        net: &Net,
+        d: &Delivery,
+        _op: Option<u32>,
+        b: &MinterSnap,
+        a: &MinterSnap,
+        aborted: bool,
+    ) {
         if aborted {
             return;
         }
@@ -528,16 +591,28 @@ impl Model {
                     assert!(*n <= 1, "I6: mint s={s} counted twice");
                     let landed = self.landed.remove(&(minter.clone(), life, *s));
                     assert_eq!(landed, Some(after.3), "a mint counted that never landed");
-                    self.atomic(outs_with_op(&d.outs, op::MINT_COMPLETED) >= 1, format!("count of {s} without completion"));
+                    self.atomic(
+                        outs_with_op(&d.outs, op::MINT_COMPLETED) >= 1,
+                        format!("count of {s} without completion"),
+                    );
                 }
                 mint_status::RESERVED => {
-                    self.atomic(outs_with_op(&d.outs, op::PREPARED) >= 1, format!("reservation of {s} without prepared"));
+                    self.atomic(
+                        outs_with_op(&d.outs, op::PREPARED) >= 1,
+                        format!("reservation of {s} without prepared"),
+                    );
                 }
                 mint_status::REFUSED => {
-                    self.atomic(outs_with_op(&d.outs, op::REFUSED) >= 1, format!("refusal of {s} without refused"));
+                    self.atomic(
+                        outs_with_op(&d.outs, op::REFUSED) >= 1,
+                        format!("refusal of {s} without refused"),
+                    );
                 }
                 mint_status::CREDITING => {
-                    self.atomic(outs_with_op(&d.outs, op::CREDIT) >= 1, format!("crediting {s} without a credit"));
+                    self.atomic(
+                        outs_with_op(&d.outs, op::CREDIT) >= 1,
+                        format!("crediting {s} without a credit"),
+                    );
                 }
                 mint_status::STRANDED => {
                     self.atomic(
@@ -577,16 +652,30 @@ impl Model {
             match now {
                 burn_status::AWAITING_BRIDGE => {
                     self.admitted.insert((minter.clone(), owner.clone(), burn_life, *bn), after.2);
-                    self.atomic(outs_with_op(&d.outs, op::BURN_NOTICE) >= 1, format!("admission of {bn} without a notice"));
+                    self.atomic(
+                        outs_with_op(&d.outs, op::BURN_NOTICE) >= 1,
+                        format!("admission of {bn} without a notice"),
+                    );
                 }
                 burn_status::ADMIT_REFUSED => {
-                    self.atomic(outs_with_op(&d.outs, op::ADMIT_REFUSED) >= 1, format!("refused admission {bn} without its answer"));
+                    self.atomic(
+                        outs_with_op(&d.outs, op::ADMIT_REFUSED) >= 1,
+                        format!("refused admission {bn} without its answer"),
+                    );
                 }
                 burn_status::REFUNDING if after.0 == 1 => {
-                    self.atomic(outs_with_op(&d.outs, op::REFUND) >= 1, format!("refunding {bn} without a refund"));
+                    self.atomic(
+                        outs_with_op(&d.outs, op::REFUND) >= 1,
+                        format!("refunding {bn} without a refund"),
+                    );
                 }
                 burn_status::REFUNDED => {
-                    let landed = self.landed_refunds.remove(&(minter.clone(), owner.clone(), burn_life, *bn));
+                    let landed = self.landed_refunds.remove(&(
+                        minter.clone(),
+                        owner.clone(),
+                        burn_life,
+                        *bn,
+                    ));
                     assert_eq!(landed, Some(after.2), "a refund counted that never landed");
                 }
                 _ => {}
@@ -594,7 +683,14 @@ impl Model {
         }
     }
 
-    fn observe_bridge(&mut self, _net: &Net, d: &Delivery, op: Option<u32>, b: &BridgeSnap, a: &BridgeSnap) {
+    fn observe_bridge(
+        &mut self,
+        _net: &Net,
+        d: &Delivery,
+        op: Option<u32>,
+        b: &BridgeSnap,
+        a: &BridgeSnap,
+    ) {
         let life = a.born;
         let burn_logs = logs_with(&d.outs, LOG_BURN);
         let mut new_decision = None;
@@ -661,7 +757,10 @@ impl Model {
             if *outcome == OUTCOME_RECORDED {
                 self.atomic(burn_logs == 1, format!("RECORDED {} without LOG_BURN", k.1));
             }
-            self.atomic(outs_with_op(&d.outs, op::BURN_RESULT) == 1, format!("decision {} without a result", k.1));
+            self.atomic(
+                outs_with_op(&d.outs, op::BURN_RESULT) == 1,
+                format!("decision {} without a result", k.1),
+            );
         }
         let mut swap_changes: Vec<(u64, i128, i128)> = Vec::new();
         for (n, state) in &a.swaps {
@@ -698,20 +797,30 @@ impl Model {
                 let c = self.consumed.entry((life, *n)).or_insert(0);
                 *c += 1;
                 assert!(*c <= 1, "I5: lock {n} consumed twice");
-                assert!(!self.cancelled.contains_key(&(life, *n)), "I5: lock {n} consumed after cancellation");
+                assert!(
+                    !self.cancelled.contains_key(&(life, *n)),
+                    "I5: lock {n} consumed after cancellation"
+                );
             }
             if *state == swap_state::CANCELLED {
                 let logs = logs_with(&d.outs, declared("LOG_SWAP_CANCELLED") as u32);
                 self.atomic(logs == 1, format!("cancellation of {n} without its log"));
                 if before == swap_state::PAID {
                     // the payment goes back in the same leg: a plain message
-                    let refunds = d.outs.iter().filter(|m| m.is_internal() && body_op(m).is_none()).count();
-                    self.atomic(refunds == 1, format!("cancellation of paid {n} without its refund"));
+                    let refunds =
+                        d.outs.iter().filter(|m| m.is_internal() && body_op(m).is_none()).count();
+                    self.atomic(
+                        refunds == 1,
+                        format!("cancellation of paid {n} without its refund"),
+                    );
                 }
                 let c = self.cancelled.entry((life, *n)).or_insert(0);
                 *c += 1;
                 assert!(*c <= 1, "lock {n} cancelled twice");
-                assert!(!self.consumed.contains_key(&(life, *n)), "I5: lock {n} cancelled after consumption");
+                assert!(
+                    !self.consumed.contains_key(&(life, *n)),
+                    "I5: lock {n} cancelled after consumption"
+                );
             }
         }
         // A cancellation log is only ever part of a new cancellation.
@@ -719,13 +828,25 @@ impl Model {
         let new_cancels = a
             .swaps
             .iter()
-            .filter(|(n, s)| **s == swap_state::CANCELLED && b.swaps.get(n) != Some(&swap_state::CANCELLED))
+            .filter(|(n, s)| {
+                **s == swap_state::CANCELLED && b.swaps.get(n) != Some(&swap_state::CANCELLED)
+            })
             .count();
         // A cancelled lock may fold out of the window in the same transaction.
         let folded = (if activation { 0..0 } else { b.swap_wm..a.swap_wm })
-            .filter(|n| !matches!(b.swaps.get(n), Some(&swap_state::PREPARING) | Some(&swap_state::CONSUMED) | Some(&swap_state::CANCELLED)))
+            .filter(|n| {
+                !matches!(
+                    b.swaps.get(n),
+                    Some(&swap_state::PREPARING)
+                        | Some(&swap_state::CONSUMED)
+                        | Some(&swap_state::CANCELLED)
+                )
+            })
             .count();
-        assert!(cancel_logs <= new_cancels + folded, "LOG_SWAP_CANCELLED without a new cancellation");
+        assert!(
+            cancel_logs <= new_cancels + folded,
+            "LOG_SWAP_CANCELLED without a new cancellation"
+        );
     }
 
     /// I1 and the capacity bound, after every transaction.
@@ -761,7 +882,9 @@ impl Model {
                 }
                 s.get_next_u32().unwrap();
                 s.get_next_u64().unwrap();
-                let amount = chain_block::Coins::construct_from(&mut s).expect("an amount").as_u128() as i128;
+                let amount = chain_block::Coins::construct_from(&mut s)
+                    .expect("an amount")
+                    .as_u128() as i128;
                 transfers += amount;
             }
         }
@@ -776,7 +899,8 @@ impl Model {
             supply += s;
             capacity_ok &= s + f + mr + br + st <= MAX_SUPPLY as i128;
         }
-        let landed: i128 = self.landed.values().sum::<i128>() + self.landed_refunds.values().sum::<i128>();
+        let landed: i128 =
+            self.landed.values().sum::<i128>() + self.landed_refunds.values().sum::<i128>();
         assert!(capacity_ok, "capacity in use exceeds MAX_SUPPLY");
         assert_eq!(
             balances + holds + transfers + self.deleted_balances,
@@ -811,7 +935,8 @@ fn minter_life_of(net: &Net, minter: &MsgAddressInt) -> i128 {
 }
 
 fn burn_life_of(net: &Net, minter: &MsgAddressInt, owner: &[u8], where_: i128) -> i128 {
-    let owner_addr = MsgAddressInt::with_params(0, chain_block::UInt256::from_slice(owner)).unwrap();
+    let owner_addr =
+        MsgAddressInt::with_params(0, chain_block::UInt256::from_slice(owner)).unwrap();
     let r = net.get(minter, "get_holder", vec![addr_arg(&owner_addr)]);
     if where_ == 2 { r.int_at(12) } else { r.int_at(1) }
 }
@@ -836,7 +961,13 @@ pub fn wallet_snap(net: &Net, addr: &MsgAddressInt) -> WalletSnap {
         }
     }
     let credits_above = net.get(addr, "get_credits_above_count", vec![]).int_at(0) as usize;
-    WalletSnap { balance: data.int_at(0), born: st.int_at(0), minter_life: st.int_at(1), holds, credits_above }
+    WalletSnap {
+        balance: data.int_at(0),
+        born: st.int_at(0),
+        minter_life: st.int_at(1),
+        holds,
+        credits_above,
+    }
 }
 
 pub fn minter_snap(net: &Net, addr: &MsgAddressInt) -> MinterSnap {
@@ -876,7 +1007,8 @@ pub fn minter_snap(net: &Net, addr: &MsgAddressInt) -> MinterSnap {
             for b in 0..8 {
                 let r = net.get(addr, "get_burn", vec![addr_arg(&owner), int_arg(b)]);
                 if r.int_at(0) == 2 {
-                    burns.insert((account_hash(&owner), b), (r.int_at(0), r.int_at(1), r.int_at(4)));
+                    burns
+                        .insert((account_hash(&owner), b), (r.int_at(0), r.int_at(1), r.int_at(4)));
                 }
             }
         }
@@ -951,5 +1083,15 @@ pub fn bridge_snap(net: &Net, addr: &MsgAddressInt) -> BridgeSnap {
         burns_stored.insert(account_hash(&minter), n);
         burn_bounds.insert(account_hash(&minter), (c.int_at(6) as u64, c.int_at(7) as u64));
     }
-    BridgeSnap { born, swaps, outcomes, pending, burns_stored, swaps_stored: stored, burn_bounds, swap_wm: wm, fees }
+    BridgeSnap {
+        born,
+        swaps,
+        outcomes,
+        pending,
+        burns_stored,
+        swaps_stored: stored,
+        burn_bounds,
+        swap_wm: wm,
+        fees,
+    }
 }

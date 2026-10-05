@@ -36,10 +36,15 @@ fn t_s_the_removed_opcodes_are_refused_before_any_effect() {
     for op in 21u32..=27 {
         for to in &targets {
             let before = net.state_hashes();
-            let msg = forged(&stranger, to, TOS, cell(|b| {
-                b.append_u32(op).unwrap().append_u64(0).unwrap();
-                b.append_u64(0).unwrap();
-            }));
+            let msg = forged(
+                &stranger,
+                to,
+                TOS,
+                cell(|b| {
+                    b.append_u32(op).unwrap().append_u64(0).unwrap();
+                    b.append_u64(0).unwrap();
+                }),
+            );
             let tx = net.send(msg);
             assert!(outcome(&tx).aborted, "op {op} at {to}: refused");
             assert_eq!(net.state_hashes(), before, "op {op} at {to}: nothing changed");
@@ -68,7 +73,11 @@ fn t_x1_the_refund_of_an_undecided_burn_always_fits() {
             assert_eq!(net.supply_state(), (MAX_SUPPLY as i128 - 100, 0, 0, 0, 0));
             let m = net.swap(100);
             // consumed; the earlier refused lock, still paid, holds the watermark
-            assert_eq!(net.swap_record(m).0, swap_state::CONSUMED, "a recorded burn freed its capacity");
+            assert_eq!(
+                net.swap_record(m).0,
+                swap_state::CONSUMED,
+                "a recorded burn freed its capacity"
+            );
             assert_eq!(net.tokens(&user), MAX_SUPPLY);
         } else {
             succeeded(&cancel(&mut net, 0));
@@ -199,7 +208,11 @@ fn t_x2_every_counter_refuses_at_its_sentinel() {
     let n = net.swap_to(&other, 1);
     assert_eq!(net.swap_record(n).0, swap_state::PAID, "attempts exhausted: refused");
     let tx = net.open_wallet(&other);
-    assert_eq!(net.exits_since(net.delivered.len() - 2, err("sequence_exhausted")), 1, "the open request is refused");
+    assert_eq!(
+        net.exits_since(net.delivered.len() - 2, err("sequence_exhausted")),
+        1,
+        "the open request is refused"
+    );
     let _ = tx;
 }
 
@@ -231,7 +244,11 @@ fn t_x5_a_landed_credit_transferred_and_burned_before_it_is_counted() {
             assert_eq!(net.tokens(&other), 600);
         } else {
             net.settle();
-            assert_eq!(net.supply_state().0, -600, "the burn was admitted before the credit was counted");
+            assert_eq!(
+                net.supply_state().0,
+                -600,
+                "the burn was admitted before the credit was counted"
+            );
             assert_eq!(net.burn_logs(), 1);
         }
         net.send(report);
@@ -328,9 +345,22 @@ fn t_x8_substituted_senders_and_lives_are_refused() {
         })
     };
     for (to, ops) in [
-        (minter.clone(), vec![op::PREPARE, op::COMMIT, op::BURN_RESULT, op::SYNC_FLOOR, op::CREDIT_RECORDED, op::BURN_ADMIT]),
+        (
+            minter.clone(),
+            vec![
+                op::PREPARE,
+                op::COMMIT,
+                op::BURN_RESULT,
+                op::SYNC_FLOOR,
+                op::CREDIT_RECORDED,
+                op::BURN_ADMIT,
+            ],
+        ),
         (bridge.clone(), vec![op::PREPARED, op::MINT_COMPLETED, op::BURN_NOTICE, op::SYNC_FLOOR]),
-        (wallet.clone(), vec![op::CREDIT, op::OPEN, op::REFUND, op::BURN_OUTCOME, op::ADMIT_REFUSED]),
+        (
+            wallet.clone(),
+            vec![op::CREDIT, op::OPEN, op::REFUND, op::BURN_OUTCOME, op::ADMIT_REFUSED],
+        ),
     ] {
         for op in ops {
             let before = net.state_hashes();
@@ -357,7 +387,10 @@ fn t_x8_substituted_senders_and_lives_are_refused() {
         user0.write_to(b).unwrap();
     });
     let before = net.state_hashes();
-    refused_with(&net.send(forged(&other_wallet, &minter, TOS, report)), declared("error::owner_not_sender") as i32);
+    refused_with(
+        &net.send(forged(&other_wallet, &minter, TOS, report)),
+        declared("error::owner_not_sender") as i32,
+    );
     assert_eq!(net.state_hashes(), before);
 
     // another token's minter completing this token's pending mint

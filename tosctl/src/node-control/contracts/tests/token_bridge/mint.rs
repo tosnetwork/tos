@@ -7,7 +7,7 @@
 //! Mints: bridge -> prepare -> minter -> open/opened -> prepared -> commit ->
 //! credit -> credit_recorded -> mint_completed.
 
-use chain_block::{IBitstring, Deserializable, Message, MsgAddressInt, SliceData};
+use chain_block::{Deserializable, IBitstring, Message, MsgAddressInt, SliceData};
 
 use crate::harness::*;
 
@@ -15,7 +15,11 @@ use crate::harness::*;
 pub fn assert_minted(net: &Net, n: u64, amount: u128) {
     let user = net.user(0);
     assert_eq!(net.tokens(&user), amount, "the wallet holds the mint once");
-    assert_eq!(net.supply_state(), (amount as i128, 0, 0, 0, 0), "supply counted once, nothing reserved");
+    assert_eq!(
+        net.supply_state(),
+        (amount as i128, 0, 0, 0, 0),
+        "supply counted once, nothing reserved"
+    );
     assert_eq!(net.channel()[10], 0, "nothing pending at the bridge");
     let state = net.swap_record(n).0;
     assert!(state == -1 || state == swap_state::CONSUMED, "the lock is consumed, not {state}");
@@ -171,7 +175,11 @@ fn t_m4_duplicate_and_old_mint_messages_repeat_no_effect() {
     // floors: only the report is repeated
     let user = net.user(0);
     succeeded(&net.advance_minter_sync(channel::C2, Some(&user)));
-    assert_eq!(net.get(&net.wallet_of(&user), "get_credits_above_count", vec![]).int_at(0), 0, "compacted");
+    assert_eq!(
+        net.get(&net.wallet_of(&user), "get_credits_above_count", vec![]).int_at(0),
+        0,
+        "compacted"
+    );
     for m in seen {
         net.send(m);
     }
