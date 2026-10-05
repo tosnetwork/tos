@@ -244,13 +244,13 @@ td::actor::ActorOwn<JsonRpcServer> JsonRpcServer::create(
                                                 std::move(options));
 }
 
-JsonRpcServer::JsonRpcServer(
-    td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
-    Options options)
-    : validator_manager_(std::move(validator_manager)),
-      opts_(std::move(options)),
-      cache_(std::make_shared<JsonRpcResponseCache>(opts_.cache_max_entries, opts_.cache_max_body_bytes)),
-      per_ip_gate_(opts_.per_ip_rate_window, opts_.per_ip_rate_requests, opts_.per_ip_rate_max_sources) {
+JsonRpcServer::JsonRpcServer(td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
+                             Options options)
+    : validator_manager_(std::move(validator_manager))
+    , opts_(std::move(options))
+    , cache_(std::make_shared<JsonRpcResponseCache>(opts_.cache_max_entries, opts_.cache_max_body_bytes))
+    , per_ip_gate_(opts_.per_ip_rate_window, opts_.per_ip_rate_requests, opts_.per_ip_rate_max_sources)
+    , ingress_gate_(opts_.per_ip_ingress_window, opts_.per_ip_ingress_requests, opts_.per_ip_rate_max_sources) {
   // Arm periodic cache cleanup if caching is enabled
   if (opts_.cache_ttl > 0) {
     alarm_timestamp() = td::Timestamp::in(10.0);
@@ -267,11 +267,16 @@ void JsonRpcServer::listen(td::IPAddress addr) {
     http_ = {};
     return;
   }
+  auto limits_r = json_rpc::listener_limits(opts_.max_connections, opts_.request_header_timeout,
+                                            opts_.request_body_timeout, opts_.response_timeout, opts_.body_budget);
+  if (limits_r.is_error()) {
+    LOG(ERROR) << "JSON-RPC server not started: " << limits_r.error().message();
+    http_ = {};
+    return;
+  }
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
-  auto limits = json_rpc::listener_limits(opts_.max_connections, opts_.request_header_timeout,
-                                          opts_.request_body_timeout, opts_.response_timeout);
-  http_ = td::actor::create_actor<http::HttpServer>(
-      PSTRING() << "JsonRPC@" << addr, addr, std::move(callback), limits);
+  http_ = td::actor::create_actor<http::HttpServer>(PSTRING() << "JsonRPC@" << addr, addr, std::move(callback),
+                                                    limits_r.move_as_ok());
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
 
   if (opts_.cors_origin == "*") {
@@ -295,7 +300,53 @@ void JsonRpcServer::HttpCallback::receive_request(
                           std::move(request), std::move(payload), std::move(promise));
 }
 
+void JsonRpcServer::HttpCallback::admit_request(const http::HttpRequest &request,
+                                                td::Promise<http::HttpServer::Admission> promise) {
+  AdmissionHead head;
+  head.method = request.method();
+  head.url = request.url();
+  head.api_key = request.get_header("X-API-Key");
+  head.peer_ip = request.peer_ip();
+  head.forwarded_for = request.get_header("X-Forwarded-For");
+  head.real_ip = request.get_header("X-Real-IP");
+  td::actor::send_closure(server_, &JsonRpcServer::admit_request_head, std::move(head), std::move(promise));
+}
+
 // ─── Request handling ─────────────────────────────────────────────────────
+
+static bool constant_time_compare(const std::string &a, const std::string &b);
+
+void JsonRpcServer::admit_request_head(AdmissionHead head, td::Promise<http::HttpServer::Admission> promise) {
+  // The routes on_request answers without a key are admitted without one;
+  // on_request answers them from the headers.
+  auto path = head.url.substr(0, head.url.find('?'));
+  bool keyless = head.method == "OPTIONS" ||
+                 (head.method == "GET" &&
+                  (path == "/healthcheck" || path == "/healthcheck/" || path == "/api-info" || path == "/api-info/"));
+  if (keyless) {
+    promise.set_value(http::HttpServer::Admission::admit());
+    return;
+  }
+  if (!opts_.api_key.empty() && (head.api_key.empty() || !constant_time_compare(head.api_key, opts_.api_key))) {
+    auto refusal = json_rpc::unauthorized_response(opts_.cors_origin);
+    promise.set_value(http::HttpServer::Admission::refuse(std::move(refusal.first), std::move(refusal.second)));
+    return;
+  }
+  // Readiness probes are never charged to a source budget (see on_request).
+  // Every other request spends one unit of its source's ingress budget here,
+  // atomically on this actor, before its body may be reserved or read.
+  bool readiness = head.method == "GET" && (path == "/readyz" || path == "/readyz/");
+  if (!readiness) {
+    auto source = resolve_source_ip(head.peer_ip, head.forwarded_for, head.real_ip, opts_.trust_proxy_headers,
+                                    opts_.trusted_proxies);
+    if (!ingress_gate_.consume(source, td::Timestamp::now())) {
+      auto refusal = json_rpc::rate_limited_response(opts_.cors_origin);
+      promise.set_value(http::HttpServer::Admission::refuse(std::move(refusal.first), std::move(refusal.second)));
+      return;
+    }
+  }
+  promise.set_value(http::HttpServer::Admission::admit());
+}
 
 // Source-IP resolution (trim, loopback/trusted-proxy checks, and the
 // X-Forwarded-For chain walk) lives in json-rpc-source-ip.h so it can be unit
@@ -605,18 +656,11 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         td::Promise<HttpReturn> promise_;
       };
       if (payload->parse_completed()) {
-        auto body_r = drain_payload_body(payload);
-        if (body_r.is_error()) {
-          // REST POST endpoint — TVM-style error envelope (HTTP 422)
-          promise.set_value(make_json_error(-32600, "Request body too large",
-                                            "null", opts_.cors_origin));
-          return;
-        }
         // REST POST carries source_ip so its submissions meet the same
         // per-IP budget as the JSON-RPC envelope path; an unattributed
         // caller would otherwise be admitted without spending any.
-        process_rest_post_body(body_r.move_as_ok(), std::move(rest_method),
-                               std::move(source_ip), std::move(promise));
+        on_request_body(std::move(payload), BodyRoute::rest, std::move(rest_method), std::move(source_ip),
+                        std::move(promise));
       } else {
         payload->add_callback(std::make_unique<PostRestWaiter>(
             actor_id(this), payload, std::move(rest_method),
@@ -629,15 +673,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
   // Accept POST on /jsonRPC (canonical) and any other path (backward compat)
 
   if (payload->parse_completed()) {
-    auto body_r = drain_payload_body(payload);
-    if (body_r.is_error()) {
-      // JSON-RPC envelope path — emit spec-shape so generic clients decode it.
-      promise.set_value(make_json_rpc_error(-32600, "Request body too large",
-                                            "null", opts_.cors_origin));
-      return;
-    }
-    process_body(body_r.move_as_ok(), "", std::move(source_ip),
-                 std::move(promise));
+    on_request_body(std::move(payload), BodyRoute::envelope, "", std::move(source_ip), std::move(promise));
   } else {
     // Body not yet fully received — register callback.
     // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
@@ -683,14 +719,44 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, std::string source_ip,
   }
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
+  on_request_body(std::move(payload), BodyRoute::envelope, "", std::move(source_ip), std::move(promise));
+}
+
+void JsonRpcServer::on_request_body(PayloadPtr payload, BodyRoute route, std::string rest_method, std::string source_ip,
+                                    td::Promise<HttpReturn> promise) {
+  json_rpc::hold_body_reservation_until_answered(payload, promise);
   auto body_r = drain_payload_body(payload);
+  payload.reset();
   if (body_r.is_error()) {
-    promise.set_value(make_json_rpc_error(-32600, "Request body too large", "null",
-                                          opts_.cors_origin));
+    if (route == BodyRoute::rest) {
+      // REST POST endpoint — TVM-style error envelope (HTTP 422)
+      promise.set_value(make_json_error(-32600, "Request body too large", "null", opts_.cors_origin));
+    } else {
+      // JSON-RPC envelope path — emit spec-shape so generic clients decode it.
+      promise.set_value(make_json_rpc_error(-32600, "Request body too large", "null", opts_.cors_origin));
+    }
     return;
   }
-  process_body(body_r.move_as_ok(), "", std::move(source_ip),
-               std::move(promise));
+  if (opts_.body_drained_hook) {
+    auto resume = td::PromiseCreator::lambda([self = actor_id(this), body = body_r.move_as_ok(), route,
+                                              rest_method = std::move(rest_method), source_ip = std::move(source_ip),
+                                              promise = std::move(promise)](td::Result<td::Unit>) mutable {
+      td::actor::send_closure(self, &JsonRpcServer::process_request_body, std::move(body), route,
+                              std::move(rest_method), std::move(source_ip), std::move(promise));
+    });
+    opts_.body_drained_hook(std::move(resume));
+    return;
+  }
+  process_request_body(body_r.move_as_ok(), route, std::move(rest_method), std::move(source_ip), std::move(promise));
+}
+
+void JsonRpcServer::process_request_body(td::BufferSlice body, BodyRoute route, std::string rest_method,
+                                         std::string source_ip, td::Promise<HttpReturn> promise) {
+  if (route == BodyRoute::rest) {
+    process_rest_post_body(std::move(body), std::move(rest_method), std::move(source_ip), std::move(promise));
+  } else {
+    process_body(std::move(body), "", std::move(source_ip), std::move(promise));
+  }
 }
 
 // JSON-RPC 2.0 batch request cap. Anything larger gets rejected with
@@ -766,38 +832,22 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   auto &obj = req.get_object();
 
   // Extract request ID — store as JSON literal to preserve type in response
-  // (JSON-RPC 2.0 requires echoing the id type exactly).
+  // (JSON-RPC 2.0 requires echoing the id type exactly). An id that cannot be
+  // echoed -- not a string, number or null, a malformed number, or longer than
+  // kMaxReflectedIdBytes once serialized -- is answered as an invalid request
+  // with id null, so a client cannot make a reply carry a large id.
+  // A missing id extracts as null and is echoed as null; in batch mode the
+  // batch driver detects a notification by re-checking the original element.
   std::string req_id;
   {
     auto id_val = obj.extract_field("id");
-    if (id_val.type() == td::JsonValue::Type::String) {
-      {
-        // Growable, not PSTRING: a string id is echoed into the reply, and
-        // the fixed buffer would truncate a large one into malformed JSON.
-        // Its size is already bounded by the request body cap.
-        td::StringBuilder id_sb;
-        id_sb << td::JsonString(td::Slice(id_val.get_string()));
-        req_id = id_sb.as_cslice().str();
-      }
-    } else if (id_val.type() == td::JsonValue::Type::Number) {
-      // The scanner accepts any run of number-ish characters, so "." and
-      // "1e+-.3" arrive here as Numbers. The value is spliced into the
-      // reply unquoted, and echoing one of those verbatim produces a body
-      // no client can parse -- an answer lost to a malformed id rather
-      // than an error reported for one.
-      req_id = id_val.get_number().str();
-      if (!is_valid_json_number(req_id)) {
-        promise.set_value(make_json_rpc_error(-32600, "Invalid Request: malformed 'id' number", "null",
-                                              opts_.cors_origin));
-        return;
-      }
-    } else {
-      // Null id, missing id, or non-stringy/numeric id → echo as JSON
-      // null per spec.  Note: in single-request mode this still emits
-      // a response.  In batch mode the batch driver detects "no id"
-      // (notification) by re-checking the original element.
-      req_id = "null";
+    auto id_r = reflected_request_id(id_val);
+    if (id_r.is_error()) {
+      promise.set_value(make_json_rpc_error(-32600, PSTRING() << "Invalid Request: " << id_r.error().message(), "null",
+                                            opts_.cors_origin));
+      return;
     }
+    req_id = id_r.move_as_ok();
   }
 
   // Extract method
@@ -945,31 +995,31 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
           state->cursor++;
           continue;
         }
+        // The same validation as the dispatch path comes first: an element
+        // that is not an object, or whose id cannot be echoed, is an invalid
+        // request (-32600, id null) whether or not the batch ran out of time.
+        // Only a valid element is answered with the timeout, under its id.
         std::string elem_id = "null";
-        if (state->elements[j].type() == td::JsonValue::Type::Object) {
+        td::Status invalid;
+        if (state->elements[j].type() != td::JsonValue::Type::Object) {
+          invalid = td::Status::Error("batch element is not a JSON object");
+        } else {
           auto &obj = state->elements[j].get_object();
           for (auto &fv : obj.field_values_) {
             if (fv.first != "id") continue;
-            if (fv.second.type() == td::JsonValue::Type::String) {
-              {
-                td::StringBuilder id_sb;
-                id_sb << td::JsonString(td::Slice(fv.second.get_string()));
-                elem_id = id_sb.as_cslice().str();
-              }
-            } else if (fv.second.type() == td::JsonValue::Type::Number) {
-              // Same grammar check as the dispatch path: this literal is
-              // spliced into the reply unquoted, and an element that never
-              // ran is exactly where a malformed id survives to be echoed.
-              auto number = fv.second.get_number().str();
-              if (is_valid_json_number(number)) {
-                elem_id = std::move(number);
-              }
+            auto id_r = reflected_request_id(fv.second);
+            if (id_r.is_ok()) {
+              elem_id = id_r.move_as_ok();
+            } else {
+              invalid = id_r.move_as_error();
             }
             break;
           }
         }
-        auto err = make_json_rpc_error(
-            -32603, "Request batch timed out", elem_id, state->cors);
+        auto err = invalid.is_error()
+                       ? make_json_rpc_error(-32600, PSTRING() << "Invalid Request: " << invalid.message(), "null",
+                                             state->cors)
+                       : make_json_rpc_error(-32603, "Request batch timed out", elem_id, state->cors);
         state->responses[j] = extract_response_body(err);
         state->cursor++;
       }
@@ -1046,14 +1096,7 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
                                             td::Promise<HttpReturn> promise) {
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s callback chain. Breaks the deadlock.
-  auto body_r = drain_payload_body(payload);
-  if (body_r.is_error()) {
-    promise.set_value(make_json_error(-32600, "Request body too large", "null",
-                                      opts_.cors_origin));
-    return;
-  }
-  process_rest_post_body(body_r.move_as_ok(), std::move(method),
-                         std::move(source_ip), std::move(promise));
+  on_request_body(std::move(payload), BodyRoute::rest, std::move(method), std::move(source_ip), std::move(promise));
 }
 
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,

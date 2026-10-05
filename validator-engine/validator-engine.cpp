@@ -6768,9 +6768,9 @@ int main(int argc, char *argv[]) {
   p.add_checked_option(
       '\0', "json-rpc-response-timeout",
       "total seconds to write a JSON-RPC response to the client before the connection is closed "
-      "(default: 60, 0 = no deadline)",
+      "(default: 60; must be greater than 0 and at most 86400)",
       [&](td::Slice arg) {
-        TRY_RESULT(v, tos::json_rpc::parse_timeout_seconds(arg));
+        TRY_RESULT(v, tos::json_rpc::parse_response_timeout_seconds(arg));
         acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_response_timeout, v); });
         return td::Status::OK();
       });

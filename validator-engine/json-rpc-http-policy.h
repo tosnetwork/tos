@@ -35,12 +35,13 @@
 #include "http/http-server.h"
 #include "http/http.h"
 #include "td/utils/Status.h"
+#include "td/utils/logging.h"
 
 namespace tos::json_rpc {
 
 // Total seconds, from the answer, for a response to be handed to the socket;
 // past it the connection is dropped even if the client is still reading
-// slowly. Without it a client that stops reading holds its connection, and
+// slowly. The deadline is mandatory (see check_response_timeout). Without it a client that stops reading holds its connection, and
 // every byte queued for it, for as long as it likes. It is a total deadline on
 // purpose: an idle timeout renewed by each written byte would let a client
 // that reads one byte at a time hold the connection indefinitely. Operators
@@ -66,9 +67,48 @@ inline td::Result<double> parse_timeout_seconds(td::Slice text) {
   return value;
 }
 
-inline http::HttpServer::Limits listener_limits(std::size_t max_connections, double request_header_timeout,
-                                                double request_body_timeout, double response_timeout) {
+// Upper bound on the response deadline. The deadline is the only thing that
+// releases a connection, and every byte queued for it, when a client stops
+// reading; a value so large that it never expires is no deadline at all.
+inline constexpr double kMaxResponseTimeout = 24 * 60 * 60;
+
+// A response deadline is mandatory on the JSON-RPC listener: it must be a
+// finite number of seconds greater than zero and at most kMaxResponseTimeout.
+// Zero is refused instead of meaning "no deadline".
+inline td::Status check_response_timeout(double seconds) {
+  if (!std::isfinite(seconds) || !(seconds > 0) || seconds > kMaxResponseTimeout) {
+    return td::Status::Error(PSLICE() << "response timeout must be a number of seconds greater than 0 and at most "
+                                      << kMaxResponseTimeout);
+  }
+  return td::Status::OK();
+}
+
+// Parses --json-rpc-response-timeout: the whole argument must be a number
+// accepted by check_response_timeout.
+inline td::Result<double> parse_response_timeout_seconds(td::Slice text) {
+  TRY_RESULT(seconds, parse_timeout_seconds(text));
+  TRY_STATUS(check_response_timeout(seconds));
+  return seconds;
+}
+
+// Request-body bytes the JSON-RPC listener holds at once across all its
+// connections, from the moment a request is admitted until it is answered.
+// Each request reserves its declared Content-Length, or the 4 MiB request
+// maximum (http::HttpRequest::max_payload_size()) for a chunked body, so at
+// least sixteen maximum-size requests fit at once.
+inline constexpr std::size_t kListenerBodyBudgetBytes = 64 << 20;
+
+// The limits the JSON-RPC listener is constructed with. Fails when the
+// response deadline is not acceptable to check_response_timeout, so a caller
+// cannot construct the listener without one. Request bodies are charged to
+// `body_budget`, or to a new kListenerBodyBudgetBytes budget when it is null.
+inline td::Result<http::HttpServer::Limits> listener_limits(std::size_t max_connections, double request_header_timeout,
+                                                            double request_body_timeout, double response_timeout,
+                                                            std::shared_ptr<http::BodyBudget> body_budget = nullptr) {
+  TRY_STATUS(check_response_timeout(response_timeout));
   http::HttpServer::Limits limits;
+  limits.body_budget =
+      body_budget ? std::move(body_budget) : std::make_shared<http::BodyBudget>(kListenerBodyBudgetBytes);
   limits.max_connections = max_connections;
   limits.request_header_timeout = request_header_timeout;
   limits.request_body_timeout = request_body_timeout;
@@ -92,6 +132,44 @@ inline std::pair<std::unique_ptr<http::HttpResponse>, std::shared_ptr<http::Http
       "\"error\":\"Unauthorized: invalid or missing API key\",\"code\":-32000}";
 
   auto response = http::HttpResponse::create("HTTP/1.1", 401, "Unauthorized", false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(body));
+  payload->complete_parse();
+  return {std::move(response), std::move(payload)};
+}
+
+// Moves the listener's reservation for a request body from the payload onto
+// the request's answer: the copy of the body drained from the payload, and
+// anything parsed from it, stay charged to the listener until the request has
+// been answered and the answer's promise released. Called by every consumer
+// path just before it drains a body.
+template <class T>
+void hold_body_reservation_until_answered(const std::shared_ptr<http::HttpPayload>& payload, td::Promise<T>& promise) {
+  auto reservation = payload->take_reservation();
+  if (!reservation) {
+    return;
+  }
+  promise = td::PromiseCreator::lambda([inner = std::move(promise), reservation = std::move(reservation)](
+                                           td::Result<T> R) mutable { inner.set_result(std::move(R)); });
+}
+
+// The answer to a request refused at header admission because its source
+// has spent its request budget. Like the 401, it is given before the body is
+// read and the connection closes once it is written.
+inline std::pair<std::unique_ptr<http::HttpResponse>, std::shared_ptr<http::HttpPayload>> rate_limited_response(
+    const std::string& cors_origin) {
+  std::string body =
+      "{\"jsonrpc\":\"2.0\",\"id\":null,"
+      "\"error\":{\"code\":-32005,\"message\":\"Rate limit exceeded (per-IP)\"}}";
+
+  auto response = http::HttpResponse::create("HTTP/1.1", 429, "Too Many Requests", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
