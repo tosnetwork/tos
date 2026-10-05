@@ -1,0 +1,58 @@
+;; Canonical identity witnesses for the complete R2 module/wallet path.
+;; Expected code identities MUST come from compiled dependencies (or MYCODE for
+;; a same-code module successor), never from the witness being checked.
+#include "pq-bytes.fc";
+const int r2id::invalid = 1815;
+
+(slice, int) r2id_raw(cell c) asm "XCTOS";
+int r2id_level(cell c) asm "CLEVEL";
+
+slice r2id_ordinary(cell c) impure inline {
+  (slice s, int special) = r2id_raw(c);
+  throw_unless(r2id::invalid, (special == 0) & (r2id_level(c) == 0));
+  return s;
+}
+
+;; Bounded traversal counts reference visits, including repeated DAG references.
+;; It never resolves an exotic/library cell. Limits are part of this profile.
+int r2id_check_dag(cell c, int remaining, int depth) impure {
+  throw_unless(r2id::invalid, (remaining > 0) & (depth <= 128));
+  slice s = r2id_ordinary(c);
+  remaining -= 1;
+  while (s.slice_refs()) {
+    remaining = r2id_check_dag(s~load_ref(), remaining, depth + 1);
+  }
+  return remaining;
+}
+
+cell r2id_state_init(cell witness, int expected_code, int expected_address) impure inline_ref {
+  slice s = r2id_ordinary(witness);
+  ;; split absent, special absent, code present, data present, libraries empty.
+  throw_unless(r2id::invalid, (s.slice_bits() == 5) & (s.slice_refs() == 2));
+  throw_unless(r2id::invalid, s~load_uint(5) == 6);
+  cell code = s~load_ref();
+  cell data = s~load_ref();
+  s.end_parse();
+  throw_unless(r2id::invalid, cell_hash(code) == expected_code);
+  throw_unless(r2id::invalid, cell_hash(witness) == expected_address);
+  r2id_check_dag(witness, 1024, 0);
+  return data;
+}
+
+;; Returns policy, canonical daily-key chain and fixed SLH public key. The whole
+;; StateInit hash, not a code/data sub-hash, is the module's address commitment.
+(int, cell, int) r2id_module(cell witness, int expected_code, int expected_address,
+    int global_id, int network) impure inline_ref {
+  slice s = r2id_state_init(witness, expected_code, expected_address).begin_parse();
+  throw_unless(r2id::invalid, s~load_uint(8) == 1);
+  throw_unless(r2id::invalid, s~load_int(32) == global_id);
+  throw_unless(r2id::invalid, s~load_uint(256) == network);
+  throw_unless(r2id::invalid, s~load_uint(8) == 1);
+  cell primary_key = s~load_ref();
+  int rescue_key = s~load_uint(256);
+  int policy = s~load_uint(8);
+  s.end_parse();
+  throw_unless(r2id::invalid, (policy == 1) | (policy == 2));
+  pq::check_chain_bytes(primary_key, 1312);
+  return (policy, primary_key, rescue_key);
+}

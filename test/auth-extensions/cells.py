@@ -1,6 +1,7 @@
 """Small ordinary-cell codec for the native authentication regression harness.
 
-It deliberately rejects exotic cells; this is test infrastructure, not an SDK.
+It rejects exotic cells by default. An explicit fixture-only option admits
+level-zero library references without resolving them; this is not an SDK.
 The transaction and account layouts are read from crypto/block/block.tlb.
 """
 import base64
@@ -89,6 +90,18 @@ class Cell:
         return base64.b64encode(self.boc())
 
 
+class LibraryReference(Cell):
+    """Level-zero exotic library-reference fixture; never resolves code."""
+    def __init__(self, code_hash):
+        super().__init__()
+        self.uint(2, 8).uint(code_hash, 256)
+
+    def prefix(self):
+        assert len(self.bits) == 264 and not self.refs
+        raw = super().prefix()
+        return bytes([raw[0] | 8]) + raw[1:]
+
+
 class Slice:
     def __init__(self, cell):
         self.bits, self.refs = cell.bits, list(cell.refs)
@@ -123,7 +136,7 @@ class Slice:
         assert not self.bits and not self.refs
 
 
-def from_boc(data):
+def from_boc(data, *, allow_library=False):
     if isinstance(data, str):
         data = base64.b64decode(data)
     assert data[:4] == bytes.fromhex('b5ee9c72')
@@ -143,7 +156,8 @@ def from_boc(data):
     cells, refs = [], []
     for _ in range(count):
         d1, d2 = read(1), read(1)
-        assert d1 & 8 == 0, 'exotic cells are outside this harness'
+        exotic = bool(d1 & 8)
+        assert not exotic or (allow_library and d1 & ~16 == 8), 'exotic cells are outside this harness'
         if d1 & 16:
             pos += (1 + (d1 >> 5).bit_count()) * 34
         b = data[pos:pos+(d2+1)//2]
@@ -152,7 +166,11 @@ def from_boc(data):
         if d2 & 1:
             assert '1' in bits
             bits = bits[:bits.rfind('1')]
-        cells.append(Cell(bits))
+        if exotic:
+            assert len(bits) == 264 and bits[:8] == '00000010', 'only library references are admitted'
+            cells.append(LibraryReference(int(bits[8:], 2)))
+        else:
+            cells.append(Cell(bits))
         refs.append([read(w) for _ in range(d1 & 7)])
     for c, indices in zip(cells, refs):
         c.refs = [cells[i] for i in indices]

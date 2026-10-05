@@ -102,3 +102,37 @@ Explicit candidate genesis construction and trusted-state admission are also
 implemented, with actual zero-state and mutation controls. Linux full-node build
 evidence, shard propagation, and the full R2 module/receiver role dispatch still
 need integration and end-to-end evidence.
+
+## Receiver authorization and module identity integration components
+
+`wallet-v5r2-auth.fc` implements read-only AUTH v2 receiver validation and checked
+counter transitions. It binds the installed sender, account, network, role,
+epoch, nonce, expiry and operation; checks retirement again at receipt; forbids
+primary use of the rescue fee route; and requires an exact-request Ed25519
+cosignature for ordinary mode-3 operations. Narrow lock/migration recovery uses
+a canonical absent cosignature. The caller must validate its installed identity
+and the complete operation payload before committing state or actions.
+
+`wallet-v5r2-identity.fc` validates canonical module StateInit witnesses against
+a caller-supplied compiled code identity, full address commitment, network,
+profile and canonical key encoding. It rejects exotic/library cells and bounds
+DAG traversal to 1024 reference visits and depth 128. These limits still require
+validation against the final compiled dependency graph and release gas pricing.
+The expected code must never be obtained from the untrusted witness itself.
+
+Native action-phase component tests cover 333 receiver cases and 29 identity
+cases, with four and five guard-deletion mutation controls respectively. The
+receiver test uses a fixture entry point: migration exercises counters only,
+not successor installation. The identity test pins research module code as a
+fixture. Neither result proves a full deployable wallet, signed module relay,
+canonical vault pairing, fresh-key POP or atomic recovery handoff. Those remain
+required integration work, alongside both-VM and client acceptance gates.
+
+```sh
+python test/wallet-v5r2/test_receiver_auth.py --output /path/to/receiver-auth
+python test/wallet-v5r2/test_identity.py --output /path/to/r2-identity
+```
+
+These tests run in authentication-extension CI. The shared Python cell decoder
+continues rejecting exotic cells by default; identity negative fixtures explicitly
+opt into decoding level-zero library-reference cells without resolving them.

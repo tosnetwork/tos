@@ -1,0 +1,14 @@
+;; Test-only witness parser. Pinning and module/wallet state integration are
+;; exercised separately; no wallet authority or possession is conferred here.
+#include "wallet-v5r2-identity.fc";
+() recv_internal(int value, cell full, slice body) impure {
+  slice ds = get_data().begin_parse();
+  int code = ds~load_uint(256);
+  int network = ds~load_uint(256);
+  int address = body~load_uint(256);
+  cell witness = body~load_ref();
+  body.end_parse();
+  var (policy, key, rescue) = r2id_module(witness, code, address, 42, network);
+  set_data(begin_cell().store_uint(policy, 8).store_uint(cell_hash(key), 256)
+    .store_uint(rescue, 256).end_cell());
+}

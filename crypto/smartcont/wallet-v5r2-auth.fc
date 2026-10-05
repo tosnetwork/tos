@@ -1,0 +1,123 @@
+;; Receiving-account AUTH v2 engine. This include has no message entry points.
+;; The full wallet must validate its canonical installed module/fee tuple before
+;; passing these identity fields; caller assertions are not initialization proofs.
+;; Validation is read-only. The caller validates operation payloads and actions,
+;; then persists the returned counters and the complete authority tuple together.
+#include "auth-extension.fc";
+#include "auth-policy.fc";
+
+const int r2::relay = 0x41553242;
+const int r2::request = 0x41553252;
+const int r2::primary = 1;
+const int r2::rescue = 2;
+const int r2::execute = 0;
+const int r2::configure = 1;
+const int r2::lock = 3;
+const int r2::migrate = 4;
+const int r2::bad_kind = 1812;
+const int r2::bad_payload = 1814;
+const int r2::requires_rescue = 1817;
+const int r2::primary_fee_route = 1818;
+
+int r2_basechain_hash(slice address, int error) impure inline {
+  throw_unless(error, (address.slice_bits() == 267) & (address.slice_refs() == 0));
+  throw_unless(error, address.preload_uint(3) == 4);
+  (int wc, int hash) = parse_std_addr(address);
+  throw_unless(error, wc == 0);
+  return hash;
+}
+
+int r2_payload_tag(int kind) impure inline {
+  if (kind == r2::execute) { return 0x45584543; }
+  if (kind == r2::configure) { return 0x434f4e46; }
+  if (kind == r2::lock) { return 0x4c4f434b; }
+  if (kind == r2::migrate) { return 0x4d494752; }
+  throw(r2::bad_kind);
+  return 0;
+}
+
+(int, int, cell) r2_validate_request(int mode, int root, int network, int daily, int policy,
+    int local_retired, int epoch, int primary_nonce, int rescue_nonce, int classical_key,
+    int vault, slice sender, slice body) impure inline_ref {
+  throw_unless(auth::bad_mode, (mode == 2) | (mode == 3));
+  throw_unless(auth::bad_mode, (daily == 1) & ((policy == 1) | (policy == 2)));
+  int account = r2_basechain_hash(my_address(), auth::wrong_account);
+  throw_unless(auth::not_module, (r2_basechain_hash(sender, auth::not_module) == root) & (root != account));
+  throw_unless(auth::bad_operation, body~load_uint(32) == r2::relay);
+  cell request = body~load_ref();
+  cell cosignature = body~load_maybe_ref();
+  int funder = r2_basechain_hash(body~load_msg_addr(), auth::wrong_account);
+  body.end_parse();
+
+  slice rs = auth_policy_ordinary(request);
+  throw_unless(r2::bad_payload, rs~load_uint(32) == r2::request);
+  throw_unless(auth::wrong_network, rs~load_int(32) == auth_global_id());
+  throw_unless(auth::wrong_network, rs~load_uint(256) == network);
+  throw_unless(auth::wrong_account, equal_slice_bits(rs~load_msg_addr(), my_address()));
+  throw_unless(auth::not_module, rs~load_uint(256) == root);
+  int role = rs~load_uint(8);
+  throw_unless(auth::stale_epoch, rs~load_uint(64) == epoch);
+  int nonce = rs~load_uint(64);
+  int deadline = rs~load_uint(32);
+  throw_unless(auth::expired, (deadline > now()) & (deadline <= now() + 3600));
+  int kind = rs~load_uint(8);
+  cell payload = rs~load_ref();
+  rs.end_parse();
+  slice ps = auth_policy_ordinary(payload);
+  throw_unless(r2::bad_payload, ps~load_uint(32) == r2_payload_tag(kind));
+
+  if (role == r2::primary) {
+    throw_unless(r2::bad_kind, kind == r2::execute);
+    throw_unless(r2::requires_rescue, policy == 1);
+    throw_if(auth_policy::retired, (local_retired >> daily) & 1);
+    ;; Recheck the current authenticated configuration, even for a relay that
+    ;; was verified before retirement in the module's earlier transaction.
+    auth_policy_require_primary(network, daily);
+    throw_unless(auth::bad_nonce, nonce == primary_nonce);
+    throw_if(r2::primary_fee_route, funder == vault);
+  } else {
+    throw_unless(r2::bad_kind, role == r2::rescue);
+    throw_unless(auth::bad_nonce, nonce == rescue_nonce);
+  }
+
+  if ((mode == 3) & ((kind == r2::execute) | (kind == r2::configure))) {
+    auth_require_strong_classical_key(classical_key);
+    throw_if(auth::bad_signature, cell_null?(cosignature));
+    slice sig = auth_policy_ordinary(cosignature);
+    throw_unless(auth::bad_signature, (sig.slice_bits() == 512) & (sig.slice_refs() == 0));
+    throw_unless(auth::bad_signature, check_signature(auth_request_hash(request), sig, classical_key));
+  } else {
+    ;; Narrow recovery never needs the old Ed25519 key and never accepts an
+    ;; unrelated optional proof. Mode 2 uses the same canonical null encoding.
+    throw_unless(auth::bad_signature, cell_null?(cosignature));
+  }
+  return (role, kind, payload);
+}
+
+;; Invoke only after payload/action/successor validation, before any state write.
+;; Control operations do NOT increment the rescue execute nonce first.
+(int, int, int, int) r2_advance_counters(int role, int kind, int epoch, int primary_nonce,
+    int rescue_nonce, int seqno) impure inline_ref {
+  throw_unless(r2::bad_kind, (role == r2::primary) | (role == r2::rescue));
+  if (kind == r2::execute) {
+    throw_if(auth::counter_exhausted, seqno == 4294967295);
+    if (role == r2::primary) {
+      throw_if(auth::counter_exhausted, primary_nonce == auth::max_counter);
+      primary_nonce += 1;
+    } else {
+      throw_if(auth::counter_exhausted, rescue_nonce == auth::max_counter);
+      rescue_nonce += 1;
+    }
+    return (epoch, primary_nonce, rescue_nonce, seqno + 1);
+  }
+  throw_unless(r2::bad_kind, role == r2::rescue);
+  throw_unless(r2::bad_kind, (kind == r2::configure) | (kind == r2::lock) | (kind == r2::migrate));
+  throw_if(auth::counter_exhausted, epoch == auth::max_counter);
+  if (kind == r2::configure) {
+    throw_if(auth::counter_exhausted, seqno == 4294967295);
+    seqno += 1;
+  } elseif (kind == r2::migrate) {
+    seqno = 0;
+  }
+  return (epoch + 1, 0, 0, seqno);
+}

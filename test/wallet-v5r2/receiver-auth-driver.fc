@@ -1,0 +1,61 @@
+;; Test-only receiver boundary harness. Not a deployable V5R2 wallet.
+;; No PQ module, canonical StateInit validation or successor installation is
+;; simulated here; these tests exercise authenticated-module relays only.
+#include "wallet-v5r2-auth.fc";
+#include "wallet-v5-action-list.fc";
+
+() recv_external(slice body) impure { throw(auth::legacy_disabled); }
+
+() recv_internal(int balance, int value, cell full, slice body) impure {
+  slice message = full.begin_parse();
+  if (message~load_uint(4) & 1) { return (); }
+  slice sender = message~load_msg_addr();
+  slice ds = get_data().begin_parse();
+  throw_unless(auth::legacy_disabled, ds~load_uint(1) == 0);
+  int seqno = ds~load_uint(32);
+  int wallet_id = ds~load_uint(32);
+  int key = ds~load_uint(256);
+  throw_unless(auth::legacy_disabled, cell_null?(ds~load_dict()));
+  slice state = ds~load_ref().begin_parse();
+  ds.end_parse();
+  int mode = state~load_uint(2);
+  int root = state~load_uint(256);
+  int network = state~load_uint(256);
+  int daily = state~load_uint(8);
+  int policy = state~load_uint(8);
+  int retired = state~load_uint(16);
+  int epoch = state~load_uint(64);
+  int primary_nonce = state~load_uint(64);
+  int rescue_nonce = state~load_uint(64);
+  cell fee = state~load_ref();
+  state.end_parse();
+  int vault = fee.begin_parse().preload_uint(256);
+  var (role, kind, payload) = r2_validate_request(mode, root, network, daily, policy,
+      retired, epoch, primary_nonce, rescue_nonce, key, vault, sender, body);
+  slice ps = payload.begin_parse().skip_bits(32);
+  cell actions = null();
+  if (kind == r2::execute) {
+    actions = verify_auth_actions(ps~load_ref());
+    ps.end_parse();
+  } elseif (kind == r2::lock) {
+    throw_unless(r2::bad_payload, ps~load_uint(8) == daily);
+    ps.end_parse();
+    retired |= 1 << daily;
+  } elseif (kind == r2::configure) {
+    mode = ps~load_uint(2);
+    ps.end_parse();
+    throw_unless(auth::bad_mode, (mode == 2) | (mode == 3));
+    if (mode == 3) { auth_require_strong_classical_key(key); }
+  } else {
+    ;; Counter-only migration fixture: no root changes or successor claims.
+    ps.end_parse();
+  }
+  (epoch, primary_nonce, rescue_nonce, seqno) = r2_advance_counters(
+      role, kind, epoch, primary_nonce, rescue_nonce, seqno);
+  cell next = begin_cell().store_uint(mode, 2).store_uint(root, 256).store_uint(network, 256)
+      .store_uint(daily, 8).store_uint(policy, 8).store_uint(retired, 16).store_uint(epoch, 64)
+      .store_uint(primary_nonce, 64).store_uint(rescue_nonce, 64).store_ref(fee).end_cell();
+  set_data(begin_cell().store_uint(0, 1).store_uint(seqno, 32).store_uint(wallet_id, 32)
+      .store_uint(key, 256).store_dict(null()).store_ref(next).end_cell());
+  ifnot (cell_null?(actions)) { set_c5_actions(actions); }
+}

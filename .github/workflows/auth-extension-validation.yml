@@ -50,6 +50,8 @@ jobs:
           python3 test/auth-extensions/mutations.py
           python3 test/wallet-v5r2/test_v5r1_action_baseline.py --output "$RUNNER_TEMP/v5r1-baseline"
           python3 test/wallet-v5r2/test_auth_policy.py --output "$RUNNER_TEMP/auth-policy"
+          python3 test/wallet-v5r2/test_receiver_auth.py --output "$RUNNER_TEMP/r2-receiver-auth"
+          python3 test/wallet-v5r2/test_identity.py --output "$RUNNER_TEMP/r2-identity"
           build/test-config-transition
           python3 test/wallet-v5r2/policy_native_mutations.py --build build --output "$RUNNER_TEMP/auth-policy-native"
           git diff --exit-code
@@ -66,4 +68,12 @@ jobs:
           path: |
             ${{ runner.temp }}/auth-policy/results.json
             ${{ runner.temp }}/auth-policy-native/
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: r2-receiver-identity-validation
+          path: |
+            ${{ runner.temp }}/r2-receiver-auth/
+            ${{ runner.temp }}/r2-identity/
           retention-days: 14
