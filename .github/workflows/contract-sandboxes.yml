@@ -22,6 +22,8 @@ on:
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
       - "scripts/test_replay_token_bridge_trace.py"
+      - "crosschain/token-bridge/tests/**"
+      - "scripts/token-bridge-mutations.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -57,6 +59,8 @@ on:
       - "scripts/replay-token-bridge-trace.py"
       - "test/auth-extensions/cells.py"
       - "scripts/test_replay_token_bridge_trace.py"
+      - "crosschain/token-bridge/tests/**"
+      - "scripts/token-bridge-mutations.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -223,6 +227,17 @@ jobs:
           cmake --build build --target emulator -j2
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
           python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR"
+
+      # Each guard of the settlement protocol is removed in a copy of the
+      # sources and the test that names it must fail for its stated reason.
+      # The runner first runs every named test unmutated. A guard no test
+      # reaches fails the job, unless it is a recorded survivor with the reason
+      # it cannot go red (equivalent or redundant at the current constants).
+      - name: Every token-bridge guard is held by a test
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: python3 scripts/token-bridge-mutations.py --skip-evm --results token-bridge-mutations.json
 
       # A guard nothing reaches is decoration. This removes each rule the validator
       # controller work added and requires a test to go red for it; a mutation that
