@@ -8,6 +8,7 @@
 //! payments, deployment and removed opcodes.
 
 use chain_block::{IBitstring, Message, MsgAddressInt, Serializable, UInt256};
+use tos_sandbox::MessageBuilder;
 
 use crate::burn::{assert_burned, assert_returned, cancel, cancel_message, minted};
 use crate::harness::*;
@@ -450,4 +451,71 @@ fn t_x10_the_model_records_every_effect_outside_the_contracts() {
     assert_eq!(net.model.burn_logs.values().sum::<u32>(), 1);
     assert!(net.model.landed.is_empty() && net.model.admitted.is_empty());
     let _ = (Message::default, MsgAddressInt::default, UInt256::default);
+}
+
+/// T-X8: a vote naming another chain, another EVM bridge or a token of
+/// another chain, or minting nothing, is refused before any effect; a burn to
+/// the zero destination is refused while the holder still has the tokens.
+#[test]
+fn t_x8_votes_outside_the_namespace_and_burns_to_nowhere_are_refused() {
+    let mut net = Net::new();
+    let user = net.user(0);
+    let n = net.next_nonce;
+    net.next_nonce += 1;
+    succeeded(&net.pay(n));
+    let voting = |chain: u32, evm_bridge: [u8; 20], token_chain: u32, amount: u128| {
+        cell(|b| {
+            b.append_u8(0).unwrap();
+            b.append_u32(GENERATION).unwrap();
+            b.append_u64(n).unwrap();
+            b.append_u32(chain).unwrap();
+            b.append_raw(&evm_bridge, 160).unwrap();
+            b.append_raw(&account_hash(&user), 256).unwrap();
+            coins(b, amount);
+            b.checked_append_reference(cell(|t| {
+                t.append_u32(token_chain).unwrap();
+                t.append_raw(&[0x5a; 20], 160).unwrap();
+                t.append_u8(18).unwrap();
+            }))
+            .unwrap();
+        })
+    };
+    let mut other_bridge = EVM_BRIDGE;
+    other_bridge[19] ^= 1;
+    for (v, code) in [
+        (voting(CHAIN_ID + 1, EVM_BRIDGE, CHAIN_ID, 10), "error::wrong_namespace"),
+        (voting(CHAIN_ID, other_bridge, CHAIN_ID, 10), "error::wrong_namespace"),
+        (voting(CHAIN_ID, EVM_BRIDGE, CHAIN_ID + 1, 10), "error::wrong_external_chain_id"),
+        (voting(CHAIN_ID, EVM_BRIDGE, CHAIN_ID, 0), "error::not_enough_funds"),
+    ] {
+        let before = net.state_hashes();
+        let vote = net.vote(900, v);
+        refused_with(&net.send(vote), declared(code) as i32);
+        assert_eq!(net.state_hashes(), before, "{code}: no effect");
+    }
+    // the same lock in this namespace still mints
+    let vote = net.vote(900, voting(CHAIN_ID, EVM_BRIDGE, CHAIN_ID, 10));
+    succeeded(&net.send(vote));
+    assert_minted(&net, n, 10);
+
+    let balance = net.tokens(&user);
+    let wallet = net.wallet_of(&user);
+    let burn = MessageBuilder::internal(&user, &wallet, net.burn_fee)
+        .bounce(true)
+        .body(cell(|b| {
+            b.append_u32(OP_BURN).unwrap().append_u64(7).unwrap();
+            coins(b, 5);
+            user.write_to(b).unwrap();
+            b.append_bit_one().unwrap();
+            b.checked_append_reference(cell(|d| {
+                d.append_raw(&[0; 20], 160).unwrap();
+            }))
+            .unwrap();
+        }))
+        .build();
+    let before = net.state_hashes();
+    refused_with(&net.send(burn), declared("error::zero_destination") as i32);
+    assert_eq!(net.state_hashes(), before, "nothing held");
+    assert_eq!(net.tokens(&user), balance);
+    assert_eq!(net.held(&user, 0), -1, "no burn opened");
 }
