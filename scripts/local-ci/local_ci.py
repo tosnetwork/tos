@@ -32,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -324,8 +325,8 @@ INTERP_RE = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 
 def interpolate(value: Any, ev: Evaluator) -> Any:
     if isinstance(value, str):
-        m = INTERP_RE.fullmatch(value.strip())
-        if m and value.strip() == value:
+        m = INTERP_RE.fullmatch(value)
+        if m and len(INTERP_RE.findall(value)) == 1:
             return ev.evaluate(m.group(1))
         return INTERP_RE.sub(lambda mm: to_str(ev.evaluate(mm.group(1))), value)
     if isinstance(value, list):
@@ -351,7 +352,7 @@ def evaluate_if(cond: Any, ev: Evaluator) -> bool:
         return cond and truthy(ev.evaluate("success()"))
     text = str(cond).strip()
     m = INTERP_RE.fullmatch(text)
-    if m:
+    if m and len(INTERP_RE.findall(text)) == 1:
         text = m.group(1).strip()
     if not STATUS_FN_RE.search(text):
         text = f"success() && ({text})"
@@ -818,6 +819,7 @@ class Run:
                     try:
                         fut.result()
                     except Exception as exc:  # harness defect: report, never pass
+                        log(f"HARNESS ERROR in {key[0]}:{key[1]}:\n{traceback.format_exc()}")
                         jr = JobResult(key[0], key[1], "fail", f"harness error: {exc!r}")
                         self.add_result(jr)
                     done.add(key)
@@ -836,6 +838,20 @@ class Run:
         with self.results_lock:
             self.results.append(jr)
             self.job_results[(jr.workflow, jr.job.split(" (")[0])] = jr
+
+    def unreplayable_needs(self, wf: str, needs: list[str]) -> list[str]:
+        """Needed jobs with a matrix leg that cannot run here (another runner)."""
+        out = []
+        for n in needs:
+            for r in self.results:
+                if (
+                    r.workflow == wf
+                    and r.job.split(" (")[0] == n
+                    and r.status == "skip"
+                    and "runner" in r.note
+                ):
+                    out.append(r.job)
+        return out
 
     def needs_context(self, wf: str, needs: list[str]) -> tuple[dict, bool]:
         ctx = {}
@@ -878,6 +894,17 @@ class Run:
         ev_base = Evaluator(base_ctx, {"failed": not needs_ok}, self.hash_files)
         if note:
             self.add_result(JobResult(wf_name, job_id, "skip", note))
+            return
+        missing = self.unreplayable_needs(wf_name, needs)
+        if missing:
+            self.add_result(
+                JobResult(
+                    wf_name,
+                    job_id,
+                    "skip",
+                    f"needs results of {', '.join(missing)}, which cannot run here",
+                )
+            )
             return
         if "uses" in job:
             self.add_result(
@@ -998,6 +1025,7 @@ class Run:
         ]
         if self.mirror:
             docker_run += ["-v", f"{self.mirror}:/__mirror:ro"]
+        docker_run += ["-v", f"{HERE / 'shim'}:/__local-ci-shim:ro"]
         docker_run += [image, "sleep", "infinity"]
         prepared = False
         try:
@@ -1021,7 +1049,7 @@ if [ -d {RUNNER_HOME}/.cargo ]; then
 fi
 """
             sh(["docker", "exec", "-u", "0", cname, "bash", "-c", prep], capture_output=True)
-            self.image_path = sh_out(["docker", "exec", cname, "printenv", "PATH"])
+            image_path = sh_out(["docker", "exec", cname, "printenv", "PATH"])
             prepared = True
         except subprocess.CalledProcessError as exc:
             jr.status = "fail"
@@ -1039,11 +1067,13 @@ fi
             rundir=rundir,
             logdir=logdir,
             in_container=in_container,
-            path_prepend=[],
+            # Hosted-runner jobs see the docker stand-in (shim/docker).
+            path_prepend=[] if in_container else ["/__local-ci-shim"],
             env={},
             steps_ctx={},
             failed=False,
             ran_after_failure=False,
+            image_path=image_path,
         )
         wf_env = wf.get("env") or {}
         job_env = job.get("env") or {}
@@ -1164,31 +1194,36 @@ fi
             t0 = time.time()
             logfile = state.logdir / f"{slug(num)}-{slug(display, 70)}.log"
             sr.log = str(logfile.relative_to(self.out))
-            if "uses" in step:
-                with_ = {k: interpolate(v, ev) for k, v in (step.get("with") or {}).items()}
-                rc, note, outputs = self.run_action(
-                    jr,
-                    wf_name,
-                    label,
-                    step["uses"],
-                    with_,
-                    step_env,
-                    ctx,
-                    state,
-                    defaults,
-                    display,
-                    logfile,
-                    action_dir,
-                )
-            else:
-                script = interpolate_str(step.get("run", ""), ev)
-                shell = step.get("shell") or defaults.get("shell")
-                wd = step.get("working-directory") or defaults.get("working-directory")
-                wd = interpolate_str(wd, ev) if wd else None
-                sr.script = script
-                rc, note, outputs = self.exec_script(
-                    state, num, script, shell, wd, step_env, logfile, display
-                )
+            try:
+                if "uses" in step:
+                    with_ = {k: interpolate(v, ev) for k, v in (step.get("with") or {}).items()}
+                    rc, note, outputs = self.run_action(
+                        jr,
+                        wf_name,
+                        label,
+                        step["uses"],
+                        with_,
+                        step_env,
+                        ctx,
+                        state,
+                        defaults,
+                        display,
+                        logfile,
+                        action_dir,
+                    )
+                else:
+                    script = interpolate_str(step.get("run", ""), ev)
+                    shell = step.get("shell") or defaults.get("shell")
+                    wd = step.get("working-directory") or defaults.get("working-directory")
+                    wd = interpolate_str(wd, ev) if wd else None
+                    sr.script = script
+                    rc, note, outputs = self.exec_script(
+                        state, num, script, shell, wd, step_env, logfile, display
+                    )
+            except (ExprError, ValueError, TypeError, KeyError) as exc:
+                # A harness defect is a failure, never a pass.
+                rc, note, outputs = 1, f"harness could not evaluate the step: {exc}", {}
+                logfile.write_text(f"# harness error: {exc!r}\n")
             sr.seconds = time.time() - t0
             if rc is None:
                 sr.status = "skip"
@@ -1288,7 +1323,7 @@ fi
             "ImageVersion": "local-ci",
         }
         full_env.update(env)
-        path = ":".join(list(reversed(state.path_prepend)) + [self.image_path])
+        path = ":".join(list(reversed(state.path_prepend)) + [state.image_path])
         if shell in (None, ""):
             argv = ["bash", "-e", c_script]
         elif shell == "bash":
@@ -1417,10 +1452,19 @@ fi
             return (1 if failed else 0), "composite action", outputs
 
         if name == "actions/checkout":
-            if with_.get("repository") or with_.get("path") or with_.get("ref"):
+            ref = to_str(with_.get("ref") or "")
+            if ref and ref not in (self.commit, self.commit[: len(ref)]) and len(ref) >= 7:
                 return (
                     None,
-                    f"checkout with {sorted(k for k in with_ if k in ('repository', 'path', 'ref'))} is not replayed",
+                    f"checkout of ref {ref} (not the commit under test) is not replayed",
+                    {},
+                )
+            if ref and len(ref) < 7:
+                return None, f"checkout of ref {ref} is not replayed", {}
+            if with_.get("repository") or with_.get("path"):
+                return (
+                    None,
+                    f"checkout with {sorted(k for k in with_ if k in ('repository', 'path'))} is not replayed",
                     {},
                 )
             depth = str(with_.get("fetch-depth", "1"))
@@ -1665,6 +1709,7 @@ class JobState:
     steps_ctx: dict[str, Any]
     failed: bool
     ran_after_failure: bool
+    image_path: str = ""
 
 
 def main() -> int:

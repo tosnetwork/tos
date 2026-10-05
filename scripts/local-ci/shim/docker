@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Stand-in for `docker` inside a replayed hosted-runner job.
+#
+# A job that pulls the repository builder image and runs a command in it is
+# replayed by running that command in the job container itself, which is
+# built from the same Dockerfile.builder target. Registry login, pull and
+# logout of the builder image succeed without network access to the
+# registry. Anything else is refused loudly, so a step that needs real
+# Docker fails instead of passing on a stand-in.
+set -euo pipefail
+
+say() { printf 'local-ci docker shim: %s\n' "$*" >&2; }
+is_builder() { [[ "$1" == *"-builder:"* || "$1" == *"/tos-builder:"* ]]; }
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  login)
+    cat >/dev/null || true
+    say "registry login not performed (the builder image is local)"
+    ;;
+  logout)
+    ;;
+  pull)
+    image="${*: -1}"
+    if is_builder "$image"; then
+      say "pull of $image replaced by the local builder image this job runs in"
+    else
+      say "refusing: pull of $image is not replayed"
+      exit 1
+    fi
+    ;;
+  run)
+    envs=()
+    workdir=""
+    declare -a mounts=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --rm|-i|-t|-it|--init) shift ;;
+        --user|-u) shift 2 ;;
+        -e|--env) envs+=("$2"); shift 2 ;;
+        -v|--volume) mounts+=("$2"); shift 2 ;;
+        -w|--workdir) workdir="$2"; shift 2 ;;
+        -*) say "refusing: unsupported docker run option $1"; exit 1 ;;
+        *) break ;;
+      esac
+    done
+    image="${1:-}"
+    shift || true
+    if ! is_builder "$image"; then
+      say "refusing: docker run of $image is not replayed"
+      exit 1
+    fi
+    for m in "${mounts[@]}"; do
+      src="${m%%:*}"
+      rest="${m#*:}"
+      dst="${rest%%:*}"
+      if [[ "$src" != "$dst" ]]; then
+        sudo rm -rf "$dst"
+        sudo ln -s "$src" "$dst"
+      fi
+      say "mount $src at $dst (symlink)"
+    done
+    say "running in this job container: $*"
+    (
+      for e in "${envs[@]}"; do export "${e?}"; done
+      [[ -n "$workdir" ]] && cd "$workdir"
+      exec "$@"
+    )
+    ;;
+  *)
+    say "refusing: docker $cmd is not replayed"
+    exit 1
+    ;;
+esac
