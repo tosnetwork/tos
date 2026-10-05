@@ -22,9 +22,11 @@ fn hex_cell(value: &str) -> anyhow::Result<chain_block::Cell> {
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = env::args().collect();
     anyhow::ensure!(
-        args.len() == 3 || args.len() == 4,
-        "usage: pq-tx-parity config.boc scenarios.tsv [min-global-version]"
+        (3..=5).contains(&args.len()),
+        "usage: pq-tx-parity config.boc scenarios.tsv [min-global-version] [--details]"
     );
+    let detailed = args.len() == 5;
+    anyhow::ensure!(!detailed || args[4] == "--details", "unknown output option");
     // The scenarios decide which version they need. The post-quantum ones need the
     // instruction to be activated; the ones that compare a version boundary need to run
     // below it, and asserting 16 there would refuse exactly the case under test.
@@ -63,7 +65,7 @@ fn main() -> anyhow::Result<()> {
         };
         let outcome = executor.execute_with_params(Some(message), &mut account, params);
         let (exit, action, messages, account_hash) = match outcome {
-            Ok(transaction) => summarize(&transaction, &account)?,
+            Ok(transaction) => summarize(&transaction, &account, detailed)?,
             // A rejected transaction is a result, not a driver failure.
             Err(error) => (describe(&error), 0, String::from("-"), String::from("-")),
         };
@@ -84,6 +86,7 @@ fn describe(error: &anyhow::Error) -> i32 {
 fn summarize(
     transaction: &Transaction,
     account: &Account,
+    detailed: bool,
 ) -> anyhow::Result<(i32, i32, String, String)> {
     let description = transaction.read_description()?;
     // A skipped compute phase must not read as a clean exit 0: that is the one
@@ -111,10 +114,24 @@ fn summarize(
         .get_data()
         .map(|cell| hex::encode(cell.repr_hash().as_slice()))
         .unwrap_or_else(|| String::from("-"));
+    let mut state = format!("{balance}\t{data}");
+    if detailed {
+        let compute = match description.compute_phase_ref() {
+            Some(chain_block::TrComputePhase::Vm(vm)) => {
+                format!("{}\t{}", vm.success, vm.gas_used.as_u64())
+            }
+            _ => String::from("-\t-"),
+        };
+        let action_success = description
+            .action_phase_ref()
+            .map(|phase| phase.success.to_string())
+            .unwrap_or_else(|| String::from("-"));
+        state.push_str(&format!("\t{compute}\t{}\t{action_success}", description.is_aborted()));
+    }
     Ok((
         exit,
         action,
         if digests.is_empty() { String::from("-") } else { digests.join(",") },
-        format!("{balance}\t{data}"),
+        state,
     ))
 }

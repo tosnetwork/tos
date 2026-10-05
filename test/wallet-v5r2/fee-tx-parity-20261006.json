@@ -1,0 +1,221 @@
+{
+  "base_commit": "b5da611b9b38e5d179a89884bdbb5bf0c6cb6275",
+  "scope": "Local macOS native Release versus Rust debug transaction execution with identical inputs; diagnostic credit 20000 only. Remote x86-64/AArch64 CI and default-credit admission remain unpassed.",
+  "routes": {
+    "auth": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": null,
+      "expected_transactions": 26,
+      "observed_transactions": 26,
+      "differences": [],
+      "success": true
+    },
+    "pop1": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": 1,
+      "expected_transactions": 24,
+      "observed_transactions": 24,
+      "differences": [],
+      "success": true
+    },
+    "pop2": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": 2,
+      "expected_transactions": 24,
+      "observed_transactions": 24,
+      "differences": [],
+      "success": true
+    }
+  },
+  "compared_fields": [
+    "refusal or compute exit",
+    "action result",
+    "ordered outgoing message hashes",
+    "balance",
+    "data hash",
+    "compute success",
+    "gas used",
+    "aborted",
+    "action success"
+  ],
+  "mutation": [
+    {
+      "native_refusal": "transaction-001\t2007\t0\t-\t-",
+      "mutated_rust_acceptance": "transaction-001\t0\t0\t2db4796ff5f39a5bcadde36a60ba9d3e46430b43ea119e6a61da7ff2e7028eb0\t999994814693000\t33b7af7362a5d1445be80997f6754c6893d85812f7b91677f777ee6d6aabab8e\ttrue\t14440\tfalse\ttrue"
+    }
+  ],
+  "restored_parity": true,
+  "legacy_output_compatibility": true,
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --example pq-tx-parity",
+    "python test/wallet-v5r2/fee_tx_parity.py --driver tosctl/src/target/debug/examples/pq-tx-parity --output OUT/auth",
+    "Same parity command with --pop-role 1 and --pop-role 2, using separate output directories.",
+    "python test/wallet-v5r2/fee_tx_mutation.py --artifacts OUT/auth --target tosctl/src/target"
+  ],
+  "retention": "Retain machine-local raw evidence through release review and at least 2027-01-06. Paths require access to this machine; hashes alone are not independent evidence. Public test-only LMS tree remains outside Git and CI upload.",
+  "sources": [
+    {
+      "path": "test/wallet-v5r2/fee_tx_parity.py",
+      "bytes": 5390,
+      "sha256": "452033964885e92af0e499fa5351ec527c7aa10fc79eadd928dd517defbc89a8"
+    },
+    {
+      "path": "test/wallet-v5r2/fee_tx_mutation.py",
+      "bytes": 2812,
+      "sha256": "0c10c3108f30b5d5db87c963899905041f31041dfff199a5b80b072b9c0d63b8"
+    },
+    {
+      "path": "tosctl/src/executor/examples/pq-tx-parity.rs",
+      "bytes": 5841,
+      "sha256": "5982dd522f84873c06fecebc46c9e4ef08635283d10fd763e62fe3948505b70c"
+    },
+    {
+      "path": ".github/workflows/rescue-context.yml",
+      "bytes": 5968,
+      "sha256": "0e9690a2fd20ea6b8df61712f31affe26f65c93823e0800ce03a7a5821a8700c"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-identity.fc",
+      "bytes": 2471,
+      "sha256": "b6eeb0d91a46522f892c3e66a4ce37ebe0b2b242d5560e0dbe73c59561f5cbeb"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-code.fc",
+      "bytes": 4499,
+      "sha256": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-state.fc",
+      "bytes": 3270,
+      "sha256": "71b1855f4ad9d836b9365b9618feeef53d9c1e6e30496b7d3211cd773d1eeb95"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-common.fc",
+      "bytes": 759,
+      "sha256": "042a1b054523a5838bc3cfff999dedfd4bcdf130eb92c18aed0d28b598c7ba14"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-auth.fc",
+      "bytes": 4861,
+      "sha256": "e8e0b134d2229e4b0c97725d53afa707bb71bec5941fa85531d274d8df2a2799"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-module.fc",
+      "bytes": 5018,
+      "sha256": "94a56c978d6d68d57462c0cb76c898464e285f0049b44a19363e993bbeda4738"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "bytes": 5759,
+      "sha256": "c7107c7b287940060bf2c9b315d09e1703eb1b806a921dc5f371191a9e0ec27d"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-identity.fc",
+      "bytes": 3056,
+      "sha256": "78889a4e42080b052a687198f4fbe54990be4e1c0694de66cabfc47eb6d796dc"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-pop.fc",
+      "bytes": 1965,
+      "sha256": "910f25e84aa4338829907d5bb57e58233d15b71c7f58b33883313770852cdd4d"
+    }
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/config.boc",
+      "bytes": 916,
+      "sha256": "844a190ea88e7fb1ca390ecfe3a69f9c942f21a194eb920835fe24569dca32c7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/scenarios.tsv",
+      "bytes": 582004,
+      "sha256": "2737d1e0ccd937a07a596f8d5f54fa960018799a841944533efe0c7d133fb7aa"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/native.tsv",
+      "bytes": 2338,
+      "sha256": "aca7396bd6335a74115b7d1704824c982d480e93144131dbcd1bdaacd470ba0b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/rust.tsv",
+      "bytes": 2338,
+      "sha256": "aca7396bd6335a74115b7d1704824c982d480e93144131dbcd1bdaacd470ba0b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/parity.json",
+      "bytes": 220,
+      "sha256": "ef73ac5b27ec6d0c4e03d9f31f8ca407fc6016ca7f6696a08819d3d90cfaea89"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop1/config.boc",
+      "bytes": 916,
+      "sha256": "844a190ea88e7fb1ca390ecfe3a69f9c942f21a194eb920835fe24569dca32c7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop1/scenarios.tsv",
+      "bytes": 309626,
+      "sha256": "0997fbf4683300a836027cd116fca8e5d08988267ffc9077d505462a863f9da3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop1/native.tsv",
+      "bytes": 1965,
+      "sha256": "ef024072b1ef5a248ee3ab6ad1f1e96f1a68e1f346449bdd262f5e42be1782e2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop1/rust.tsv",
+      "bytes": 1965,
+      "sha256": "ef024072b1ef5a248ee3ab6ad1f1e96f1a68e1f346449bdd262f5e42be1782e2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop1/parity.json",
+      "bytes": 217,
+      "sha256": "76de167470dcaba43d4c7d2e64594cb0f278034fb88066e5574c267c69219c62"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop2/config.boc",
+      "bytes": 916,
+      "sha256": "844a190ea88e7fb1ca390ecfe3a69f9c942f21a194eb920835fe24569dca32c7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop2/scenarios.tsv",
+      "bytes": 565480,
+      "sha256": "72274541e41308ae22bae1f67efbfdbd2fa05ba19c79e81e5f4983c42bf4e3f8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop2/native.tsv",
+      "bytes": 1967,
+      "sha256": "5b914f70b89821c57a1e80771424e04b1031244df8ec09d119086a44635af751"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop2/rust.tsv",
+      "bytes": 1967,
+      "sha256": "5b914f70b89821c57a1e80771424e04b1031244df8ec09d119086a44635af751"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/pop2/parity.json",
+      "bytes": 217,
+      "sha256": "98858d7e92a75f64129b354dff6d8f0a31fbe4f4109b2ea5f5b1e73b917bb5dd"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/mutation.json",
+      "bytes": 298,
+      "sha256": "2e73090b906d1c123d30bda0d1c251fd2433eef9f2095c5532b57c7e28934acc"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/mutated-rust.tsv",
+      "bytes": 2499,
+      "sha256": "5398ffa636b4d643c2eda6d3926505a8bae82764aee0192680f96fab1691d9cb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/restored-rust.tsv",
+      "bytes": 2338,
+      "sha256": "aca7396bd6335a74115b7d1704824c982d480e93144131dbcd1bdaacd470ba0b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-full-fee-parity/auth/legacy-output.tsv",
+      "bytes": 2100,
+      "sha256": "0af3c0f16569788f764f3f66af2da860b51efd0cd8d4bae092ac495b7885f0ed"
+    }
+  ]
+}
