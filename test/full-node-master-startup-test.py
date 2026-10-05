@@ -106,7 +106,9 @@ class Node:
     def create_config(self) -> dict:
         # With no config in the database the engine writes a fresh one, with a
         # full-node ADNL key in its keyring, and exits.
-        result = subprocess.run(self.command([]), capture_output=True, text=True, errors="replace", timeout=60)
+        result = subprocess.run(
+            self.command([]), capture_output=True, text=True, errors="replace", timeout=60
+        )
         if result.returncode != 0:
             fail(f"creating the local config exited {result.returncode}: {result.stderr[-2000:]}")
         return self.read_config()
@@ -122,7 +124,13 @@ class Node:
     def expect_refusal(self, extra: list[str], refusal: str, case: str) -> None:
         start = time.monotonic()
         try:
-            result = subprocess.run(self.command(extra), capture_output=True, text=True, errors="replace", timeout=REFUSAL_TIMEOUT_S)
+            result = subprocess.run(
+                self.command(extra),
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=REFUSAL_TIMEOUT_S,
+            )
         except subprocess.TimeoutExpired:
             fail(f"{case}: the engine did not refuse to start within {REFUSAL_TIMEOUT_S} s")
         elapsed = time.monotonic() - start
@@ -215,14 +223,24 @@ def main() -> None:
         try:
             start = time.monotonic()
             try:
-                result = subprocess.run(node.command([]), capture_output=True, text=True, errors="replace", timeout=REFUSAL_TIMEOUT_S)
+                result = subprocess.run(
+                    node.command([]),
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    timeout=REFUSAL_TIMEOUT_S,
+                )
             except subprocess.TimeoutExpired:
                 fail("slave_missing_key: the engine did not refuse to start")
             if result.returncode != 2:
-                fail(f"slave_missing_key: expected exit code 2, got {result.returncode}: {result.stderr[-2000:]}")
+                fail(
+                    f"slave_missing_key: expected exit code 2, got {result.returncode}: {result.stderr[-2000:]}"
+                )
             reason = (result.stdout + result.stderr).strip().splitlines()[-1:] or [""]
-            print(f"FULL_NODE_MASTER_STARTUP slave_missing_key=refused exit=2 "
-                  f"seconds={time.monotonic() - start:.1f} reason={reason[0][-200:]!r}")
+            print(
+                f"FULL_NODE_MASTER_STARTUP slave_missing_key=refused exit=2 "
+                f"seconds={time.monotonic() - start:.1f} reason={reason[0][-200:]!r}"
+            )
         finally:
             os.rename(hidden, key_file)
 

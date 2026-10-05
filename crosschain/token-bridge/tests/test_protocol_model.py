@@ -28,7 +28,11 @@ def vote_digest(contract: str, chain_id: int, kind: str, payload: bytes) -> byte
     # Python's SHA3 implementation is used only as a deterministic model. The
     # Solidity source uses keccak256 and is tested separately by Hardhat.
     return hashlib.sha3_256(
-        b"TOS_TOKEN_BRIDGE" + contract.encode() + chain_id.to_bytes(32, "big") + kind.encode() + payload
+        b"TOS_TOKEN_BRIDGE"
+        + contract.encode()
+        + chain_id.to_bytes(32, "big")
+        + kind.encode()
+        + payload
     ).digest()
 
 
@@ -59,7 +63,14 @@ class EvmBridgeModel:
         if 0 in self.oracles:
             raise ValueError("zero oracle")
 
-    def new_generation(self, generation: int, tos_bridge: str, tos_life: int, digest: bytes, signatures: tuple[int, ...]) -> None:
+    def new_generation(
+        self,
+        generation: int,
+        tos_bridge: str,
+        tos_life: int,
+        digest: bytes,
+        signatures: tuple[int, ...],
+    ) -> None:
         self.authorize(digest, signatures)
         if generation != self.generation + 1:
             raise ValueError("a generation follows the current one")
@@ -197,7 +208,9 @@ class ProtocolModelTests(unittest.TestCase):
         self.tos = TosBridgeModel(life=5)
 
     def activate(self, generation: int = 1) -> None:
-        self.evm.new_generation(generation, "tos-bridge", 5, f"gen{generation}".encode(), (11, 22, 33))
+        self.evm.new_generation(
+            generation, "tos-bridge", 5, f"gen{generation}".encode(), (11, 22, 33)
+        )
         self.tos.activate(generation, 5, self.evm.generations[generation][2])
         self.evm.allow_lock = True
 
@@ -343,8 +356,11 @@ class ProtocolModelTests(unittest.TestCase):
         self.evm.new_generation(2, "tos-bridge-2", 9, b"gen2", (11, 22, 33))
         recreated = TosBridgeModel(life=9)
         recreated.activate(2, 9, self.evm.generations[2][2])
-        for attempt in (lambda: recreated.pay_swap(1, old, 17), lambda: recreated.pay_swap(2, old, 17),
-                        lambda: recreated.cancel_lock(2, old)):
+        for attempt in (
+            lambda: recreated.pay_swap(1, old, 17),
+            lambda: recreated.pay_swap(2, old, 17),
+            lambda: recreated.cancel_lock(2, old),
+        ):
             with self.assertRaises((PermissionError, RuntimeError)):
                 attempt()
         self.assertEqual(recreated.cancel_logs, [])

@@ -202,7 +202,9 @@ def function_bodies(text: str) -> dict[str, str]:
     bodies: dict[str, str] = {}
     lines = text.splitlines()
     i = 0
-    header = re.compile(r"^(?:\(.*?\)|[A-Za-z_][\w,() ]*?)\s+([A-Za-z_][\w?']*)\s*\(.*\)\s*[\w ]*\{\s*$")
+    header = re.compile(
+        r"^(?:\(.*?\)|[A-Za-z_][\w,() ]*?)\s+([A-Za-z_][\w?']*)\s*\(.*\)\s*[\w ]*\{\s*$"
+    )
     while i < len(lines):
         m = header.match(lines[i])
         if not m:
@@ -340,7 +342,9 @@ def main() -> int:
     print(
         "note: these are source-text and model checks; behavior is proven by the EVM and TVM suites"
     )
-    print("      (the token-bridge sandbox and scripts/test-token-bridge-tvm.sh execute the compiled contracts)")
+    print(
+        "      (the token-bridge sandbox and scripts/test-token-bridge-tvm.sh execute the compiled contracts)"
+    )
     return 0
 
 
