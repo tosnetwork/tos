@@ -19,7 +19,7 @@ use tos_vm::stack::{integer::IntegerData, Stack, StackItem};
 mod common;
 use common::*;
 
-const ACTIVE_VERSION: u32 = 17;
+const ACTIVE_VERSION: u32 = 16;
 /// The measured tariff, the cost of a 24-bit instruction, and the implicit
 /// return. Written as specification literals, not read from the
 /// implementation: a test that reads the constant it checks cannot catch that
@@ -195,8 +195,8 @@ fn both_instructions_cost_the_tariff() {
 
 // --- POSEIDON2_PATH7 --------------------------------------------------------
 
-/// The version PATH7 shipped in, which is one past the pair above.
-const PATH7_VERSION: u32 = 18;
+/// The unified development version shared by all Poseidon2 instructions.
+const PATH7_VERSION: u32 = 16;
 /// 500 base, 3,700 a level for twelve levels, and the twenty-four cells the
 /// path is made of at the VM's own first-load price, plus the instruction and
 /// the implicit return. Written as literals for the same reason as

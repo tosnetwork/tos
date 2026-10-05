@@ -27,13 +27,10 @@ use tos_vm::stack::integer::IntegerData;
 use chain_block::{BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, StateInit};
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
-/// The version POSEIDON2_PERM8 and POSEIDON2_HASH7 shipped in, which is not
-/// the version this suite runs at. They were the same number until
-/// POSEIDON2_PATH7 raised the ceiling to 18, and a test that wrote
-/// `ACTIVE_VERSION - 1` for "before this instruction existed" quietly started
-/// asking whether the instruction exists at 17, where it does.
-const POSEIDON2_MIN_VERSION: u32 = 17;
+const ACTIVE_VERSION: u32 = 16;
+/// The fixed activation boundary is independent of future test execution versions.
+/// All three Poseidon2 instructions share the unified development baseline.
+const POSEIDON2_MIN_VERSION: u32 = 16;
 
 /// Every structure the work order names, with the domain label it is built on.
 /// The wrapper in the contract binds the domain; the test binds nothing.

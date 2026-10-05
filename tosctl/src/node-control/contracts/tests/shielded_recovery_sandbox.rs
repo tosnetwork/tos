@@ -35,7 +35,7 @@ use tos_vm::stack::integer::IntegerData;
 mod shielded_pool_library;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 const MAGIC: u32 = 0x5350_5631;
 const VERSION: u16 = 1;
 const EPOCH_NONE: u32 = 0xffff_ffff;
@@ -233,7 +233,7 @@ struct Probe {
 impl Probe {
     fn deploy() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         bc.set_workchain(0);
         let addr = deploy_source(
             &mut bc,
@@ -738,14 +738,14 @@ fn a_bounced_payout_becomes_a_note_for_what_came_back() {
         probe.int_of("p_template_hash", vec![int(&owner), StackItem::cell(data.clone())]);
 
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     bc.set_workchain(0);
     // The record has to name the address the bounce will come from, which is
     // the refuser's, so it is deployed on a throwaway chain first just to
     // learn it. Code determines the address, so the one that matters later is
     // the same address.
     let mut scratch = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     scratch.set_workchain(0);
     let refuser = deploy_source(&mut scratch, "recovery_refuser", REFUSER, &[]);
     let recipient_hash = probe
@@ -801,10 +801,10 @@ fn a_bounce_from_the_wrong_address_recovers_nothing() {
         probe.int_of("p_template_hash", vec![int(&owner), StackItem::cell(data.clone())]);
 
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     bc.set_workchain(0);
     let mut scratch = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     scratch.set_workchain(0);
     let refuser = deploy_source(&mut scratch, "recovery_refuser", REFUSER, &[]);
     let recipient_hash = probe
@@ -831,7 +831,7 @@ fn a_bounce_from_the_wrong_address_recovers_nothing() {
 #[test]
 fn a_bounce_that_is_not_a_payout_is_reserve() {
     let bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     let mut pool = Pool::deploy(bc, 0);
     let before = pool.snapshot();
     let from = MsgAddressInt::with_params(0, SliceData::from_raw(vec![0x11u8; 32], 256)).unwrap();

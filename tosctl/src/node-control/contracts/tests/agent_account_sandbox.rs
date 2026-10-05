@@ -133,7 +133,7 @@ impl Fixture {
     ) -> Self {
         // Agent Account pins the minimum supported TVM global version: the
         // fee reserve relies on the version-6 GETFORWARDFEE / GETGASFEE
-        // primitives (the genesis configuration activates version 18).
+        // primitives (the genesis configuration activates version 16).
         let mut bc = Blockchain::with_global_version(6).expect("blockchain");
         bc.set_workchain(-1);
         let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");

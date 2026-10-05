@@ -30,7 +30,7 @@ use tos_vm::stack::StackItem;
 use tos_vm::stack::integer::IntegerData;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 const DEPTH: usize = 12;
 const ARITY: usize = 7;
 
@@ -204,7 +204,7 @@ struct Probe {
 impl Probe {
     fn deploy() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         let payer = bc.treasury("deployer", 1_000 * TOS).expect("treasury");
         // Derived from this crate's own location, never from TOS_ROOT: that
         // variable points at the checkout holding the compiler, which in a

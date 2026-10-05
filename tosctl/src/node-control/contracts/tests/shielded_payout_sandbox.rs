@@ -25,7 +25,7 @@ use tos_vm::stack::integer::IntegerData;
 mod shielded_pool_library;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 /// Section 3: the canonical outer payload is exactly this many bytes.
 const PAYLOAD_BYTES: usize = 1233;
 
@@ -168,7 +168,7 @@ struct Probe {
 impl Probe {
     fn deploy() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         bc.set_workchain(0);
         let payer = bc.treasury("deployer", 100_000 * TOS).expect("treasury");
         let library = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont/shielded");

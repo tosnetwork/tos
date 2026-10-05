@@ -21,6 +21,20 @@ jobs:
   # means the change under test introduced it.
   strict-build:
     runs-on: ubuntu-24.04
+    env:
+      # A compile cache carried between runs. ccache stores only successful compilations and
+      # keys them on the full command line, so -Werror and every warning flag stay in force: a
+      # cached object is one that compiled without warnings under the same flags and inputs.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      # Clang is installed afresh on every run; the default mtime check would treat it as a new
+      # compiler each time and never hit. Hash the compiler binary instead.
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 3G
+      # A fixed CPU level instead of the default -march=native. ccache keys on the flag's text,
+      # not on the CPU it resolves to, and hosted runners differ: objects cached on one runner
+      # died with an illegal instruction on another. Every hosted x86 runner supports v2.
+      BUILD_ARCH: x86-64-v2
 
     steps:
     - name: Check out repository
@@ -35,7 +49,7 @@ jobs:
     - name: Install system libraries
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev
+        sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache
 
     - name: Install Clang 21
       run: |
@@ -44,7 +58,14 @@ jobs:
         chmod +x llvm.sh
         sudo ./llvm.sh 21 all
 
-    # TODO: Preserve ccache cache between runs once we get rid of warning suppression mappings.
+    # Pull requests read the newest cache saved on main (or their own earlier runs); main
+    # saves after every push, so the next pull request starts from it.
+    - name: Restore compile cache
+      uses: actions/cache/restore@v4
+      with:
+        path: .ccache
+        key: strict-build-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
+        restore-keys: strict-build-ccache-${{ env.BUILD_ARCH }}-
 
     # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install repository-pinned Rust toolchain
@@ -58,8 +79,26 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DTOS_USE_JEMALLOC=ON \
           -DTOS_USE_LLD=On \
-          -DTOS_WERROR_BUILD=On
+          -DTOS_WERROR_BUILD=On \
+          -DTOS_ARCH="$BUILD_ARCH" \
+          -DPORTABLE="$BUILD_ARCH" \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        ccache --zero-stats
         ninja -C build
+
+    # The hit rate is the evidence that the cache works; a run that hits nothing is a cold
+    # build, not a broken one.
+    - name: Compile cache statistics
+      if: always()
+      run: ccache --show-stats
+
+    - name: Save compile cache
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: .ccache
+        key: strict-build-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
 
   # Formatting and whitespace, judged on the lines this change actually touches.
   #

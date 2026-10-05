@@ -9,7 +9,7 @@ readiness suite compares both executors and compiled language bindings.
 
 `PQCHECKSIG_MLDSA44` is codepage-0 instruction **F93100 (24 bits)**, registered
 with `require_version(16)`. Versions 0 through 15 reject it as invalid opcode
-(6). `SUPPORTED_VERSION` is **19** in this source tree. ML-DSA retains its version-16
+(6). `SUPPORTED_VERSION` is **16** in this source tree. ML-DSA retains its version-16
 activation gate and wire format; see [Global Versions](GlobalVersions.md).
 
 That constant is not an execution gate, and must not be read as one. A node

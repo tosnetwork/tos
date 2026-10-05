@@ -146,7 +146,7 @@ extern "C" {
 }
 
 pub(super) fn execute_pq_falcon512(engine: &mut Engine) -> Status {
-    if engine.block_version() < 19 {
+    if engine.block_version() < 16 {
         if engine.block_version() >= 4 {
             engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
         } else {
