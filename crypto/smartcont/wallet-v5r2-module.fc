@@ -1,10 +1,11 @@
 ;; Dual-root module candidate for the complete R2 wallet. Immutable data and
-;; compiled vault dependency. Fee preparation and POP are separate entry points
-;; still to be integrated; this file implements signed wallet submissions only.
+;; compiled vault dependency. Wallet submissions and per-key POP are distinct
+;; domains. Bounded fee preparation remains a separate integration requirement.
 cell r2module_vault_code();
 #include "pq.fc";
 #include "wallet-v5r2-auth.fc";
 #include "wallet-v5r2-fee-identity.fc";
+#include "wallet-v5r2-pop.fc";
 cell r2module_code() asm "MYCODE";
 
 () r2module_pair(cell module, cell metadata, cell vault, slice account, int network) impure inline_ref {
@@ -24,7 +25,8 @@ cell r2module_code() asm "MYCODE";
   if (body.slice_empty?()) { return (); }
   r2pair_basechain(funded_by);
   ;; SUB3 is PQ-only; earlier submission/cosignature envelopes are refused.
-  throw_unless(1902, body~load_uint(32) == 0x53554233);
+  int opcode = body~load_uint(32);
+  throw_unless(1902, (opcode == 0x53554233) | (opcode == 0x50505333));
   cell request = body~load_ref();
   cell signature = body~load_ref();
   body.end_parse();
@@ -39,6 +41,10 @@ cell r2module_code() asm "MYCODE";
   ds.end_parse();
   throw_unless(1902, (policy == 1) | (policy == 2));
   pq::check_chain_bytes(primary_key, 1312);
+  if (opcode == 0x50505333) {
+    r2pop_verify(request, signature, network, root, primary_key, rescue_key, policy);
+    return (); ;; funded proof only; never emits AUTH or changes installed keys
+  }
   slice rs = r2id_ordinary(request);
   throw_unless(1902, rs~load_uint(32) == r2::request);
   throw_unless(auth::wrong_network, rs~load_int(32) == auth_global_id());

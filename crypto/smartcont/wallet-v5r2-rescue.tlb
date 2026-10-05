@@ -138,6 +138,20 @@ pop_challenge_v1#504f5031 global_id:int32 network_tag:bits256
   = PopChallenge;                                               // "POP1"
 pop_submit_v1#504f5053 challenge:^PopChallenge signature:^Cell = InternalMsgBody; // "POPS"
 
+// Complete PQ-only module: independently signed proofs for both roles. This
+// framing splits parties and keys into cells so every cell fits the 1023-bit cap.
+// Digest = cell_hash(uint64("TOS-POP1") ++ ^PopChallengeV3); Pure context for both
+// suites is "TOS-RESCUE-POP-v1". Role selects exactly ML-DSA-44 or SLH-DSA-SHA2-128s.
+pop_parties_v3$_ account:MsgAddressInt module:bits256 = PopPartiesV3;
+pop_keys_v3$_ daily:DailySuite primary_key_hash:bits256 rescue_key:bits256
+  policy:RescuePolicy = PopKeysV3;
+pop_challenge_v3#504f5033 global_id:int32 network_tag:bits256 role:AuthRole
+  challenge:bits256 valid_until:uint32 parties:^PopPartiesV3 keys:^PopKeysV3
+  = PopChallengeV3;
+pop_submit_v3#50505333 challenge:^PopChallengeV3 signature:^Cell = InternalMsgBody;
+// POP creates no authorization, state change or outgoing messages. Clients require
+// a fresh CSPRNG challenge and authenticated successful execution for each key.
+
 // ---- Successor fee preparation (SLH-authorized at the current module; spends only its own
 // incoming amount; no wallet AUTH meaning)
 prepare_targets_v1$_ module_init_hash:bits256 vault_init_hash:bits256 fee_tree_id:bits256

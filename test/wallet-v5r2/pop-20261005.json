@@ -1,0 +1,237 @@
+{
+  "base_commit": "489cb6085144f67344af00c722cfc4bb0ec784e0",
+  "scope": "Funded internal per-key POP and real PQ delivery; fee-vault stub remains. No client readiness or release claim.",
+  "cases": {
+    "pop": 19,
+    "delivery_regression": 9,
+    "native_configuration": 18
+  },
+  "mutations": {
+    "1": "expected exit 1808, got 0",
+    "2": "expected exit 1808, got 0"
+  },
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-pop.fc",
+      "sha256": "910f25e84aa4338829907d5bb57e58233d15b71c7f58b33883313770852cdd4d",
+      "bytes": 1965
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-module.fc",
+      "sha256": "94a56c978d6d68d57462c0cb76c898464e285f0049b44a19363e993bbeda4738",
+      "bytes": 5018
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-common.fc",
+      "sha256": "042a1b054523a5838bc3cfff999dedfd4bcdf130eb92c18aed0d28b598c7ba14",
+      "bytes": 759
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-auth.fc",
+      "sha256": "e8e0b134d2229e4b0c97725d53afa707bb71bec5941fa85531d274d8df2a2799",
+      "bytes": 4861
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-identity.fc",
+      "sha256": "9338d13e56394e1f5636d7a6a08239f090eb61c8f024c1bd2da4db9ab454ebd4",
+      "bytes": 2320
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-state.fc",
+      "sha256": "71b1855f4ad9d836b9365b9618feeef53d9c1e6e30496b7d3211cd773d1eeb95",
+      "bytes": 3270
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-identity.fc",
+      "sha256": "b6eeb0d91a46522f892c3e66a4ce37ebe0b2b242d5560e0dbe73c59561f5cbeb",
+      "bytes": 2471
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-rescue.tlb",
+      "sha256": "414f5940a2f3082a7c5e005af4d89e5208f831e8cd4504f288d9f7c9f5ce3c1a",
+      "bytes": 10819
+    },
+    {
+      "path": "test/wallet-v5r2/test_pop.py",
+      "sha256": "1be43ed59f394f7d519236023eac518a54a8040a16d76c82702b0a3015b60356",
+      "bytes": 7770
+    },
+    {
+      "path": "test/wallet-v5r2/test_module_delivery.py",
+      "sha256": "b7bc31249ab57a36dc7f1a9156516ffea15f40b1529ab051cfd825c2db9936a3",
+      "bytes": 12517
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/ci/v5r2-config-check.log",
+      "sha256": "63e311e2080aaaf11372774f0ccfd595456074ad366ed11de2086524897c1986",
+      "bytes": 9467
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/ci/v5r2-format-build.log",
+      "sha256": "fa4a019a64405e0386b9a56523326129b2e2d0fe4017fae98220edb1b11cfb3c",
+      "bytes": 7769
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/ci/v5r2-hygiene.log",
+      "sha256": "5bebc69a59ea48bb236cb49cb113caae3cc73d74a13aa15be2324b1bcf20a36f",
+      "bytes": 73851
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/ci/v5r2-readiness-arm.log",
+      "sha256": "b48aababd3af45f757b3fa5d37a7afedba4c05edea470addea2f71e6214ce6ee",
+      "bytes": 1158523
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/module.boc",
+      "sha256": "f6e72e56dab549ac4efebab2132ea59ac58fcd8fc92a27866ec187e504b03c3f",
+      "bytes": 1876
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/module.fif",
+      "sha256": "96fb86f34a12d362ff281d46dc583e2beeaa1c160edf12c4ca72e4735386ead7",
+      "bytes": 71377
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/module.run.fif",
+      "sha256": "dee505bc43a1412b68e48950cc61815d12c184f7ab876a96302a294842257fa6",
+      "bytes": 226
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/restored-module.boc",
+      "sha256": "f6e72e56dab549ac4efebab2132ea59ac58fcd8fc92a27866ec187e504b03c3f",
+      "bytes": 1876
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/restored-module.fif",
+      "sha256": "96fb86f34a12d362ff281d46dc583e2beeaa1c160edf12c4ca72e4735386ead7",
+      "bytes": 71377
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/restored-module.run.fif",
+      "sha256": "a8d6f05ea21b306a712296db3e7f059a34857febb9b5a827f553e0948f03d79e",
+      "bytes": 244
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/results.json",
+      "sha256": "bd1ba9b828380ec90611fe714533e9c8cbe00d796582c8a3df4895a67d9feda2",
+      "bytes": 3301
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/signature-mutant.boc",
+      "sha256": "280728ff78a023cedc7d512db24abd395f57b5a39f2fb86612fec27fb3915326",
+      "bytes": 1840
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/signature-mutant.fif",
+      "sha256": "641865ea94fbc82d6b90dbc6c85a850787eb95cfec634d0db58d373fb41ed02f",
+      "bytes": 69822
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/signature-mutant.run.fif",
+      "sha256": "1619ac283fb4924fbc67580f7df7de7f47fb952c8e23696e1d408a67cb0d5f53",
+      "bytes": 246
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/vault-fixture.boc",
+      "sha256": "2fef287e5204456de19c00e3b947491ca5210e79fcd7e16752003f1c51f02e9c",
+      "bytes": 32
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/vault-fixture.fif",
+      "sha256": "f7d25a45920751ef247f31000a41783950115fef0a7a414fc5b63b16c0a169c7",
+      "bytes": 279
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/vault-fixture.run.fif",
+      "sha256": "03512c6e077a758a0b4932e1c2ca4647c74fc7d7cff2c8d66712b6aeb31fbeab",
+      "bytes": 240
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/wallet.boc",
+      "sha256": "c840bcf519dfd75683fe439ce6204d01358dcda53a1967ef681989babf9ad380",
+      "bytes": 2323
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/wallet.fif",
+      "sha256": "268a0ba3dab61a911ef3e00590674f8fc6f62f6361efc02f2e67c72eac2af058",
+      "bytes": 60863
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/delivery-regression/wallet.run.fif",
+      "sha256": "9a5c511f24a5c9899587b8e7a9e921a8cbc42f783e10ec2c7f5a90eed3d693db",
+      "bytes": 226
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/module.boc",
+      "sha256": "a8d8ed37246f6d285cd1e4eb08171783fe393fac6990eb9a9bea48a3ee867657",
+      "bytes": 1856
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/module.fif",
+      "sha256": "ea65188e6c6312cf068f0e875e8ec97ea46a170f467ed984bef725ba430b47f3",
+      "bytes": 71324
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/module.run.fif",
+      "sha256": "057bab03885d18c577c9072ea0376ee6eb9ac5a8a833294ede2e59330c1f6536",
+      "bytes": 186
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/mutant-1.boc",
+      "sha256": "d86cd930d12063998cbd154875b498c96fa732e5245ae17343fae6eff40d4f99",
+      "bytes": 1846
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/mutant-1.fif",
+      "sha256": "8579e3df10e9d8e9e92587f097789c1f9e4f07be088816569eb47ba709065f27",
+      "bytes": 70691
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/mutant-1.run.fif",
+      "sha256": "957776f3abd2976389a374c854534bc5d34f19491f208a4d0bddf13d7e6c95ab",
+      "bytes": 190
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/mutant-2.boc",
+      "sha256": "1f2f8aa9b693857e5e5da8c5e15927131bf7a4d10d75ad4dc6dd26e35ff16943",
+      "bytes": 1842
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/mutant-2.fif",
+      "sha256": "dfb87b4be017067c01b3c154288def25c0f19c62db61ad8cd99d4f72e079b10d",
+      "bytes": 70728
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/mutant-2.run.fif",
+      "sha256": "78fcdaf0db7b93629c7d4183e9c1c1b0dc40b36c227ea01ccf47129e4b1ae781",
+      "bytes": 190
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/restored.boc",
+      "sha256": "a8d8ed37246f6d285cd1e4eb08171783fe393fac6990eb9a9bea48a3ee867657",
+      "bytes": 1856
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/restored.fif",
+      "sha256": "ea65188e6c6312cf068f0e875e8ec97ea46a170f467ed984bef725ba430b47f3",
+      "bytes": 71324
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/restored.run.fif",
+      "sha256": "84e7657da4d66cc6d1813a4a89205e642a3f11ea2531721a6142846bc2bedf6f",
+      "bytes": 190
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-r2-pop/results.json",
+      "sha256": "cccf10258145f4a1a777a5e58053d09d723d953c6928a2899fe0b25d341c4f58",
+      "bytes": 3657
+    }
+  ],
+  "ci_findings": {
+    "hygiene": "Formatting diff applied from job 111819378020; rerun pending",
+    "readiness_arm": "OpenSSL lookup failed at configure in job 111819384363; explicit system crypto paths added, Linux validation pending"
+  },
+  "retention": "Retain local raw artifacts through PR review and release acceptance; CI retains artifacts 14 days."
+}

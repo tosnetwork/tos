@@ -1,0 +1,39 @@
+;; Per-key possession proof. No AUTH, transfer, configuration or state mutation.
+;; Freshness is a client-generated challenge checked against an authenticated
+;; transaction; a repeated proof has no authority and is not an enrollment token.
+#include "pq.fc";
+#include "wallet-v5r2-fee-identity.fc";
+
+() r2pop_verify(cell challenge, cell signature, int network, int root,
+    cell primary_key, int rescue_key, int policy) impure inline_ref {
+  slice s = r2id_ordinary(challenge);
+  throw_unless(1903, s~load_uint(32) == 0x504f5033);
+  throw_unless(auth::wrong_network, s~load_int(32) == auth_global_id());
+  throw_unless(auth::wrong_network, s~load_uint(256) == network);
+  int role = s~load_uint(8);
+  throw_unless(1903, s~load_uint(256) != 0);
+  int deadline = s~load_uint(32);
+  throw_unless(auth::expired, (deadline > now()) & (deadline <= now() + 3600));
+  slice parties = r2id_ordinary(s~load_ref());
+  slice keys = r2id_ordinary(s~load_ref());
+  s.end_parse();
+  throw_if(auth::wrong_account, r2pair_basechain(parties~load_msg_addr()) == root);
+  throw_unless(auth::not_module, parties~load_uint(256) == root);
+  parties.end_parse();
+  throw_unless(1903, keys~load_uint(8) == 1);
+  throw_unless(1903, keys~load_uint(256) == cell_hash(primary_key));
+  throw_unless(1903, keys~load_uint(256) == rescue_key);
+  throw_unless(1903, keys~load_uint(8) == policy);
+  keys.end_parse();
+  cell digest = begin_cell().store_uint(cell_hash(begin_cell().store_uint(0x544f532d504f5031, 64)
+      .store_ref(challenge).end_cell()), 256).end_cell();
+  cell context = begin_cell().store_uint(0x544f532d5245534355452d504f502d7631, 136).end_cell();
+
+  if (role == 1) {
+    throw_unless(auth::bad_signature, pq_check_suite(digest, context, signature, primary_key, 1));
+  } else {
+    throw_unless(1901, role == 2);
+    cell key = begin_cell().store_uint(rescue_key, 256).end_cell();
+    throw_unless(auth::bad_signature, pq_check_suite(digest, context, signature, key, 3));
+  }
+}

@@ -30,6 +30,7 @@ def main():
         work = Path(tmp)
         for name in [
             "wallet-v5r2-module.fc",
+            "wallet-v5r2-pop.fc",
             "wallet-v5r2-code.fc",
             "wallet-v5r2-auth.fc",
             "wallet-v5r2-fee-identity.fc",

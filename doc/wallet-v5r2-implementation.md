@@ -247,5 +247,33 @@ before relaying only incoming funds. Real native transactions exercise primary,
 rescue, lock and migration through the actual outgoing module message into the
 complete wallet, plus invalid primary signature and retired-primary refusal. A
 signature-check deletion control must turn rejection into an authorization relay.
-This still uses a fee-vault stub: fee origination, POP, preparation, actual recipient
+This still uses a fee-vault stub: fee origination, POP client readiness, preparation, actual recipient
 execution, both-VM delivery and production acceptance remain outstanding.
+
+## Per-key non-authorizing possession proofs
+
+The complete module accepts PPS3 separately from SUB3. `wallet-v5r2-pop.fc`
+verifies a canonical POP3 challenge binding the global id, network, basechain
+account, prepared module address, daily suite, both public keys, immutable policy,
+role, nonzero 256-bit challenge and at most one-hour expiry. Parties and keys are
+separate cells to remain within the 1023-bit limit. The signed digest commits to
+`TOS-POP1` plus the challenge cell, using the independent `TOS-RESCUE-POP-v1`
+context. PRIMARY and RESCUE each require their own signature with the corresponding
+key; an SLH proof does not establish possession of the primary secret.
+
+Success leaves module data unchanged and emits no actions or authorization relay.
+Repeated proofs are non-authorizing, not persistent enrollment or readiness tokens.
+A client must generate a fresh CSPRNG challenge per attempt and verify the exact
+proof in authenticated canonical execution. A verifier cannot infer custody,
+backup quality or future fee availability from this result.
+
+The native runner exercises both genuine signature schemes, wrong-domain and
+changed-challenge rejection, identity/profile/expiry boundaries, unchanged state,
+no outgoing messages and separate guard-deletion controls for both verifiers.
+These 19 cases use funded internal messages and a compiled vault stub. Independent
+SLH implementation checks for user-key POP, real fee-vault origination, client
+readiness enforcement and both-VM acceptance remain open.
+
+```sh
+python test/wallet-v5r2/test_pop.py --output /path/to/r2-pop
+```

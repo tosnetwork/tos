@@ -69,6 +69,7 @@ jobs:
         run: |
           python -m pip install cryptography==46.0.4
           python test/wallet-v5r2/test_module_delivery.py --output artifacts/context/r2-module
+          python test/wallet-v5r2/test_pop.py --output artifacts/context/r2-pop
       - name: Verify context, opcode, complete transactions and legacy pricing
         run: |
           build/crypto/tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb
