@@ -759,3 +759,37 @@ but total vault execution gas increased. This variant is not adopted: it moves
 62–72 gas across the payment boundary without resolving any default-credit
 failure. The official contract remains unchanged. Exact totals, source hashes
 and reproduction are in `test/wallet-v5r2/admission-late-send-20261006.json`.
+
+### PQ-only AUTH SDK encoding
+
+`contracts::wallet_v5r2` provides typed AUTH construction for execution,
+configuration (mode 2 only, with optional fee replacement), primary-key lock,
+and migration. The primary role is ML-DSA-44 and permits execution only; the
+rescue role uses the separate SLH context. There is no Ed25519, classic
+cosignature, hybrid-mode or manage-action constructor. Basechain standard
+addresses are encoded directly. The encoder rejects equal wallet/module hashes,
+expired or over-one-hour deadlines, and signature lengths outside the exact
+role profile. Request bytes, role context and domain-separated digest are held
+in one immutable object. SUB3 signature chains use canonical 127-byte chunks.
+
+This is a wire encoder, not an authority or cryptographic verifier. Supplied
+chain time, counters, code identity, StateInit witnesses and action lists still
+require client proof/policy verification and on-chain validation; signature
+framing acceptance alone never establishes authenticity. No backend or key
+custody is provided by this module.
+
+Six independent Python wire vectors cover both roles and all four action kinds,
+including fee replacement. Byte-filled signatures in those vectors test framing
+only. In the real public-key fixture suite, `sdk_auth_parity.py` compares Rust
+SDK bytes/digests/contexts with Python, then actually signs and submits the Rust
+requests for lock, migration and recipient payment through the persistent fee
+sessions. All 62 native/Rust transaction outcomes match at diagnostic credit
+20,000. Five semantic controls remove distinct-party, primary-role, TTL, signature-width
+or signing-domain safeguards and require the relevant SDK tests to fail before
+restoring source and rerunning them. CI runs wire and transaction checks on both
+architectures and deletion controls on x86-64. Evidence:
+`test/wallet-v5r2/auth-sdk-20261006.json`.
+
+POP, preparation, fee-intent and genesis SDK codecs, trusted chain-view binding,
+real custody and user-facing create/restore flows remain to be integrated.
+Default-credit admission remains a separate failed release gate.

@@ -1,0 +1,88 @@
+{
+  "base_commit": "3405cea62bdb93b53d9d8390581ce4a856c2a265",
+  "scope": "Typed PQ-only AUTH encoder; six independent Python wire vectors; actual Rust request cells signed and submitted in public fixture lock/migrate/payment. Not proof verification, custody, policy approval or production readiness.",
+  "source_sha256": {
+    ".github/workflows/rescue-context.yml": "d6ee8ebb168f0a9ca63412720d676d705f1137cfcb998de7522be2d376106d88",
+    "tosctl/src/node-control/contracts/src/lib.rs": "7d6e2b1cb16a0f1e72f0b899ddc6e494697e59889dd259e64673b21791692eca",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2.rs": "01539a1bdd258c7e258b450d8ae5bff2eed072291d1b153a3ceabf1001cdff18",
+    "tosctl/src/node-control/contracts/examples/v5r2_auth_encode.rs": "c4c7caff433475bafa24814ec6d4cdce4fc2e23edba73f02ca62eca8954d81be",
+    "tosctl/src/node-control/contracts/tests/fixtures/v5r2/auth-wire.json": "2e5da727d762e642eac704b54602bf915ba7f45fdb8517e620244c18adb1f606",
+    "test/wallet-v5r2/sdk_auth_vectors.py": "5cd68e79bb97ae132c6100d1df3c9188fbce607182311a026ed953d073d44476",
+    "test/wallet-v5r2/sdk_auth_parity.py": "125e2eab5bd9240a698451e703836bd15cc59e2a0e8e905f18ccfb4918f208b5",
+    "test/wallet-v5r2/sdk_auth_controls.py": "5cb7a83c87f74383110fa1afac87d2d98be396e562a40b4bf8ad64b864d83dbf",
+    "test/wallet-v5r2/funded_recovery.py": "8d94b9c3f42e94be0ebc2c41a892454e7641e80b42a58b5dfd2eac1917ef172b",
+    "test/wallet-v5r2/fee_tx_parity.py": "5f5f32b186b89004367f5d3044c79d4254981be729baa7dc09c98a88ef7037c5",
+    "test/wallet-v5r2/test_fee_delivery.py": "be03d22b868a1d88e976ea2a786fb64348b5515e7ebfcacd3d459b65374748d5"
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --locked -p contracts",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2::tests",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example v5r2_auth_encode",
+    "python test/wallet-v5r2/sdk_auth_vectors.py --output /tmp/v5r2-auth-vectors.json",
+    "cmp /tmp/v5r2-auth-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/auth-wire.json",
+    "python test/wallet-v5r2/sdk_auth_parity.py --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-auth-sdk",
+    "python test/wallet-v5r2/sdk_auth_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-auth-sdk/controls-final"
+  ],
+  "all_commands_exit": 0,
+  "unit_tests": 4,
+  "independent_vectors": 6,
+  "sdk_request_kinds": [
+    0,
+    3,
+    4,
+    0
+  ],
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 62,
+    "observed_transactions": 62,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 5,
+    "final_chain_time": 1780007190,
+    "transactions": 20,
+    "recipient_received": true,
+    "primary_signing_used": false,
+    "production_admission_passed": false
+  },
+  "semantic_controls": {
+    "parties": {
+      "exit": 101,
+      "semantic_witness": "wallet_cannot_be_its_own_module"
+    },
+    "primary_authority": {
+      "exit": 101,
+      "semantic_witness": "primary_cannot_change_authority"
+    },
+    "ttl": {
+      "exit": 101,
+      "semantic_witness": "deadline_and_signature_framing_are_strict"
+    },
+    "signature_width": {
+      "exit": 101,
+      "semantic_witness": "deadline_and_signature_framing_are_strict"
+    },
+    "domain": {
+      "exit": 101,
+      "semantic_witness": "independent_python_wire_vectors"
+    }
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-auth-sdk",
+    "retain_until": "2027-01-06",
+    "manifest": {
+      "sha256": "a0f4dbe41ce86796233a5f2bb86d758676a0fe2ca63a290ce3dd7b8edab4e704",
+      "bytes": 22360
+    },
+    "files": 155,
+    "total_bytes": 139950770
+  },
+  "remaining": "Default admission 10000 fails; POP/preparation/fee/genesis SDK encoding, production custody, trusted chain view, device recovery, worst-case resource/hardware pricing, independent review and final-head CI remain open."
+}

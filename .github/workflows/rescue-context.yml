@@ -66,18 +66,27 @@ jobs:
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
             --example fee-native-cost --example suite-parity --example pq-tx-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
-            --example lms_fee_cache_fixture
+            --example lms_fee_cache_fixture --example v5r2_auth_encode
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_
+      - name: PQ-only AUTH SDK wire vectors
+        run: |
+          python -m pip install cryptography==46.0.4
+          python test/wallet-v5r2/sdk_auth_vectors.py --output /tmp/v5r2-auth-vectors.json
+          cmp /tmp/v5r2-auth-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/auth-wire.json
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2::tests
+      - name: AUTH SDK semantic deletion controls
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/wallet-v5r2/sdk_auth_controls.py --output artifacts/context/auth-sdk-controls
       - name: Durable fee reservation deletion controls
         if: matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-v5r2/fee_journal_controls.py --output artifacts/context/fee-journal
       - name: PQ-only complete receiver delivery
         run: |
-          python -m pip install cryptography==46.0.4
           python test/wallet-v5r2/test_module_delivery.py --output artifacts/context/r2-module
           python test/wallet-v5r2/test_pop.py --output artifacts/context/r2-pop
           python test/wallet-v5r2/test_preparation.py --output artifacts/context/r2-preparation \
@@ -100,7 +109,8 @@ jobs:
           mkdir -p artifacts/context/r2-fee-prepare/native
           ln artifacts/context/r2-fee-auth/native/PUBLIC-TEST-ONLY-lms-tree \
             artifacts/context/r2-fee-prepare/native/PUBLIC-TEST-ONLY-lms-tree
-          python test/wallet-v5r2/fee_tx_parity.py --prepare --recovery \
+          python test/wallet-v5r2/sdk_auth_parity.py \
+            --auth-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_auth_encode" \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-fee-prepare
