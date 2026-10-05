@@ -7,33 +7,42 @@ deploys and under what restriction.
 
 | Version | Source | Status | Deployable by repository tooling |
 |---|---|---|---|
-| v1 | removed | **Retired** | Never |
+| v1 | none | **Removed** | Never |
 | v2 | `tos-service-stablecoin-escrow-v2.fc` | **Experimental; accepted risk** | Non-production only, with `--non-production-test-deployment` |
 
-The policy is enforced in `scripts/tos_service_escrow_deploy_policy.py`, which
+The deployment policy is `scripts/tos_service_escrow_deploy_policy.py`, which
 `scripts/tos-service-stablecoin-escrow-deploy.py` applies to the code hash of
-the StateInit before it reads any network configuration or key.
-`scripts/check-retired-escrow-v1.py` (tested by
-`scripts/test_check_retired_escrow_v1.py`) fails if the policy, or any
-tooling, build or contract file, would let v1 be deployed again.
+the StateInit before it reads any network configuration or key. The policy
+deploys only code listed in a supported release manifest; any other code is
+refused as unknown. `scripts/test_tos_service_escrow_deploy_policy.py` tests
+the policy and that the deploy script applies it first.
 
-## Escrow v1: retired
+## Escrow v1: removed
 
 Escrow v1 derived the address of its own jetton wallet from one fixed wallet
 StateInit layout. Funding through a jetton whose wallet lays out its data
 differently was credited to a wallet v1 never addresses; v1 then refused the
 transfer notification, and the funding was orphaned.
 
-The vulnerable deployment path was retired rather than repaired: the v1
-source, frozen BOC, release manifest, build/embed/test scripts, CMake wiring,
-the local paid rehearsal that deployed it (with its `--allow-deprecated-escrow-v1`
-opt-in) and the evidence collector that read v1 state were removed. They remain
-in Git history. The deployment policy refuses the v1 code hash by name, also
-for non-production deployments.
+Escrow v1 was a development-only contract and has been removed from the
+repository, not kept in a retired state: there is no v1 source, frozen
+artifact, release manifest, schema, build, embedding, test, rehearsal or
+deployment path, and no compatibility layer for v1 data. Its code exists only
+in Git history.
 
-This does not repair any v1 contract that was already deployed: deployed
-contracts are immutable. Funds orphaned by such a contract are not recovered
-by this change.
+`scripts/check-no-legacy-escrow.py` (tested by
+`scripts/test_check_no_legacy_escrow.py`, and run in CI and as the CTest
+`source-guard` tests `no-legacy-escrow-source` and
+`no-legacy-escrow-self-test`) fails if any part of v1 reappears anywhere in
+the tree: either of its two code hashes, any v1 bytecode artifact ever
+committed (recognised by content, and by the hash of every cell of every BOC
+in the tree, so a re-serialized or StateInit-wrapped copy is caught too), or
+any v1 source, build, rehearsal or deployment path.
+
+Removing the code does not change a contract that was already deployed:
+deployed contracts are immutable, and a third party can still deploy v1
+bytecode taken from Git history. What this repository guarantees is that its
+own tooling cannot build or deploy v1.
 
 ## Escrow v2: refused payouts can strand funds (accepted risk)
 
