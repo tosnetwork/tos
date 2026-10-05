@@ -1,7 +1,8 @@
-# Token bridge settlement protocol (design, for review)
+# Token bridge settlement protocol
 
-Status: **design only, version 5.** Nothing in this document is implemented.
-It specifies changes to `jetton-bridge.fc`, `jetton-minter.fc`,
+Status: **version 5, implemented** on `fix/bridge-settlement`. Section 19
+records where the implementation departs from the text, and the limits it
+measured. It specifies changes to `jetton-bridge.fc`, `jetton-minter.fc`,
 `jetton-wallet.fc`, `settlement.fc`, the deployment scripts, the EVM
 `Bridge.sol` lock path and the oracle vote format. Together they make every
 mint and burn a durable, authenticated, idempotent operation at every
@@ -21,6 +22,12 @@ commit. Section 18 lists the changes from versions 1 (`63afca486`), 2
   when both endpoints are recreated.
 - **EVM lock counter and oracle vote format change: approved**, subject to
   the namespace, gap and exhaustion rules of section 11.
+- **No backward compatibility.** TOS is in development: no test data is
+  inherited, and no migration, old-instance support or compatibility
+  handling is written for earlier bridge, minter or wallet code, old
+  opcodes, old storage layouts or old ConfigParam contents. Superseded
+  tools and getters are removed. Unknown opcodes, including the earlier
+  completion protocol's, are still refused before any effect.
 
 ## 1. Why the current protocol cannot close
 
@@ -1115,14 +1122,10 @@ allocation (section 3.1). `n` is checked by `lock`, and generations by
   - The `Lock` event and the vote format change.
   - The changes reach `test_protocol_model.py`, the Hardhat tests, and the
     Tron build and tests.
-- **Deployed instances (Q4).**
-  - None are recorded in memo or in the deployment tooling.
-  - Before merge, each operated network needs an inventory: the history of
-    ConfigParams 79 and 81 to 83 since genesis, plus a code-hash search for
-    every built bridge, minter and wallet.
-  - That inventory needs network access and has not been done.
-  - Any instance found would be retired under the incident procedure, not
-    migrated.
+- **Deployed instances (Q4).** None are recorded in memo or in the
+  deployment tooling, and by the owner's ruling none are supported: nothing
+  is migrated. The network inventory (R1) remains a release prerequisite so
+  that activation does not meet an unexpected instance.
 
 ## 13. Failure analysis per message
 
@@ -1406,15 +1409,14 @@ Implementation is not complete until these hold:
 | Q4: inventory | A prerequisite before merge, not done here (section 12). |
 | Q5: excess | Section 8. |
 | Q6 / D1: lifecycle | Owner chose option Y (section 10). |
-| Q7: constants | Provisional, set by measurement (T-G, T-L). |
+| Q7: constants | Set by measurement (T-G), section 19. |
 | Q8: already-final answers | Section 3.3, with the default-answer wording. |
 | Q9: removed opcodes | Section 12, T-S. |
 | Q10: `LOG_BURN` | Unchanged (section 12). |
 | D3: opening before burn | Approved. Opening is permissionless, funded, retryable and independent of ConfigParam 79, and it reserves the holder's burn window (section 7.2). |
 | D4: limits | Measured worst cases. Admission stops when limits fall, and completions then depend on the limit being restored (section 6.2). |
 
-**Still open:** the window and limit values, which are measured during
-implementation, and the network inventory (Q4).
+**Still open:** the network inventory (Q4, release prerequisite R1).
 
 ## 18. Changes from earlier versions
 
@@ -1462,3 +1464,73 @@ implementation, and the network inventory (Q4).
 | 3. Waiting mints | `k` is assigned and reserved before `prepared`. A waiting mint without a slot is REFUSED and releases its reservation. Promotion is bounded and advanceable. T-Z7. |
 | 4. Isolation | Shared C1 backpressure is documented as accepted, with per-holder storage still bounded. T-Z3 rewritten. |
 | 5. Deletion accounting | Deletion adjustment `X` in I1. STRANDED is not evidence of non-landing. T-Z4 adds a landed credit transferred away before deletion. `LOG_LIABILITY_STRANDED` is mandatory, and its rollback is tested. |
+
+## 19. Implementation notes
+
+The implementation follows sections 1 to 16 with these differences and
+measured values.
+
+**Measured limits (G1).** The sandbox test
+`t_g_worst_case_cells_fit_the_declared_bound_and_the_account_limit` builds
+each participant's worst case from one real record of every kind cloned
+into every slot, with no cell shared between records. At commit
+`1f99ccdbe`: the wallet needs 115 cells; the bridge 897 cells at 8
+channels (58 per channel), under the 2048-cell non-special masterchain
+limit; the minter 347 cells plus 63 per holder. `HOLDER_LIMIT` is 1000
+(63347 cells under the 65536-cell basechain limit); 2048 holders would have
+needed 129371. The declared worst cases are 128, 1000 and 64000 cells.
+`FOLD_LIMIT` is 4. The windows are those of section 3.
+
+**Gas.** Every settlement transaction in the suite is checked against its
+contract's declared step gas. A swap vote that deploys a minter used 69698
+gas, close to the 70000 bridge step, so votes have their own declaration,
+`BRIDGE_VOTE_GAS` (100000).
+
+**Layouts.**
+
+- The burn descriptor holds `b`, amount, destination, minter, owner and
+  wallet life; the token is identified by the minter.
+- A wallet's pending burn stores only its cancellation flag beside the
+  descriptor: a burn is held from the owner's `burn` until its end, and an
+  admitted burn needs no separate status at the wallet.
+- A mint record carries an `escrow` field: the value a waiting mint keeps
+  for its own `prepared`.
+- A holder carries an `awaiting` dictionary of its waiting mints, and a
+  fourth opening state, DEAD, for a wallet that refused this minter's life.
+  A newer wallet life is detected in `open_request`.
+
+**Behaviour.**
+
+- `advance(MINT)` at the minter also continues a waiting mint and strands a
+  mint bound to a deleted life; `advance(STRAND)` processes the old life.
+- A channel that becomes terminal at the bridge emits the optional
+  `LOG_CHANNEL_TERMINAL`.
+- The bridge accepts a message with an empty body as a plain top-up.
+- A swap number must be at most `MAX_SEQ`; the sentinel is never admitted.
+- Cancelling a lock nobody paid for is paid by the vote: the vote keeps the
+  mandatory log's cost and must carry at least `get_cancel_cost()`.
+- The bridge checks its declared worst case against the masterchain cell
+  limit at every payment and swap vote, unless it is listed in ConfigParam
+  31, which exempts it from the limit.
+
+**Mutation controls.** `scripts/token-bridge-mutations.py` applies every
+control of section 15 and those of the guards added in implementation. Two
+of the listed controls cannot go red in this implementation:
+
+- "admission tests only `W`, not `max(W, C)`" is redundant by construction:
+  no entry at or above `W` is ever deleted, so a number in `[W, C)` always
+  finds its own entry first;
+- "a sender advances `A` from `C` instead of `S`" is equivalent at the
+  current constants: every reply follows a fold of up to `FOLD_LIMIT`
+  numbers, and the unfolded backlog never exceeds
+  `MINT_WINDOW - FOLD_LIMIT = FOLD_LIMIT`, so `S = C` whenever a reply is
+  sent.
+
+A third, "`LOG_LIABILITY_STRANDED` sent in mode 2", cannot be exercised in
+the sandbox engine: its message-size check never refuses a message (its
+cell count stops at the limit), and every leg's funding leaves the reserve
+to pay its logs, so no test can make a mandatory log fail. The mode-0 rule
+for every mandatory log is pinned by `scripts/verify-token-bridge.py`, and
+the rollback of a whole leg on action failure is shown with a cell-limit
+failure (T-Z4, T-Y8).
+
