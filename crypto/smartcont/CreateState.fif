@@ -28,7 +28,8 @@ variable @default-subwallet-id
 "auto/restricted-wallet3-code.fif" include =: RWCode3
 
 // pubkey amount --
-{ over ."Key " pubkey>$ type ." -> "
+{ over check-owner-pubkey drop
+  over ."Key " pubkey>$ type ." -> "
   RWCode1  // code
   <b 1 32 u, 3 roll 256 u, b>  // data
   empty_cell  // libs
@@ -41,7 +42,8 @@ variable @default-subwallet-id
 } : create-wallet1
 
 // pubkey amount
-{ over ."W0 Key " pubkey>$ type space dup .TM ." -> "
+{ over check-owner-pubkey drop
+  over ."W0 Key " pubkey>$ type space dup .TM ." -> "
   WCode3  // code
   <b 0 32 u, default-subwallet-id 32 u, 3 roll 256 u, b>  // data
   empty_cell  // libs
@@ -79,7 +81,8 @@ variable rwallet-start-at  rwallet-start-at 0!
 now 86400 / 1+ 86400 * rwallet-start-at !
 
 // pubkey amount --
-{ over ."Key " pubkey>$ type ." -> "
+{ over check-owner-pubkey drop
+  over ."Key " pubkey>$ type ." -> "
   RWCode2  // code
   <b 1 32 u, 3 pick 256 u, rwallet-start-at @ 32 u,
      3 roll make-rdict dict, b>  // data
@@ -95,7 +98,8 @@ now 86400 / 1+ 86400 * rwallet-start-at !
 variable rwallet-init-pubkey
 
 // pubkey -- addr
-{ RWCode3  // code
+{ check-owner-pubkey rwallet-init-pubkey @ check-owner-pubkey drop
+  RWCode3  // code
   <b 0 32 u, default-subwallet-id 32 u,
      rwallet-init-pubkey @ 256 u,
      rot 256 u,
@@ -127,7 +131,8 @@ variable w3-addr
 { ' make-rdict2 create-wallet3-internal } : create-wallet3b
 
 // pubkey amount
-{ over ."Key " pubkey>$ type space dup .TM ." -> "
+{ over check-owner-pubkey drop
+  over ."Key " pubkey>$ type space dup .TM ." -> "
   WCode0  // code
   <b 1 32 u, 3 roll 256 u, b>  // data
   empty_cell  // libs

@@ -932,6 +932,131 @@ TEST(Toslib, AutoDnsFiftScript) {
   CHECK(vm::std_boc_deserialize(boc).move_as_ok().not_null());
 }
 
+namespace {
+// The fourteen encodings of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs:
+// the eight torsion points, y >= 2^255 - 19 with either sign bit, and the identity and
+// order-2 point with the sign bit set. Anyone can sign for each of them.
+const char* const kForgeableEd25519Keys[] = {
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+};
+
+std::string strong_owner_key_hex() {
+  auto key = td::Ed25519::PrivateKey(td::SecureString(32, 's')).get_public_key().move_as_ok().as_octet_string();
+  return td::buffer_to_hex(key.as_slice());
+}
+
+std::string serialized_pubkey(const std::string& hex) {
+  block::PublicKey key;
+  key.key = td::hex_decode(hex).move_as_ok();
+  return key.serialize(true);
+}
+
+// Runs a restricted-wallet creation script on the given public key; returns its
+// error, if any.
+td::Status run_restricted_wallet_script(const std::string& script, const std::string& public_key) {
+  auto lookup = fift::create_mem_source_lookup(load_source(PSTRING() << "smartcont/" << script)).move_as_ok();
+  for (auto code : {"restricted-wallet-code.fif", "restricted-wallet2-code.fif", "restricted-wallet3-code.fif"}) {
+    lookup.write_file(PSTRING() << "/auto/" << code, load_source(PSTRING() << "smartcont/auto/" << code)).ensure();
+  }
+  lookup.write_file("creator.pk", std::string(32, 'c')).ensure();
+  std::vector<std::string> args{"aba"};
+  if (script == "new-restricted-wallet3.fif") {
+    args.push_back("creator");
+  }
+  args.push_back(public_key);
+  if (script != "new-restricted-wallet.fif") {
+    args.push_back("100");
+  }
+  auto result = fift::mem_run_fift(std::move(lookup), args);
+  if (result.is_error()) {
+    return result.move_as_error();
+  }
+  return td::Status::OK();
+}
+}  // namespace
+
+TEST(Toslib, ForgeableKeysFiftPredicate) {
+  std::string script;
+  for (auto hex : kForgeableEd25519Keys) {
+    script += PSTRING() << "0x" << hex << " weak-ed25519-pubkey? not abort\"weak key not refused\"\n";
+  }
+  script += PSTRING() << "0x" << strong_owner_key_hex() << " weak-ed25519-pubkey? abort\"strong key refused\"\n";
+  // Neighbours: one bit away inside the comparison, and just outside the y range.
+  script += "0x26e8958fc2b227b045c3f489f2ef98f0d4dfac05d3c63339b13802886d53fc85 weak-ed25519-pubkey? abort\"n1\"\n";
+  script += "0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7e weak-ed25519-pubkey? abort\"n2\"\n";
+  script += "0xedfffffffffffffffffffffffffffffffffffffffffffffffffffffffeffff7f weak-ed25519-pubkey? abort\"n3\"\n";
+  script = "\"TosUtil.fif\" include\n" + script;
+  fift::mem_run_fift(script, {"aba"}).ensure();
+}
+
+TEST(Toslib, RestrictedWalletScriptsRefuseForgeableKeys) {
+  auto strong = serialized_pubkey(strong_owner_key_hex());
+  for (auto script : {"new-restricted-wallet.fif", "new-restricted-wallet2.fif", "new-restricted-wallet3.fif"}) {
+    run_restricted_wallet_script(script, strong).ensure();
+    for (auto hex : kForgeableEd25519Keys) {
+      auto status = run_restricted_wallet_script(script, serialized_pubkey(hex));
+      LOG_IF(ERROR, status.is_ok()) << script << " accepted " << hex;
+      CHECK(status.is_error());
+      CHECK(status.message().str().find("anyone can sign for") != std::string::npos);
+    }
+  }
+}
+
+// The zerostate builders refuse a weak owner key before registering the wallet.
+TEST(Toslib, CreateStateWalletsRefuseForgeableKeys) {
+  auto temp_dir = td::mkdtemp("/tmp", "tos-create-state-keys").move_as_ok();
+  SCOPE_EXIT {
+    td::rmrf(temp_dir).ignore();
+  };
+  auto include_path = PSTRING() << fift_lib_dir() << ":" << generated_smartcont_dir() << ":" << smartcont_dir();
+  auto run = [&](const std::string& body) {
+    auto script_path = temp_dir + TD_DIR_SLASH + "wallet.fif";
+    td::write_file(script_path, "wc_master setworkchain 1 setglobalid ' make-rdict1 'make-rdict !\n" + body).ensure();
+    auto stderr_path = temp_dir + TD_DIR_SLASH + "stderr.txt";
+    auto command = PSTRING() << "cd " << shell_quote(temp_dir) << " && " << shell_quote(create_state_binary()) << " -I "
+                             << shell_quote(include_path) << " " << shell_quote(script_path) << " > /dev/null 2> "
+                             << shell_quote(stderr_path);
+    auto rc = std::system(command.c_str());
+    return std::make_pair(rc, td::read_file_str(stderr_path).move_as_ok());
+  };
+  auto strong = PSTRING() << "0x" << strong_owner_key_hex();
+  auto words = {"create-wallet0", "create-wallet0a", "create-wallet1", "create-wallet2", "create-wallet3"};
+  for (auto word : words) {
+    // create-wallet2 cannot build its data from a bare `pubkey amount` stack (it picks
+    // one element too deep), so only its refusal is checked.
+    if (td::Slice(word) != "create-wallet2") {
+      auto ok = run(PSTRING() << strong << " rwallet-init-pubkey ! " << strong << " 1000000000 " << word << "\n");
+      LOG_IF(ERROR, ok.first != 0) << word << ": " << ok.second;
+      CHECK(ok.first == 0);
+    }
+    for (auto hex : kForgeableEd25519Keys) {
+      auto refused = run(PSTRING() << strong << " rwallet-init-pubkey ! 0x" << hex << " 1000000000 " << word << "\n");
+      CHECK(refused.first != 0);
+      CHECK(refused.second.find("anyone can sign for") != std::string::npos);
+    }
+  }
+  // The restricted wallet v3 initializer key is an owner key too.
+  for (auto hex : kForgeableEd25519Keys) {
+    auto refused =
+        run(PSTRING() << "0x" << hex << " rwallet-init-pubkey ! " << strong << " 1000000000 create-wallet3\n");
+    CHECK(refused.first != 0);
+    CHECK(refused.second.find("anyone can sign for") != std::string::npos);
+  }
+}
+
 TEST(Toslib, ManualDnsFiftScript) {
   auto source_lookup = fift::create_mem_source_lookup(load_source("smartcont/manual-dns-manage.fif")).move_as_ok();
   auto priv_key = td::Ed25519::generate_private_key().move_as_ok();
