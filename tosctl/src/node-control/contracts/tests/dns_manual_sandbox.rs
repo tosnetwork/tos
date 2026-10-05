@@ -12,7 +12,8 @@
 //! nothing, nor leaves a replayable message behind. Strong owners keep full control.
 
 use chain_block::{
-    BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
+    BuilderData, Cell, HashmapE, HashmapType, IBitstring, MsgAddressInt, Serializable, SliceData,
+    StateInit,
 };
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, compile_func_with_stdlib};
@@ -85,13 +86,40 @@ fn cell(build: impl FnOnce(&mut BuilderData)) -> Cell {
 }
 
 fn initial_data(owner: &[u8; 32]) -> Cell {
+    initial_data_with_queries(owner, None)
+}
+
+fn initial_data_with_queries(owner: &[u8; 32], old_queries: Option<Cell>) -> Cell {
     cell(|d| {
         d.append_u32(CONTRACT_ID).unwrap();
         d.append_u64(0).unwrap();
         d.append_u256(owner).unwrap();
         d.append_bit_zero().unwrap();
-        d.append_bit_zero().unwrap();
+        match old_queries {
+            Some(queries) => {
+                d.append_bit_one().unwrap();
+                d.checked_append_reference(queries).unwrap();
+            }
+            None => {
+                d.append_bit_zero().unwrap();
+            }
+        }
     })
+}
+
+/// A record of `count` processed query ids that all expired long ago (their
+/// expiry, the high 32 bits, is unix time 1000), as a resolver that was used
+/// heavily and then left idle would hold.
+fn expired_query_backlog(count: u32) -> Cell {
+    let mut queries = HashmapE::with_bit_len(64);
+    for n in 0..count {
+        let id = (1_000u64 << 32) | u64::from(n);
+        let key =
+            SliceData::load_builder(BuilderData::with_raw(id.to_be_bytes().to_vec(), 64).unwrap())
+                .unwrap();
+        queries.set(key, &SliceData::default()).unwrap();
+    }
+    queries.data().cloned().expect("a non-empty backlog")
 }
 
 /// An operation list: OSet to `key`.
@@ -141,9 +169,13 @@ struct Resolver {
 
 impl Resolver {
     fn deploy(code: Cell, owner: &[u8; 32]) -> Self {
+        Self::deploy_with_data(code, initial_data(owner))
+    }
+
+    fn deploy_with_data(code: Cell, data: Cell) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         let funder = bc.treasury("funder", 1_000 * TOS).expect("funder");
-        let init = StateInit::with_code_and_data(code, initial_data(owner));
+        let init = StateInit::with_code_and_data(code, data);
         let hash = init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
         let address = MsgAddressInt::with_params(0, hash).unwrap();
         let deploy = MessageBuilder::internal(funder.address(), &address, 10 * TOS)
@@ -204,6 +236,22 @@ impl Resolver {
             .expect("balance")
             .coins
             .as_u128()
+    }
+
+    /// How many processed query ids the resolver still records.
+    fn recorded_queries(&self) -> usize {
+        let data = self.bc.get_account(&self.address).expect("account").get_data().expect("data");
+        let mut cs = SliceData::load_cell(data).unwrap();
+        cs.move_by(32 + 64 + 256).unwrap();
+        if cs.get_next_bit().unwrap() {
+            cs.checked_drain_reference().unwrap();
+        }
+        let queries = if cs.get_next_bit().unwrap() {
+            Some(cs.checked_drain_reference().unwrap())
+        } else {
+            None
+        };
+        HashmapE::with_hashmap(64, queries).len().unwrap()
     }
 
     fn data_hash(&self) -> chain_block::UInt256 {
@@ -505,4 +553,111 @@ fn a_malformed_owner_message_is_charged_only_once() {
     let valid = resolver.signed(&owner, &tset(table(9)));
     resolver.send(valid).expect("a valid operation").expect_success();
     assert_ne!(resolver.data_hash(), data, "the valid operation took effect");
+}
+
+/// Expired query ids the resolver drops per accepted message (QUERY_CLEANUP_LIMIT).
+const CLEANUP_LIMIT: usize = 16;
+
+/// The basechain per-transaction gas limit (ConfigParam 21 gas_limit in
+/// crypto/smartcont/gen-zerostate.fif: 30 *M).
+const BASECHAIN_GAS_LIMIT: u64 = 30_000_000;
+
+/// More expired query ids than one transaction can delete within that limit: each
+/// deletion costs about 4,600 gas at this size.
+const BACKLOG: u32 = 8_000;
+
+/// A resolver holding a large backlog of expired query ids. Cleanup is bounded, and the
+/// new query id is committed before it runs, so the backlog can neither stop an accepted
+/// message from being spent nor stop valid operations: the first submission applies and
+/// is charged, every replay is refused before acceptance (exit 32) at no cost, and the
+/// backlog drains by a fixed amount with each accepted message.
+#[test]
+fn an_expired_query_backlog_cannot_unspend_a_query_id() {
+    let code = compile(&source());
+    let owner = SigningKey::from_bytes(&[0x25; 32]);
+    let data = initial_data_with_queries(
+        &owner.verifying_key().to_bytes(),
+        Some(expired_query_backlog(BACKLOG)),
+    );
+    let mut resolver = Resolver::deploy_with_data(code, data);
+    resolver.bc.set_workchain_gas_limit(BASECHAIN_GAS_LIMIT);
+    assert_eq!(resolver.recorded_queries(), BACKLOG as usize);
+
+    let before = resolver.data_hash();
+    let message = resolver.signed(&owner, &tset(table(1)));
+    let first = resolver.send(message.clone()).expect("the owner's message is accepted");
+    let gas = match first.read_primary_description().compute_ph {
+        chain_block::TrComputePhase::Vm(vm) => {
+            assert!(vm.success, "the first submission failed: exit {}", vm.exit_code);
+            vm.gas_used.as_u64()
+        }
+        chain_block::TrComputePhase::Skipped(skipped) => panic!("skipped: {:?}", skipped.reason),
+    };
+    eprintln!("gas with a cleanup of {CLEANUP_LIMIT} expired ids: {gas}");
+    // A bounded cleanup is a small fraction of the limit; the unbounded one needed more
+    // than all of it.
+    assert!(gas * 50 <= BASECHAIN_GAS_LIMIT, "{gas} gas for one message");
+    assert_ne!(resolver.data_hash(), before, "the operation applied");
+    assert_eq!(resolver.recorded_queries(), BACKLOG as usize - CLEANUP_LIMIT + 1);
+
+    let balance = resolver.balance();
+    let data = resolver.data_hash();
+    for attempt in 0..3 {
+        let error = match resolver.send(message.clone()) {
+            Ok(result) => panic!("replay {attempt} accepted (exit {})", exit_code(&result)),
+            Err(error) => error,
+        };
+        assert!(error.contains("exit code: 32"), "replay {attempt}: {error}");
+    }
+    assert_eq!(resolver.balance(), balance, "a replay cost the resolver");
+    assert_eq!(resolver.data_hash(), data, "a replay changed state");
+
+    // A malformed owner message is spent too, and leaves the cleanup it did undone.
+    let (bad_ops, expected) = malformed_ops().remove(0);
+    let bad = resolver.signed(&owner, &bad_ops);
+    let recorded = resolver.recorded_queries();
+    let failed = resolver.send(bad.clone()).expect("accepted");
+    assert_eq!(exit_code(&failed), expected);
+    assert_eq!(resolver.recorded_queries(), recorded + 1, "the failed message's id is spent");
+    assert!(resolver.send(bad).err().unwrap_or_default().contains("exit code: 32"));
+
+    // Each accepted message drains the backlog by the bound.
+    for round in 0..4 {
+        let recorded = resolver.recorded_queries();
+        let valid = resolver.signed(&owner, &tset(table(10 + round)));
+        resolver.send(valid).expect("a valid operation").expect_success();
+        assert_eq!(resolver.recorded_queries(), recorded - CLEANUP_LIMIT + 1, "round {round}");
+    }
+}
+
+/// Gas for a message's own work (acceptance, recording its query id, the commit) but not
+/// for a single round of cleanup in a large backlog: the message runs out of gas during
+/// cleanup. Its query id is spent all the same, so replays are refused before acceptance
+/// and cost nothing; only cleanup and the operations are lost.
+const GAS_SHORT_OF_CLEANUP: u64 = 40_000;
+
+#[test]
+fn a_message_that_runs_out_of_gas_in_cleanup_stays_spent() {
+    let code = compile(&source());
+    let owner = SigningKey::from_bytes(&[0x26; 32]);
+    let data = initial_data_with_queries(
+        &owner.verifying_key().to_bytes(),
+        Some(expired_query_backlog(BACKLOG)),
+    );
+    let mut resolver = Resolver::deploy_with_data(code, data);
+    resolver.bc.set_workchain_gas_limit(GAS_SHORT_OF_CLEANUP);
+
+    let message = resolver.signed(&owner, &tset(table(1)));
+    let first = resolver.send(message.clone()).expect("the owner's message is accepted");
+    assert_eq!(exit_code(&first), -14, "the message runs out of gas");
+    assert_eq!(resolver.recorded_queries(), BACKLOG as usize + 1, "its query id is spent");
+
+    let balance = resolver.balance();
+    let data = resolver.data_hash();
+    for attempt in 0..3 {
+        let error = resolver.send(message.clone()).err().unwrap_or_default();
+        assert!(error.contains("exit code: 32"), "replay {attempt}: {error}");
+    }
+    assert_eq!(resolver.balance(), balance, "a replay cost the resolver");
+    assert_eq!(resolver.data_hash(), data, "a replay changed state");
 }
