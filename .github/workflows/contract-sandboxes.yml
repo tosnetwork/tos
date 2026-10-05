@@ -287,6 +287,9 @@ jobs:
       - name: Proven configuration and PRIMARY policy guard controls
         run: python3 test/wallet-v5r2/primary_policy_controls.py --output "$RUNNER_TEMP/primary-policy-controls"
 
+      - name: Proven transaction receipt guard controls
+        run: python3 test/wallet-v5r2/receipt_controls.py --output "$RUNNER_TEMP/receipt-controls"
+
       # The indexer folds a pool snapshot the real verifier proved from a signed
       # chain while the endpoint reports different stacks. It is ignored in the
       # service job, which has no native build, so it is run here by name and

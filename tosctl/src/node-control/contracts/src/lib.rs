@@ -41,6 +41,7 @@ pub mod nominator_pool;
 pub mod prediction_market;
 pub mod proof_attestation;
 pub mod proven_getters;
+pub mod proven_transactions;
 pub mod provider;
 pub mod service_actor;
 pub mod smart_contract;

@@ -155,9 +155,18 @@ pub struct ProvenAccountState {
     root: Cell,
     account: Account,
     config_params: BTreeMap<u32, Cell>,
+    last_transaction_hash: [u8; 32],
+    anchor_id: [u8; 32],
 }
 
 impl ProvenAccountState {
+    pub fn last_transaction_hash(&self) -> &[u8; 32] {
+        &self.last_transaction_hash
+    }
+    pub(crate) fn anchor_id(&self) -> &[u8; 32] {
+        &self.anchor_id
+    }
+
     /// Only explicitly requested parameters proven at this account checkpoint.
     pub fn config_param(&self, index: u32) -> Option<&Cell> {
         self.config_params.get(&index)
@@ -201,7 +210,7 @@ impl std::fmt::Debug for ProvenGetterProvider {
 }
 
 /// The anchor exactly as provisioned locally.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct AnchorRecord {
     kind: String,
@@ -317,7 +326,21 @@ impl ProvenGetterProvider {
             "raw account balance mismatch"
         );
         let config_params = checked_config_params(&wire.config_params, &request.config_params)?;
-        Ok(ProvenAccountState { evidence, root, account, config_params })
+        let last_hash =
+            wire.account.last_trans_hash.context("proof verifier omitted last transaction hash")?;
+        ensure_digest(&last_hash, "last transaction hash")?;
+        let last_transaction_hash = hex::decode(last_hash)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("last transaction hash width"))?;
+        let anchor_id = sha2::Sha256::digest(serde_json::to_vec(&self.anchor)?).into();
+        Ok(ProvenAccountState {
+            evidence,
+            root,
+            account,
+            config_params,
+            last_transaction_hash,
+            anchor_id,
+        })
     }
 
     async fn invoke(&self, request: &[u8], policy: &ReadPolicy) -> anyhow::Result<Vec<u8>> {
@@ -650,6 +673,8 @@ struct LiveOutput {
 #[derive(Deserialize)]
 struct AccountOutput {
     #[serde(default)]
+    last_trans_hash: Option<String>,
+    #[serde(default)]
     state_boc: Option<String>,
     address: String,
     shard_block: BlockId,
@@ -978,6 +1003,8 @@ mod fee_state_tests {
         .unwrap();
         let root = account.serialize().unwrap();
         let state = ProvenAccountState {
+            last_transaction_hash: [0; 32],
+            anchor_id: [0; 32],
             config_params: BTreeMap::new(),
             root: root.clone(),
             account,
@@ -1660,6 +1687,244 @@ mod fee_state_tests {
                 Ok(_) => panic!("accepted bad {case}"),
                 Err(error) => assert!(error.to_string().contains(reason), "{case}: {error}"),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod transaction_receipt_tests {
+    use super::*;
+    use crate::proven_transactions::ProvenTransaction;
+    use chain_block::{Serializable, ShardAccount, TrComputePhase, Transaction, TransactionDescr};
+
+    // Actual native-executor transactions/account states, wrapped in synthetic
+    // proof metadata. Real finality proof plumbing is tested separately.
+    fn fixture(name: &str) -> (ProvenAccountState, Cell) {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/v5r2/receipt-transactions.json"))
+                .unwrap();
+        let item = &cases["cases"][name];
+        let decode = |field: &str| {
+            read_single_root_boc(
+                base64::engine::general_purpose::STANDARD
+                    .decode(item[field].as_str().unwrap())
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let root = decode("transaction");
+        let tx = Transaction::construct_from_cell(root.clone()).unwrap();
+        let shard = ShardAccount::construct_from_cell(decode("shard_account")).unwrap();
+        let account = shard.read_account().unwrap();
+        let time = tx.now().checked_add(10).unwrap();
+        let proof = ProvenAccountState {
+            evidence: ProvenGetterResults {
+                live: true,
+                checkpoint: MasterchainCheckpoint {
+                    seqno: 1,
+                    root_hash: "00".repeat(32),
+                    file_hash: "00".repeat(32),
+                },
+                block_gen_utime: time,
+                account: ProvenAccount {
+                    address: canonical_address(account.get_addr().unwrap()).unwrap(),
+                    state_hash: shard.account_cell().repr_hash().to_hex_string(),
+                    balance: account.get_balance().unwrap().coins.to_string(),
+                    code_hash: account.get_code_hash().unwrap().to_hex_string(),
+                    data_hash: account.get_data_hash().unwrap().to_hex_string(),
+                    last_trans_lt: shard.last_trans_lt(),
+                    gen_utime: time,
+                },
+                results: vec![],
+                request_sha256: "00".repeat(32),
+            },
+            root: shard.account_cell(),
+            account,
+            config_params: BTreeMap::new(),
+            last_transaction_hash: *shard.last_trans_hash().as_array(),
+            anchor_id: [0; 32],
+        };
+        (proof, root)
+    }
+    fn sent_message(tx: &ProvenTransaction) -> Cell {
+        let mut cells = vec![];
+        tx.transaction()
+            .iterate_out_msgs_with_cells(|_, c| {
+                cells.push(c);
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(cells.len(), 1);
+        cells.remove(0)
+    }
+    fn reanchor(mut proof: ProvenAccountState, tx: Transaction) -> ProvenTransaction {
+        let root = tx.serialize().unwrap();
+        proof.last_transaction_hash = *root.repr_hash().as_array();
+        proof.evidence.account.last_trans_lt = tx.logical_time();
+        ProvenTransaction::latest(&proof, root).unwrap()
+    }
+    #[test]
+    fn receipt_incomplete_execution_is_not_completion() {
+        for case in [
+            "aborted",
+            "destroyed",
+            "compute",
+            "exit",
+            "action",
+            "valid",
+            "funds",
+            "result",
+            "skipped",
+        ] {
+            let (proof, root) = fixture("payment-wallet");
+            let mut tx = Transaction::construct_from_cell(root).unwrap();
+            let TransactionDescr::Ordinary(mut d) = tx.read_description().unwrap() else {
+                panic!("ordinary fixture")
+            };
+            let reason = match case {
+                "aborted" => {
+                    d.aborted = true;
+                    "aborted"
+                }
+                "destroyed" => {
+                    d.destroyed = true;
+                    "destroyed"
+                }
+                "compute" | "exit" => {
+                    let TrComputePhase::Vm(ref mut vm) = d.compute_ph else { panic!("VM fixture") };
+                    if case == "compute" {
+                        vm.success = false
+                    } else {
+                        vm.exit_code = 42
+                    };
+                    "compute failed"
+                }
+                _ => {
+                    let a = d.action.as_mut().unwrap();
+                    match case {
+                        "action" => a.success = false,
+                        "valid" => a.valid = false,
+                        "funds" => a.no_funds = true,
+                        "result" => a.result_code = 37,
+                        _ => a.skipped_actions = 1,
+                    };
+                    "actions incomplete"
+                }
+            };
+            tx.write_description(&TransactionDescr::Ordinary(d)).unwrap();
+            let receipt = reanchor(proof, tx);
+            match receipt.require_complete_execution() {
+                Ok(_) => panic!("accepted incomplete execution {case}"),
+                Err(e) => assert!(e.to_string().contains(reason), "{case}: {e}"),
+            }
+        }
+    }
+    #[test]
+    fn receipt_history_state_chain_is_bound() {
+        let (proof, root) = fixture("payment-wallet");
+        let mut tx = Transaction::construct_from_cell(root).unwrap();
+        let mut update = tx.read_state_update().unwrap();
+        update.old_hash = chain_block::UInt256::from([9; 32]);
+        tx.write_state_update(&update).unwrap();
+        let current = reanchor(proof, tx);
+        let (_, previous) = fixture("migrate-wallet");
+        match current.previous(previous) {
+            Ok(_) => panic!("accepted broken transaction state chain"),
+            Err(e) => assert!(e.to_string().contains("state chain mismatch"), "{e}"),
+        }
+    }
+    #[test]
+    fn receipt_delivery_requires_exact_inbound_message() {
+        let (p, c) = fixture("payment-wallet");
+        let sent = ProvenTransaction::latest(&p, c).unwrap();
+        let message = sent_message(&sent);
+        let (proof, root) = fixture("recipient");
+        let mut tx = Transaction::construct_from_cell(root).unwrap();
+        let mut unrelated = tx.read_in_msg().unwrap().unwrap();
+        unrelated.set_body(
+            chain_block::SliceData::load_builder(
+                chain_block::BuilderData::with_raw(vec![0x80], 1).unwrap(),
+            )
+            .unwrap(),
+        );
+        tx.write_in_msg(Some(&unrelated)).unwrap();
+        let wrong = reanchor(proof, tx);
+        match sent.require_internal_delivery(&wrong, message.repr_hash().as_array()) {
+            Ok(_) => panic!("accepted unrelated recipient input"),
+            Err(e) => assert!(e.to_string().contains("inbound message mismatch"), "{e}"),
+        }
+    }
+
+    #[test]
+    fn receipt_native_payment_and_history() {
+        let (proof, root) = fixture("payment-wallet");
+        let sent = ProvenTransaction::latest(&proof, root).unwrap();
+        let (proof, root) = fixture("recipient");
+        let received = ProvenTransaction::latest(&proof, root).unwrap();
+        let message = sent_message(&sent);
+        sent.require_internal_delivery(&received, message.repr_hash().as_array()).unwrap();
+        let (_, previous) = fixture("migrate-wallet");
+        let previous = sent.previous(previous).unwrap();
+        previous.require_complete_execution().unwrap();
+        sent.require_inbound(&sent.transaction().in_msg_cell().unwrap()).unwrap();
+        assert!(
+            sent.require_inbound(&Cell::default()).is_err(),
+            "accepted another inbound message"
+        );
+        assert!(
+            sent.require_internal_delivery(&received, &[9; 32]).is_err(),
+            "accepted message absent from sender"
+        );
+    }
+    #[test]
+    fn receipt_latest_rejects_substitutions() {
+        for case in ["hash", "lt", "account", "post_state", "future"] {
+            let (mut proof, mut root) = fixture("payment-wallet");
+            let reason = match case {
+                "hash" => {
+                    let mut altered = Transaction::construct_from_cell(root.clone()).unwrap();
+                    altered.set_prev_trans_hash(chain_block::UInt256::from([9; 32]));
+                    root = altered.serialize().unwrap();
+                    "hash mismatch"
+                }
+                "lt" => {
+                    proof.evidence.account.last_trans_lt += 1;
+                    "logical time"
+                }
+                "account" => {
+                    proof.account.set_addr(format!("0:{}", "ab".repeat(32)).parse().unwrap());
+                    "account mismatch"
+                }
+                "post_state" => {
+                    proof.root = Cell::default();
+                    "post-state"
+                }
+                _ => {
+                    proof.evidence.account.gen_utime = 0;
+                    "newer than account"
+                }
+            };
+            match ProvenTransaction::latest(&proof, root) {
+                Ok(_) => panic!("accepted receipt substitution {case}"),
+                Err(e) => assert!(e.to_string().contains(reason), "{case}: {e}"),
+            }
+        }
+    }
+    #[test]
+    fn receipt_delivery_rejects_other_anchor_and_recipient() {
+        let (p, c) = fixture("payment-wallet");
+        let sent = ProvenTransaction::latest(&p, c).unwrap();
+        let message = sent_message(&sent);
+        let (mut p, c) = fixture("recipient");
+        p.anchor_id = [1; 32];
+        let other = ProvenTransaction::latest(&p, c).unwrap();
+        match sent.require_internal_delivery(&other, message.repr_hash().as_array()) {
+            Ok(_) => panic!("accepted receipt from another trust anchor"),
+            Err(e) => assert!(e.to_string().contains("trust anchors"), "{e}"),
+        }
+        match sent.require_internal_delivery(&sent, message.repr_hash().as_array()) {
+            Ok(_) => panic!("accepted wrong delivery recipient"),
+            Err(e) => assert!(e.to_string().contains("parties mismatch"), "{e}"),
         }
     }
 }

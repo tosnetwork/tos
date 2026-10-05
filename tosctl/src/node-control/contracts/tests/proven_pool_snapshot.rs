@@ -1210,6 +1210,7 @@ async fn raw_account_response_binding(mutation: &str, expected: Option<&str>) {
     let mut changes = serde_json::json!({});
     match mutation {
         "none" => {}
+        "missing_last_hash" => changes["last_trans_hash"] = serde_json::Value::Null,
         "state_hash" | "code_hash" | "data_hash" => changes[mutation] = "ab".repeat(32).into(),
         "balance" => changes[mutation] = "1".into(),
         "address" => {
@@ -1259,6 +1260,11 @@ async fn raw_account_response_binding(mutation: &str, expected: Option<&str>) {
             }
         },
     }
+}
+
+#[tokio::test]
+async fn raw_binding_requires_last_transaction_hash() {
+    raw_account_response_binding("missing_last_hash", Some("omitted last transaction hash")).await;
 }
 
 #[tokio::test]

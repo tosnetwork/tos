@@ -1086,3 +1086,35 @@ policy, REQUIRED status, nonce/seqno exhaustion and rescue independence. Twelve
 semantic controls cover response binding and PRIMARY policy gates. Live V5R2
 proof/receipt integration, production signing/custody, default-credit admission
 and independent/final-head acceptance remain open.
+
+### Account-anchored transaction history and internal delivery
+
+Raw account reads now require the native verifier's proven `last_trans_hash`
+as well as `last_trans_lt`, and retain a fingerprint of the locally provisioned
+trust anchor. `ProvenTransaction::latest` binds an untrusted transaction cell to
+that hash/LT/account and requires its post-state hash to equal the authenticated
+raw Account root. `previous` follows both the predecessor hash/LT and the complete
+Account state-update chain. These operations prove history, not freshness.
+Callers fetching a long history must bound their own fetch/iteration budget.
+
+`require_complete_execution` refuses aborted/destroyed/bounced transactions,
+skipped or failed compute, invalid/failed action phases and silently skipped
+actions. It is not a recipient-completion predicate by itself.
+`require_internal_delivery` additionally requires a common trust anchor, an
+actually emitted internal message with exact sender/destination, an identical
+original message cell at the receiver and a later receiver transaction LT.
+Both executions must be complete. Original outbound cells are retained rather
+than reserialized, since valid message encodings can differ after round trips.
+
+Six tests use bounded frozen native-executor payment/recipient/migration receipts
+from the existing full recovery run. Their Account proof wrappers are explicitly
+synthetic; they do not establish real-network V5R2 finality. Mutated receipt tests
+exercise refusals, and fourteen semantic guard controls require bad history or
+completion to be accepted when the corresponding guard is removed. Generic real
+account-proof tests still cover the native cryptographic read boundary.
+
+The account-read API currently requires active accounts. Destroyed-account/block
+transaction proofs, application-specific payment amounts and state effects,
+POP challenge interpretation, live transport/fetch orchestration and production
+key custody remain open. This layer does not turn phase flags into proof of an
+application's intended outcome, nor clear default-credit admission.

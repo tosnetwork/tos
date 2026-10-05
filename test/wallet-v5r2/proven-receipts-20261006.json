@@ -1,0 +1,41 @@
+{
+  "source_base": "1ddc532bc3228501d02dad39a0c6f501cd47f38e",
+  "source_sha256": {
+    "tosctl/src/node-control/contracts/src/proven_transactions.rs": "95ba0968b1fd49ec62384adbf3d12772a132465d47ae702dbaa917e94907b980",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "9e1a7e2caed991d25686d262d33bd1c572a4e4b9325edad1d978a580bbaeb312",
+    "tosctl/src/node-control/contracts/tests/proven_pool_snapshot.rs": "7374bfcceda1bde90d80b41b628da542cc21898af3ed890ef4aa188379be35cc",
+    "tosctl/src/node-control/contracts/tests/fixtures/v5r2/receipt-transactions.json": "a60dac1f9a3b2a0942069509fe94b183d79629abdc3a28925631417ddbb6c4bf",
+    "test/wallet-v5r2/receipt_controls.py": "c054e6188c3bb132a50d3845032875ba980bca059884b5219b3daf0bfbfcf995",
+    "test/wallet-v5r2/raw_account_controls.py": "8034ca116c94adb38d8ba92fb72b3883b737f29b715a170e45001087b899b698"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-receipts",
+  "retain_until": "2027-01-06",
+  "manifest": {
+    "sha256": "7acda1442ffaec61b0606f8ca62d6d55fd70b8dbcf5d025546f62d3e2ec2b3af",
+    "size": 4244
+  },
+  "results": {
+    "receipt_tests": 6,
+    "receipt_semantic_controls": 14,
+    "raw_account_tests": 11,
+    "raw_semantic_controls": 5,
+    "fee_regression": 31,
+    "primary_regression": 4,
+    "selected_proof_regression": 32
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/receipt_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-receipts/controls-final",
+    "python3 test/wallet-v5r2/raw_account_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-receipts/raw-controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib fee_",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib primary_",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --test proven_pool_snapshot -- --skip live --skip a_current_code_pool --skip a_pool_whose_code_is_a_library --skip a_library_pool --skip substituted_library --skip a_library_proof"
+  ],
+  "limits": [
+    "Receipt fixtures are actual native executor transactions; their account proof wrappers are synthetic, not network finality evidence.",
+    "First hash-deletion control used a malformed cell and failed sensitivity; replaced with a valid modified transaction. Initial failed logs retained under controls/.",
+    "Selected macOS proof regression excludes live-clock and library/pool cases; relevant Linux CI remains required.",
+    "Active-account history only. Application outcomes, production custody, live receipt orchestration, default gas admission and independent review remain open.",
+    "Test filters overlap; counts are not a unique total."
+  ]
+}
