@@ -184,14 +184,14 @@ def description(tx: Cell) -> dict:
             c.coins()
         c.coins()
         c.maybe()
-    exit_code, skipped = None, True
+    exit_code, skipped, gas_used = None, True, None
     if c.uint(1):
         skipped = False
         c.uint(1)  # success
         c.uint(2)
         c.coins()
         vm = c.ref().slice()
-        vm.varuint(7)
+        gas_used = vm.varuint(7)
         vm.varuint(7)
         if vm.uint(1):
             vm.varuint(3)
@@ -222,6 +222,7 @@ def description(tx: Cell) -> dict:
         a.uint(16)
         action = {"success": success, "result_code": result_code, "skipped": a.uint(16)}
     return {
+        "gas_used": gas_used,
         "aborted": aborted,
         "exit_code": exit_code,
         "compute_skipped": skipped,
@@ -357,7 +358,8 @@ def main() -> int:
                 expect["data"],
                 expect["code"],
             )
-        for key in (
+        keys = ["gas_used"] if "gas_used" in expect else []
+        for key in keys + [
             "aborted",
             "exit_code",
             "compute_skipped",
@@ -367,7 +369,7 @@ def main() -> int:
             "balance",
             "data",
             "code",
-        ):
+        ]:
             if got[key] != expect[key]:
                 differences.append(
                     f"{path.relative_to(args.trace_dir)}: {key}: Rust {expect[key]} native {got[key]}"
