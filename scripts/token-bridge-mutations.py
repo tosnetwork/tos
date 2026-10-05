@@ -156,10 +156,7 @@ MUTATIONS = [
     M("M24", "LOG_LIABILITY_STRANDED is sent in mode 2", f"{C}/settlement.fc",
       "        .store_ref(data)\n        .end_cell(), 0);\n}\n\n;; A record for observers only",
       "        .store_ref(data)\n        .end_cell(), 2);\n}\n\n;; A record for observers only",
-      "t_z4_stranding", "panicked",
-      survivor="the log cannot be made to fail in the sandbox engine: its message-size check never "
-               "refuses (StorageUsageCalc stops counting at the limit), and every leg's funding "
-               "check leaves the reserve to pay the log, so mode 0 and mode 2 behave alike here"),
+      "t_z4_stranding", "the action phase failed"),
     M("M25", "a record keeps only a hash", f"{C}/jetton-bridge.fc",
       ".store_uint(hash, 256).store_ref(d));\n}", ".store_uint(hash, 256).store_ref(begin_cell().end_cell()));\n}",
       "t_z6_a_mint", "panicked"),

@@ -81,7 +81,6 @@ What remains:
 
 - **Stranded liabilities need off-chain reconciliation**, from `LOG_LIABILITY_STRANDED`, under the scope above.
 - **Liveness, not safety, depends on execution and funding.** A step over the gas limit, a cell limit lowered below a live deployment's measured worst case, a frozen participant that is not restored, or absent funding stops completion until it is remedied; nothing is repeated meanwhile. Governance must not lower ConfigParam 43 below the measured worst case of a live deployment.
-- **The mandatory logs' rollback is not exercised end to end in the sandbox.** A mandatory log rolls its leg back if it cannot be sent, but the sandbox engine never refuses an oversized message (its message-size count stops at the limit), and every leg's funding leaves the reserve to pay its logs, so no test can make a mandatory log fail; the mode-0 rule is pinned by `scripts/verify-token-bridge.py` instead.
 - **Fees still decide liveness for new business.** A configured fee too small makes new mints or burns refuse. That is safe, but nothing new goes through until the fee is raised.
 
 ## Mandatory pre-mainnet work

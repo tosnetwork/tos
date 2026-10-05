@@ -222,21 +222,18 @@ fn t_z4_a_wallet_deleted_at_each_point_of_a_mint_strands_it_exactly_once() {
     }
 }
 
-/// T-Z4: more old-life records than FOLD_LIMIT are stranded over several
-/// transactions; the stranding log is mandatory, and a leg whose log cannot be
-/// sent rolls back whole, to be completed by a later advance.
-#[test]
-fn t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log() {
+/// A holder whose deleted wallet left a window of landed but unreported
+/// credits and two refunds in flight, recreated and asking to open: more
+/// old-life records than one transaction may strand.
+fn old_life_to_strand() -> (Net, MsgAddressInt, usize) {
     let mut net = minted();
     let user = net.user(0);
     let credits = declared("CREDIT_WINDOW") as usize;
-    // a window of credits landed, their reports lost
     for _ in 0..credits - 1 {
         net.start_swap(10);
         net.drop_op(op::CREDIT_RECORDED);
         net.settle();
     }
-    // two refunds in flight
     for _ in 0..2 {
         net.start_burn(1);
         net.drop_op(op::BURN_NOTICE);
@@ -253,23 +250,77 @@ fn t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log() {
     net.recreate_wallet(&user);
     succeeded(&net.open_wallet(&user));
     assert!(net.holder(&user)[12] != 0, "the old life holds its records");
-    // a leg whose action phase fails rolls back whole: no record is
-    // stranded without its log, and no log is emitted without its record
-    let minter = net.minter();
-    let (cells, _) = net.state_cells(&minter);
+    (net, user, credits)
+}
+
+/// The cells an outbound message is charged for, as both engines count them:
+/// every distinct cell of its serialized form but the root.
+fn charged_cells(m: &Message) -> u32 {
+    fn walk(c: &chain_block::Cell, seen: &mut std::collections::HashSet<chain_block::UInt256>) -> u32 {
+        let mut n = 0;
+        for i in 0..c.references_count() {
+            let r = c.reference(i).expect("a reference");
+            if seen.insert(r.repr_hash()) {
+                n += 1 + walk(&r, seen);
+            }
+        }
+        n
+    }
+    use chain_block::Serializable;
+    walk(&m.serialize().expect("a message"), &mut std::collections::HashSet::new())
+}
+
+/// T-Z4: more old-life records than FOLD_LIMIT are stranded over several
+/// transactions, and the stranding log is mandatory: with the message size
+/// limit one cell below the log, the log cannot be sent, so the leg fails in
+/// its action phase and rolls back whole; at exactly the log's size it
+/// strands. The trace replays both sides of the limit in the native engine.
+#[test]
+fn t_z4_stranding_is_bounded_and_rolls_back_whole_without_its_log() {
+    // measure the stranding leg's messages in an identical setup
+    let (mut probe, user, _) = old_life_to_strand();
+    let from = probe.delivered.len();
+    succeeded(&probe.advance_minter(advance::STRAND, &user, None));
+    let leg = probe.delivered[from..]
+        .iter()
+        .find(|d| d.addr == probe.minter() && body_op(&d.msg) == Some(op::ADVANCE))
+        .expect("the stranding leg ran");
+    let topic = declared("LOG_LIABILITY_STRANDED") as u32;
+    let logs: Vec<u32> = leg
+        .outs
+        .iter()
+        .filter(|m| !m.is_internal() && crate::model::ext_topic(m) == Some(topic))
+        .map(charged_cells)
+        .collect();
+    let others = leg.outs.iter().filter(|m| m.is_internal()).map(charged_cells).max().unwrap_or(0);
+    // the largest log the leg sends: one cell less and it cannot be sent
+    let log_cells = *logs.iter().max().expect("the leg logged a stranding");
+    assert!(others < log_cells, "the log ({log_cells} cells) is the largest send ({others})");
+
+    let (mut net, user, credits) = old_life_to_strand();
     let saved = net.bc.config_params().size_limits_config().expect("size limits");
-    // below what any stranding step can shrink the state to
-    let limit = (cells / 2) as u32;
-    net.configure_limits(limit, limit);
+    let limits = |net: &mut Net, cells: u32| {
+        let mut config = net.bc.config_params().clone();
+        let mut l = config.size_limits_config().expect("size limits");
+        l.max_msg_cells = cells;
+        config.set_config(chain_block::ConfigParamEnum::ConfigParam43(l)).expect("param 43");
+        net.bc.set_config(config).expect("the chain adopts it");
+    };
+    // one cell short: the mandatory log cannot be sent
+    limits(&mut net, log_cells - 1);
     let before = net.state_hashes();
     let tx = net.advance_minter(advance::STRAND, &user, None);
     let o = outcome(&tx);
-    assert!(!o.action_ok, "the action phase failed");
     assert_eq!(o.exit_code, Some(0), "the leg itself ran to completion");
+    assert!(!o.action_ok, "the action phase failed");
     assert_eq!(net.state_hashes(), before, "nothing stranded without its log");
     assert_eq!(stranded_logs(&net), 0, "no log without its record");
     assert_eq!(net.supply_state().4, 0);
-    net.configure_limits(saved.max_acc_state_cells, saved.max_mc_acc_state_cells);
+    // at exactly the log's size the same leg strands
+    limits(&mut net, log_cells);
+    succeeded(&net.advance_minter(advance::STRAND, &user, None));
+    assert!(stranded_logs(&net) > 0, "stranded, with its logs, at the limit");
+    limits(&mut net, saved.max_msg_cells);
     reopen(&mut net, &user);
     assert_eq!(stranded_logs(&net), credits - 1 + 2);
     assert_eq!(net.supply_state().4, 10 * (credits as i128 - 1) + 2);

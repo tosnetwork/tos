@@ -1526,11 +1526,13 @@ of the listed controls cannot go red in this implementation:
   `MINT_WINDOW - FOLD_LIMIT = FOLD_LIMIT`, so `S = C` whenever a reply is
   sent.
 
-A third, "`LOG_LIABILITY_STRANDED` sent in mode 2", cannot be exercised in
-the sandbox engine: its message-size check never refuses a message (its
-cell count stops at the limit), and every leg's funding leaves the reserve
-to pay its logs, so no test can make a mandatory log fail. The mode-0 rule
-for every mandatory log is pinned by `scripts/verify-token-bridge.py`, and
-the rollback of a whole leg on action failure is shown with a cell-limit
-failure (T-Z4, T-Y8).
+"`LOG_LIABILITY_STRANDED` sent in mode 2" goes red in T-Z4: with the
+message size limit one cell below the stranding log, the log cannot be sent
+and the leg must roll back whole; at exactly the log's size it strands. The
+sandbox engine could not show this until its action phase was made to
+refuse oversized messages as the native engine does (it had stopped
+counting at the limit, so no message was ever refused). The trace replays
+both sides of the limit in the native engine, and the mode-2 mutation's
+run in both engines alike. `scripts/verify-token-bridge.py` also pins mode 0
+for every mandatory log.
 
