@@ -3128,8 +3128,25 @@ TEST(WalletIndexWorker, FullQueueAndParkingAreNeverOverfilled) {
     }
     ASSERT_TRUE(static_cast<bool>(parked_wallet));
     auto again = wallet_index_fixture::block(41, 5200, 1002, {{parked_wallet.value(), 20, kJettonTransferOp}});
+    // Block 41 is indexed once its event is committed, which happens in the
+    // same batch that clears its recovery mark. A missing mark alone proves
+    // nothing: the block has none before the recorder marks it either. If
+    // the exit flush below paused the worker before block 41 was indexed, it
+    // would rightly stay marked, and the restart (which has no block fetcher)
+    // could never read it back.
+    auto again_indexed = [&] {
+      return db.get_event(parked_wallet.value(), 20).is_ok() &&
+             !db.has_incomplete_block(worker_block_id(41)).move_as_ok();
+    };
+    // Hold the recorder while block 41 is handed over, as a slow disk would:
+    // the block is then neither marked nor indexed, and the wait below must
+    // not take that for done.
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(true);
     tos_wallet_index::enqueue_wc0_index_block(again, td::Ref<vm::Cell>{}, worker_block_id(41), 1002);
-    ASSERT_TRUE(eventually([&] { return !db.has_incomplete_block(worker_block_id(41)).move_as_ok(); }));
+    ASSERT_TRUE(!db.has_incomplete_block(worker_block_id(41)).move_as_ok());
+    ASSERT_TRUE(!again_indexed());
+    tos_wallet_index::set_wc0_index_marking_stall_for_testing(false);
+    ASSERT_TRUE(eventually(again_indexed));
     settle(db);
     ASSERT_EQ(watch(db).parked, static_cast<uint64_t>(2));
     bool requeued = false;
