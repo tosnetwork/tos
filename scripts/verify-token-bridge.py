@@ -117,16 +117,17 @@ def verify_tvm_sources() -> None:
         [
             "op::execute_voting::swap",
             "throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee)",
-            "throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0)",
+            "throw_unless(error::wrong_namespace, (evm_chain_id == b_evm_chain) & (evm_bridge == b_evm_bridge) & (b_evm_chain == MY_CHAIN_ID))",
+            "throw_unless(error::wrong_external_chain_id, chain_id == MY_CHAIN_ID)",
             "calculate_minter_address(wrapped_token_data)",
-            "throw_unless(error::minter_not_sender",
-            "burn_log_message(destination_address, jetton_amount, token_address, from_address_hash)",
-            "emit_log_simple(LOG_SWAP_PAID",
-            # A mint stays recorded until its wallet confirms it, and a burn's log
-            # and answer are sent together or bounce back to the minter.
-            "pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_IN_FLIGHT",
-            "op::burn_recorded, burn_id",
-            "msg_value - gas_fee(BRIDGE_STEP_GAS, -1) - fee_of(log, -1)",
+            "require_generation(generation);",
+            "require_open_swap(n);",
+            "require_bridge_capacity();",
+            "require_window(s, c_mint_ack, MINT_WINDOW);",
+            # LOG_BURN commits with the RECORDED decision: mode 0, never ignored.
+            "send_raw_message(burn_log_message(destination, amount, token_address, owner_hash), 0);",
+            "emit_mandatory(LOG_SWAP_CANCELLED",
+            "throw_unless(error::underfunded, msg_value_of_in() >= get_cancel_cost());",
         ],
     )
     require_text(
@@ -135,22 +136,24 @@ def verify_tvm_sources() -> None:
             "throw_unless(error::not_enough_funds, jetton_amount > 0)",
             "throw_unless(error::burn_fee_not_matched, msg_value == bridge_burn_fee)",
             "state_flags & STATE_BURN_SUSPENDED",
-            ".store_uint(destination_address, 160)",
-            ".store_body_header(op::mint_credited, query_id)",
+            "throw_if(error::zero_destination, destination_address == 0);",
+            "throw_unless(error::life_mismatch, wallet_life == w_born);",
+            "require_cell_capacity(WALLET_WORST_CELLS, 0);",
         ],
     )
     require_text(
         c / "jetton-minter.fc",
         [
-            "sender_wc == -1",
-            "sender_address_hash == bridge_address_hash",
             "calculate_user_jetton_wallet_address",
             "https://bridge.tos.network/token/",
-            "SEND_MODE_PAY_FEES_SEPARETELY + extra_mode",
-            "throw_unless(error::supply_bound, total_supply + in_flight + jetton_amount <= MAX_SUPPLY)",
-            "throw_unless(error::burn_underfunded, available >= burn_cost(",
+            "(used + amount <= MAX_SUPPLY) & (MINTER_WORST_CELLS <= cell_limit(false))",
+            "(m_holders_count >= HOLDER_LIMIT) | (MINTER_WORST_CELLS > cell_limit(false))",
+            "emit_mandatory(LOG_LIABILITY_STRANDED",
+            "throw_unless(error::bad_floor, floor <= entered_high(m_mints, m_mint_wm));",
         ],
     )
+    verify_mandatory_logs(c / "settlement.fc")
+    verify_settlement_handlers_skip_config(c)
     require_text(
         c / "multisig.fc",
         [
@@ -194,6 +197,75 @@ def verify_tvm_sources() -> None:
         )
 
 
+def function_bodies(text: str) -> dict[str, str]:
+    """FunC function definitions at column 0, by name, with their bodies."""
+    bodies: dict[str, str] = {}
+    lines = text.splitlines()
+    i = 0
+    header = re.compile(r"^(?:\(.*?\)|[A-Za-z_][\w,() ]*?)\s+([A-Za-z_][\w?']*)\s*\(.*\)\s*[\w ]*\{\s*$")
+    while i < len(lines):
+        m = header.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        name = m.group(1)
+        depth = lines[i].count("{") - lines[i].count("}")
+        j = i + 1
+        while j < len(lines) and depth > 0:
+            depth += lines[j].count("{") - lines[j].count("}")
+            j += 1
+        bodies[name] = "\n".join(lines[i + 1 : j])
+        i = j
+    return bodies
+
+
+CONFIG_READERS = {"get_jetton_bridge_config", "get_external_bridge_address"}
+
+
+def verify_settlement_handlers_skip_config(contracts: Path) -> None:
+    """No settlement handler reaches a ConfigParam 79 reader.
+
+    Completions must run while the configuration is absent or changed. Every
+    `on_*` handler of the bridge, the minter and the wallet is a settlement
+    entry; the check follows calls through every function defined in the
+    contract and the files it includes.
+    """
+    shared = ""
+    for inc in ("settlement.fc", "utils.fc", "config.fc", "stdlib.fc"):
+        path = contracts / inc
+        if path.is_file():
+            shared += path.read_text(encoding="utf-8") + "\n"
+    call = re.compile(r"[~.]?([A-Za-z_][\w?']*)\s*\(")
+    for name in ("jetton-bridge.fc", "jetton-minter.fc", "jetton-wallet.fc"):
+        bodies = function_bodies(shared + (contracts / name).read_text(encoding="utf-8"))
+        entries = [f for f in bodies if f.startswith("on_")]
+        if len(entries) < 4:
+            raise AssertionError(f"{name}: found only {len(entries)} settlement handlers")
+        for entry in entries:
+            seen, todo = set(), [entry]
+            while todo:
+                f = todo.pop()
+                if f in seen:
+                    continue
+                seen.add(f)
+                if f in CONFIG_READERS:
+                    raise AssertionError(f"{name}: settlement handler {entry} reaches {f}")
+                for callee in call.findall(bodies.get(f, "")):
+                    if callee in bodies or callee in CONFIG_READERS:
+                        todo.append(callee)
+
+
+def verify_mandatory_logs(settlement: Path) -> None:
+    """A mandatory log is sent in mode 0: if it cannot be sent, its leg rolls back."""
+    bodies = function_bodies(settlement.read_text(encoding="utf-8"))
+    body = bodies.get("emit_mandatory", "")
+    if not re.search(r"\.end_cell\(\), 0\);", body):
+        raise AssertionError("settlement.fc: emit_mandatory must send in mode 0")
+    send = bodies.get("send_settlement", "")
+    if not re.search(r"\.end_cell\(\), 1\);", send):
+        raise AssertionError("settlement.fc: send_settlement must send in mode 1, never +2")
+
+
 def verify_evm_sources() -> None:
     c = PROJECT / "evm/contracts"
     require_text(
@@ -213,6 +285,11 @@ def verify_evm_sources() -> None:
             'require(initiallyDisabledTokens[i] != address(0), "Zero token in disabled list")',
             'require(nonce > lastLockStatusNonce, "Stale lock status nonce")',
             'require(nonce > lastDisableTokenNonce[tokenAddress], "Stale disable token nonce")',
+            'require(generation != 0, "No active generation")',
+            'require(lockNonce <= MAX_LOCK_NONCE, "Lock nonces exhausted")',
+            'require(record.status == LOCK_OPEN, "Lock is not refundable")',
+            'require(newGeneration == generation + 1, "Generation must follow the current one")',
+            'require(nonce > lastGenerationNonce, "Stale generation nonce")',
         ],
     )
     require_text(
@@ -224,6 +301,8 @@ def verify_evm_sources() -> None:
             "data.tx.tx_hash",
             "uint256(s) <= 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0",
             "v == 27 || v == 28",
+            "abi.encode(0x4EF0, address(this), block.chainid, n, lockGeneration, locker, token, amount)",
+            "abi.encode(0x6E4E, address(this), block.chainid, newGeneration, tosBridge, tosLife, nonce)",
         ],
     )
     require_text(c / "TosUtils.sol", ["uint256 amount", "bytes32 tx_hash", "uint64 lt"])
@@ -261,7 +340,7 @@ def main() -> int:
     print(
         "note: these are source-text and model checks; behavior is proven by the EVM and TVM suites"
     )
-    print("      (scripts/test-token-bridge-tvm.sh executes the compiled contracts)")
+    print("      (the token-bridge sandbox and scripts/test-token-bridge-tvm.sh execute the compiled contracts)")
     return 0
 
 

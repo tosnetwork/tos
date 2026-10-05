@@ -103,6 +103,10 @@ pub enum IncorrectCheckRewrite {
 #[path = "tests/test_transaction_executor_with_real_data.rs"]
 mod tests_with_real_data;
 
+#[cfg(test)]
+#[path = "tests/test_message_size_limits.rs"]
+mod tests_message_size_limits;
+
 #[derive(Clone, Default)]
 pub struct ExecuteParams {
     pub state_libs: HashmapE,
@@ -1341,7 +1345,9 @@ fn outmsg_action_handler(
                 },
             ),
         };
-        let mut sstat = StorageUsageCalc::with_limits(max_cells, limits.max_msg_bits as u64);
+        // As the native engine counts: past the cell limit by one, bits
+        // without a limit, so both size checks below can hold.
+        let mut sstat = StorageUsageCalc::with_cell_limit(max_cells);
         if let Some(body) = &body {
             sstat.append_cell(body, body_to_ref, &mut 0).map_err(|err| {
                 log::error!(target: "executor", "cannot calc msg storage used for body: {err}");
@@ -1357,7 +1363,8 @@ fn outmsg_action_handler(
 
         log::debug!(target: "executor", "msg_storage cells: {}, bits: {}", sstat.cells(), sstat.bits());
         if !is_special {
-            fine = Coins::from(fine_per_cell * sstat.cells());
+            // the native engine fines the visited cells, never more than max_cells
+            fine = Coins::from(fine_per_cell * sstat.cells().min(max_cells));
         }
         let mut acc_balance_copy = acc_balance.clone();
         let mut collect_fine = || {
@@ -1373,22 +1380,24 @@ fn outmsg_action_handler(
                 phase.action_fine += fine;
             }
         };
+        // The size checks apply to every account, special ones included; a
+        // special account only pays no fine and no forwarding fee.
+        if sstat.cells() > max_cells && max_cells < limits.max_msg_cells as u64 {
+            log::debug!(target: "executor", "not enough funds to process a message (max_cells={})", max_cells);
+            collect_fine();
+            return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
+        }
+        if sstat.bits() > limits.max_msg_bits as u64 || sstat.cells() > max_cells {
+            log::debug!(target: "executor", "message too large, invalid");
+            collect_fine();
+            return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
+        }
+        if sstat.max_merkle_depth() > MAX_MSG_MERKLE_DEPTH {
+            log::debug!(target: "executor", "message has too big merkle depth, invalid");
+            collect_fine();
+            return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
+        }
         let compute_fwd_fee = if !is_special {
-            if sstat.cells() > max_cells {
-                log::debug!(target: "executor", "not enough funds to process a message (max_cells={})", max_cells);
-                collect_fine();
-                return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
-            }
-            if sstat.bits() > limits.max_msg_bits as u64 {
-                log::debug!(target: "executor", "message too large, invalid");
-                collect_fine();
-                return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
-            }
-            if sstat.max_merkle_depth() > MAX_MSG_MERKLE_DEPTH {
-                log::debug!(target: "executor", "message has too big merkle depth, invalid");
-                collect_fine();
-                return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
-            }
             Coins::try_from(fwd_prices.calc_fwd_fee(sstat.bits(), sstat.cells()))
                 .map_err(|err| {
                     log::error!(target: "executor", "cannot calc fwd fee message in action phase : {}", err);

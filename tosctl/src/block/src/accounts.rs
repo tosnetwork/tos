@@ -127,6 +127,10 @@ pub struct StorageUsageCalc {
     max_merkle_depth: u32,
     limit_bits: u64,
     limit_cells: u64,
+    /// Count the cell that crosses `limit_cells` and stop there, so that
+    /// `cells() > limit` reports an oversized tree; a limit of zero is a
+    /// limit, not "unlimited".
+    count_past_limit: bool,
     hashes: HashSet<UInt256>,
 }
 
@@ -148,11 +152,34 @@ impl StorageUsageCalc {
             max_merkle_depth: 0,
             limit_bits,
             limit_cells,
+            count_past_limit: false,
+            hashes: HashSet::new(),
+        }
+    }
+
+    /// Counts a message as the native engine's action phase does: cells up
+    /// to and including the first one past `limit_cells`, after which the
+    /// walk stops; bits without a limit. A caller tells an oversized message
+    /// by `cells() > limit_cells`. The saturating counter of `with_limits`
+    /// never exceeds its limit, so that comparison could never hold.
+    pub fn with_cell_limit(limit_cells: u64) -> Self {
+        Self {
+            bits: 0,
+            cells: 0,
+            max_merkle_depth: 0,
+            limit_bits: 0,
+            limit_cells,
+            count_past_limit: true,
             hashes: HashSet::new(),
         }
     }
 
     fn add_checked(&mut self, cells: u64, bits: u64) -> bool {
+        if self.count_past_limit {
+            self.cells = self.cells.saturating_add(cells);
+            self.bits = self.bits.saturating_add(bits);
+            return self.cells <= self.limit_cells;
+        }
         if self.limit_cells != 0 && self.cells + cells > self.limit_cells
             || self.limit_bits != 0 && self.bits + bits > self.limit_bits
         {
@@ -175,6 +202,9 @@ impl StorageUsageCalc {
         add_root: bool,
         gas_consumer: &mut impl GasConsumer,
     ) -> Result<u32> {
+        if self.count_past_limit && self.cells > self.limit_cells {
+            return Ok(0); // the limit was crossed: the native walk stops here
+        }
         if add_root
             && (!self.hashes.insert(cell.repr_hash())
                 || !self.add_checked(1, cell.bit_length() as u64))

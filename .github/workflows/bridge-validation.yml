@@ -103,6 +103,9 @@ jobs:
           npm ci --ignore-scripts
           npm test
 
+      - name: Every EVM token-bridge guard is held by a test
+        run: python3 scripts/token-bridge-mutations.py --evm-only
+
       - name: Compile the token-bridge contracts for Tron
         working-directory: crosschain/token-bridge/evm
         run: npm run compile-tron

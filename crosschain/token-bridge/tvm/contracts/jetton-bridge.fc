@@ -7,205 +7,441 @@
 #include "config.fc";
 #include "settlement.fc";
 
-;; collector_address: MsgAddress jetton_minter_code:^Cell jetton_wallet_code:^Cell
-;;   paid_swaps:(HashmapE 256 Unit)
-;;   next_mint_id:uint64 pending_mints:(HashmapE 64 PendingMint)
-;; pending_mint#_ status:uint1 swap_key:uint256 to_address_hash:uint256
-;;   amount:Coins wrapped_token_data:^Cell = PendingMint;
-;;
-;; paid_swaps holds the swaps whose mint fee has been paid and not yet spent.
-;; pay_swap adds a key; a swap vote requires one and removes it, so a fee pays
-;; for exactly one mint and the set does not grow without bound.
-;;
-;; pending_mints holds every mint a vote started until its wallet confirmed the
-;; credit. A mint that failed stays here and anyone may send it again by paying
-;; the mint fee; the vote that authorised it is not needed a second time.
-(slice, cell, cell, cell, int, cell) load_data() inline_ref {
-    slice slice_data = get_data().begin_parse();
-    slice collector_address = slice_data~load_msg_addr();
-    cell jetton_minter_code = slice_data~load_ref();
-    cell jetton_wallet_code = slice_data~load_ref();
-    cell paid_swaps = slice_data~load_dict();
-    int next_mint_id = slice_data~load_uint(64);
-    cell pending_mints = slice_data~load_dict();
-    slice_data.end_parse();
-    return (collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
+{-
+  The bridge receives swaps from the oracle quorum on channel S (numbered by
+  the EVM lock nonce n within one source generation), is the sender of C1 (mints
+  to each minter) and the receiver of C4 (burn notices from each minter).
+
+  storage#_ born_lt:uint64 evm_chain_id:uint32 evm_bridge:uint160
+            generation:uint32 generation_start:uint64 generation_state:uint2
+            collector_address:MsgAddress jetton_minter_code:^Cell jetton_wallet_code:^Cell
+            ^[ swap_watermark:uint64 swaps:(HashmapE 64 SwapState)
+               channels:(HashmapE 256 ^TokenChannel) channels_count:uint32 ] = Storage;
+  swap_paid$00 payer:MsgAddressInt fee:Coins = SwapState;
+  swap_preparing$01 minter:uint256 s:uint64 payer:MsgAddressInt fee:Coins = SwapState;
+  swap_consumed$10 = SwapState;
+  swap_cancelled$11 = SwapState;
+  token_channel#_ terminal:uint1 minter_life:uint64 next_mint:uint64 mint_ack:uint64
+      burn_watermark:uint64 burn_compaction:uint64 burn_high:uint64
+      token_data:^Cell pending:(HashmapE 64 PendingMint)
+      burns:(HashmapE 64 BurnOutcome) = TokenChannel;
+  pending_mint#_ status:uint1 n:uint64 descriptor_hash:uint256
+      descriptor:^MintDescriptor = PendingMint;
+  burn_outcome#_ outcome:uint1 descriptor_hash:uint256 = BurnOutcome;
+
+  The namespace (evm_chain_id, evm_bridge) is fixed at deployment. The source
+  generation is pinned once, by an oracle vote that names this bridge's address
+  and life: a recreated bridge has a new life and can never act on an earlier
+  generation's locks.
+-}
+
+const int GEN_UNSET = 0;
+const int GEN_ACTIVE = 1;
+
+global int b_born;
+global int b_evm_chain;
+global int b_evm_bridge;
+global int b_generation;
+global int b_gen_start;
+global int b_gen_state;
+global slice b_collector;
+global cell b_minter_code;
+global cell b_wallet_code;
+global int b_swap_wm;
+global cell b_swaps;
+global cell b_channels;
+global int b_channels_count;
+
+;; the channel being worked on
+global int c_minter;
+global int c_terminal;
+global int c_minter_life;
+global int c_next_mint;
+global int c_mint_ack;
+global int c_burn_wm;
+global int c_burn_cf;
+global int c_burn_high;
+global cell c_token_data;
+global cell c_pending;
+global cell c_burns;
+;; What a vote keeps of its own value for the records it pays for.
+global int b_vote_keep;
+
+() load_data() impure inline {
+    slice ds = get_data().begin_parse();
+    b_born = ds~load_uint(64);
+    b_evm_chain = ds~load_uint(32);
+    b_evm_bridge = ds~load_uint(160);
+    b_generation = ds~load_uint(32);
+    b_gen_start = ds~load_uint(64);
+    b_gen_state = ds~load_uint(2);
+    b_collector = ds~load_msg_addr();
+    b_minter_code = ds~load_ref();
+    b_wallet_code = ds~load_ref();
+    slice ss = ds~load_ref().begin_parse();
+    ds.end_parse();
+    b_swap_wm = ss~load_uint(64);
+    b_swaps = ss~load_dict();
+    b_channels = ss~load_dict();
+    b_channels_count = ss~load_uint(32);
+    ss.end_parse();
 }
 
-() save_data(slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) impure inline_ref {
+() save_data() impure inline {
     set_data(begin_cell()
-        .store_slice(collector_address)
-        .store_ref(jetton_minter_code)
-        .store_ref(jetton_wallet_code)
-        .store_dict(paid_swaps)
-        .store_uint(next_mint_id, 64)
-        .store_dict(pending_mints)
-        .end_cell()
-    );
-}
-
-builder pack_pending_mint(int status, int swap_key, int to_address_hash, int amount, cell wrapped_token_data) inline {
-    return begin_cell()
-        .store_uint(status, 1)
-        .store_uint(swap_key, 256)
-        .store_uint(to_address_hash, 256)
-        .store_coins(amount)
-        .store_ref(wrapped_token_data);
-}
-
-(int, int, int, int, cell) unpack_pending_mint(slice entry) inline {
-    int status = entry~load_uint(1);
-    int swap_key = entry~load_uint(256);
-    int to_address_hash = entry~load_uint(256);
-    int amount = entry~load_coins();
-    cell wrapped_token_data = entry~load_ref();
-    entry.end_parse();
-    return (status, swap_key, to_address_hash, amount, wrapped_token_data);
-}
-
-;; A swap's identity, derived from the source event rather than chosen.
-;;
-;; The vote already carries both halves, so the contract computes this itself
-;; and a payer cannot make a payment point at a different swap. Before this,
-;; pay_swap took whatever 256-bit number it was given and nothing checked it.
-int swap_key(int ext_chain_hash, int internal_index) inline {
-    return cell_hash(begin_cell()
-        .store_uint(ext_chain_hash, 256)
-        .store_int(internal_index, 16)
+        .store_uint(b_born, 64)
+        .store_uint(b_evm_chain, 32)
+        .store_uint(b_evm_bridge, 160)
+        .store_uint(b_generation, 32)
+        .store_uint(b_gen_start, 64)
+        .store_uint(b_gen_state, 2)
+        .store_slice(b_collector)
+        .store_ref(b_minter_code)
+        .store_ref(b_wallet_code)
+        .store_ref(begin_cell()
+            .store_uint(b_swap_wm, 64)
+            .store_dict(b_swaps)
+            .store_dict(b_channels)
+            .store_uint(b_channels_count, 32)
+            .end_cell())
         .end_cell());
 }
 
-(slice, cell) calculate_minter_address(cell wrapped_token_data) impure inline_ref {
-    (_, cell jetton_minter_code, cell jetton_wallet_code, _, _, _) = load_data();
+;; ---- minters --------------------------------------------------------------
 
-    cell jetton_minter_data = begin_cell()
-            .store_coins(0) ;; total_supply
-            .store_coins(0) ;; in_flight
-            .store_ref(wrapped_token_data)
-            .store_ref(jetton_wallet_code)
-            .store_uint(0, 64) ;; next_burn_id
-            .store_dict(null()) ;; pending_burns
-            .end_cell();
-
-    cell jetton_minter_state_init = begin_cell()
+(slice, cell) calculate_minter_address(cell wrapped_token_data) inline {
+    cell data = pack_minter_initial_data(wrapped_token_data, b_wallet_code, my_address());
+    cell state_init = begin_cell()
             .store_uint(0, 2)
-            .store_dict(jetton_minter_code)
-            .store_dict(jetton_minter_data)
+            .store_dict(b_minter_code)
+            .store_dict(data)
             .store_uint(0, 1)
             .end_cell();
-
-    slice minter_address = calculate_address_by_state_init(jetton_minter_state_init); ;; calculate minter address by init_state
-    return (minter_address, jetton_minter_state_init);
+    return (calculate_address_by_state_init(state_init), state_init);
 }
 
-;; Sends a recorded mint to its minter. The mint id travels as the query_id, so
-;; the minter's report, or its bounce, names the mint it is about.
-() send_mint(int mint_id, int to_address_hash, int amount, cell wrapped_token_data, int value) impure inline_ref {
-    (slice minter_address, cell jetton_minter_state_init) = calculate_minter_address(wrapped_token_data);
-
-    cell master_msg = begin_cell() ;; mint tokens to wallet address
-            .store_body_header(op::mint, mint_id)
-            .store_slice(create_address(WORKCHAIN, to_address_hash)) ;; 3 + 8 + 256 = 267 bit
-            .store_coins(amount) ;; max 124 bit
-            .store_coins(0) ;; forward_coins_amount
-            .end_cell();
-
-    var msg = begin_cell()
-            .store_msg_flags(BOUNCEABLE)
-            .store_slice(minter_address)
-            .store_coins(value)
-            .store_msgbody_prefix_stateinit()
-            .store_ref(jetton_minter_state_init)
-            .store_ref(master_msg);
-
-    send_raw_message(msg.end_cell(), SEND_MODE_REGULAR); ;; revert on errors
-}
-
-;; The outcome of an in-flight mint: completed removes it, failed keeps it for a
-;; retry. Only the mint's own minter can report on it.
-() settle_mint(int mint_id, int completed, slice sender_address) impure {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) = load_data();
-    (slice entry, int found) = pending_mints.udict_get?(64, mint_id);
+int channel_load(int minter) impure inline {
+    c_minter = minter;
+    (cell c, int found) = b_channels.udict_get_ref?(256, minter);
     if (~ found) {
-        return ();
+        return false;
     }
-    (int status, int key, int to_address_hash, int amount, cell wrapped_token_data) = unpack_pending_mint(entry);
-    (slice minter_address, _) = calculate_minter_address(wrapped_token_data);
-    throw_unless(error::minter_not_sender, equal_slices(minter_address, sender_address));
-    if (status != MINT_IN_FLIGHT) {
-        return ();
-    }
-    if (completed) {
-        (pending_mints, _) = pending_mints.udict_delete?(64, mint_id);
-    } else {
-        pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_FAILED, key, to_address_hash, amount, wrapped_token_data));
-        emit_record(LOG_MINT_FAILED, begin_cell().store_uint(mint_id, 64).store_uint(key, 256).end_cell());
-    }
-    save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
+    slice cs = c.begin_parse();
+    c_terminal = cs~load_uint(1);
+    c_minter_life = cs~load_uint(64);
+    c_next_mint = cs~load_uint(64);
+    c_mint_ack = cs~load_uint(64);
+    c_burn_wm = cs~load_uint(64);
+    c_burn_cf = cs~load_uint(64);
+    c_burn_high = cs~load_uint(64);
+    c_token_data = cs~load_ref();
+    c_pending = cs~load_dict();
+    c_burns = cs~load_dict();
+    cs.end_parse();
+    return true;
 }
 
-() execute_voting (slice oracles_address, slice voting_data, int query_id, int bridge_mint_fee, int state_flags, int msg_value) impure {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) = load_data();
+() channel_store() impure inline {
+    b_channels~udict_set_ref(256, c_minter, begin_cell()
+        .store_uint(c_terminal, 1)
+        .store_uint(c_minter_life, 64)
+        .store_uint(c_next_mint, 64)
+        .store_uint(c_mint_ack, 64)
+        .store_uint(c_burn_wm, 64)
+        .store_uint(c_burn_cf, 64)
+        .store_uint(c_burn_high, 64)
+        .store_ref(c_token_data)
+        .store_dict(c_pending)
+        .store_dict(c_burns)
+        .end_cell());
+}
 
+slice minter_address() inline {
+    return create_address(WORKCHAIN, c_minter);
+}
+
+;; A message from a minter: the sender must be a minter this bridge created.
+() channel_of_sender(slice sender) impure inline {
+    (int wc, int hash) = parse_std_addr(sender);
+    throw_unless(error::minter_not_sender, wc == WORKCHAIN);
+    throw_unless(error::minter_not_sender, channel_load(hash));
+}
+
+;; Checks the lives of a minter's message. Returns false for an older minter
+;; life, which is ignored. A newer life means the minter was recreated: its
+;; channel becomes terminal and is refused from then on.
+int minter_ok?(int life, int expected, int bootstrap) impure inline {
+    throw_if(error::terminal, c_terminal);
+    if (c_minter_life == 0) {
+        throw_unless(error::not_admissible, bootstrap);
+        c_minter_life = life;
+    }
+    if (life < c_minter_life) {
+        return false;
+    }
+    if (life > c_minter_life) {
+        c_terminal = 1;
+        channel_store();
+        save_data();
+        emit_optional(LOG_CHANNEL_TERMINAL, begin_cell().store_uint(c_minter, 256).store_uint(life, 64).end_cell());
+        return false;
+    }
+    throw_unless(error::life_mismatch, expected == b_born);
+    return true;
+}
+
+builder to_minter(int op) inline {
+    return header(op).store_uint(b_born, 64).store_uint(c_minter_life, 64);
+}
+
+;; ---- C1 sender: mints -----------------------------------------------------
+
+int mint_finished_floor() inline {
+    return finished_floor(c_pending, c_next_mint);
+}
+
+() accept_mint_ack(int floor) impure inline {
+    throw_unless(error::bad_floor, floor <= c_next_mint);
+    c_mint_ack = max(c_mint_ack, floor);
+}
+
+;; status, n, hash, descriptor
+(int, int, int, cell, int) pending_get(int s) inline {
+    (slice e, int found) = c_pending.udict_get?(64, s);
+    if (~ found) {
+        return (0, 0, 0, null(), false);
+    }
+    int status = e~load_uint(1);
+    int n = e~load_uint(64);
+    int hash = e~load_uint(256);
+    cell d = e~load_ref();
+    return (status, n, hash, d, true);
+}
+
+() pending_put(int s, int status, int n, int hash, cell d) impure inline {
+    c_pending~udict_set_builder(64, s, begin_cell().store_uint(status, 1).store_uint(n, 64).store_uint(hash, 256).store_ref(d));
+}
+
+;; What the open message from the minter to the recipient's wallet costs.
+int open_fee_for(slice recipient) inline {
+    return fee_of(calculate_jetton_wallet_state_init(recipient, minter_address(), b_wallet_code), 0) + described_fee(0);
+}
+
+;; What P1 carries: everything its minter needs, including opening the wallet,
+;; and the minter's reserve while P1 may still be the message that deploys it.
+int need_p1_for(cell d) inline {
+    (_, _, _, _, _, _, _, slice recipient) = parse_mint_descriptor(d);
+    return need_p1_opening(open_fee_for(recipient)) + (c_minter_life ? 0 : MINTER_RESERVE);
+}
+
+;; P1, with the minter's initial state while the minter has not answered yet.
+() send_prepare(int s, cell d, int value) impure inline {
+    builder body = header(op::prepare)
+        .store_uint(b_born, 64)
+        .store_uint(c_minter_life, 64)
+        .store_uint(s, 64)
+        .store_uint(mint_finished_floor(), 64)
+        .store_ref(d);
+    if (c_minter_life == 0) {
+        (slice addr, cell state_init) = calculate_minter_address(c_token_data);
+        send_settlement_with_init(addr, value, state_init, body);
+        return ();
+    }
+    send_settlement(minter_address(), value, body);
+}
+
+() send_commit(int s, cell d) impure inline {
+    send_settlement(minter_address(), need_m1(), to_minter(op::commit)
+        .store_uint(s, 64)
+        .store_uint(mint_finished_floor(), 64)
+        .store_ref(d));
+}
+
+;; ---- swaps ----------------------------------------------------------------
+
+() fold_swaps() impure inline {
+    int steps = 0;
+    int more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (slice e, int found) = b_swaps.udict_get?(64, b_swap_wm);
+        if (found ? (e.preload_uint(2) >= SWAP_CONSUMED) : false) {
+            (b_swaps, _) = b_swaps.udict_delete?(64, b_swap_wm);
+            b_swap_wm += 1;
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+}
+
+() require_generation(int generation) impure inline {
+    throw_unless(error::wrong_generation, (b_gen_state == GEN_ACTIVE) & (generation == b_generation));
+}
+
+;; A swap number the bridge may still hold: within the generation and the window,
+;; and never the exhausted sentinel, which the watermark could not fold past.
+;; New business stops while the masterchain account limit is below the
+;; bridge's measured worst case, unless the bridge is listed in ConfigParam 31,
+;; which exempts it from the limit.
+() require_bridge_capacity() impure inline {
+    cell p = config_param(31);
+    if (~ p.null?()) {
+        (_, int me) = parse_std_addr(my_address());
+        (_, int listed) = p.begin_parse().preload_dict().udict_get?(256, me);
+        if (listed) {
+            return ();
+        }
+    }
+    require_cell_capacity(BRIDGE_WORST_CELLS, true);
+}
+
+() require_open_swap(int n) impure inline {
+    throw_unless(error::sequence_exhausted, n <= MAX_SEQ);
+    throw_unless(error::not_admissible, n >= b_swap_wm);
+    throw_unless(error::window_full, n < b_swap_wm + SWAP_WINDOW);
+}
+
+() vote_swap(slice voting_data) impure {
+    int generation = voting_data~load_uint(32);
+    int n = voting_data~load_uint(64);
+    int evm_chain_id = voting_data~load_uint(32);
+    int evm_bridge = voting_data~load_uint(160);
+    int recipient_hash = voting_data~load_uint(256);
+    int amount = voting_data~load_coins();
+    cell wrapped_token_data = voting_data~load_ref();
+    voting_data.end_parse();
+
+    require_generation(generation);
+    throw_unless(error::wrong_namespace, (evm_chain_id == b_evm_chain) & (evm_bridge == b_evm_bridge) & (b_evm_chain == MY_CHAIN_ID));
+    throw_unless(error::wrong_namespace, get_external_bridge_address() == b_evm_bridge);
+    (int chain_id, _, _) = unpack_wrapped_token_data(wrapped_token_data);
+    throw_unless(error::wrong_external_chain_id, chain_id == MY_CHAIN_ID);
+    throw_unless(error::not_enough_funds, amount > 0);
+    require_open_swap(n);
+    (slice e, int found) = b_swaps.udict_get?(64, n);
+    throw_unless(error::swap_not_paid, found ? (e.preload_uint(2) == SWAP_PAID) : false);
+    e~skip_bits(2);
+    slice payer = e~load_msg_addr();
+    int fee = e~load_coins();
+
+    require_bridge_capacity();
+    (slice minter, _) = calculate_minter_address(wrapped_token_data);
+    (_, int minter_hash) = parse_std_addr(minter);
+    if (~ channel_load(minter_hash)) {
+        throw_unless(error::window_full, b_channels_count < CHANNEL_LIMIT);
+        c_terminal = 0;
+        c_minter_life = 0;
+        c_next_mint = 0;
+        c_mint_ack = 0;
+        c_burn_wm = 0;
+        c_burn_cf = 0;
+        c_burn_high = 0;
+        c_token_data = wrapped_token_data;
+        c_pending = new_dict();
+        c_burns = new_dict();
+        b_channels_count += 1;
+    }
+    throw_if(error::terminal, c_terminal);
+    int s = c_next_mint;
+    require_window(s, c_mint_ack, MINT_WINDOW);
+
+    cell d = mint_descriptor(n, s, amount, my_address(), b_evm_bridge, b_evm_chain, minter, create_address(WORKCHAIN, recipient_hash));
+    pending_put(s, PENDING_PREPARING, n, cell_hash(d), d);
+    c_next_mint = s + 1;
+    b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_PREPARING, 2).store_uint(minter_hash, 256).store_uint(s, 64).store_slice(payer).store_coins(fee));
+    ;; P1 is paid out of the swap's recorded fee, and nothing else.
+    int value = fee - bridge_gas() - described_fee(-1);
+    if (c_minter_life == 0) {
+        (_, cell state_init) = calculate_minter_address(c_token_data);
+        value -= fee_of(state_init, -1);
+    }
+    throw_unless(error::mint_fee_not_matched, value > 0);
+    send_prepare(s, d, value);
+    channel_store();
+    save_data();
+}
+
+() vote_cancel_lock(slice voting_data) impure {
+    int generation = voting_data~load_uint(32);
+    int n = voting_data~load_uint(64);
+    voting_data.end_parse();
+    require_generation(generation);
+    ;; Below the watermark every lock is consumed or cancelled already: nothing
+    ;; is evaluated, logged or refunded.
+    require_open_swap(n);
+    (slice e, int found) = b_swaps.udict_get?(64, n);
+    if (found) {
+        throw_unless(error::not_admissible, e.preload_uint(2) == SWAP_PAID);
+        e~skip_bits(2);
+        slice payer = e~load_msg_addr();
+        int fee = e~load_coins();
+        ;; The payment carries the refund, its forwarding and the cancellation's
+        ;; mandatory log; the bridge's own balance pays for none of them.
+        int refund = fee - small_fee(-1) - allowance(2, -1);
+        if (refund > 0) {
+            send_raw_message(begin_cell()
+                .store_uint(0x10, 6)
+                .store_slice(payer)
+                .store_coins(refund)
+                .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+                .end_cell(), 1);
+        }
+    }
+    else {
+        ;; Nothing was paid for this lock: the vote's own value pays for the
+        ;; mandatory log, never the bridge's balance.
+        b_vote_keep = allowance(2, -1);
+        throw_unless(error::underfunded, msg_value_of_in() >= get_cancel_cost());
+    }
+    b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_CANCELLED, 2));
+    emit_mandatory(LOG_SWAP_CANCELLED, begin_cell()
+        .store_uint(b_evm_chain, 32)
+        .store_uint(b_evm_bridge, 160)
+        .store_uint(b_generation, 32)
+        .store_uint(n, 64)
+        .end_cell());
+    fold_swaps();
+    save_data();
+}
+
+() vote_activate_generation(slice voting_data) impure {
+    int bridge_hash = voting_data~load_uint(256);
+    int life = voting_data~load_uint(64);
+    int generation = voting_data~load_uint(32);
+    int start = voting_data~load_uint(64);
+    voting_data.end_parse();
+    (_, int my_hash) = parse_std_addr(my_address());
+    throw_unless(error::wrong_generation, b_gen_state == GEN_UNSET);
+    throw_unless(error::wrong_generation, (bridge_hash == my_hash) & (life == b_born));
+    throw_unless(error::wrong_generation, (generation > 0) & (start <= MAX_SEQ));
+    b_generation = generation;
+    b_gen_start = start;
+    b_swap_wm = start;
+    b_gen_state = GEN_ACTIVE;
+    emit_optional(LOG_GENERATION_ACTIVATED, begin_cell().store_uint(generation, 32).store_uint(start, 64).store_uint(life, 64).end_cell());
+    save_data();
+}
+
+() execute_voting (slice oracles_address, slice voting_data, int query_id, int state_flags, int msg_value) impure {
     int op = voting_data~load_uint(8);
+    b_vote_keep = 0;
 
     throw_if(error::unknown_execute_voting_op,
         (op != op::execute_voting::swap) &
         (op != op::execute_voting::get_reward) &
-        (op != op::execute_voting::change_collector));
+        (op != op::execute_voting::change_collector) &
+        (op != op::execute_voting::activate_generation) &
+        (op != op::execute_voting::cancel_lock));
 
     throw_if(error::operation_suspended, state_flags & STATE_GOVERNANCE_SUSPENDED);
 
     if (op == op::execute_voting::swap) {
         throw_if(error::operation_suspended, state_flags & STATE_SWAPS_SUSPENDED);
-        (
-            int ext_chain_hash,
-            int internal_index,
-            int addr_hash,
-            int mint_jetton_amount,
-            cell wrapped_token_data,
-            int forward_coins_amount
-        ) = (
-            voting_data~load_uint(256),
-            voting_data~load_int(16),
-            voting_data~load_uint(256),
-            voting_data~load_coins(), ;; max 124 bits
-            voting_data~load_ref(),
-            voting_data~load_coins()
-        );
-
-        voting_data.end_parse();
-
-        (
-                int chain_id,
-                int token_address,
-                int token_decimals
-        ) = unpack_wrapped_token_data(wrapped_token_data);
-
-        throw_unless(error::wrong_external_chain_id, chain_id == MY_CHAIN_ID);
-
-        throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0);
-        throw_unless(error::mint_fee_less_forward, bridge_mint_fee > forward_coins_amount);
-
-        ;; The fee is paid in its own transaction, so the contract has to
-        ;; remember it. Without this the multisig mints out of its own balance
-        ;; and nothing fails — the two transactions were connected by nothing.
-        ;;
-        ;; Last of the checks, so a vote that is malformed or meant for another
-        ;; chain is reported as that rather than as unpaid. Removing the key is
-        ;; what makes one payment pay for one mint, and what keeps the set from
-        ;; growing for as long as the bridge runs.
-        int key = swap_key(ext_chain_hash, internal_index);
-        (cell remaining, int was_paid) = paid_swaps.udict_delete?(256, key);
-        throw_unless(error::swap_not_paid, was_paid);
-        throw_unless(error::mint_ids_exhausted, next_mint_id < REFUND_ID_FLAG);
-
-        int mint_id = next_mint_id;
-        pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_IN_FLIGHT, key, addr_hash, mint_jetton_amount, wrapped_token_data));
-        save_data(collector_address, jetton_minter_code, jetton_wallet_code, remaining, mint_id + 1, pending_mints);
-
-        send_mint(mint_id, addr_hash, mint_jetton_amount, wrapped_token_data, bridge_mint_fee);
-
+        vote_swap(voting_data);
+    } elseif (op == op::execute_voting::cancel_lock) {
+        vote_cancel_lock(voting_data);
+    } elseif (op == op::execute_voting::activate_generation) {
+        vote_activate_generation(voting_data);
     } elseif (op == op::execute_voting::get_reward) {
 
         slice reward_address = voting_data~load_msg_addr();
@@ -230,91 +466,353 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
 
     } elseif (op == op::execute_voting::change_collector) {
 
-        collector_address = voting_data~load_msg_addr();
+        b_collector = voting_data~load_msg_addr();
         voting_data.end_parse();
-
-        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
-
+        save_data();
     }
 
     if (op != op::execute_voting::get_reward) {
-        send_receipt_message(oracles_address, 0x10000 + 9, query_id, 0, 0, 64); ;; thanks
+        if (b_vote_keep > 0) {
+            ;; return the rest of the vote's value, keeping what its records cost
+            raw_reserve(b_vote_keep, 4);
+            send_receipt_message(oracles_address, 0x10000 + 9, query_id, 0, 0, 128);
+        } else {
+            send_receipt_message(oracles_address, 0x10000 + 9, query_id, 0, 0, 64); ;; thanks
+        }
     }
 }
 
-;; A burn the minter has already taken out of supply. The log and the answer
-;; to the minter are sent together or not at all: if either cannot be sent, the
-;; notification bounces and the minter credits the tokens back. Both are paid
-;; from the notification, which the minter priced for them: the log's fee comes
-;; off the answer's value, so the bridge's own balance is not drawn on.
-() record_burn(slice sender_address, int burn_id, slice in_msg_body, int msg_value) impure {
-    int jetton_amount = in_msg_body~load_coins();
-    slice from_address = in_msg_body~load_msg_addr();
-    slice response_address = in_msg_body~load_msg_addr();
-    int destination_address = in_msg_body~load_uint(160);
-    cell wrapped_token_data = in_msg_body~load_ref();
-    in_msg_body.end_parse();
+;; ---- C1 results -----------------------------------------------------------
 
-    (slice minter_address, _) = calculate_minter_address(wrapped_token_data);
-
-    throw_unless(error::minter_not_sender, equal_slices(minter_address, sender_address));
-    (int chain_id, int token_address, _) = unpack_wrapped_token_data(wrapped_token_data);
-
-    throw_unless(error::wrong_external_chain_id, chain_id == MY_CHAIN_ID); ;; can never happen
-
-    (int from_address_wc, int from_address_hash) = parse_std_addr(from_address);
-
-    throw_unless(error::wrong_sender_workchain, from_address_wc == WORKCHAIN); ;; can never happen
-
-    cell log = burn_log_message(destination_address, jetton_amount, token_address, from_address_hash);
-    send_raw_message(log, SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
-
-    var answer = begin_cell()
-            .store_msg_flags(NON_BOUNCEABLE)
-            .store_slice(sender_address)
-            .store_coins(msg_value - gas_fee(BRIDGE_STEP_GAS, -1) - fee_of(log, -1))
-            .store_msgbody_prefix_slice()
-            .store_body_header(op::burn_recorded, burn_id);
-    send_raw_message(answer.end_cell(), SEND_MODE_REGULAR + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+() on_mint_result(int op, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int s = body~load_uint(64);
+    int floor = body~load_uint(64);
+    body.end_parse();
+    int bootstrap = (op == op::prepared) | (op == op::refused);
+    if (~ minter_ok?(life, expected, bootstrap)) {
+        return ();
+    }
+    throw_unless(error::underfunded, available(msg_value, BRIDGE_RESERVE) >= ((op == op::prepared) ? need_p2() : bridge_gas()));
+    accept_mint_ack(floor);
+    (int status, int n, int hash, cell d, int found) = pending_get(s);
+    if (found) {
+        if ((op == op::prepared) & (status == PENDING_PREPARING)) {
+            pending_put(s, PENDING_COMMITTED, n, hash, d);
+            b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_CONSUMED, 2));
+            send_commit(s, d);
+        } elseif ((op == op::refused) & (status == PENDING_PREPARING)) {
+            ;; the minter could not reserve: the swap is paid again, unconsumed
+            (slice e, _) = b_swaps.udict_get?(64, n);
+            e~skip_bits(2 + 256 + 64);
+            slice payer = e~load_msg_addr();
+            int fee = e~load_coins();
+            b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_PAID, 2).store_slice(payer).store_coins(fee));
+            (c_pending, _) = c_pending.udict_delete?(64, s);
+        } elseif (op == op::mint_completed) {
+            (c_pending, _) = c_pending.udict_delete?(64, s);
+        } elseif (op == op::mint_stranded) {
+            ;; The minter had reserved: the swap is consumed, and its liability
+            ;; is the minter's logged strand. A committed swap is consumed
+            ;; already, and may have folded below the watermark.
+            if (status == PENDING_PREPARING) {
+                b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_CONSUMED, 2));
+            }
+            (c_pending, _) = c_pending.udict_delete?(64, s);
+        }
+    }
+    channel_store();
+    fold_swaps();
+    save_data();
 }
 
+;; ---- C4 receiver: burn notices --------------------------------------------
+
+;; The external message that carries LOG_BURN: the event the relayer reads. Its
+;; format is unchanged.
+cell burn_log_message(int destination_address, int jetton_amount, int token_address, int from_address_hash) inline {
+    return begin_cell()
+        .store_uint(12, 4) ;; ext_out_msg_info$11 src:MsgAddressInt ()
+        .store_uint(1, 2) ;; addr_extern$01
+        .store_uint(256, 9) ;; len:(## 9)
+        .store_uint(LOG_BURN, 256) ;; external_address:(bits len)
+        .store_uint(1, 64 + 32 + 2) ;; created_lt, created_at, init:Maybe, body:Either
+        .store_ref(begin_cell() ;; 704 bit
+                .store_uint(destination_address, 160)
+                .store_uint(jetton_amount, 128) ;; max 124 bits
+                .store_uint(token_address, 160)
+                .store_uint(from_address_hash, 256)
+                .end_cell())
+        .end_cell();
+}
+
+int burn_storage_floor() inline {
+    return storage_floor(c_burns, c_burn_wm, c_burn_cf);
+}
+
+() accept_burn_floor(int floor) impure inline {
+    if (floor <= c_burn_cf) {
+        return ();
+    }
+    throw_unless(error::bad_floor, floor <= c_burn_high);
+    int m = max(c_burn_wm, c_burn_cf);
+    int steps = 0;
+    while ((m < floor) & (steps < FOLD_LIMIT)) {
+        (_, int found) = c_burns.udict_get?(64, m);
+        if (found) {
+            m += 1;
+            steps += 1;
+        } else {
+            floor = m;
+        }
+    }
+    c_burn_cf = max(c_burn_cf, min(floor, m));
+}
+
+;; Every recorded outcome is final at once. RECORDED is the default and leaves
+;; no entry below the watermark; CANCELLED stays until the minter's finished
+;; floor passes it.
+() fold_burns() impure inline {
+    int steps = 0;
+    int more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (slice e, int found) = c_burns.udict_get?(64, c_burn_wm);
+        if (found) {
+            if ((e.preload_uint(1) == OUTCOME_RECORDED) | (c_burn_wm < c_burn_cf)) {
+                (c_burns, _) = c_burns.udict_delete?(64, c_burn_wm);
+            }
+            c_burn_wm += 1;
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+    int bound = min(c_burn_wm, c_burn_cf);
+    steps = 0;
+    more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (int m, _, int found) = c_burns.udict_get_min?(64);
+        if (found ? (m < bound) : false) {
+            (c_burns, _) = c_burns.udict_delete?(64, m);
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+}
+
+() send_burn_result(int m, int outcome) impure inline {
+    send_settlement(minter_address(), need_b3(), to_minter(op::burn_result)
+        .store_uint(m, 64)
+        .store_uint(outcome, 1)
+        .store_uint(burn_storage_floor(), 64));
+}
+
+() on_burn_notice(slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int m = body~load_uint(64);
+    int cancel = body~load_uint(1);
+    int floor = body~load_uint(64);
+    cell d = body~load_ref();
+    body.end_parse();
+    if (~ minter_ok?(life, expected, false)) {
+        return ();
+    }
+    (_, int amount, int destination, slice minter, slice owner, _) = parse_burn_descriptor(d);
+    (int owner_wc, int owner_hash) = parse_std_addr(owner);
+    throw_unless(error::operation_mismatch, equal_slices(minter, minter_address()) & (owner_wc == WORKCHAIN) & (amount > 0));
+    int hash = cell_hash(d);
+    throw_unless(error::underfunded, available(msg_value, BRIDGE_RESERVE) >= need_b2());
+    accept_burn_floor(floor);
+
+    (slice e, int found) = c_burns.udict_get?(64, m);
+    if (found) {
+        int outcome = e~load_uint(1);
+        throw_unless(error::operation_mismatch, e~load_uint(256) == hash);
+        send_burn_result(m, outcome);
+    } elseif (m < max(c_burn_wm, c_burn_cf)) {
+        send_burn_result(m, OUTCOME_RECORDED);      ;; the channel's default
+    } else {
+        ;; The one decision for m. RECORDED and LOG_BURN commit together, and a
+        ;; cancelled m can never log.
+        int outcome = cancel ? OUTCOME_CANCELLED : OUTCOME_RECORDED;
+        if (outcome == OUTCOME_RECORDED) {
+            (_, int token_address, _) = unpack_wrapped_token_data(c_token_data);
+            send_raw_message(burn_log_message(destination, amount, token_address, owner_hash), 0);
+        }
+        c_burns~udict_set_builder(64, m, begin_cell().store_uint(outcome, 1).store_uint(hash, 256));
+        c_burn_high = max(c_burn_high, m + 1);
+        send_burn_result(m, outcome);
+    }
+    fold_burns();
+    channel_store();
+    save_data();
+}
+
+;; ---- synchronization ------------------------------------------------------
+
+() on_sync_floor(slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int kind = body~load_uint(8);
+    int floor = body~load_uint(64);
+    body.end_parse();
+    throw_unless(error::not_admissible, kind == channel::c4);
+    if (~ minter_ok?(life, expected, false)) {
+        return ();
+    }
+    throw_unless(error::underfunded, available(msg_value, BRIDGE_RESERVE) >= bridge_gas() + small_fee(-1) + need_sync_ack(false));
+    accept_burn_floor(floor);
+    fold_burns();
+    channel_store();
+    save_data();
+    send_settlement(minter_address(), need_sync_ack(false), to_minter(op::sync_ack)
+        .store_uint(channel::c4, 8)
+        .store_uint(burn_storage_floor(), 64));
+}
+
+() on_sync_ack(slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int kind = body~load_uint(8);
+    int floor = body~load_uint(64);
+    body.end_parse();
+    throw_unless(error::not_admissible, kind == channel::c1);
+    if (~ minter_ok?(life, expected, false)) {
+        return ();
+    }
+    throw_unless(error::underfunded, available(msg_value, BRIDGE_RESERVE) >= bridge_gas());
+    accept_mint_ack(floor);
+    channel_store();
+    save_data();
+}
+
+;; ---- advance --------------------------------------------------------------
+
+int advance_need(int kind, int s) inline {
+    if (kind == advance::mint) {
+        (int status, _, _, cell d, int found) = pending_get(s);
+        if (~ found) {
+            return 0;
+        }
+        if (status == PENDING_PREPARING) {
+            int fwd = described_fee(-1);
+            if (c_minter_life == 0) {
+                (_, cell state_init) = calculate_minter_address(c_token_data);
+                fwd += fee_of(state_init, -1);
+            }
+            return bridge_gas() + fwd + need_p1_for(d);
+        }
+        return bridge_gas() + described_fee(-1) + need_m1();
+    }
+    if (kind == advance::burn_result) {
+        return bridge_gas() + small_fee(-1) + need_b3();
+    }
+    if (kind == advance::sync) {
+        return bridge_gas() + small_fee(-1) + need_sync_floor(false, true);
+    }
+    return 0;
+}
+
+() on_advance(slice body, int msg_value) impure {
+    int kind = body~load_uint(8);
+    int minter = body~load_uint(256);
+    throw_unless(error::nothing_to_advance, channel_load(minter));
+    throw_if(error::terminal, c_terminal);
+    if (kind == advance::mint) {
+        int s = body~load_uint(64);
+        body.end_parse();
+        int need = advance_need(kind, s);
+        throw_unless(error::nothing_to_advance, need);
+        throw_unless(error::underfunded, available(msg_value, BRIDGE_RESERVE) >= need);
+        (int status, _, _, cell d, _) = pending_get(s);
+        if (status == PENDING_PREPARING) {
+            send_prepare(s, d, need_p1_for(d));
+        } else {
+            send_commit(s, d);
+        }
+        save_data();
+        return ();
+    }
+    if (kind == advance::burn_result) {
+        int m = body~load_uint(64);
+        body.end_parse();
+        throw_unless(error::underfunded, available(msg_value, BRIDGE_RESERVE) >= advance_need(kind, 0));
+        (slice e, int found) = c_burns.udict_get?(64, m);
+        if (found) {
+            send_burn_result(m, e.preload_uint(1));
+        } else {
+            throw_unless(error::nothing_to_advance, m < c_burn_wm);
+            send_burn_result(m, OUTCOME_RECORDED);
+        }
+        save_data();
+        return ();
+    }
+    throw_unless(error::nothing_to_advance, kind == advance::sync);
+    body.end_parse();
+    throw_unless(error::not_admissible, c_minter_life);
+    throw_unless(error::underfunded, available(msg_value, BRIDGE_RESERVE) >= advance_need(kind, 0));
+    save_data();
+    send_settlement(minter_address(), need_sync_floor(false, true), to_minter(op::sync_floor)
+        .store_uint(channel::c1, 8)
+        .store_uint(mint_finished_floor(), 64));
+}
+
+;; ---- entry ----------------------------------------------------------------
+
 () recv_internal(int msg_value, cell in_msg_cell, slice in_msg_body) impure {
+    load_data();
+    if (b_born == 0) {
+        ;; The first committed transaction fixes this bridge's life.
+        b_born = cur_lt();
+        save_data();
+    }
     var cs = in_msg_cell.begin_parse();
     var flags = cs~load_uint(4);  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
     slice sender_address = cs~load_msg_addr();
 
     if (flags & 1) {
-        ;; The only bounceable message the bridge sends is a mint, and a bounce
-        ;; carries the first 256 bits of it: the op and the mint id.
-        in_msg_body~skip_bits(32); ;; 0xFFFFFFFF
-        if (in_msg_body~load_uint(32) == op::mint) {
-            settle_mint(in_msg_body~load_uint(64), false, sender_address);
-        }
-        return ();
+        return ();  ;; no settlement message is bounceable; nothing to restore
     }
-
-    throw_if(error::inbound_message_has_empty_body, in_msg_body.slice_empty?());
+    if (in_msg_body.slice_empty?()) {
+        return ();  ;; a plain top-up: anyone may fund the bridge's storage
+    }
 
     (int op, int query_id) = in_msg_body~load_body_header();
 
-    ;; Completion reports do not read the configuration: their senders are
-    ;; derived from this contract's own storage, and refusing one for a missing
-    ;; parameter would leave a mint or a burn without its outcome.
-    if ((op == op::mint_completed) | (op == op::mint_failed)) {
-        in_msg_body.end_parse();
-        settle_mint(query_id, op == op::mint_completed, sender_address);
+    ;; Settlement: none of these reads the network configuration.
+    if ((op == op::prepared) | (op == op::refused) | (op == op::mint_completed) | (op == op::mint_stranded)) {
+        channel_of_sender(sender_address);
+        on_mint_result(op, in_msg_body, msg_value);
         return ();
     }
-    if (op == op::burn_notification) {
-        record_burn(sender_address, query_id, in_msg_body, msg_value);
+    if (op == op::burn_notice) {
+        channel_of_sender(sender_address);
+        on_burn_notice(in_msg_body, msg_value);
+        return ();
+    }
+    if (op == op::sync_floor) {
+        channel_of_sender(sender_address);
+        on_sync_floor(in_msg_body, msg_value);
+        return ();
+    }
+    if (op == op::sync_ack) {
+        channel_of_sender(sender_address);
+        on_sync_ack(in_msg_body, msg_value);
+        return ();
+    }
+    if (op == op::advance) {
+        on_advance(in_msg_body, msg_value);
         return ();
     }
 
-    throw_if(error::unknown_op, (op != op::execute_voting) & (op != op::pay_swap) & (op != op::excesses) & (op != op::retry_mint));
+    throw_if(error::unknown_op, (op != op::execute_voting) & (op != op::pay_swap) & (op != op::excesses));
 
     (int sender_wc, int sender_address_hash) = parse_std_addr(sender_address);
 
-    (_, int oracles_address_hash, _, int state_flags, int bridge_burn_fee, int bridge_mint_fee, _, _, _, _) = get_jetton_bridge_config();
+    (_, int oracles_address_hash, _, int state_flags, _, int bridge_mint_fee, _, _, _, _) = get_jetton_bridge_config();
 
     int is_oracles = (sender_wc == -1) & (oracles_address_hash == sender_address_hash);
 
@@ -325,65 +823,136 @@ int swap_key(int ext_chain_hash, int internal_index) inline {
 
     if (op == op::execute_voting) {
         throw_unless(error::oracles_not_sender, is_oracles);
-
-        execute_voting(sender_address, in_msg_body, query_id, bridge_mint_fee, state_flags, msg_value);
-
-    } elseif (op == op::pay_swap) {
-
-        throw_if(error::oracles_sender, is_oracles);
-        throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee);
-        ;; The payer quotes the swap they are paying for, computed the same way
-        ;; the vote will compute it. Recording it is what lets the swap branch
-        ;; check that a fee was paid at all.
-        int swap_id = in_msg_body~load_uint(256);
-        (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) = load_data();
-        paid_swaps~udict_set_builder(256, swap_id, begin_cell());
-        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
-        emit_log_simple(LOG_SWAP_PAID, begin_cell().store_uint(swap_id, 256).end_cell(), 0);
-    } elseif (op == op::retry_mint) {
-
-        ;; The caller pays the mint fee again and the mint goes out as voted.
-        throw_if(error::oracles_sender, is_oracles);
-        throw_if(error::operation_suspended, state_flags & STATE_SWAPS_SUSPENDED);
-        throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee);
-        int mint_id = in_msg_body~load_uint(64);
-        in_msg_body.end_parse();
-        (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps, int next_mint_id, cell pending_mints) = load_data();
-        (slice entry, int found) = pending_mints.udict_get?(64, mint_id);
-        throw_unless(error::nothing_to_retry, found);
-        (int status, int key, int to_address_hash, int amount, cell wrapped_token_data) = unpack_pending_mint(entry);
-        throw_unless(error::nothing_to_retry, status == MINT_FAILED);
-        pending_mints~udict_set_builder(64, mint_id, pack_pending_mint(MINT_IN_FLIGHT, key, to_address_hash, amount, wrapped_token_data));
-        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps, next_mint_id, pending_mints);
-        send_mint(mint_id, to_address_hash, amount, wrapped_token_data, bridge_mint_fee);
+        execute_voting(sender_address, in_msg_body, query_id, state_flags, msg_value);
+        return ();
     }
+
+    ;; pay_swap: the user pays the mint fee for lock n before its vote.
+    throw_if(error::oracles_sender, is_oracles);
+    throw_if(error::operation_suspended, state_flags & STATE_SWAPS_SUSPENDED);
+    throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee);
+    int generation = in_msg_body~load_uint(32);
+    int n = in_msg_body~load_uint(64);
+    in_msg_body.end_parse();
+    require_generation(generation);
+    require_open_swap(n);
+    (_, int seen) = b_swaps.udict_get?(64, n);
+    throw_if(error::not_admissible, seen);
+    require_bridge_capacity();
+    b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_PAID, 2).store_slice(sender_address).store_coins(msg_value));
+    save_data();
+    emit_optional(LOG_SWAP_PAID, begin_cell().store_uint(generation, 32).store_uint(n, 64).end_cell());
 }
 
-;; get methods
+;; ---- get-methods ----------------------------------------------------------
 
 slice get_minter_address(cell wrapped_token_data) method_id {
+    load_data();
     (slice minter_address, _) = calculate_minter_address(wrapped_token_data);
     return minter_address;
 }
 
 (int, int, cell, cell, int) get_bridge_data() method_id {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, _, _, _) = load_data();
-    (int wc, int addr) = parse_std_addr(collector_address);
-    return (wc, addr, jetton_minter_code, jetton_wallet_code, MY_CHAIN_ID);
+    load_data();
+    (int wc, int addr) = parse_std_addr(b_collector);
+    return (wc, addr, b_minter_code, b_wallet_code, MY_CHAIN_ID);
 }
 
-;; status (-1 when there is no such mint), swap key, recipient hash, amount
-(int, int, int, int) get_pending_mint(int mint_id) method_id {
-    (_, _, _, _, _, cell pending_mints) = load_data();
-    (slice entry, int found) = pending_mints.udict_get?(64, mint_id);
+;; life, evm chain, evm bridge, generation, generation start, generation state,
+;; swap watermark, channels
+(int, int, int, int, int, int, int, int) get_bridge_state() method_id {
+    load_data();
+    return (b_born, b_evm_chain, b_evm_bridge, b_generation, b_gen_start, b_gen_state, b_swap_wm, b_channels_count);
+}
+
+;; state (-1 when absent: 0 paid, 1 preparing, 2 consumed, 3 cancelled), fee, s
+(int, int, int) get_swap(int n) method_id {
+    load_data();
+    (slice e, int found) = b_swaps.udict_get?(64, n);
     if (~ found) {
-        return (-1, 0, 0, 0);
+        return (-1, 0, 0);
     }
-    (int status, int key, int to_address_hash, int amount, _) = unpack_pending_mint(entry);
-    return (status, key, to_address_hash, amount);
+    int state = e~load_uint(2);
+    if (state == SWAP_PAID) {
+        e~load_msg_addr();
+        return (state, e~load_coins(), 0);
+    }
+    if (state == SWAP_PREPARING) {
+        e~skip_bits(256);
+        int s = e~load_uint(64);
+        e~load_msg_addr();
+        return (state, e~load_coins(), s);
+    }
+    return (state, 0, 0);
 }
 
-int get_next_mint_id() method_id {
-    (_, _, _, _, int next_mint_id, _) = load_data();
-    return next_mint_id;
+;; exists, terminal, minter life, next mint, mint ack, mint finished floor,
+;; burn watermark, burn compaction, burn high, burn storage floor, pending count
+(int, int, int, int, int, int, int, int, int, int, int) get_channel(int minter) method_id {
+    load_data();
+    if (~ channel_load(minter)) {
+        return (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+    int pending = 0;
+    (int s, _, int f) = c_pending.udict_get_min?(64);
+    while (f) {
+        pending += 1;
+        (s, _, f) = c_pending.udict_get_next?(64, s);
+    }
+    return (-1, c_terminal, c_minter_life, c_next_mint, c_mint_ack, mint_finished_floor(),
+            c_burn_wm, c_burn_cf, c_burn_high, burn_storage_floor(), pending);
+}
+
+;; status (-1 when absent), n
+(int, int) get_pending_mint(int minter, int s) method_id {
+    load_data();
+    if (~ channel_load(minter)) {
+        return (-1, 0);
+    }
+    (int status, int n, _, _, int found) = pending_get(s);
+    return found ? (status, n) : (-1, 0);
+}
+
+cell get_pending_descriptor(int minter, int s) method_id {
+    load_data();
+    channel_load(minter);
+    (_, _, _, cell d, _) = pending_get(s);
+    return d;
+}
+
+;; outcome (-1 when no entry)
+int get_burn_outcome(int minter, int m) method_id {
+    load_data();
+    if (~ channel_load(minter)) {
+        return -1;
+    }
+    (slice e, int found) = c_burns.udict_get?(64, m);
+    return found ? e.preload_uint(1) : -1;
+}
+
+(int, int) get_advance_cost(int kind, int minter, int s) method_id {
+    load_data();
+    if (~ channel_load(minter)) {
+        return (0, 0);
+    }
+    int need = advance_need(kind, s);
+    int balance = pair_first(get_balance());
+    int deficit = max(0, BRIDGE_RESERVE - balance);
+    (int cells, int bits, _) = compute_data_size(get_data(), 1 << 20);
+    return (need, need + deficit + storage_fee(cells, bits, STORAGE_QUOTE_HORIZON, true));
+}
+
+;; What the vote must carry in its recorded fee for the mint's first leg, at the
+;; current prices, for a new holder.
+;; The least a vote cancelling an unpaid lock must carry.
+int get_cancel_cost() method_id {
+    return allowance(2, -1) + vote_gas();
+}
+
+int get_mint_fee_floor(cell wrapped_token_data, slice recipient) method_id {
+    load_data();
+    (slice minter, cell state_init) = calculate_minter_address(wrapped_token_data);
+    (_, int hash) = parse_std_addr(minter);
+    c_minter = hash;
+    return bridge_gas() + described_fee(-1) + fee_of(state_init, -1) + need_p1_opening(open_fee_for(recipient)) + MINTER_RESERVE;
 }

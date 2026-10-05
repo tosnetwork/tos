@@ -66,7 +66,7 @@ class Engine:
         self.lib.emulator_set_verbosity_level(0)
         self.emulators: dict[str, int] = {}
 
-    def run(self, config: str, unixtime: int, shard_account: str, message: str) -> dict:
+    def run(self, config: str, unixtime: int, shard_account: str, message: str, lt: int) -> dict:
         if config not in self.emulators:
             ptr = self.lib.transaction_emulator_create(complete_config(config), 0)
             if not ptr:
@@ -74,7 +74,7 @@ class Engine:
             self.emulators[config] = ptr
         ptr = self.emulators[config]
         self.lib.transaction_emulator_set_unixtime(ptr, unixtime)
-        self.lib.transaction_emulator_set_lt(ptr, 2_000_000_000)
+        self.lib.transaction_emulator_set_lt(ptr, lt)
         out = self.lib.transaction_emulator_emulate_transaction(
             ptr, shard_account.encode(), message.encode()
         )
@@ -184,14 +184,14 @@ def description(tx: Cell) -> dict:
             c.coins()
         c.coins()
         c.maybe()
-    exit_code, skipped = None, True
+    exit_code, skipped, gas_used = None, True, None
     if c.uint(1):
         skipped = False
         c.uint(1)  # success
         c.uint(2)
         c.coins()
         vm = c.ref().slice()
-        vm.varuint(7)
+        gas_used = vm.varuint(7)
         vm.varuint(7)
         if vm.uint(1):
             vm.varuint(3)
@@ -222,6 +222,7 @@ def description(tx: Cell) -> dict:
         a.uint(16)
         action = {"success": success, "result_code": result_code, "skipped": a.uint(16)}
     return {
+        "gas_used": gas_used,
         "aborted": aborted,
         "exit_code": exit_code,
         "compute_skipped": skipped,
@@ -334,8 +335,15 @@ def main() -> int:
     kept_deployments = []
     for path in records:
         record = json.loads(path.read_text())
+        # A contract may read its transaction's logical time (a participant's
+        # life is the time of its first transaction), so each transaction is
+        # replayed at the time it ran, when the recording says.
         result = engine.run(
-            record["config"], record["unixtime"], record["shard_account"], record["message"]
+            record["config"],
+            record["unixtime"],
+            record["shard_account"],
+            record["message"],
+            int(record.get("lt", 2_000_000_000)),
         )
         expect = record["expect"]
         if not result.get("success"):
@@ -357,7 +365,8 @@ def main() -> int:
                 expect["data"],
                 expect["code"],
             )
-        for key in (
+        keys = ["gas_used"] if "gas_used" in expect else []
+        for key in keys + [
             "aborted",
             "exit_code",
             "compute_skipped",
@@ -367,7 +376,7 @@ def main() -> int:
             "balance",
             "data",
             "code",
-        ):
+        ]:
             if got[key] != expect[key]:
                 differences.append(
                     f"{path.relative_to(args.trace_dir)}: {key}: Rust {expect[key]} native {got[key]}"
