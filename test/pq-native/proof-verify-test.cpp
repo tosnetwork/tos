@@ -312,9 +312,11 @@ void real_cases(const RealFixture& fixture, const pv::Anchor& foreign_anchor, co
     expect_refused("real-unknown-signer",
                    verify_historical(fixture, with_chain(fixture,
                                                          [](ChainObject& chain) {
-                                                           auto& signature =
-                                                               pq_signatures(forward(chain, 2)).signatures_.at(0);
-                                                           signature->validator_id_.as_slice()[0] ^= 1;
+                                                           // A quorum of genuine signers plus one outsider.
+                                                           auto& set = pq_signatures(forward(chain, 2));
+                                                           auto outsider = copy_signature(*set.signatures_.at(0));
+                                                           outsider->validator_id_.as_slice()[0] ^= 1;
+                                                           set.signatures_.push_back(std::move(outsider));
                                                          })),
                    "unknown validator_id");
   }
@@ -392,8 +394,7 @@ void real_cases(const RealFixture& fixture, const pv::Anchor& foreign_anchor, co
     // A genuine header proof, of another block, offered for the target.
     config->state_proof_ = forward(chain, 0).dest_proof_.clone();
     material.config = serialize_tl_object(config, true);
-    expect_refused("real-config-other-block-header", verify_historical(fixture, material),
-                   "configuration proof is not proven from the target");
+    expect_refused("real-config-other-block-header", verify_historical(fixture, material), "has incorrect root hash");
   }
   if (selected("real-config-substituted-state")) {
     auto material = clone(fixture.historical);
@@ -787,7 +788,7 @@ struct Synthetic {
   Authority x{4, 3};
   td::Ref<vm::Cell> config_a, config_b, config_x;
   td::Ref<block::ValidatorSet> set_a, set_b, set_x;
-  BlockFixture k0, k1, t, k1x, tx;
+  BlockFixture k0, k1, t, k1x, tx, k1y, ty;
   ValidatorSessionId session_k1, session_t;
   pv::Anchor anchor;
   pv::Request request;
@@ -805,8 +806,12 @@ struct Synthetic {
     k1 = make_block(global_id, 2, k0.id, set_a->get_catchain_seqno(), set_a->get_validator_set_hash(), 1, config_b);
     t = make_block(global_id, 3, k1.id, set_b->get_catchain_seqno(), set_b->get_validator_set_hash(), 2, {});
     // An attacker key block naming its own set, claiming the set it replaces.
-    k1x = make_block(global_id, 2, k0.id, set_a->get_catchain_seqno(), set_a->get_validator_set_hash(), 1, config_x);
+    // Attacker key blocks carrying the attacker's own configuration: k1x names
+    // the attacker's set in its header, k1y claims the set it replaces.
+    k1x = make_block(global_id, 2, k0.id, set_x->get_catchain_seqno(), set_x->get_validator_set_hash(), 1, config_x);
     tx = make_block(global_id, 3, k1x.id, set_x->get_catchain_seqno(), set_x->get_validator_set_hash(), 2, {});
+    k1y = make_block(global_id, 2, k0.id, set_a->get_catchain_seqno(), set_a->get_validator_set_hash(), 1, config_x);
+    ty = make_block(global_id, 3, k1y.id, set_x->get_catchain_seqno(), set_x->get_validator_set_hash(), 2, {});
     session_k1 = session_for(global_id, config_a, set_a, k1);
     session_t = session_for(global_id, config_b, set_b, t);
     anchor.kind = pv::AnchorKind::KeyBlock;
@@ -961,19 +966,27 @@ void synthetic_cases(const Synthetic& s, const pv::Anchor& real_anchor) {
                    "does not end at the exact target block");
   }
   // Control 6: an unauthenticated replacement set, self-signed, with the rest
-  // of the chain consistent with it.
-  if (selected("synthetic-unauthenticated-replacement")) {
-    auto session_k1x = session_for(s.global_id, s.config_a, s.set_a, s.k1x);
-    auto session_tx = session_for(s.global_id, s.config_x, s.set_x, s.tx);
+  // of the chain consistent with it. The governing set for each link comes
+  // from the already authenticated source, so neither variant can succeed.
+  auto replacement = [&](const BlockFixture& key, const BlockFixture& target,
+                         const td::Ref<block::ValidatorSet>& claimed, const td::Ref<vm::Cell>& session_config) {
+    auto session_key = session_for(s.global_id, session_config, claimed, key);
+    auto session_target = session_for(s.global_id, s.config_x, s.set_x, target);
     std::vector<LinkSpec> links;
-    links.push_back({&s.k0, &s.k1x, sign(s.x, s.set_a, s.k1x, session_k1x, 2001)->tl_lite()});
-    links.push_back({&s.k1x, &s.tx, sign(s.x, s.set_x, s.tx, session_tx, 2002)->tl_lite()});
-    auto request_text = "{\"mode\":\"historical\",\"target\":" + pv::block_id_json(s.tx.id) + "}";
+    links.push_back({&s.k0, &key, sign(s.x, claimed, key, session_key, 2001)->tl_lite()});
+    links.push_back({&key, &target, sign(s.x, s.set_x, target, session_target, 2002)->tl_lite()});
+    auto request_text = "{\"mode\":\"historical\",\"target\":" + pv::block_id_json(target.id) + "}";
     auto request = must(pv::parse_request(request_text), "replacement request");
     pv::Material material;
-    material.chain.push_back(chain_wire(s.k0.id, s.tx.id, true, std::move(links)));
-    expect_refused("synthetic-unauthenticated-replacement",
-                   pv::verify(s.anchor, request, request_text, material, std::nullopt, at(kHistoricalNow)),
+    material.chain.push_back(chain_wire(s.k0.id, target.id, true, std::move(links)));
+    return pv::verify(s.anchor, request, request_text, material, std::nullopt, at(kHistoricalNow));
+  };
+  if (selected("synthetic-unauthenticated-replacement")) {
+    expect_refused("synthetic-unauthenticated-replacement", replacement(s.k1x, s.tx, s.set_x, s.config_x),
+                   "stated in block header");
+  }
+  if (selected("synthetic-replacement-claims-current-set")) {
+    expect_refused("synthetic-replacement-claims-current-set", replacement(s.k1y, s.ty, s.set_a, s.config_a),
                    "unknown validator_id");
   }
 }
