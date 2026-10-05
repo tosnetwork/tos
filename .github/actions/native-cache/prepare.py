@@ -62,11 +62,15 @@ def cache_settings(
         raise ValueError("Invalid cache size")
     if not re.fullmatch(r"[0-9a-f]{64}", identity):
         raise ValueError("Invalid host fingerprint")
+    if "\n" in str(workspace) or "\r" in str(workspace):
+        raise ValueError("Multiline workspace path")
     prefix = f"tos-native-v1-{profile}-{identity}"
     settings = {
         "CCACHE_DIR": str(temporary / "tos-native-ccache"),
         "CCACHE_CONFIGPATH": str(temporary / "tos-native-ccache.conf"),
-        "CCACHE_BASEDIR": str(workspace),
+        # No CCACHE_BASEDIR: it rewrites source paths to relative ones, and code that
+        # finds files through __FILE__ (Fift's library directory, several tests) then
+        # only works from the build directory. The workspace path is fixed in CI.
         "CCACHE_COMPILERCHECK": "content",
         "CCACHE_NAMESPACE": prefix,
         "CCACHE_MAXSIZE": max_size,

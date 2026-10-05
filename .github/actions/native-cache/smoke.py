@@ -73,9 +73,10 @@ def main() -> None:
         header.write_text("static inline int expected(void) { return 42; }\n")
         (root / "main.cpp").write_text(
             '#include "value.h"\nextern "C" int answer(void);\n'
-            "int main() { return answer() != expected(); }\n"
+            "// Sources find files through __FILE__, so it must stay an absolute path.\n"
+            "int main() { return answer() != expected() || __FILE__[0] != '/'; }\n"
         )
-        env = dict(os.environ, CCACHE_DIR=str(root / "objects"), CCACHE_BASEDIR=str(root))
+        env = dict(os.environ, CCACHE_DIR=str(root / "objects"))
         for language in ("C", "CXX"):
             if env.get(f"CMAKE_{language}_COMPILER_LAUNCHER") != "ccache":
                 raise RuntimeError(f"The shared action did not install the {language} launcher")
