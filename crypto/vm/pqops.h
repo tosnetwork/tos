@@ -16,7 +16,7 @@ inline constexpr long long pq_falcon512_byte_gas = 1;
 // F93101's version gate); suite 3 is the SLH-DSA rescue root; suite 4 is the rescue fee gate's
 // one-level HSS/LMS verifier. Enabled at the genesis version; tariffs are prototype values.
 inline constexpr unsigned pq_suite_opcode = 0xf93102;
-inline constexpr int pq_suite_min_version = 18;
+inline constexpr int pq_suite_min_version = 16;
 inline constexpr int pq_suite_mldsa44 = 1;
 inline constexpr int pq_suite_falcon512 = 2;
 inline constexpr int pq_suite_slhdsa128s = 3;

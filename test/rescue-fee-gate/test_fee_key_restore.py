@@ -64,6 +64,7 @@ class FeeKeyRestoreTests(unittest.TestCase):
     def setUp(self):
         self.h = slot.SlotVaultTests("test_slot_window")
         self.h.setUp()
+        self.addCleanup(self.h.doCleanups)
 
     def test_derivation_is_deterministic_and_separated(self):
         self.assertEqual(Derived(MASTER).public, self.phone.public)

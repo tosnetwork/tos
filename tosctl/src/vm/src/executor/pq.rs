@@ -206,7 +206,7 @@ extern "C" {
     ) -> i32;
 }
 
-// Generic instruction F93102, enabled at the genesis version 18: message context signature
+// Generic instruction F93102, enabled at the development genesis version 16: message context signature
 // public_key suite -> bool. Order of pops, charges and errors follows the C++ VM exactly; the
 // parity scenarios check that. Suite 2 keeps F93101's own version gate.
 const SUITE_MLDSA44: i32 = 1;
@@ -229,8 +229,8 @@ fn push_outcome(engine: &mut Engine, valid: Option<bool>, name: &str) -> Status 
     }
 }
 
-const SUITE_MIN_VERSION: u32 = 18;
-const FALCON512_MIN_VERSION: u32 = 19;
+const SUITE_MIN_VERSION: u32 = 16;
+const FALCON512_MIN_VERSION: u32 = 16;
 
 pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
     if engine.block_version() < SUITE_MIN_VERSION {

@@ -3,15 +3,18 @@
 Prototype of the wallet rescue design: an ML-DSA-44 daily root, an SLH-DSA-SHA2-128s rescue
 root, and a per-wallet fee vault that admits an external message only after a native one-level
 HSS/LMS signature over the complete fee intent verifies, inside the external gas credit (10,000
-gas, as in genesis). Everything runs at the genesis global version **18**. **Not for merge.**
+gas, as in genesis). Everything runs at the development genesis global version **16**.
+**Not for production merge.**
 
-Adopted parameters (owner decisions, 2026-10-04):
+Adopted parameters (2026-10-04 design, with the later development-version integration):
 
 - Fee key: one-level HSS, `LMS_SHA256_M32_H20` / `LMOTS_SHA256_N32_W4`, leaves bound to chain
   time — 1-hour slots, 4 leaves per slot. A device restored from the mnemonic re-derives the key
-  and waits for the next slot boundary, so it never reuses a leaf the lost device may have spent.
-- `PQCHECKSIG_SUITE` = `F93102`, enabled at version 18. Suite 2 (Falcon) keeps `F93101`'s
-  version-19 gate and is refused at 18 (`range_chk`).
+  and waits for the next slot boundary. Safe operation still requires the design's trusted-time,
+  single-writer and durable within-slot reservation rules; this is not a production signer.
+- `PQCHECKSIG_SUITE` = `F93102`, enabled at version 16. Suite 2 (Falcon) keeps `F93101`'s
+  version-16 gate. The original 18/19 allocation is superseded by the development baseline
+  integrated from `main` at `334be6e51`; this changes no running network.
 - AUTH v2 PRIMARY context `TOS-AUTH-V2-ML-DSA-44-v1`; global AUTH policy in ConfigParam 48 (not
   implemented yet).
 
@@ -58,8 +61,36 @@ build/crypto/pq/test-pq-suite-parity test/rescue-fee-gate/suite-scenarios.tsv   
 cargo run -p tos_vm --example suite-parity -- ../../test/rescue-fee-gate/suite-scenarios.tsv
                                                      # (from tosctl/src) Rust rows; both must
                                                      # equal suite-expected.tsv
+python3 test/rescue-fee-gate/compare.py test/rescue-fee-gate/suite-scenarios.tsv \
+  /path/to/cpp.tsv /path/to/rust.tsv test/rescue-fee-gate/suite-expected.tsv
+python3 test/rescue-fee-gate/version_scenarios.py /path/to/version-scenarios.tsv
+# Run both drivers on version-scenarios.tsv, then compare.py without a frozen-expected argument.
+# All four suites must reject versions 0-15 and accept valid inputs at versions 16-19.
 ```
 
 Not done: reference-hardware tariffs, ACVP conformance of suite 3 through the VM, the V5 action
 list and mode 3 in the account, the global retirement policy, successor witness validation, POP
 and fee preparation.
+
+The `main` integration is a development baseline, not completion of the v5 design. The native
+transaction tests execute the simplified account, not a deployed wallet or a successor funding
+handoff. `probe_role_budget.py` measures the next admission gap with an actual SLH-signed lock:
+the current vault admits it at 9,660 gas; adding only the missing pre-ACCEPT inner RESCUE-role
+check exhausts the 10,000 credit. It verifies the original request locks the receiver as a
+positive control. This probe neither lowers the verifier tariff nor removes a production guard.
+Full class/binding/solvency checks still need their own measured envelope before migration work
+can claim a complete fee route.
+
+Reproduce the probe with the signer/compiler/emulator environment above:
+
+```sh
+python3 test/rescue-fee-gate/probe_role_budget.py
+python3 test/rescue-fee-gate/version_mutations.py build /path/to/version-scenarios.tsv \
+  /path/to/version-rust.tsv /path/to/native-version-mutations
+```
+
+The retained integration receipt is `integration-20261005.json`. It distinguishes local checks
+from the outstanding reference-hardware, hosted-CI and production release gates.
+H20 test trees are released after each slot-vault test. The solvency bisection signs one intent
+once and submits the same bytes against independent initial-balance fixtures, so its one-nanoton
+boundary checks do not allocate a new tree for every sample or re-sign an OTS leaf.

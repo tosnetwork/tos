@@ -20,7 +20,15 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import test_slot_vault as slot
 from cells import Cell, from_boc
-from native import NOW, GLOBAL_ID, account_data, active_account, compile_contract, internal, outgoing
+from native import (
+    GLOBAL_ID,
+    NOW,
+    account_data,
+    active_account,
+    compile_contract,
+    internal,
+    outgoing,
+)
 
 MODULE = slot.TARGET
 ACCOUNT = (0, 0xACC0 << 240 | 0x55)
@@ -118,6 +126,7 @@ class RescueLoopTests(unittest.TestCase):
     def setUp(self):
         self.h = slot.SlotVaultTests("test_slot_window")
         self.h.setUp()
+        self.addCleanup(self.h.doCleanups)
         self.em = slot.SlotVaultTests.emulator
         self.fee = self.h.device()
         # A rescue takes several fee payments in one sitting: four leaves per slot.

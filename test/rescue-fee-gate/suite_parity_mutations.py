@@ -24,11 +24,12 @@ MUTATIONS = {
         "        tmp = if node & 1 == 0 {",
     ),
     "Falcon suite accepts a non-empty context": (PQ, "            read_bytes(engine, context, 0)?;", "            read_bytes(engine, context, 1)?;"),
-    "suite enabled only from version 19": (PQ, "const SUITE_MIN_VERSION: u32 = 18;", "const SUITE_MIN_VERSION: u32 = 19;"),
-    "Falcon opened at genesis through the generic opcode": (
+    "suite enabled before version 16": (PQ, "const SUITE_MIN_VERSION: u32 = 16;", "const SUITE_MIN_VERSION: u32 = 15;"),
+    "suite enabled only from version 17": (PQ, "const SUITE_MIN_VERSION: u32 = 16;", "const SUITE_MIN_VERSION: u32 = 17;"),
+    "Falcon generic gate differs from the dedicated gate": (
         PQ,
-        "const FALCON512_MIN_VERSION: u32 = 19;",
-        "const FALCON512_MIN_VERSION: u32 = 18;",
+        "const FALCON512_MIN_VERSION: u32 = 16;",
+        "const FALCON512_MIN_VERSION: u32 = 17;",
     ),
     "SLH base gas 750,000 -> 749,999": (
         PQ,
@@ -40,7 +41,7 @@ MUTATIONS = {
 
 def rust_output(scenarios, target):
     env = dict(os.environ, CARGO_TARGET_DIR=str(target))
-    subprocess.run(["cargo", "build", "-q", "-p", "tos_vm", "--example", "suite-parity"], cwd=CARGO,
+    subprocess.run(["cargo", "build", "--locked", "-q", "-p", "tos_vm", "--example", "suite-parity"], cwd=CARGO,
                    env=env, check=True, capture_output=True)
     return subprocess.run([str(Path(target) / "debug/examples/suite-parity"), str(scenarios)],
                           check=True, capture_output=True, text=True).stdout
@@ -61,10 +62,14 @@ def main(scenarios, cpp_output, target):
             out = rust_output(scenarios, target)
         finally:
             path.write_text(text)
+        if len(out.splitlines()) != len(cpp.splitlines()):
+            sys.exit(f"{name}: incomplete output is not mutation evidence")
         differ = sum(a != b for a, b in zip(out.splitlines(), cpp.splitlines()))
         print(f"{name}: {'caught' if differ else 'ESCAPED'} ({differ} rows differ)")
         failed |= not differ
-    rust_output(scenarios, target)  # leave the driver built from the restored source
+    if rust_output(scenarios, target) != cpp:
+        sys.exit("restored baseline differs")
+    print("restored baseline: identical")
     sys.exit(1 if failed else 0)
 
 

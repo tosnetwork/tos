@@ -8,7 +8,7 @@ earlier signature in the current slot (a restored one) waits for the next slot b
 Environment: FUNC_PATH, FIFT_PATH, EMULATOR_PATH (native build), LMS_TOOL (tools/lms_tool.c,
 H20/W4 test keys) and HASH_SIGS_DEMO (the `demo` binary of cisco/hash-sigs, an independent
 implementation, for keys of other profiles). The chain runs at
-the genesis global version 18. LMS_PROFILES=15/4,10/1 probes other profiles (they are refused).
+the development genesis global version 16. LMS_PROFILES=15/4,10/1 probes other profiles (they are refused).
 """
 
 # ruff: noqa: E402
@@ -24,8 +24,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 from cells import Cell, from_boc
 from native import (
-    NOW,
     GLOBAL_ID,
+    NOW,
     Emulator,
     account_data,
     active_account,
@@ -43,7 +43,7 @@ START_SLOT = 5
 EPOCH0 = NOW - START_SLOT * SLOT - 10  # NOW lies 10 s into slot 5
 MAX_VALUE = 2_000_000_000
 RESCUE_SUBMIT = 0x53554231  # "SUB1"
-GLOBAL_VERSION = 18  # genesis (crypto/smartcont/gen-zerostate.fif)
+GLOBAL_VERSION = 16  # development genesis (crypto/smartcont/gen-zerostate.fif)
 # The fee budget the vault computes after ACCEPT under the emulator's fee configuration: compute
 # for the gas bound, capped forwarding both ways and the storage floor. It does not depend on
 # the message, so it is pinned; the solvency edge test re-derives it from the vault itself.
@@ -207,6 +207,9 @@ class SlotVaultTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def setUp(self):
+        # H20 trees are large; retain them only for the test that needs them.
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.clock(NOW)
 
     def clock(self, t):
@@ -280,26 +283,29 @@ class SlotVaultTests(unittest.TestCase):
                 self.assertEqual(s.coins(), 1_000_000_000)
                 RESULTS.append((params, len(key.public), gas, result["details"]["gas"]))
 
-    def solvency_case(self, balance, budget=BUDGET):
-        key = self.device()
-        i = intent(START_SLOT, value=MAX_VALUE)
+    def solvency_case(self, balance, key, message, budget=BUDGET):
         return self.submit(
-            self.vault(key, balance=balance, budget=budget), body(i, key.sign_at(START_SLOT, i.hash))
+            self.vault(key, balance=balance, budget=budget), message
         )
 
     def test_solvency_edge_pays_in_full(self):
         # Bisect the smallest balance the vault admits; at that edge the send must go out with
         # the full value and the account must stay active, one nanoton less must be refused.
+        # Sign once and replay identical bytes against independent balance fixtures. This
+        # changes neither the fee envelope nor the OTS message across bisection samples.
+        key = self.device()
+        i = intent(START_SLOT, value=MAX_VALUE)
+        message = body(i, key.sign_at(START_SLOT, i.hash))
         low, high = MAX_VALUE, 100 * MAX_VALUE
         while high - low > 1:
             mid = (low + high) // 2
-            result = self.solvency_case(mid)
+            result = self.solvency_case(mid, key, message)
             if self.admitted(result):
                 high = mid
             else:
                 self.assertEqual(result.get("vm_exit_code"), 2008, f"balance {mid}")
                 low = mid
-        edge = self.solvency_case(high)
+        edge = self.solvency_case(high, key, message)
         self.assertTrue(self.admitted(edge))
         self.assertTrue(edge["details"]["action"]["success"])
         sent = outgoing(from_boc(edge["transaction"]))
@@ -308,7 +314,7 @@ class SlotVaultTests(unittest.TestCase):
         s.uint(4), s.addr(), s.addr()
         self.assertEqual(s.coins(), MAX_VALUE)
         _, left = account_data(from_boc(edge["shard_account"]))
-        self.assert_refused(self.solvency_case(high - 1), 2008, "one nanoton short")
+        self.assert_refused(self.solvency_case(high - 1, key, message), 2008, "one nanoton short")
         # The edge also contains what the transaction deducts before the compute phase (import
         # and storage), which depends on the message size; only the budget itself is fixed by the
         # fee configuration. (At H10/W4 the edge equalled the uncached check's exactly: 0fa04224d.)

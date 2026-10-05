@@ -10,6 +10,7 @@ All inputs are PUBLIC TEST DATA. Needs SLH_TOOL, MLDSA_TOOL, LMS_TOOL and HASH_S
 Usage: suite_scenarios.py <out.tsv>
 """
 
+# ruff: noqa: E402
 import json
 import os
 import subprocess
@@ -26,8 +27,8 @@ from cells import Cell
 
 CTX_AUTH = b"TOS-AUTH-SLH-DSA-SHA2-128S-v1"
 CTX_ML = b"TOS-AUTH-V2-ML-DSA-44-v1"
-VERSION = 18  # genesis
-FALCON_VERSION = 19  # suite 2 keeps F93101's gate
+VERSION = 16  # unified development genesis
+FALCON_VERSION = 16  # suite 2 keeps F93101's gate
 BUDGET = 1_000_000
 
 
@@ -74,7 +75,8 @@ def main(out):
     (tmp / "m").write_bytes(msg)
     run(os.environ["MLDSA_TOOL"], "sign", tmp / "ml.sk", CTX_ML.hex(), tmp / "m", tmp / "ml.sig")
     mpk, msig = (tmp / "ml.pk").read_bytes(), (tmp / "ml.sig").read_bytes()
-    flip = lambda b, i=10: b[:i] + bytes([b[i] ^ 1]) + b[i + 1 :]
+    def flip(b, i=10):
+        return b[:i] + bytes([b[i] ^ 1]) + b[i + 1 :]
     add("s1-valid", "V", "int:1", msg, CTX_ML, msig, mpk)
     add("s1-bitflip", "I", "int:1", msg, CTX_ML, flip(msig), mpk)
     add("s1-other-context", "I", "int:1", msg, CTX_AUTH, msig, mpk)
@@ -89,7 +91,7 @@ def main(out):
     add("s2-valid", "V", "int:2", fmsg, b"", fsig, fpk, version=FALCON_VERSION)
     add("s2-bitflip", "I", "int:2", fmsg, b"", flip(fsig, 100), fpk, version=FALCON_VERSION)
     add("s2-nonempty-context", "E9", "int:2", fmsg, b"x", fsig, fpk, version=FALCON_VERSION)
-    add("s2-not-active-at-genesis", "E5", "int:2", fmsg, b"", fsig, fpk)
+    add("s2-active-at-genesis", "V", "int:2", fmsg, b"", fsig, fpk)
 
     # Suite 3: SLH-DSA-SHA2-128s.
     pk_hex, sk_hex = run(os.environ["SLH_TOOL"], "keygen", "22" * 48).split()
@@ -135,7 +137,7 @@ def main(out):
     add("suite-is-a-cell", "E7", Cell().boc().hex(), msg, CTX_ML, msig, mpk)
     add("key-is-an-int", "E7", "int:1", msg, CTX_ML, msig, "int:7")
     add("stack-underflow", "E2", "int:1", None, CTX_ML, msig, mpk)
-    add("version-17", "E6", "int:1", msg, CTX_ML, msig, mpk, version=17)
+    add("version-15", "E6", "int:1", msg, CTX_ML, msig, mpk, version=15)
 
     Path(out).write_text("\n".join("\t".join(r) for r in rows) + "\n")
     print(f"{len(rows)} scenarios")

@@ -7,7 +7,7 @@ s1-out-of-gas-reading	-14	51623	99
 s2-valid	0	23299	-1
 s2-bitflip	0	23299	0
 s2-nonempty-context	9	20184	99
-s2-not-active-at-genesis	5	84	99
+s2-active-at-genesis	0	23299	-1
 s3-valid	0	764488	-1
 s3-bitflip	0	764488	0
 s3-no-context	0	764459	0
@@ -36,4 +36,4 @@ suite-negative	5	84	99
 suite-is-a-cell	7	84	99
 key-is-an-int	7	84	99
 stack-underflow	2	84	99
-version-17	6	60	99
+version-15	6	60	99

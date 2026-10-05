@@ -1,0 +1,106 @@
+{
+  "scope": "Local development integration only; not production acceptance",
+  "date": "2026-10-05",
+  "merge_commit": "bb21dcdb95bcc822fee7597c55b0ad751fcb4256",
+  "integrated_main": "334be6e51de84236449a9009196ad680b59aa7da",
+  "original_feature_head": "1ff819f2e801c0ad4fb156faf2f383664f59bfd5",
+  "source_identity": "Working tree on merge_commit, pinned by source_sha256 below; receipt added after checks",
+  "source_sha256": {
+    "crypto/smartcont/rescue-dual-module.fc": "65e4e11c1212432388716b01168c384962152c4e534737159b2b3cee16c2ff68",
+    "crypto/smartcont/rescue-fee-vault-slot.fc": "bc2abe072edc469375316549b954e95eb0b27882eebf580ba9633d6a56f166b7",
+    "crypto/smartcont/rescue-v5r2-account.fc": "9f409fb588fb3f3d3bf75df5a6d24d48c3634e63568431b12fac1c2b3287543a",
+    "crypto/vm/pqops.h": "4ab1ef3eb93956f236cb13e933662ce82a59e44578d0204596cf919ac00750d7",
+    "test/rescue-fee-gate/README.md": "e516f013609f35860f1983275551bb678b4d3b5c4ea791e078f44852a1ca9dc9",
+    "test/rescue-fee-gate/compare.py": "e6c7c4935baac256f829e064a5b5e4ff0a6fb63a05f66940f717dd6a87687481",
+    "test/rescue-fee-gate/probe_role_budget.py": "795a41dcf29b3b1c21fedb0604d1616f49dd61d2a813a3eda2d11f90bb137bd3",
+    "test/rescue-fee-gate/suite-expected.tsv": "b0aaee12f1acc93a7572280ca9f441a8c862811929f4ff3567e8561e517f8ded",
+    "test/rescue-fee-gate/suite-scenarios.tsv": "606353ea5f25191fbfc382db589692928faa1cad8cd5978a3c5d479db5cde214",
+    "test/rescue-fee-gate/suite_parity_mutations.py": "906451c18848d167a5cc1f5a5c64af814ba077f104f5d7ff60ec91357f279359",
+    "test/rescue-fee-gate/suite_scenarios.py": "e4a4a36f76517fc0649ac1d464c6dac0748368c904c3c4e211a4ac3683352171",
+    "test/rescue-fee-gate/test_fee_key_restore.py": "b6223c0df172b6b7d4164887a4112ecce427473736a9e85bd157eba58f32b7e6",
+    "test/rescue-fee-gate/test_rescue_e2e.py": "f30e8fca3b6ca4aeff4e41f897d7832ebdaa5627359a5e98ce03ce40c969dc59",
+    "test/rescue-fee-gate/test_slot_vault.py": "7ab73867103f9dd704d9285f37bbc36e3a1c686311bd52ee9713f4a3cf6592f5",
+    "test/rescue-fee-gate/version_mutations.py": "024420396d887ec0a63c25bfed6b26753a06f139642311ecd918734a8e2e7e98",
+    "test/rescue-fee-gate/version_scenarios.py": "e9ec32f432ca37ed6b0fa950ca92c763e22e07c7edd3ab865a125c740af2b995",
+    "tosctl/src/vm/src/executor/pq.rs": "3e41f30a125e0269e5169fd256b61b6313ff785bca71e91006831259a0353de7"
+  },
+  "platform": "macOS AArch64; C++ Release; Rust dev/test",
+  "checks": {
+    "slot_vault": {
+      "passed": 12,
+      "skipped": 0,
+      "exit": 0,
+      "log": "test_slot_vault-rerun.log"
+    },
+    "vault_failures": {
+      "passed": 8,
+      "skipped": 0,
+      "exit": 0,
+      "log": "test_vault_failures.log"
+    },
+    "fee_key_restore": {
+      "passed": 2,
+      "skipped": 0,
+      "exit": 0,
+      "log": "test_fee_key_restore.log"
+    },
+    "rescue_loop": {
+      "passed": 7,
+      "skipped": 0,
+      "exit": 0,
+      "log": "test_rescue_e2e.log"
+    }
+  },
+  "pq_suite_parity": {
+    "frozen_scenarios": 39,
+    "version_scenarios": 80,
+    "version_range": [
+      0,
+      19
+    ],
+    "checks": "expected exit/value plus exact C++/Rust exit/gas/value"
+  },
+  "mutations": {
+    "rust": 7,
+    "cpp_version": 2,
+    "solvency_budget": 1,
+    "restored_baselines_passed": true
+  },
+  "rust_executor_tests": 16,
+  "fee_key_vectors": "passed RFC root control and all committed H20/W4 vectors",
+  "independent_slh_signer": "OpenSSL 3.6.3; positive and wrong-context controls executed",
+  "initial_failure": {
+    "test": "slot_vault",
+    "exit": 1,
+    "reason": "H20 test key generation failed with large retained temporary trees and low disk space; no passing claim from that run",
+    "repair": "per-test tree lifetime and one signed intent across balance bisection; full 12-test rerun passed"
+  },
+  "role_budget_probe": {
+    "scope": "role check only; not complete v5 admission",
+    "global_version": 16,
+    "external_credit": 10000,
+    "source_sha256": "bc2abe072edc469375316549b954e95eb0b27882eebf580ba9633d6a56f166b7",
+    "candidate_sha256": "85a34ecd583b7d5a32e4564499307206bcafca484ecce2f85d8972ef00d31666",
+    "baseline_admitted": true,
+    "baseline_gas_at_accept": 9660,
+    "baseline_receiver_locked": true,
+    "role_guard_admitted": false,
+    "role_guard_gas_at_accept": null,
+    "role_guard_exit": -14
+  },
+  "retained_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline",
+    "retention": "retain until explicitly superseded or owner-authorized cleanup",
+    "manifest_sha256": "eeea042a971ddbffcbc2b61cc910388a7419a66e808678eb2af54dbe0e0fc138"
+  },
+  "hosted_ci": "not run; no PR exists for this prototype branch",
+  "release_blockers": [
+    "Full v5 admission does not fit the current external credit using the measured role-check layout",
+    "Reference x86-64/AArch64 tariff measurements and VM ACVP conformance",
+    "Full V5 action list, mode 3, global policy and strict initialization",
+    "Canonical successor witnesses, POP, paired vault funding/handoff and post-migration recipient proof",
+    "Production durable signer, mobile restore and trusted-time behavior",
+    "Independent review and final-head hosted CI"
+  ],
+  "next_step": "Redesign the bounded fee envelope/decoder and measure all v5 pre-ACCEPT checks without lowering tariffs or removing guards; then implement paired successor handoff"
+}
