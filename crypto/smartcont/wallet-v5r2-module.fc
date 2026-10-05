@@ -1,6 +1,6 @@
 ;; Dual-root module candidate for the complete R2 wallet. Immutable data and
 ;; compiled vault dependency. Wallet submissions and per-key POP are distinct
-;; domains. Bounded fee preparation remains a separate integration requirement.
+;; domains. Preparation is SLH-only and spends exclusively its incoming funds.
 cell r2module_vault_code();
 #include "pq.fc";
 #include "wallet-v5r2-auth.fc";
@@ -16,6 +16,54 @@ cell r2module_code() asm "MYCODE";
       network, account, r2pair_address(cell_hash(module)), metadata);
 }
 
+;; A preparation is a repeatable funded deployment, never wallet authority. The
+;; immutable source module verifies only its own SLH key, even after rotation.
+;; Clients must verify both deployments and fresh POP before installing them.
+() r2module_prepare(cell request, cell signature, int network, int root, int rescue_key,
+    int balance, int value) impure inline_ref {
+  slice rs = r2id_ordinary(request);
+  throw_unless(1904, rs~load_uint(32) == 0x50525033);
+  throw_unless(auth::wrong_network, rs~load_int(32) == auth_global_id());
+  throw_unless(auth::wrong_network, rs~load_uint(256) == network);
+  slice account = rs~load_msg_addr();
+  throw_if(auth::wrong_account, r2pair_basechain(account) == root);
+  throw_unless(auth::not_module, rs~load_uint(256) == root);
+  int deadline = rs~load_uint(32);
+  throw_unless(auth::expired, (deadline > now()) & (deadline <= now() + 3600));
+  slice plan = r2id_ordinary(rs~load_ref());
+  rs.end_parse();
+  int module_amount = plan~load_coins();
+  int vault_amount = plan~load_coins();
+  cell module = plan~load_ref();
+  cell metadata = plan~load_ref();
+  cell vault = plan~load_ref();
+  plan.end_parse();
+  cell digest = begin_cell().store_uint(cell_hash(request), 256).end_cell();
+  cell context = begin_cell().store_uint(0x544f532d5245534355452d4645452d505245502d7631, 176).end_cell();
+  cell key = begin_cell().store_uint(rescue_key, 256).end_cell();
+  throw_unless(auth::bad_signature, pq_check_suite(digest, context, signature, key, 3));
+  r2module_pair(module, metadata, vault, account, network);
+  ;; Provisional current-price bounds, shared with the candidate vault envelope.
+  ;; Two conservative AUTH budgets cover initial POP and post-install execution.
+  int forwarding = get_forward_fee(0, 1024 * 1023, 1024);
+  int reserve = get_compute_fee(0, 65536) + 2 * forwarding
+      + get_storage_fee(0, 33554432, 128 * 1023, 128);
+  int module_floor = reserve;
+  int vault_floor = 2 * (get_compute_fee(0, 2000000) + 2 * forwarding + reserve);
+  throw_unless(1905, (module_amount >= module_floor) & (vault_amount >= vault_floor));
+  throw_unless(1905, module_amount + vault_amount <= 4 * (module_floor + vault_floor));
+  throw_unless(1905, module_amount + vault_amount + get_compute_fee(0, 1000000)
+      + 2 * forwarding <= value);
+  raw_reserve(max(0, balance - value), 2);
+  ;; Exact destinations/StateInit and empty deposit bodies; no caller actions.
+  send_raw_message(begin_cell().store_uint(0x18, 6)
+      .store_slice(r2pair_address(cell_hash(module))).store_coins(module_amount)
+      .store_uint(0, 1 + 4 + 4 + 64 + 32).store_uint(6, 3).store_ref(module).end_cell(), 3);
+  send_raw_message(begin_cell().store_uint(0x18, 6)
+      .store_slice(r2pair_address(cell_hash(vault))).store_coins(vault_amount)
+      .store_uint(0, 1 + 4 + 4 + 64 + 32).store_uint(6, 3).store_ref(vault).end_cell(), 3);
+}
+
 () recv_external(slice body) impure { throw(1900); }
 () recv_internal(int balance, int value, cell full, slice body) impure {
   slice ms = full.begin_parse();
@@ -26,7 +74,7 @@ cell r2module_code() asm "MYCODE";
   r2pair_basechain(funded_by);
   ;; SUB3 is PQ-only; earlier submission/cosignature envelopes are refused.
   int opcode = body~load_uint(32);
-  throw_unless(1902, (opcode == 0x53554233) | (opcode == 0x50505333));
+  throw_unless(1902, (opcode == 0x53554233) | (opcode == 0x50505333) | (opcode == 0x46505233));
   cell request = body~load_ref();
   cell signature = body~load_ref();
   body.end_parse();
@@ -41,6 +89,10 @@ cell r2module_code() asm "MYCODE";
   ds.end_parse();
   throw_unless(1902, (policy == 1) | (policy == 2));
   pq::check_chain_bytes(primary_key, 1312);
+  if (opcode == 0x46505233) {
+    r2module_prepare(request, signature, network, root, rescue_key, balance, value);
+    return ();
+  }
   if (opcode == 0x50505333) {
     r2pop_verify(request, signature, network, root, primary_key, rescue_key, policy);
     return (); ;; funded proof only; never emits AUTH or changes installed keys

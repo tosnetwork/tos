@@ -192,3 +192,12 @@ context_fee_external$_ intent:^ContextFeeIntent signature:^Cell = ContextFeeExte
 context_fee_data$_ next_leaf:uint32 gas_at_accept:uint32 epoch0:uint32
   fixed_value:Tomis header_hash:bits256 target:MsgAddressInt
   public_key:^Cell auth_prefix:^Cell = ContextFeeData;
+
+// Complete receiver candidate preparation: exact canonical witnesses are signed.
+// Pure SLH context TOS-RESCUE-FEE-PREP-v1, digest = cell_hash(FeePrepareV3).
+prepare_plan_v3$_ module_amount:Tomis vault_amount:Tomis
+  module_init:^Cell metadata:^Cell vault_init:^Cell = PreparePlanV3;
+fee_prepare_v3#50525033 global_id:int32 network_tag:bits256
+  wallet:MsgAddressInt source_module:bits256 valid_until:uint32
+  plan:^PreparePlanV3 = FeePrepareV3;
+fee_prepare_submit_v3#46505233 prepare:^FeePrepareV3 signature:^Cell = InternalMsgBody;

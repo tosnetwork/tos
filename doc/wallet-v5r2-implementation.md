@@ -428,3 +428,44 @@ routes save 80 gas each, with all 74 transaction parity comparisons passing agai
 This small optimization leaves a substantial default-credit gap; it does not
 justify weaker checks or tariff changes. Current-source evidence is in
 `test/wallet-v5r2/fee-config-predicate-20261006.json`.
+
+## Module-side successor preparation candidate
+
+The complete module now accepts `FPR3` carrying `PRP3`, a separate SLH-only
+preparation request in Pure context `TOS-RESCUE-FEE-PREP-v1`. The signed cell hash
+binds global/network identity, wallet, current module, deadline, exact module and
+vault amounts, both canonical StateInit witnesses and fee metadata. Primary or
+legacy authorization is not selected by this envelope. The module checks its own
+SLH key and same-code successor/module-to-vault pairing, including policy rules.
+
+It reserves its entire pre-message balance and emits exactly two fixed-destination
+messages, each with the signed StateInit, signed amount, empty deposit body and
+send mode 3. It never emits wallet AUTH or updates wallet/module state. Repeating
+an unchanged valid preparation requires fresh incoming funds. Surplus incoming
+funds stay at the source module; no arbitrary refund or withdrawal is introduced.
+
+Current-price provisional bounds require a module reserve floor, a vault floor
+covering two conservative AUTH fee budgets and reserves, an aggregate setup cap
+of four times the combined floors, and incoming value covering both amounts plus
+bounded module compute/forwarding. These are candidate bounds requiring worst-case
+pricing and the real recovery drill; they are not a release funding quote.
+
+`test_preparation.py` covers 24 cases: actual deployment of both recipients,
+repeated funding, wrong SLH key/domain, modified amounts, identity/expiry checks,
+wrong pairing, funding floors/cap and refusal to spend prior funds. Deleting the
+preparation verifier accepts a wrong-domain request and sends both deployments;
+restoring it returns to rejection. Separate deletion controls remove the funding
+floors, setup cap and incoming budget, and expose the corresponding unwanted
+sends. A reduced message-cell cap skips the larger
+module deployment while sending the smaller vault deployment: this deliberately
+proves partial completion, not cross-account atomicity. Both funds and state at
+the source retain their invariants. Twenty-three standard-config transactions, including
+actual deployments, have exact native/Rust output/state/gas/phase parity; the
+custom-cap partial-send scenario is currently native-only. Existing 74 fee-route
+parity transactions and real module/POP regressions also pass with the new code.
+
+This module-side feature does **not** yet supply the primary-independent bootstrap:
+the paired vault still refuses preparation class 3. Its admission shape/budget,
+real new fee-key possession, new-vault POP, atomic wallet migration, post-migration
+payment and restore/device drills remain to be integrated and validated together.
+The source-bound local evidence is `test/wallet-v5r2/preparation-module-20261006.json`.

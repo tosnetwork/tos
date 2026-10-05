@@ -1,0 +1,295 @@
+{
+  "base_commit": "bc0bfa8ea730ea4b26851520775a43f96a33a892",
+  "scope": "Complete module-side SLH-funded preparation/deployment candidate only. Vault class 3 remains refused, no full funded migration/restore drill or release acceptance. Native Release / Rust debug on local macOS.",
+  "preparation_cases": 24,
+  "parity": {
+    "transactions": 23,
+    "success": true,
+    "scope": "Funded internal preparations and deployments; partial-send custom config native-only; no paired external fee admission",
+    "differences": []
+  },
+  "mutations": [
+    "SLH verifier deletion admits wrong-domain signature",
+    "funding-floor deletion admits zero module amount",
+    "setup-cap deletion admits oversized funded setup",
+    "incoming-budget deletion admits preparation with one send skipped; prior balance remains protected"
+  ],
+  "regressions": {
+    "full_fee_route_parity": {
+      "auth": {
+        "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+        "pop_role": null,
+        "expected_transactions": 26,
+        "observed_transactions": 26,
+        "differences": [],
+        "success": true
+      },
+      "pop1": {
+        "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+        "pop_role": 1,
+        "expected_transactions": 24,
+        "observed_transactions": 24,
+        "differences": [],
+        "success": true
+      },
+      "pop2": {
+        "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+        "pop_role": 2,
+        "expected_transactions": 24,
+        "observed_transactions": 24,
+        "differences": [],
+        "success": true
+      }
+    },
+    "real_module_delivery_cases": 9,
+    "pop_cases": 19,
+    "pop_signature_mutations": 2,
+    "frozen_auth_contracts": "check passed",
+    "tlb_schema": "tlbc compile passed"
+  },
+  "source_scope": "Setup budget formulas remain provisional; tests use structurally canonical fee metadata and do not prove new LMS key possession or working new-vault POP. Partial-send lower-cap case is native-only.",
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-module.fc",
+      "bytes": 8035,
+      "sha256": "263c0c24e14e0f65aa481633f18cc2bac61ce160038b151b81a8f032b3dbe802"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-rescue.tlb",
+      "bytes": 12106,
+      "sha256": "daa1c4ae51ddc83880148fb8846e89be958f981ab5696f05384c54a24ba1e064"
+    },
+    {
+      "path": "test/wallet-v5r2/test_preparation.py",
+      "bytes": 14090,
+      "sha256": "7dc3073688178adf3bb8264bea67de996880c94bcf1a50d3f1a1d0d0e2fbec3f"
+    },
+    {
+      "path": ".github/workflows/rescue-context.yml",
+      "bytes": 6140,
+      "sha256": "a6643b4f9ad30f13a16101c213f092bcd7c4eac38cdf5142d0d20be1044a4d2c"
+    }
+  ],
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python test/wallet-v5r2/test_preparation.py --rust-driver tosctl/src/target/debug/examples/pq-tx-parity --output OUT/preparation",
+    "python test/wallet-v5r2/test_pop.py --output OUT/pop",
+    "python test/wallet-v5r2/test_module_delivery.py --output OUT/module",
+    "python test/wallet-v5r2/fee_tx_parity.py --driver tosctl/src/target/debug/examples/pq-tx-parity --output OUT/auth; separately repeat with --pop-role 1/2",
+    "build/crypto/tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb",
+    "python scripts/update-auth-contract-code.py --check"
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/changed_amount.json",
+      "bytes": 36437,
+      "sha256": "d5c4d575c2f04a31d5ccfdffd70b0f3a3c4d10c993efe51ba4b70929e41345d0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/deleted_cap.json",
+      "bytes": 154692,
+      "sha256": "27f7c6aa5b9c18484de783c0b66b4a019972438f0537d985c2ec8d8f105fa292"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/deleted_floor.json",
+      "bytes": 154679,
+      "sha256": "7136d211f33dd063f703d26b0ba0b69c78a7a4df684a8907641d46610c1f7103"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/deleted_incoming_budget.json",
+      "bytes": 154440,
+      "sha256": "7307b81f5e84c161043eb1fb8ef6a754dafec3e9edded128a5a6965b09a13817"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/deleted_verifier_accepts_wrong_domain.json",
+      "bytes": 154366,
+      "sha256": "8febc36e8cbbf5d49c61a6ae3d6ac7e61040e1d779acdcdeae0282f0d8553864"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/deployed-module.json",
+      "bytes": 13282,
+      "sha256": "4a3ad7c3018e0a01115486a1b002d69e70136ef57384a0350b4c9244bceb891d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/deployed-vault.json",
+      "bytes": 3344,
+      "sha256": "b7080f16dbc929b161e605da7bb9684f07010d3e3320f00fe7598d0be98e7721"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/expired.json",
+      "bytes": 35731,
+      "sha256": "7284d3f648bdcd759f6ff5b3242fa85502cbcd5f466f148740758223ad6842e7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/incoming_only.json",
+      "bytes": 147874,
+      "sha256": "90d55313478d467e80b4f1b63e50145123bf92ddd3747b26cdc5946dcdeb49a8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/module_floor.json",
+      "bytes": 147545,
+      "sha256": "4b827f92cdee21aea878b1a6152089ad7ae51c3b0fab9ea878e712ed791a7485"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/overlong.json",
+      "bytes": 35732,
+      "sha256": "e5af734f600ddd655fc937185dd07824336634eaa85b0cd63863ad5eb462bbdb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/parity.json",
+      "bytes": 198,
+      "sha256": "83232cee78e0c2dfdfd625bf48c69493ee2ef16969190e8ed00d15f933adf50a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/partial_send_size_limit.json",
+      "bytes": 155566,
+      "sha256": "f791ad00faef556209815c3b1a641ce803c5932d22817ea24fa329b6b63040f2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/prepare.json",
+      "bytes": 155703,
+      "sha256": "1bc9f1e4f489011cafe471bbbadf1b8bb3b7775ce6fced9f0d126aa1eda6ad51"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/repeat_fresh_funding.json",
+      "bytes": 155707,
+      "sha256": "1b279d1943cf841e2e8a48b8de1a7630df64d20a1e0fcdfd7bb98a5dcfc9fecf"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/restored.json",
+      "bytes": 155703,
+      "sha256": "3a8da045010b354f4dbdc8735df81456437e4d36f941c5e98a8d1407760040ca"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/results.json",
+      "bytes": 4217,
+      "sha256": "3f5a2b607f248b090e6d8ccb9e0fc190f3bfb1d4fbd99f12417659cf7137b97f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/setup_cap.json",
+      "bytes": 147672,
+      "sha256": "7c4c4cbfbade8726d9e834b8a0cb12a235d9e80b03b996b9d45cbac10d1cb134"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/vault_floor.json",
+      "bytes": 147544,
+      "sha256": "51616d3f68e6d7eae20e2b7bb48e68003a26f64fd52b400c4821da70cd9a8067"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/wrong_domain.json",
+      "bytes": 36437,
+      "sha256": "303f12e1c0b2f2f57287cf48e814b5e4511b7b624c4710d862f81d87f84a13b2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/wrong_global.json",
+      "bytes": 34979,
+      "sha256": "2c034b94a9725f2154288eb43a7a4ec802b2cd058ef8e6c2162a7aa8d837a7e8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/wrong_key.json",
+      "bytes": 36437,
+      "sha256": "2eab1e5f56761c8ee561797b18e119876cfc9ce6837c69006b545a139c9acda6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/wrong_network.json",
+      "bytes": 35056,
+      "sha256": "b300f66ef7c55136cff2fd76a6420b76598b64dfb7809cdd922a840bd1bdb732"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/wrong_pair.json",
+      "bytes": 146894,
+      "sha256": "6e97641b989d1a048fd0b905bf6b51cfa84156123536311cc7d511573114ab64"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/wrong_source.json",
+      "bytes": 35516,
+      "sha256": "4b6d0ce45d9283bcb61c491754019b61b6f8004115d731189f2c7391ee15fa4f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/wrong_wallet_chain.json",
+      "bytes": 35387,
+      "sha256": "d3301f897bfc035f616786046b078482d2d432815f97bca727b23ef8962fb011"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/config.boc",
+      "bytes": 828,
+      "sha256": "ccd929c2d28741ce8828fda10e1eeaf4159a9fa36aee41f725c21bb16fa4e383"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/scenarios.tsv",
+      "bytes": 760870,
+      "sha256": "a2b2cb6f8b2a6cf16cf785353a48b8edb0210e50f227b72d486e47693a33f1fb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/native.tsv",
+      "bytes": 3669,
+      "sha256": "1a6913f1011a57b9d77d2137a8582e702f3c443c134f677e0acf645dcd5200d2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-module/rust.tsv",
+      "bytes": 3669,
+      "sha256": "1a6913f1011a57b9d77d2137a8582e702f3c443c134f677e0acf645dcd5200d2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/auth/parity.json",
+      "bytes": 220,
+      "sha256": "ef73ac5b27ec6d0c4e03d9f31f8ca407fc6016ca7f6696a08819d3d90cfaea89"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/auth/native/credit-probe.json",
+      "bytes": 145,
+      "sha256": "f9cb9accf04e5c62a8c446bdeade96679b19d966f648b3c33791122d06b05ae8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/auth/native.tsv",
+      "bytes": 2338,
+      "sha256": "037c682e8147bf45bee2b568d5f5374a8b7fd0c350d0f8411bb8f09be6b811c9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/auth/rust.tsv",
+      "bytes": 2338,
+      "sha256": "037c682e8147bf45bee2b568d5f5374a8b7fd0c350d0f8411bb8f09be6b811c9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/pop1/parity.json",
+      "bytes": 217,
+      "sha256": "76de167470dcaba43d4c7d2e64594cb0f278034fb88066e5574c267c69219c62"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/pop1/native/credit-probe.json",
+      "bytes": 145,
+      "sha256": "f64d3e3bbfb4b7641be1487fd9d6fbd27724736d1fc67f89e01b6d823d0e14cc"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/pop1/native.tsv",
+      "bytes": 1965,
+      "sha256": "601d3c2a9c77862db9aa0267e6f26bb30621dd24fe47977dcda99ce302c2f234"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/pop1/rust.tsv",
+      "bytes": 1965,
+      "sha256": "601d3c2a9c77862db9aa0267e6f26bb30621dd24fe47977dcda99ce302c2f234"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/pop2/parity.json",
+      "bytes": 217,
+      "sha256": "98858d7e92a75f64129b354dff6d8f0a31fbe4f4109b2ea5f5b1e73b917bb5dd"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/pop2/native/credit-probe.json",
+      "bytes": 145,
+      "sha256": "f64d3e3bbfb4b7641be1487fd9d6fbd27724736d1fc67f89e01b6d823d0e14cc"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/pop2/native.tsv",
+      "bytes": 1967,
+      "sha256": "d78bc21445af796804aee64d4c9617da5e5fbc042761a6af72809fddc533f85e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-regression/pop2/rust.tsv",
+      "bytes": 1967,
+      "sha256": "d78bc21445af796804aee64d4c9617da5e5fbc042761a6af72809fddc533f85e"
+    }
+  ],
+  "retention": "Retain local artifacts through release review and at least 2027-01-06. Local paths require access; hashes alone are not independent evidence."
+}
