@@ -125,8 +125,8 @@ Masterchain swap
  * Configuration Parameters
  *
  */
-// Protocol version 18 enables the current PQ/VM and shielded-pool profile.
-18 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
+// Protocol version 16 enables the current PQ/VM and shielded-pool profile.
+16 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators

@@ -33,7 +33,7 @@ int imt_node(int c0, int c1, int c2, int c3, int c4, int c5, int c6) inline {
   return h7(domain_imt_node(), c0, c1, c2, c3, c4, c5, c6);
 }
 
-;; Global version 18. One imt_node a level, over a path laid out as section 7.2
+;; Global version 16. One imt_node a level, over a path laid out as section 7.2
 ;; describes it, with the carry placed by the base-seven digits of the index.
 int poseidon2_path7(int leaf, int domain, cell path, int index, int depth)
   asm "POSEIDON2_PATH7";

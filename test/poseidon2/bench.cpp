@@ -86,8 +86,7 @@ Sample run_once(td::Ref<vm::Cell> code, unsigned method_id, int rounds) {
   // it, so this harness had never once executed a CALLDICT and the defect was
   // invisible for as long as nothing needed one.
   //
-  // `poseidon2_path7_min_version`, not `poseidon2_min_version`: PATH7 ships a
-  // version later than the other two, and at 17 it is not an instruction.
+  // All Poseidon2 instructions share the unified development baseline.
   vm::VmState state{vm::load_cell_slice_ref(code), vm::poseidon2_path7_min_version, std::move(stack),
                     vm::GasLimits{budget, budget}, 1};
   const auto started = std::chrono::steady_clock::now();

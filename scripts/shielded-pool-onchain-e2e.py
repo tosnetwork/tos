@@ -80,10 +80,9 @@ from tostester.network import FullNode, Network, StartOptions  # noqa: E402
 
 TOS = 1_000_000_000
 
-# Global version 18 is where POSEIDON2_PATH7 lives, and 17 is where the
-# permutation and the seven-input hash do.  A chain below 18 cannot run this
-# contract at all: the instructions are not merely absent, they are refused.
-GLOBAL_VERSION = 18
+# The unified development version 16 enables all three Poseidon2 instructions.
+# Earlier versions refuse them, so this contract requires the version-16 baseline.
+GLOBAL_VERSION = 16
 
 # Nothing on top of what section 14.1's funding rule demands.
 #
@@ -128,8 +127,16 @@ def build_fixture(out: Path, build: Path, refuse: bool, transfer: bool) -> Path:
     # answers `POSEIDON2_HASH7:-?` instead of assembling it.
     environment["TOS_ROOT"] = str(build.parent)
     environment["CARGO_TERM_COLOR"] = "never"
-    command = [str(cargo), "run", "--release", "--bin", "onchain_fixture", "--",
-               str(REPO), str(out)]
+    command = [
+        str(cargo),
+        "run",
+        "--release",
+        "--bin",
+        "onchain_fixture",
+        "--",
+        str(REPO),
+        str(out),
+    ]
     if refuse:
         command.append("--refuse")
     if transfer:
@@ -264,8 +271,14 @@ def describe_transaction(rpc_address: str, account: str, bounced: bool = False) 
 # ---------------------------------------------------------------------------
 
 
-def internal(source: Address, destination: Address, value: int, body: Cell,
-             init: StateInit | None, bounce: bool) -> WalletMessage:
+def internal(
+    source: Address,
+    destination: Address,
+    value: int,
+    body: Cell,
+    init: StateInit | None,
+    bounce: bool,
+) -> WalletMessage:
     return WalletMessage(
         send_mode=3,
         message=MessageAny(
@@ -336,8 +349,17 @@ def check_recovery(lite, rpc_address, account, fixture, fixture_dir, step, build
 
     # What that amount implies, computed by the circuit rather than read back.
     result = subprocess.run(
-        [str(Path.home() / ".cargo/bin/cargo"), "run", "--release", "--bin", "onchain_fixture",
-         "--", "--recovery-root", str(fixture_dir), str(recovered)],
+        [
+            str(Path.home() / ".cargo/bin/cargo"),
+            "run",
+            "--release",
+            "--bin",
+            "onchain_fixture",
+            "--",
+            "--recovery-root",
+            str(fixture_dir),
+            str(recovered),
+        ],
         cwd=REPO / "tools/shielded-pool-circuit/crosscheck",
         env={**os.environ, "TOS_ROOT": str(build.parent), "CARGO_TERM_COLOR": "never"},
         capture_output=True,
@@ -348,8 +370,12 @@ def check_recovery(lite, rpc_address, account, fixture, fixture_dir, step, build
         return
     predicted = json.loads(result.stdout.strip().splitlines()[-1])
 
-    compare("commitment_root", predicted["commitment_root"],
-            lite.get_method(account, "commitment_root"), failures)
+    compare(
+        "commitment_root",
+        predicted["commitment_root"],
+        lite.get_method(account, "commitment_root"),
+        failures,
+    )
     log(f"  {'the recovery note landed at':<34} {predicted['leaf_index']}")
 
     # And the pool owes the recovered money again: section 15.4's whole point
@@ -361,8 +387,12 @@ def check_recovery(lite, rpc_address, account, fixture, fixture_dir, step, build
     # recomputed here, because this was the third place the subtraction had to
     # happen and the first two had already been missed.
     before = int(step["expect"]["liability_before_recovery"])
-    compare("native_liability", str(before + int(predicted["minted_nanotos"])),
-            lite.get_method(account, "native_liability"), failures)
+    compare(
+        "native_liability",
+        str(before + int(predicted["minted_nanotos"])),
+        lite.get_method(account, "native_liability"),
+        failures,
+    )
     return bounce
 
 
@@ -375,9 +405,17 @@ def anchor_epoch_seconds() -> int:
     return int(match.group(1))
 
 
-def report_cost(lite, rpc_address, account, step, workdir, failures,
-                fixture_sandbox_bounce=None, transaction=None,
-                previous_utime=None) -> int | None:
+def report_cost(
+    lite,
+    rpc_address,
+    account,
+    step,
+    workdir,
+    failures,
+    fixture_sandbox_bounce=None,
+    transaction=None,
+    previous_utime=None,
+) -> int | None:
     """What the chain charged for the message just sent, against what the
     sandbox charged for the same bytes.
 
@@ -406,7 +444,9 @@ def report_cost(lite, rpc_address, account, step, workdir, failures,
     if compute.get("exit_code") not in (0, None):
         failures.append(f"{step['name']}: the compute phase exited {compute.get('exit_code')}")
     if action and action.get("success") is False:
-        failures.append(f"{step['name']}: the action phase failed, code {action.get('result_code')}")
+        failures.append(
+            f"{step['name']}: the action phase failed, code {action.get('result_code')}"
+        )
 
     identifier = transaction.get("transaction_id", {})
     lt = identifier.get("lt")
@@ -462,8 +502,10 @@ def report_cost(lite, rpc_address, account, step, workdir, failures,
         # epoch ring, and a dictionary write measures about 5,200 gas.
         checkpoint_ceiling = 10_000
         if opened and 0 < gas - sandbox <= checkpoint_ceiling:
-            log(f"  {'it opened a new anchor epoch':<34} "
-                f"+{gas - sandbox} gas for the checkpoint the sandbox's frozen clock skipped")
+            log(
+                f"  {'it opened a new anchor epoch':<34} "
+                f"+{gas - sandbox} gas for the checkpoint the sandbox's frozen clock skipped"
+            )
         else:
             failures.append(
                 f"{step['name']}: the chain charged {gas} gas and the sandbox charged {sandbox} "
@@ -471,6 +513,7 @@ def report_cost(lite, rpc_address, account, step, workdir, failures,
                 f"so the difference is the error bar on all of them."
             )
     return transaction.get("utime")
+
 
 async def run(args) -> int:
     workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="tos-shielded-"))
@@ -527,8 +570,10 @@ async def run(args) -> int:
         # is refused, and would look like a broken proof rather than a
         # mismatched chain.
         network.config.global_id = int(fixture["global_id"])
-        log(f"localnet at global_version={network.config.global_version}, "
-            f"global_id={network.config.global_id}, deployment fee schedule")
+        log(
+            f"localnet at global_version={network.config.global_version}, "
+            f"global_id={network.config.global_id}, deployment fee schedule"
+        )
 
         dht = network.create_dht_node()
         # Node 0 is the one this script talks to; the rest exist to make the
@@ -560,8 +605,9 @@ async def run(args) -> int:
         tasks.extend(asyncio.create_task(peer.run()) for peer in nodes[1:])
         try:
             if args.validators > 1:
-                log(f"waiting for {args.validators} validators to agree on masterchain "
-                    f"block #2 ...")
+                log(
+                    f"waiting for {args.validators} validators to agree on masterchain block #2 ..."
+                )
                 # Block 2 rather than 1: the first block a set produces is the
                 # first one that needed agreeing.
                 await asyncio.wait_for(network.wait_mc_block(seqno=2), timeout=args.boot_timeout)
@@ -579,9 +625,11 @@ async def run(args) -> int:
             data = cell_from(fixture_dir / "data.boc")
             init = StateInit(split_depth=None, special=None, code=code, data=data, library=None)
             deploy_value = int(fixture["deploy_value_nanotos"])
-            log(f"deploying with {deploy_value/TOS:.9f} TOS ...")
+            log(f"deploying with {deploy_value / TOS:.9f} TOS ...")
             await faucet.send(
-                internal(faucet.address, destination, deploy_value, Cell.empty(), init, bounce=False)
+                internal(
+                    faucet.address, destination, deploy_value, Cell.empty(), init, bounce=False
+                )
             )
             try:
                 await wait_for(
@@ -602,14 +650,27 @@ async def run(args) -> int:
             # trusting the deploy path.
             log("genesis, as the chain holds it:")
             expected = fixture["expected_at_genesis"]
-            compare("commitment_root", expected["commitment_root"],
-                    lite.get_method(address_text, "commitment_root"), failures)
-            compare("nullifier_root", expected["nullifier_root"],
-                    lite.get_method(address_text, "nullifier_root"), failures)
-            compare("commitment_next_index", "0",
-                    lite.get_method(address_text, "commitment_next_index"), failures)
-            compare("native_liability", "0",
-                    lite.get_method(address_text, "native_liability"), failures)
+            compare(
+                "commitment_root",
+                expected["commitment_root"],
+                lite.get_method(address_text, "commitment_root"),
+                failures,
+            )
+            compare(
+                "nullifier_root",
+                expected["nullifier_root"],
+                lite.get_method(address_text, "nullifier_root"),
+                failures,
+            )
+            compare(
+                "commitment_next_index",
+                "0",
+                lite.get_method(address_text, "commitment_next_index"),
+                failures,
+            )
+            compare(
+                "native_liability", "0", lite.get_method(address_text, "native_liability"), failures
+            )
 
             # --- the scenario ----------------------------------------------
             #
@@ -651,7 +712,7 @@ async def run(args) -> int:
                 else:
                     body = cell_from(fixture_dir / step["body"])
                     value = int(step["value_nanotos"]) + args.fee_allowance
-                    log(f"{step['name']}: attaching {value/TOS:.9f} TOS ...")
+                    log(f"{step['name']}: attaching {value / TOS:.9f} TOS ...")
                     await faucet.send(
                         internal(faucet.address, destination, value, body, None, bounce=True)
                     )
@@ -668,15 +729,17 @@ async def run(args) -> int:
                 try:
                     await wait_for(
                         f"{step['name']} to be accepted",
-                        lambda counter=counter, expect=expect: lite.get_method(
-                            address_text, counter
-                        ) == str(expect[counter]),
+                        lambda counter=counter, expect=expect: (
+                            lite.get_method(address_text, counter) == str(expect[counter])
+                        ),
                         timeout=args.step_timeout,
                     )
                 except Failed:
                     log(f"{step['name']} did not land. Dumping what the chain has:")
-                    for who, account in (("pool", address_text),
-                                         ("wallet", faucet.address.to_str())):
+                    for who, account in (
+                        ("pool", address_text),
+                        ("wallet", faucet.address.to_str()),
+                    ):
                         answer = rpc(rpc_address, "getTransactions", address=account, limit=3)
                         path = workdir / f"failure-{who}-transactions.json"
                         path.write_text(json.dumps(answer, indent=2))
@@ -692,18 +755,42 @@ async def run(args) -> int:
                             )
                     raise
                 log(f"after {step['name']}:")
-                for field in ("commitment_root", "commitment_next_index", "nullifier_root",
-                              "nullifier_next_index", "native_liability"):
+                for field in (
+                    "commitment_root",
+                    "commitment_next_index",
+                    "nullifier_root",
+                    "nullifier_next_index",
+                    "native_liability",
+                ):
                     if field in expect:
-                        compare(field, str(expect[field]),
-                                lite.get_method(address_text, field), failures)
+                        compare(
+                            field,
+                            str(expect[field]),
+                            lite.get_method(address_text, field),
+                            failures,
+                        )
                 bounce = None
                 if step["body"] is None:
-                    bounce = check_recovery(lite, rpc_address, address_text, fixture,
-                                            fixture_dir, step, Path(args.build_dir), failures)
+                    bounce = check_recovery(
+                        lite,
+                        rpc_address,
+                        address_text,
+                        fixture,
+                        fixture_dir,
+                        step,
+                        Path(args.build_dir),
+                        failures,
+                    )
                 previous_utime = report_cost(
-                    lite, rpc_address, address_text, step, workdir, failures,
-                    fixture.get("recovery_sandbox"), bounce, previous_utime,
+                    lite,
+                    rpc_address,
+                    address_text,
+                    step,
+                    workdir,
+                    failures,
+                    fixture.get("recovery_sandbox"),
+                    bounce,
+                    previous_utime,
                 )
 
             # Where the money ended up. A withdrawal that moved every root
@@ -715,7 +802,7 @@ async def run(args) -> int:
             deployed = int(fixture["destination"]["deploy_value_nanotos"])
             refuses = bool(fixture["destination"].get("refuses"))
             balance = lite.balance(fixture["destination"]["address"])
-            log(f"the destination holds {balance/TOS:.9f} TOS")
+            log(f"the destination holds {balance / TOS:.9f} TOS")
             if refuses and balance >= deployed:
                 failures.append(
                     f"the destination refused the payout and still holds {balance} nanotos, "
@@ -785,15 +872,19 @@ async def run(args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", default=os.environ.get("TOS_BUILD_DIR", str(REPO / "build")))
-    parser.add_argument("--fixture", default=None,
-                        help="a directory onchain_fixture has already written")
+    parser.add_argument(
+        "--fixture", default=None, help="a directory onchain_fixture has already written"
+    )
     parser.add_argument("--workdir", default=None)
     parser.add_argument("--base-port", type=int, default=21000)
     parser.add_argument(
-        "--validators", type=int, default=1,
+        "--validators",
+        type=int,
+        default=1,
         help="how many initial validators the localnet has. One is enough to "
-             "exercise the contract; more than one is what exercises the "
-             "block a transact has to be agreed in.")
+        "exercise the contract; more than one is what exercises the "
+        "block a transact has to be agreed in.",
+    )
     parser.add_argument("--boot-timeout", type=float, default=180.0)
     parser.add_argument("--step-timeout", type=float, default=120.0)
     parser.add_argument(
@@ -801,21 +892,21 @@ def main() -> int:
         type=int,
         default=FORWARD_FEE_ALLOWANCE,
         help="nanotos to attach on top of what section 14.1's funding rule demands. "
-             "Zero by default, because a message carrying more than the rule asks for "
-             "does not test the rule",
+        "Zero by default, because a message carrying more than the rule asks for "
+        "does not test the rule",
     )
     parser.add_argument(
         "--refuse",
         action="store_true",
         help="build a fixture whose payout destination refuses the money, so the "
-             "withdrawal bounces and the pool has to mint a recovery note",
+        "withdrawal bounces and the pool has to mint a recovery note",
     )
     parser.add_argument(
         "--transfer",
         action="store_true",
         help="spend two notes into three, paying nobody. The only money path "
-             "that had never run on a chain: the same handler takes a cheaper "
-             "branch, and an argument that it must therefore work is not a run",
+        "that had never run on a chain: the same handler takes a cheaper "
+        "branch, and an argument that it must therefore work is not a run",
     )
     args = parser.parse_args()
     try:

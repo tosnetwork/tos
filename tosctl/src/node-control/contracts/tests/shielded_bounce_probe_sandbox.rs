@@ -22,7 +22,7 @@ use chain_block::{
 };
 use tos_sandbox::{Blockchain, MessageBuilder, compile_func_with_stdlib};
 
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 const TOS: u64 = 1_000_000_000;
 
 /// A sender with nothing in it but the action under test: forward one
@@ -151,7 +151,7 @@ fn bounced_messages(result: &tos_sandbox::SendResult) -> Vec<Message> {
 /// bounced message and the whole result.
 fn round_trip(flags: u8) -> (Blockchain, MsgAddressInt, Message, tos_sandbox::SendResult) {
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     bc.set_workchain(0);
     let sender = deploy(&mut bc, SENDER, "sender");
     let refuser = deploy(&mut bc, REFUSER, "refuser");

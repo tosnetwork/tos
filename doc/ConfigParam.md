@@ -66,19 +66,20 @@ that field.
 
 The only parameter that decides what a network executes is `version` here.
 
-### Versions 16–18 in this build
+### Unified version 16 in this build
 
-The compiled [SUPPORTED_VERSION](../common/global-version.h) is now **19**. It
+The compiled [SUPPORTED_VERSION](../common/global-version.h) is now **16**. It
 does not activate that version on a network. The configured value gates these
 instructions:
 
 | Minimum version | Instruction | Reference |
 |---|---|---|
 | 16 | `PQCHECKSIG_MLDSA44` | [tvm-mldsa44.md](tvm-mldsa44.md) |
-| 17 | `POSEIDON2_PERM8`, `POSEIDON2_HASH7` | [GlobalVersions.md](GlobalVersions.md) |
-| 18 | `POSEIDON2_PATH7` | [GlobalVersions.md](GlobalVersions.md) |
+| 16 | `PQCHECKSIG_FALCON512_PADDED` | [wallet-falcon-fndsa.md](wallet-falcon-fndsa.md) |
+| 16 | `POSEIDON2_PERM8`, `POSEIDON2_HASH7` | [GlobalVersions.md](GlobalVersions.md) |
+| 16 | `POSEIDON2_PATH7` | [GlobalVersions.md](GlobalVersions.md) |
 
-Version 16 also changes one transaction rule. Both version-16 changes are
+Version 16 also changes one transaction rule. All version-16 changes are
 gated on the configured value, not on the compiled constant.
 
 1. The TVM instruction `PQCHECKSIG_MLDSA44` (`F93100`) exists. Its gate is
@@ -91,9 +92,8 @@ gated on the configured value, not on the compiled constant.
    with the pre-launch audit changes and is unrelated to the instruction above;
    it is recorded here because activating version 16 activates it too.
 
-The transaction change is independent of the version-17 and version-18
-instructions. See [GlobalVersions.md](GlobalVersions.md) for their full
-semantics and activation requirements.
+The transaction change is independent of the PQ and Poseidon2 instructions.
+See [GlobalVersions.md](GlobalVersions.md) for their full semantics and activation requirements.
 
 Because the checks above do not refuse, a mixed fleet will not fail loudly: nodes
 that do not implement the configured version log an error and keep validating,
@@ -137,7 +137,7 @@ state by [shielded-pool-genesis](../tools/shielded-pool-genesis/src/lib.rs).
 The reserve floor is part of that initial state. A change to these inputs
 changes the generated state or deployment identity; it is not a ConfigParam
 vote. The VM instructions used by the pool are gated separately by
-**ConfigParam 8**, at versions 17 and 18 as described above.
+**ConfigParam 8**, at unified version 16 as described above.
 
 The current **development fixture** records these amounts in the smallest
 native units (tomis):
@@ -151,7 +151,7 @@ native units (tomis):
 The byte-frozen [V1 profile](../artifacts/shielded-pool/PROFILE.md) defines the
 wire format and rules. The [generated manifest](../artifacts/shielded-pool/genesis-manifest.json)
 pins these inputs and the resulting state hash. Its verifying key is a
-development fixture; neither the manifest nor compiled version 18 establishes
+development fixture; neither the manifest nor compiled version 16 establishes
 network activation or production deployment.
 
 ## Validator and Network Parameters
@@ -274,4 +274,4 @@ Each bridge parameter file also fixes the chain id its contract compares against
 - [Zerostate.md](Zerostate.md)
 - [block.tlb](../crypto/block/block.tlb)
 
-Falcon wallet verification adds a version-19 candidate capability. See [wallet-falcon-fndsa.md](wallet-falcon-fndsa.md). Network activation and protocol approval remain separate from compiling support.
+Falcon wallet verification adds a version-16 candidate capability. See [wallet-falcon-fndsa.md](wallet-falcon-fndsa.md). Network activation and protocol approval remain separate from compiling support.

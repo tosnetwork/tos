@@ -2,7 +2,7 @@
 
 `scripts/setup-testnet.sh` installs four PQ validators, two observers and a separate DHT,
 then deploys the shielded pool compiled from this checkout. Consensus uses
-ML-DSA-44, ConfigParam 8 is version 18, and ConfigParam 34 contains exactly
+ML-DSA-44, ConfigParam 8 is version 16, and ConfigParam 34 contains exactly
 the four newly generated PQ identities. No classical validator is installed.
 
 ## Initialize
@@ -206,7 +206,7 @@ the reserve floor is 50 TOS. It checks both empty roots, zero liability and
 that the actual balance covers liability plus reserve.
 
 `testnet-ctl.sh check` verifies increasing common full block IDs across the local
-nodes, live version 18, the four provisioned PQ identities, and the pool's
+nodes, live version 16, the four provisioned PQ identities, and the pool's
 reserve/backing getters. `deploy-pool` resumes an interrupted deployment;
 it checks an existing account before sending another deployment.
 Pool proofs and withdrawals use the matching development parameters from

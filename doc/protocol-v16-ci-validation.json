@@ -1,0 +1,117 @@
+{
+  "input_head": "80c730e00435e1bc7d2517c6ec7a5382725e4955",
+  "scope": "Local CI repair validation; hosted CI must be verified separately on the pushed head.",
+  "evidence_root": "/Users/tomisetsu/.cache/tos-protocol-v16-validation-20261004",
+  "retention": "Retained in the named workspace cache for review; no automatic cleanup scheduled.",
+  "results": {
+    "recorded_answers": {
+      "exit_status": 0,
+      "command": "./scripts/check-regression-db.sh . \"$TOS_BUILD_DIR\"",
+      "binaries": [
+        "test-fift",
+        "test-cells",
+        "test-vm",
+        "test-smartcont"
+      ]
+    },
+    "genesis_control": {
+      "v16_old_record_exit_status": 1,
+      "v18_old_record_exit_status": 0,
+      "v16_summary_sha256": "befe1ead1d289096fc4e3686fcc7d9812bdffec62e5d69c114825b1ea17841d8",
+      "command": "\"$TOS_BUILD_DIR/test-smartcont\" --filter +GenZerostateFiftRegression --regression \"$COPY_OF_OLD_RECORD\"",
+      "control": "Run with the v16 template, then temporarily change only the config.version! floor to 18; restore the template afterward."
+    },
+    "rust_mutations": {
+      "exit_status": 0,
+      "command": "python test/pq-readiness/mutate_rust.py --scenarios \"$READINESS_ARTIFACT/scenarios.tsv\" --cpp \"$READINESS_ARTIFACT/cpp.tsv\" --out \"$OUT/mutations.json\"",
+      "source_scenarios": "CI run 37217930416, pq-readiness-x86_64 artifact",
+      "scenarios": 323,
+      "guards": [
+        {
+          "compiled": true,
+          "guard": "verification",
+          "killed": true
+        },
+        {
+          "compiled": true,
+          "guard": "version",
+          "killed": true
+        },
+        {
+          "compiled": true,
+          "guard": "base-gas",
+          "killed": true
+        },
+        {
+          "compiled": true,
+          "guard": "canonical-chunk",
+          "killed": true
+        },
+        {
+          "compiled": true,
+          "guard": "preactivation-gas",
+          "killed": true
+        }
+      ],
+      "restored_baselines": "Passed after every compiled mutation."
+    },
+    "python_hygiene": {
+      "exit_status": 0,
+      "ruff_version": "0.15.2",
+      "scope": "All 18 changed Python files relative to origin/main, including mutate_rust.py.",
+      "checks": [
+        "ruff check",
+        "ruff format --check",
+        "AST equivalence for the three formatting-only files",
+        "git diff --check"
+      ]
+    }
+  },
+  "artifacts": [
+    {
+      "path": "ci2-lint-failed.log",
+      "sha256": "9c35d7e8def5dcdf045c590914965b86f8cfd4b12ac6e8a6033c52af5636ec76",
+      "bytes": 83822
+    },
+    {
+      "path": "ci2-readiness-failed.log",
+      "sha256": "41f85f3ca78e84f95fb60dfef878b0d681be46ac63a624c616b797f21153a542",
+      "bytes": 1778788
+    },
+    {
+      "path": "ci2-sandboxes-failed.log",
+      "sha256": "3f5652e24c9d31fa2666cdb08593fc491d45aefc650ef24ba5c132915301f31e",
+      "bytes": 28786757
+    },
+    {
+      "path": "ci3-genesis-red.log",
+      "sha256": "7b54a1767f0f46b9616aa02ed3f47fa570fb8c26c21696df400b83c90d60b7cc",
+      "bytes": 3880
+    },
+    {
+      "path": "ci3-genesis-v18-control.log",
+      "sha256": "88a739a3f8142874ddca98b4b2532f4b6d0b2f29e5acc6b9832da8af3294468c",
+      "bytes": 88
+    },
+    {
+      "path": "ci3-original-regression.cache/WA",
+      "sha256": "befe1ead1d289096fc4e3686fcc7d9812bdffec62e5d69c114825b1ea17841d8",
+      "bytes": 684
+    },
+    {
+      "path": "ci3-readiness-mutations.json",
+      "sha256": "2b8cc5d0881c7508fab4c7148cbb76ed1b40570241a08cca18e056c4db6eeb97",
+      "bytes": 397
+    },
+    {
+      "path": "ci3-readiness-mutations.log",
+      "sha256": "59e565ac813bab0cd4b65226822d0aa16792494050627a27b4461e4303760f4a",
+      "bytes": 19332
+    },
+    {
+      "path": "ci3-regression-green.log",
+      "sha256": "96db7d96f9e379cd531b400f9dee34f3abca4a55365bca29c15372ff0c343e70",
+      "bytes": 75
+    }
+  ]
+}

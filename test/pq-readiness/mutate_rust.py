@@ -19,19 +19,25 @@ def main():
     a = p.parse_args()
     source = ROOT / "tosctl/src/vm/src/executor/pq.rs"
     original = source.read_text()
+    # Both suites activate at v16. Anchor mutations to the ML-DSA guard's
+    # metering comment so the shared floor cannot mutate the Falcon guard too.
+    mldsa_guard = (
+        "    // older versions charge the exception too before detecting exhaustion.\n"
+        "    if engine.block_version() < 16 {"
+    )
     mutants = [
         (
             "verification",
             "status == invalid_signature {\n        false",
             "status == invalid_signature {\n        true",
         ),
-        ("version", "engine.block_version() < 16", "false"),
+        ("version", mldsa_guard, mldsa_guard.replace("engine.block_version() < 16", "false")),
         ("base-gas", "const BASE_GAS: i64 = 50_000;", "const BASE_GAS: i64 = 49_999;"),
         ("canonical-chunk", "(refs != 0 && size != CHUNK_BYTES)", "(false)"),
         (
             "preactivation-gas",
-            "if engine.block_version() < 16 {\n        if engine.block_version() >= 4 {",
-            "if engine.block_version() < 16 {\n        if false {",
+            mldsa_guard + "\n        if engine.block_version() >= 4 {",
+            mldsa_guard + "\n        if false {",
         ),
     ]
     build = [
