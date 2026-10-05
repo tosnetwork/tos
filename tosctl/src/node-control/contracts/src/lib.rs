@@ -32,6 +32,8 @@ pub mod dispute;
 pub mod dns;
 pub mod elector;
 pub mod liquid_controller;
+#[cfg(unix)]
+pub mod lms_fee_journal;
 pub mod lms_fee_schedule;
 pub mod native_registry;
 pub mod nominator;

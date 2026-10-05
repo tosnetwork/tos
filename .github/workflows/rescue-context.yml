@@ -68,6 +68,11 @@ jobs:
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_
+      - name: Durable fee reservation deletion controls
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/wallet-v5r2/fee_journal_controls.py --output artifacts/context/fee-journal
       - name: PQ-only complete receiver delivery
         run: |
           python -m pip install cryptography==46.0.4

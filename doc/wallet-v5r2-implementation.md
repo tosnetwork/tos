@@ -616,3 +616,40 @@ A restored snapshot cannot be supplied as `IntactState`; a restore must revoke t
 old writer. This module has no signing API and is not yet connected to a production
 fee signer, wallet creation, CLI or mobile restore. Those integrations remain
 required before release; a filesystem mutex alone cannot prove rollback safety.
+
+
+## Durable local fee reservations
+
+On Unix, `contracts::lms_fee_journal::FeeJournal` binds an append-only journal to
+one route. Its existing directory must be private mode 0700 and owned by the
+caller. Descriptor-relative opens refuse symlink journal files; journal files
+must be private regular files with one link. An exclusive file lock is held for
+the session lifetime. Records contain leaf, proven time, exact intent hash and a
+hash chain rooted in the versioned route header. Bounded parsing rejects damaged,
+truncated, reordered or reused records and route mismatches. Hash chaining detects
+accidental corruption; it is not protection against a writer who controls the file.
+
+`preview` is read-only. `reserve` rechecks the expected leaf, appends the bound
+record, synchronizes the file, and only then returns a reservation receipt. The
+session becomes unusable if append/sync completion is uncertain. New-file creation
+also synchronizes the directory. Ordinary restart and restored backups both
+create a next-proven-slot barrier: there is no unsafe option to treat an ordinary
+file snapshot as intact same-slot continuity. This deliberately adds up to one
+slot of waiting on every restart. An old device must still be revoked; local
+file locking cannot enforce exclusion across machines or restored directories.
+
+Ten SDK tests pass, including the scheduler tests and real two-process lock and
+restart handoff. One ignored child helper is explicitly invoked twice by the
+parent test, which checks that it actually ran. Tests also cover old-snapshot
+rollback, persisted intent/leaf records, stale previews, real OS write failure
+followed by handle repair, truncated/corrupted files, wrong routes, hard/symbolic
+links and unsafe permissions. Four independent deletions (lock, append, uncertain
+write poisoning, restore barrier) fail semantic assertions; restored source
+passes. Evidence: `test/wallet-v5r2/fee-journal-20261006.json`.
+
+This journal is not yet a production signing service. It stores no secrets or
+signature cache and does not verify proof freshness, reserve/call the real LMS
+signer atomically across its service boundary, enforce cross-device revocation,
+or provide CLI/mobile integration. Tests exercise process handoff and damaged
+records, not physical power-loss guarantees on every target filesystem. Those
+requirements and default-credit admission remain release gates.

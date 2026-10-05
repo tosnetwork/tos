@@ -1,0 +1,70 @@
+{
+  "base_commit": "5ef256cd5086ab60041635fdbc91fbf567fbddb5",
+  "scope": "Unix SDK append-only reservation journal; no LMS signing, signature cache, freshness/proof provider, cross-device revocation or hardware power-loss acceptance. Every reopen waits for next proven slot.",
+  "tests": {
+    "sdk_tests_passed": 10,
+    "child_probe": "One helper ignored in normal suite; parent explicitly executes it in two subprocesses and asserts one passed each time.",
+    "controls": {
+      "lock": {
+        "exit": 101,
+        "semantic_witness": "durable_reservations_exclude_writers_and_restarts_wait"
+      },
+      "append": {
+        "exit": 101,
+        "semantic_witness": "durable_reservations_exclude_writers_and_restarts_wait"
+      },
+      "poison": {
+        "exit": 101,
+        "semantic_witness": "failed_write_poison_survives_repaired_handle"
+      },
+      "restore": {
+        "exit": 101,
+        "semantic_witness": "rollback_snapshot_cannot_resume_current_slot"
+      }
+    },
+    "restored_cargo_exit": 0,
+    "rustfmt": "passed",
+    "ruff": "passed",
+    "diff_check": "passed"
+  },
+  "sources": [
+    {
+      "path": "tosctl/src/node-control/contracts/src/lms_fee_journal.rs",
+      "bytes": 15264,
+      "sha256": "60994d884f70c6a8289d7ec7063fda477c9a001e68796e343736edfd2db6f5c6"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/lms_fee_schedule.rs",
+      "bytes": 9440,
+      "sha256": "a17e1e230aee1ad9ef895980593af5073fcadb56909f0c6172a922164ea817ee"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/lib.rs",
+      "bytes": 5146,
+      "sha256": "3465b12bd5c4385767ee91b1b5e634b1af25b3cec07dfa5b0032af0731854e6f"
+    },
+    {
+      "path": "test/wallet-v5r2/fee_journal_controls.py",
+      "bytes": 2665,
+      "sha256": "dd62f971949fe59fe0d8d5255948d118ed4e19ac9647c42e25aa7b021f0e4565"
+    },
+    {
+      "path": ".github/workflows/rescue-context.yml",
+      "bytes": 7748,
+      "sha256": "6eacdf9d2ca0c195f609c86b445f9ff8f4bdbf7bafa6263229d93a626715e505"
+    }
+  ],
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_ -- --nocapture",
+    "python3 test/wallet-v5r2/fee_journal_controls.py --output <artifacts>"
+  ],
+  "raw_artifacts": {
+    "root": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-journal",
+    "manifest": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-journal/MANIFEST.json",
+      "bytes": 954,
+      "sha256": "2592a54bf43b84876ae667a37658d4f6dba853d47f96155c84cee48fd666d3db"
+    },
+    "retention": "Through review and at least 2027-01-06. Local host access required; CI reproduces separately."
+  }
+}
