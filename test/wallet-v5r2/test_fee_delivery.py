@@ -1,4 +1,4 @@
-"""Real LMS fee delivery for wallet AUTH or non-authorizing per-key POP; candidate limits."""
+"""Real LMS fee delivery for wallet AUTH, per-key POP or bounded successor preparation; candidate limits."""
 
 import argparse
 import json
@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +22,8 @@ from test_fee_identity import vault_data  # noqa: E402
 from test_identity import chain  # noqa: E402
 from test_pop import challenge as pop_challenge  # noqa: E402
 from test_pop import signed as pop_signed  # noqa: E402
+from test_preparation import request as preparation_request  # noqa: E402
+from test_preparation import signed as preparation_signed  # noqa: E402
 from test_receiver_auth import request  # noqa: E402
 from test_rescue_e2e import Signers, digest  # noqa: E402
 from test_state import fee, state  # noqa: E402
@@ -35,6 +38,7 @@ def main():
         help="Measure required credit without changing protocol defaults",
     )
     p.add_argument("--gas-trace", action="store_true", help="Retain instruction gas accounting")
+    p.add_argument("--prepare", action="store_true", help="Exercise bounded successor deployment")
     p.add_argument("--pop-role", type=int, choices=(1, 2), help="Exercise fee-funded per-key POP")
     p.add_argument(
         "--delete-payload-guard",
@@ -46,7 +50,21 @@ def main():
         choices=fee_failure_controls.FAULTS,
         help="Inject a post-ACCEPT failure into a private copy of the vault",
     )
+    p.add_argument(
+        "--delete-preparation-guard",
+        choices=("floors", "ceiling"),
+        help="Preparation fee budget sensitivity control",
+    )
     options = p.parse_args()
+    assert not options.delete_preparation_guard or options.prepare
+    assert (
+        sum(
+            bool(x)
+            for x in (options.delete_preparation_guard, options.delete_payload_guard, options.fault)
+        )
+        <= 1
+    )
+    assert not (options.prepare and options.pop_role), "select one submission class"
     assert not (options.fault and options.delete_payload_guard), (
         "run independent controls separately"
     )
@@ -69,10 +87,30 @@ def main():
         if options.delete_payload_guard:
             src = work / "wallet-v5r2-fee-vault.fc"
             source = src.read_text()
-            tag = "0x50505333" if options.pop_role else "0x53554233"
+            tag = (
+                "0x46505233"
+                if options.prepare
+                else ("0x50505333" if options.pop_role else "0x53554233")
+            )
             guard = f"throw_unless(2012, payload_tag == {tag});"
             assert source.count(guard) == 1
             src.write_text(source.replace(guard, ""))
+        if options.delete_preparation_guard:
+            src = work / "wallet-v5r2-fee-vault.fc"
+            text = src.read_text()
+            old, new = (
+                (
+                    "    throw_unless(2010, (setup_module >= reserve) & (setup_vault >= vault_floor));",
+                    "",
+                )
+                if options.delete_preparation_guard == "floors"
+                else (
+                    "  throw_unless(2010, (amount >= floor) & (amount <= ceiling));",
+                    "  throw_unless(2010, amount >= floor);",
+                )
+            )
+            assert text.count(old) == 1
+            src.write_text(text.replace(old, new))
         if options.fault:
             src = work / "wallet-v5r2-fee-vault.fc"
             src.write_text(fee_failure_controls.inject(src.read_text(), options.fault))
@@ -121,7 +159,78 @@ def main():
         payment = native.internal(wa, recipient, Cell(), value=1_000_000_000)
         actions = Cell().uint(0x0EC3C86D, 32).uint(3, 8).ref(Cell()).ref(payment)
         req = request(root=root, role=2, account=wa, body=Cell().uint(0x45584543, 32).ref(actions))
-        if options.pop_role:
+        if options.prepare:
+            successor_tree = out / "PUBLIC-TEST-ONLY-successor-tree"
+            successor_key = bytes.fromhex(
+                subprocess.run(
+                    [
+                        os.environ["LMS_TOOL"],
+                        "keygen",
+                        "77" * 32,
+                        "88" * 16,
+                        "20",
+                        str(successor_tree),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+            )
+            assert successor_key != pub, "successor must use a distinct LMS key"
+            successor_metadata = fee(
+                key=chain(successor_key), tree_id=457, epoch0=native.NOW - 2 * 3600 - 10
+            )
+            successor_pk = work / "successor-ml.pk"
+            successor_sk = work / "successor-ml.sk"
+            subprocess.run(
+                [
+                    os.environ["MLDSA_TOOL"],
+                    "keygen",
+                    "99" * 32,
+                    str(successor_pk),
+                    str(successor_sk),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            new_slh_pk = bytes.fromhex(
+                subprocess.run(
+                    [os.environ["SLH_TOOL"], "keygen", "33" * 48],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.split()[0]
+            )
+            assert new_slh_pk != signer.slh_pk
+            assert successor_pk.read_bytes() != signer.ml_pk.read_bytes()
+            successor_data = (
+                Cell()
+                .uint(1, 8)
+                .sint(42, 32)
+                .uint(123, 256)
+                .uint(1, 8)
+                .ref(chain(successor_pk.read_bytes()))
+                .raw(new_slh_pk)
+                .uint(2, 8)
+            )
+            successor_module = native.state_init(module, successor_data)
+            successor_root = int.from_bytes(successor_module.hash, "big")
+            successor_vd = vault_data(
+                metadata=successor_metadata, wallet=wa[1], module=successor_root
+            )
+            successor_vault = native.state_init(vault, successor_vd)
+            module_amount, vault_amount = 10**10, 2 * 10**10
+            plan = (
+                Cell()
+                .coins(module_amount)
+                .coins(vault_amount)
+                .ref(successor_module)
+                .ref(successor_metadata)
+                .ref(successor_vault)
+            )
+            req = preparation_request(root, plan, wallet=wa)
+            submit = Cell().uint(0x46505233, 32).ref(req).ref(preparation_signed(signer, req))
+        elif options.pop_role:
             req = pop_challenge(
                 root,
                 int.from_bytes(chain(signer.ml_pk.read_bytes()).hash, "big"),
@@ -134,12 +243,12 @@ def main():
             )
         else:
             submit = Cell().uint(0x53554233, 32).ref(req).ref(chain(signer.slh(digest(req))))
-        amount = 5_000_000_000
+        amount = 50_000_000_000 if options.prepare else 5_000_000_000
         header = vd.slice().uint(8 + 32 + 256) & ((1 << 256) - 1)
 
         def make_intent(
             *,
-            kind=2 if options.pop_role else 1,
+            kind=3 if options.prepare else (2 if options.pop_role else 1),
             target=va,
             config_hash=header,
             leaf=8,
@@ -213,6 +322,22 @@ def main():
             + (max(downstream_gas - flat_limit, 0) * gas_price + 65535) // 65536
             + 2 * forwarding
         )
+        fee_ceiling = 4 * fee_floor
+        if options.prepare:
+
+            def compute_fee(gas):
+                return flat_price + (max(gas - flat_limit, 0) * gas_price + 65535) // 65536
+
+            prices = read_dict(entries[18].refs[0], 32)
+            active = prices[max(t for t in prices if t <= native.NOW)].slice()
+            assert active.uint(8) == 0xCC
+            active.uint(32)
+            storage_bit, storage_cell = active.uint(64), active.uint(64)
+            storage = (33554432 * (128 * 1023 * storage_bit + 128 * storage_cell) + 65535) // 65536
+            reserve = compute_fee(65536) + 2 * forwarding + storage
+            successor_floor = 2 * (compute_fee(2000000) + 2 * forwarding + reserve)
+            fee_floor = module_amount + vault_amount + compute_fee(1000000) + 2 * forwarding
+            fee_ceiling = 4 * (reserve + successor_floor) + compute_fee(1000000) + 2 * forwarding
         initial_balance = (
             amount if options.fault and options.fault.startswith("unfunded-") else 10**15
         )
@@ -325,14 +450,14 @@ def main():
                 + "\n"
             )
 
-            wrong_tag = 0x53554233 if options.pop_role else 0x50505333
+            wrong_tag = 0x53554233 if options.pop_role or options.prepare else 0x50505333
             wrong_payload = Cell().uint(wrong_tag, 32).ref(req).ref(submit.refs[1])
             # These envelopes have genuine LMS signatures, so signature failure
             # cannot hide an omitted structural/class/value guard.
             for name, changes, error in [
                 ("payload_constructor", {"payload": wrong_payload}, 2012),
                 ("class_zero", {"kind": 0}, 2012),
-                ("class_three", {"kind": 3}, 2012),
+                ("class_four", {"kind": 4}, 2012),
                 ("wrong_vault", {"target": (0, va[1] ^ 1)}, 2002),
                 ("wrong_config", {"config_hash": header ^ 1}, 2013),
                 ("expired", {"deadline": native.NOW}, 2003),
@@ -340,7 +465,7 @@ def main():
                 ("future_slot", {"leaf": 12}, 2009),
                 ("old_slot", {"leaf": 3}, 2009),
                 ("below_floor", {"value": fee_floor - 1}, 2010),
-                ("above_ceiling", {"value": 4 * fee_floor + 1}, 2010),
+                ("above_ceiling", {"value": fee_ceiling + 1}, 2010),
             ]:
                 rejected = e.send(initial, sign_fee(make_intent(**changes), changes.get("leaf", 8)))
                 (out / f"negative-{name}.json").write_text(json.dumps(rejected, indent=2) + "\n")
@@ -351,10 +476,88 @@ def main():
                 )
                 failures[name] = rejected["vm_exit_code"]
 
+            if options.prepare:
+
+                def changed_preparation(changed_plan=plan, **kwargs):
+                    changed = preparation_request(
+                        **{"root": root, "plan": changed_plan, "wallet": wa, **kwargs}
+                    )
+                    return (
+                        Cell()
+                        .uint(0x46505233, 32)
+                        .ref(changed)
+                        .ref(preparation_signed(signer, changed))
+                    )
+
+                def changed_plan(module_value=module_amount, vault_value=vault_amount):
+                    return (
+                        Cell()
+                        .coins(module_value)
+                        .coins(vault_value)
+                        .ref(successor_module)
+                        .ref(successor_metadata)
+                        .ref(successor_vault)
+                    )
+
+                wrong_request = Cell(bits=format(0x50525034, "032b") + req.bits[32:], refs=req.refs)
+                for name, payload, value, error in [
+                    ("prepare_wallet", changed_preparation(wallet=(0, wa[1] ^ 1)), amount, 9),
+                    ("prepare_source", changed_preparation(root=root ^ 1), amount, 9),
+                    ("prepare_network", changed_preparation(network=124), amount, 9),
+                    (
+                        "prepare_constructor",
+                        Cell()
+                        .uint(0x46505233, 32)
+                        .ref(wrong_request)
+                        .ref(preparation_signed(signer, wrong_request)),
+                        amount,
+                        2012,
+                    ),
+                    (
+                        "prepare_missing_witness",
+                        changed_preparation(Cell(bits=plan.bits, refs=plan.refs[:-1])),
+                        amount,
+                        9,
+                    ),
+                    (
+                        "prepare_trailing_plan",
+                        changed_preparation(Cell(bits=plan.bits + "0", refs=plan.refs)),
+                        amount,
+                        9,
+                    ),
+                    (
+                        "prepare_module_floor",
+                        changed_preparation(changed_plan(module_value=0)),
+                        amount,
+                        2010,
+                    ),
+                    (
+                        "prepare_vault_floor",
+                        changed_preparation(changed_plan(vault_value=0)),
+                        amount,
+                        2010,
+                    ),
+                    (
+                        "prepare_setup_cap",
+                        changed_preparation(changed_plan(10**14, 10**14)),
+                        2 * 10**14 + compute_fee(1000000) + 2 * forwarding,
+                        2010,
+                    ),
+                ]:
+                    rejected = e.send(initial, sign_fee(make_intent(payload=payload, value=value)))
+                    (out / f"negative-{name}.json").write_text(
+                        json.dumps(rejected, indent=2) + "\n"
+                    )
+                    assert not rejected["success"] and rejected.get("vm_exit_code") == error, (
+                        name,
+                        rejected,
+                    )
+                    failures[name] = rejected["vm_exit_code"]
+
             boundaries = {}
             for name, changes in [
                 ("minimum_amount", {"value": fee_floor}),
-                ("maximum_amount", {"value": 4 * fee_floor}),
+                ("maximum_amount", {"value": fee_ceiling}),
                 ("minimum_ttl", {"deadline": native.NOW + 1}),
                 ("maximum_ttl", {"deadline": native.NOW + 3600}),
             ]:
@@ -369,6 +572,24 @@ def main():
                 after = native.account_data(from_boc(accepted["shard_account"]))[0].slice()
                 assert after.uint(8) == 3 and after.uint(32) == 9
                 boundaries[name] = accepted["details"]
+                if options.prepare:
+                    boundary_module = e.send(
+                        native.active_account((0, root), module, md, balance=10**12),
+                        native.outgoing(from_boc(accepted["transaction"]))[0],
+                    )
+                    assert (
+                        boundary_module["success"]
+                        and boundary_module["details"]["exit"] == 0
+                        and not boundary_module["details"]["aborted"]
+                    ), boundary_module
+                    assert len(native.outgoing(from_boc(boundary_module["transaction"]))) == 2
+                    boundary_data, boundary_balance = native.account_data(
+                        from_boc(boundary_module["shard_account"])
+                    )
+                    assert boundary_data.hash == md.hash and boundary_balance >= 10**12
+                    (out / f"boundary-module-{name}.json").write_text(
+                        json.dumps(boundary_module, indent=2) + "\n"
+                    )
 
             messages = native.outgoing(from_boc(paid["transaction"]))
             assert len(messages) == 1
@@ -379,7 +600,130 @@ def main():
             assert relayed["success"] and relayed["details"]["exit"] == 0, relayed
             messages = native.outgoing(from_boc(relayed["transaction"]))
             executed = delivered = None
-            if options.pop_role:
+            preparation_deployments = None
+            successor_pop = None
+            if options.prepare:
+                assert not relayed["details"]["aborted"] and len(messages) == 2
+                module_after, module_balance = native.account_data(
+                    from_boc(relayed["shard_account"])
+                )
+                assert module_after.hash == md.hash and module_balance >= 10**12
+                preparation_deployments = {}
+                prepared_states = {}
+                for name, message, target, data, value in zip(
+                    ["module", "vault"],
+                    messages,
+                    [successor_module, successor_vault],
+                    [successor_data, successor_vd],
+                    [module_amount, vault_amount],
+                ):
+                    ms = message.slice()
+                    ms.uint(4)
+                    assert ms.addr() == (0, root)
+                    assert ms.addr() == (0, int.from_bytes(target.hash, "big"))
+                    assert ms.coins() == value and message.refs[0].hash == target.hash
+                    empty = Cell().uint(0, 320).ref(Cell().uint(0, 1))
+                    deployed = e.send(empty, message)
+                    assert (
+                        deployed["success"]
+                        and deployed["details"]["exit"] == 0
+                        and not deployed["details"]["aborted"]
+                    ), deployed
+                    after, balance = native.account_data(from_boc(deployed["shard_account"]))
+                    assert after.hash == data.hash and balance > 0
+                    assert not native.outgoing(from_boc(deployed["transaction"]))
+                    (out / f"prepared-{name}.json").write_text(
+                        json.dumps(deployed, indent=2) + "\n"
+                    )
+                    preparation_deployments[name] = deployed["details"]
+                    prepared_states[name] = from_boc(deployed["shard_account"])
+                # Prove the actual fresh fee route using its deployed balances and
+                # both new keys, before any wallet migration is attempted.
+                next_signer = SimpleNamespace(
+                    dir=work, slh_sk=signer.other_slh_sk, ml_sk=successor_sk
+                )
+                pop = pop_challenge(
+                    successor_root,
+                    int.from_bytes(chain(successor_pk.read_bytes()).hash, "big"),
+                    int.from_bytes(new_slh_pk, "big"),
+                    role=2,
+                    account=wa,
+                    policy=2,
+                )
+                next_body = (
+                    Cell().uint(0x50505333, 32).ref(pop).ref(pop_signed(next_signer, pop, 2))
+                )
+                next_address = (0, int.from_bytes(successor_vault.hash, "big"))
+                next_header = successor_vd.slice().uint(8 + 32 + 256) & ((1 << 256) - 1)
+                next_intent = (
+                    Cell()
+                    .uint(0x46454534, 32)
+                    .raw(b"TOS-RESCUE-FEE-v1")
+                    .uint(2, 8)
+                    .addr(next_address)
+                    .uint(next_header, 256)
+                    .uint(8, 32)
+                    .uint(native.NOW + 600, 32)
+                    .coins(5_000_000_000)
+                    .ref(next_body)
+                )
+                next_msg, next_sig = work / "next-fee-message", work / "next-fee-signature"
+                next_msg.write_bytes(next_intent.hash)
+                subprocess.run(
+                    [
+                        os.environ["LMS_TOOL"],
+                        "sign",
+                        "77" * 32,
+                        "88" * 16,
+                        "20",
+                        str(successor_tree),
+                        "8",
+                        str(next_msg),
+                        "66" * 32,
+                        str(next_sig),
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                next_external = native.external(
+                    next_address, Cell().ref(next_intent).ref(chain(next_sig.read_bytes()))
+                )
+                next_paid = e.send(prepared_states["vault"], next_external)
+                assert (
+                    next_paid["success"]
+                    and next_paid["details"]["exit"] == 0
+                    and not next_paid["details"]["aborted"]
+                ), next_paid
+                next_messages = native.outgoing(from_boc(next_paid["transaction"]))
+                assert len(next_messages) == 1
+                pop_result = e.send(prepared_states["module"], next_messages[0])
+                assert (
+                    pop_result["success"]
+                    and pop_result["details"]["exit"] == 0
+                    and not pop_result["details"]["aborted"]
+                ), pop_result
+                pop_data, pop_balance = native.account_data(from_boc(pop_result["shard_account"]))
+                assert pop_data.hash == successor_data.hash
+                assert pop_balance >= native.account_data(prepared_states["module"])[1]
+                assert not native.outgoing(from_boc(pop_result["transaction"]))
+                next_data = native.account_data(from_boc(next_paid["shard_account"]))[0].slice()
+                assert next_data.uint(8) == 3 and next_data.uint(32) == 9
+                next_replay = e.send(from_boc(next_paid["shard_account"]), next_external)
+                assert not next_replay["success"] and next_replay.get("vm_exit_code") == 2004
+                for name, receipt in [
+                    ("successor-fee-pop", next_paid),
+                    ("successor-module-pop", pop_result),
+                    ("successor-fee-replay", next_replay),
+                ]:
+                    (out / f"{name}.json").write_text(json.dumps(receipt, indent=2) + "\n")
+                successor_pop = {
+                    "role": 2,
+                    "vault": next_paid["details"],
+                    "module": pop_result["details"],
+                    "replay_exit": 2004,
+                }
+
+            elif options.pop_role:
                 assert not relayed["details"]["aborted"] and not messages, (
                     "POP emitted authorization"
                 )
@@ -486,6 +830,9 @@ def main():
             report = {
                 "scope": __doc__,
                 "pop_role": options.pop_role,
+                "prepare": options.prepare,
+                "preparation_deployments": preparation_deployments,
+                "successor_pop": successor_pop,
                 "credit_probe": credit_probe,
                 "bounce_recovery": bounce_recovery,
                 "vault": paid["details"],
@@ -495,6 +842,7 @@ def main():
                 "replay_exit": replay["vm_exit_code"],
                 "failure_exits": failures,
                 "fee_floor": fee_floor,
+                "fee_ceiling": fee_ceiling,
                 "admission_boundaries": boundaries,
                 "addresses": {
                     "wallet": hex(wa[1]),

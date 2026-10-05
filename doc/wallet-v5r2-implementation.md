@@ -281,18 +281,19 @@ python test/wallet-v5r2/test_pop.py --output /path/to/r2-pop
 ## Paired fee-vault admission gap (not a release pass)
 
 `wallet-v5r2-fee-vault.fc` is an incomplete candidate using the actual LMS verifier,
-SUB3/PPS3 allowlist, exact signed destination/config/body/value, monotonic time-slot
+SUB3/PPS3/FPR3 allowlist, exact signed destination/config/body/value, monotonic time-slot
 leaf, fee-relative amount limits and current-price solvency checks before ACCEPT.
 The v3 paired data caches the config hash, canonical rescue request prefix and POP
 parties hash derived by `r2pair_data`; wallet/module witness validation compares the
 whole reconstructed data hash. Arbitrary caches cannot be installed as a paired
 route. The public tree id and full metadata remain committed by the config hash.
 
-The measured SUB3 path requires **12,209 gas to reach ACCEPT**, exceeding the
+The measured SUB3 path requires **12,600 gas to reach ACCEPT**, exceeding the
 unchanged default **10,000**. This is a failed release gate. No credit or tariff
 change is made to production configuration and no check is moved after ACCEPT.
 The 1024-cell envelope, compute/storage bounds and class limits are provisional
-and still require worst-case pricing/coverage; preparation is not yet admitted.
+and still require worst-case pricing/coverage. Preparation is admitted only at
+diagnostic credit, as described below.
 
 `test_fee_delivery.py` defaults to requiring actual admission. Its explicit
 `--credit-probe` option changes only the emulator's copied fee configuration to
@@ -322,12 +323,13 @@ support was added to the default Python decoder.
 tag predicates with independent specification bounds: all 256 class, role and
 tag values, deadline extremes and TTL boundaries, plus four guard deletion
 controls (781 cases total).
-Floor division checks TTL [1, 3600]; signed right shift checks class/role {1, 2}.
+Floor division checks TTL [1, 3600] and classes {1, 2, 3}; signed right shift
+checks roles {1, 2}.
 The native AUTH workflow now runs and retains both suites; wiring is not evidence
 that remote CI has passed on this revision.
 
 The delivery runner's `--pop-role 1` and `--pop-role 2` now exercise actual fee vault
-payments for ML-DSA and SLH POP. Both require **12,572 gas** at ACCEPT, still exceeding
+payments for ML-DSA and SLH POP. Both require **13,190 gas** at ACCEPT, still exceeding
 default credit. Diagnostic 20,000-credit transactions verify POP without module
 data changes, outgoing authorization messages or spending its pre-message funds.
 Both also reject replay, corrupt LMS signatures and insufficient reserves. Wallet
@@ -391,8 +393,9 @@ corrupted inner PQ signature. The actual module rejects it with 1808 and emits a
 bounce; the actual vault receives the returned funds without changing its data
 or rolling back leaf 10. Exact fee replay fails with 2004. This verifies refund
 handling and replay protection, not successful authorization of the failed inner
-request. All three routes still require diagnostic 20,000 credit. Current minimum
-admission values are 12,209 for AUTH and 12,572 for either POP route.
+request. All three routes still require diagnostic 20,000 credit. With preparation enabled, current minimum
+admission values are 12,600 for AUTH and 13,190 for either POP route. Historical
+indexes below retain their original source-bound measurements.
 
 Source hashes, commands and retained before/after, deletion, action and bounce
 receipts are indexed in `test/wallet-v5r2/fee-failure-safety-20261006.json`.
@@ -464,8 +467,42 @@ actual deployments, have exact native/Rust output/state/gas/phase parity; the
 custom-cap partial-send scenario is currently native-only. Existing 74 fee-route
 parity transactions and real module/POP regressions also pass with the new code.
 
-This module-side feature does **not** yet supply the primary-independent bootstrap:
-the paired vault still refuses preparation class 3. Its admission shape/budget,
-real new fee-key possession, new-vault POP, atomic wallet migration, post-migration
-payment and restore/device drills remain to be integrated and validated together.
+At this module-only checkpoint the paired vault still refused preparation class 3.
+The following integration adds funded preparation and fresh-key POP; wallet
+migration, post-migration payment and restore/device drills remain open.
 The source-bound local evidence is `test/wallet-v5r2/preparation-module-20261006.json`.
+
+
+## Paired-vault successor preparation and fresh-key POP candidate
+
+The fee vault now admits class 3 FPR3 requests with the exact current namespace,
+wallet and source module. Before ACCEPT it checks the PRP3 constructor, canonical
+plan shape, module/vault funding floors, signed forwarding amount and solvency,
+then verifies LMS. The forwarding floor covers the actual signed setup amounts
+plus preparation compute and forwarding overhead. The ceiling covers the fixed
+setup cap plus the same overhead. Together these bounds also enforce the setup
+sum cap. The module independently verifies the current SLH signature, successor
+StateInit identities and all preparation budgets before emitting its two sends.
+No check is moved after ACCEPT to reduce admission cost.
+
+`fee_tx_parity.py --prepare` executes V0 -> M0 -> M1/V1 with real deployment
+receipts, distinct successor ML-DSA, SLH and LMS keys, then pays through the actual
+new V1 for a fresh SLH proof of possession at M1. Both old and new fee replays are
+refused. The preparation suite includes 22 signed negative envelopes and four
+accepted fee/TTL endpoints with actual module execution. Its 42 transactions
+match native/Rust state, balance, outgoing messages, gas and phase results.
+AUTH (26), primary POP (24) and rescue POP (24) also match: 116 fee-route
+transactions in total. These are local native Release / Rust debug diagnostics.
+Three independent fee guard deletions expose unwanted accepted sends and leaf
+consumption: constructor, funding floors and fee ceiling. All 12 existing
+failure/cap controls were rerun against the expanded vault.
+
+Current minimum admission credit is 12,600 for AUTH, 13,190 for either POP route,
+and **13,515 for preparation**. Default 10,000 remains a failed release gate;
+20,000 is only the copied emulator diagnostic setting. This evidence does not
+prove wallet lock/migration, payment through the migrated wallet, client/device
+recovery, restore safety, worst-case resource pricing or production readiness.
+CI runs preparation parity on both configured architectures and the three guard
+deletion controls on x86-64; workflow wiring does not establish a remote pass.
+Source and retained receipts are indexed in
+`test/wallet-v5r2/fee-preparation-20261006.json`.

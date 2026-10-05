@@ -27,7 +27,7 @@ def main():
             lambda x: x in (0xDD, 0xDE),
             2017,
         ),
-        "kind": ("throw_if(2012, (kind - 1) >> 1);", 8, range(256), lambda x: x in (1, 2), 2012),
+        "kind": ("throw_if(2012, (kind - 1) / 3);", 8, range(256), lambda x: x in (1, 2, 3), 2012),
         "role": ("throw_if(2012, (role - 1) >> 1);", 8, range(256), lambda x: x in (1, 2), 2012),
         "deadline": (
             "throw_if(2003, (deadline - now() - 1) / 3600);",

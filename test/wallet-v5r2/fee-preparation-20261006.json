@@ -1,0 +1,197 @@
+{
+  "base_commit": "06c0d424ceddf2b9e58540f62d8bb1152599819c",
+  "scope": "Local native Release / Rust debug transaction evidence; diagnostic credit 20000 only. No production admission, wallet migration, migrated payment or device/restore acceptance.",
+  "sources": [
+    {
+      "path": "crypto/smartcont/wallet-v5r2-fee-vault.fc",
+      "bytes": 7015,
+      "sha256": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-module.fc",
+      "bytes": 8035,
+      "sha256": "263c0c24e14e0f65aa481633f18cc2bac61ce160038b151b81a8f032b3dbe802"
+    },
+    {
+      "path": "crypto/smartcont/wallet-v5r2-rescue.tlb",
+      "bytes": 12106,
+      "sha256": "daa1c4ae51ddc83880148fb8846e89be958f981ab5696f05384c54a24ba1e064"
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_delivery.py",
+      "bytes": 40799,
+      "sha256": "e7fc9099a67a106d517f9e1979972adc3bf0e8ca2135dfa04b4ca60c2b24b875"
+    },
+    {
+      "path": "test/wallet-v5r2/fee_tx_parity.py",
+      "bytes": 5538,
+      "sha256": "e0e4a24cb668f3f61efd819ee90ac48a23b3f3985a09cf7e21b99e39f89d35b6"
+    },
+    {
+      "path": "test/wallet-v5r2/test_fee_bounds.py",
+      "bytes": 4457,
+      "sha256": "fa4ca56b474385d1a2747e41043e94222489ffd4089151133ee19a6319697f00"
+    },
+    {
+      "path": "test/wallet-v5r2/preparation_fee_controls.py",
+      "bytes": 2732,
+      "sha256": "cf7ed607e96a56ec8d4074ed43ada5a4a91d87d9f564591851b6075a10bf6dc2"
+    },
+    {
+      "path": "test/wallet-v5r2/test_preparation.py",
+      "bytes": 14090,
+      "sha256": "7dc3073688178adf3bb8264bea67de996880c94bcf1a50d3f1a1d0d0e2fbec3f"
+    },
+    {
+      "path": ".github/workflows/rescue-context.yml",
+      "bytes": 6954,
+      "sha256": "fa098a8c7b41cf65b32cd8853491ae0611f8829e0f1d1c301ba2158f49f1c5d2"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "bytes": 102700,
+      "sha256": "be606aea975c75f2d165f46c314405f7313abe4e6a5aba6aca2f408ae59ffc8c"
+    },
+    {
+      "path": ".github/workflows/v5r2-readiness.yml",
+      "bytes": 3448,
+      "sha256": "68e9cb3ffeeb5ef8f33ecf552a7de120a0e90adbdd82918416a824daabae23e6"
+    }
+  ],
+  "parity": {
+    "auth": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": null,
+      "prepare": false,
+      "expected_transactions": 26,
+      "observed_transactions": 26,
+      "differences": [],
+      "success": true
+    },
+    "pop1": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": 1,
+      "prepare": false,
+      "expected_transactions": 24,
+      "observed_transactions": 24,
+      "differences": [],
+      "success": true
+    },
+    "pop2": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": 2,
+      "prepare": false,
+      "expected_transactions": 24,
+      "observed_transactions": 24,
+      "differences": [],
+      "success": true
+    },
+    "prepare": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": null,
+      "prepare": true,
+      "expected_transactions": 42,
+      "observed_transactions": 42,
+      "differences": [],
+      "success": true
+    },
+    "module": {
+      "transactions": 23,
+      "success": true,
+      "scope": "Funded internal preparations and deployments; partial-send custom config native-only; no paired external fee admission",
+      "differences": []
+    }
+  },
+  "admission": {
+    "auth": {
+      "default_credit": 10000,
+      "minimum_accept_credit": 12600,
+      "production_admission_passed": false,
+      "downstream_diagnostic_credit": 20000
+    },
+    "pop1": {
+      "default_credit": 10000,
+      "minimum_accept_credit": 13190,
+      "production_admission_passed": false,
+      "downstream_diagnostic_credit": 20000
+    },
+    "pop2": {
+      "default_credit": 10000,
+      "minimum_accept_credit": 13190,
+      "production_admission_passed": false,
+      "downstream_diagnostic_credit": 20000
+    },
+    "prepare": {
+      "default_credit": 10000,
+      "minimum_accept_credit": 13515,
+      "production_admission_passed": false,
+      "downstream_diagnostic_credit": 20000
+    }
+  },
+  "guard_deletions": {
+    "constructor": {
+      "runner_exit": 1,
+      "unexpected_fee_acceptance": true,
+      "leaf_after": 9,
+      "witness": "negative-payload_constructor.json"
+    },
+    "floors": {
+      "runner_exit": 1,
+      "unexpected_fee_acceptance": true,
+      "leaf_after": 9,
+      "witness": "negative-prepare_module_floor.json"
+    },
+    "ceiling": {
+      "runner_exit": 1,
+      "unexpected_fee_acceptance": true,
+      "leaf_after": 9,
+      "witness": "negative-above_ceiling.json"
+    }
+  },
+  "faults": {
+    "cases": 12,
+    "runner_exit": 0,
+    "paths": [
+      "faults/gas-after-commit",
+      "faults/gas-before-commit",
+      "faults/gas-cap-below-minimum",
+      "faults/gas-cap-minimum",
+      "faults/low-gas-cap",
+      "faults/low-gas-cap-unguarded",
+      "faults/oversized-control",
+      "faults/oversized-ignore",
+      "faults/throw-after-commit",
+      "faults/throw-before-commit",
+      "faults/unfunded-ignore",
+      "faults/unfunded-strict"
+    ]
+  },
+  "checks": {
+    "ruff": "passed",
+    "tlbc": "passed",
+    "diff_check": "passed",
+    "fee_predicates": "781 cases, 4 guard deletions passed",
+    "gas_config": "12 cases, 3 guard deletions passed",
+    "module_preparation": "24 cases including 4 guard deletions; 23 standard-config parity transactions",
+    "ci_source_guards": "Prior-head CI failed unpinned actions and missing wallet action include dependency; fixed and local checks pass. Supply-chain self-test: 35 samples. FunC dependency rules: 35.",
+    "remote_ci": "Not cleared. Prior-head ARM conformance runner shutdown exit 143; final-head rerun required."
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python test/wallet-v5r2/fee_tx_parity.py --prepare --driver tosctl/src/target/debug/examples/pq-tx-parity --output <artifacts>/prepare",
+    "python test/wallet-v5r2/preparation_fee_controls.py --baseline <artifacts>/prepare --output <artifacts>/controls",
+    "python test/wallet-v5r2/test_preparation.py --rust-driver tosctl/src/target/debug/examples/pq-tx-parity --output <artifacts>/module",
+    "python test/wallet-v5r2/fee_tx_parity.py [--pop-role 1|2] --driver tosctl/src/target/debug/examples/pq-tx-parity --output <artifacts>/<route>",
+    "python test/wallet-v5r2/test_fee_delivery.py --credit-probe --fault <each fee_failure_controls.FAULTS entry> --output <artifacts>/faults/<name>"
+  ],
+  "raw_artifacts": {
+    "root": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-preparation",
+    "manifest": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-preparation/MANIFEST.json",
+      "bytes": 98364,
+      "sha256": "a0cd661826e2ebed76215327986bbcbfa8e688f4d1970cef0563b52fde565ff3"
+    },
+    "retention": "Retain through review and at least 2027-01-06. Local artifacts require access to this host; CI supplies separately source-pinned reproductions.",
+    "public_test_material": "Deterministic fixture keys and LMS trees only; never use for live funds."
+  }
+}

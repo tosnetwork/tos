@@ -53,7 +53,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
       - name: Install pinned Rust toolchain
@@ -85,6 +85,18 @@ jobs:
               --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
               --output "artifacts/context/r2-fee-pop$role"
           done
+          mkdir -p artifacts/context/r2-fee-prepare/native
+          ln artifacts/context/r2-fee-auth/native/PUBLIC-TEST-ONLY-lms-tree \
+            artifacts/context/r2-fee-prepare/native/PUBLIC-TEST-ONLY-lms-tree
+          python test/wallet-v5r2/fee_tx_parity.py --prepare \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-fee-prepare
+      - name: Preparation fee admission deletion controls
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/wallet-v5r2/preparation_fee_controls.py \
+            --baseline artifacts/context/r2-fee-prepare \
+            --output artifacts/context/r2-fee-prepare-controls
       - name: Full fee verification deletion control
         if: matrix.runner == 'ubuntu-24.04'
         run: |
@@ -125,4 +137,5 @@ jobs:
           path: |
             artifacts/context
             !artifacts/context/**/PUBLIC-TEST-ONLY-lms-tree
+            !artifacts/context/**/PUBLIC-TEST-ONLY-successor-tree
           retention-days: 14

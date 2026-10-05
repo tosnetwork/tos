@@ -1,7 +1,7 @@
 ;; NOT RELEASE READY: the measured SUB3 path exceeds 10,000 external gas credit.
 ;; Complete R2 paired-vault candidate. Immutable parties/metadata, mutable leaf.
-;; No wallet authority. SUB3 (RESCUE only) and non-authorizing PPS3 are admitted.
-;; Preparation is not admitted until its bounded funding path is integrated.
+;; No wallet authority. RESCUE SUB3, non-authorizing PPS3 and bounded FPR3 preparation.
+;; Complete funded handoff and production admission still require validation.
 ;; Release pricing and worst-case envelope limits still require acceptance.
 #include "pq.fc";
 int r2fee_cells() asm "18 GETPARAMLONG" "2 INDEX";
@@ -70,7 +70,7 @@ int r2fee_gas_limit() impure inline {
   slice is = r2fee_ordinary(intent);
   is~r2fee_intent_prefix();
   int kind = is~load_uint(8);
-  throw_if(2012, (kind - 1) >> 1); ;; exactly 1 or 2, including rejection of zero
+  throw_if(2012, (kind - 1) / 3); ;; exactly 1, 2 or 3, including rejection of zero
   r2fee_address(my_address());
   throw_unless(2002, equal_slice_bits(is~load_msg_addr(), my_address()));
   throw_unless(2013, is~load_uint(256) == expected_header);
@@ -90,6 +90,8 @@ int r2fee_gas_limit() impure inline {
   slice request = r2fee_child(ps~load_ref());
   ps~load_ref(); ;; module verifies the inner PQ signature
   ps.end_parse();
+  int setup_module = 0;
+  int setup_vault = 0;
   if (kind == 1) {
     throw_unless(2012, payload_tag == 0x53554233);
     request~r2fee_prefix(prefix);
@@ -97,7 +99,7 @@ int r2fee_gas_limit() impure inline {
     int operation = request~load_uint(8);
     throw_unless(2012, (1 << operation) & 0x1b);
     request~load_ref();
-  } else {
+  } elseif (kind == 2) {
     throw_unless(2012, payload_tag == 0x50505333);
     throw_unless(2012, request~load_uint(32) == 0x504f5033);
     slice namespace = prefix.skip_bits(32).preload_bits(288);
@@ -107,6 +109,19 @@ int r2fee_gas_limit() impure inline {
     request~skip_bits(256 + 32);
     throw_unless(2013, cell_hash(request~load_ref()) == pop_parties);
     request~load_ref();
+  } else {
+    throw_unless(2012, payload_tag == 0x46505233);
+    throw_unless(2012, request~load_uint(32) == 0x50525033);
+    ;; Exact global/network/wallet/source-module prefix; no caller retargeting.
+    request~r2fee_prefix(prefix.skip_bits(32).preload_bits(811));
+    request~skip_bits(32); ;; module also checks the signed preparation deadline
+    slice plan = r2fee_child(request~load_ref());
+    setup_module = plan~load_coins();
+    setup_vault = plan~load_coins();
+    plan~load_ref(); ;; module validates all three canonical pairing witnesses
+    plan~load_ref();
+    plan~load_ref();
+    plan.end_parse();
   }
   request.end_parse();
   r2fee_address(module);
@@ -114,12 +129,24 @@ int r2fee_gas_limit() impure inline {
   ;; Fee-relative class bounds: one maximum-gas hop for POP, two for wallet AUTH.
   ;; They are provisional profile bounds, not measured production fee quotes.
   int forward_bound = 2 * get_forward_fee(0, r2fee::max_bits, r2fee::max_cells);
-  int floor = get_compute_fee(0, (3 - kind) * 1000000)
-      + forward_bound;
-  throw_unless(2010, (amount >= floor) & (amount <= 4 * floor));
   int reserve = get_compute_fee(0, r2fee::compute_bound)
       + forward_bound
       + get_storage_fee(0, r2fee::storage_horizon, r2fee::state_bits, r2fee::state_cells);
+  int floor = 0;
+  int ceiling = 0;
+  if (kind == 3) {
+    int vault_floor = 2 * (get_compute_fee(0, 2000000) + forward_bound + reserve);
+    int setup_cap = 4 * (reserve + vault_floor);
+    throw_unless(2010, (setup_module >= reserve) & (setup_vault >= vault_floor));
+    ;; The amount floor and ceiling together enforce setup_module + setup_vault <= setup_cap.
+    int overhead = get_compute_fee(0, 1000000) + forward_bound;
+    floor = setup_module + setup_vault + overhead;
+    ceiling = setup_cap + overhead;
+  } else {
+    floor = get_compute_fee(0, (3 - kind) * 1000000) + forward_bound;
+    ceiling = 4 * floor;
+  }
+  throw_unless(2010, (amount >= floor) & (amount <= ceiling));
   throw_unless(2008, amount + reserve <= balance);
   throw_unless(2007, lms_check_fee_hash(cell_hash(intent), leaf, signature, key));
   accept_message();

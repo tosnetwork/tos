@@ -55,6 +55,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--driver", type=Path, required=True)
+    parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--pop-role", type=int, choices=(1, 2))
     options = parser.parse_args()
     out = options.output.resolve()
@@ -91,6 +92,8 @@ def main():
             return result
 
     args = ["test_fee_delivery.py", "--credit-probe", "--output", str(out / "native")]
+    if options.prepare:
+        args += ["--prepare"]
     if options.pop_role:
         args += ["--pop-role", str(options.pop_role)]
     with patch.object(native, "Emulator", RecordingEmulator), patch.object(sys, "argv", args):
@@ -125,6 +128,7 @@ def main():
     report = {
         "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
         "pop_role": options.pop_role,
+        "prepare": options.prepare,
         "expected_transactions": len(expected),
         "observed_transactions": len(observed),
         "differences": differences,
