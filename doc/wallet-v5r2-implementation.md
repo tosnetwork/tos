@@ -1827,3 +1827,12 @@ execution and its charge-deletion control require Linux CI because this macOS
 build encounters unrelated Linux-only diagnostic IPC dependencies. Both rescue
 CI architectures run these tests and controls. Evidence and exact local limits:
 `test/wallet-v5r2/admission-byte-budget-20261006.json`.
+
+The admission budget also has an isolated actor-scheduler test using the same
+coroutine task and bridge-promise types as the pool. It waits until the reservation
+is held, confirms a competing admission is rejected while the task is suspended,
+and then checks release after success, an explicit producer error and destruction
+of an unresolved producer promise. Removing release fails this test semantically;
+restoration passes all three native tests. This covers coroutine unwinding without
+requiring full node linkage, but does not replace the actual pool actor test or a
+network load test. Evidence: `test/wallet-v5r2/admission-coroutine-20261006.json`.

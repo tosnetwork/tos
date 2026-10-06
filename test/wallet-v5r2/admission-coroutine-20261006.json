@@ -1,0 +1,65 @@
+{
+  "base_commit": "9c9a97cf338d53c27ca4e40e9e9f4733c2f0d475",
+  "scope": "Admission reservation lifetime across real actor-task suspension and success/error/broken-promise completion; not a full pool or network test.",
+  "native_tests_passed": 3,
+  "semantic_controls": {
+    "capacity": {
+      "exit": 1,
+      "test": "ExtMessageAdmissionBudget_RejectsAggregateBytesBeforeCountLimit",
+      "semantic_witness": "over.is_error()"
+    },
+    "release": {
+      "exit": 1,
+      "test": "ExtMessageAdmissionBudget_MoveAndEarlyReturnReleaseExactlyOnce",
+      "semantic_witness": "budget->used()"
+    },
+    "coroutine_release": {
+      "exit": 1,
+      "test": "ExtMessageAdmissionBudget_HoldsAcrossSuspensionAndReleasesOnCompletion",
+      "semantic_witness": "budget->used()"
+    }
+  },
+  "commands": [
+    "python3 test/wallet-v5r2/admission_budget_controls.py --build build --output <fresh-directory>"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/test-ext-message-admission-budget.cpp",
+      "bytes": 3794,
+      "sha256": "52eacf65e6622938d35d40b04022a95be23d4ad1d1641d07a0203c042fe9af6d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/admission_budget_controls.py",
+      "bytes": 4201,
+      "sha256": "932cec019dabd2223d2dcb2bcadf83ce751915cfbe75c50a72753ee57aadb25c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/validator/impl/ext-message-admission-budget.hpp",
+      "bytes": 1751,
+      "sha256": "b43f6b35070c619b7843199555bd3d4bd9af1a9688b2783aa4b5bfb2c1c96985"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/CMakeLists.txt",
+      "bytes": 103356,
+      "sha256": "b0e5ef14190828c30ffd3ced06a5740c890d4921f4b459dc461003e406721316"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 118113,
+      "sha256": "e588fbf51336ea168d61e7a0f5bd0ed00c81708c3d21105955ce6765d6586c4b"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-coroutine-controls/MANIFEST.json",
+      "bytes": 2567,
+      "sha256": "56040f418a68dac2932ebd7df8410d59c62b4acfae1c32e546b1f1ef6f1cd969"
+    }
+  ],
+  "remaining_gates": [
+    "Actual pool actor execution and charge-deletion control await Linux CI.",
+    "Serialized-byte accounting does not bound transport mailbox or parsed-cell memory.",
+    "Default-credit admission, production custody and release acceptance remain open."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}

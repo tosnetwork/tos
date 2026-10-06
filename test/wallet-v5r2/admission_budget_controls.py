@@ -41,6 +41,17 @@ def main():
             "budget->used()",
         ),
     ]
+    cases.append(
+        (
+            "coroutine_release",
+            header,
+            "CHECK(budget_->release(bytes_));",
+            "(void)bytes_;",
+            target,
+            "ExtMessageAdmissionBudget_HoldsAcrossSuspensionAndReleasesOnCompletion",
+            "budget->used()",
+        )
+    )
     if args.pool_controls:
         cases.append(
             (
@@ -77,7 +88,7 @@ def main():
 
     def positives(label):
         code, log = run(label, target, "ExtMessageAdmissionBudget")
-        assert code == 0 and "2 test(s) passed" in log, log
+        assert code == 0 and "3 test(s) passed" in log, log
         if args.pool_controls:
             code, log = run(
                 label + "-pool",
