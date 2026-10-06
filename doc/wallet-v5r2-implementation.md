@@ -2933,3 +2933,33 @@ before interactive signing, rather than blocking a UI/event loop.
 Evidence: `test/wallet-v5r2/tree-fee-custody-20261006.json`. This remains local
 fixture evidence at diagnostic credit 20,000, not live proof acquisition or
 production admission.
+
+### Per-message admission boundaries
+
+`recorded_admission.py` selects every successful fee external from the complete
+recorded transaction set and binary-searches its minimum credit without changing
+contract code, gas prices or any other configuration field. At both the minimum
+and minimum minus one, the native and Rust executors must agree on the complete
+receipt transcript. Each Rust invocation also replays three other recorded
+transactions, retaining the driver's scenario-set completeness check. Accepted
+native probes must match the original diagnostic receipt, including gas, actions,
+state and balance. Below-boundary probes must fail before acceptance with out of
+gas; zero credit can instead skip execution entirely.
+
+The local native-signer fixture contained 13 successful fee externals. All 26
+boundary points matched across VMs. Observed minima were 12,600 for the three
+AUTH cases, 13,190 for three POP cases and 13,515 for seven preparation cases,
+including amount/TTL boundaries. This confirms the default 10,000 gap across the
+recorded recovery sequence; it is not a maximum over all legal message shapes or
+a justification to change network credit. Existing function-extraction and
+late-send experiments remain rejected. Evidence:
+`test/wallet-v5r2/recorded-admission-20261006.json`.
+
+The ARM job for remote `48dc1af037e5f2ac924eccb9bf2728a394da041f` stopped before
+fee-recovery mutation execution because the `exact_password` source anchor
+matched both production code and a subsequently added full-tree test. The runner
+now targets the production call's `Rejected` error mapping explicitly. All seven
+fee-recovery mutations were rerun locally and reached their named semantic
+assertions; restored code passed. This fixes the test selector, not a password
+behavior change. Final-head cross-architecture CI remains required. Evidence:
+`test/wallet-v5r2/fee-recovery-anchor-20261006.json`.

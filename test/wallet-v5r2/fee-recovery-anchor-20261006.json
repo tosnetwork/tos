@@ -1,0 +1,63 @@
+{
+  "base_commit": "5f39657718a021dacf6444f45cc99102699c4cbb",
+  "results": {
+    "network": {
+      "exit": 101,
+      "semantic_witness": "fee master restore accepted wrong input 1"
+    },
+    "global_id": {
+      "exit": 101,
+      "semantic_witness": "fee master restore accepted wrong input 2"
+    },
+    "account_index": {
+      "exit": 101,
+      "semantic_witness": "fee master restore accepted wrong input 3"
+    },
+    "key_generation": {
+      "exit": 101,
+      "semantic_witness": "fee master restore accepted wrong input 4"
+    },
+    "tree_id": {
+      "exit": 101,
+      "semantic_witness": "fee master restore accepted wrong input 5"
+    },
+    "unpolled_wipe": {
+      "exit": 101,
+      "semantic_witness": "unpolled fee master restore retained input"
+    },
+    "exact_password": {
+      "exit": 101,
+      "semantic_witness": "fee mnemonic rejected exact password"
+    }
+  },
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-anchor-fix.tar.gz",
+    "sha256": "5a70b3a9e904d6abeaf15f722ac5bb11dd4c9ab7d278c71092189fd6bd7a1266",
+    "bytes": 3814
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_recovery_controls.py",
+      "sha256": "ebd739dca4b73a191b2ad6238303cd4598aad824ddd07793214944c03e94d72d",
+      "bytes": 3631
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_restore.rs",
+      "sha256": "c90282b1a25efdb6408d059327088876ee04a67e9c7f05e7920633786b7b55d8",
+      "bytes": 8617
+    }
+  ],
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; python3 test/wallet-v5r2/fee_recovery_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-anchor-fix",
+  "runner_exit": 0,
+  "remote_failure": {
+    "head": "48dc1af037e5f2ac924eccb9bf2728a394da041f",
+    "job": 112139452424,
+    "reason": "exact_password source anchor had two matches before mutation execution",
+    "log": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-arm-job.log",
+      "sha256": "6aef92e4a093d084b8421981f47999aa0692ce7e93e439f3ea0a75a3ae2d92b4",
+      "bytes": 1481558
+    }
+  }
+}

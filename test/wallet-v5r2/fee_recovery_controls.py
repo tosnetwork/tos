@@ -46,8 +46,8 @@ def main():
             ),
             (
                 "exact_password",
-                "private_seed(phrase, password)",
-                "private_seed(phrase, password.trim())",
+                "private_seed(phrase, password).map_err(|_| Rejected)?",
+                "private_seed(phrase, password.trim()).map_err(|_| Rejected)?",
                 "fee mnemonic rejected exact password",
             ),
         ]

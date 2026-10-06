@@ -254,6 +254,10 @@ jobs:
       - name: Receipt-checked native transaction timing smoke
         run: |
           python test/wallet-v5r2/test_benchmark_transactions.py
+          python test/wallet-v5r2/recorded_admission.py \
+            --fixtures artifacts/context/r2-fee-prepare \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-recorded-admission
           python test/wallet-v5r2/benchmark_transactions.py \
             --fixtures artifacts/context/r2-fee-prepare \
             --output artifacts/context/r2-native-timing --iterations 10 --warmup 2

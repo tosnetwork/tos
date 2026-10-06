@@ -1,0 +1,131 @@
+{
+  "base_commit": "5f39657718a021dacf6444f45cc99102699c4cbb",
+  "results": {
+    "scope": "Exact recorded successful fee externals; not a worst-case envelope bound or production activation",
+    "transactions": [
+      {
+        "name": "transaction-003",
+        "minimum_credit": 13515,
+        "both_vm_boundary_match": true,
+        "probe_count": 19
+      },
+      {
+        "name": "transaction-026",
+        "minimum_credit": 13515,
+        "both_vm_boundary_match": true,
+        "probe_count": 19
+      },
+      {
+        "name": "transaction-028",
+        "minimum_credit": 13515,
+        "both_vm_boundary_match": true,
+        "probe_count": 19
+      },
+      {
+        "name": "transaction-030",
+        "minimum_credit": 13515,
+        "both_vm_boundary_match": true,
+        "probe_count": 19
+      },
+      {
+        "name": "transaction-032",
+        "minimum_credit": 13515,
+        "both_vm_boundary_match": true,
+        "probe_count": 19
+      },
+      {
+        "name": "transaction-037",
+        "minimum_credit": 13190,
+        "both_vm_boundary_match": true,
+        "probe_count": 18
+      },
+      {
+        "name": "transaction-040",
+        "minimum_credit": 12600,
+        "both_vm_boundary_match": true,
+        "probe_count": 18
+      },
+      {
+        "name": "transaction-044",
+        "minimum_credit": 13515,
+        "both_vm_boundary_match": true,
+        "probe_count": 19
+      },
+      {
+        "name": "transaction-048",
+        "minimum_credit": 13190,
+        "both_vm_boundary_match": true,
+        "probe_count": 18
+      },
+      {
+        "name": "transaction-050",
+        "minimum_credit": 13190,
+        "both_vm_boundary_match": true,
+        "probe_count": 18
+      },
+      {
+        "name": "transaction-052",
+        "minimum_credit": 12600,
+        "both_vm_boundary_match": true,
+        "probe_count": 18
+      },
+      {
+        "name": "transaction-056",
+        "minimum_credit": 12600,
+        "both_vm_boundary_match": true,
+        "probe_count": 18
+      },
+      {
+        "name": "transaction-063",
+        "minimum_credit": 13515,
+        "both_vm_boundary_match": true,
+        "probe_count": 19
+      }
+    ],
+    "maximum_observed_minimum": 13515,
+    "inputs": [
+      {
+        "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/config.boc",
+        "sha256": "844a190ea88e7fb1ca390ecfe3a69f9c942f21a194eb920835fe24569dca32c7",
+        "bytes": 916
+      },
+      {
+        "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/scenarios.tsv",
+        "sha256": "114d637de3fed4b969e3bbbfbf4da7071e62c93837f34b07eff3d780b6b48335",
+        "bytes": 1824648
+      },
+      {
+        "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native.tsv",
+        "sha256": "906f0a356130df52b7b751bef8815cfc93e3a52876c55d7e906b929a65599431",
+        "bytes": 7836
+      }
+    ],
+    "rust_driver": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/pq-tx-parity",
+      "sha256": "4f662abd5beb37714ccca822ff75bfbfbc9655d7b845fe12758f9c6f8d63dc61",
+      "bytes": 10067024
+    }
+  },
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-recorded-admission-accepted.tar.gz",
+    "sha256": "ac30f24854799e4aa041b957c7842d63e42509b8d6ac484a70bd5c29792c9f56",
+    "bytes": 538198
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/recorded_admission.py",
+      "sha256": "a1cd386c4c0d007533d2026588c9d3a4bbe85df21889750b99a44bc8b2ac43d2",
+      "bytes": 7007
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "d9f661dc86bb74720c36e06406371a35b691f5c72cb175081e2f4f1cb54651e6",
+      "bytes": 23641
+    }
+  ],
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/recorded_admission.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-recorded-admission-accepted",
+  "runner_exit": 0,
+  "boundary_points": 26,
+  "all_13_above_default_credit": true
+}
