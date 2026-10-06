@@ -19,7 +19,7 @@ def main(output):
             row = fixture.copy()
             row[0] = f"version-{version}-suite-{suite[4:]}"
             row[1] = str(version)
-            row[3] = "V" if version >= 16 else "E6"
+            row[3] = "E6" if version < 16 else "E5" if suite == "int:2" and version < 19 else "V"
             expanded.append(row)
     Path(output).write_text("".join("\t".join(row) + "\n" for row in expanded))
     print(f"{len(expanded)} version scenarios")

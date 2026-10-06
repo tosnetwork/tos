@@ -13,7 +13,7 @@ different ceiling from the same source is a second answer to "what does this
 binary implement", and the activation evidence then has to carry which one was
 built. One source commit, one ceiling.
 
-The prelaunch instruction gates share the version-16 activation boundary. The
+Instruction gates have separate activation boundaries. The
 ceiling must equal the highest gate. Below that, the shipped tools cannot reach
 an instruction this build implements; above it, the binary claims a version it
 has nothing to show for. This source profile requires a fresh development
@@ -34,7 +34,8 @@ PROBE = """
 int main() {
   std::cout << tos::SUPPORTED_VERSION << ' ' << vm::pq_mldsa44_min_version << ' '
             << vm::poseidon2_min_version << ' ' << vm::poseidon2_path7_min_version << ' '
-            << vm::pq_falcon512_min_version;
+            << vm::pq_falcon512_min_version << ' ' << vm::pq_suite_min_version << ' '
+            << vm::pq_lms_fee_hash_min_version;
 }
 """
 
@@ -44,7 +45,9 @@ GATES = {
     "PQCHECKSIG_MLDSA44": 16,
     "POSEIDON2_PERM8/POSEIDON2_HASH7": 16,
     "POSEIDON2_PATH7": 16,
-    "PQCHECKSIG_FALCON512_PADDED": 16,
+    "PQCHECKSIG_FALCON512_PADDED": 19,
+    "PQCHECKSIG_SUITE": 16,
+    "LMSCHECKFEEHASH": 17,
 }
 
 

@@ -349,9 +349,9 @@ Not yet activated on any TOS network, same as version 14 above.
 
 ## Version 16: unified development baseline
 
-ML-DSA-44, Falcon-512 padded, all three Poseidon2 instructions and the
-frozen-account recovery fix are enabled together at version 16. Earlier
-development allocations 17, 18 and 19 are consolidated before public launch.
+ML-DSA-44, all three Poseidon2 instructions and the frozen-account recovery
+fix are enabled at version 16. Falcon retains a separate version-19 gate in
+the V5R2 candidate profile; version 18 does not activate either Falcon entry point.
 This changes execution under version 16: existing development-chain history
 requires the original binary, or a fresh genesis for the consolidated baseline.
 No running network is migrated by this source change.
@@ -443,17 +443,26 @@ Rejected as invalid (exit 6) at versions 0-15. `POSEIDON2_PERM8` and
 
 PATH7 adds no separate transaction-engine change.
 
-### Original Falcon wallet authorization
+## Version 19: original Falcon wallet authorization
 
 `PQCHECKSIG_FALCON512_PADDED` has candidate codepage-0 allocation `F93101` and
-minimum global version 16. It consumes message/signature/public-key Cells,
+minimum global version 19. It consumes message/signature/public-key Cells,
 uses the fixed original Falcon-512 padded profile and returns a TVM boolean.
 The development proposal charges 20,000 base gas plus one gas per decoded byte
 and ordinary instruction/cell loads. Historical versions reject the opcode.
 See [the frozen profile](falcon512-profile-v1.json) and
 [implementation and remaining gates](wallet-falcon-fndsa.md).
 
-The binary capability ceiling is 16. This change does not alter a network's
+Generic `PQCHECKSIG_SUITE` suite 2 also requires version 19 and returns
+`range_chk` at versions 16 through 18. The dedicated opcode returns
+`inv_opcode` below 19.
+
+This candidate changes Falcon execution at versions 16 through 18 compared
+with the consolidated development profile. Existing development histories
+that executed Falcon at those versions require their original binary; use a
+fresh genesis to test this profile.
+
+The binary capability ceiling is 19. This change does not alter a network's
 ConfigParam 8 or canonical genesis. The candidate allocation, version and gas
 must receive protocol approval before activation; profile acceptance bytes
 cannot later be reinterpreted as formal FN-DSA.

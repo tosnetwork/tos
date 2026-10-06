@@ -146,7 +146,7 @@ extern "C" {
 }
 
 pub(super) fn execute_pq_falcon512(engine: &mut Engine) -> Status {
-    if engine.block_version() < 16 {
+    if engine.block_version() < FALCON512_MIN_VERSION {
         if engine.block_version() >= 4 {
             engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
         } else {
@@ -230,7 +230,7 @@ fn push_outcome(engine: &mut Engine, valid: Option<bool>, name: &str) -> Status 
 }
 
 const SUITE_MIN_VERSION: u32 = 16;
-const FALCON512_MIN_VERSION: u32 = 16;
+const FALCON512_MIN_VERSION: u32 = 19;
 
 pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
     if engine.block_version() < SUITE_MIN_VERSION {

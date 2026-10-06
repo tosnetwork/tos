@@ -1,0 +1,114 @@
+{
+  "base_commit": "c247bd45b2b1264e55776cdbe095d6d66f3b1d3b",
+  "source_state": "Candidate changes on base commit; all mutation sources restored; unrelated installed-enrollment client changes excluded",
+  "platform": "macOS AArch64; native C++ Release and Rust debug opcode drivers",
+  "retain_until": "2027-01-06",
+  "sources": {
+    ".github/workflows/rescue-context.yml": "ddb7d3654fc3ab16cf347183a5784d5c3f4815b0507c1b0006e006e6c86d4129",
+    ".github/workflows/wallet-falcon.yml": "3ea7e379492660d98bc0d4714ea24c972bd65cf46353f6f5e0be89f76edfbd9a",
+    "common/global-version.h": "2d76e0199d2dc16880b04650adebbab7bae489477f4176a9ea6eb76d9eee9cb9",
+    "crypto/vm/pqops.h": "d4d4002761939a8ae7a909fa751e0e1ff76c8ebc9ce7044420e3fc4f8befb3d0",
+    "doc/GlobalVersions.md": "3f6a161fae23e855ba25c426acad5a8d769e71b64a75384000bebb0b30f646ca",
+    "doc/falcon512-profile-v1.json": "08b9f44cd359a9b9c5b0f060445aea9e02d4107600af33c30444bc83222f5606",
+    "doc/wallet-falcon-fndsa.md": "3143390c5fcbf2c17129b1bd289886215ffd1278337ed4bb054e7ceda82a45a4",
+    "test/falcon-auth/e2e.py": "850da3aa8f59fbf5ea0954559551a51348ece6989644b1e59b6a1df9f14dc0b7",
+    "test/falcon-auth/live_relay.py": "dae898f989c7e91e2b6bd1bc137b8efc932e87819a5bd76fcd95e6375c7b3a53",
+    "test/falcon-auth/receipt_e2e.py": "a93704a1c00abd8c7154551413efd7cc2d6cc9be04dc8d0b6e500945cacb2ed3",
+    "test/falcon-auth/test_boundaries.py": "97691e26eded7caa39cf8b52358a3ce37bc381ded3bec0a5d538b510c579f958",
+    "test/falcon-auth/test_wallet.py": "4a5d7fa9a780d4fc7ab64b24ae15ee51d1472a3941c1a6276cecc5101173bd4b",
+    "test/falcon-auth/tx_parity.py": "0f5eb67c47598368ee4aac0c7fcb930248da826b3a0ce415882144c71e548395",
+    "test/pq-falcon512/mutations.py": "de290af6cd2156b07607b400732cd8deef2a275436695af2e0ed30d587d3d25f",
+    "test/pq-falcon512/prepare.py": "fd7fd6dcca8da571116fbb89953cd8d4b1b0cab0e05750ac8d63869fa0a810cf",
+    "test/pq-readiness/test_release_profile.py": "3ccc00afa9fd875c3b34c6416ad40007ad6fb7fbe4f8253f45e4200e23b5b6f1",
+    "test/protocol-v16/mutations.py": "5f056194d363e79bff573d178bc71e8f5f8b868bda1eb8ca2a612178ab96e5b5",
+    "test/rescue-fee-gate/suite-expected.tsv": "407f5ff98cf4dd68b264ccb98efd6badb23ced01b8f9c51bd03e404528cafb5d",
+    "test/rescue-fee-gate/suite-scenarios.tsv": "820d8a08ab22b0bf794823e80ca11cd9295942cad31ca792936f76998dee3e03",
+    "test/rescue-fee-gate/suite_scenarios.py": "39725749a0eed33cf473dcb99a977ddd1369bffd4f901f8975028894a8892ae2",
+    "test/rescue-fee-gate/version_scenarios.py": "76541ae6b1be27b0b80988be6cddec2f5da6507680cbb539520477d3e85382ce",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "d64707cb6f99fa56aa051b8ba58a131362cdb4b885d4eda7e66529c9104a30f2",
+    "tools/falcon/provider.py": "42009b8147806567006fc03e939c89d5e07290c7669bec610098af339b6b29f0",
+    "tosctl/src/vm/src/executor/pq.rs": "28836e293b23ddb10c2f3bab82ba3bf15767144e4016552b298fc83ee311762c",
+    "test/pq-falcon512/version_boundary.py": "cd52a695f353f75504f96c64921fdc4b5a0a9a85939382dece644ee532a52a49",
+    "test/pq-falcon512/version_controls.py": "2868338bfee7bd12d753d1aabb0cd7060b07f2d3aea9ca6f6423b9a6493ff582"
+  },
+  "commands": [
+    "cmake --build build --target test-pq-falcon512-parity test-pq-suite-parity -j2",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm --example falcon-parity --example suite-parity -j1",
+    "python3 test/pq-falcon512/version_controls.py --build build --rust-examples tosctl/src/target/debug/examples --out /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-falcon-version-controls",
+    "python3 test/rescue-fee-gate/version_scenarios.py /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-falcon-version-boundary/versions.tsv",
+    "python3 test/pq-readiness/test_release_profile.py"
+  ],
+  "results": {
+    "before_fix": {
+      "passed": false,
+      "semantic_failures": 36,
+      "note": "Both VMs execute Falcon at versions 16 through 18"
+    },
+    "boundary": {
+      "passed": true,
+      "cases_per_vm": {
+        "dedicated": 42,
+        "generic": 42
+      },
+      "failures": []
+    },
+    "gate_controls": {
+      "passed": true,
+      "controls": [
+        {
+          "vm": "cpp",
+          "gate": 18,
+          "exit": 1,
+          "both_entries_detected": true
+        },
+        {
+          "vm": "cpp",
+          "gate": 20,
+          "exit": 1,
+          "both_entries_detected": true
+        },
+        {
+          "vm": "rust",
+          "gate": 18,
+          "exit": 1,
+          "both_entries_detected": true
+        },
+        {
+          "vm": "rust",
+          "gate": 20,
+          "exit": 1,
+          "both_entries_detected": true
+        }
+      ],
+      "restored_green": true
+    },
+    "provider_controls": {
+      "mutation": "replace all three global_version < 19 guards with < 18",
+      "command": [
+        "/Users/tomisetsu/tos/.venv/bin/python",
+        "test/falcon-auth/test_wallet.py",
+        "--library",
+        "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-falcon-version-signer/libtos_falcon_offline.dylib",
+        "--artifacts",
+        "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-falcon-version-wallet"
+      ],
+      "mutant_exit": 1,
+      "restored_exit": 0
+    },
+    "provider_tests": 9,
+    "four_suite_version_cases_per_vm": 80,
+    "frozen_suite_cases_per_vm": 39,
+    "release_profile": "passed; ceiling 19; MLDSA/Poseidon2/generic 16; LMS fee hash 17; Falcon 19"
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-falcon-version-evidence.tar.gz",
+    "bytes": 82392,
+    "sha256": "7aec22c770ea0dc032f5999eae744a719bffec4d9896076f1451428f74aac77b"
+  },
+  "limits": [
+    "Explicit-version opcode tests, not execution through generated release config",
+    "Full wallet transaction regression, network activation, x86/ARM release CI and hardware calibration remain pending",
+    "No fee pricing or V5R2 PQ-only wallet authorization change",
+    "Existing version-16 Falcon development history requires its original binary"
+  ]
+}

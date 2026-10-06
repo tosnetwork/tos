@@ -122,14 +122,14 @@ jobs:
             --rust tosctl/src/target/release/examples/falcon-parity --scenarios artifacts/scenarios.tsv --out artifacts/benchmark
           nm build/crypto/pq/libtos_falcon512_native.a > artifacts/verifier-symbols.txt
           if grep -E 'falcon_(sign|keygen)|tos_falcon_inner_(sign|keygen|sampler|prng)' artifacts/verifier-symbols.txt; then exit 1; fi
-      - name: Disposable version-16 chain and real funded delivery
+      - name: Disposable version-19 chain and real funded delivery
         if: matrix.arch == 'x86_64'
         run: |
           cmake --build build --target validator-engine dht-server validator-engine-console lite-client create-state generate-random-id tos-pq-consensus-key toslibjson -j"$(nproc)"
           python test/tostester/generate_tl.py
           falcon_network_dir="$RUNNER_TEMP/falcon-devnet"
           setsid env PYTHONUNBUFFERED=1 PYTHONPATH="$PWD/test/tostester/src" \
-            TOS_BUILD_DIR="$PWD/build" TOS_GLOBAL_VERSION=16 \
+            TOS_BUILD_DIR="$PWD/build" TOS_GLOBAL_VERSION=19 \
             python scripts/localnet-jsonrpc.py --validators 1 --boot-timeout 180 \
             --rpc 127.0.0.1:28545 --control 127.0.0.1:28745 --base-port 29000 \
             --workdir "$falcon_network_dir" > "$RUNNER_TEMP/falcon-network.log" 2>&1 &
@@ -188,5 +188,5 @@ jobs:
               assert receipt_controls['success'] is True and len(receipt_controls['controls'])==4
               assert all(c['compiled'] and c['killed'] and c['restored_baseline_passed'] for c in receipt_controls['controls'])
           live=json.loads(Path('results/falcon-x86_64/live/live-falcon.json').read_text())
-          assert live['success'] is True and live['cases']==4 and live['global_version']==16
+          assert live['success'] is True and live['cases']==4 and live['global_version']==19
           PY

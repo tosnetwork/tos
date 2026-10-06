@@ -62,7 +62,7 @@ class WalletTests(unittest.TestCase):
         )
         self.snapshot = TrustedChainSnapshot(
             42,
-            16,
+            19,
             1000,
             self.account,
             Cell.one_from_boc((ARGS.artifacts / "wallet-func.boc").read_bytes()),
@@ -98,7 +98,7 @@ class WalletTests(unittest.TestCase):
 
     def test_capabilities_never_fall_back_to_classical(self):
         for snapshot in [
-            replace(self.snapshot, global_version=15),
+            replace(self.snapshot, global_version=18),
             replace(self.snapshot, network=43),
             replace(self.snapshot, module_code=Cell.empty()),
             replace(self.snapshot, account_code=Cell.empty()),
@@ -279,7 +279,7 @@ class WalletTests(unittest.TestCase):
             )
             destination = TrustedModuleSnapshot(
                 42,
-                16,
+                19,
                 1000,
                 proposed.address,
                 self.snapshot.module_code,
@@ -344,7 +344,7 @@ class WalletTests(unittest.TestCase):
                 replace(destination, status="frozen"),
                 replace(destination, status="deleted"),
                 replace(destination, network=43),
-                replace(destination, global_version=15),
+                replace(destination, global_version=18),
                 replace(destination, now=999),
             ]:
                 with self.assertRaises(ValueError):
@@ -396,7 +396,7 @@ class WalletTests(unittest.TestCase):
             )
             destination = TrustedModuleSnapshot(
                 42,
-                16,
+                19,
                 1000,
                 proposed.address,
                 self.snapshot.module_code,

@@ -108,7 +108,7 @@ profiles fail before key generation. The localnet credit and validation bypass
 controls are recorded in [localnet evidence](localnet-admission-20261006.json).
 
 This is a configuration candidate for further acceptance work. Rust defaults,
-opcode version boundaries, full default-credit
+release-config opcode execution, full default-credit
 transaction parity, calibrated node rates and public-network activation remain
 pending; generating a BOC does not establish these gates.
 
@@ -118,3 +118,26 @@ canonical candidate and pass its `ConfigParams` directly into
 configuration. Replacing basechain loading with the old default table fails at
 credit 20,000 versus 10,000. The runner retains the public ConfigParams BOC for
 transaction testing; this loading check does not execute wallet transactions.
+
+
+## Falcon activation boundary
+
+The candidate restores the design's version-19 gate for both dedicated
+`F93101` and generic `F93102` suite 2. At version 18 they return `inv_opcode`
+and `range_chk`, respectively. The C++ capability ceiling is 19; the explicit
+V5R2 candidate genesis remains 18, and default genesis remains 16. Raising the
+capability ceiling does not activate Falcon on those configurations.
+
+[Boundary evidence](falcon-version-20261006.json) records 42 dedicated and 42
+generic cases per VM over versions 0 through 20, with valid and invalid public
+signatures. All four independent C++/Rust early/late gate mutations fail at the
+intended boundary and restored builds pass. The 80-case four-suite version
+corpus and 39-case frozen corpus retain exact cross-VM gas/result parity. The
+Falcon client rejects version 18; its nine wallet boundary tests pass and a
+version-18 provider mutation fails before restoration.
+
+These are explicit-version opcode tests and local client tests. They do not
+close G02's requirement to execute through the actual generated release
+configuration, nor prove full transaction, network, hardware or deployment
+acceptance. Previous version-16 Falcon development histories require their
+original binary; this candidate is for a fresh development genesis.

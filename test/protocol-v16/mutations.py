@@ -87,10 +87,11 @@ def main():
 
     try:
         for name, header, constant, early_failure, late_failure in cases:
-            for version, expected in [(15, early_failure), (17, late_failure)]:
+            gate = 19 if name == "falcon" else 16
+            for version, expected in [(gate - 1, early_failure), (gate + 1, late_failure)]:
                 label = name + "-" + str(version)
                 path = ROOT / header
-                needle = constant + " = 16"
+                needle = constant + " = " + str(gate)
                 if headers[header].count(needle) != 1:
                     raise RuntimeError("mutation anchor must occur once")
                 path.write_text(headers[header].replace(needle, constant + " = " + str(version)))

@@ -70,10 +70,10 @@ jobs:
       - name: Build native Release tools and both Rust drivers
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift tlbc create-state emulator test-fee-native-cost test-pq-suite-parity test-wallet-pq-signer-fixture -j2
+          cmake --build build --target func fift tlbc create-state emulator test-fee-native-cost test-pq-suite-parity test-pq-falcon512-parity test-wallet-pq-signer-fixture -j2
           sh test/rescue-fee-gate/tools/build.sh build-signers
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
-            --example fee-native-cost --example suite-parity --example pq-tx-parity
+            --example fee-native-cost --example suite-parity --example falcon-parity --example pq-tx-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
             --example lms_fee_cache_fixture --example v5r2_auth_encode --example v5r2_pop_encode --example v5r2_prepare_encode --example v5r2_fee_encode --example v5r2_genesis_encode
       - name: Generated admission configuration loading
@@ -427,6 +427,15 @@ jobs:
         run: |
           python test/wallet-v5r2/fee_tx_mutation.py \
             --artifacts artifacts/context/r2-fee-auth --target "$CARGO_TARGET_DIR"
+      - name: Falcon version-19 boundary in both VMs
+        run: |
+          python test/pq-falcon512/version_boundary.py --build build \
+            --rust-examples "$CARGO_TARGET_DIR/debug/examples" --out artifacts/context/falcon-version
+      - name: Reject early and late Falcon activation mutations
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/pq-falcon512/version_controls.py --build build \
+            --rust-examples "$CARGO_TARGET_DIR/debug/examples" --out artifacts/context/falcon-version-controls
       - name: Verify context, opcode, complete transactions and legacy pricing
         run: |
           build/crypto/tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb

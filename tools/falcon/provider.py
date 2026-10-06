@@ -110,7 +110,7 @@ class AuthProvider:
     def _capability(self, snapshot):
         if not isinstance(snapshot, TrustedChainSnapshot):
             raise TypeError("verified chain snapshot required")
-        if type(snapshot.global_version) is not int or snapshot.global_version < 16:
+        if type(snapshot.global_version) is not int or snapshot.global_version < 19:
             raise ValueError("Falcon is not activated in the trusted chain snapshot")
         if snapshot.account_status != "active" or snapshot.module_status != "active":
             raise ValueError("frozen, deleted or uninitialized accounts require separate recovery")
@@ -169,7 +169,7 @@ class AuthProvider:
             666,
             "original Falcon padded",
             snapshot.network,
-            16,
+            19,
             account.auth.mode,
             states[account.auth.mode],
             snapshot.root.to_str(is_user_friendly=False),
@@ -392,7 +392,7 @@ def buildMigrationRequest(
         raise ValueError("destination root must be deployed and active before migration")
     if (
         destination.network != old_snapshot.network
-        or destination.global_version < 16
+        or destination.global_version < 19
         or destination.now != old_snapshot.now
     ):
         raise ValueError("destination deployment proof is for another network or snapshot")
@@ -403,7 +403,7 @@ def buildMigrationRequest(
         raise ValueError("strict migration target required")
     if old_snapshot.account_status != "active" or old_snapshot.module_status != "active":
         raise ValueError("storage recovery is not a root migration")
-    if old_snapshot.global_version < 16:
+    if old_snapshot.global_version < 19:
         raise ValueError("target profile is not activated")
     if not old_snapshot.now < valid_until <= old_snapshot.now + 3600:
         raise ValueError("invalid migration expiry")
