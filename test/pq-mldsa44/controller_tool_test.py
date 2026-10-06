@@ -90,24 +90,31 @@ def check(controller: Path, consensus: Path, work: Path) -> None:
     if other.returncode != 0 or boc(other.stdout) == data:
         raise Failure("init-data ignored the consensus key identity")
 
+    # Each refusal names its reason: any failure, a crash included, exits non-zero.
+    key_shape = b"a root public key is 2624 hexadecimal digits"
     bad = {
-        "a zero consensus key": [root_public, "00" * 32],
-        "the root's own key as the consensus key": [root_public, root_id],
-        "a short consensus key id": [root_public, consensus_id[:-2]],
-        "a non-hex consensus key id": [root_public, "zz" + consensus_id[2:]],
-        "a short root public key": [root_public[:-2], consensus_id],
-        "a long root public key": [root_public + "00", consensus_id],
-        "a root public key that is not hex": ["zz" + root_public[2:], consensus_id],
-        "a missing root seed": [str(keys / "absent.seed"), consensus_id],
-        "a missing argument": [root_public],
-        "an extra argument": [root_public, consensus_id, "0"],
+        "a zero consensus key": ([root_public, "00" * 32], b"key_id is zero"),
+        "the root's own key as the consensus key": ([root_public, root_id], b"root key's own"),
+        "a short consensus key id": ([root_public, consensus_id[:-2]], b"expected 32 bytes of hex"),
+        "a non-hex consensus key id": (
+            [root_public, "zz" + consensus_id[2:]],
+            b"expected 32 bytes of hex",
+        ),
+        "a short root public key": ([root_public[:-2], consensus_id], key_shape),
+        "a long root public key": ([root_public + "00", consensus_id], key_shape),
+        "a root public key that is not hex": (["zz" + root_public[2:], consensus_id], key_shape),
+        "a missing root seed": ([str(keys / "absent.seed"), consensus_id], b"cannot be opened"),
+        "a missing argument": ([root_public], b"usage:"),
+        "an extra argument": ([root_public, consensus_id, "0"], b"usage:"),
     }
-    for why, args in bad.items():
+    for why, (args, reason) in bad.items():
         refused = run(controller, ["init-data", *args])
         if refused.returncode == 0:
             raise Failure(f"init-data accepted {why}")
         if refused.stdout != b"":
             raise Failure(f"init-data printed data for {why}")
+        if reason not in refused.stderr:
+            raise Failure(f"init-data refused {why} without saying why: {refused.stderr[:300]!r}")
 
     # The state init lands where the witness says the controller lives.
     # Any cell serves as code here; the fixture test uses the compiled controller.
@@ -130,14 +137,23 @@ def check(controller: Path, consensus: Path, work: Path) -> None:
     other_state = run(controller, ["state-init", code_b64, other.stdout.decode().strip()])
     if other_state.returncode != 0 or other_state.stderr == state.stderr:
         raise Failure("state-init ignored the initial data")
-    for why, args in {
-        "data that is not base64": [code_b64, "@@@"],
-        "code that is not a BOC": [base64.b64encode(b"not a boc").decode(), data_b64],
-        "a missing argument": [code_b64],
+    for why, (args, reason) in {
+        "data that is not base64": ([code_b64, "@@@"], b"not base64"),
+        "code that is not a BOC": (
+            [base64.b64encode(b"not a boc").decode(), data_b64],
+            b"bag-of-cells",
+        ),
+        "data that is not a BOC": (
+            [code_b64, base64.b64encode(b"not a boc").decode()],
+            b"bag-of-cells",
+        ),
+        "a missing argument": ([code_b64], b"usage:"),
     }.items():
         refused = run(controller, ["state-init", *args])
         if refused.returncode == 0 or refused.stdout != b"":
             raise Failure(f"state-init accepted {why}")
+        if reason not in refused.stderr:
+            raise Failure(f"state-init refused {why} without saying why: {refused.stderr!r}")
 
 
 def main() -> int:

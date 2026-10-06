@@ -76,10 +76,22 @@ if(TARGET tl_api)
   # headers come from the library it links, not from whatever the system search path holds.
   target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus tl_api tdutils
                         OpenSSL::Crypto)
+  # A directory flush that fails after the rename is reached through this shim, which
+  # makes fsync on a directory fail while the test asks it to. LD_PRELOAD is a Linux
+  # mechanism here; elsewhere the test runs without that one case.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(test-fsync-dir-failure-shim SHARED
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/fsync-dir-failure-shim.cpp")
+    target_link_libraries(test-fsync-dir-failure-shim PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(tos-pq-consensus-key test-fsync-dir-failure-shim)
+    set(CONSENSUS_KEY_TOOL_SHIM_ARGS --fsync-shim "$<TARGET_FILE:test-fsync-dir-failure-shim>")
+  else()
+    set(CONSENSUS_KEY_TOOL_SHIM_ARGS)
+  endif()
   add_test(NAME consensus-key-tool
            COMMAND "${CMAKE_COMMAND}" -E env python3
                    "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/consensus_key_tool_test.py"
-                   --tool "$<TARGET_FILE:tos-pq-consensus-key>")
+                   --tool "$<TARGET_FILE:tos-pq-consensus-key>" ${CONSENSUS_KEY_TOOL_SHIM_ARGS})
 endif()
 
 set(PQ_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44")

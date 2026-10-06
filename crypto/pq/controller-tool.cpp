@@ -101,19 +101,25 @@ std::string lower_hex(td::Slice bytes) {
 
 // The root public key an initial data cell carries, from either thing an operator has: the
 // 2624-digit public key `tos-pq-key keygen` and `tos-pq-key public` print, or the root seed
-// file itself. Anything of exactly that length that is all hexadecimal is read as the
-// key; everything else is a path.
+// file itself. An argument with a '/' is a path. Without one, an argument that is all
+// hexadecimal, or far longer than a file name, is meant as the key and must be exactly
+// one; anything else is a file name.
 std::string root_public_key(const std::string& argument) {
   constexpr std::size_t digits = 2 * tos::pq::mldsa44_public_key_bytes;
-  if (argument.size() == digits) {
-    auto decoded = td::hex_decode(td::Slice(argument));
-    if (decoded.is_ok()) {
-      auto bytes = decoded.move_as_ok();
-      if (!tos::pq::valid_public_key(tos::pq::PQAlgorithmId::mldsa44, bytes)) {
-        throw std::runtime_error("the root public key is not an ML-DSA-44 public key");
-      }
-      return bytes;
+  const bool all_hex = !argument.empty() && argument.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
+  if (argument.find('/') == std::string::npos && (all_hex || argument.size() > 255)) {
+    if (argument.size() != digits || !all_hex) {
+      throw std::runtime_error("a root public key is 2624 hexadecimal digits (or give the root seed file)");
     }
+    auto decoded = td::hex_decode(td::Slice(argument));
+    if (decoded.is_error()) {
+      throw std::runtime_error("a root public key is 2624 hexadecimal digits (or give the root seed file)");
+    }
+    auto bytes = decoded.move_as_ok();
+    if (!tos::pq::valid_public_key(tos::pq::PQAlgorithmId::mldsa44, bytes)) {
+      throw std::runtime_error("the root public key is not an ML-DSA-44 public key");
+    }
+    return bytes;
   }
   auto root = open_key(argument.c_str());
   return root.root_key().public_key;

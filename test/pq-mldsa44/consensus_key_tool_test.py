@@ -46,7 +46,7 @@ def key_id_of(output: bytes) -> str:
     return m.group(1).decode()
 
 
-def check(tool: Path, work: Path) -> None:
+def check(tool: Path, work: Path, shim: Path | None) -> None:
     home = private_dir(work, "private")
 
     # Generating one, and reading it back: the same key, from the file, every time.
@@ -215,7 +215,7 @@ def check(tool: Path, work: Path) -> None:
             raise Failure(f"the tool has a '{invented}' command")
 
     check_export(tool, work, home)
-    check_bind_node(tool, work, home)
+    check_bind_node(tool, work, home, shim)
 
 
 def export_through_pty(tool: Path, key: Path) -> tuple[int, bytes]:
@@ -414,17 +414,40 @@ def bound_key_id(output: bytes) -> str:
     return m.group(1).decode()
 
 
-def check_bind_node(tool: Path, work: Path, home: Path) -> None:
+def refuses(tool: Path, args: list[str], reason: bytes, why: str, timeout: int = 120) -> None:
+    try:
+        refused = subprocess.run(
+            [str(tool), "bind-node", *args], capture_output=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        raise Failure(f"bind-node hung on {why}")
+    if refused.returncode != 1:
+        raise Failure(f"bind-node did not refuse {why}: {refused!r}")
+    if reason not in refused.stderr:
+        raise Failure(f"bind-node refused {why} without saying why: {refused.stderr!r}")
+    if refused.stdout != b"":
+        raise Failure(f"bind-node printed a binding while refusing {why}")
+
+
+def held_lock(path: Path):
+    """An exclusive fcntl lock on `path`, as the engine and the binder take it."""
+    handle = open(path, "ab")
+    fcntl.lockf(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return handle
+
+
+def check_bind_node(tool: Path, work: Path, home: Path, shim: Path | None) -> None:
     key = home / "c.key"
     other_key = home / "a.key"
     key_id = key_id_of(run(tool, ["show", str(key)]).stdout)
     seed = bytes.fromhex(SEED_HEX)
 
-    # A configuration as the generate step leaves it: no extra configuration at all.
+    # A configuration as the generate step leaves it: no extra configuration at all. The
+    # database root is what is named; the configuration is where the engine reads it.
     db = private_dir(work, "db")
     original = node_config()
     path = write_config(db, original, 0o640)
-    bound = run(tool, ["bind-node", str(path), str(key), VALIDATOR_HEX])
+    bound = run(tool, ["bind-node", str(db), str(key), VALIDATOR_HEX])
     if bound.returncode != 0:
         raise Failure(f"bind-node failed: {bound.stderr!r}")
     for stream in (bound.stdout, bound.stderr):
@@ -432,7 +455,7 @@ def check_bind_node(tool: Path, work: Path, home: Path) -> None:
             raise Failure("bind-node printed the seed")
     if bound_key_id(bound.stdout) != key_id:
         raise Failure(f"bind-node did not report the key file's identity: {bound.stdout!r}")
-    if not bound.stdout.endswith(b" updated\n"):
+    if not bound.stdout.endswith(f"{path} updated\n".encode()):
         raise Failure(f"bind-node did not say it changed the configuration: {bound.stdout!r}")
     written = json.loads(path.read_text())
     # Absent, the extra configuration means a running state serializer; present, it has to
@@ -460,7 +483,7 @@ def check_bind_node(tool: Path, work: Path, home: Path) -> None:
     # controller's address form names the same validator.
     before = path.read_bytes()
     stamp = path.stat().st_mtime_ns
-    again = run(tool, ["bind-node", str(path), str(key), "-1:" + VALIDATOR_HEX.upper()])
+    again = run(tool, ["bind-node", str(db), str(key), "-1:" + VALIDATOR_HEX.upper()])
     if again.returncode != 0 or not again.stdout.endswith(b" unchanged\n"):
         raise Failure(f"binding the same key twice was not a no-op: {again!r}")
     unchanged(path, before, "an identical binding was applied")
@@ -468,21 +491,12 @@ def check_bind_node(tool: Path, work: Path, home: Path) -> None:
         raise Failure("an identical binding rewrote the configuration")
 
     # A different binding is not replaced by accident...
-    for args, why in (
-        ([str(path), str(other_key), VALIDATOR_HEX], "another key"),
-        ([str(path), str(key), OTHER_VALIDATOR_HEX], "another validator"),
-    ):
-        refused = run(tool, ["bind-node", *args])
-        if refused.returncode == 0:
-            raise Failure(f"bind-node replaced a binding to {why} without --replace")
-        if b"--replace" not in refused.stderr:
-            raise Failure(f"refusing {why} did not say how to replace it: {refused.stderr!r}")
-        unchanged(path, before, f"replacing a binding to {why} was refused")
+    refuses(tool, [str(db), str(other_key), VALIDATOR_HEX], b"--replace", "another key")
+    refuses(tool, [str(db), str(key), OTHER_VALIDATOR_HEX], b"--replace", "another validator")
+    unchanged(path, before, "replacing a binding without --replace was refused")
 
     # ...only deliberately, and then completely.
-    replaced = run(
-        tool, ["bind-node", "--replace", str(path), str(other_key), OTHER_VALIDATOR_HEX]
-    )
+    replaced = run(tool, ["bind-node", "--replace", str(db), str(other_key), OTHER_VALIDATOR_HEX])
     if replaced.returncode != 0:
         raise Failure(f"bind-node --replace failed: {replaced.stderr!r}")
     now = json.loads(path.read_text())
@@ -511,60 +525,60 @@ def check_bind_node(tool: Path, work: Path, home: Path) -> None:
         ],
     }
     path2 = write_config(db2, node_config(extra))
-    if run(tool, ["bind-node", str(path2), str(key), VALIDATOR_HEX]).returncode != 0:
+    if run(tool, ["bind-node", str(db2), str(key), VALIDATOR_HEX]).returncode != 0:
         raise Failure("bind-node refused a configuration with an extra configuration")
     kept = json.loads(path2.read_text())
     if kept != node_config({**extra, "pq_consensus": pq_consensus(VALIDATOR_HEX, key)}):
         raise Failure(f"bind-node lost configuration: {json.dumps(kept, indent=1)}")
 
-    # Refusals, each leaving the configuration as it was.
+    # Refusals, each naming its reason (a crash also exits non-zero and says something)
+    # and each leaving the configuration as it was.
     db3 = private_dir(work, "db3")
     path3 = write_config(db3, node_config())
     before3 = path3.read_bytes()
     loose = work / "loose" / "k.key"  # readable by others; made by check_export
-    # Each refusal names its reason: a crash also exits non-zero and says something.
     bad = {
-        "a zero validator id": ([str(path3), str(key), "00" * 32], b"zero"),
-        "a zero controller address": ([str(path3), str(key), "-1:" + "00" * 32], b"zero"),
-        "a basechain address": ([str(path3), str(key), "0:" + VALIDATOR_HEX], b"masterchain"),
-        "a short validator id": ([str(path3), str(key), VALIDATOR_HEX[:-2]], b"64 hexadecimal"),
+        "a zero validator id": ([str(db3), str(key), "00" * 32], b"zero"),
+        "a zero controller address": ([str(db3), str(key), "-1:" + "00" * 32], b"zero"),
+        "a basechain address": ([str(db3), str(key), "0:" + VALIDATOR_HEX], b"masterchain"),
+        "a short validator id": ([str(db3), str(key), VALIDATOR_HEX[:-2]], b"64 hexadecimal"),
         "a non-hex validator id": (
-            [str(path3), str(key), "zz" + VALIDATOR_HEX[2:]],
+            [str(db3), str(key), "zz" + VALIDATOR_HEX[2:]],
             b"64 hexadecimal",
         ),
-        "a relative key path": ([str(path3), "c.key", VALIDATOR_HEX], b"absolute"),
-        "a missing key": (
-            [str(path3), str(home / "missing.key"), VALIDATOR_HEX],
-            b"cannot be opened",
-        ),
+        "a relative key path": ([str(db3), "c.key", VALIDATOR_HEX], b"absolute"),
+        "a missing key": ([str(db3), str(home / "missing.key"), VALIDATOR_HEX], b"cannot be opened"),
         "a key readable by others": (
-            [str(path3), str(loose), VALIDATOR_HEX],
+            [str(db3), str(loose), VALIDATOR_HEX],
             b"readable or writable by group or others",
         ),
         "a key behind a symbolic link": (
-            [str(path3), str(home / "link.key"), VALIDATOR_HEX],
+            [str(db3), str(home / "link.key"), VALIDATOR_HEX],
             b"symbolic link",
         ),
-        "a missing configuration": (
-            [str(db3 / "absent.json"), str(key), VALIDATOR_HEX],
+        "a database root that is not a directory": (
+            [str(path3), str(key), VALIDATOR_HEX],
+            b"not a database directory",
+        ),
+        "a database without a configuration": (
+            [str(private_dir(work, "db-empty")), str(key), VALIDATOR_HEX],
             b"cannot open the configuration",
         ),
-        "a stray argument": (["--force", str(path3), str(key), VALIDATOR_HEX], b"usage:"),
     }
     for why, (args, reason) in bad.items():
-        refused = run(tool, ["bind-node", *args])
-        if refused.returncode == 0:
-            raise Failure(f"bind-node accepted {why}")
-        if reason not in refused.stderr:
-            raise Failure(f"bind-node refused {why} without saying why: {refused.stderr!r}")
+        refuses(tool, args, reason, why)
         unchanged(path3, before3, f"{why} was refused")
+    stray = run(tool, ["bind-node", "--force", str(db3), str(key), VALIDATOR_HEX])
+    if stray.returncode == 0 or b"usage:" not in stray.stderr:
+        raise Failure("bind-node accepted a stray argument")
+    unchanged(path3, before3, "a stray argument was refused")
     if leftovers(db3):
         raise Failure(f"a refused bind-node left temporary files: {leftovers(db3)}")
 
     # A relative key path is refused even where it names a good key: the node does not
     # start in the directory this runs in.
     refused = subprocess.run(
-        [str(tool), "bind-node", str(path3), "c.key", VALIDATOR_HEX],
+        [str(tool), "bind-node", str(db3), "c.key", VALIDATOR_HEX],
         cwd=home,
         capture_output=True,
         timeout=120,
@@ -572,21 +586,6 @@ def check_bind_node(tool: Path, work: Path, home: Path) -> None:
     if refused.returncode == 0 or b"absolute" not in refused.stderr:
         raise Failure("bind-node accepted a relative key path")
     unchanged(path3, before3, "a relative key path was refused")
-
-    # A configuration far larger than any encoder buffer is written whole.
-    db_big = private_dir(work, "db-big")
-    big = node_config()
-    big["dht"] = [
-        {"@type": "engine.dht", "id": b64(i.to_bytes(32, "big"))} for i in range(1, 20001)
-    ]
-    path_big = write_config(db_big, big)
-    if path_big.stat().st_size < 1 << 20:
-        raise Failure("the large configuration is not large")
-    if run(tool, ["bind-node", str(path_big), str(key), VALIDATOR_HEX]).returncode != 0:
-        raise Failure("bind-node refused a large configuration")
-    written_big = json.loads(path_big.read_text())
-    if {k: v for k, v in written_big.items() if k != "extraconfig"} != big:
-        raise Failure("bind-node lost part of a large configuration")
 
     # The configuration has to be one: JSON, of the engine's schema, and a plain file.
     for index, (why, text, reason) in enumerate(
@@ -604,46 +603,144 @@ def check_bind_node(tool: Path, work: Path, home: Path) -> None:
         db_bad = private_dir(work, f"bad-{index}")
         bad_path = db_bad / "config.json"
         bad_path.write_text(text)
-        refused = run(tool, ["bind-node", str(bad_path), str(key), VALIDATOR_HEX])
-        if refused.returncode == 0 or bad_path.read_text() != text:
+        refuses(tool, [str(db_bad), str(key), VALIDATOR_HEX], reason, f"a configuration that is {why}")
+        if bad_path.read_text() != text:
             raise Failure(f"bind-node rewrote a configuration that is {why}")
-        if reason not in refused.stderr:
-            raise Failure(f"bind-node refused a configuration that is {why} for another reason")
+
+    # Content the engine's schema would drop is refused by name, not silently lost: at the
+    # top level, inside the extra configuration, and as a value of the wrong kind.
+    for index, (why, config, name) in enumerate(
+        (
+            ("an unknown top-level field", {**node_config(), "operator_notes": "keep me"}, b"$.operator_notes"),
+            (
+                "an unknown nested field",
+                node_config({**extra, "comment": "keep me"}),
+                b"$.extraconfig.comment",
+            ),
+            (
+                "an unknown field in a list entry",
+                {**node_config(), "dht": [{"@type": "engine.dht", "id": b64(bytes([2]) * 32), "x": 1}]},
+                b"$.dht[0].x",
+            ),
+        )
+    ):
+        db_extra = private_dir(work, f"extra-{index}")
+        extra_path = write_config(db_extra, config)
+        extra_before = extra_path.read_bytes()
+        refuses(tool, [str(db_extra), str(key), VALIDATOR_HEX], name, why)
+        unchanged(extra_path, extra_before, f"{why} was refused")
+
+    # A configuration behind a symbolic link is not followed, and the link stays.
     db_link = private_dir(work, "db-link")
     os.symlink(path3, db_link / "config.json")
-    refused = run(tool, ["bind-node", str(db_link / "config.json"), str(key), VALIDATOR_HEX])
-    if refused.returncode == 0 or b"symbolic link is refused" not in refused.stderr:
-        raise Failure(f"bind-node followed a symbolic link to a configuration: {refused!r}")
+    refuses(tool, [str(db_link), str(key), VALIDATOR_HEX], b"symbolic link is refused", "a symlinked configuration")
     if not (db_link / "config.json").is_symlink():
         raise Failure("bind-node replaced a symbolic link to a configuration")
     unchanged(path3, before3, "a configuration behind a symbolic link was refused")
 
-    # A running node holds its cell database locked, and would write its own configuration
-    # over this edit. While the lock is held nothing is written; once it is released, the
-    # same command succeeds.
-    (db3 / "celldb").mkdir()
-    with open(db3 / "celldb" / "LOCK", "wb") as lock:
-        fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        refused = run(tool, ["bind-node", str(path3), str(key), VALIDATOR_HEX])
-        fcntl.lockf(lock, fcntl.LOCK_UN)
-    if refused.returncode == 0 or b"running node" not in refused.stderr:
-        raise Failure(f"bind-node edited the configuration of a running node: {refused!r}")
+    # A FIFO at the configuration's name is refused at once, not waited on.
+    db_fifo = private_dir(work, "db-fifo")
+    os.mkfifo(db_fifo / "config.json", 0o600)
+    refuses(tool, [str(db_fifo), str(key), VALIDATOR_HEX], b"not a regular file", "a FIFO", timeout=20)
+
+    # A config.json.tmp left by an interrupted engine write may be the newer of the two;
+    # which one is right is the operator's call, so nothing is edited until it is gone.
+    db_tmp = private_dir(work, "db-tmp")
+    path_tmp = write_config(db_tmp, node_config())
+    before_tmp = path_tmp.read_bytes()
+    (db_tmp / "config.json.tmp").write_text("{}")
+    refuses(tool, [str(db_tmp), str(key), VALIDATOR_HEX], b"interrupted engine write", "a leftover config.json.tmp")
+    unchanged(path_tmp, before_tmp, "a leftover config.json.tmp was refused")
+    if (db_tmp / "config.json.tmp").read_text() != "{}":
+        raise Failure("bind-node touched the engine's leftover temporary file")
+    (db_tmp / "config.json.tmp").unlink()
+    if run(tool, ["bind-node", str(db_tmp), str(key), VALIDATOR_HEX]).returncode != 0:
+        raise Failure("bind-node refused once the leftover temporary file was resolved")
+
+    # The configuration lock. A running node holds it for as long as it runs, and another
+    # binder for its whole edit: while it is held nothing is read or written, whether or
+    # not the cell database's lock file exists. Released, the same command succeeds.
+    with held_lock(db3 / "config.json.lock"):
+        refuses(tool, [str(db3), str(key), VALIDATOR_HEX], b"held by a running node", "a held configuration lock")
     unchanged(path3, before3, "the configuration of a running node was refused")
-    if run(tool, ["bind-node", str(path3), str(key), VALIDATOR_HEX]).returncode != 0:
-        raise Failure("bind-node refused a stopped node whose database lock was released")
+    if (db3 / "celldb").exists():
+        raise Failure("the configuration lock test needs a database without a cell database")
+
+    # The cell database's own lock is a second signal and refuses on its own.
+    (db3 / "celldb").mkdir()
+    with held_lock(db3 / "celldb" / "LOCK"):
+        refuses(tool, [str(db3), str(key), VALIDATOR_HEX], b"running node", "a held cell database")
+    unchanged(path3, before3, "a held cell database was refused")
+    if run(tool, ["bind-node", str(db3), str(key), VALIDATOR_HEX]).returncode != 0:
+        raise Failure("bind-node refused a stopped node whose locks were released")
+
+    # The configuration keeps its group, not the group of whoever ran this.
+    others = [g for g in os.getgroups() if g != os.getegid()]
+    if others:
+        db_group = private_dir(work, "db-group")
+        path_group = write_config(db_group, node_config(), 0o640)
+        os.chown(path_group, -1, others[0])
+        if run(tool, ["bind-node", str(db_group), str(key), VALIDATOR_HEX]).returncode != 0:
+            raise Failure("bind-node refused a configuration with another of this user's groups")
+        if path_group.stat().st_gid != others[0]:
+            raise Failure(
+                f"bind-node changed the configuration's group from {others[0]} to {path_group.stat().st_gid}"
+            )
+    else:
+        print("note: no supplementary group; the group-preservation case did not run", file=sys.stderr)
+
+    # A configuration far larger than any encoder buffer is written whole.
+    db_big = private_dir(work, "db-big")
+    big = node_config()
+    big["dht"] = [{"@type": "engine.dht", "id": b64(i.to_bytes(32, "big"))} for i in range(1, 20001)]
+    path_big = write_config(db_big, big)
+    if path_big.stat().st_size < 1 << 20:
+        raise Failure("the large configuration is not large")
+    if run(tool, ["bind-node", str(db_big), str(key), VALIDATOR_HEX]).returncode != 0:
+        raise Failure("bind-node refused a large configuration")
+    written_big = json.loads(path_big.read_text())
+    if {k: v for k, v in written_big.items() if k != "extraconfig"} != big:
+        raise Failure("bind-node lost part of a large configuration")
+
+    # A directory flush that fails after the rename is not a refusal: the binding is in
+    # place, and the tool says it is not confirmed durable with its own exit status.
+    if shim is not None:
+        db_flush = private_dir(work, "db-flush")
+        path_flush = write_config(db_flush, node_config())
+        failed = subprocess.run(
+            [str(tool), "bind-node", str(db_flush), str(key), VALIDATOR_HEX],
+            capture_output=True,
+            timeout=120,
+            env={**os.environ, "LD_PRELOAD": str(shim), "TOS_TEST_FAIL_DIR_FSYNC": "1"},
+        )
+        if failed.returncode != 3:
+            raise Failure(f"a failed directory flush did not exit 3: {failed!r}")
+        if b"not confirmed durable" not in failed.stderr or not failed.stdout.endswith(b" updated\n"):
+            raise Failure(f"a failed directory flush was not reported as such: {failed!r}")
+        if json.loads(path_flush.read_text()).get("extraconfig", {}).get("pq_consensus") != pq_consensus(
+            VALIDATOR_HEX, key
+        ):
+            raise Failure("a failed directory flush was reported, but the binding is not in place")
+    else:
+        print("note: no fsync shim given; the directory-flush case did not run", file=sys.stderr)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tool", required=True, help="path to tos-pq-consensus-key")
+    parser.add_argument("--fsync-shim", help="LD_PRELOAD library that fails directory fsync")
     args = parser.parse_args()
     tool = Path(args.tool).resolve()
     if not tool.is_file():
         print(f"no tool at {tool}", file=sys.stderr)
         return 2
+    shim = Path(args.fsync_shim).resolve() if args.fsync_shim else None
+    if shim is not None and not shim.is_file():
+        print(f"no shim at {shim}", file=sys.stderr)
+        return 2
     with tempfile.TemporaryDirectory() as tmp:
         try:
-            check(tool, Path(tmp))
+            check(tool, Path(tmp), shim)
         except Failure as failure:
             print(f"CONSENSUS_KEY_TOOL_FAILED {failure}", file=sys.stderr)
             return 1
@@ -651,7 +748,7 @@ def main() -> int:
         "CONSENSUS_KEY_TOOL_OK generate/import/show round-trip; a seed that is not exactly "
         "64 digits is refused and writes nothing; only export prints a seed, only into a "
         "pipe, and export | import moves it; bind-node binds a stopped node's configuration "
-        "and refuses everything else"
+        "under the configuration lock and refuses everything else"
     )
     return 0
 

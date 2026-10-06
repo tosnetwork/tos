@@ -122,30 +122,46 @@ int usage() {
       "       tos-pq-consensus-key import KEYFILE   (64 hex characters on stdin)\n"
       "       tos-pq-consensus-key show KEYFILE\n"
       "       tos-pq-consensus-key export KEYFILE   (the seed to a pipe, never a terminal or file)\n"
-      "       tos-pq-consensus-key bind-node [--replace] CONFIG_JSON KEYFILE VALIDATOR_ID\n"
+      "       tos-pq-consensus-key bind-node [--replace] DB_ROOT KEYFILE VALIDATOR_ID\n"
       "\n"
       "generate, import and show print the identity the validator set records for the\n"
       "key. Only export prints the key itself.\n"
       "\n"
-      "bind-node sets extraconfig.pq_consensus in a stopped node's <db>/config.json.\n"
-      "Run it as the node's service account: it checks KEYFILE (an absolute path) under\n"
-      "the rules the node loads it by. VALIDATOR_ID is the controller's account id, as\n"
-      "64 hex digits or -1:<64 hex digits>. A different binding already there is\n"
-      "replaced only with --replace.\n"
+      "bind-node sets extraconfig.pq_consensus in DB_ROOT/config.json, where DB_ROOT is\n"
+      "the node's -D directory. Run it as the node's service account: it checks KEYFILE\n"
+      "(an absolute path) under the rules the node loads it by. VALIDATOR_ID is the\n"
+      "controller's account id, as 64 hex digits or -1:<64 hex digits>. A different\n"
+      "binding already there is replaced only with --replace. It holds\n"
+      "DB_ROOT/config.json.lock for the whole edit; a running node holds the same lock,\n"
+      "so bind-node refuses while the node runs and the node refuses to start meanwhile.\n"
+      "It refuses a configuration with content the engine's schema would drop. Exit\n"
+      "status: 0 bound (or already bound), 1 refused, nothing written, 3 written but\n"
+      "the directory flush failed, so durability is unconfirmed.\n"
       "\n"
-      "Rotating the consensus key (a kind 3 bind):\n"
-      "  1. offline:   tos-pq-consensus-key generate NEXT.seed   (note its key_id)\n"
-      "  2. offline:   tos-pq-controller bind ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH\n"
-      "                  NONCE VALID_UNTIL NEXT.seed   and send the body from a wallet\n"
-      "  3. check that the controller_state getter shows the new key_id\n"
+      "Rotating the consensus key from A to B (a kind 3 bind). The node holds one key,\n"
+      "so it signs with A or with B, never both: once B is bound the controller refuses\n"
+      "stakes signed with A, and once the node restarts with B it no longer signs for a\n"
+      "validator set that lists A. A single-key rotation is therefore safe only inside a\n"
+      "verified interval in which A has no signing obligation; otherwise it costs\n"
+      "accepted downtime. An uninterrupted rotation needs A and B held at once, which\n"
+      "the node does not support yet.\n"
+      "  1. offline:   tos-pq-consensus-key generate NEXT.seed   (note its key_id, B)\n"
+      "  2. verify the interval: Config34 (and Config36 while a next set is pending)\n"
+      "     no longer lists this controller with key A, and the next stake is not due\n"
+      "     before steps 3-5 complete. If it cannot be verified, plan for downtime.\n"
+      "  3. offline:   tos-pq-controller bind ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH\n"
+      "                  NONCE VALID_UNTIL NEXT.seed   and send the body from a wallet;\n"
+      "     check that the controller_state getter shows B\n"
       "  4. offline:   tos-pq-consensus-key export NEXT.seed | ENCRYPT > MEDIUM\n"
       "     host:      DECRYPT < MEDIUM | tos-pq-consensus-key import KEYDIR/pq-consensus-next.seed\n"
       "     (or, with a direct link, export | ssh HOST tos-pq-consensus-key import ...)\n"
-      "  5. host, between elections, node stopped:\n"
-      "                tos-pq-consensus-key bind-node --replace CONFIG_JSON\n"
+      "  5. host, node stopped:\n"
+      "                tos-pq-consensus-key bind-node --replace DB_ROOT\n"
       "                  KEYDIR/pq-consensus-next.seed VALIDATOR_ID\n"
-      "     then start the node and confirm it logs the new key.\n"
-      "  6. destroy every other copy of the seed except the encrypted offline backup.\n",
+      "     then start the node and confirm it logs key B.\n"
+      "  6. confirm the next election accepts the stake signed with B, and that the\n"
+      "     validator appears in Config34 with B after the set switches.\n"
+      "  7. destroy every other copy of the seed except the encrypted offline backup.\n",
       stderr);
   return 2;
 }
@@ -232,7 +248,7 @@ int bind_node(int argc, char** argv) {
   } else if (argc != 5) {
     return usage();
   }
-  binding.config_path = argv[next];
+  binding.db_root = argv[next];
   binding.key_file = argv[next + 1];
   std::string why;
   if (!tos::pq::parse_validator_id(argv[next + 2], binding.validator_id, why)) {
@@ -240,16 +256,35 @@ int bind_node(int argc, char** argv) {
     return 1;
   }
   tos::pq::NodeConsensusBindingResult result;
-  if (!tos::pq::bind_node_consensus_key(binding, result, why)) {
-    std::fprintf(stderr, "%s\n", why.c_str());
-    return 1;
+  const auto outcome = tos::pq::bind_node_consensus_key(binding, result, why);
+  const char* state = nullptr;
+  switch (outcome) {
+    case tos::pq::NodeBindingOutcome::refused:
+      std::fprintf(stderr, "%s\n", why.c_str());
+      return 1;
+    case tos::pq::NodeBindingOutcome::unchanged:
+      state = "unchanged";
+      break;
+    case tos::pq::NodeBindingOutcome::applied:
+    case tos::pq::NodeBindingOutcome::applied_not_durable:
+      state = "updated";
+      break;
   }
   std::fputs("validator_id ", stdout);
   print_hex(std::string_view(reinterpret_cast<const char*>(binding.validator_id.data()), binding.validator_id.size()));
   std::fputs("\nkey_id       ", stdout);
   print_hex(std::string_view(reinterpret_cast<const char*>(result.key_id.data()), result.key_id.size()));
-  std::fprintf(stdout, "\nkey_file     %s\nconfig       %s %s\n", binding.key_file.c_str(), binding.config_path.c_str(),
-               result.changed ? "updated" : "unchanged");
+  std::fprintf(stdout, "\nkey_file     %s\nconfig       %s %s\n", binding.key_file.c_str(), result.config_path.c_str(),
+               state);
+  if (outcome == tos::pq::NodeBindingOutcome::applied_not_durable) {
+    // The binding is in place and the node will read it; only its survival of a crash is
+    // unconfirmed. A distinct status lets a script tell this from both success and refusal.
+    std::fprintf(stderr,
+                 "%s\nthe new configuration is in place, but not confirmed durable: run `sync` before relying "
+                 "on it\n",
+                 why.c_str());
+    return 3;
+  }
   return 0;
 }
 
