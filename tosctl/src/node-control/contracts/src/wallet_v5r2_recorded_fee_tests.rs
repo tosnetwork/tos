@@ -22,6 +22,7 @@ async fn recorded_fee_custody_matches_executed_messages() {
             .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let storage_path = dir.path().join("encrypted-fee.json");
+    let mut trees: [Option<wallet_pq_signer::fee::FeeTree>; 2] = [None, None];
     let mut journals: [Option<FeeJournal>; 2] = [None, None];
     let mut checked = vec![];
     for (number, route, before, receipt) in [
@@ -47,6 +48,19 @@ async fn recorded_fee_custody_matches_executed_messages() {
         let path: [u8; 640] = signature[2192..].try_into().unwrap();
         let id = SecretId::new(if route == 0 { "old-fee" } else { "successor-fee" });
         if journals[route].is_none() {
+            let name = if route == 0 {
+                "PUBLIC-TEST-ONLY-lms-tree"
+            } else {
+                "PUBLIC-TEST-ONLY-successor-tree"
+            };
+            let header = [b"TOSFT001".as_slice(), view.fee_public_key()].concat();
+            let input = std::io::Read::chain(
+                std::io::Cursor::new(header),
+                std::fs::File::open(root.join(name)).unwrap(),
+            );
+            trees[route] = Some(
+                wallet_pq_signer::fee::FeeTree::read_cache(input, view.fee_public_key()).unwrap(),
+            );
             let vault = open(&storage_path).await;
             let mut seed = [if route == 0 { 0x44 } else { 0x77 }; 48];
             seed[32..].fill(if route == 0 { 0x55 } else { 0x88 });
@@ -78,20 +92,41 @@ async fn recorded_fee_custody_matches_executed_messages() {
         let payload = || FeePayload::from_submission(class, hex_cell(&input["payload"])).unwrap();
         let deadline = input["deadline"].as_u64().unwrap().try_into().unwrap();
         let value = input["value"].as_str().unwrap().parse().unwrap();
+        if route == 1 {
+            let mut samples = 0;
+            let mismatch = journal
+                .sign_proven_fee_from_vault_tree(
+                    &vault,
+                    &id,
+                    &view,
+                    || {
+                        samples += 1;
+                        now
+                    },
+                    deadline,
+                    value,
+                    payload(),
+                    trees[0].as_ref().unwrap(),
+                )
+                .await;
+            assert!(mismatch.is_err(), "fee tree mismatch accepted");
+            assert_eq!(samples, 1, "wrong fee tree reached key loading path");
+            assert_eq!(journal.preview_proven(&view, now).unwrap().leaf, leaf);
+        }
         let mut samples = 0;
         let stale = journal
-            .sign_proven_fee_from_vault(
+            .sign_proven_fee_from_vault_tree(
                 &vault,
                 &id,
                 &view,
                 || {
                     samples += 1;
-                    if samples == 1 { now } else { now + 31 }
+                    if samples <= 2 { now } else { now + 31 }
                 },
                 deadline,
                 value,
                 payload(),
-                &path,
+                trees[route].as_ref().unwrap(),
             )
             .await;
         assert!(stale.is_err(), "recorded custody accepted stale clock after key loading");
@@ -101,7 +136,7 @@ async fn recorded_fee_custody_matches_executed_messages() {
             "recorded custody stale clock consumed leaf"
         );
         let signed = journal
-            .sign_proven_fee_from_vault(
+            .sign_proven_fee_from_vault_tree(
                 &vault,
                 &id,
                 &view,
@@ -109,7 +144,7 @@ async fn recorded_fee_custody_matches_executed_messages() {
                 deadline,
                 value,
                 payload(),
-                &path,
+                trees[route].as_ref().unwrap(),
             )
             .await
             .unwrap();

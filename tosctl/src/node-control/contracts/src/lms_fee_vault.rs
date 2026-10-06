@@ -96,6 +96,37 @@ async fn load_bound(
 }
 
 impl FeeJournal {
+    /// Select the authentication path from a validated public tree using the
+    /// proof-bound journal plan. Reject a different tree before key loading.
+    /// The delegated signer rechecks the plan before loading and samples the
+    /// trusted clock again afterward. No caller-selected leaf/path is accepted.
+    pub async fn sign_proven_fee_from_vault_tree(
+        &mut self,
+        storage: &SecretVault,
+        id: &SecretId,
+        view: &ProvenFeeVault,
+        mut clock: impl FnMut() -> u32,
+        valid_until: u32,
+        value: u128,
+        payload: FeePayload,
+        tree: &wallet_pq_signer::fee::FeeTree,
+    ) -> anyhow::Result<SignedFeeMessage> {
+        let plan = self.preview_proven(view, clock())?;
+        anyhow::ensure!(tree.public_key() == view.fee_public_key(), "fee tree enrollment mismatch");
+        let path = tree.authentication_path(plan.leaf)?;
+        self.sign_proven_fee_from_vault(
+            storage,
+            id,
+            view,
+            clock,
+            valid_until,
+            value,
+            payload,
+            &path,
+        )
+        .await
+    }
+
     /// Load a bound fee seed and sign only through this journal's durable
     /// reservation path. `clock` is sampled again after asynchronous loading;
     /// it must be a trusted local clock, not an endpoint-controlled timestamp.

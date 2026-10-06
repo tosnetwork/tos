@@ -1,0 +1,132 @@
+{
+  "base_commit": "587596ce793ed02206626013075f801319aaeaa0",
+  "scope": "Validated public fee trees select journal-bound paths for encrypted Vault signing. Six message bodies match executed recovery transactions. Synthetic proof metadata, public test keys, diagnostic credit 20000; no live network claim.",
+  "controls": {
+    "baseline": {
+      "exit": 0,
+      "semantic_witness": null
+    },
+    "tree_enrollment": {
+      "exit": 101,
+      "semantic_witness": "wrong fee tree reached key loading path"
+    },
+    "config_binding": {
+      "exit": 101,
+      "semantic_witness": "protected custody changed executed fee body"
+    },
+    "clock_resample": {
+      "exit": 101,
+      "semantic_witness": "recorded custody accepted stale clock after key loading"
+    },
+    "restored": {
+      "exit": 0,
+      "semantic_witness": null
+    }
+  },
+  "restored": {
+    "scope": "Encrypted public test seeds, actual executed bodies, synthetic proof metadata; diagnostic credit 20000",
+    "messages": [
+      {
+        "route": 0,
+        "leaf": 12,
+        "body_hash": "0a526c80f2155336a05926105f26af43dad2b52f11d52e39394d16f85b7fc4fe"
+      },
+      {
+        "route": 0,
+        "leaf": 13,
+        "body_hash": "62b126e1cae70aec9c66f9bb9bb491a7fb5b6c79dfb9348bdff9e90e5c6a4d98"
+      },
+      {
+        "route": 1,
+        "leaf": 16,
+        "body_hash": "b900533f241795201ae6dcddb4edbb9bf05bbd27065ac8dd10cf414dd35f063a"
+      },
+      {
+        "route": 1,
+        "leaf": 17,
+        "body_hash": "902f680b3e9b86f71563ef44529a29340367638abb177f98c7aab21af48e7870"
+      },
+      {
+        "route": 0,
+        "leaf": 16,
+        "body_hash": "59c8e4583424418305b835c351f4f0fce347707c28b6576c7f312fdb88ea4316"
+      },
+      {
+        "route": 1,
+        "leaf": 18,
+        "body_hash": "70025a6b03f4f5cb82df7fe86efc397d711f956dd17a122da2b7333a2c0f2fc3"
+      }
+    ],
+    "stale_clock_rejected_without_reservation": true,
+    "reopened_encrypted_vault": true,
+    "exact_cached_retry_after_vault_drop": true
+  },
+  "existing_vault_controls": {
+    "prestore_binding": {
+      "exit": 101,
+      "semantic_witness": "fee restore persisted wrong seed"
+    },
+    "load_binding": {
+      "exit": 101,
+      "semantic_witness": "fee vault loaded wrong enrollment"
+    },
+    "record_profile": {
+      "exit": 101,
+      "semantic_witness": "fee vault accepted untagged record"
+    },
+    "new_only": {
+      "exit": 101,
+      "semantic_witness": "fee restore overwrote enrolled record"
+    },
+    "unpolled_wipe": {
+      "exit": 101,
+      "semantic_witness": "unpolled fee restore retained seed"
+    },
+    "fresh_clock": {
+      "exit": 101,
+      "semantic_witness": "fee vault signed after proof expired during load"
+    }
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/recorded_fee_custody.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-tree-fee-custody-final --controls",
+    "python3 test/wallet-v5r2/fee_vault_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-tree-fee-vault-regression",
+    "make -C tosctl/src fmt-check"
+  ],
+  "fixture_receipts_index": "test/wallet-v5r2/recorded-fee-custody-20261006.json",
+  "public_trees_index": "test/wallet-v5r2/native-fee-integration-20261006.json",
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-tree-fee-custody.tar.gz",
+    "sha256": "c14a36232811aecf1a69549dadd75c948e68917f1b095eb8dde3524d96129ea5",
+    "bytes": 7205
+  },
+  "retention_through": "2027-01-06",
+  "source_files": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "sha256": "5b849be71d433aa107e3b9c7cb8dd7bca7a10b2442f05e5e4ab24ccb2067167d",
+      "bytes": 187471
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_vault_controls.py",
+      "sha256": "e2e8fa26877911856cc899f36afe2aed4f5b27543ec4dbf01fa838042f181a35",
+      "bytes": 4166
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/recorded_fee_custody.py",
+      "sha256": "0fc5c44c00f49b7821d7582f1c35a00f4c1d3a7fc39aa6877ee2eea4ba5ff115",
+      "bytes": 3765
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_vault.rs",
+      "sha256": "b047e5b34fb8782c28831d3cfb14eb685f881dd94f075f3106646ad85b037d35",
+      "bytes": 9466
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_fee_tests.rs",
+      "sha256": "bb684194af486edd677e1d44924574cbfa2f904796ae864b1c701a86a4e68189",
+      "bytes": 8240
+    }
+  ],
+  "format_and_lint_exit": 0
+}

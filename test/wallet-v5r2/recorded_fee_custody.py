@@ -22,6 +22,13 @@ def main():
     originals = {p: p.read_text() for p in (journal, vault)}
     cases = [
         (
+            "tree_enrollment",
+            vault,
+            "tree.public_key() == view.fee_public_key()",
+            "true",
+            "wrong fee tree reached key loading path",
+        ),
+        (
             "config_binding",
             journal,
             "config_hash: *vault.config_hash(),",

@@ -55,8 +55,15 @@ def main():
         ),
         (
             "fresh_clock",
-            "        let plan = self.preview_proven(view, clock())?;",
-            "        let old_now = clock();\n        let mut clock = || old_now;\n        let plan = self.preview_proven(view, clock())?;",
+            (
+                "        let plan = self.preview_proven(view, clock())?;\n"
+                "        let mut seed = load_bound"
+            ),
+            (
+                "        let old_now = clock();\n        let mut clock = || old_now;\n"
+                "        let plan = self.preview_proven(view, clock())?;\n"
+                "        let mut seed = load_bound"
+            ),
             INTEGRATION,
             "fee vault signed after proof expired during load",
         ),

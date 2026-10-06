@@ -2911,3 +2911,25 @@ execution, while their proof metadata and local clock are explicitly synthetic.
 The prior dual-VM execution used diagnostic credit 20,000. Live deployment,
 revocation/takeover and default-credit admission remain open. Evidence:
 `test/wallet-v5r2/recorded-fee-custody-20261006.json`.
+
+### Public tree selection at the encrypted signing boundary
+
+`FeeJournal::sign_proven_fee_from_vault_tree` accepts a validated `FeeTree`,
+checks its enrollment against the fresh proven fee vault, and obtains the path
+for the leaf selected by the journal. It then delegates to the existing
+protected-custody signer, which rechecks the plan before loading and resamples
+the trusted clock after loading. A clock transition or stale proof fails closed;
+no caller-supplied leaf/path can be mixed with this API's selected tree.
+
+The recorded six-message custody replay now loads both independently generated
+public trees through the cache validator and signs through this API. A different
+tree must be rejected before entering the delegated key-loading path. Deleting
+that early enrollment check, substituting the fee config hash, or removing the
+post-load clock sample must trigger distinct semantic assertions. Existing
+path-based signing remains available with its original preflight and custody
+checks. Tree loading/validation is synchronous and should occur on a worker
+before interactive signing, rather than blocking a UI/event loop.
+
+Evidence: `test/wallet-v5r2/tree-fee-custody-20261006.json`. This remains local
+fixture evidence at diagnostic credit 20,000, not live proof acquisition or
+production admission.
