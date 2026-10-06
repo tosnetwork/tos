@@ -34,12 +34,9 @@
 
 namespace {
 
+// Through the same formatter the node logs identities with, so the two read alike.
 void print_hex(std::string_view bytes) {
-  static const char digits[] = "0123456789abcdef";
-  for (unsigned char c : bytes) {
-    std::fputc(digits[c >> 4], stdout);
-    std::fputc(digits[c & 15], stdout);
-  }
+  std::fputs(tos::pq::identity_hex(bytes).c_str(), stdout);
 }
 
 // What a validator set records for this key, and nothing else. The identity is derived
@@ -158,7 +155,9 @@ int usage() {
       "  5. host, node stopped:\n"
       "                tos-pq-consensus-key bind-node --replace DB_ROOT\n"
       "                  KEYDIR/pq-consensus-next.seed VALIDATOR_ID\n"
-      "     then start the node and confirm it logs key B.\n"
+      "     then start the node and confirm its log line\n"
+      "       post-quantum consensus custody: validator_id ... key_id ...\n"
+      "     shows B's key_id exactly as `tos-pq-consensus-key show` prints it.\n"
       "  6. confirm the next election accepts the stake signed with B, and that the\n"
       "     validator appears in Config34 with B after the set switches.\n"
       "  7. destroy every other copy of the seed except the encrypted offline backup.\n",

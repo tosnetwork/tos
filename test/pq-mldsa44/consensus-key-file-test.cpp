@@ -42,6 +42,11 @@ void write_file(const std::string& path, const std::string& contents, mode_t mod
 }  // namespace
 
 int main() {
+  // The one form identities are printed and logged in: lowercase hexadecimal, two digits
+  // a byte, every byte, nothing else.
+  assert(identity_hex(std::string_view("\x00\x0a\xab\xff", 4)) == "000aabff");
+  assert(identity_hex(std::string_view()).empty());
+
   const std::string dir = scratch_directory();
   const std::string key = dir + "/consensus.key";
 

@@ -192,7 +192,8 @@ jobs:
       # a provisioning run reported as written becomes one the node refuses at startup.
       - name: Consensus key file
         run: |
-          cmake --build build --target test-consensus-key-file tos-pq-consensus-key tos-pq-controller -j2
+          cmake --build build --target test-consensus-key-file tos-pq-consensus-key tos-pq-controller \
+            test-fsync-dir-failure-shim -j2
           ./build/crypto/pq/test-consensus-key-file
           python3 test/pq-mldsa44/consensus_key_tool_test.py \
             --tool build/crypto/pq/tos-pq-consensus-key \

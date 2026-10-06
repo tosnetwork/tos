@@ -55,6 +55,11 @@ const char* describe(ConsensusKeyFileError error) noexcept;
 // reads the same words whichever command refused the file.
 ConsensusKeyFileError consensus_key_refusal(detail::SeedFileRefusal refusal) noexcept;
 
+// An identity (a key_id, a validator id, a public key) as lowercase hexadecimal: the one
+// form `tos-pq-consensus-key` prints and the node logs, so an operator can compare the
+// two as strings.
+std::string identity_hex(std::string_view bytes);
+
 // Load the seed at `path` and derive the signer it stands for.
 //
 // The file must be a regular file this process owns, with no group or world bits, in a

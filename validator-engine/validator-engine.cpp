@@ -2629,10 +2629,15 @@ void ValidatorEngine::start_validator() {
         std::make_shared<const tos::pq::ValidatorPQKeyStore>(std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
     // The identity of the key is what the key derives, never what the configuration says:
     // a node cannot claim to hold a key it does not.
-    LOG(WARNING) << "post-quantum consensus custody: validator " << config_.pq_consensus->validator_id.value.to_hex()
-                 << " key "
-                 << td::base64_encode(
-                        td::Slice(store->consensus_key().key_id.data(), store->consensus_key().key_id.size()));
+    // Logged in the form `tos-pq-consensus-key show` and `bind-node` print, through the
+    // same formatter, so an operator compares the two as strings.
+    const auto &validator_id = config_.pq_consensus->validator_id.value;
+    const auto &key_id = store->consensus_key().key_id;
+    LOG(WARNING) << "post-quantum consensus custody: validator_id "
+                 << tos::pq::identity_hex(std::string_view(reinterpret_cast<const char *>(validator_id.data()), 32))
+                 << " key_id "
+                 << tos::pq::identity_hex(
+                        std::string_view(reinterpret_cast<const char *>(key_id.data()), key_id.size()));
     pq_consensus_signer_ = store;
     // Registration crosses an actor boundary, so nothing else may start until it has
     // answered. Were the rest of startup to run here, a refused custody would kill the
