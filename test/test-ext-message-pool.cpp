@@ -14,6 +14,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
+#include <cstdio>
 #include <filesystem>
 
 #include "block/block-parse.h"
@@ -291,7 +292,7 @@ TEST(ExtMessageChecker, RejectedContractExecutesVmExactlyOnce) {
 
 namespace tos::validator {
 namespace {
-void exercise_work_dispatch(bool mismatched_config) {
+void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = false) {
   ASSERT_TRUE(vm::init_vm().is_ok());
   auto file = td::read_file((std::filesystem::path(__FILE__).parent_path() /
                             "pq-native/data/c04-pq-genesis.boc").string());
@@ -299,6 +300,26 @@ void exercise_work_dispatch(bool mismatched_config) {
   auto decoded = vm::std_boc_deserialize(file.move_as_ok());
   ASSERT_TRUE(decoded.is_ok());
   auto root = decoded.move_as_ok();
+  if (ordinary_account) {
+    // Keep the funded bootstrap wallet and its code intact, but remove the
+    // optional special-account list in this synthetic test configuration.
+    block::gen::ShardStateUnsplit::Record shard;
+    block::gen::McStateExtra::Record extra;
+    block::gen::ConfigParams::Record params;
+    ASSERT_TRUE(tlb::unpack_cell(root, shard));
+    ASSERT_TRUE(tlb::unpack_cell(shard.custom->prefetch_ref(), extra));
+    ASSERT_TRUE(tlb::csr_unpack(extra.config, params));
+    vm::Dictionary config_dict{params.config, 32};
+    ASSERT_TRUE(config_dict.lookup_delete_ref(td::BitArray<32>{31}).not_null());
+    params.config = std::move(config_dict).extract_root_cell();
+    td::Ref<vm::Cell> params_cell;
+    ASSERT_TRUE(tlb::pack_cell(params_cell, params));
+    extra.config = vm::load_cell_slice_ref(params_cell);
+    td::Ref<vm::Cell> extra_cell;
+    ASSERT_TRUE(tlb::pack_cell(extra_cell, extra));
+    shard.custom = vm::load_cell_slice_ref(vm::CellBuilder().store_long(1, 1).store_ref(extra_cell).finalize());
+    ASSERT_TRUE(tlb::pack_cell(root, shard));
+  }
   BlockIdExt id{masterchainId, shardIdAll, 0, root->get_hash().bits(), FileHash::zero()};
   auto loaded = MasterchainStateQ::fetch(id, td::BufferSlice{}, root);
   ASSERT_TRUE(loaded.is_ok());
@@ -306,7 +327,30 @@ void exercise_work_dispatch(bool mismatched_config) {
   auto config = block::ConfigInfo::extract_config(root, id, 0xFFFF);
   ASSERT_TRUE(config.is_ok());
   StdSmcAddress destination;
-  ASSERT_TRUE(vm::load_cell_slice(config.ok()->get_config_param(0)).fetch_bits_to(destination));
+  if (ordinary_account) {
+    StdSmcAddress config_address, elector_address;
+    ASSERT_TRUE(vm::load_cell_slice(config.ok()->get_config_param(0)).fetch_bits_to(config_address));
+    ASSERT_TRUE(vm::load_cell_slice(config.ok()->get_config_param(1)).fetch_bits_to(elector_address));
+    block::gen::ShardStateUnsplit::Record shard;
+    ASSERT_TRUE(tlb::unpack_cell(root, shard));
+    vm::AugmentedDictionary accounts{vm::load_cell_slice_ref(shard.accounts), 256, block::tlb::aug_ShardAccounts};
+    bool found = false;
+    ASSERT_TRUE(accounts.check_for_each([&](td::Ref<vm::CellSlice>, td::ConstBitPtr key, int bits) {
+      if (bits != 256) {
+        return false;
+      }
+      StdSmcAddress candidate{key};
+      if (!found && candidate != config_address && candidate != elector_address) {
+        destination = candidate;
+        found = true;
+      }
+      return true;
+    }));
+    ASSERT_TRUE(found);
+    ASSERT_TRUE(!config.ok()->is_special_smartcontract(destination));
+  } else {
+    ASSERT_TRUE(vm::load_cell_slice(config.ok()->get_config_param(0)).fetch_bits_to(destination));
+  }
   auto rejected_root = vm::CellBuilder().store_long(2, 2).store_zeroes(2)
       .store_long(2, 2).store_zeroes(1).store_long(-1, 8)
       .store_bits(destination.cbits(), 256).store_zeroes(4 + 1 + 1).finalize();
@@ -365,6 +409,11 @@ void exercise_work_dispatch(bool mismatched_config) {
         EXPECT_EQ(result.error().message(), "external admission configuration is outside the work profile");
       } else if (i == 0) {
         EXPECT(result.error().message().str().find("External message was not accepted") != std::string::npos);
+        if (ordinary_account) {
+          std::fprintf(stderr, "Ordinary account rejection: %s\n", result.error().message().str().c_str());
+          EXPECT(result.error().message().str().find("gas_used=0") != std::string::npos);
+          EXPECT(result.error().message().str().find("steps=0,") == std::string::npos);
+        }
       } else if (i == 1) {
         EXPECT(result.error().message().str().find("cannot deserialize bag-of-cells") != std::string::npos);
       } else {
@@ -392,6 +441,9 @@ TEST(ExtMessagePool, WorkBudgetChargesFailuresAcrossPeerAndLocalSources) {
 }
 TEST(ExtMessagePool, WorkBudgetRejectsUnmatchedConfigurationWithoutDispatch) {
   exercise_work_dispatch(true);
+}
+TEST(ExtMessagePool, WorkBudgetChargesRejectedOrdinaryVmReportingZeroGas) {
+  exercise_work_dispatch(false, true);
 }
 
 namespace {

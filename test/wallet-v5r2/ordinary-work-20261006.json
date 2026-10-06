@@ -1,0 +1,64 @@
+{
+  "base_commit": "d11a308d584e08a41c58a30cbf2897f43751dd59",
+  "source_state": "uncommitted test and runner changes on base commit; production sources unchanged and restored",
+  "platform": "Linux AArch64 Release clang",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "test/test-ext-message-pool.cpp": "e27e5f41f6f4c62ce783f55a3dc1be00e8d5bca302af44e26746a758765bd770",
+    "validator/impl/ext-message-pool.cpp": "e5acfb7bef80120b105c846b64272ce86cad7287b36d2b636b8995d47cb6afd1",
+    "validator/impl/ext-message-checker.cpp": "080ef0c13ba023e4f2f04b9dbe673b9a878931614db7c3b31504eb6207ed6a85",
+    "validator/impl/collator.cpp": "3b0560ca836dd161315a2b6d98c79775f73a39ca420131a8d7a7a82c67b07d7e",
+    "crypto/block/transaction.cpp": "d0493ad8bdacd38e02b9f1addb12d393512c5f292f622875b5876ae9a025c8be",
+    "test/pq-native/data/c04-pq-genesis.boc": "4e833bf9650c48448969688b862abfd6ad31dd504aa9ab68757db683e47bb162",
+    "scripts/check-ext-message-pool-controls.py": "56ff09c41e50d87d3528a914d3ce7a05baadf0c448e5f9557ba5ec862d25b904",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "e68ac415c07d502765c4ca6b5c3dae394a21e60d53d28a008acde8189db17806"
+  },
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-ordinary-work-controls",
+  "command": "python3 scripts/check-ext-message-pool-controls.py --mutation skip-zero-gas-work-charge --container v5r2-admission-linux --build-dir /build-shadow --output-dir /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-ordinary-work-controls",
+  "results": {
+    "target": "test-ext-message-pool",
+    "source_sha256": "e5acfb7bef80120b105c846b64272ce86cad7287b36d2b636b8995d47cb6afd1",
+    "returncodes": {
+      "baseline-build": 0,
+      "baseline": 0,
+      "skip-zero-gas-work-charge-build": 0,
+      "skip-zero-gas-work-charge": 1,
+      "restored-build": 0,
+      "restored": 0
+    },
+    "logs": {
+      "baseline-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "baseline.log": {
+        "sha256": "3fd943e76fa90d885a91ecf5ebc11e1340791edb60691f22140d08703ddd7cf4",
+        "bytes": 7038
+      },
+      "restored-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "restored.log": {
+        "sha256": "664700cf2d025b683c6a7e384a053fcc00997d0f3164372227a76decca957d82",
+        "bytes": 7038
+      },
+      "skip-zero-gas-work-charge-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "skip-zero-gas-work-charge.log": {
+        "sha256": "36cc50c1a500de3e66413a66d47b68316ff0910fca149ece2ec74cb586933298",
+        "bytes": 2151
+      }
+    },
+    "scope": "actual pool coroutine, shared work charge, exact config pin, and failure VM-count regression"
+  },
+  "scope": "Synthetic frozen-state variant removes ConfigParam 31, preserving accounts, code, balances and gas prices. An existing non-config/non-elector masterchain account is verified non-special. Its external request executes VM once and reports exitcode=9, steps=13, gas_used=0. Work still charges once; a following parse failure consumes the second unit and null/peer requests then observe exhaustion. Baseline/restored each pass 13 tests; targeted deletion of charging fails.",
+  "limitations": [
+    "Synthetic non-special masterchain configuration; no basechain 20,000-credit measurement or complete consensus validation of a generated release chain.",
+    "The contract rejects an empty external body; this does not establish the worst-case PQ signature rejection cost or cold-cache hardware budget.",
+    "Earlier assumed-address and compile failures were fixture setup failures and are excluded from acceptance evidence.",
+    "Latest remote CI remains pending at an older revision."
+  ]
+}

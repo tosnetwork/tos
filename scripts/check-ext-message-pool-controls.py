@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--container')
     parser.add_argument('--manager-entrypoints', action='store_true',
                         help='Check shared manager/broadcast/liteserver admission instead of pool-only boundaries')
+    parser.add_argument('--mutation', help='Run only this mutation; baseline and restoration still run the full target')
     parser.add_argument('--container-source-dir', default='/checkout')
     parser.add_argument('--build-dir', required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
@@ -57,6 +58,9 @@ def main():
         ('skip-work-charge', b'    if (!work_admission_->try_consume()) {',
          b'    if (false) {', 'external message admission work budget exhausted',
          'WorkBudgetChargesFailuresAcrossPeerAndLocalSources'),
+        ('skip-zero-gas-work-charge', b'    if (!work_admission_->try_consume()) {',
+         b'    if (false) {', 'external message admission work budget exhausted',
+         'WorkBudgetChargesRejectedOrdinaryVmReportingZeroGas'),
         ('skip-profile-check', b'    if (!work_profile_supported_) {',
          b'    if (false) {', 'external admission configuration is outside the work profile',
          'WorkBudgetRejectsUnmatchedConfigurationWithoutDispatch'),
@@ -77,6 +81,10 @@ def main():
         mutations = [('skip-shared-charge', b'    if (!work_admission_->try_consume()) {',
                       b'    if (false) {', 'available:0 supported:true',
                       'BroadcastQueryAndLiteServerShareWorkBudget')]
+    if args.mutation:
+        mutations = [mutation for mutation in mutations if mutation[0] == args.mutation]
+        if not mutations:
+            parser.error('unknown mutation for selected target: ' + args.mutation)
     for name, anchor, _, _, _ in mutations:
         if original.count(anchor) != 1:
             raise RuntimeError(f'{name}: expected exactly one mutation anchor')

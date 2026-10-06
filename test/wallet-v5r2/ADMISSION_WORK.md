@@ -80,3 +80,11 @@ observe the shared exhausted budget. `--manager-entrypoints` on the pool control
 runner deletes shared charging and requires that test to fail. This does not
 establish HTTP/ADNL transport coverage, actual signature rejection cost or mixed
 network-load fairness.
+
+The pool suite also executes a funded, non-special masterchain account from a
+synthetic variant of the frozen fixture: only optional ConfigParam 31 is removed;
+account code, balances and gas-price parameters remain unchanged. The
+[recorded rejection](ordinary-work-20261006.json) reports `steps=13, gas_used=0`, while the VM start/finish counters each
+equal one and the attempt consumes work. A targeted charge-deletion control
+must fail this test. Basechain 20,000-credit calibration and full release genesis
+acceptance remain separate gates.
