@@ -1,0 +1,347 @@
+{
+  "code": {
+    "module": {
+      "bytes": 3055,
+      "cells": 46,
+      "code_hash": "f818dd311152d6ea13ef7f38002eb6f7390fac06bbe5df71bb8a2dd0c09c5b6d",
+      "depth": 15,
+      "external_libraries": 0,
+      "sha256": "500dc4c115c636291a880c2d2874ab8c1c557dcaa5147421827b06824bba8475"
+    },
+    "vault": {
+      "bytes": 690,
+      "cells": 11,
+      "code_hash": "9fa07637d49c4176766847251cfd820d5a11ade70fe92a45e11e419dba0452a0",
+      "depth": 5,
+      "external_libraries": 0,
+      "sha256": "0a8dd10e6450a3e469e86572fc52b49bfc64e10fe2cd61071747f4ba4922e38e"
+    },
+    "wallet": {
+      "bytes": 3410,
+      "cells": 59,
+      "code_hash": "06203e98d4d8bf97b0cab37523ec435f5ab0e1d6d2c5253926eebf20ef1712f5",
+      "depth": 14,
+      "external_libraries": 0,
+      "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
+    }
+  },
+  "config": {
+    "bytes": 7387,
+    "gas": {
+      "20": {
+        "block_gas_limit": 2500000,
+        "gas_credit": 10000,
+        "gas_limit": 1000000
+      },
+      "21": {
+        "block_gas_limit": 60000000,
+        "gas_credit": 20000,
+        "gas_limit": 30000000
+      }
+    },
+    "global_id": 1,
+    "network": "4242424242424242424242424242424242424242424242424242424242424242",
+    "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+    "version": 18
+  },
+  "files": {
+    "abi/contract-constants.json": {
+      "bytes": 3814,
+      "sha256": "a9244723d6d5cdf62044b9c8de8ce7fd1bab8b16fd3af63c3aaa70c82662032e"
+    },
+    "code/module.boc": {
+      "bytes": 3055,
+      "sha256": "500dc4c115c636291a880c2d2874ab8c1c557dcaa5147421827b06824bba8475"
+    },
+    "code/vault.boc": {
+      "bytes": 690,
+      "sha256": "0a8dd10e6450a3e469e86572fc52b49bfc64e10fe2cd61071747f4ba4922e38e"
+    },
+    "code/wallet.boc": {
+      "bytes": 3410,
+      "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
+    },
+    "config.boc": {
+      "bytes": 7387,
+      "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7"
+    },
+    "repository/LICENSE": {
+      "bytes": 35149,
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    "repository/THIRD_PARTY_NOTICES.md": {
+      "bytes": 1188,
+      "sha256": "4e30874f0e49807d6d8d6d967649332c9370bda0449c8727a7e6bdebf3453d75"
+    },
+    "repository/crypto/block/block.tlb": {
+      "bytes": 45250,
+      "sha256": "b6885c1cedd4cb8d86433634488578825b2b7f9003a9b625bfccb2fbf0d8842a"
+    },
+    "repository/crypto/fift/lib/Asm.fif": {
+      "bytes": 49768,
+      "sha256": "a1df048428646f7f5ea2addc206a0cb2089982d967d589d5408aba90d2fedc4e"
+    },
+    "repository/crypto/fift/lib/Fift.fif": {
+      "bytes": 4653,
+      "sha256": "bad419afb217f533cfba08eaec1ba33dbbd8b061bf5299447ea672e2561ed7a4"
+    },
+    "repository/crypto/pq/lms-fee.cpp": {
+      "bytes": 6703,
+      "sha256": "c7792505bd59820760d9d0d0b00b6367e734ff6c2eef1462eebe57ec9373772a"
+    },
+    "repository/crypto/pq/lms-fee.h": {
+      "bytes": 1315,
+      "sha256": "601bda498c7a67bc870b4248bd2036a2a14287f17e8dbb4c83dc7bb670885443"
+    },
+    "repository/crypto/pq/wallet-pq-signer-c.h": {
+      "bytes": 1893,
+      "sha256": "ae118544a5d14f10ebc733aec5b78494a01104f84018b2e074de42c23187b9e3"
+    },
+    "repository/crypto/smartcont/auth-policy.fc": {
+      "bytes": 3347,
+      "sha256": "8cbe92ade5089e39785292cdc7643246c6e17a4001773366e7d5c3f260769e10"
+    },
+    "repository/crypto/smartcont/pq-bytes.fc": {
+      "bytes": 6817,
+      "sha256": "0ef93769adb8db5c2665e9e9a78d239683a0a975e2ffc0034f9f58cb5f9fd011"
+    },
+    "repository/crypto/smartcont/pq.fc": {
+      "bytes": 857,
+      "sha256": "04c582149605adbeeb7d0ab0733ebcc2d3af15b44455162255541be6aebf3bf3"
+    },
+    "repository/crypto/smartcont/stdlib.fc": {
+      "bytes": 37585,
+      "sha256": "77d121550d99c533cffe10d5f479c04777e6e7c34b712421473cfe6a24615717"
+    },
+    "repository/crypto/smartcont/wallet-v5-action-list.fc": {
+      "bytes": 2227,
+      "sha256": "86d23a7f6548bc4c69106f255df271baaab0a51559e9c179cdb629b633ddec83"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-auth.fc": {
+      "bytes": 4861,
+      "sha256": "e8e0b134d2229e4b0c97725d53afa707bb71bec5941fa85531d274d8df2a2799"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-code.fc": {
+      "bytes": 4499,
+      "sha256": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-common.fc": {
+      "bytes": 759,
+      "sha256": "042a1b054523a5838bc3cfff999dedfd4bcdf130eb92c18aed0d28b598c7ba14"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-fee-identity.fc": {
+      "bytes": 3056,
+      "sha256": "78889a4e42080b052a687198f4fbe54990be4e1c0694de66cabfc47eb6d796dc"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-fee-vault.fc": {
+      "bytes": 7015,
+      "sha256": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-identity.fc": {
+      "bytes": 2471,
+      "sha256": "b6eeb0d91a46522f892c3e66a4ce37ebe0b2b242d5560e0dbe73c59561f5cbeb"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-module.fc": {
+      "bytes": 8035,
+      "sha256": "263c0c24e14e0f65aa481633f18cc2bac61ce160038b151b81a8f032b3dbe802"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-pop.fc": {
+      "bytes": 1965,
+      "sha256": "910f25e84aa4338829907d5bb57e58233d15b71c7f58b33883313770852cdd4d"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-rescue.tlb": {
+      "bytes": 12106,
+      "sha256": "daa1c4ae51ddc83880148fb8846e89be958f981ab5696f05384c54a24ba1e064"
+    },
+    "repository/crypto/smartcont/wallet-v5r2-state.fc": {
+      "bytes": 3270,
+      "sha256": "71b1855f4ad9d836b9365b9618feeef53d9c1e6e30496b7d3211cd773d1eeb95"
+    },
+    "repository/crypto/vm/excno.hpp": {
+      "bytes": 4609,
+      "sha256": "976d9ab3cbdc02ff56a85be02212ace5b30cacef341aeb785c90ed5e2319a652"
+    },
+    "repository/crypto/vm/pqops.cpp": {
+      "bytes": 11603,
+      "sha256": "86a9991fad0e8abbaf2f4ea3b2ba623ce0b976f6150ef3c04a49894f69c697ee"
+    },
+    "repository/crypto/vm/pqops.h": {
+      "bytes": 2493,
+      "sha256": "d4d4002761939a8ae7a909fa751e0e1ff76c8ebc9ce7044420e3fc4f8befb3d0"
+    },
+    "repository/doc/auth-policy-v1.md": {
+      "bytes": 5876,
+      "sha256": "0f34d3bfda978335e803dcbefb1848ec2d4e9a2ab801d057d689b3edda4e020c"
+    },
+    "repository/doc/tvm-lms-fee-hash.md": {
+      "bytes": 5976,
+      "sha256": "e839b211e61ea7f981d184b30aa6a44abaa39644a9f5e760440852a2dffd3c42"
+    },
+    "repository/scripts/build-wallet-v5r2-bundle.py": {
+      "bytes": 13114,
+      "sha256": "1a9b39aa4c367d445ec915ca1b5d8d2c2db5d3eacdbebf812ef6ed4d440e04c0"
+    },
+    "repository/test/auth-extensions/cells.py": {
+      "bytes": 7222,
+      "sha256": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281"
+    },
+    "repository/test/auth-extensions/native.py": {
+      "bytes": 8265,
+      "sha256": "a12555c82eafb849de167f825dbc2e926eef871fc9fe75a5c57b6899265188f4"
+    },
+    "repository/test/pq-falcon512/vectors.json": {
+      "bytes": 129214,
+      "sha256": "9624a340e5e0df5c54476f8f0f2bc8ba73df3fef5c30c60c9a984e994940ca02"
+    },
+    "repository/test/pq-mldsa44/fixtures.json": {
+      "bytes": 17936,
+      "sha256": "eec0c9046f66c05419a56ed110d6c77f22d5404fca056d2a909e832a2a7714b8"
+    },
+    "repository/test/rescue-fee-gate/fee-kdf-vectors.json": {
+      "bytes": 2770,
+      "sha256": "e521f4cbfd2a641a01ce87356fe45d316b62475176f93a291acdca90f4ff67fe"
+    },
+    "repository/test/rescue-fee-gate/suite-expected.tsv": {
+      "bytes": 1026,
+      "sha256": "407f5ff98cf4dd68b264ccb98efd6badb23ced01b8f9c51bd03e404528cafb5d"
+    },
+    "repository/test/rescue-fee-gate/suite-scenarios.tsv": {
+      "bytes": 316784,
+      "sha256": "820d8a08ab22b0bf794823e80ca11cd9295942cad31ca792936f76998dee3e03"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2.rs": {
+      "bytes": 15283,
+      "sha256": "062cdc5a6179a9394ba0bb09d58e03fae359a6b5a5f5f8f5379ba246ee8df47a"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_fee.rs": {
+      "bytes": 15119,
+      "sha256": "82e55daef39927b9fd83dfebb691d207bb57633947c3f43f72606f5f973a2113"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_fee_decode.rs": {
+      "bytes": 2337,
+      "sha256": "a0460678b51e3672cfc5318456312b97368e47656e79e211b483373f9da2be9f"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_fee_decode_tests.rs": {
+      "bytes": 3308,
+      "sha256": "c0a4d5634188d82e9aad1ab13615ffa84123d5fce6393e75697d867c077cb9da"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_genesis.rs": {
+      "bytes": 17936,
+      "sha256": "440fafa25c55bb16db59ff766df598fcd7faa690af4450fa8cf6dc05fe509e4d"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_manifest.rs": {
+      "bytes": 27994,
+      "sha256": "4f8d6cd82ff1d4e452169ae8087dab3be4d38433e896c036ff527fa04a3f1870"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_manifest_fee.rs": {
+      "bytes": 11772,
+      "sha256": "403ddd7bbe1b1634e077a5a0a68f5f56dcb91ac07241d491d8f1a99c5b72c85b"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_policy.rs": {
+      "bytes": 4651,
+      "sha256": "85fe11b34555f58281c43ea7406f50191d0676cab70485ffc675615f87960085"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs": {
+      "bytes": 23835,
+      "sha256": "341950b46567326849b327b34269c6749fbcd75dc562b519dcd730a61dfb4dcb"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_prepare.rs": {
+      "bytes": 6607,
+      "sha256": "98f206c0344c45846130847448aabc963e5e1b0a999900b656fd896ee37ba189"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_receipts.rs": {
+      "bytes": 9279,
+      "sha256": "02e1b380c88f9a6cb797bb6115f0e630d4312debec7cc1e78af24347f8b7988d"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_fee_tests.rs": {
+      "bytes": 13201,
+      "sha256": "85e312bae0132decb43f90bb75245e24844f162e1c70bee62c0d06618648e12c"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_migration_tests.rs": {
+      "bytes": 12865,
+      "sha256": "1f44862979d538f491c054d1a52834bc072b738a05bea667a456e2c44cc10ecf"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs": {
+      "bytes": 10925,
+      "sha256": "74c7a078e682aeb9d3435ac5575080ddd6dec1f6159da390942b29ef4fb6071a"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_vault.rs": {
+      "bytes": 6539,
+      "sha256": "b0c28b1680500ca8e9542a27b18dfff1be96a95d70ae23680ddd0f521fa5697b"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs": {
+      "bytes": 24046,
+      "sha256": "a9e551e14db397087bf66dcd5e828f23d0bc6016e8530d131f3baad543e5415f"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/v5r2/auth-wire.json": {
+      "bytes": 1952,
+      "sha256": "2e5da727d762e642eac704b54602bf915ba7f45fdb8517e620244c18adb1f606"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/v5r2/fee-wire.json": {
+      "bytes": 935,
+      "sha256": "d7e77e992e304edbd845ec862c4ec1f9d2ea2e3b7fb1b81fa6e746b4dc15e779"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/v5r2/genesis-wire.json": {
+      "bytes": 3031,
+      "sha256": "bfaa382f35e6045921e92387223996489f6010aa67ebfa8dc204634dd2776ec5"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/v5r2/pop-wire.json": {
+      "bytes": 1207,
+      "sha256": "431da18e7af8a044f971906223e74b75960b63cc62aaeb7061691b4cbc7504ea"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/v5r2/prepare-wire.json": {
+      "bytes": 792,
+      "sha256": "5b6622bd82a9db21db5e038b026634ae6bb520056c06895375b690208d5460d2"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/v5r2/receipt-transactions.json": {
+      "bytes": 127797,
+      "sha256": "fe916fadeba3d5b8a52e49290080496d2d7f84a4a9c89d8137f1fb0ec992f03b"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/v5r2/successor-wire.json": {
+      "bytes": 3391,
+      "sha256": "9f91d78252965ce19bf3939918630a1f24ee9049ca1e5b0425954045f9e65ee0"
+    },
+    "repository/tosctl/src/tos-native-mnemonic/tests/fixtures/native-pq.json": {
+      "bytes": 1462,
+      "sha256": "a8aa654107f705f907981951f3f6db62e9fbf1fc1b5864264144a78cb0fb91cc"
+    },
+    "repository/tosctl/src/vm/src/executor/engine/handlers.rs": {
+      "bytes": 49500,
+      "sha256": "d1c230a43c7043d6e688dbe505d0d9d259f2fbd43d651537451060e8381b253e"
+    },
+    "repository/tosctl/src/vm/src/executor/lms_fee.rs": {
+      "bytes": 5582,
+      "sha256": "ff6ae2ffc152a193695c7f152be4a1063f958bc5e16a6f43be0262694f609f66"
+    },
+    "repository/tosctl/src/vm/src/executor/pq.rs": {
+      "bytes": 16734,
+      "sha256": "28836e293b23ddb10c2f3bab82ba3bf15767144e4016552b298fc83ee311762c"
+    },
+    "repository/tosctl/src/wallet-pq-signer/src/kdf.rs": {
+      "bytes": 9772,
+      "sha256": "7fafeb1316d17ef27d2d7bf368e2a3451dced935c9210f5f1554423bf46c999f"
+    },
+    "repository/tosctl/src/wallet-pq-signer/tests/fixtures/dual-root-kdf.json": {
+      "bytes": 2483,
+      "sha256": "dc77c31594168f0bca6fdf491f8e147e9ae7faada5d9cf888d2accc52bfb2bb2"
+    },
+    "repository/tosctl/src/wallet-pq-signer/tests/fixtures/lms-fee-signature.json": {
+      "bytes": 6137,
+      "sha256": "22e4ce39d6e2bf20d3cb51797c081671230a9d10da4889b5021c18dda7524da0"
+    },
+    "repository/tosctl/src/wallet-pq-signer/tests/fixtures/native-fee-recovery.json": {
+      "bytes": 2425,
+      "sha256": "0832b942ba7a4be8a0d3446b7fc3b07cfd3f96b50e7540169053a00bd3b5ff19"
+    },
+    "wrappers/module.fc": {
+      "bytes": 1516,
+      "sha256": "aaabc9645c1980ce03b11a2343b3a881a43369c070c0a07c23a017f2b1594317"
+    },
+    "wrappers/wallet.fc": {
+      "bytes": 1736,
+      "sha256": "88dbc736ef2074ee19f1ff1efb1805644c9dc07e5482733e9a3e60a727b93e27"
+    }
+  },
+  "format": "tos-wallet-v5r2-review-bundle/1",
+  "status": "unapproved-review-candidate"
+}

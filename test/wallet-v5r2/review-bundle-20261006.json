@@ -1,0 +1,278 @@
+{
+  "schema": "TOS-WALLET-V5R2-REVIEW-BUNDLE-EVIDENCE-v1",
+  "source_base": "8251ca8679f5212bf7325d3ee0ae46a9994584c8",
+  "source_scope": "Local working-tree source identities; final-head CI remains separate",
+  "source_sha256": {
+    "scripts/build-wallet-v5r2-bundle.py": "1a9b39aa4c367d445ec915ca1b5d8d2c2db5d3eacdbebf812ef6ed4d440e04c0",
+    "test/wallet-v5r2/release_bundle_controls.py": "ba63a419ee8531b88752e407c46bc15639dcc787c340a269b4d8e5053cdebf8e"
+  },
+  "frozen_manifest": {
+    "path": "test/wallet-v5r2/review-candidate-manifest.json",
+    "sha256": "b11e01c2ea64823f30f8b60aa753811e3e94eaa33ee7628ed6197b3abe25517d",
+    "bytes": 14261,
+    "files": 74
+  },
+  "config": {
+    "bytes": 7387,
+    "gas": {
+      "20": {
+        "block_gas_limit": 2500000,
+        "gas_credit": 10000,
+        "gas_limit": 1000000
+      },
+      "21": {
+        "block_gas_limit": 60000000,
+        "gas_credit": 20000,
+        "gas_limit": 30000000
+      }
+    },
+    "global_id": 1,
+    "network": "4242424242424242424242424242424242424242424242424242424242424242",
+    "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+    "version": 18
+  },
+  "code": {
+    "module": {
+      "bytes": 3055,
+      "cells": 46,
+      "code_hash": "f818dd311152d6ea13ef7f38002eb6f7390fac06bbe5df71bb8a2dd0c09c5b6d",
+      "depth": 15,
+      "external_libraries": 0,
+      "sha256": "500dc4c115c636291a880c2d2874ab8c1c557dcaa5147421827b06824bba8475"
+    },
+    "vault": {
+      "bytes": 690,
+      "cells": 11,
+      "code_hash": "9fa07637d49c4176766847251cfd820d5a11ade70fe92a45e11e419dba0452a0",
+      "depth": 5,
+      "external_libraries": 0,
+      "sha256": "0a8dd10e6450a3e469e86572fc52b49bfc64e10fe2cd61071747f4ba4922e38e"
+    },
+    "wallet": {
+      "bytes": 3410,
+      "cells": 59,
+      "code_hash": "06203e98d4d8bf97b0cab37523ec435f5ab0e1d6d2c5253926eebf20ef1712f5",
+      "depth": 14,
+      "external_libraries": 0,
+      "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
+    }
+  },
+  "compiler_binaries": {
+    "FIFT_PATH": {
+      "bytes": 6951664,
+      "sha256": "c98186b8034be5ee06fc4ce5c1f60486dd7b351d69352c5df13adc6bd7cdf870"
+    },
+    "FUNC_PATH": {
+      "bytes": 2645192,
+      "sha256": "b027fbc14f834d8958556a73209213b120db59d88019e5b661a15a76d15180e1"
+    }
+  },
+  "checks": {
+    "passed": true,
+    "normal_build_reproduce_restored": 3,
+    "changed_bundle_refusals": 8,
+    "expected_manifest_cli_refusals": 2,
+    "in_memory_guard_deletions": 5,
+    "results": [
+      {
+        "name": "build",
+        "command": [
+          "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+          "/workspace/scratch/58828491a8ce/tos/scripts/build-wallet-v5r2-bundle.py",
+          "--config",
+          "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+          "--output-dir",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-pinned/bundle",
+          "--expected-manifest",
+          "/workspace/scratch/58828491a8ce/tos/test/wallet-v5r2/review-candidate-manifest.json"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "reproduce",
+        "command": [
+          "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+          "/workspace/scratch/58828491a8ce/tos/scripts/build-wallet-v5r2-bundle.py",
+          "--config",
+          "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+          "--check",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-pinned/bundle"
+        ],
+        "exit": 0
+      },
+      {
+        "name": "expected-namespace",
+        "command": [
+          "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+          "/workspace/scratch/58828491a8ce/tos/scripts/build-wallet-v5r2-bundle.py",
+          "--config",
+          "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+          "--output-dir",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-pinned/expected-namespace",
+          "--expected-manifest",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-pinned/expected-namespace.json"
+        ],
+        "exit": 1,
+        "semantic_refusal": "bundle differs from current sources: config"
+      },
+      {
+        "name": "expected-status",
+        "command": [
+          "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+          "/workspace/scratch/58828491a8ce/tos/scripts/build-wallet-v5r2-bundle.py",
+          "--config",
+          "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+          "--output-dir",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-pinned/expected-status",
+          "--expected-manifest",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-pinned/expected-status.json"
+        ],
+        "exit": 1,
+        "semantic_refusal": "unknown expected bundle format or acceptance status"
+      },
+      {
+        "name": "deleted-expected-manifest-option",
+        "red_assertion": "bundle corruption survived: expected-manifest-option"
+      },
+      {
+        "name": "wallet-bytecode",
+        "semantic_refusal": "bundle file digest differs: code/wallet.boc"
+      },
+      {
+        "name": "deleted-integrity-guard",
+        "red_assertion": "bundle corruption survived: wallet-bytecode"
+      },
+      {
+        "name": "module-bytecode",
+        "semantic_refusal": "bundle file digest differs: code/module.boc"
+      },
+      {
+        "name": "vault-bytecode",
+        "semantic_refusal": "bundle file digest differs: code/vault.boc"
+      },
+      {
+        "name": "wire-vector",
+        "semantic_refusal": "bundle file digest differs: repository/test/rescue-fee-gate/suite-scenarios.tsv"
+      },
+      {
+        "name": "missing-code",
+        "semantic_refusal": "bundle file set differs"
+      },
+      {
+        "name": "unexpected-file",
+        "semantic_refusal": "bundle file set differs"
+      },
+      {
+        "name": "deleted-file-set-guard",
+        "red_assertion": "bundle corruption survived: unexpected-file"
+      },
+      {
+        "name": "unreviewed-status",
+        "semantic_refusal": "unknown bundle format or acceptance status"
+      },
+      {
+        "name": "deleted-review-status-guard",
+        "red_assertion": "bundle corruption survived: unreviewed-status"
+      },
+      {
+        "name": "wrong-namespace",
+        "semantic_refusal": "bundle differs from current sources: config"
+      },
+      {
+        "name": "deleted-configuration-guard",
+        "red_assertion": "bundle corruption survived: wrong-namespace"
+      },
+      {
+        "name": "restored",
+        "command": [
+          "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+          "/workspace/scratch/58828491a8ce/tos/scripts/build-wallet-v5r2-bundle.py",
+          "--check",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-pinned/bundle",
+          "--expected-manifest",
+          "/workspace/scratch/58828491a8ce/tos/test/wallet-v5r2/review-candidate-manifest.json"
+        ],
+        "exit": 0
+      }
+    ]
+  },
+  "reproduction": [
+    "python",
+    "test/wallet-v5r2/release_bundle_controls.py",
+    "--config",
+    "GENERATED_CONFIG.boc",
+    "--expected-manifest",
+    "test/wallet-v5r2/review-candidate-manifest.json",
+    "--output",
+    "NEW_OUTPUT"
+  ],
+  "raw_artifacts": {
+    "local_path": "/workspace/scratch/58828491a8ce/artifacts/review-bundle-pinned",
+    "results": {
+      "sha256": "f2e8de08460a7dcd024f549efd747c8b1730e00a746213d48b6f0b56aaeddb4e",
+      "bytes": 6237
+    },
+    "retention": "Execution workspace lifetime only; not a durable independent archive",
+    "future_ci_path": "rescue-context-<runner>/r2-review-bundle",
+    "future_ci_retention_days": 14
+  },
+  "limits": [
+    "Unapproved candidate with explicit public test namespace 0x42 repeated 32 times",
+    "The 74-file snapshot contains available public vectors, not a claim of full ACVP acceptance",
+    "Compiler binary hashes and Git metadata are provenance, not cross-architecture equality gates",
+    "No deployment, custody backup, live proof-provider, hardware rate or independent release review claim"
+  ],
+  "final_clang_tool_reproduction": {
+    "scope": "One build and independent check after all client guard restorations, using the restored Clang 18 Release Func/Fift binaries. This is additional local compiler-build reproducibility, not architecture CI or 18 new controls.",
+    "commands": [
+      {
+        "command": [
+          "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+          "scripts/build-wallet-v5r2-bundle.py",
+          "--config",
+          "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+          "--expected-manifest",
+          "/workspace/scratch/58828491a8ce/tos/test/wallet-v5r2/review-candidate-manifest.json",
+          "--output-dir",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-clang-final"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.333,
+        "log": "/workspace/scratch/58828491a8ce/artifacts/review-bundle-clang-final-build.log",
+        "log_bytes": 1154,
+        "log_sha256": "0bebe4122d1b250a812a92a85738d866b4b95837e4a32edbba5d1aa98c335f62"
+      },
+      {
+        "command": [
+          "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+          "scripts/build-wallet-v5r2-bundle.py",
+          "--config",
+          "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+          "--expected-manifest",
+          "/workspace/scratch/58828491a8ce/tos/test/wallet-v5r2/review-candidate-manifest.json",
+          "--check",
+          "/workspace/scratch/58828491a8ce/artifacts/review-bundle-clang-final"
+        ],
+        "exit": 0,
+        "elapsed_seconds": 0.289,
+        "log": "/workspace/scratch/58828491a8ce/artifacts/review-bundle-clang-final-check.log",
+        "log_bytes": 1157,
+        "log_sha256": "a1d1235582fbf0bf2a18b1c06f922c8aa478f21c2bb98a46f4abd98f2438419d"
+      }
+    ],
+    "compiler_binaries": {
+      "FIFT_PATH": {
+        "bytes": 11340080,
+        "sha256": "2d3f1ae5e3d5707e7e03e57d8a1c12a2af47d29161509a8d8bfce3f830f79461"
+      },
+      "FUNC_PATH": {
+        "bytes": 1619960,
+        "sha256": "31f76781b608f44132fa8f7caf601c06b6a16aa6d1937b9e6a377c709e17e8ac"
+      }
+    },
+    "stable_file_identities": 74,
+    "manifest_sha256": "1e17309e4e425427b38373a167140a9204588a357a5f7c4a5924bfe9c3cf683f",
+    "output": "/workspace/scratch/58828491a8ce/artifacts/review-bundle-clang-final",
+    "raw_retention": "Local scratch only; no guaranteed independent retention. The workflow rebuilds these artifacts on the final head."
+  }
+}

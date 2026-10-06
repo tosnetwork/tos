@@ -1,0 +1,392 @@
+{
+  "schema_version": 1,
+  "scope": "Local bounded V5R2 generated-configuration and transaction-corpus evidence; publication and final-head CI remain pending",
+  "date_utc": "2026-10-06",
+  "source": {
+    "base_revision": "8251ca8679f5212bf7325d3ee0ae46a9994584c8",
+    "state": "Working-tree changes, identified by source SHA-256 below",
+    "file_sha256": {
+      "tosctl/src/executor/src/blockchain_config.rs": "2063e5aa03a6a611077042d80e3b04d75bb64f265dc495f4f42e8280e06bb137",
+      "tosctl/src/node-control/contracts/tests/chain_gas_envelope_sandbox.rs": "a9b47d7deb185014f4d676af20909952be3e61c7c2b55bf854c005e600f9d2f3",
+      "tosctl/src/executor/examples/pq-tx-parity.rs": "fe90412ba4def751809a9d98c651adb2815dce99761a981d3fb963c3e12c9e50",
+      "tosctl/src/block/src/config_params.rs": "d316a681b660db6ecbb916b3f3e43c55aa0e379bcfe47528abe4224180ad03ad",
+      "test/wallet-v5r2/release_wallet_corpus.py": "ddb3634b4dcf91b5edc976201cba933251372391abeb3982e6639eedc070f600",
+      "test/wallet-v5r2/recorded_admission.py": "9580086e571f119bbcdd9cdb7917c05ef43350ddda167b5ff03f1b36e6266c37",
+      "test/wallet-v5r2/test_recorded_admission.py": "0207ab6afe20741315d020a69b1017498e99fdf07c54d67381911b696af6fbe6",
+      "test/wallet-v5r2/test_module_delivery.py": "347939199e1e20c9d5cd74ac21203291032f33d748830b5600d4d5a844ecf36d",
+      "test/wallet-v5r2/module_tx_parity.py": "09bd0bfe71260fc141a83e2d26d2d94308517cd8502b49073f72c997c3cd975d",
+      "test/wallet-v5r2/fee_tx_parity.py": "acc6eadaff9fdf2b230020338e52f6999523c5fc14be27b8c1b10fec1a614fa5",
+      "test/wallet-v5r2/test_fee_delivery.py": "291f50fcb7b0ac8b2507bd549b14c677cbe938cf3d5612b355ef8d4e5727352d",
+      "test/wallet-v5r2/funded_recovery.py": "e7e9ba5c6c8aa60975bab77914d21f1a480d112eb24c06b1981c312fb039242f",
+      "test/wallet-v5r2/admission_config_controls.py": "8af6a443b2737c7107ac433442c020f21499e65440ef81cef86020acdd9eb7e6",
+      "test/wallet-v5r2/benchmark_transactions.py": "d20b0ddf3705506391a45bc0bf7729663ad54ce5d9d2d7124662e8032c758bd5",
+      "test/wallet-v5r2/native_signer_fixture.py": "b368ce434f679e993bd17242f445c532ccfefdfcb0e4941960c4a2566156baee",
+      "test/wallet-v5r2/pq-signer-fixture.cpp": "c2f8f67402e75c342276c70f4853de3a7e61be575389806ed3f50a34ac31e046",
+      "test/auth-extensions/native.py": "a12555c82eafb849de167f825dbc2e926eef871fc9fe75a5c57b6899265188f4",
+      "test/auth-extensions/cells.py": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281",
+      "crypto/smartcont/auth-policy.fc": "8cbe92ade5089e39785292cdc7643246c6e17a4001773366e7d5c3f260769e10",
+      "crypto/smartcont/pq.fc": "04c582149605adbeeb7d0ab0733ebcc2d3af15b44455162255541be6aebf3bf3",
+      "crypto/smartcont/pq-bytes.fc": "0ef93769adb8db5c2665e9e9a78d239683a0a975e2ffc0034f9f58cb5f9fd011",
+      "crypto/smartcont/wallet-v5-action-list.fc": "86d23a7f6548bc4c69106f255df271baaab0a51559e9c179cdb629b633ddec83",
+      "crypto/smartcont/gen-zerostate.fif": "e837c6a29ffdf605ebd723f65db1eaa29982061480982122dce4f3814d828d4e",
+      "crypto/smartcont/wallet-v5r2-auth.fc": "e8e0b134d2229e4b0c97725d53afa707bb71bec5941fa85531d274d8df2a2799",
+      "crypto/smartcont/wallet-v5r2-code.fc": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f",
+      "crypto/smartcont/wallet-v5r2-common.fc": "042a1b054523a5838bc3cfff999dedfd4bcdf130eb92c18aed0d28b598c7ba14",
+      "crypto/smartcont/wallet-v5r2-fee-identity.fc": "78889a4e42080b052a687198f4fbe54990be4e1c0694de66cabfc47eb6d796dc",
+      "crypto/smartcont/wallet-v5r2-fee-vault.fc": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a",
+      "crypto/smartcont/wallet-v5r2-identity.fc": "b6eeb0d91a46522f892c3e66a4ce37ebe0b2b242d5560e0dbe73c59561f5cbeb",
+      "crypto/smartcont/wallet-v5r2-module.fc": "263c0c24e14e0f65aa481633f18cc2bac61ce160038b151b81a8f032b3dbe802",
+      "crypto/smartcont/wallet-v5r2-pop.fc": "910f25e84aa4338829907d5bb57e58233d15b71c7f58b33883313770852cdd4d",
+      "crypto/smartcont/wallet-v5r2-state.fc": "71b1855f4ad9d836b9365b9618feeef53d9c1e6e30496b7d3211cd773d1eeb95"
+    }
+  },
+  "environment": {
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "native_compiler": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+    "python": "Python 3.12.14",
+    "configuration_control_environment": {
+      "RUST_TEST_THREADS": "1"
+    },
+    "native_tools_frozen_during_transaction_runs": true
+  },
+  "configuration": {
+    "path": "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+    "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+    "bytes": 7387,
+    "dictionary_root_hash": "afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726",
+    "global_version": 18,
+    "basechain_gas_credit": 20000,
+    "masterchain_gas_credit": 10000,
+    "unchanged_baseline_bytes": true,
+    "default_basechain_gas_credit": 10000,
+    "version_selection_does_not_activate_candidate": true
+  },
+  "commands": {
+    "configuration_unit_controls": [
+      "python3",
+      "test/wallet-v5r2/test_recorded_admission.py"
+    ],
+    "generated_config_and_fallback_control": [
+      "python3",
+      "test/wallet-v5r2/admission_config_controls.py",
+      "--output-dir",
+      "/workspace/scratch/58828491a8ce/artifacts/release-corpus/config-loading-controls"
+    ],
+    "fee_corpus": [
+      "python3",
+      "test/wallet-v5r2/release_wallet_corpus.py",
+      "--config",
+      "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+      "--driver",
+      "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/examples/pq-tx-parity",
+      "--output",
+      "/workspace/scratch/58828491a8ce/artifacts/release-corpus/wallet",
+      "--controls"
+    ],
+    "module_candidate": [
+      "python3",
+      "test/wallet-v5r2/module_tx_parity.py",
+      "--chain-config",
+      "/workspace/scratch/58828491a8ce/artifacts/release-corpus/candidate-config.boc",
+      "--native-signer",
+      "/workspace/scratch/58828491a8ce/tos/build/crypto/pq/test-wallet-pq-signer-fixture",
+      "--driver",
+      "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/examples/pq-tx-parity",
+      "--output",
+      "/workspace/scratch/58828491a8ce/artifacts/release-corpus/module-candidate"
+    ],
+    "module_diagnostic": [
+      "python3",
+      "test/wallet-v5r2/module_tx_parity.py",
+      "--native-signer",
+      "/workspace/scratch/58828491a8ce/tos/build/crypto/pq/test-wallet-pq-signer-fixture",
+      "--driver",
+      "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/examples/pq-tx-parity",
+      "--output",
+      "/workspace/scratch/58828491a8ce/artifacts/release-corpus/module-diagnostic"
+    ],
+    "cache_red_green": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "tosctl/src/Cargo.toml",
+      "--locked",
+      "-p",
+      "contracts",
+      "--test",
+      "chain_gas_envelope_sandbox",
+      "default_execution_prices_match_the_serialized_configuration",
+      "--",
+      "--nocapture"
+    ]
+  },
+  "results": {
+    "configuration_unit_tests": {
+      "exit": 0,
+      "passed": 7,
+      "in_memory_semantic_controls": 3
+    },
+    "generated_configuration_tests": {
+      "baseline_exit": 0,
+      "baseline_passed": 6,
+      "fallback_exit": 101,
+      "restored_exit": 0,
+      "restored_passed": 6
+    },
+    "fee_corpus": {
+      "exit": 0,
+      "transactions": 138,
+      "fee_externals": 31,
+      "profiles": {
+        "auth": {
+          "transactions": 26,
+          "differences": 0,
+          "fee_externals": 6,
+          "maximum_minimum_credit": 12600,
+          "maximum_complete_fee_gas": 14641,
+          "minimum_credit_by_recorded_transaction": {
+            "transaction-000": 12600,
+            "transaction-014": 12600,
+            "transaction-015": 12600,
+            "transaction-016": 12600,
+            "transaction-017": 12600,
+            "transaction-022": 12600
+          }
+        },
+        "pop-1": {
+          "transactions": 24,
+          "differences": 0,
+          "fee_externals": 6,
+          "maximum_minimum_credit": 13190,
+          "maximum_complete_fee_gas": 15231,
+          "minimum_credit_by_recorded_transaction": {
+            "transaction-000": 13190,
+            "transaction-014": 13190,
+            "transaction-015": 13190,
+            "transaction-016": 13190,
+            "transaction-017": 13190,
+            "transaction-020": 13190
+          }
+        },
+        "pop-2": {
+          "transactions": 24,
+          "differences": 0,
+          "fee_externals": 6,
+          "maximum_minimum_credit": 13190,
+          "maximum_complete_fee_gas": 15231,
+          "minimum_credit_by_recorded_transaction": {
+            "transaction-000": 13190,
+            "transaction-014": 13190,
+            "transaction-015": 13190,
+            "transaction-016": 13190,
+            "transaction-017": 13190,
+            "transaction-020": 13190
+          }
+        },
+        "recovery": {
+          "transactions": 64,
+          "differences": 0,
+          "fee_externals": 13,
+          "maximum_minimum_credit": 13515,
+          "maximum_complete_fee_gas": 15556,
+          "minimum_credit_by_recorded_transaction": {
+            "transaction-000": 13515,
+            "transaction-023": 13515,
+            "transaction-025": 13515,
+            "transaction-027": 13515,
+            "transaction-029": 13515,
+            "transaction-034": 13190,
+            "transaction-037": 12600,
+            "transaction-041": 13515,
+            "transaction-045": 13190,
+            "transaction-047": 13190,
+            "transaction-049": 12600,
+            "transaction-053": 12600,
+            "transaction-060": 13515
+          }
+        }
+      },
+      "both_vms_g_minus_one_and_g": true,
+      "historical_credit": 10000,
+      "all_historical_credit_rejections": {
+        "exit": -14,
+        "no_transaction_or_committed_account_update": true
+      }
+    },
+    "module_candidate": {
+      "exit": 0,
+      "groups": [
+        {
+          "configuration": "afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726",
+          "transactions": 15,
+          "differences": [],
+          "profile": "unchanged-generated-candidate"
+        },
+        {
+          "configuration": "8ad8c4965107d55e769acf44b078f155eac65c1917d5d84821f6f5a77e703736",
+          "transactions": 4,
+          "differences": [],
+          "profile": "retirement-control"
+        }
+      ]
+    },
+    "module_diagnostic": {
+      "exit": 0,
+      "transactions": 19,
+      "differences": 0
+    },
+    "default_cache_fix": {
+      "old_cached_threshold": 1000000000,
+      "serialized_and_new_cached_threshold": 200000152,
+      "serialized_gas_parameters_changed": false
+    },
+    "ruff_0_15_2": {
+      "check_exit": 0,
+      "format_check_exit": 0,
+      "python_files": 5
+    }
+  },
+  "required_failure_receipts": [
+    {
+      "name": "default-cache-consistency",
+      "red_exit": 101,
+      "green_exit": 0,
+      "source_before_fix_sha256": "6132198b8601d671fe9625e5d694fef05168d428859ef84a4399cacd5c3a5a10",
+      "test": "default_execution_prices_match_the_serialized_configuration",
+      "failure_excerpt": [
+        "assertion `left == right` failed: default basechain cached max_gas_threshold",
+        "  left: 200000152",
+        " right: 1000000000"
+      ],
+      "green_excerpt": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "name": "generated-config-default-fallback",
+      "baseline_tests_passed": 6,
+      "red_exit": 101,
+      "restored_tests_passed": 6,
+      "mutation": "Replace config.gas_prices(false)? with GasLimitsPrices::default_wc() in the configuration loader",
+      "failure_excerpt": [
+        "assertion `left == right` failed: candidate basechain gas_credit",
+        "  left: 20000",
+        " right: 10000"
+      ],
+      "source_restored_byte_for_byte": true
+    },
+    {
+      "name": "private-delete-lock",
+      "exit": 1,
+      "mutation": "Remove the wallet lock transition in a private compiler copy",
+      "failure_excerpt": [
+        "    assert native.account_data(w)[0].hash == expected.hash, \"lock state transition missing\"",
+        "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "AssertionError: lock state transition missing"
+      ]
+    },
+    {
+      "name": "private-delete-migrate",
+      "exit": 1,
+      "mutation": "Remove the wallet migrate transition in a private compiler copy",
+      "failure_excerpt": [
+        "    assert native.account_data(w)[0].hash == expected.hash, \"migration state transition missing\"",
+        "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "AssertionError: migration state transition missing"
+      ]
+    },
+    {
+      "name": "private-delete-recipient-update-candidate",
+      "exit": 1,
+      "failure_excerpt": [
+        "    assert recipient_data.hash == Cell().uint(1, 32).hash, (",
+        "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "AssertionError: recipient state update missing"
+      ]
+    },
+    {
+      "name": "private-delete-recipient-update-diagnostic",
+      "exit": 1,
+      "failure_excerpt": [
+        "    assert recipient_data.hash == Cell().uint(1, 32).hash, (",
+        "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "AssertionError: recipient state update missing"
+      ]
+    },
+    {
+      "name": "in-memory-test_release_config_requires_exact_original_bytes",
+      "observed_semantic_failures": 1,
+      "setup_errors": 0,
+      "failure_excerpt": [
+        "AssertionError: AssertionError not raised"
+      ]
+    },
+    {
+      "name": "in-memory-test_probe_uses_supplied_credit_as_upper_bound",
+      "observed_semantic_failures": 1,
+      "setup_errors": 0,
+      "failure_excerpt": [
+        "AssertionError: AssertionError not raised"
+      ]
+    },
+    {
+      "name": "in-memory-test_profile_reads_configuration_version",
+      "observed_semantic_failures": 1,
+      "setup_errors": 0,
+      "failure_excerpt": [
+        "AssertionError: {'global_version': 17, 'basechain_credit': 20000, 'masterchain_credit': 10000} != {'global_version': 18, 'basechain_credit': 20000, 'masterchain_credit': 10000}"
+      ]
+    }
+  ],
+  "tool_files": {
+    "build-cargo/debug/examples/pq-tx-parity": {
+      "sha256": "14e7140fa1fc65a9efe1d6186598cb9fdacf589dbe3924a736856fd58256ce08",
+      "bytes": 60862320
+    },
+    "build/crypto/pq/test-wallet-pq-signer-fixture": {
+      "sha256": "17e30b4d19c21e9822a9f3247a440367ea423fde48e8936c700281f64e52c120",
+      "bytes": 128552
+    },
+    "build/emulator/libemulator.so": {
+      "sha256": "49a78896ca75de48d068f01881f87bfb3e464fe1d6382e549363f65ad48199ed",
+      "bytes": 7166848
+    },
+    "build/crypto/func": {
+      "sha256": "b027fbc14f834d8958556a73209213b120db59d88019e5b661a15a76d15180e1",
+      "bytes": 2645192
+    },
+    "build/crypto/fift": {
+      "sha256": "c98186b8034be5ee06fc4ce5c1f60486dd7b351d69352c5df13adc6bd7cdf870",
+      "bytes": 6951664
+    },
+    "build/crypto/create-state": {
+      "sha256": "21a73d9e5d012c4550023fe79c24db08660a1cc6e84329cbe46ca3f19b37feb0",
+      "bytes": 7625760
+    }
+  },
+  "raw_evidence": {
+    "directory": "/workspace/scratch/58828491a8ce/artifacts/release-corpus",
+    "archive": {
+      "path": "/workspace/scratch/58828491a8ce/artifacts/release-corpus/raw-selected-evidence.tar.gz",
+      "sha256": "34c6cbaefb7ff5d17dc733a0ce429cd7f9200362852319190e0cf81feab5bc02",
+      "bytes": 6553725
+    },
+    "manifest": {
+      "path": "/workspace/scratch/58828491a8ce/artifacts/release-corpus/raw-manifest.json",
+      "sha256": "81fd6dca86ed81b450c91a874701144bcb87763ddb02e6cb774fe3faf30f5032",
+      "bytes": 143295,
+      "selected_files": 841
+    },
+    "retention": "Execution workspace only; local lifetime is not guaranteed. Relevant final-head rescue CI artifact upload with 14-day retention is pending.",
+    "bounded_failure_receipts": "Essential semantic failure excerpts are retained in this committed index; full raw output remains outside Git.",
+    "public_test_scope": "All fixtures use deterministic public test keys; large public tree node caches are reproducible and excluded from the archive."
+  },
+  "acceptance_limits": [
+    "G01 candidate profile selection is implemented; published client defaults still use 10000 and the publication switch remains gated.",
+    "G04/G05 cover all 31 successful selected fee externals here; G09 re-signed legal maximum cells, bytes, depth and StateInit inputs remain unverified.",
+    "The module corpus starts with a harness-funded internal message; it does not prove live payer funding, deployment, broadcast, finality or a live proof provider.",
+    "Exact solvency, reserve, worst-loading, format, scheduler-terminal and complete accepted-failure matrices remain bounded as listed in RELEASE_CORPUS.md.",
+    "SDK/CLI integration, iOS/Android/JS clients, durable device custody and restore/rotation acceptance remain separate T01-T28 and R0-R4 requirements.",
+    "These source-specific local results do not replace relevant CI on the final PR head or authorize network/default activation."
+  ]
+}

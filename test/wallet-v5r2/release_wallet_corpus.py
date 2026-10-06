@@ -1,13 +1,15 @@
 """Run selected full-wallet fee and recovery flows on unchanged generated config.
 
-The corpus proves recipient execution after recovery and source-transition
-sensitivity. It is not the complete worst-case admission or client release gate.
+The corpus proves recipient execution after recovery, exact credit boundaries
+for its accepted fee requests and source-transition sensitivity. It is not the
+complete worst-case admission or client release gate.
 """
 
 # ruff: noqa: E402
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -35,8 +37,17 @@ def main():
         ("recovery", ["--prepare", "--recovery"], 64),
     ]
     reports = {}
+    public_trees = {}
 
     def run(name, script, flags):
+        tree_folder = out / name / "native" if script == "fee_tx_parity.py" else out / name
+        tree_folder.mkdir(parents=True, exist_ok=True)
+        # Every profile uses the same deterministic public test keys. Reuse
+        # verified public nodes, without sharing any fee signer or journal.
+        for filename, source in public_trees.items():
+            destination = tree_folder / filename
+            if not destination.exists():
+                shutil.copyfile(source, destination)
         command = [
             sys.executable,
             ROOT / "test/wallet-v5r2" / script,
@@ -51,6 +62,12 @@ def main():
                 list(map(str, command)), cwd=ROOT, stdout=log, stderr=subprocess.STDOUT
             )
         reports[name] = dict(command=list(map(str, command)), exit=result.returncode)
+        if result.returncode == 0:
+            for filename in ("PUBLIC-TEST-ONLY-lms-tree", "PUBLIC-TEST-ONLY-successor-tree"):
+                tree = tree_folder / filename
+                if tree.exists():
+                    assert tree.stat().st_size == 64 * 1024 * 1024
+                    public_trees.setdefault(filename, tree)
         return result.returncode
 
     for name, flags, count in profiles:
@@ -84,6 +101,42 @@ def main():
                 successes.append(int(fields[7]))
         assert successes and max(successes) <= 18000, "selected successful fee path exceeds margin"
         reports[name].update(transactions=count, maximum_successful_fee_gas=max(successes))
+        admission_name = "admission-" + name
+        admission_command = [
+            sys.executable,
+            ROOT / "test/wallet-v5r2/recorded_admission.py",
+            "--fixtures",
+            folder,
+            "--driver",
+            args.driver.resolve(),
+            "--release-config",
+            config,
+            "--minimum-fee-cases",
+            "1",
+            "--output",
+            out / admission_name,
+        ]
+        with (out / (admission_name + ".log")).open("w") as log:
+            admission = subprocess.run(
+                list(map(str, admission_command)), cwd=ROOT, stdout=log, stderr=subprocess.STDOUT
+            )
+        assert admission.returncode == 0, "exact release admission failed: " + name
+        boundaries = json.loads((out / admission_name / "results.json").read_text())
+        assert boundaries["frozen_release_config"]
+        assert len(boundaries["transactions"]) == len(successes), "missing accepted fee boundary"
+        assert all(case["both_vm_boundary_match"] for case in boundaries["transactions"])
+        assert all(
+            case["historical_credit"]["no_transaction_or_state_update"]
+            for case in boundaries["transactions"]
+            if case["minimum_credit"] > 10000
+        ), "over-credit request did not preserve state at historical credit"
+        reports[name]["admission"] = {
+            "command": list(map(str, admission_command)),
+            "exit": admission.returncode,
+            "fee_requests": len(boundaries["transactions"]),
+            "maximum_minimum_credit": boundaries["maximum_observed_minimum"],
+            "scope": "Selected requests at G-1/G and historical 10000 in both VMs",
+        }
     if args.controls:
         for transition in ("lock", "migrate"):
             name = "delete-" + transition

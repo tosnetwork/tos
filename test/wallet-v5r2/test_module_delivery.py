@@ -5,11 +5,13 @@ prove a payer's own transaction or default-credit external admission.
 """
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
 import tempfile
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,9 +21,10 @@ sys.path.insert(0, str(ROOT / "test/rescue-fee-gate"))
 import native  # noqa: E402
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 from test_auth_policy import policy as global_policy  # noqa: E402
-from test_fee_identity import vault_data  # noqa: E402
+from test_fee_identity import vault_data as fixture_vault_data  # noqa: E402
 from test_identity import chain  # noqa: E402
-from test_receiver_auth import ACCOUNT, TARGET, request  # noqa: E402
+from test_receiver_auth import ACCOUNT, TARGET  # noqa: E402
+from test_receiver_auth import request as fixture_request  # noqa: E402
 from test_rescue_e2e import Signers, digest  # noqa: E402
 from test_state import fee, state  # noqa: E402
 
@@ -30,6 +33,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--native-signer", type=Path)
+    p.add_argument(
+        "--chain-config", type=Path, help="Use the unchanged generated version-18 ConfigParams"
+    )
     p.add_argument(
         "--delete-recipient-update", action="store_true", help="Test-only delivery control"
     )
@@ -40,7 +46,9 @@ def main():
 
             signer = NativeSignerFixture(args.native_signer)
             signer.install(stack)
-        run(args.output, args.delete_recipient_update)
+        now = 1_789_437_600 if args.chain_config else native.NOW
+        stack.enter_context(patch.object(native, "NOW", now))
+        run(args.output, args.delete_recipient_update, args.chain_config)
         if args.native_signer:
             assert {(call["key"], call["purpose"]) for call in signer.calls} >= {
                 ("primary", "auth"),
@@ -51,8 +59,28 @@ def main():
             )
 
 
-def run(out, delete_recipient_update=False):
+def run(out, delete_recipient_update=False, chain_config_path=None):
     out.mkdir(parents=True, exist_ok=True)
+    network, global_id, version = 123, 42, 17
+    chain_config = chain_bytes = None
+    if chain_config_path:
+        from recorded_admission import config_profile, require_release_config
+
+        chain_bytes = chain_config_path.read_bytes()
+        root_config = from_boc(chain_bytes)
+        profile = config_profile(root_config)
+        require_release_config(chain_bytes, chain_bytes, profile)
+        version = profile["global_version"]
+        chain_config = root_config.refs[0]
+        entries = read_dict(chain_config, 32)
+        identity = entries[48].refs[0].slice()
+        assert identity.uint(8) == 0xA1
+        network = identity.uint(256)
+        global_id = entries[19].refs[0].slice().sint(32)
+    request = partial(
+        fixture_request, network=network, global_id=global_id, deadline=native.NOW + 600
+    )
+    vault_data = partial(fixture_vault_data, network=network, global_id=global_id)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         for name in [
@@ -101,7 +129,7 @@ def run(out, delete_recipient_update=False):
         wallet_driver.write_text(
             '#include "wallet-v5r2-code.fc";\n'
             + const
-            + f"int r2wallet_network() inline {{ return 123; }}\nint r2wallet_module_hash() inline {{ return 0x{module_code.hash.hex()}; }}\ncell r2wallet_vault_code() inline {{ return fixture_vault(); }}\n"
+            + f"int r2wallet_network() inline {{ return {network}; }}\nint r2wallet_module_hash() inline {{ return 0x{module_code.hash.hex()}; }}\ncell r2wallet_vault_code() inline {{ return fixture_vault(); }}\n"
         )
         wallet_code = native.compile_contract(str(wallet_driver), out / "wallet.boc")
         for compiled in ["wallet.fif", "module.fif"]:
@@ -111,8 +139,8 @@ def run(out, delete_recipient_update=False):
         data = (
             Cell()
             .uint(1, 8)
-            .sint(42, 32)
-            .uint(123, 256)
+            .sint(global_id, 32)
+            .uint(network, 256)
             .uint(1, 8)
             .ref(chain(sign.ml_pk.read_bytes()))
             .raw(sign.slh_pk)
@@ -121,10 +149,16 @@ def run(out, delete_recipient_update=False):
         witness = native.state_init(module_code, data)
         root = int.from_bytes(witness.hash, "big")
         address = (0, root)
-        entries = read_dict(native.config(17), 32)
-        entries[48] = Cell().ref(global_policy())
-        with patch.object(native, "config", return_value=make_dict(entries, 32)):
-            e = native.Emulator(17)
+        if chain_config is None:
+            entries = read_dict(native.config(version), 32)
+            entries[48] = Cell().ref(global_policy(network=network))
+            with patch.object(native, "config", return_value=make_dict(entries, 32)):
+                e = native.Emulator(version)
+        else:
+            with patch.object(
+                native, "config", side_effect=AssertionError("synthesized configuration forbidden")
+            ):
+                e = native.Emulator.from_config(chain_config)
         cases = {}
         try:
             for name, role, mode, kind in [
@@ -273,9 +307,15 @@ def run(out, delete_recipient_update=False):
             primary_body = (
                 Cell().uint(0x53554233, 32).ref(primary_request).ref(chain(primary_signature))
             )
-            entries[48] = Cell().ref(global_policy(retired=2))
-            with patch.object(native, "config", return_value=make_dict(entries, 32)):
-                retired_emulator = native.Emulator(17)
+            before_retirement = {key: value.hash for key, value in entries.items() if key != 48}
+            entries[48] = Cell().ref(global_policy(retired=2, network=network))
+            assert before_retirement == {
+                key: value.hash for key, value in entries.items() if key != 48
+            }
+            with patch.object(
+                native, "config", side_effect=AssertionError("synthesized configuration forbidden")
+            ):
+                retired_emulator = native.Emulator.from_config(make_dict(entries, 32))
             try:
                 rejected = retired_emulator.send(
                     module_initial, native.internal((0, 102), address, primary_body, value=10**12)
@@ -360,7 +400,16 @@ def run(out, delete_recipient_update=False):
                 "mutations": mutations,
                 "module_code_hash": module_code.hash.hex(),
                 "wallet_code_hash": wallet_code.hash.hex(),
+                "chain_config_sha256": hashlib.sha256(chain_bytes).hexdigest()
+                if chain_bytes
+                else None,
+                "chain_version": version,
+                "network": f"{network:064x}",
+                "global_id": global_id,
+                "retirement_configuration": "Only ConfigParam 48 is replaced for the retirement control",
             }
+            if chain_config_path:
+                assert chain_config_path.read_bytes() == chain_bytes
             (out / "results.json").write_text(json.dumps(report, indent=2) + "\n")
             print(f"{len(cases)} real PQ delivery cases passed")
         finally:

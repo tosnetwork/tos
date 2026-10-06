@@ -1,6 +1,7 @@
 """Replay actual PQ module, wallet and recipient transactions in both executors."""
 
 import argparse
+import hashlib
 import json
 import runpy
 import subprocess
@@ -16,6 +17,9 @@ def main():
     parser.add_argument("--native-signer", type=Path, required=True)
     parser.add_argument("--driver", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--chain-config", type=Path, help="Use the unchanged generated version-18 ConfigParams"
+    )
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -23,9 +27,9 @@ def main():
     original = native.Emulator
 
     class RecordingEmulator(original):
-        def __init__(self, global_version=6, max_msg_cells=None, vm_log_verbosity=1):
-            self.configuration = native.config(global_version, max_msg_cells)
-            super().__init__(global_version, max_msg_cells, vm_log_verbosity)
+        def _initialize(self, configuration, vm_log_verbosity):
+            self.configuration = configuration
+            super()._initialize(configuration, vm_log_verbosity)
 
         def send(self, shard, message):
             result = super().send(shard, message)
@@ -53,17 +57,35 @@ def main():
         "--output",
         str(out / "native"),
     ]
+    if args.chain_config:
+        argv += ["--chain-config", str(args.chain_config.resolve())]
     with patch.object(native, "Emulator", RecordingEmulator), patch.object(sys, "argv", argv):
         runpy.run_path(
             str(Path(__file__).with_name("test_module_delivery.py")), run_name="__main__"
         )
     assert len(groups) == 2, "must exercise active and retired global policy"
-    root = from_boc((native.ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
+    if args.chain_config:
+        raw = args.chain_config.read_bytes()
+        root = from_boc(raw)
+        assert root.refs[0].hash.hex() in groups, (
+            "the actual candidate configuration was not executed"
+        )
+        module_results = json.loads((out / "native/results.json").read_text())
+        assert module_results["chain_config_sha256"] == hashlib.sha256(raw).hexdigest()
+        assert module_results["chain_version"] == 18
+    else:
+        raw = None
+        root = from_boc(
+            (native.ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes()
+        )
     reports = []
     for index, (configuration, scenarios, expected) in enumerate(groups.values()):
         folder = out / f"configuration-{index}"
         folder.mkdir()
-        (folder / "config.boc").write_bytes(Cell(bits=root.bits, refs=[configuration]).boc())
+        generated = raw is not None and configuration.hash == root.refs[0].hash
+        (folder / "config.boc").write_bytes(
+            raw if generated else Cell(bits=root.bits, refs=[configuration]).boc()
+        )
         (folder / "scenarios.tsv").write_text("\n".join(scenarios) + "\n")
         (folder / "native.tsv").write_text("\n".join(expected) + "\n")
         result = subprocess.run(
@@ -71,7 +93,7 @@ def main():
                 str(args.driver.resolve()),
                 str(folder / "config.boc"),
                 str(folder / "scenarios.tsv"),
-                "17",
+                "18" if args.chain_config else "17",
                 "--details",
             ],
             capture_output=True,
@@ -91,10 +113,23 @@ def main():
                 "configuration": configuration.hash.hex(),
                 "transactions": len(expected),
                 "differences": differences,
+                "profile": "unchanged-generated-candidate"
+                if generated
+                else "retirement-control"
+                if args.chain_config
+                else "diagnostic",
             }
         )
     (out / "parity.json").write_text(
-        json.dumps({"scope": __doc__, "groups": reports}, indent=2) + "\n"
+        json.dumps(
+            {
+                "scope": __doc__,
+                "groups": reports,
+                "generated_config_sha256": hashlib.sha256(raw).hexdigest() if raw else None,
+            },
+            indent=2,
+        )
+        + "\n"
     )
     assert all(not report["differences"] for report in reports), reports
     control = subprocess.run(
@@ -106,6 +141,7 @@ def main():
             "--delete-recipient-update",
             "--output",
             str(out / "recipient-control"),
+            *(["--chain-config", str(args.chain_config.resolve())] if args.chain_config else []),
         ],
         capture_output=True,
         text=True,
@@ -127,6 +163,8 @@ def main():
         )
         + "\n"
     )
+    if args.chain_config:
+        assert args.chain_config.read_bytes() == raw
     print(
         f"{sum(report['transactions'] for report in reports)} module/wallet/recipient transactions match"
     )

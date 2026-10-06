@@ -134,25 +134,10 @@ impl DefaultConfig for GasLimitsPrices {
     }
 
     fn default_wc() -> Self {
-        GasLimitsPrices {
-            // ConfigParam 21 from the canonical basechain zero state
-            // (`crypto/smartcont/gen-zerostate.fif`). This yields 400
-            // nanotomi/gas beyond the flat segment, not the
-            // masterchain-derived 1,000 nanotomi/gas sandbox value.
-            //
-            // The three limits used to carry TON's basechain values -- a
-            // 1,000,000 gas transaction inside a 10,000,000 gas block -- while
-            // this chain's zero state grants thirty times that. A measurement
-            // taken against the old table said a path "does not fit the
-            // network" when it fits this network twenty-seven times over.
-            // `chain_gas_envelope_sandbox.rs` now generates the zero state and
-            // compares it against this table field by field, so the two cannot
-            // drift apart again without a named test going red.
-            //
-            // The prices are TON mainnet's live basechain values, read from
-            // ConfigParam21 on 2026-09-21. They used to be exactly six times
-            // these, which was what production charged before its fee cut.
-            // The limits above stay thirty times mainnet's on purpose.
+        let mut prices = GasLimitsPrices {
+            // Existing canonical basechain gas profile. Admission candidates
+            // load their generated ConfigParams through with_config; changing
+            // only the VM version must not activate a candidate gas profile.
             gas_price: 436907,
             flat_gas_limit: 100,
             flat_gas_price: 667,
@@ -162,8 +147,12 @@ impl DefaultConfig for GasLimitsPrices {
             block_gas_limit: 60000000,
             freeze_due_limit: 100000000,
             delete_due_limit: 1000000000,
-            max_gas_threshold: 1000000000,
-        }
+            max_gas_threshold: 0,
+        };
+        // Keep the cached execution threshold consistent with decoding the
+        // serialized gas table. Choosing this profile does not change credit.
+        prices.max_gas_threshold = prices.calc_max_gas_threshold(prices.gas_limit);
+        prices
     }
 }
 
