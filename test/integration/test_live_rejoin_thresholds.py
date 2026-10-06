@@ -87,6 +87,9 @@ class Fixture:
         self.run_dir = Path(tempfile.mkdtemp(prefix=f"rejoin_{name}_"))
         self.experiment = SimpleNamespace(rpc_addresses=[f"127.0.0.1:{8111 + i}" for i in range(4)])
         self.enable_consensus_cleanup = armed
+        # Live rejoin is measured in experiment mode, which never runs the full PQ
+        # launch gate; the real methods branch on this.
+        self.pq_full = False
         self._reference = _Sequence(ref_tips)
         self._target = _Sequence(target_tips)
         self._fork = fork  # target diverges at every height
@@ -156,6 +159,8 @@ class Fixture:
 Fixture.verify_live_rejoin = REAL.verify_live_rejoin
 Fixture._node_mc_seqno = REAL._node_mc_seqno
 Fixture._node_mc_block_id = REAL._node_mc_block_id
+# Real, and a no-op outside the full PQ launch gate (pq_full is False above).
+Fixture.record_f01_process = REAL.record_f01_process
 
 
 async def _run(name, ref_tips, target_tips, *, armed=True, log="", restart=True, fork=False, fork_after=None):
