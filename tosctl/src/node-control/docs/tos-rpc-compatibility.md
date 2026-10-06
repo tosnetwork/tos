@@ -45,6 +45,32 @@ When TOS introduces a native RPC backend, a new `ChainProvider` implementation r
 | `getExtendedAddressInformation` | Raw account state | pool/wallet diagnostics |
 | `getWalletInformation` | Wallet-specific info (type, seqno) | wallet commands |
 
+### Account storage metadata (`storage_stat`)
+
+`getAddressInformation` and `getExtendedAddressInformation` also return the
+account's storage metadata, read from the same account state as the balance,
+code and data, at the block named in `block_id` (pass `seqno` to pin it):
+
+```json
+"storage_stat": {
+  "@type": "storage.stat",
+  "used_cells": "7",
+  "used_bits": "4321",
+  "last_paid": 1700000123,
+  "due_payment": "2000000000"
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `used_cells`, `used_bits` | Decimal strings: the cells and bits the storage phase charges for (`StorageUsed`) |
+| `last_paid` | Unix time the account last paid for storage |
+| `due_payment` | Decimal nanoTOS of storage debt the account carries, or `null` when it records none |
+
+The field is additive: it is absent for an account that does not exist and from
+nodes that predate it. `tosctl vote offer create --wallet` bounds the sending
+wallet's own fees from it and refuses when it is absent.
+
 ---
 
 ## Compatibility Assumptions

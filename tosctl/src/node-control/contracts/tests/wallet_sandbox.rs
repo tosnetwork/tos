@@ -246,3 +246,116 @@ async fn v4_transfer_is_bound_to_network_global_id() {
 async fn v5_transfer_is_bound_to_network_global_id() {
     accepts_own_network_and_rejects_other(WalletVersion::V5R1, V5_WRONG_GLOBAL_ID_EXIT).await;
 }
+
+/// A wallet holding exactly the value plus the reserve `vote offer create` requires
+/// still sends: the reserve covers the wallet's whole mode-3 charge, including
+/// storage due after a long idle period. Mode 3 ignores action errors, so a reserve
+/// below the real charge would show here as the target receiving nothing.
+///
+/// `debt` puts that much storage debt on the account first, as a wallet carries after
+/// its balance once fell short of storage and a later top-up did not clear it: the
+/// next external send pays the debt with its storage phase.
+async fn the_send_reserve_covers_the_wallet_charge(version: WalletVersion, debt: u64) {
+    use contracts::wallet::send_fees::{SendFeeInputs, WalletStorage, wallet_send_reserve};
+    let mut fixture = Fixture::new(version).await;
+    let deploy = fixture.signed_transfer(GLOBAL_ID, 0, true).await;
+    fixture.bc.send_message(deploy).expect("deploy").expect_success();
+
+    // Let storage accrue for a long idle period.
+    let idle_until = fixture.bc.now() + 180 * 86_400;
+    fixture.bc.set_now(idle_until);
+
+    // A proposal-sized body with a value of many cells.
+    let mut value = chain_block::BuilderData::new();
+    chain_block::IBitstring::append_u32(&mut value, 1).expect("value");
+    let mut value = value.into_cell().expect("value");
+    for word in 0..200u32 {
+        let mut next = chain_block::BuilderData::new();
+        chain_block::IBitstring::append_u32(&mut next, word).expect("value");
+        next.checked_append_reference(value).expect("value");
+        value = next.into_cell().expect("value");
+    }
+    let proposal =
+        contracts::config_contract::messages::proposal::proposal_cell(100, Some(value), None)
+            .expect("proposal");
+    let body = contracts::config_contract::messages::proposal::new_proposal_body(
+        1, 2_000_000, proposal, false,
+    )
+    .expect("body");
+
+    let mut account = fixture.bc.get_account(&fixture.address).expect("deployed").clone();
+    if debt > 0 {
+        account.set_due_payment(Some(chain_block::Coins::from(debt)));
+        fixture.bc.set_account(fixture.address.clone(), account.clone());
+    }
+    let storage = WalletStorage::from_account(&account).expect("storage");
+    assert_eq!(storage.due_payment, u128::from(debt));
+    let config = fixture.bc.config_params();
+    let gas = config.gas_prices(true).expect("gas prices");
+    let forward = config.fwd_prices(true).expect("forward prices");
+    let storage_prices = config.storage_prices().expect("storage prices").prices().expect("prices");
+    let reserve = wallet_send_reserve(&SendFeeInputs {
+        gas: &gas,
+        forward: &forward,
+        storage_prices: &storage_prices,
+        storage: &storage,
+        now: idle_until,
+        body: &body,
+    })
+    .expect("reserve");
+
+    // The boundary: everything but the reserve is sent.
+    let balance = fixture.balance_of(&fixture.address);
+    let value = balance - u64::try_from(reserve).expect("reserve fits");
+    let target_before = fixture.target_balance();
+    let wallet = fixture.wallet(GLOBAL_ID).await;
+    let cell = wallet
+        .build_message(fixture.target.address().clone(), value, body, true, Some(1), None, None)
+        .await
+        .expect("signed send");
+    let message = Message::construct_from_cell(cell).expect("external message");
+    fixture.bc.send_message(message).expect("send").expect_success();
+    assert_eq!(fixture.seqno(), 2, "{version}: the wallet accepted the message");
+    assert!(
+        fixture.target_balance() > target_before,
+        "{version}: nothing reached the target; the reserve {reserve} is below the wallet's charge"
+    );
+    let charge = balance - value - fixture.balance_of(&fixture.address);
+    eprintln!("{version}: reserve {reserve}, charge {charge}");
+    assert!(
+        u128::from(charge) <= reserve,
+        "{version}: charge {charge} exceeds the reserve {reserve}"
+    );
+}
+
+#[tokio::test]
+async fn v3_send_reserve_covers_the_wallet_charge() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V3R2, 0).await;
+}
+
+#[tokio::test]
+async fn v4_send_reserve_covers_the_wallet_charge() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V4R2, 0).await;
+}
+
+#[tokio::test]
+async fn v5_send_reserve_covers_the_wallet_charge() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V5R1, 0).await;
+}
+
+/// Storage debt below the freeze threshold: the next send pays it, and the reserve
+/// counts it.
+#[tokio::test]
+async fn v3_send_reserve_covers_outstanding_storage_debt() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V3R2, 2 * TOS).await;
+}
+
+#[tokio::test]
+async fn v4_send_reserve_covers_outstanding_storage_debt() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V4R2, 2 * TOS).await;
+}
+
+#[tokio::test]
+async fn v5_send_reserve_covers_outstanding_storage_debt() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V5R1, 2 * TOS).await;
+}

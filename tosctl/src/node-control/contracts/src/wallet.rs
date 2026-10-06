@@ -6,6 +6,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+pub mod send_fees;
 pub mod wallet_contract;
 use crate::SmartContract;
 use chain_block::{Cell, MsgAddressInt, StateInit};
