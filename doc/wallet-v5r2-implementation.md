@@ -2022,8 +2022,8 @@ No authorization decision is derived from Vault tags or a raw record ID.
 Ordinary rescue refuses Migrate before accessing custody and retains the existing
 signing gate's rejection as well. The funded dual-POP migration API remains the
 required migration path. Preparation and migration now have the equivalent Vault
-methods described below; POP still requires a directly loaded bound signer. Applications must still approve actions, use a trusted
-clock, authenticate current proof sources, reserve concurrent counters and fee
+methods described below, as do initial and successor POP. Applications must still
+approve actions, use a trusted clock, authenticate current proof sources, reserve concurrent counters and fee
 leaves, submit exact bytes and check delivery/finality. These methods do not perform
 network I/O or prove that chain state cannot change after the observed checkpoint.
 
@@ -2069,3 +2069,33 @@ execution, device independence, nonce reservation, delivery or finality. The sam
 immutable snapshot is checked twice; no newer network proof is fetched during
 loading. Full client flows and default-credit admission remain release gates.
 Evidence: `test/wallet-v5r2/vault-recovery-20261006.json`.
+
+
+### Vault-backed initial and successor POP
+
+`VaultKey::sign_pop_initial` and `sign_pop_successor` accept an already generated
+`PopRequest` and the locally pinned complete enrollment. They share the native
+signer's enrollment/deadline validator to resolve the exact PQ role and public
+key before loading custody. After loading the matching encrypted record, they
+reject clock regression and rerun the original strict signing path with the new
+time. The request/challenge is retained unchanged; retries must reuse the exact
+submission and funded receipt verification remains mandatory. The supplied clock
+must represent current proof-checked time; these methods do not fetch or verify
+chain proofs themselves.
+
+A new test exercises both roles in both enrollment routes using real encrypted
+storage and public test seeds. It independently verifies the ML-DSA signatures
+with the Rust verifier and SLH signatures with the VM verifier shim, checks exact
+PPS3/request framing, and rejects wrong enrollment and expired requests before
+accessing a deliberately missing record. Each route rejects backward clocks and
+requests that expire during loading. Six semantic controls remove shared
+registration/deadline validation or each route's clock/post-load checks; each
+must fail the named assertion, followed by a passing restored test. The existing
+native signer controls also cover the shared validator after extraction.
+
+The test deliberately uses REQUIRED policy: per-key POP remains allowed without
+turning PRIMARY POP into AUTH or migration authority. These are signature and
+custody tests, not funded transaction, live-proof or production-client evidence.
+Full CLI/mobile lifecycle, actual proof sources, device isolation, default-credit
+admission and final-head release validation remain open. Evidence:
+`test/wallet-v5r2/vault-pop-20261006.json`.

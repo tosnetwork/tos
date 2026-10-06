@@ -1,0 +1,165 @@
+{
+  "base_commit": "be52f7fb3caf2d180141c9d780dd9f6d0e566900",
+  "scope": "Vault POP signing for both PQ roles and initial/successor enrollment, with exact registration and time checks; public test seeds and local enrollment fixtures.",
+  "tests": {
+    "vault_feature_state_tests": 17,
+    "independent_signature_combinations": 4,
+    "vault_pop_controls": {
+      "enrollment": {
+        "exit": 101,
+        "semantic_witness": "initial POP opened custody before enrollment validation"
+      },
+      "deadline": {
+        "exit": 101,
+        "semantic_witness": "initial POP opened custody before deadline validation"
+      },
+      "initial_clock": {
+        "exit": 101,
+        "semantic_witness": "initial POP accepted regressed clock after loading"
+      },
+      "initial_recheck": {
+        "exit": 101,
+        "semantic_witness": "initial POP accepted expired request after loading"
+      },
+      "successor_clock": {
+        "exit": 101,
+        "semantic_witness": "successor POP accepted regressed clock after loading"
+      },
+      "successor_recheck": {
+        "exit": 101,
+        "semantic_witness": "successor POP accepted expired request after loading"
+      }
+    },
+    "native_signer_controls": {
+      "pop_enrollment": {
+        "exit": 101,
+        "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+      },
+      "pop_domain": {
+        "exit": 101,
+        "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+      },
+      "pop_key": {
+        "exit": 101,
+        "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+      },
+      "seed_wipe": {
+        "exit": 101,
+        "witness": "import_wipes_on_success_and_failure"
+      },
+      "failure_status": {
+        "exit": 101,
+        "witness": "bound_signatures_and_independent_primary_verification"
+      },
+      "proven_key": {
+        "exit": 101,
+        "witness": "native_wallet_signing_binds_proven_keys_and_policy"
+      },
+      "challenge_rng_status": {
+        "exit": 101,
+        "witness": "challenge_rng_failures_are_rejected"
+      },
+      "challenge_nonzero": {
+        "exit": 101,
+        "witness": "challenge_rng_failures_are_rejected"
+      },
+      "fresh_challenge": {
+        "exit": 101,
+        "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+      },
+      "preparation_wallet": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_module_code": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_vault_code": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_namespace": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_domain": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_key": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_ready_policy": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      }
+    },
+    "restored_tests": "passed",
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-vault --lib fee_state_tests",
+    "python3 test/wallet-v5r2/vault_pop_controls.py --output <fresh-directory>",
+    "python3 test/wallet-v5r2/rust_signer_controls.py --output <another-fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "bytes": 149309,
+      "sha256": "7853c33f5d4864e69b5da955370c30f666d3573876d84cf469b74018b5e820b4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs",
+      "bytes": 19732,
+      "sha256": "f18cab9d80b91c1948a165d611090222d5b085a14cd1e04ded700219721b9b73"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_vault.rs",
+      "bytes": 6199,
+      "sha256": "8df2d11de726df66edb72d88dda17ae26a96d8f84231161b029ead5b3c28c17a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/vault_pop_controls.py",
+      "bytes": 4004,
+      "sha256": "296ea7cfee98b325af57e8d9fef6bb7fe0293d42f99c90d441aca926dce06833"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/rust_signer_controls.py",
+      "bytes": 6557,
+      "sha256": "f4256dc87ee5d7eebf28d714665161b2e5116d52d30d738a3ea1ab50bfa411e1"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 17297,
+      "sha256": "62d7aa5e619c9de3558df439da2a69c96f3fc80fedce62c0fa40eb25e8e9e673"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 135060,
+      "sha256": "eb8b8142c5b6afb6f6025ccdbc7efbe541d9b631e4f51765f5a8ec05686c1ac1"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-pop-controls/MANIFEST.json",
+      "bytes": 2533,
+      "sha256": "a2d060ee80826c97844bf1dd635442736f0ead57413882d2b7d2b200ebd2b7d5"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-pop-native-controls/MANIFEST.json",
+      "bytes": 5425,
+      "sha256": "09cba9f31c48e29728f74f7ef9f6d8bfc22223e0deaf42243067a3c7936dc9bf"
+    }
+  ],
+  "retention": "Retain raw evidence through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Clock must be supplied from current proof-checked time by caller; POP wrappers do not fetch or verify chain proofs.",
+    "POP signatures do not establish funded execution, wallet authority, migration permission or finality.",
+    "No live-network, device independence or full CLI/mobile acceptance claim.",
+    "Default 10000 gas-credit admission and final-head release CI remain open."
+  ]
+}

@@ -4,7 +4,8 @@
 use crate::{
     proven_getters::ProvenAccountState,
     wallet_v5r2::AuthAction,
-    wallet_v5r2_genesis::SuccessorDeployment,
+    wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis},
+    wallet_v5r2_pop::PopRequest,
     wallet_v5r2_prepare::PreparationAmounts,
     wallet_v5r2_wallet_state::{MigrationEvidence, ProvenWalletState},
 };
@@ -106,5 +107,41 @@ impl VaultKey<'_> {
             load_bound(self.vault, self.id, Role::Rescue, view.rescue_public_key()).await?;
         let after = checked_time(before, clock()?)?;
         view.sign_migration_submission(after, valid_until, successor, evidence, &mut signer)
+    }
+
+    /// Sign a retained fresh POP challenge for the locally pinned initial
+    /// enrollment. Caller supplies current proof-checked time. A signature alone
+    /// establishes neither funded execution nor wallet authority.
+    pub async fn sign_pop_initial(
+        &self,
+        request: &PopRequest,
+        enrollment: &WalletGenesis,
+        mut clock: impl FnMut() -> anyhow::Result<u32>,
+    ) -> anyhow::Result<Cell> {
+        let before = clock()?;
+        let (role, key) = request.enrolled_signing_key(
+            enrollment.module_init(),
+            *enrollment.wallet_init().repr_hash().as_array(),
+            before,
+        )?;
+        let mut signer = load_bound(self.vault, self.id, role, &key).await?;
+        let after = checked_time(before, clock()?)?;
+        request.sign_initial(enrollment, after, &mut signer)
+    }
+
+    /// Prove possession for the exact proposed successor without authorizing
+    /// migration. Retain the request and verify both funded receipts separately.
+    pub async fn sign_pop_successor(
+        &self,
+        request: &PopRequest,
+        enrollment: &SuccessorDeployment,
+        mut clock: impl FnMut() -> anyhow::Result<u32>,
+    ) -> anyhow::Result<Cell> {
+        let before = clock()?;
+        let (role, key) =
+            request.enrolled_signing_key(enrollment.module_init(), *enrollment.wallet(), before)?;
+        let mut signer = load_bound(self.vault, self.id, role, &key).await?;
+        let after = checked_time(before, clock()?)?;
+        request.sign_successor(enrollment, after, &mut signer)
     }
 }

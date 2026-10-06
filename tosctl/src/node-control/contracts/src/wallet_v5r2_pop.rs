@@ -388,6 +388,21 @@ impl PopRequest {
         proven_time: u32,
         signer: &mut wallet_pq_signer::Signer,
     ) -> anyhow::Result<Cell> {
+        let (role, key) = self.enrolled_signing_key(module_init, wallet, proven_time)?;
+        let signature =
+            signer.sign_bound(role, &key, wallet_pq_signer::Purpose::Pop, self.digest())?;
+        self.encode_submission(&signature)
+    }
+
+    /// Resolve custody only after validating the complete pinned enrollment and
+    /// deadline. Shared by native signing and asynchronous Vault preflight.
+    #[cfg(feature = "native-wallet-signer")]
+    pub(crate) fn enrolled_signing_key(
+        &self,
+        module_init: &Cell,
+        wallet: [u8; 32],
+        proven_time: u32,
+    ) -> anyhow::Result<(wallet_pq_signer::Role, Vec<u8>)> {
         use chain_block::SliceData;
         let mut original = SliceData::load_cell(self.cell.clone())?;
         original.move_by(32 + 32 + 256 + 8)?;
@@ -412,9 +427,7 @@ impl PopRequest {
             ),
             AuthRole::Rescue => (wallet_pq_signer::Role::Rescue, rescue_key.to_vec()),
         };
-        let signature =
-            signer.sign_bound(role, &key, wallet_pq_signer::Purpose::Pop, self.digest())?;
-        self.encode_submission(&signature)
+        Ok((role, key))
     }
 }
 

@@ -1112,7 +1112,9 @@ mod fee_state_tests {
         refresh_proof_data(wallet);
     }
     #[cfg(feature = "native-wallet-vault")]
-    async fn public_rescue_vault_fixture() -> (
+    async fn public_vault_fixture(
+        role: wallet_pq_signer::Role,
+    ) -> (
         tempfile::TempDir,
         secrets_vault::vault::SecretVault,
         secrets_vault::types::secret_id::SecretId,
@@ -1153,12 +1155,14 @@ mod fee_state_tests {
         let id = SecretId::new("public.test.rescue");
         let metadata = Metadata::new(Some(&id), Algorithm::None, true)
             .with_tag(wallet_pq_signer::vault::PROFILE_TAG, wallet_pq_signer::vault::PROFILE_V1)
-            .with_tag(
-                wallet_pq_signer::vault::ROLE_TAG,
-                wallet_pq_signer::vault::role_tag(wallet_pq_signer::Role::Rescue),
-            );
+            .with_tag(wallet_pq_signer::vault::ROLE_TAG, wallet_pq_signer::vault::role_tag(role));
         let secret = Secret::from_protected_data(
-            ProtectedMemory::from_slice(&[0x22; 48]).await.unwrap(),
+            ProtectedMemory::from_slice(match role {
+                wallet_pq_signer::Role::Primary => &[0x11; 32],
+                wallet_pq_signer::Role::Rescue => &[0x22; 48],
+            })
+            .await
+            .unwrap(),
             metadata,
             AutoCryptoFactory {}.new_crypto().unwrap(),
         )
@@ -1502,7 +1506,7 @@ mod fee_state_tests {
         #[cfg(feature = "native-wallet-vault")]
         {
             use crate::wallet_v5r2_vault::VaultKey;
-            let (_dir, custody, id) = public_rescue_vault_fixture().await;
+            let (_dir, custody, id) = public_vault_fixture(wallet_pq_signer::Role::Rescue).await;
             let key = VaultKey { vault: &custody, id: &id };
             let signed =
                 key.sign_migration(&view, || Ok(4620), 4700, &successor, &evidence).await.unwrap();
@@ -1794,7 +1798,7 @@ mod fee_state_tests {
         #[cfg(feature = "native-wallet-vault")]
         let body = {
             use crate::wallet_v5r2_vault::VaultKey;
-            let (_dir, custody, id) = public_rescue_vault_fixture().await;
+            let (_dir, custody, id) = public_vault_fixture(wallet_pq_signer::Role::Rescue).await;
             let key = VaultKey { vault: &custody, id: &id };
             let signed = key
                 .sign_preparation(&view, || Ok(4620), 4700, &successor, amounts, None)
@@ -1877,6 +1881,147 @@ mod fee_state_tests {
         assert_eq!(verify(request.digest(), request.signing_context()), 1);
         assert_eq!(verify(request.digest(), b"TOS-RESCUE-POP-v1"), 0);
         assert_eq!(verify(&[0; 32], request.signing_context()), 0);
+    }
+
+    #[cfg(feature = "native-wallet-vault")]
+    #[tokio::test]
+    async fn vault_pop_signing_binds_enrollment_and_time() {
+        use crate::wallet_v5r2::AuthRole;
+        use crate::wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis};
+        use crate::wallet_v5r2_pop::PopRequest;
+        use crate::wallet_v5r2_vault::VaultKey;
+        use chain_block::SliceData;
+        use fips204::traits::{SerDes, Verifier};
+        use secrets_vault::types::secret_id::SecretId;
+        use wallet_pq_signer::{Role, Signer};
+        unsafe extern "C" {
+            fn tos_rust_slhdsa128s_verify(
+                msg: *const u8,
+                msg_len: usize,
+                sig: *const u8,
+                sig_len: usize,
+                ctx: *const u8,
+                ctx_len: usize,
+                pk: *const u8,
+            ) -> i32;
+        }
+        async fn submit(
+            key: &VaultKey<'_>,
+            request: &PopRequest,
+            genesis: &WalletGenesis,
+            successor: &SuccessorDeployment,
+            successor_route: bool,
+            clock: impl FnMut() -> anyhow::Result<u32>,
+        ) -> anyhow::Result<Cell> {
+            if successor_route {
+                key.sign_pop_successor(request, successor, clock).await
+            } else {
+                key.sign_pop_initial(request, genesis, clock).await
+            }
+        }
+        let primary = Signer::import_and_wipe(Role::Primary, &mut [0x11; 32]).unwrap();
+        let rescue = Signer::import_and_wipe(Role::Rescue, &mut [0x22; 48]).unwrap();
+        let enrollment = || {
+            fixture_with_keys(
+                RescuePolicy::Required,
+                primary.public_key().try_into().unwrap(),
+                rescue.public_key().try_into().unwrap(),
+            )
+            .0
+        };
+        let genesis = enrollment();
+        let successor = SuccessorDeployment::new(enrollment(), [0x44; 32]).unwrap();
+        let wrong = fixture().0;
+        let wrong_successor = SuccessorDeployment::new(fixture().0, [0x45; 32]).unwrap();
+        for (role, native_role, public_key) in [
+            (AuthRole::Primary, Role::Primary, primary.public_key()),
+            (AuthRole::Rescue, Role::Rescue, rescue.public_key()),
+        ] {
+            let (_dir, vault, id) = public_vault_fixture(native_role).await;
+            let key = VaultKey { vault: &vault, id: &id };
+            let missing_id = SecretId::new("missing");
+            let missing = VaultKey { vault: &vault, id: &missing_id };
+            for successor_route in [false, true] {
+                let route = if successor_route { "successor" } else { "initial" };
+                let req = if successor_route {
+                    PopRequest::fresh_successor(&successor, role, 4700, 4620).unwrap()
+                } else {
+                    PopRequest::fresh_initial(&genesis, role, 4700, 4620).unwrap()
+                };
+                let body = submit(&key, &req, &genesis, &successor, successor_route, || Ok(4620))
+                    .await
+                    .unwrap();
+                let mut header = SliceData::load_cell(body.clone()).unwrap();
+                assert_eq!(header.get_next_u32().unwrap(), 0x50505333);
+                assert_eq!(body.reference(0).unwrap().repr_hash(), req.cell().repr_hash());
+                let mut cell = body.reference(1).unwrap();
+                let mut signature = Vec::new();
+                loop {
+                    let mut slice = SliceData::load_cell(cell).unwrap();
+                    signature.extend(slice.get_bytestring(0));
+                    if slice.remaining_references() == 0 {
+                        break;
+                    }
+                    cell = slice.checked_drain_reference().unwrap();
+                }
+                assert_eq!(signature.len(), role.signature_bytes());
+                if role == AuthRole::Primary {
+                    let pk = fips204::ml_dsa_44::PublicKey::try_from_bytes(
+                        public_key.try_into().unwrap(),
+                    )
+                    .unwrap();
+                    assert!(pk.verify(
+                        req.digest(),
+                        &signature.try_into().unwrap(),
+                        req.signing_context()
+                    ));
+                } else {
+                    // Exact public-key/signature widths and live buffers for the independent verifier.
+                    assert_eq!(
+                        unsafe {
+                            tos_rust_slhdsa128s_verify(
+                                req.digest().as_ptr(),
+                                req.digest().len(),
+                                signature.as_ptr(),
+                                signature.len(),
+                                req.signing_context().as_ptr(),
+                                req.signing_context().len(),
+                                public_key.as_ptr(),
+                            )
+                        },
+                        1
+                    );
+                }
+                let error =
+                    submit(&missing, &req, &wrong, &wrong_successor, successor_route, || Ok(4620))
+                        .await
+                        .unwrap_err()
+                        .to_string();
+                assert_eq!(
+                    error, "POP enrollment binding mismatch",
+                    "{route} POP opened custody before enrollment validation"
+                );
+                let error =
+                    submit(&missing, &req, &genesis, &successor, successor_route, || Ok(4700))
+                        .await
+                        .unwrap_err()
+                        .to_string();
+                assert_eq!(
+                    error, "POP TTL must be 1..=3600 seconds",
+                    "{route} POP opened custody before deadline validation"
+                );
+                for (after, label) in [(4619, "regressed clock"), (4700, "expired request")] {
+                    let mut calls = 0;
+                    let result = submit(&key, &req, &genesis, &successor, successor_route, || {
+                        calls += 1;
+                        Ok(if calls == 1 { 4620 } else { after })
+                    })
+                    .await;
+                    assert!(result.is_err(), "{route} POP accepted {label} after loading");
+                    assert_eq!(calls, 2);
+                }
+            }
+        }
     }
 
     #[cfg(feature = "native-wallet-signer")]

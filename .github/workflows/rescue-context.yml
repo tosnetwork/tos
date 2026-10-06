@@ -91,6 +91,7 @@ jobs:
           python test/wallet-v5r2/vault_creation_controls.py --output artifacts/context/vault-creation-controls
           python test/wallet-v5r2/proven_vault_controls.py --output artifacts/context/proven-vault-controls
           python test/wallet-v5r2/vault_recovery_controls.py --output artifacts/context/vault-recovery-controls
+          python test/wallet-v5r2/vault_pop_controls.py --output artifacts/context/vault-pop-controls
           python test/wallet-v5r2/migration_signing_controls.py --output artifacts/context/migration-signing-controls
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
