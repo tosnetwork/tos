@@ -256,7 +256,7 @@ async fn v5_transfer_is_bound_to_network_global_id() {
 /// its balance once fell short of storage and a later top-up did not clear it: the
 /// next external send pays the debt with its storage phase.
 async fn the_send_reserve_covers_the_wallet_charge(version: WalletVersion, debt: u64) {
-    use contracts::wallet::send_fees::{SendFeeInputs, WalletStorage, wallet_send_reserve};
+    use contracts::wallet::send_fees::{AccountStorage, SendFeeInputs, wallet_send_reserve};
     let mut fixture = Fixture::new(version).await;
     let deploy = fixture.signed_transfer(GLOBAL_ID, 0, true).await;
     fixture.bc.send_message(deploy).expect("deploy").expect_success();
@@ -288,7 +288,7 @@ async fn the_send_reserve_covers_the_wallet_charge(version: WalletVersion, debt:
         account.set_due_payment(Some(chain_block::Coins::from(debt)));
         fixture.bc.set_account(fixture.address.clone(), account.clone());
     }
-    let storage = WalletStorage::from_account(&account).expect("storage");
+    let storage = AccountStorage::from_account(&account).expect("storage");
     assert_eq!(storage.due_payment, u128::from(debt));
     let config = fixture.bc.config_params();
     let gas = config.gas_prices(true).expect("gas prices");

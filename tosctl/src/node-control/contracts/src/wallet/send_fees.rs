@@ -48,9 +48,9 @@ pub fn tree_size(roots: &[&Cell]) -> anyhow::Result<(u64, u64)> {
     Ok((cells, bits))
 }
 
-/// A wallet's storage, as the storage phase sees it.
+/// An account's storage, as the storage phase sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WalletStorage {
+pub struct AccountStorage {
     pub cells: u64,
     pub bits: u64,
     /// When the wallet last paid for storage.
@@ -59,17 +59,32 @@ pub struct WalletStorage {
     pub due_payment: u128,
 }
 
-impl WalletStorage {
+impl AccountStorage {
     /// The storage metadata the account itself records.
     pub fn from_account(account: &Account) -> anyhow::Result<Self> {
-        let info = account
-            .storage_info()
-            .ok_or_else(|| anyhow::anyhow!("the wallet account does not exist"))?;
+        let info =
+            account.storage_info().ok_or_else(|| anyhow::anyhow!("the account does not exist"))?;
         Ok(Self {
             cells: info.used().cells(),
             bits: info.used().bits(),
             last_paid: info.last_paid(),
             due_payment: info.due_payment().map_or(0, |due| due.as_u128()),
+        })
+    }
+
+    /// The storage metadata a node served with an account (`storage_stat`).
+    pub fn from_rpc(stat: &chain_rpc_client::v2::data_models::StorageStat) -> anyhow::Result<Self> {
+        let due_payment = match &stat.due_payment {
+            Some(text) => text.parse::<u128>().map_err(|e| {
+                anyhow::anyhow!("storage_stat.due_payment '{text}' is not an amount: {e}")
+            })?,
+            None => 0,
+        };
+        Ok(Self {
+            cells: stat.used_cells,
+            bits: stat.used_bits,
+            last_paid: stat.last_paid,
+            due_payment,
         })
     }
 }
@@ -81,7 +96,7 @@ impl WalletStorage {
 /// rounded up once at the end.
 pub fn storage_due(
     prices: &[StoragePrices],
-    storage: &WalletStorage,
+    storage: &AccountStorage,
     now: u32,
 ) -> anyhow::Result<u128> {
     storage_accrued(prices, storage, now)?
@@ -91,7 +106,7 @@ pub fn storage_due(
 
 fn storage_accrued(
     prices: &[StoragePrices],
-    storage: &WalletStorage,
+    storage: &AccountStorage,
     now: u32,
 ) -> anyhow::Result<u128> {
     let overflow = || anyhow::anyhow!("storage fee overflows");
@@ -146,7 +161,7 @@ pub struct SendFeeInputs<'a> {
     pub gas: &'a GasLimitsPrices,
     pub forward: &'a MsgForwardPrices,
     pub storage_prices: &'a [StoragePrices],
-    pub storage: &'a WalletStorage,
+    pub storage: &'a AccountStorage,
     /// The latest time the message can execute at.
     pub now: u32,
     pub body: &'a Cell,
@@ -224,7 +239,7 @@ mod tests {
             cell_price: 65_536,
             ..Default::default()
         };
-        let storage = WalletStorage { cells: 3, bits: 100, last_paid: 1, due_payment: 0 };
+        let storage = AccountStorage { cells: 3, bits: 100, last_paid: 1, due_payment: 0 };
         let reserve = wallet_send_reserve(&SendFeeInputs {
             gas: &gas,
             forward: &forward,
@@ -256,7 +271,7 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let storage = WalletStorage { cells: 3, bits: 100, last_paid: 900, due_payment: 0 };
+        let storage = AccountStorage { cells: 3, bits: 100, last_paid: 900, due_payment: 0 };
         // 100 s at (100 * 1 + 3 * 500) = 1600 and 500 s at (100 * 2 + 3 * 1000) = 3200,
         // summed in 2^-16 nanoTOS and rounded up once: ceil(1_760_000 / 65536) = 27.
         // Rounding each period separately would give 3 + 25 = 28.
@@ -264,7 +279,7 @@ mod tests {
         assert_eq!(storage_due(&prices, &storage, 900).unwrap(), 0);
         assert_eq!(storage_due(&[], &storage, 1_500).unwrap(), 0);
         // Recorded debt is charged on top, even when nothing new has accrued.
-        let indebted = WalletStorage { due_payment: 7, ..storage };
+        let indebted = AccountStorage { due_payment: 7, ..storage };
         assert_eq!(storage_due(&prices, &indebted, 1_500).unwrap(), 27 + 7);
         assert_eq!(storage_due(&prices, &indebted, 900).unwrap(), 7);
     }
@@ -279,7 +294,7 @@ mod tests {
             StoragePrices { utime_since: 0, mc_cell_price_ps: 65_536, ..Default::default() },
             StoragePrices { utime_since: 1_000, mc_cell_price_ps: 65_536, ..Default::default() },
         ];
-        let storage = WalletStorage { cells: 1, bits: 0, last_paid: 1, due_payment: 7 };
+        let storage = AccountStorage { cells: 1, bits: 0, last_paid: 1, due_payment: 7 };
         assert_eq!(storage_due(&prices, &storage, 100).unwrap(), 106);
     }
 
@@ -307,7 +322,7 @@ mod tests {
             period(200, 2_000, 20),
             period(300, 3_000, 30),
         ];
-        let storage = WalletStorage { cells: 2, bits: 10, last_paid: 150, due_payment: 0 };
+        let storage = AccountStorage { cells: 2, bits: 10, last_paid: 150, due_payment: 0 };
         assert_eq!(storage_due(&prices, &storage, 350).unwrap(), 13);
         // Ending inside period 2 clips it: 105_000 + 4200 * 50 = 315_000 -> ceil 4.81 = 5.
         assert_eq!(storage_due(&prices, &storage, 250).unwrap(), 5);

@@ -12,6 +12,8 @@ const NOW: u64 = 1_791_250_000;
 const ELECTED_FOR: u32 = 65_536;
 /// A controller balance that covers any reserve these tests ask for.
 const RICH: u128 = 1_000_000 * NANO;
+/// No receive fee, no storage and no margin: the plan's arithmetic alone.
+const NO_COSTS: CapitalCosts = CapitalCosts { receive_fee: 0, storage_forecast: 0, margin: 0 };
 
 /// The fee fixture of the local funding helper's tests (`prices()`): a flat prefix of
 /// 100 gas for 1_000_000, then `gas_price` per 2^16 gas; forwarding with lump 10^7, bit
@@ -163,6 +165,7 @@ fn renewal_deposits_only_the_deficit() {
         false,
         NOW,
         &request(100 * NANO),
+        &NO_COSTS,
     )
     .unwrap();
     assert_eq!(plan.deposit, 70 * NANO);
@@ -177,15 +180,33 @@ fn a_surplus_renews_with_a_zero_deposit() {
     let fees = fees();
     let mut ask = request(100 * NANO);
     ask.expires_at = (NOW + 90 * DAY) as u32;
-    let plan =
-        plan_renewal(&controller(), &state(150 * NANO, 1), RICH, &fees, false, NOW, &ask).unwrap();
+    let plan = plan_renewal(
+        &controller(),
+        &state(150 * NANO, 1),
+        RICH,
+        &fees,
+        false,
+        NOW,
+        &ask,
+        &NO_COSTS,
+    )
+    .unwrap();
     assert_eq!(plan.deposit, 0);
     assert_eq!(plan.funds_after, 150 * NANO);
     assert_eq!(plan.expires_at, ask.expires_at);
     assert_eq!(plan.required_value, fees.funding_processing);
     // Exactly at the target is also zero.
-    let plan =
-        plan_renewal(&controller(), &state(100 * NANO, 1), RICH, &fees, false, NOW, &ask).unwrap();
+    let plan = plan_renewal(
+        &controller(),
+        &state(100 * NANO, 1),
+        RICH,
+        &fees,
+        false,
+        NOW,
+        &ask,
+        &NO_COSTS,
+    )
+    .unwrap();
     assert_eq!(plan.deposit, 0);
 }
 
@@ -199,6 +220,7 @@ fn the_payload_is_the_layout_the_contract_parses() {
         false,
         NOW,
         &request(100 * NANO),
+        &NO_COSTS,
     )
     .unwrap();
     let mut slice = SliceData::load_cell(plan.payload).unwrap();
@@ -216,40 +238,59 @@ fn the_payload_is_the_layout_the_contract_parses() {
 fn renewal_refusals() {
     let fees = fees();
     let current = state(30 * NANO, 30 * NANO);
-    let pending =
-        plan_renewal(&controller(), &current, RICH, &fees, true, NOW, &request(100 * NANO));
+    let pending = plan_renewal(
+        &controller(),
+        &current,
+        RICH,
+        &fees,
+        true,
+        NOW,
+        &request(100 * NANO),
+        &NO_COSTS,
+    );
     assert!(pending.unwrap_err().to_string().contains("pending"));
 
     let mut other = request(100 * NANO);
     other.payer = MsgAddressInt::standard(-1, [0xBB; 32]);
-    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &other);
+    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &other, &NO_COSTS);
     assert!(refused.unwrap_err().to_string().contains("recorded payer"));
     other.allow_payer_change = true;
-    assert!(plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &other).is_ok());
+    assert!(
+        plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &other, &NO_COSTS).is_ok()
+    );
 
     // A controller never funded reports itself as payer; any payer may start.
     let unset = OperatingState { payer: controller(), expires: 0, ..state(0, 0) };
     let mut first = request(100 * NANO);
     first.payer = MsgAddressInt::standard(-1, [0xBB; 32]);
-    assert!(plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first).is_ok());
+    assert!(
+        plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first, &NO_COSTS).is_ok()
+    );
     first.payer = controller();
-    assert!(plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first).is_err());
+    assert!(
+        plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first, &NO_COSTS).is_err()
+    );
 
     let mut low_limit = request(100 * NANO);
     low_limit.limit = fees.grant - 1;
-    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit);
+    let refused =
+        plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit, &NO_COSTS);
     assert!(refused.unwrap_err().to_string().contains("per-request limit"));
     low_limit.limit = fees.grant;
-    assert!(plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit).is_ok());
+    assert!(
+        plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit, &NO_COSTS)
+            .is_ok()
+    );
 
     let mut low_allowance = request(100 * NANO);
     low_allowance.allowance = fees.grant - 1;
-    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_allowance);
+    let refused =
+        plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_allowance, &NO_COSTS);
     assert!(refused.unwrap_err().to_string().contains("allowance"));
 
     let mut past = request(100 * NANO);
     past.expires_at = NOW as u32;
-    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &past);
+    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &past, &NO_COSTS);
     assert!(refused.unwrap_err().to_string().contains("not in the future"));
 
     let tiny = plan_renewal(
@@ -260,12 +301,16 @@ fn renewal_refusals() {
         false,
         NOW,
         &RenewalRequest { funds_target: fees.grant - 1, allowance: fees.grant, ..request(0) },
+        &NO_COSTS,
     );
     assert!(tiny.unwrap_err().to_string().contains("do not cover one automatic grant"));
 
     let mut huge = request(COINS_LIMIT - 1);
     huge.margin = COINS_LIMIT - 1;
-    assert!(plan_renewal(&controller(), &state(0, 0), RICH, &fees, false, NOW, &huge).is_err());
+    assert!(
+        plan_renewal(&controller(), &state(0, 0), RICH, &fees, false, NOW, &huge, &NO_COSTS)
+            .is_err()
+    );
 }
 
 fn inputs<'a>(
@@ -522,6 +567,8 @@ fn null_cells_are_recognised_in_every_rendering() {
 
 /// The relay checks `balance - msg_value >= funds + floor`, and a deposit raises
 /// balance and funds by the same amount, so a new floor needs its own capital.
+/// Arithmetic only: whether the transfer this prices actually leaves that capital
+/// behind is shown by executing it, in `validator_controller_sandbox`.
 #[test]
 fn a_new_floor_needs_capital_the_deposit_cannot_supply() {
     let fees = fees();
@@ -529,10 +576,14 @@ fn a_new_floor_needs_capital_the_deposit_cannot_supply() {
     current.floor = 0;
     // Balance holds exactly the recorded funds: nothing for a floor.
     let ask = RenewalRequest { floor: 10 * NANO, ..request(100 * NANO) };
-    let plan = plan_renewal(&controller(), &current, 30 * NANO, &fees, false, NOW, &ask).unwrap();
+    let plan = plan_renewal(&controller(), &current, 30 * NANO, &fees, false, NOW, &ask, &NO_COSTS)
+        .unwrap();
     assert_eq!(plan.deposit, 70 * NANO);
     assert_eq!(plan.capital_after, 100 * NANO, "the deposit adds to balance and funds alike");
-    assert_eq!(plan.capital_top_up, 10 * NANO, "the new floor must be funded separately");
+    assert_eq!(plan.capital_shortfall, 10 * NANO, "the new floor must be funded separately");
+    assert_eq!(plan.capital_top_up_net, 10 * NANO);
+    assert_eq!(plan.capital_transfer_value, 10 * NANO, "no receive fee in this fixture");
+    assert!(!plan.capital_ready());
     let projected = plan.projected_state();
     assert_eq!(projected.funds, 100 * NANO);
     assert_eq!(projected.floor, 10 * NANO);
@@ -550,9 +601,10 @@ fn a_new_floor_needs_capital_the_deposit_cannot_supply() {
         "{:?}",
         without.warnings
     );
+    // What the transfer retains is the net amount, not its gross value.
     let with = assess(
         &OperatingInputs {
-            balance: Some(plan.capital_after + plan.capital_top_up),
+            balance: Some(plan.capital_after + plan.capital_top_up_net),
             ..inputs(&projected, &fees, &ctl)
         },
         &thresholds(),
@@ -560,9 +612,83 @@ fn a_new_floor_needs_capital_the_deposit_cannot_supply() {
     .unwrap();
     assert!(!with.blocks_next_stake(), "{:?}", with.warnings);
 
-    // Enough capital already: no top-up.
-    let plan = plan_renewal(&controller(), &current, 40 * NANO, &fees, false, NOW, &ask).unwrap();
-    assert_eq!(plan.capital_top_up, 0);
+    // Enough capital already: no top-up, and no receive fee charged for one.
+    let costs = CapitalCosts { receive_fee: 9_010_000, storage_forecast: 0, margin: NANO };
+    let plan =
+        plan_renewal(&controller(), &current, 40 * NANO, &fees, false, NOW, &ask, &costs).unwrap();
+    assert_eq!((plan.capital_top_up_net, plan.capital_transfer_value), (0, 0));
+    assert!(plan.capital_ready());
+}
+
+/// The gross transfer is the net capital to retain plus the controller's own fee for
+/// receiving it; the storage forecast and the margin are part of what is retained.
+#[test]
+fn the_transfer_carries_the_receive_fee_on_top_of_the_capital_it_leaves() {
+    let fees = fees();
+    let mut current = state(30 * NANO, 30 * NANO);
+    current.floor = 10 * NANO;
+    let ask = RenewalRequest { floor: 10 * NANO, ..request(30 * NANO) };
+    let costs = CapitalCosts { receive_fee: 9_010_000, storage_forecast: 0, margin: 0 };
+    let plan =
+        plan_renewal(&controller(), &current, 30 * NANO, &fees, false, NOW, &ask, &costs).unwrap();
+    assert_eq!(plan.deposit, 0);
+    assert_eq!(plan.capital_shortfall, 10 * NANO);
+    assert_eq!(plan.capital_required, 40 * NANO);
+    assert_eq!(plan.capital_top_up_net, 10 * NANO);
+    assert_eq!(plan.capital_transfer_value, 10 * NANO + 9_010_000);
+
+    let costs = CapitalCosts { receive_fee: 9_010_000, storage_forecast: 123, margin: 7 };
+    let plan =
+        plan_renewal(&controller(), &current, 30 * NANO, &fees, false, NOW, &ask, &costs).unwrap();
+    assert_eq!(plan.capital_required, 40 * NANO + 123);
+    assert_eq!(plan.capital_top_up_net, 10 * NANO + 123 + 7);
+    assert_eq!(plan.capital_transfer_value, 10 * NANO + 123 + 7 + 9_010_000);
+
+    // Funds + floor covered, the forecast not: still a top-up, of the forecast only.
+    let plan =
+        plan_renewal(&controller(), &current, 40 * NANO, &fees, false, NOW, &ask, &costs).unwrap();
+    assert_eq!(plan.capital_shortfall, 0);
+    assert!(!plan.capital_ready(), "the forecast is part of the requirement");
+    assert_eq!(plan.capital_top_up_net, 123 + 7);
+    assert_eq!(plan.capital_transfer_value, 123 + 7 + 9_010_000);
+
+    // At the requirement the margin is not demanded: it sizes a transfer, it does not
+    // make a funded controller unready.
+    let plan =
+        plan_renewal(&controller(), &current, 40 * NANO + 123, &fees, false, NOW, &ask, &costs)
+            .unwrap();
+    assert!(plan.capital_ready());
+    assert_eq!(plan.capital_transfer_value, 0);
+
+    // Amounts beyond the coin range are refused, not wrapped.
+    let huge = CapitalCosts { receive_fee: 0, storage_forecast: 1 << 120, margin: 0 };
+    assert!(plan_renewal(&controller(), &current, 0, &fees, false, NOW, &ask, &huge).is_err());
+}
+
+/// The receive fee is `GETGASFEE` for the measured receive gas, and the storage
+/// forecast runs from the recorded last payment to the expiry and counts the
+/// recorded debt once.
+#[test]
+fn capital_costs_price_the_receive_and_forecast_storage_through_the_expiry() {
+    let prices = vec![storage_prices()];
+    let storage = AccountStorage { cells: 9, bits: 5000, last_paid: 1_000, due_payment: 0 };
+    let gas = gas(true, 10_000 * 65_536);
+    let costs = capital_costs(&gas, &prices, &storage, 1_000, 5).unwrap();
+    assert_eq!(costs.receive_fee, gas_fee(&gas, PLAIN_RECEIVE_GAS).unwrap());
+    assert_eq!(costs.storage_forecast, 0, "nothing accrues before the last payment");
+    assert_eq!(costs.margin, 5);
+
+    // 100 s of 9 cells at 65_536/2^16 and 5000 bits at 1/2^16: 900 + ceil(500_000/65_536).
+    let costs = capital_costs(&gas, &prices, &storage, 1_100, 0).unwrap();
+    assert_eq!(costs.storage_forecast, 900 + 8);
+
+    // Recorded debt plus storage elapsed before the plan, plus storage to the expiry:
+    // one span from last_paid, and the debt once.
+    let indebted = AccountStorage { due_payment: 70, ..storage };
+    let costs = capital_costs(&gas, &prices, &indebted, 1_100, 0).unwrap();
+    assert_eq!(costs.storage_forecast, 900 + 8 + 70);
+
+    assert!(capital_costs(&gas, &prices, &storage, 1_100, 1 << 120).is_err());
 }
 
 /// Answers pinned reads only, and records the block each one named. An unpinned
@@ -571,14 +697,63 @@ fn a_new_floor_needs_capital_the_deposit_cannot_supply() {
 struct PinnedOnlyChain {
     head: u32,
     seen: std::sync::Mutex<Vec<(&'static str, u32)>>,
+    /// How the controller account read answers.
+    account: AccountAnswer,
 }
 
+#[derive(Clone, Copy)]
+struct AccountAnswer {
+    state: &'static str,
+    /// The root hash byte of the block the answer names; the head's is 0x11.
+    root_hash: u8,
+    storage_stat: bool,
+}
+
+const ACTIVE: AccountAnswer =
+    AccountAnswer { state: "active", root_hash: 0x11, storage_stat: true };
+
 impl PinnedOnlyChain {
+    fn new(head: u32, account: AccountAnswer) -> Self {
+        Self { head, seen: std::sync::Mutex::new(Vec::new()), account }
+    }
+
     fn record(&self, what: &'static str, seqno: u32) {
         if let Ok(mut seen) = self.seen.lock() {
             seen.push((what, seqno));
         }
     }
+}
+
+/// The account as a node serves it at `seqno`.
+fn served_account(
+    answer: AccountAnswer,
+    seqno: u32,
+) -> anyhow::Result<crate::chain_provider::AddressInfo> {
+    let mut account = serde_json::json!({
+        "@type": "raw.fullAccountState",
+        "balance": "2000000000000",
+        "last_transaction_id": {"@type": "internal.transactionId", "lt": "5", "hash": ""},
+        "block_id": {
+            "@type": "tos.blockIdExt", "workchain": -1, "shard": "-9223372036854775808",
+            "seqno": 1, "root_hash": "", "file_hash": ""
+        },
+        "sync_utime": 1,
+        "state": answer.state,
+        "storage_stat": {
+            "@type": "storage.stat",
+            "used_cells": "9",
+            "used_bits": "5000",
+            "last_paid": 1791240000,
+            "due_payment": "70"
+        },
+    });
+    if !answer.storage_stat {
+        account["storage_stat"] = serde_json::Value::Null;
+    }
+    let mut info: crate::chain_provider::AddressInfo = serde_json::from_value(account)?;
+    info.block_id = block_id(seqno);
+    info.block_id.root_hash = vec![answer.root_hash; 32];
+    Ok(info)
 }
 
 fn block_id(seqno: u32) -> chain_rpc_client::v2::data_models::BlockIdExt {
@@ -633,13 +808,13 @@ impl ChainProvider for PinnedOnlyChain {
     async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
         anyhow::bail!("unpinned balance")
     }
-    async fn get_balance_at_unverified(
+    async fn get_address_info_at_unverified(
         &self,
         _address: &MsgAddressInt,
         checkpoint: &crate::MasterchainCheckpoint,
-    ) -> anyhow::Result<u64> {
-        self.record("balance", checkpoint.seqno);
-        Ok(2_000_000_000_000)
+    ) -> anyhow::Result<crate::chain_provider::AddressInfo> {
+        self.record("account", checkpoint.seqno);
+        served_account(self.account, checkpoint.seqno)
     }
     async fn get_config_param_at_unverified(
         &self,
@@ -650,6 +825,11 @@ impl ChainProvider for PinnedOnlyChain {
         Ok(match param_id {
             20 => ConfigParamEnum::ConfigParam20(gas(true, 10_000 * 65_536)),
             24 => ConfigParamEnum::ConfigParam24(forward()),
+            18 => {
+                let mut prices = chain_block::ConfigParam18::default();
+                prices.insert(&storage_prices())?;
+                ConfigParamEnum::ConfigParam18(prices)
+            }
             15 => ConfigParamEnum::ConfigParam15(chain_block::ConfigParam15 {
                 validators_elected_for: ELECTED_FOR,
                 elections_start_before: 1,
@@ -707,16 +887,65 @@ impl ChainProvider for PinnedOnlyChain {
     }
 }
 
+/// Masterchain storage at 1 nano-TOS per cell-second and per 2^16 bit-seconds.
+fn storage_prices() -> chain_block::StoragePrices {
+    chain_block::StoragePrices {
+        utime_since: 0,
+        bit_price_ps: 1,
+        cell_price_ps: 500,
+        mc_bit_price_ps: 1,
+        mc_cell_price_ps: 65_536,
+    }
+}
+
 #[tokio::test]
 async fn every_planning_input_is_read_at_one_block() {
-    let chain = PinnedOnlyChain { head: 4242, seen: std::sync::Mutex::new(Vec::new()) };
+    let chain = PinnedOnlyChain::new(4242, ACTIVE);
     let operations = read_controller_operations(&chain, &controller()).await.unwrap();
     assert_eq!(operations.checkpoint.seqno, 4242);
     assert_eq!(operations.checkpoint.root_hash, "11".repeat(32));
     assert_eq!(operations.authority.nonce, 4);
     assert_eq!(operations.balance, 2_000_000_000_000);
     assert_eq!(operations.fees, fees());
+    assert_eq!(operations.gas_prices, gas(true, 10_000 * 65_536));
+    assert_eq!(operations.storage_prices, vec![storage_prices()]);
+    assert_eq!(
+        operations.storage,
+        Some(AccountStorage { cells: 9, bits: 5000, last_paid: 1_791_240_000, due_payment: 70 })
+    );
     let seen = chain.seen.lock().unwrap().clone();
-    assert_eq!(seen.len(), 8, "{seen:?}");
+    assert_eq!(seen.len(), 9, "{seen:?}");
+    assert!(seen.iter().any(|(what, _)| *what == "account"), "{seen:?}");
     assert!(seen.iter().all(|(_, seqno)| *seqno == 4242), "{seen:?}");
+}
+
+/// An account answer naming another block at the same height is refused, even when
+/// the provider let it through.
+#[tokio::test]
+async fn an_account_read_from_another_block_is_refused() {
+    let chain = PinnedOnlyChain::new(4242, AccountAnswer { root_hash: 0x99, ..ACTIVE });
+    let error = read_controller_operations(&chain, &controller()).await.unwrap_err();
+    assert!(format!("{error:#}").contains("returned another block"), "{error:#}");
+}
+
+/// A frozen or uninitialized controller is refused, not quoted as an active one with
+/// a balance and a plan.
+#[tokio::test]
+async fn an_inactive_controller_is_refused() {
+    for state in ["frozen", "uninitialized"] {
+        let chain = PinnedOnlyChain::new(4242, AccountAnswer { state, ..ACTIVE });
+        let error = read_controller_operations(&chain, &controller()).await.unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains(state) && text.contains("not an active controller"), "{text}");
+        let seen = chain.seen.lock().unwrap().clone();
+        assert!(seen.iter().all(|(what, _)| *what != "getter"), "a getter ran: {seen:?}");
+    }
+}
+
+/// A status check does not need the storage metadata; it reports it absent.
+#[tokio::test]
+async fn missing_storage_metadata_is_reported_absent() {
+    let chain = PinnedOnlyChain::new(4242, AccountAnswer { storage_stat: false, ..ACTIVE });
+    let operations = read_controller_operations(&chain, &controller()).await.unwrap();
+    assert_eq!(operations.storage, None);
 }

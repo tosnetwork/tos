@@ -550,3 +550,83 @@ fn the_guard_fits_the_external_gas_credit() {
     assert!(worst_overhead <= 1_050, "the guard adds {worst_overhead} gas");
     assert!(worst * 10 <= EXTERNAL_GAS_CREDIT * 9, "{worst} leaves under 10% of the credit");
 }
+
+/// A sandbox stack item rendered as the node's `runGetMethodStd` serializer
+/// (`serialize_stack_entry_std` in `validator-engine/json-rpc-server-runmethod.cpp`)
+/// renders it: a tuple is tested before a list, so a TVM null, which only the list
+/// test accepts, becomes an empty `tvm.stackEntryList`, and a cons cell stays a
+/// two-element tuple. This mirrors that code and is no evidence of it on its own;
+/// `tests/fixtures/get_proposal` holds the node's real answers.
+fn as_served(item: &StackItem) -> serde_json::Value {
+    use base64::Engine;
+    let b64 = |cell: &Cell| {
+        base64::engine::general_purpose::STANDARD
+            .encode(chain_block::write_boc(cell).expect("a boc"))
+    };
+    if item.is_null() {
+        return serde_json::json!({
+            "@type": "tvm.stackEntryList",
+            "list": {"@type": "tvm.list", "elements": []}
+        });
+    }
+    if let Ok(int) = item.as_integer() {
+        return serde_json::json!({
+            "@type": "tvm.stackEntryNumber",
+            "number": {"@type": "tvm.numberDecimal", "number": int.to_string()}
+        });
+    }
+    if let Ok(items) = item.as_tuple() {
+        return serde_json::json!({
+            "@type": "tvm.stackEntryTuple",
+            "tuple": {"@type": "tvm.tuple", "elements": items.iter().map(as_served).collect::<Vec<_>>()}
+        });
+    }
+    if let Ok(cell) = item.as_cell() {
+        return serde_json::json!({
+            "@type": "tvm.stackEntryCell",
+            "cell": {"@type": "tvm.cell", "bytes": b64(cell)}
+        });
+    }
+    panic!("get_proposal returned an item this test does not render: {item:?}");
+}
+
+/// The configuration contract's own `get_proposal`, rendered as the node serves it
+/// and read back by the decoders `tosctl` uses.
+fn served_proposal(config: &Config, phash: [u8; 32]) -> common::tvm_stack_parser::TvmStackParser {
+    let key = StackItem::integer(IntegerData::from_unsigned_bytes_be(phash));
+    let result = config.bc.run_get_method(&config.address, "get_proposal", vec![key]).expect("run");
+    result.expect_success();
+    // The node serializes the stack top first; the provider reverses it.
+    let served: Vec<serde_json::Value> = result.stack.iter().rev().map(as_served).collect();
+    let entries: Vec<chain_rpc_client::v2::stack::RPCStackEntry> =
+        serde_json::from_value(serde_json::Value::Array(served)).expect("served entries");
+    contracts::chain_provider::stack_from_rpc(entries)
+}
+
+#[test]
+fn the_real_get_proposal_decodes_absent_unvoted_and_voted() {
+    use contracts::config_contract::{decode_proposal, decode_proposal_expiry};
+    let strong = strong_validator();
+    let weak = weak_ed25519::sign_bit_aliases()[1];
+    let mut config = Config::deploy(compile(&source()), &weak, &strong);
+    let expires = config.bc.now() + 100_000;
+
+    let absent = served_proposal(&config, [0x71; 32]);
+    assert_eq!(decode_proposal_expiry(&absent).expect("absent"), None);
+    assert!(decode_proposal([0x71; 32], &absent).expect("absent").is_none());
+
+    let unvoted = served_proposal(&config, PHASH);
+    assert_eq!(decode_proposal_expiry(&unvoted).expect("present"), Some(expires));
+    let proposal = decode_proposal(PHASH, &unvoted).expect("present").expect("a proposal");
+    assert_eq!(proposal.expires, expires);
+    assert_eq!(proposal.param.id, 100);
+    assert!(proposal.voters.is_empty());
+
+    let part = internal_vote_part(STRONG_INDEX, PHASH);
+    let (result, _) = config.send_internal(internal_vote(7, strong.sign(&part).to_bytes(), &part));
+    result.expect_success();
+    let voted = served_proposal(&config, PHASH);
+    assert_eq!(decode_proposal_expiry(&voted).expect("voted"), Some(expires));
+    let proposal = decode_proposal(PHASH, &voted).expect("voted").expect("a proposal");
+    assert_eq!(proposal.voters, vec![STRONG_INDEX]);
+}

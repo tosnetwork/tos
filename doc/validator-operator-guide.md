@@ -250,9 +250,29 @@ tosctl controller operations plan --controller -1:CONTROLLER_HEX \
 A deposit is added to the recorded funds and every other field replaces the
 stored one, so the plan renews by deficit. `--floor-nanotos` is required for a
 first authorization. `--expiry-only` renews only the expiry. The plan refuses
-while a relay is pending or retry fees are held, and when the payer would change
-unless `--allow-payer-change` is given. It signs and sends nothing. It prints
-the payload and two commands:
+while a relay is pending or retry fees are held, when the payer would change
+unless `--allow-payer-change` is given, when the controller account is frozen or
+uninitialized, and when the node does not serve the controller's storage
+metadata. It signs and sends nothing.
+
+Each relay requires the controller's balance to keep `funds + floor`, and the
+deposit cannot supply that: it raises the balance and the recorded funds alike.
+The plan therefore requires `funds + floor + storage forecast`, where the
+forecast is the storage the controller will be charged from its last payment
+through the authorization's expiry, plus any recorded storage debt, at the
+occupancy and prices of the block the plan read. It is a forecast, not a
+guarantee: the request rewrites the controller's data, relays add state, and
+prices can change.
+
+While the balance is short of that requirement the plan is **BLOCKING**. It
+prints a plain transfer to send first: the net amount to retain, plus
+`--capital-margin-nanotos` (discretionary headroom, default one live
+`control_value`), plus the fee the controller pays from its own balance to
+receive the transfer. It prints the kind 4 payload only as a preview and no
+signing or send command. Send the transfer, then run the plan again: it reads
+the balance, the storage metadata and the authorization afresh, and prints the
+commands once the capital is there. Once it does, it prints the payload and two
+commands:
 
 1. the exact `tos-pq-controller fund-operations ROOTSEED GLOBAL_ID
    CONTROLLER_HEX EPOCH NONCE VALID_UNTIL PAYLOAD_BOC_B64` line, with the live
