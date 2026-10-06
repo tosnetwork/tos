@@ -173,7 +173,8 @@ the node's own rules. The tool:
 
 Start the node. For every consensus key it holds it logs
 `post-quantum consensus custody: validator_id <hex> key_id <hex> valid_from <t>
-expire_at <t>`, in the same lower-case hex `tos-pq-consensus-key show` prints,
+expire_at <t>` at start-up, in the same lower-case hex that
+`tos-pq-consensus-key show` prints,
 and stops instead of starting as an observer if the key cannot be
 loaded. In the container image the binding is made from `VALIDATOR_ID` and
 `PQ_CONSENSUS_KEY_FILE`; see [docker/README.md](../docker/README.md#run-a-validator).
@@ -187,8 +188,9 @@ controller, so deploy the controller first. Configure `tosctl`
 connection (`config node add`), the validator wallet (`config wallet add`), the
 pool (`config pool add --controller`, or `deploy pool --controller` to deploy
 it), and the binding (`config bind add --pool`). Pass a raw masterchain address
-to `--to`, `--owner`, `--controller` or `--address` of these commands in the
-`--flag=-1:<hex>` form; as a separate word, `-1:<hex>` is read as an option. Then import the controller's
+to `--to`, `--owner`, `--controller` or `--address` of these commands either as
+`--flag -1:<hex>` or `--flag=-1:<hex>`; address flags accept a value starting with a hyphen, and
+refuse anything that is not an address. Then import the controller's
 birth from the transaction kept in step 5:
 
 ```bash
@@ -265,9 +267,8 @@ the payload and two commands:
      --amount-nanotos VALUE --body-boc SIGNED_BODY_B64 --bounce
    ```
 
-   `--bounce` makes a refused request return its value. Write a masterchain
-   destination as `--to=-1:...`: `--to` does not accept a value that starts
-   with a hyphen as a separate word.
+   `--bounce` makes a refused request return its value. A masterchain
+   destination can be given as `--to -1:...` or `--to=-1:...`.
 
 Run `status` again and check that the nonce advanced and the recorded values
 are the planned ones.

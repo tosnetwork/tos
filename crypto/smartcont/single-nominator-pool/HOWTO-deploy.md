@@ -57,9 +57,9 @@ because the pool does not exist yet. The script saves the signed message to
 
 - Record the pool in tosctl with `tosctl config pool add --name POOL --address
   POOL_ADDRESS --owner OWNER_ADDRESS --controller CONTROLLER_ADDRESS` and bind it to the
-  node with `tosctl config bind add --node NODE --wallet WALLET --pool POOL`. Give a raw
-  masterchain address as `--controller=-1:<hex>` (likewise `--owner=`, `--address=`);
-  as a separate word, `-1:<hex>` is read as an option.
+  node with `tosctl config bind add --node NODE --wallet WALLET --pool POOL`. A raw
+  masterchain address can be given as `--controller -1:<hex>` or `--controller=-1:<hex>`
+  (likewise `--owner`, `--address`).
 - Import the controller's birth with `tosctl config bind import-birth`.
 - Make sure the controller holds a current operating authorization
   (`tosctl controller operations status --controller CONTROLLER_ADDRESS`); without one the
