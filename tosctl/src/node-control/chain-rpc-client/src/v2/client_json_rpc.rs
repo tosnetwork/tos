@@ -274,16 +274,18 @@ impl ClientJsonRpc {
         &self,
         param_id: u32,
         seqno: u32,
-    ) -> anyhow::Result<ConfigParamEnum> {
+    ) -> anyhow::Result<(ConfigParamEnum, BlockIdExt)> {
         anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
+        // with_proof makes the endpoint report the block it actually read; a height
+        // alone does not name a block, and another endpoint may hold another one.
         let config_info = self
             .json_rpc_read(
                 "getConfigParam",
-                serde_json::json!({"config_id": param_id, "seqno": seqno}),
+                serde_json::json!({"config_id": param_id, "seqno": seqno, "with_proof": true}),
             )
             .await
             .with_context(|| format!("getConfigParam({param_id}) at seqno {seqno}"))?;
-        decode_config_param(config_info, param_id)
+        decode_config_param_with_block(config_info, param_id)
     }
 
     /// Return the exact on-chain value cell. Pool maintenance compares its
@@ -1140,6 +1142,20 @@ fn decode_config_param(
 ) -> anyhow::Result<ConfigParamEnum> {
     let cell = decode_config_param_cell(config_info)?;
     ConfigParamEnum::construct_from_cell_and_number(cell, param_id).map_err(anyhow::Error::from)
+}
+
+/// A `getConfigParam` answer requested `with_proof`, with the block it was read at.
+pub fn decode_config_param_with_block(
+    config_info: serde_json::Value,
+    param_id: u32,
+) -> anyhow::Result<(ConfigParamEnum, BlockIdExt)> {
+    let block = config_info
+        .get("block_id")
+        .or_else(|| config_info.get("result").and_then(|result| result.get("block_id")))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("the endpoint did not report the block it read"))?;
+    let block = serde_json::from_value::<BlockIdExt>(block).context("block_id")?;
+    Ok((decode_config_param(config_info, param_id)?, block))
 }
 
 fn decode_config_param_cell(config_info: serde_json::Value) -> anyhow::Result<Cell> {
