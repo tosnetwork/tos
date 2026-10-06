@@ -1,0 +1,73 @@
+{
+  "base_commit": "a352db138193a7d0dbeb1bb37e9a2616a6e14479",
+  "scope": "Isolated recorded prestates at default credit; not a continuous recovery",
+  "gas_credit": 10000,
+  "transactions": 65,
+  "changed_to_out_of_gas": 13,
+  "verified_native_executions": 2145,
+  "expectation_source": "Rust executor --details",
+  "max_changed_scenario_median_ns": 114000.5,
+  "controls": "4 tests passed: changed rejection refused and deletion admits it, evidence preservation, only gas_credit changed for extended configurations with/without flat prefix",
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh && /Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/default_credit_timing.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-signer-integration-final/recovery --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-default-credit-timing-final --iterations 30",
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-default-credit-timing-final/comparison.json",
+      "sha256": "45e03e7f451fb610d75707d2a950dbea82927922eb0065d412b4fca979f5e737",
+      "bytes": 4979
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-default-credit-timing-final/fixtures/config.boc",
+      "sha256": "36380e095e8e2935d6c493207cd5f9990062640622c4faa16fc7e4ed4cfb6681",
+      "bytes": 916
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-default-credit-timing-final/fixtures/native.tsv",
+      "sha256": "6f7ade4952c888c71b5a5f4d323713575a192ceb9c5dbcd0ccea6a6b575f49a4",
+      "bytes": 5600
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-default-credit-timing-final/fixtures/scenarios.tsv",
+      "sha256": "2eeb5610e5e9bc26ade5bb6b39058352311e5a0f0974d2f5c846d3483073ea3f",
+      "bytes": 1796244
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-default-credit-timing-final/rust.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-default-credit-timing-final/rust.tsv",
+      "sha256": "6f7ade4952c888c71b5a5f4d323713575a192ceb9c5dbcd0ccea6a6b575f49a4",
+      "bytes": 5600
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-default-credit-timing-final/timing/measurements.json",
+      "sha256": "14aeccb0efbd0e8b4365ca6ec16c19f245d6c87b8f0ecc6ae4eeb4c7752e3b7f",
+      "bytes": 49774
+    }
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/default_credit_timing.py",
+      "sha256": "ec72945faa72d22e8c2522848a4c105489ac7a91e9bf7920bc9c7d00d5a571e6",
+      "bytes": 3805
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/benchmark_transactions.py",
+      "sha256": "d20b0ddf3705506391a45bc0bf7729663ad54ce5d9d2d7124662e8032c758bd5",
+      "bytes": 5941
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_benchmark_transactions.py",
+      "sha256": "13a10c078255c5a06e72d2f157b4f43ee14c532939e87fcf3a25c7a2baf4555c",
+      "bytes": 2731
+    }
+  ],
+  "retention": "Retain raw artifacts and their referenced source fixtures through 2027-01-06 or later release review. Reproduce into a fresh output directory.",
+  "remaining": [
+    "Default-credit admission still fails",
+    "No continuous default-credit recovery established",
+    "Not worst-case ingress or reference hardware clearance",
+    "Final-head dual-architecture CI pending"
+  ]
+}

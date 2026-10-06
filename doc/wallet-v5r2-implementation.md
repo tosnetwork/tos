@@ -1309,3 +1309,15 @@ The local Release/arm64 sample covers 65 transactions with 30 measured repetitio
 and three warmups each (2,145 verified executions), at diagnostic credit 20,000.
 See `test/wallet-v5r2/native-timing-20261006.json` for source and artifact hashes.
 Default-credit admission and production hardware/pricing approval remain open.
+
+`default_credit_timing.py` derives a separate fixture configuration by changing
+only ConfigParam 21's gas credit to 10,000. It obtains expected transcripts from
+the Rust executor, then checks every native timed execution against those results.
+The recorded account prestates are retained: these are isolated transaction
+probes, not an end-to-end recovery run at default credit. In the local 65-input
+sample, 13 transcripts change from diagnostic execution to out-of-gas rejection
+(`-14`); all 2,145 native executions match Rust expectations. Other gas fields and
+configuration entries are preserved by the adapter's regression test. Both CI
+architectures run this comparison alongside the diagnostic-credit measurements.
+See `test/wallet-v5r2/default-credit-timing-20261006.json`; neither these repeated
+public samples nor their measured rejection latency establish worst-case safety.

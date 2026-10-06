@@ -144,6 +144,10 @@ jobs:
           python test/wallet-v5r2/benchmark_transactions.py \
             --fixtures artifacts/context/r2-fee-prepare \
             --output artifacts/context/r2-native-timing --iterations 10 --warmup 2
+          python test/wallet-v5r2/default_credit_timing.py \
+            --fixtures artifacts/context/r2-fee-prepare \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-default-credit-timing --iterations 10
       - name: Receipt-bound module rent invariant
         run: |
           python test/wallet-v5r2/module_rent_control.py \
