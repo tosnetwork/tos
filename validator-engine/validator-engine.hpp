@@ -298,7 +298,9 @@ class ValidatorEngine : public td::actor::Actor {
   std::map<CI_key, td::uint32> control_permissions_;
 
   double state_ttl_ = 0;
-  bool enable_validator_consensus_cleanup_ = false;
+  // Deletion of retired validator consensus-DB directories; on unless
+  // --disable-validator-consensus-cleanup is given.
+  bool validator_consensus_cleanup_ = true;
   bool test_crash_cleanup_before_erase_ = false;
   size_t max_mempool_num_ = 0;
   double block_ttl_ = 0;
@@ -371,8 +373,8 @@ class ValidatorEngine : public td::actor::Actor {
   void set_state_ttl(double t) {
     state_ttl_ = t;
   }
-  void set_enable_validator_consensus_cleanup(bool v) {
-    enable_validator_consensus_cleanup_ = v;
+  void set_validator_consensus_cleanup(bool v) {
+    validator_consensus_cleanup_ = v;
   }
   void set_test_crash_cleanup_before_erase(bool v) {
     test_crash_cleanup_before_erase_ = v;

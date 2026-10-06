@@ -106,7 +106,7 @@ struct ConsensusDbSweepStats {
 // set": a validator directory must never be deleted by a fence match here,
 // because a session can be legitimately recreated and would then need its
 // consensus state. Validator-group directory cleanup is checkpoint-bound and
-// lives in the manager (Finding 1 / PR B), not in this sweep. Only observer
+// lives in the manager, not in this sweep. Only observer
 // directories are ever queued into `pending`, so in practice this sweep reclaims
 // observer databases only.
 //

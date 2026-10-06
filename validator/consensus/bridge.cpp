@@ -694,7 +694,7 @@ class BridgeImpl final : public IValidatorGroup {
     co_return td::Unit{};
   }
 
-  // Retirement close (validator-group cleanup, Finding 1 / PR B): mirror the
+  // Retirement close (validator-group cleanup): mirror the
   // stop/close sequence of destroy_inner() WITHOUT deleting the directory. The
   // bus destructor destroys `db` before satisfying stop_waiter_, so by the time
   // that waiter completes the actor no longer holds the database; only then is

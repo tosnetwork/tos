@@ -309,33 +309,18 @@ class ValidatorManagerImpl : public ValidatorManager {
   // plus multiple observers).
   std::set<std::string> pending_consensus_db_cleanup_;
 
-  // Validator-group consensus-DB cleanup adapter (Finding 1 / PR B/B2-8). Owns the
-  // durable cleanup records, per-incarnation generations, closure tracking, and
-  // the in-flight-delete reservation. Fed by the group lifecycle events below and
-  // driven by try_validator_consensus_db_cleanup(). Actual deletion is gated OFF
-  // by kValidatorConsensusCleanupEnabled until a post-genesis enablement; with the
-  // gate off the adapter only accumulates shadow state and deletes nothing.
+  // Validator-group consensus-DB cleanup driver. The durable store is the backlog;
+  // the driver holds only open retirements, in-flight deletes and its scan cursor
+  // (see validator-cleanup-manager.h). Fed by the group lifecycle events below and
+  // driven by a fixed-period tick (validator_cleanup_timer), which deletes only when the
+  // runtime option (on by default) is set and the four-condition safety gate proves
+  // a retired session obsolete against the durable GC snapshot. With cleanup
+  // disabled nothing is scanned or deleted; records keep accumulating on disk.
   consensus::ValidatorCleanupManager validator_cleanup_manager_;
 
   // Dedicated actor that runs the blocking validator-DB filesystem delete off the
-  // manager actor thread (created lazily on the first gated cleanup dispatch).
+  // manager actor thread (created lazily on the first cleanup dispatch).
   td::actor::ActorOwn<consensus::ValidatorConsensusCleanupWorker> validator_cleanup_worker_;
-
-  // Compile-time gate for enabling validator consensus-DB deletion. Deliberately
-  // false: a normal build must never delete. Live deletion is turned on ONLY via an
-  // explicit runtime opt-in for acceptance (never a blanket compile-time enable that
-  // would arm every build from this branch). The four-condition safety gate +
-  // GC-snapshot oracles remain the runtime protection against wrongful deletion.
-  static constexpr bool kValidatorConsensusCleanupEnabled = false;
-  // Max directory deletions dispatched per cleanup pass, so a large backlog cannot
-  // make a single manager turn do unbounded filesystem work.
-  static constexpr size_t kValidatorConsensusCleanupBudget = 16;
-  // Max records examined per cleanup pass (bounds scan cost on a big backlog; the
-  // round-robin cursor still covers all records over successive passes).
-  static constexpr size_t kValidatorConsensusCleanupScanBudget = 256;
-  // Max concurrent in-flight (Deleting+Erasing) cleanup operations across passes,
-  // bounding outstanding filesystem/erase work once deletion runs asynchronously.
-  static constexpr size_t kValidatorConsensusCleanupMaxOutstanding = 64;
 
  private:
   // MASTERCHAIN LAST BLOCK
@@ -684,7 +669,20 @@ class ValidatorManagerImpl : public ValidatorManager {
   void started(ValidatorManagerInitResult result);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
-  void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);
+  // Steps of one validator cleanup pass (see validator-cleanup-dispatch.h): the page
+  // read, each candidate's point read, a reservation, and the end of the pass.
+  void validator_cleanup_page_loaded(consensus::ValidatorCleanupPageRequest request,
+                                     td::Result<consensus::ValidatorCleanupPage> R);
+  void validator_cleanup_point_read(td::uint64 pass_token, consensus::PendingValidatorConsensusDbCleanup candidate,
+                                    td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> R);
+  // The cleanup tick timer fired (see validator-cleanup-dispatch.h).
+  void validator_cleanup_timer();
+  bool validator_cleanup_enabled();
+  bool validator_cleanup_reserved(const consensus::ReservedValidatorDelete &reserved);
+  void validator_cleanup_pass_finished(consensus::ValidatorCleanupPassSummary summary, td::Status status);
+  // The deletion-gate inputs bound to the current durable GC snapshot, or nothing when
+  // there is no consistent snapshot yet.
+  std::optional<consensus::ValidatorCleanupOracles> validator_cleanup_oracles();
   // Called by a validator group once it has confirmed its own consensus
   // directory is deleted, so the cleanup queue is pruned during normal uptime
   // (not only at the next startup sweep).
@@ -693,10 +691,6 @@ class ValidatorManagerImpl : public ValidatorManager {
   // Reclaims the observer per-group databases still queued for cleanup; see the
   // definition. Validator directories are never reclaimed here.
   void sweep_destroyed_consensus_dbs();
-  // Drives one validator-group cleanup pass through validator_cleanup_manager_:
-  // builds the GC-snapshot oracles, deletes eligible directories, and erases their
-  // durable records. A no-op while kValidatorConsensusCleanupEnabled is false.
-  void try_validator_consensus_db_cleanup();
   // The async delete worker reported a completed delete ATTEMPT (session,
   // generation, attempt_id) with its confirmed-gone result: feed it to the adapter.
   void validator_cleanup_delete_done(ValidatorSessionId session_id, td::uint64 generation, td::uint64 attempt_id,

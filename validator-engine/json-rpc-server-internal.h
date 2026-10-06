@@ -18,9 +18,9 @@
 */
 #pragma once
 
-#include "json-rpc-server.h"
 #include "json-rpc-server-parse.h"
 #include "json-rpc-server-storage.h"
+#include "json-rpc-server.h"
 
 // Minimal shared includes — each .cpp adds its own heavy deps
 #include "auto/tl/lite_api.h"

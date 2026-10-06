@@ -2798,30 +2798,12 @@ void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::str
     }
   }
   sweep_destroyed_consensus_dbs();
-  // Load the validator-group cleanup records BEFORE finishing startup, so they are
-  // in the adapter before update_shards can create any group. This is the startup
-  // barrier: on_group_created must never precede on_loaded_at_startup, or a load
-  // could overwrite a live group's state.
-  td::actor::send_closure(
-      db_, &Db::get_pending_validator_consensus_db_cleanup,
-      [SelfId = actor_id(this)](td::Result<std::vector<consensus::PendingValidatorConsensusDbCleanup>> R) {
-        R.ensure();
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup,
-                                R.move_as_ok());
-      });
-}
-
-void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup(
-    std::vector<consensus::PendingValidatorConsensusDbCleanup> records) {
-  // Fresh process, and this runs before any group is created (startup barrier), so
-  // nothing owns these directories -- closure is established by exclusive ownership,
-  // not an invented ack. Load each record into the cleanup adapter, attempt a
-  // cleanup pass (a no-op while deletion is gated off), and only THEN finish
-  // startup (which triggers group creation via update_shards).
-  for (auto &record : records) {
-    validator_cleanup_manager_.on_loaded_at_startup(std::move(record));
-  }
-  try_validator_consensus_db_cleanup();
+  // Validator-group cleanup records are not loaded: the durable store is the backlog
+  // and a fixed-period tick scans it a page at a time from the beginning. Nothing is
+  // open in a fresh process, so every stored retirement is closed; a group created
+  // meanwhile is live and the scan refuses it. The one tick chain starts here, and only
+  // if cleanup is enabled; that choice is fixed for the life of the process.
+  consensus::start_validator_cleanup_ticks(this, actor_id(this), consensus::ValidatorCleanupManager::kTickSeconds);
   finish_start_up().start().detach_ensure();
 }
 
@@ -2837,7 +2819,7 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
   // observer directories. Validator-group directories are NOT swept by fence
   // match: a validator session can be legitimately recreated, so deleting its
   // directory here would destroy live consensus state. Validator-group cleanup is
-  // checkpoint-bound and handled by the manager (Finding 1 / PR B), not this
+  // checkpoint-bound and handled by the cleanup tick, not this
   // startup sweep.
   // The walk + decision + reconciliation logic lives in a testable helper; the
   // deleter here does the real removal and confirms it with stat() (rmrf()
@@ -2894,83 +2876,125 @@ void ValidatorManagerImpl::consensus_db_closed(ValidatorSessionId session_id, td
   // A retiring validator group reported its bus stopped and DB closed (WITHOUT
   // deleting the directory), tagged with the incarnation it was retired at. The
   // adapter accepts it only if it matches the current pending incarnation -- a
-  // stale ack from an older incarnation (after a reopen) is ignored. Then attempt
-  // a cleanup pass (a no-op while deletion is gated off).
+  // stale ack from an older incarnation (after a reopen) is ignored. The session
+  // becomes eligible to a later cleanup tick.
   validator_cleanup_manager_.on_close_confirmed(session_id, generation);
   LOG(INFO) << "Validator consensus DB closed for retirement (pending checkpoint-bound cleanup): " << dir_name;
-  try_validator_consensus_db_cleanup();
 }
 
-void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
-  // Enablement: the runtime option is the sole opt-in and defaults false, so a normal
-  // build/deploy never deletes; only an explicit acceptance run
-  // (--enable-validator-consensus-cleanup) arms it. The compile-time constant stays
-  // false and is an OR override -- setting it true would force-enable regardless of the
-  // option, which is deliberately not done.
-  if (!kValidatorConsensusCleanupEnabled && !opts_->get_validator_consensus_cleanup_enabled()) {
-    return;
-  }
+bool ValidatorManagerImpl::validator_cleanup_enabled() {
+  // On by default: without it every retired session's directory stays on disk forever.
+  // An operator can keep them (e.g. for forensics) with
+  // --disable-validator-consensus-cleanup, a start-up choice: then no tick runs and
+  // nothing is read, durable records keep accumulating, and after a restart with
+  // cleanup enabled the scan reclaims them over many ticks, each record only once it
+  // passes the eligibility gate.
+  return opts_->get_validator_consensus_cleanup_enabled();
+}
+
+void ValidatorManagerImpl::validator_cleanup_timer() {
+  consensus::on_validator_cleanup_timer(this, actor_id(this), validator_cleanup_manager_, db_.get(),
+                                        consensus::ValidatorCleanupManager::kTickSeconds);
+}
+
+std::optional<consensus::ValidatorCleanupOracles> ValidatorManagerImpl::validator_cleanup_oracles() {
   if (!gc_masterchain_handle_ || gc_masterchain_state_.is_null()) {
-    return;  // no durable GC floor yet -> nothing is provably obsolete
+    return std::nullopt;
   }
   auto gc_id = gc_masterchain_handle_->id();
   auto gc_state = gc_masterchain_state_;
   if (!(gc_state->get_block_id() == gc_id)) {
-    return;  // the handle and state must describe the SAME durable GC block; else fail closed
+    return std::nullopt;  // the handle and state must describe the SAME durable GC block; else fail closed
   }
+  consensus::ValidatorCleanupOracles oracles;
+  oracles.gc = gc_id;
   // Both oracles are bound to this one durable GC snapshot.
-  auto ancestor_or_equal_of_gc = [gc_state](const BlockIdExt &retirement) {
+  oracles.ancestor_or_equal_of_gc = [gc_state](const BlockIdExt &retirement) {
     return gc_state->check_old_mc_block_id(retirement, /*strict=*/true);
   };
-  auto gc_shard_catchain_seqno = [gc_state](ShardIdFull shard) -> std::optional<CatchainSeqno> {
+  oracles.gc_shard_catchain_seqno = [gc_state](ShardIdFull shard) -> std::optional<CatchainSeqno> {
     auto cc = gc_state->get_shard_cc_seqno(shard);
     if (cc == std::numeric_limits<CatchainSeqno>::max()) {
       return std::nullopt;  // unknown sentinel / unsupported topology -> veto deletion
     }
     return cc;
   };
-  auto is_live = [this](const ValidatorSessionId &session) {
+  oracles.is_live = [this](const ValidatorSessionId &session) {
     return validator_groups_.contains(session) || next_validator_groups_.contains(session);
   };
-  // Per-record examination trace (armed-only): proves, per session, that a record was
-  // evaluated this pass and the eligibility decision -- so an acceptance harness need not
-  // infer examination from budget arithmetic.
-  auto on_examined = [](const ValidatorSessionId &session, bool eligible) {
-    LOG(WARNING) << "VALCLEANUP eval session=" << session.to_hex() << " eligible=" << (eligible ? 1 : 0);
+  return oracles;
+}
+
+void ValidatorManagerImpl::validator_cleanup_page_loaded(consensus::ValidatorCleanupPageRequest request,
+                                                         td::Result<consensus::ValidatorCleanupPage> R) {
+  // Per-record examination trace: proves, per session, that a record was evaluated and
+  // what was decided. The first full scan in this process logs every decision at INFO
+  // (a start-up audit of the backlog); later scans, which repeat on every GC advance,
+  // log them at DEBUG.
+  bool audit = validator_cleanup_manager_.in_first_scan();
+  auto on_examined = [audit](const ValidatorSessionId &session, bool eligible) {
+    if (audit) {
+      LOG(INFO) << "VALCLEANUP eval session=" << session.to_hex() << " eligible=" << (eligible ? 1 : 0);
+    } else {
+      LOG(DEBUG) << "VALCLEANUP eval session=" << session.to_hex() << " eligible=" << (eligible ? 1 : 0);
+    }
   };
-  auto reserved = validator_cleanup_manager_.begin_eligible_deletes(
-      gc_id, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live, kValidatorConsensusCleanupBudget,
-      kValidatorConsensusCleanupScanBudget, kValidatorConsensusCleanupMaxOutstanding, on_examined);
-  // Observable proof that a cleanup pass actually RAN and examined the durable records
-  // against this GC snapshot (so "record X was not reserved" is evidence of refusal, not
-  // of the pass never running). Emitted only when cleanup is armed.
-  LOG(WARNING) << "VALCLEANUP pass gc_seqno=" << gc_id.seqno()
-               << " pending=" << validator_cleanup_manager_.pending_count() << " reserved=" << reserved.size();
-  // Distinguishable per-op trace for the REAL validator-group cleanup path (bound to
-  // session/generation/attempt/dir + the GC/retirement inputs). This is emitted only
-  // when cleanup is armed, so it is not noise in a normal build; it lets a real-node
-  // acceptance verify the SAME reserved op reaches fs-confirmed-gone and erase-ack --
-  // distinct from the observer startup sweep's "reclaimed ..." log.
-  for (const auto &item : reserved) {
-    LOG(WARNING) << "VALCLEANUP reserve session=" << item.record.session_id.to_hex()
-                 << " generation=" << item.generation << " attempt=" << item.attempt_id
-                 << " dir=" << item.record.dir_name << " gc_seqno=" << gc_id.seqno()
-                 << " retirement_seqno=" << item.record.retirement_checkpoint.seqno();
+  // The oracles are re-bound to the GC snapshot current now; a GC move since the page
+  // request only makes them more permissive in the safe direction (a later floor).
+  consensus::handle_validator_cleanup_page(this, actor_id(this), validator_cleanup_manager_, db_.get(), request,
+                                           std::move(R), validator_cleanup_oracles(), on_examined);
+}
+
+void ValidatorManagerImpl::validator_cleanup_point_read(
+    td::uint64 pass_token, consensus::PendingValidatorConsensusDbCleanup candidate,
+    td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> R) {
+  consensus::handle_validator_cleanup_point_read(this, actor_id(this), validator_cleanup_manager_,
+                                                 validator_cleanup_worker_, db_root_, pass_token, candidate,
+                                                 std::move(R), validator_cleanup_oracles());
+}
+
+bool ValidatorManagerImpl::validator_cleanup_reserved(const consensus::ReservedValidatorDelete &item) {
+  // Distinguishable per-op trace for the validator-group cleanup path (bound to
+  // session/generation/attempt/dir + the GC/retirement inputs). One line per reserved
+  // delete lets an operator or harness follow the SAME op to fs-confirmed-gone and
+  // erase-ack -- distinct from the observer startup sweep's "reclaimed ..." log.
+  auto gc_seqno = gc_masterchain_handle_ ? gc_masterchain_handle_->id().seqno() : 0;
+  LOG(INFO) << "VALCLEANUP reserve session=" << item.record.session_id.to_hex() << " generation=" << item.generation
+            << " attempt=" << item.attempt_id << " dir=" << item.record.dir_name << " gc_seqno=" << gc_seqno
+            << " retirement_seqno=" << item.record.retirement_checkpoint.seqno();
+  return true;
+}
+
+void ValidatorManagerImpl::validator_cleanup_pass_finished(consensus::ValidatorCleanupPassSummary summary,
+                                                           td::Status status) {
+  if (status.is_error()) {
+    LOG(WARNING) << "validator consensus cleanup pass did not run: " << status;
+  } else if (summary.reserved > 0 || validator_cleanup_manager_.in_first_scan() ||
+             (summary.wrapped && validator_cleanup_manager_.completed_cycles() == 1)) {
+    // Observable proof that a pass RAN and examined durable records (so "record X was
+    // not reserved" is evidence of refusal, not of the pass never running). A pass runs
+    // every tick, so only the first cycle and passes that reserve something are logged.
+    auto gc_seqno = gc_masterchain_handle_ ? gc_masterchain_handle_->id().seqno() : 0;
+    LOG(INFO) << "VALCLEANUP pass gc_seqno=" << gc_seqno << " examined=" << summary.examined
+              << " reserved=" << summary.reserved << " wrapped=" << (summary.wrapped ? 1 : 0)
+              << " in_flight=" << validator_cleanup_manager_.in_flight_count();
   }
-  // Dispatch the reserved deletes to the worker actor so the blocking filesystem work
-  // does not run inline on this manager's message-processing stack. The worker,
-  // completion token threading, durable-erase ordering, and retry pacing are shared
-  // with the integration harness via validator-cleanup-dispatch.h, so the production
-  // path and its end-to-end test exercise one copy of this glue.
-  consensus::dispatch_reserved_validator_deletes(actor_id(this), validator_cleanup_worker_, db_root_, reserved);
 }
 
 void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId session_id, td::uint64 generation,
                                                          td::uint64 attempt_id, bool confirmed_gone) {
-  LOG(WARNING) << "VALCLEANUP delete_done session=" << session_id.to_hex() << " generation=" << generation
-               << " attempt=" << attempt_id << " confirmed_gone=" << (confirmed_gone ? 1 : 0);
-  // ACCEPTANCE FAULT INJECTION (default off): the worker has just confirmed the consensus
-  // directory removed, and the durable record erase below has NOT been dispatched yet. On
+  // A delete that could not be confirmed is retried by a later cycle; it is the one
+  // outcome an operator should notice, so it is a warning.
+  if (confirmed_gone) {
+    LOG(INFO) << "VALCLEANUP delete_done session=" << session_id.to_hex() << " generation=" << generation
+              << " attempt=" << attempt_id << " confirmed_gone=1";
+  } else {
+    LOG(WARNING) << "VALCLEANUP delete_done session=" << session_id.to_hex() << " generation=" << generation
+                 << " attempt=" << attempt_id << " confirmed_gone=0";
+  }
+  // TEST-ONLY FAULT INJECTION (default off, --test-consensus-cleanup-crash-before-erase):
+  // the worker has just confirmed the consensus directory removed, and the durable
+  // record erase below has NOT been dispatched yet. On
   // disk this is exactly {directory gone, durable record present}. Exiting abruptly here
   // reproduces the crash a validator could take at this instant, so a restart can be shown
   // to reconcile that mid-flight state. This is the real dispatch path, not a fixture.
@@ -2982,20 +3006,17 @@ void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId sess
   }
   // Feed the completed delete attempt to the adapter; on a confirmed delete this
   // dispatches the durable record erase and releases the reservation only on the
-  // erase-ack. Deliberately does NOT re-trigger a pass (that would spin a backoff-free
-  // retry loop on a persistently failing delete). See validator-cleanup-dispatch.h.
+  // erase-ack. Nothing here schedules a pass; the next tick does.
   consensus::complete_validator_delete(actor_id(this), validator_cleanup_manager_, db_.get(), session_id, generation,
                                        attempt_id, confirmed_gone);
 }
 
 void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation,
                                                          td::uint64 attempt_id) {
-  LOG(WARNING) << "VALCLEANUP erase_ack session=" << session_id.to_hex() << " generation=" << generation
-               << " attempt=" << attempt_id;
-  // A record was actually removed: release the reservation and re-trigger draining.
-  // This is the only completion-path re-trigger, and it is loop-safe because each
-  // re-trigger is paid for by a completed removal. See validator-cleanup-dispatch.h.
-  consensus::acknowledge_validator_erase(this, validator_cleanup_manager_, session_id, generation, attempt_id);
+  LOG(INFO) << "VALCLEANUP erase_ack session=" << session_id.to_hex() << " generation=" << generation
+            << " attempt=" << attempt_id;
+  // A record was actually removed: release the reservation.
+  consensus::acknowledge_validator_erase(validator_cleanup_manager_, session_id, generation, attempt_id);
 }
 
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
@@ -3376,7 +3397,7 @@ void ValidatorManagerImpl::update_shards() {
     // session: do not reopen its directory until the delete completes (it will be
     // retried on a later masterchain block). This is a secondary guard -- the
     // eligibility check already refuses to delete a live/recreatable session -- and
-    // it cannot fire while the cleanup gate is off (nothing is ever in flight then).
+    // it cannot fire when cleanup is disabled (nothing is ever in flight then).
     if (validator_cleanup_manager_.is_delete_in_flight(id)) {
       LOG(WARNING) << "deferring validator group creation for " << id << ": a consensus-DB cleanup delete is in flight";
       return next_validator_groups_.end();
@@ -3399,10 +3420,8 @@ void ValidatorManagerImpl::update_shards() {
     LOG(INFO) << "Created " << entry.name() << ":" << id;
     // A (new or reopened) group for this session is born: advance its incarnation
     // and drop any pending cleanup record -- the directory is now owned by a live
-    // group again, so it is no longer a deletion target. (When deletion is enabled
-    // in B2-8c, the caller must additionally defer creation while a delete for this
-    // session is in flight -- is_delete_in_flight -- which cannot occur while the
-    // cleanup gate is off.)
+    // group again, so it is no longer a deletion target. Creation was deferred
+    // above while a delete for this session was in flight (is_delete_in_flight).
     validator_cleanup_manager_.on_group_created(id);
     auto [it, success] = next_validator_groups_.emplace(id, std::move(entry));
     CHECK(success);
@@ -3646,8 +3665,9 @@ void ValidatorManagerImpl::update_shards() {
   // Validator/tentative groups: retired by CLOSING (stop bus + close DB) without
   // deleting the directory, and recorded as a durable cleanup record. The record
   // is the delete authority; physical deletion happens later only under a
-  // checkpoint-bound eligibility check (PR B/B2), never here -- so a session that
-  // could still be recreated can never lose its consensus state at retirement.
+  // checkpoint-bound eligibility check (the cleanup tick), never
+  // here -- so a session that could still be recreated can never lose its
+  // consensus state at retirement.
   // The destroyed-session fence still guards recreation, as before.
   std::vector<std::pair<td::actor::ActorId<IValidatorGroup>, td::uint64>> to_close;
   std::vector<consensus::PendingValidatorConsensusDbCleanup> retirement_records;
@@ -4169,8 +4189,7 @@ void ValidatorManagerImpl::advance_gc(BlockHandle handle, td::Ref<MasterchainSta
   gc_masterchain_handle_ = std::move(handle);
   gc_masterchain_state_ = std::move(state);
   // The durable GC floor moved forward: more retired sessions may now be provably
-  // obsolete. Attempt a cleanup pass (a no-op while deletion is gated off).
-  try_validator_consensus_db_cleanup();
+  // obsolete; the next cleanup tick sees the new floor.
   try_advance_gc_masterchain_block();
 }
 

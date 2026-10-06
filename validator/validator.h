@@ -177,12 +177,16 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual size_t get_max_open_archive_files() const = 0;
   virtual double get_archive_preload_period() const = 0;
   virtual bool get_disable_rocksdb_stats() const = 0;
-  // Runtime opt-in for live validator consensus-DB deletion (Finding 1). Default false:
-  // a normal build/deploy never deletes. Turned on ONLY for an explicit acceptance run
-  // (validator-engine --enable-validator-consensus-cleanup). Replaces the former
-  // compile-time gate so enablement is not baked into every build.
+  // Deletion of retired validator consensus-DB directories. Default TRUE: every
+  // validator-set session leaves a RocksDB directory under <db>/consensus/, and without
+  // this a validator's disk grows without bound. A directory is deleted only when its
+  // durable cleanup record passes the four-condition gate against the durable GC
+  // snapshot (retirement checkpoint is an ancestor of the GC block, the session is
+  // obsolete on-chain, not live or recreatable, and its actor has closed the DB).
+  // validator-engine --disable-validator-consensus-cleanup turns it off; records keep
+  // accumulating and are reclaimed once it is enabled again.
   virtual bool get_validator_consensus_cleanup_enabled() const = 0;
-  // ACCEPTANCE FAULT INJECTION (Finding 1 crash boundary), default false. When armed, the
+  // TEST-ONLY FAULT INJECTION (crash boundary), default false. When armed, the
   // manager exits abruptly after the worker has confirmed the consensus directory removed
   // but before the durable cleanup record is erased -- reproducing, through the real
   // dispatch path, the {directory gone, record present} state a crash leaves at that
