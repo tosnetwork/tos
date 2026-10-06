@@ -12,9 +12,6 @@
 // what this program checks: a row the node disagrees with, a row that cannot be parsed,
 // or a file with no rows at all fails it.
 
-#include "block/mc-config.h"
-#include "common/refint.h"
-
 #include <cstdlib>
 #include <exception>
 #include <fstream>
@@ -22,6 +19,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include "block/mc-config.h"
+#include "common/refint.h"
 
 #ifndef STORAGE_FEE_VECTORS
 #error "STORAGE_FEE_VECTORS must name the vector file"
@@ -118,8 +118,7 @@ int main(int argc, char** argv) {
       auto periods = parse_periods(fields[7]);
       parse_u64(fields[8]);
       const auto& expected = fields[8];
-      auto fee =
-          block::StoragePrices::compute_storage_fees(now, periods, used, last_paid, special, masterchain);
+      auto fee = block::StoragePrices::compute_storage_fees(now, periods, used, last_paid, special, masterchain);
       if (fee.is_null()) {
         std::cerr << "line " << line_number << " (" << name << "): the node computed no fee\n";
         ++failures;
