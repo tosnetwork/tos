@@ -584,6 +584,32 @@ unchanged. These results narrow the optimization search; they do not prove that
 all safe compiler/contract optimizations are exhausted. The retained index is
 `test/wallet-v5r2/admission-helper-experiments-20261006.json`.
 
+### Distinct forged-signature cost comparison
+
+`admission_forgery_timing.py` selects successful AUTH, POP and preparation fee
+messages from a recorded dual-VM run. For each class it produces 16 distinct
+LMOTS randomizers and 16 distinct final authentication-path nodes, preserving
+the intent and fixed signature framing. All 96 forged messages must reach the
+LMS rejection (2007) at diagnostic credit 20,000. At the current default 10,000,
+they instead exhaust admission gas (-14). Three original valid messages serve
+as positive controls at 20,000 and also fail admission at 10,000.
+
+The independent Rust executor supplies the exact expected receipts, and every
+native timing sample is checked against them. A sensitivity test substitutes an
+early structural rejection for the expected LMS rejection; the validator rejects
+that result, and deleting its exit-code check admits the substitution. This
+prevents timing an unintended cheap rejection as though it exercised LMS.
+
+The local Release native emulator run performed 6,534 receipt-checked executions
+(99 scenarios per credit, three warmups and 30 timed samples). The maximum invalid
+scenario median was 108,458 ns at 10,000 and 230,104.5 ns at 20,000. These are
+sequential warm-cache C API timings, including BOC decoding and serialization;
+they are not ingress throughput, a causal speed ratio, exhaustive adversarial
+bounds or reference-hardware clearance. Randomizers sample differing verification
+work; they do not prove that maximum hash-chain work was reached. No tariff or
+credit setting changes. Both architecture CI jobs include a smaller smoke run.
+Evidence: `test/wallet-v5r2/admission-forgery-timing-20261006.json`.
+
 
 ## Client fee-leaf scheduling boundary
 

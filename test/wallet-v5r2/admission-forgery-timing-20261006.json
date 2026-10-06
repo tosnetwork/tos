@@ -1,0 +1,67 @@
+{
+  "base_commit": "7c0343eaa919b31696951ae83627da7111d77e32",
+  "scope": "Distinct invalid LMS signatures through full native C API, compared at default and diagnostic gas credit. No release clearance or credit change.",
+  "build_type": "Release",
+  "scenarios_per_credit": 99,
+  "distinct_invalid_signatures": 96,
+  "native_verified_executions": 6534,
+  "controls": {
+    "forgery_and_exact_rejection": 2,
+    "existing_benchmark_controls": 4,
+    "ruff": "passed"
+  },
+  "results": {
+    "10000": {
+      "invalid_scenarios": 96,
+      "max_invalid_scenario_median_ns": 108458.0,
+      "rejection": -14
+    },
+    "20000": {
+      "invalid_scenarios": 96,
+      "max_invalid_scenario_median_ns": 230104.5,
+      "rejection": 2007
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/admission_forgery_timing.py",
+      "bytes": 7799,
+      "sha256": "04e9def9ef23ca4a266da60646a943164ba4683fe544cff6aa9a9674c864c9d1"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_admission_forgery_timing.py",
+      "bytes": 2293,
+      "sha256": "ff05875e7fea81da556a533e83207e318fe7a9179e06d2e73b8115f8ebb1771f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 14864,
+      "sha256": "49263504a2dfd78eb9b8fe8ebb383963dfef34b395416fd5f84856f48fc46eb7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 110762,
+      "sha256": "5a0b123d6024b4d9e4292dc7857ecf12067304ee7c3526fca19be930b146ba12"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-forgery-timing/MANIFEST.json",
+      "bytes": 2916,
+      "sha256": "95b8db60291847d0191523c4b7b00ca0549035200dbe9c5efb612355a36893f7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-forgery-timing/comparison.json",
+      "bytes": 1567,
+      "sha256": "f621884ca9f0c4ee7d133a153969b58c93000f4814283dc7fb301e5a61cc0ab5"
+    }
+  ],
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh && /Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/admission_forgery_timing.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-custody-migration-recovery --driver tosctl/src/target/debug/examples/pq-tx-parity --output <fresh-directory> --variants 16 --iterations 30",
+  "limitations": [
+    "Sequential warm-cache timings include BOC decoding and serialization; no isolated instruction pricing or network ingress budget is established.",
+    "Distinct randomizers vary verification work but do not prove maximum LMOTS chain work. Maximum message size/depth, cold caches and concurrent ingress remain unmeasured here.",
+    "Local macOS arm64 Release native measurement is not approved reference-hardware evidence on both architectures. Rust replay supplies semantic expectations, not Rust wall-clock pricing.",
+    "Default admission still fails for valid messages. Increasing credit requires broader node-cost, abuse-budget and governance evaluation."
+  ],
+  "retention": "Retain raw output and referenced fixture inputs through release review, at least through 2027-01-06."
+}
