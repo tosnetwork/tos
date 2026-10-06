@@ -24,84 +24,132 @@ This is a local development chain with a funded development wallet and a
 real funds. The initial validator set lasts 30 days; reset the local chain
 before expiry or use the explicit election rehearsal described below.
 
+## Startup checklist after a reset
+
+A full reset of the local development network, in order:
+
+1. `sudo ./scripts/setup-testnet.sh --clean --rotate` (add `--build` after source
+   changes). With `--rotate` it deploys and authorizes the candidate
+   controllers and only then starts `tos-pq-elections`; see the next section.
+   Do not edit `scripts/setup-testnet.sh` while it runs: bash reads the script
+   as it executes, and a changed file makes it run the wrong lines.
+2. `./scripts/testnet-ctl.sh status` and `./scripts/testnet-ctl.sh check`: every
+   service active, seven nodes on one full block ID.
+3. Bootstrap random transfers in a quiet interval of the election service (see
+   `scripts/README-local-pq-testnet.md`), then
+   `sudo systemctl enable --now tos-pq-transfers`.
+4. Confirm the first election: four `stake_accepted` events in
+   `sudo journalctl -u tos-pq-elections`, then a new
+   `/data/elections/activation-*.json` after the set switches.
+5. Rebind health monitoring to the new zero-state (see "Health MCP after a chain
+   reset"). Restarting the old monitoring units is not enough; their network ID
+   belongs to the previous chain.
+6. Watch disk use for the first two hours (next section).
+
+## Disk retention
+
+On this chain a validator writes about 1.4 GB per hour and an observer about
+0.4 GB per hour. With the node defaults, block files and archives are kept for
+`state-ttl + archive-ttl` = 8 days, retired consensus databases are never
+deleted, and the session statistics file is never rotated. The local network
+then needs more than 600 GB and fills a typical development disk in 3–4 days.
+
+The local unit templates therefore pass:
+
+| Option | Effect |
+| --- | --- |
+| `--state-ttl 3600` | states may be garbage collected after one hour |
+| `--archive-ttl 7200` | archived blocks are kept two hours beyond that |
+| `--enable-validator-consensus-cleanup` | retired validator consensus databases are deleted once the GC floor proves them obsolete. The engine marks this option as acceptance-only and off by default; on this development network it is deliberately on. |
+
+`setup-testnet.sh` also installs `/etc/logrotate.d/tos-local-session-logs`,
+which rotates each node's `session-logs` daily or above 500 MB and keeps three
+compressed copies.
+
+A local `ExecStart` override, such as a health-monitoring drop-in, replaces the
+template's command line. It must carry the same three options. Verify with
+`systemctl show tos-pq-validator@1 -p ExecStart`.
+
+**Garbage collection needs key blocks and a persistent state.** The GC floor
+only advances behind the last key block, a validator-set rotation and the last
+persistent state, and only for states older than `state-ttl`. A persistent
+state is written only at the first key block after each 2^17 s (about 36.4 h)
+boundary of Unix time (`ValidatorManager::is_persistent_state`). So on a new
+network nothing is collected until it has crossed such a boundary, which takes
+up to about 36 hours. Plan for roughly that many hours of full growth, about
+7 GB/h for the seven nodes, before usage levels off.
+
+Elections and set changes produce the key blocks. A network whose elections
+fail keeps only its Genesis key block and never collects anything, whatever the
+TTLs are. The validator logs then show
+`VALCLEANUP pass gc_seqno=0 … reserved=0` indefinitely. If `/data` keeps
+growing past the first boundary:
+
+- check that elections still complete;
+- check that `last_known_key_block_ago` in the node log stays below a few
+  election periods;
+- check that `VALCLEANUP pass` reports a non-zero `gc_seqno`.
+
 ## Controller funding before election rehearsal
 
 `--rotate` selects a ten-minute development election profile and adds candidate
 node 7. The election driver alternates the four-member sets 1/2/3/7 and 1/2/3/4.
 This is different from the default 30-day bootstrap profile above.
 
-**The current setup/election scripts do not initialize the controller's explicit
-operating authorization.** `setup-testnet.sh --rotate` attempts to start
-`tos-pq-elections`; arrange a service start hold before invoking it, and keep
-that hold until the following initialization is complete. Starting the chain
-or deploying the controller is not sufficient to authorize stake forwarding.
-A plain balance transfer does not set the operating allowance.
+A controller forwards a stake to the Elector only within an explicit, root-signed
+operating authorization (controller action kind 4). A newly deployed controller
+has none: `operating_state` reads all zero, and every relay is refused with exit
+180. A plain balance transfer does not create an authorization.
 
-For each candidate controller:
+`setup-testnet.sh --rotate` therefore runs `scripts/local-pq-fund-controllers.py`
+after the network is deployed and **before** it starts `tos-pq-elections`. For
+each candidate controller (nodes 1, 2, 3, 4 and 7) the tool:
 
-1. Deploy the current controller code and its exact birth StateInit, with the
-   matching code admission in the chain configuration. Retain the birth witness.
-   The local development fixtures are generated under `/data/elections/`;
-   deterministic fixture keys must never be used for production funds.
-2. Read `controller_state` to obtain the current authority epoch and root nonce.
-   Do not assume both remain zero after an earlier initialization attempt.
-3. Have the operator explicitly choose the deposit, spending allowance,
-   per-request limit, storage floor, funding wallet and sponsorship expiry.
-   Encode and root-sign action kind 4 using the current SDK/tool:
+1. deploys the controller's birth StateInit if the account has no code;
+2. reads `controller_state` (authority epoch and root nonce) and
+   `operating_state`;
+3. if the authorization is missing, expires within a day, or has less than
+   100 TOS of funds or allowance, encodes the kind 4 payload, signs it with
+   `/usr/local/bin/tos-pq-controller fund-operations` using the development root
+   seed `/data/elections/keys/root-<i>.seed`, and sends it from the Genesis
+   wallet, which becomes the bound payer;
+4. waits for the root nonce to advance and reads `operating_state` back. It
+   refuses to continue if the values differ, and never resends blindly;
+5. tops up ordinary capital so the balance covers the recorded funds plus the
+   storage floor plus a 20 TOS margin.
 
-   ```bash
-   cargo build --manifest-path tosctl/src/Cargo.toml -p contracts --locked \
-     --example controller_operating_payload
-   cmake --build build --target tos-pq-controller
+Defaults: 1,000 TOS deposit, 1,000 TOS allowance, 20 TOS per-request limit,
+10 TOS floor, 30-day sponsorship. These are local development values, not
+production fee estimates. The Python payload encoder is byte-for-byte equal
+(same cell hash) to `contracts::validator_controller::operating_funding_payload`.
 
-   PAYLOAD_BOC_B64=$(tosctl/src/target/debug/examples/controller_operating_payload \
-     "$PAYER" "$DEPOSIT" "$ALLOWANCE" "$PER_REQUEST_LIMIT" \
-     "$STORAGE_FLOOR" "$SPONSORSHIP_EXPIRES")
-   build/crypto/tos-pq-controller fund-operations \
-     "$ROOT_SEED_FILE" "$GLOBAL_ID" "$CONTROLLER_HEX" "$EPOCH" "$NONCE" \
-     "$AUTHORIZATION_VALID_UNTIL" "$PAYLOAD_BOC_B64"
-   ```
+The tool is idempotent. Check or renew authorizations on a running network
+during a quiet interval. The election service exclusively owns the Genesis
+wallet while it runs, so stop it first and always restart it afterwards:
 
-   All amounts are decimal nano-TOS. `CONTROLLER_HEX` is the 256-bit account ID
-   without the workchain prefix. The authorization expiry must be in the future
-   and no more than 3,600 seconds ahead; it is separate from sponsorship expiry.
-   These commands only encode/sign: submit the returned body as an internal
-   message from the exact bound `PAYER` wallet, with the deposit plus the current
-   required processing fees. Keep the seed private and execute the signer as its
-   file owner; do not loosen key permissions to work around a signing error.
-4. Read back `operating_state`: funds, allowance, per-request limit, storage
-   floor, sponsorship expiry and payer. Verify transaction compute/action
-   success and the updated root nonce. A wallet send confirmation alone does
-   not prove controller acceptance. Re-read state before retrying; do not
-   blindly repeat a deposit after a timeout.
-5. Check the account's actual balance **after deployment and funding fees**.
-   Before accepting a relay, the controller requires pre-message capital to
-   cover its recorded operating funds **plus** the storage floor. Leave a
-   separate margin for deployment/storage charges. Depositing exactly 10 TOS
-   as initial capital while configuring a 10 TOS floor is insufficient once
-   any fees have been charged. Also verify that the unexpired allowance,
-   per-request limit and funds cover the current automatic processing budget.
-6. Only then release the election service hold and submit a stake. Record the
-   query ID and watch the complete pool/controller/elector transaction path.
+```bash
+sudo env PYTHONPATH=test/tostester/src:scripts .venv/bin/python \
+  scripts/local-pq-fund-controllers.py --check     # report only
+sudo systemctl stop tos-pq-elections
+sudo env PYTHONPATH=test/tostester/src:scripts .venv/bin/python \
+  scripts/local-pq-fund-controllers.py             # renew where needed
+sudo systemctl start tos-pq-elections
+```
 
-A tested local setup used an 80 TOS operating deposit, 60 TOS allowance,
-20 TOS per-request limit, 10 TOS floor and one-day sponsorship, with a 100 TOS
-funding message. A further 20 TOS ordinary capital top-up was needed after the
-initial 10 TOS controller deployment. These are **development examples**, not
-production fee estimates or mandatory defaults. An ordinary top-up supplies
-balance margin; it does not increase the authorized allowance. Size both from
-the current chain fee configuration and monitor them independently. Operating
-capital belongs to the validator operator; pool principal and unrelated
-receipts must not be treated as an operating budget.
+Each relay consumes part of the allowance and funds, and the authorization
+expires after 30 days. A long-running rehearsal must re-run the tool before
+either runs out; `--check` shows what is left. The development root seeds are
+deterministic fixtures and must never control real funds.
 
 ### Diagnose a missing stake confirmation
 
 | Observation | Check and response |
 | --- | --- |
 | Controller has balance but refuses forwarding | Read the explicit operating authorization, expiry, allowance and per-request limit; ordinary transfers do not authorize spending. |
+| `operating_state` reads all zero or expired | The controller has no operating authorization. Run `scripts/local-pq-fund-controllers.py` with the election service stopped. |
 | Controller rejects with exit 180 | This is a shared relay guard code, not a unique diagnosis. Inspect the request and exact transaction; check balance against recorded funds plus floor, as well as the other relay preconditions. |
 | Pool receives a native bounce after forwarding | Decode the controller compute/action failure and pool bounce transaction. Confirm where principal returned before retrying. A bounce is not an elector acceptance. |
-| Election driver reports a confirmation timeout | The current driver waits for business receipts and may miss a controller rejection/bounce. Pause automatic submission, inspect raw transactions and getters, and do not infer that the stake is lost or accepted. |
+| Election driver reports a confirmation timeout | The driver waits for business receipts and may miss a controller rejection/bounce. Pause automatic submission, inspect raw transactions and getters, and do not infer that the stake is lost or accepted. |
 | Re-running the driver adds more faucet capital | It funds pools before submission; a retry can add another deposit even when the previous principal returned. Reconcile balances and accepted stake separately. |
 
 Do not disable contract guards to make deployment succeed. Correct missing
@@ -169,6 +217,35 @@ old retained evidence as current health.
   participating, retired validators should stop current duties, and all nodes
   should continue following the same chain. Short memory samples do not prove
   the absence of a leak or replace a complete trend window.
+
+### Rebinding the local health stack
+
+The local stack lives in `~/.local/state/tos-local-health/<first 12 hex of the
+network ID>/`. It has 31 user units (`tos-local-health-*`) and seven system
+units (`tos-local-health-edge-<i>`, bound to the validator's PID). To rebind it
+after a reset:
+
+1. Take the network ID from the **new** chain:
+   `sudo jq -r .zerostate_root /data/network.json`. It must equal the
+   `payload.network_id` that a node reports at
+   `http://127.0.0.1:901<i>/health-snapshot`. Read it only after
+   `setup-testnet.sh` has finished: a value read before the reset belongs to
+   the previous chain. The symptom is an edge logging
+   `native sample refused: native v3 identity or generation mismatch` every
+   minute, with every MCP snapshot at `CACHE_MISS`.
+2. Stop the user units and the edges. Create the new directory with copies of
+   `bin/`, `pki/`, `config/` and `observe.py`, and empty `control/`,
+   `evidence/`, `query/` and `sockets/`, so that no old database is reused.
+   Replace the old network ID and directory name in the copied `config/*` and
+   in all 38 unit files.
+3. `daemon-reload` both managers, start the units, wait about three minutes,
+   then run `observe.py` from the new directory. Expected: all seven nodes
+   answer, observers `ok` and validators `partial` with the known gaps listed
+   above. `host` and `telemetry` answer `CACHE_MISS` on this deployment: no
+   collector feeds them, and they did not before the reset either.
+
+The validator restart in a reset stops the edges (`BindsTo=`). Start them again
+after `setup-testnet.sh`, even when the network ID does not change.
 
 Keep node health collection running independently of the bounded election
 submission driver. Resetting the chain again requires repeating this binding

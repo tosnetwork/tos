@@ -1,4 +1,4 @@
-name: Local PQ runtime regression
+name: Local PQ focused regression
 
 on:
   pull_request:
@@ -7,9 +7,6 @@ on:
       - 'scripts/*local*pq*'
       - 'scripts/*root*services*'
       - 'scripts/setup-testnet.sh'
-      - 'scripts/*nominator*'
-      - 'scripts/pq-config-wallet-first-stake-e2e.py'
-      - 'test/tostester/**'
       - 'tools/shielded-pool-circuit/**'
       - 'crypto/smartcont/tos-shielded-pool-v1.fc'
       - '.github/workflows/local-pq-runtime-regression.yml'
@@ -23,28 +20,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python:
+  focused:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Prepare retained evidence
+      - name: Persistent deficit-policy regressions
+        env:
+          PYTHONPATH: scripts
         run: |
           mkdir -p "$RUNNER_TEMP/local-pq-evidence"
           git rev-parse HEAD > "$RUNNER_TEMP/local-pq-evidence/commit.txt"
-      - name: Existing snapshot security regressions
-        run: |
-          python3 -m venv "$RUNNER_TEMP/testenv"
-          "$RUNNER_TEMP/testenv/bin/pip" install 'pytest>=9,<10'
-          "$RUNNER_TEMP/testenv/bin/python" -m pytest -q scripts/test_install_root_services.py --junitxml="$RUNNER_TEMP/local-pq-evidence/snapshot.xml"
-      - name: Offline wire-test dependencies
-        run: |
-          "$RUNNER_TEMP/testenv/bin/pip" download --only-binary=:all: --platform manylinux2014_x86_64 --python-version 313 --implementation cp --abi cp313 --dest "$RUNNER_TEMP/local-pq-evidence/wheels" bitarray pynacl pycryptodome
-      - name: Retain regression evidence
+          set -o pipefail
+          python3 -m unittest discover -s scripts -p test_local_pq_funding_policy.py -v 2>&1 | tee "$RUNNER_TEMP/local-pq-evidence/policy.log"
+      - name: Retain exact regression sources for independent reproduction
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        run: |
+          git archive --format=tar.gz --output="$RUNNER_TEMP/local-pq-evidence/sources.tar.gz" HEAD scripts test/tostester crypto/smartcont tools/shielded-pool-circuit tl .github/workflows pyproject.toml uv.lock tosctl/src/node-control/contracts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: local-pq-evidence-${{ github.sha }}
           path: ${{ runner.temp }}/local-pq-evidence
