@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -71,8 +72,9 @@ struct ValidatorCleanupPageRequest {
 class ValidatorCleanupManager {
  public:
   static constexpr size_t kDefaultResidentLimit = 4096;
-  // Retirements tracked while one page read is in flight; beyond this the page is
-  // simply read again (a read takes milliseconds, so this is never reached in practice).
+  // Retired keys tracked while one page read is in flight: the smallest ones after
+  // the page's start key. Larger keys are forgotten, and the page is then admitted
+  // only up to the largest key still tracked (see on_page_loaded).
   static constexpr size_t kMaxRetiredDuringPage = 1024;
 
   ValidatorCleanupManager() = default;
@@ -151,6 +153,7 @@ class ValidatorCleanupManager {
     page_in_flight_ = true;
     retired_during_page_.clear();
     page_overrun_ = false;
+    page_after_key_ = sweep_cursor_;
     return ValidatorCleanupPageRequest{sweep_cursor_, room, ++page_token_};
   }
 
@@ -159,9 +162,13 @@ class ValidatorCleanupManager {
   // in flight, so the page may carry the record that retirement superseded: such a
   // session's page copy is skipped (its current record is resident, or on disk and
   // reached by a later sweep), while every other record is admitted and the cursor
-  // advances, so retirements of unrelated sessions cannot starve paging. Only if
-  // more than kMaxRetiredDuringPage retirements landed during one read is the whole
-  // page discarded and read again from the same cursor.
+  // advances, so retirements of unrelated sessions cannot starve paging.
+  // Only retirements whose keys fall after the page's start key can matter, and the
+  // adapter tracks the kMaxRetiredDuringPage smallest of them. If more landed, the
+  // forgotten ones all lie above the largest tracked key, so the page is trusted only
+  // up to that key: records at or below it are checked exactly, the rest are left for
+  // the next read, and the cursor moves to that key. It is strictly after the start
+  // key, so every read makes progress however many retirements overlap it.
   // When a sweep of the whole range finishes without any eviction or refusal, every
   // durable record is resident (or belongs to a live session) and paging stops until
   // the next eviction. Returns the number of records admitted.
@@ -170,30 +177,55 @@ class ValidatorCleanupManager {
       return 0;
     }
     page_in_flight_ = false;
-    if (page_overrun_) {
-      retired_during_page_.clear();
-      return 0;
+    // Largest key the tracked retirements cover exactly, when some were forgotten.
+    std::optional<std::string> trusted_up_to;
+    if (page_overrun_ && !retired_during_page_.empty()) {
+      trusted_up_to = *retired_during_page_.rbegin();
     }
     size_t admitted = 0;
     std::string resume = request.after_key;
     for (auto& record : page.records) {
-      if (pending_.size() >= resident_limit_) {
-        // No room left (runtime retirements arrived meanwhile): resume at this record.
-        sweep_cursor_ = resume;
+      auto key = validator_cleanup_key(record.session_id);
+      if (trusted_up_to && key > *trusted_up_to) {
+        // Beyond what the tracked retirements cover: read it again next time.
+        sweep_cursor_ = *trusted_up_to;
         disk_backlog_ = true;
+        retired_during_page_.clear();
         return admitted;
       }
-      resume = validator_cleanup_key(record.session_id);
-      if (retired_during_page_.count(record.session_id) > 0) {
+      if (retired_during_page_.count(key) > 0) {
+        resume = key;
         disk_backlog_ = true;  // its current record may be on disk, not resident
         continue;
       }
+      auto session = record.session_id;
+      if (live_generation_.count(session) > 0 || pending_.count(session) > 0) {
+        resume = key;  // refused by insert-if-absent; nothing to make room for
+        continue;
+      }
+      // A full window (runtime retirements arrived meanwhile) makes room by evicting
+      // one closed entry: its record is durable and comes back on a later sweep, so the
+      // sweep keeps moving however many retirements fill the window.
+      if (pending_.size() >= resident_limit_ && !evict_one_closed()) {
+        // Nothing evictable (every entry awaits its close or is in flight): resume here.
+        sweep_cursor_ = resume;
+        disk_backlog_ = true;
+        retired_during_page_.clear();
+        return admitted;
+      }
+      resume = key;
       if (on_loaded_at_startup(std::move(record))) {
         ++admitted;
       }
     }
     retired_during_page_.clear();
     sweep_cursor_ = page.last_key.empty() ? resume : page.last_key;
+    if (trusted_up_to && *trusted_up_to < sweep_cursor_) {
+      // Keys after the trusted bound that held no valid record are re-read too.
+      sweep_cursor_ = *trusted_up_to;
+      disk_backlog_ = true;
+      return admitted;
+    }
     if (page.reached_end) {
       if (!evicted_in_sweep_) {
         disk_backlog_ = false;
@@ -272,10 +304,13 @@ class ValidatorCleanupManager {
     pending_[session] = Entry{std::move(record), gen, /*closed=*/false, EntryState::Pending};
     // A page in flight may carry the record this retirement supersedes.
     if (page_in_flight_) {
-      if (retired_during_page_.size() < kMaxRetiredDuringPage) {
-        retired_during_page_.insert(session);
-      } else {
-        page_overrun_ = true;
+      auto key = validator_cleanup_key(session);
+      if (key > page_after_key_) {  // the page reads only keys after its start key
+        retired_during_page_.insert(std::move(key));
+        if (retired_during_page_.size() > kMaxRetiredDuringPage) {
+          retired_during_page_.erase(std::prev(retired_during_page_.end()));
+          page_overrun_ = true;
+        }
       }
     }
     // This entry is not closed yet, so trimming keeps it.
@@ -444,6 +479,26 @@ class ValidatorCleanupManager {
   // Keep the window bounded: evict closed, not-in-flight entries (their records are
   // durable, so the store still holds every deletion authority) until the window is
   // within its limit or nothing else is evictable.
+  // Evict one closed, not-in-flight entry, preferring one last judged ineligible.
+  bool evict_one_closed() {
+    auto victim = pending_.end();
+    for (auto it = pending_.begin(); it != pending_.end(); ++it) {
+      if (it->second.state == EntryState::Pending && it->second.closed) {
+        victim = it;
+        if (it->second.examined_ineligible) {
+          break;
+        }
+      }
+    }
+    if (victim == pending_.end()) {
+      return false;
+    }
+    pending_.erase(victim);
+    disk_backlog_ = true;
+    evicted_in_sweep_ = true;
+    return true;
+  }
+
   void trim_to_limit() {
     for (auto evict = pending_.begin(); pending_.size() > resident_limit_ && evict != pending_.end();) {
       if (evict->second.state == EntryState::Pending && evict->second.closed) {
@@ -502,11 +557,12 @@ class ValidatorCleanupManager {
   bool evicted_in_sweep_ = false;
   bool page_in_flight_ = false;
   uint64_t page_token_ = 0;
-  // Sessions retired while the current page was in flight (at most
-  // kMaxRetiredDuringPage), and whether more than that landed, in which case the page
-  // is read again.
-  std::set<ValidatorSessionId> retired_during_page_;
+  // Keys of sessions retired while the current page was in flight, after the page's
+  // start key: the kMaxRetiredDuringPage smallest. page_overrun_ records that larger
+  // ones were forgotten.
+  std::set<std::string> retired_during_page_;
   bool page_overrun_ = false;
+  std::string page_after_key_;
   // Pending records examined since the last pass that reserved anything.
   size_t examined_since_reservation_ = 0;
   // Something was reserved since the current sweep began.

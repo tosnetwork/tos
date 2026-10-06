@@ -472,6 +472,8 @@ struct BacklogDrive {
   size_t max_resident = 0;
   size_t pages = 0;
   size_t erased_total = 0;
+  // Page reads completed when the first record was erased.
+  std::optional<size_t> pages_at_first_erase;
   // Runs between a page read and its reply, i.e. while the page is in flight.
   std::function<void()> while_page_in_flight;
 
@@ -501,6 +503,9 @@ struct BacklogDrive {
                               [&](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) {
                                 erase_validator_cleanup_record(kv, s);
                                 ++erased_total;
+                                if (!pages_at_first_erase) {
+                                  pages_at_first_erase = pages;
+                                }
                                 erased.emplace_back(s, g, a);
                               });
         progressed = true;
@@ -693,6 +698,105 @@ TEST(ValidatorCleanupStateDb, unrelated_retirements_do_not_starve_paging) {
       ASSERT_EQ(r.retirement_checkpoint.seqno(), static_cast<tos::BlockSeqno>(900));
     }
     ASSERT_TRUE(drive.max_resident <= m.resident_limit() + 1);
+  }
+  td::rmrf(path).ignore();
+}
+
+// More retirements overlapping every page read than the adapter tracks must still not
+// starve paging: an old eligible record is admitted and reclaimed while every read is
+// overlapped by kMaxRetiredDuringPage + 76 distinct unrelated retirements and closes.
+TEST(ValidatorCleanupStateDb, retirement_overrun_on_every_read_still_progresses) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto eligible = make_record(0x80, 100);  // in the middle of the key range
+    store_validator_cleanup_record(kv, eligible);
+    ValidatorCleanupManager m(16);
+    const size_t kPerRead = ValidatorCleanupManager::kMaxRetiredDuringPage + 76;
+    const size_t kChurnReads = 10;
+    size_t reads = 0;
+    size_t churned = 0;
+    BacklogDrive drive{kv, m, [](const tos::BlockIdExt& r) { return r.seqno() <= 500; }};
+    drive.while_page_in_flight = [&] {
+      if (++reads > kChurnReads) {
+        return;
+      }
+      for (size_t n = 0; n < kPerRead; n++, churned++) {
+        // Distinct sessions spread over the whole key range (first byte cycles).
+        PendingValidatorConsensusDbCleanup rec;
+        rec.session_id = make_session_id(0x11);
+        rec.session_id.as_slice()[0] = static_cast<char>(churned & 0xff);
+        rec.session_id.as_slice()[1] = static_cast<char>((churned >> 8) & 0xff);
+        rec.session_id.as_slice()[2] = static_cast<char>(0xC3);
+        rec.retirement_checkpoint = make_checkpoint(900);
+        rec.dir_name = consensus_db_dir_name(kShard, 7, rec.session_id, td::Slice(""));
+        store_validator_cleanup_record(kv, rec);
+        m.on_group_created(rec.session_id);
+        auto gen = m.on_group_retired(rec);
+        m.on_close_confirmed(rec.session_id, gen);
+      }
+    };
+    drive.run();
+    ASSERT_EQ(drive.erased_total, static_cast<size_t>(1));
+    ASSERT_TRUE(drive.pages_at_first_erase.has_value());
+    // Reclaimed while every read so far was overrun.
+    ASSERT_TRUE(drive.pages_at_first_erase.value() <= kChurnReads);
+    for (const auto& r : load_validator_cleanup_records(kv)) {
+      ASSERT_TRUE(!(r == eligible));
+    }
+  }
+  td::rmrf(path).ignore();
+}
+
+// When more retirements overlap a page than the adapter tracks, the forgotten ones all
+// lie above the largest tracked key, so a page record above that key must not be
+// admitted -- it may be the superseded copy of a session retired, closed and evicted
+// while the page was in flight. It is left for the next read instead.
+TEST(ValidatorCleanupStateDb, page_record_beyond_the_tracked_retirements_is_not_admitted) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto churn_record = [](uint8_t first, size_t n) {
+      PendingValidatorConsensusDbCleanup rec;
+      rec.session_id = make_session_id(0x11);
+      rec.session_id.as_slice()[0] = static_cast<char>(first);
+      rec.session_id.as_slice()[1] = static_cast<char>(n & 0xff);
+      rec.session_id.as_slice()[2] = static_cast<char>((n >> 8) & 0xff);
+      rec.retirement_checkpoint = make_checkpoint(900);
+      rec.dir_name = consensus_db_dir_name(kShard, 7, rec.session_id, td::Slice(""));
+      return rec;
+    };
+    auto old_copy = churn_record(0xF0, 0);
+    old_copy.retirement_checkpoint = make_checkpoint(100);
+    store_validator_cleanup_record(kv, old_copy);
+    ValidatorCleanupManager m(16);
+    auto request = m.next_page_request();
+    ASSERT_TRUE(request.has_value());
+    auto page = load_validator_cleanup_page(kv, request->after_key, request->max_keys);
+    ASSERT_EQ(page.records.size(), static_cast<size_t>(1));
+    auto retire_and_close = [&](const PendingValidatorConsensusDbCleanup& rec) {
+      store_validator_cleanup_record(kv, rec);
+      m.on_group_created(rec.session_id);
+      auto gen = m.on_group_retired(rec);
+      m.on_close_confirmed(rec.session_id, gen);
+    };
+    // While the page is in flight: more low-key retirements than are tracked, then the
+    // old copy's session retires again, then enough high-key retirements to evict it.
+    for (size_t n = 0; n < ValidatorCleanupManager::kMaxRetiredDuringPage + 50; n++) {
+      retire_and_close(churn_record(0x10, n));
+    }
+    auto newer = churn_record(0xF0, 0);
+    retire_and_close(newer);
+    for (size_t n = 0; n < 64; n++) {
+      retire_and_close(churn_record(0xF8, n));
+    }
+    ASSERT_EQ(m.on_page_loaded(*request, std::move(page)), static_cast<size_t>(0));
+    // The newer record is what the store holds; a later read admits it.
+    bool newer_on_disk = false;
+    for (const auto& r : load_validator_cleanup_records(kv)) {
+      newer_on_disk |= r == newer;
+    }
+    ASSERT_TRUE(newer_on_disk);
   }
   td::rmrf(path).ignore();
 }
