@@ -1529,3 +1529,30 @@ new binding check reproduces wrong-wallet acceptance; all five receipt deletion
 controls and restored tests must pass. This proves the client validation boundary,
 not public-network finality or completed migration orchestration. Evidence:
 `test/wallet-v5r2/pop-receipt-enrollment-20261006.json`.
+
+
+## Funded POP route receipts
+
+`FundedPopReceipts` supplies the fee-vault and module transactions plus each
+transaction's pre-state. `PopRequest::require_initial_funded_receipt` and
+`require_successor_funded_receipt` validate the exact enrolled vault address,
+executed vault code and immutable vault configuration (allowing the replay counter
+to advance). The fee input must be the caller's exact submitted external message.
+The module must execute the exact enrollment-bound POP, and the fee transaction
+must actually emit the same internal message consumed by that module. Both
+transactions must have complete execution and the same authenticated trust anchor.
+
+This prevents a direct module payment or an unrelated successful vault transaction
+from being treated as proof that the enrolled fee route worked. The existing
+module-only POP methods remain explicitly narrower evidence. Neither API by
+itself proves both keys, current reserve availability, successful migration, or a
+restored-backup recovery drill.
+
+The local positive test uses the recorded native `successor-pop-fee` and
+`successor-pop-module` transactions, with synthetic authenticated proof metadata.
+Wrong vault identity, altered executed code/configuration, internal instead of
+external funding input, and a missing emitted message all fail. Five new guard
+deletion controls reproduce the corresponding false acceptances alongside the
+five existing POP receipt controls. Evidence is indexed in
+`test/wallet-v5r2/funded-pop-receipt-20261006.json`. Both funded per-key proofs still
+need to be consumed by the pending strict migration orchestration gate.

@@ -16,6 +16,31 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     cases = [
         (
+            "funding_vault",
+            "wallet_v5r2_pop.rs",
+            "POP funding vault address mismatch",
+            "accepted another POP funding vault",
+        ),
+        (
+            "funding_code",
+            "wallet_v5r2_pop.rs",
+            "POP funding vault code mismatch",
+            "accepted altered POP funding pre-state",
+        ),
+        ("funding_config", "wallet_v5r2_pop.rs", "", "accepted altered POP funding pre-state"),
+        (
+            "funding_external",
+            "wallet_v5r2_pop.rs",
+            "POP funding requires external input",
+            "accepted internal POP funding input",
+        ),
+        (
+            "funding_delivery",
+            "proven_transactions.rs",
+            "transaction did not emit expected message",
+            "accepted undelivered POP funding",
+        ),
+        (
             "enrollment",
             "wallet_v5r2_pop.rs",
             "POP receipt enrollment binding mismatch",
@@ -74,13 +99,19 @@ def main():
         assert code == 0 and "1 passed" in log, log[-3000:]
         for label, name, message, failure in cases:
             source = originals[name]
-            marker = json.dumps(message)
-            assert source.count(marker) == 1
-            at = source.index(marker)
-            start = source.rfind("anyhow::ensure!(", 0, at)
-            end = source.index(");", at) + 2
-            assert start >= 0
-            (SOURCES / name).write_text(source[:start] + source[end:])
+            if label == "funding_config":
+                marker = "crate::wallet_v5r2_state::checked_counter(&data, &expected)?;"
+                assert source.count(marker) == 1
+                changed = source.replace(marker, "")
+            else:
+                marker = json.dumps(message)
+                assert source.count(marker) == 1
+                at = source.index(marker)
+                start = source.rfind("anyhow::ensure!(", 0, at)
+                end = source.index(");", at) + 2
+                assert start >= 0
+                changed = source[:start] + source[end:]
+            (SOURCES / name).write_text(changed)
             code, log = run(label)
             assert code != 0 and " ... FAILED" in log and failure in log, log[-3000:]
             results[label] = {"exit": code, "semantic_failure": failure}

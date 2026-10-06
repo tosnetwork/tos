@@ -23,6 +23,15 @@ pub struct PopBinding {
     pub valid_until: u32,
 }
 
+/// Authenticated transactions and their authenticated pre-states for one POP
+/// paid by the enrolled fee vault. Neither transaction alone proves delivery.
+pub struct FundedPopReceipts<'a> {
+    pub fee: &'a crate::proven_transactions::ProvenTransaction,
+    pub module: &'a crate::proven_transactions::ProvenTransaction,
+    pub fee_before: Cell,
+    pub module_before: Cell,
+}
+
 /// Immutable POP3 request with a PPS3 submission, separate from AUTH/SUB3.
 pub struct PopRequest {
     cell: Cell,
@@ -104,6 +113,76 @@ impl PopRequest {
         enrollment: &crate::wallet_v5r2_genesis::SuccessorDeployment,
     ) -> anyhow::Result<()> {
         self.require_receipt(receipt, pre_state, enrollment.module_init(), *enrollment.wallet())
+    }
+
+    /// Prove that the enrolled initial fee route funded this exact POP.
+    pub fn require_initial_funded_receipt(
+        &self,
+        receipts: &FundedPopReceipts<'_>,
+        submitted_external: &Cell,
+        enrollment: &crate::wallet_v5r2_genesis::WalletGenesis,
+    ) -> anyhow::Result<()> {
+        self.require_funded_receipt(
+            receipts,
+            submitted_external,
+            enrollment.module_init(),
+            enrollment.vault_init(),
+            *enrollment.wallet_init().repr_hash().as_array(),
+        )
+    }
+
+    /// Historical funded POP through the exact successor vault, before migration.
+    /// This is per-key evidence; both keys and current route readiness are needed.
+    pub fn require_successor_funded_receipt(
+        &self,
+        receipts: &FundedPopReceipts<'_>,
+        submitted_external: &Cell,
+        enrollment: &crate::wallet_v5r2_genesis::SuccessorDeployment,
+    ) -> anyhow::Result<()> {
+        self.require_funded_receipt(
+            receipts,
+            submitted_external,
+            enrollment.module_init(),
+            enrollment.vault_init(),
+            *enrollment.wallet(),
+        )
+    }
+
+    pub(crate) fn require_funded_receipt(
+        &self,
+        receipts: &FundedPopReceipts<'_>,
+        submitted_external: &Cell,
+        module_init: &Cell,
+        vault_init: &Cell,
+        wallet: [u8; 32],
+    ) -> anyhow::Result<()> {
+        let before = receipts.fee.pre_account(receipts.fee_before.clone())?;
+        let init = StateInit::construct_from_cell(vault_init.clone())?;
+        anyhow::ensure!(
+            before.get_addr().map(ToString::to_string)
+                == Some(format!("0:{}", vault_init.repr_hash().to_hex_string())),
+            "POP funding vault address mismatch"
+        );
+        anyhow::ensure!(before.get_code() == init.code, "POP funding vault code mismatch");
+        let data =
+            before.get_data().ok_or_else(|| anyhow::anyhow!("POP funding vault data missing"))?;
+        let expected =
+            init.data.ok_or_else(|| anyhow::anyhow!("POP funding enrollment data missing"))?;
+        crate::wallet_v5r2_state::checked_counter(&data, &expected)?;
+        receipts.fee.require_inbound(submitted_external)?;
+        let input = receipts
+            .fee
+            .transaction()
+            .read_in_msg()?
+            .ok_or_else(|| anyhow::anyhow!("POP funding input missing"))?;
+        anyhow::ensure!(input.is_inbound_external(), "POP funding requires external input");
+        self.require_receipt(receipts.module, receipts.module_before.clone(), module_init, wallet)?;
+        let delivered = receipts
+            .module
+            .transaction()
+            .in_msg_cell()
+            .ok_or_else(|| anyhow::anyhow!("POP module input missing"))?;
+        receipts.fee.require_internal_delivery(receipts.module, delivered.repr_hash().as_array())
     }
 
     pub(crate) fn require_receipt(

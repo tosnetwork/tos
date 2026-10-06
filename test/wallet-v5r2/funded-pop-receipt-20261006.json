@@ -1,0 +1,95 @@
+{
+  "base_commit": "b4a1fe91a279a3883542a3849125175e2c6e4083",
+  "scope": "Exact enrolled fee-vault to module POP delivery; existing native transaction cells with synthetic authenticated proof metadata",
+  "tests": {
+    "transaction_receipt_group": 11,
+    "feature_state": 13,
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "controls": {
+    "funding_vault": {
+      "exit": 101,
+      "semantic_failure": "accepted another POP funding vault"
+    },
+    "funding_code": {
+      "exit": 101,
+      "semantic_failure": "accepted altered POP funding pre-state"
+    },
+    "funding_config": {
+      "exit": 101,
+      "semantic_failure": "accepted altered POP funding pre-state"
+    },
+    "funding_external": {
+      "exit": 101,
+      "semantic_failure": "accepted internal POP funding input"
+    },
+    "funding_delivery": {
+      "exit": 101,
+      "semantic_failure": "accepted undelivered POP funding"
+    },
+    "enrollment": {
+      "exit": 101,
+      "semantic_failure": "accepted POP for another enrolled wallet"
+    },
+    "pre_state": {
+      "exit": 101,
+      "semantic_failure": "accepted substituted POP pre-state"
+    },
+    "code": {
+      "exit": 101,
+      "semantic_failure": "accepted POP under other code"
+    },
+    "challenge": {
+      "exit": 101,
+      "semantic_failure": "accepted unrelated POP challenge"
+    },
+    "bounced": {
+      "exit": 101,
+      "semantic_failure": "accepted bounced POP input"
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs",
+      "sha256": "188b30552d00c0e602b7ec2bb3b755f71e97cb51230daf0a37065544af5500fe",
+      "bytes": 19214
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "56f4ac5b54f69f263fe003773123263cf7eee69563dbfa6591ee83e01e78c9ce",
+      "bytes": 116163
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/pop_receipt_controls.py",
+      "sha256": "56fa53de592df6ac7eda2df16896f3c18afdc00d2efc069dca63e7186a8e325c",
+      "bytes": 4370
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-funded-pop-receipt-controls/MANIFEST.json",
+      "sha256": "e9449deb5b5598b18d29c3209e8be89306d9f8f74241bb98425e702d023d52ea",
+      "bytes": 3783
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-funded-pop-receipt-controls/results.json",
+      "sha256": "55a3c20b931aeb3d462894e731f4887416079b5f3186fa053c2a36efef16dd8d",
+      "bytes": 1021
+    }
+  ],
+  "commands": [
+    "python3 test/wallet-v5r2/pop_receipt_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib receipt_pop_",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib transaction_receipt_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limitations": [
+    "Positive transaction cells are recorded native executions; proof metadata and negative mutations are synthetic, not public-chain finality.",
+    "Historical funded per-key POP does not prove current funding readiness, both-key completion or migration.",
+    "A strict migration orchestration gate consuming both funded POPs remains to be implemented.",
+    "Default-credit admission and production custody/client/release gates remain open."
+  ],
+  "retention": "Retain raw logs outside Git through review and release acceptance, at least through 2027-01-06."
+}

@@ -2311,7 +2311,7 @@ pub(crate) mod transaction_receipt_tests {
     fn receipt_pop_binds_challenge_and_executed_code() {
         use crate::wallet_v5r2::AuthRole;
         use crate::wallet_v5r2_pop::{PopBinding, PopRequest, RescuePolicy};
-        use chain_block::{SliceData, StateInit};
+        use chain_block::{BuilderData, IBitstring, SliceData, StateInit};
         let (proof, root) = fixture("successor-pop-module");
         let receipt = ProvenTransaction::latest(&proof, root).unwrap();
         let (before, _) = fixture("deploy-module");
@@ -2372,6 +2372,116 @@ pub(crate) mod transaction_receipt_tests {
             .err()
             .expect("accepted POP for another enrolled wallet");
         assert!(error.to_string().contains("receipt enrollment binding mismatch"));
+
+        use crate::wallet_v5r2_pop::FundedPopReceipts;
+        let (fee_proof, fee_root) = fixture("successor-pop-fee");
+        let fee_receipt = ProvenTransaction::latest(&fee_proof, fee_root).unwrap();
+        let (vault_before, _) = fixture("deploy-vault");
+        let vault_init = StateInit {
+            code: vault_before.account().get_code(),
+            data: vault_before.account().get_data(),
+            ..Default::default()
+        }
+        .serialize()
+        .unwrap();
+        let submitted = fee_receipt.transaction().in_msg_cell().unwrap();
+        let funded = FundedPopReceipts {
+            fee: &fee_receipt,
+            module: &receipt,
+            fee_before: vault_before.root().clone(),
+            module_before: pre.clone(),
+        };
+        expected.require_funded_receipt(&funded, &submitted, &init, &vault_init, account).unwrap();
+        assert!(
+            expected
+                .require_funded_receipt(&funded, &Cell::default(), &init, &vault_init, account)
+                .is_err()
+        );
+        let mut other_init = StateInit::construct_from_cell(vault_init.clone()).unwrap();
+        other_init.special = Some(chain_block::TickTock::with_values(true, false));
+        let other_init = other_init.serialize().unwrap();
+        let error = expected
+            .require_funded_receipt(&funded, &submitted, &init, &other_init, account)
+            .err()
+            .expect("accepted another POP funding vault");
+        assert!(error.to_string().contains("funding vault address mismatch"));
+        // Synthetic anchors let us isolate validation from signature execution.
+        // The positive pair above retains the actual native transaction cells.
+        for changed in ["code", "config"] {
+            let mut before = vault_before.account().clone();
+            if changed == "code" {
+                assert!(before.set_code(Cell::default()));
+            } else {
+                let mut data = SliceData::load_cell(before.get_data().unwrap()).unwrap();
+                let mut b = BuilderData::new();
+                b.append_raw(&data.get_next_bits(8 + 32).unwrap(), 40).unwrap();
+                data.move_by(256).unwrap();
+                b.append_u256(&[9; 32]).unwrap();
+                b.append_raw(&data.get_bytestring(0), data.remaining_bits()).unwrap();
+                while data.remaining_references() > 0 {
+                    b.checked_append_reference(data.checked_drain_reference().unwrap()).unwrap();
+                }
+                assert!(before.set_data(b.into_cell().unwrap()));
+            }
+            let before = before.serialize().unwrap();
+            let mut tx = fee_receipt.transaction().clone();
+            let mut update = tx.read_state_update().unwrap();
+            update.old_hash = before.repr_hash();
+            tx.write_state_update(&update).unwrap();
+            let (fee_anchor, _) = fixture("successor-pop-fee");
+            let forged = reanchor(fee_anchor, tx);
+            let inputs = FundedPopReceipts {
+                fee: &forged,
+                module: &receipt,
+                fee_before: before,
+                module_before: pre.clone(),
+            };
+            let error = expected
+                .require_funded_receipt(&inputs, &submitted, &init, &vault_init, account)
+                .err()
+                .expect("accepted altered POP funding pre-state");
+            assert!(error.to_string().contains(if changed == "code" {
+                "funding vault code mismatch"
+            } else {
+                "vault immutable configuration mismatch"
+            }));
+        }
+        let mut tx = fee_receipt.transaction().clone();
+        tx.write_in_msg(Some(&message)).unwrap();
+        let (fee_anchor, _) = fixture("successor-pop-fee");
+        let forged = reanchor(fee_anchor, tx);
+        let inputs = FundedPopReceipts {
+            fee: &forged,
+            module: &receipt,
+            fee_before: vault_before.root().clone(),
+            module_before: pre.clone(),
+        };
+        let error = expected
+            .require_funded_receipt(
+                &inputs,
+                &forged.transaction().in_msg_cell().unwrap(),
+                &init,
+                &vault_init,
+                account,
+            )
+            .err()
+            .expect("accepted internal POP funding input");
+        assert!(error.to_string().contains("requires external input"));
+        let mut tx = fee_receipt.transaction().clone();
+        tx.out_msgs = Default::default();
+        let (fee_anchor, _) = fixture("successor-pop-fee");
+        let forged = reanchor(fee_anchor, tx);
+        let inputs = FundedPopReceipts {
+            fee: &forged,
+            module: &receipt,
+            fee_before: vault_before.root().clone(),
+            module_before: pre.clone(),
+        };
+        let error = expected
+            .require_funded_receipt(&inputs, &submitted, &init, &vault_init, account)
+            .err()
+            .expect("accepted undelivered POP funding");
+        assert!(error.to_string().contains("did not emit expected message"));
 
         let error = make_request([9; 32])
             .require_receipt(&receipt, pre.clone(), &init, account)
