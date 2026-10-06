@@ -242,8 +242,39 @@ fees; all native/Rust transcripts agree. The account is a probe, not a wallet.
 
 Deleting ACCEPT fails the expected-acceptance assertion. Replacing the complete
 gas bound with the initial bound fails the C++ ordinary-account assertion;
-restored unit tests pass. A complete node-attempt CPU quote must cover these
-post-ACCEPT paths, parsing, state lookup, instruction overshoot, special accounts
-and supported native execution. The selected wallet fee maximum of 15,556 is
-not a bound for every destination. Actual checker dispatch on this probe and
-hardware/network calibration remain open gates.
+restored unit tests pass. Full block transaction execution must cover post-ACCEPT paths. Node admission
+sets `stop_on_accept_message=true` and stops at ACCEPT (or SETGASLIMIT), so its
+CPU quote covers work up to that stop, parsing, state lookup, serialization,
+instruction overshoot, special accounts and supported native execution. The
+selected wallet fee maximum of 15,556 is not a bound for every destination.
+Actual checker behavior is recorded below; hardware/network calibration remains
+open. The complete gas helper above applies to full transactions, not the
+stop-on-accept checker.
+
+
+## Actual checker stop-on-accept boundary
+
+[Checker evidence](checker-stop-accept-20261006.json) corrects the distinction
+between full transaction execution and node admission. Production
+`ExtMessageQ::ExecutionConfig::create` sets `stop_on_accept_message=true`.
+Both ACCEPT and SETGASLIMIT use the VM's stop path. The checker does not execute
+the post-ACCEPT loop that the full-transaction probe measures above.
+
+The real pool/checker test uses a synthetic variant of the frozen masterchain
+state. It removes optional ConfigParam 31 and replaces an ordinary funded
+account's code/data with the frozen public probe. It retains the original
+balance, address and gas-price configuration. The accepted probe consumes 436
+gas against initial credit 10,000 and executes the VM exactly once. It consumes
+one shared work unit; a malformed request consumes the second; subsequent local
+and peer submissions are refused. Byte occupancy releases after each request.
+
+Disabling the production stop flag executes the loop to 116,106 gas and fails
+the stop-marker/gas assertions. Deleting shared charging fails the budget
+exhaustion assertion. Restored full pool tests pass. The earlier 30,000,000 full
+transaction result remains valid, but must not be used as the ordinary
+stop-on-accept checker execution bound. Initial credit alone still does not
+price parsing, lookup, serialization, overshoot or special/native execution.
+
+This establishes a real checker boundary on a synthetic frozen configuration;
+version-18 generated-state checker coverage, SETGASLIMIT-specific runtime
+coverage and hardware/network CPU calibration remain open.

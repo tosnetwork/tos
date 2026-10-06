@@ -292,7 +292,7 @@ TEST(ExtMessageChecker, RejectedContractExecutesVmExactlyOnce) {
 
 namespace tos::validator {
 namespace {
-void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = false) {
+void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = false, bool accepted_loop = false) {
   ASSERT_TRUE(vm::init_vm().is_ok());
   auto file = td::read_file((std::filesystem::path(__FILE__).parent_path() /
                             "pq-native/data/c04-pq-genesis.boc").string());
@@ -351,9 +351,51 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
   } else {
     ASSERT_TRUE(vm::load_cell_slice(config.ok()->get_config_param(0)).fetch_bits_to(destination));
   }
+  if (accepted_loop) {
+    ASSERT_TRUE(ordinary_account);
+    auto source = td::read_file((std::filesystem::path(__FILE__).parent_path() /
+                                "wallet-v5r2/post-accept-probe.boc").string());
+    ASSERT_TRUE(source.is_ok());
+    auto code = vm::std_boc_deserialize(source.move_as_ok());
+    ASSERT_TRUE(code.is_ok());
+    block::gen::ShardStateUnsplit::Record shard;
+    ASSERT_TRUE(tlb::unpack_cell(root, shard));
+    vm::AugmentedDictionary accounts{vm::load_cell_slice_ref(shard.accounts), 256, block::tlb::aug_ShardAccounts};
+    block::gen::ShardAccount::Record entry;
+    ASSERT_TRUE(tlb::csr_unpack(accounts.lookup(destination), entry));
+    block::gen::Account::Record_account account;
+    block::gen::AccountStorage::Record storage;
+    ASSERT_TRUE(tlb::unpack_cell(entry.account, account));
+    ASSERT_TRUE(tlb::csr_unpack(account.storage, storage));
+    vm::CellBuilder replacement;
+    replacement.store_long(storage.last_trans_lt, 64);
+    replacement.append_cellslice(*storage.balance);
+    replacement.store_long(1, 1).store_long(0, 2);
+    ASSERT_TRUE(replacement.store_maybe_ref(code.move_as_ok()));
+    ASSERT_TRUE(replacement.store_maybe_ref(vm::CellBuilder().store_long(0, 32).finalize()));
+    replacement.store_long(0, 1);
+    account.storage = vm::load_cell_slice_ref(replacement.finalize());
+    ASSERT_TRUE(tlb::pack_cell(entry.account, account));
+    td::Ref<vm::Cell> entry_cell;
+    ASSERT_TRUE(tlb::pack_cell(entry_cell, entry));
+    ASSERT_TRUE(accounts.set(destination.cbits(), 256, vm::load_cell_slice_ref(entry_cell)));
+    vm::CellBuilder updated_accounts;
+    ASSERT_TRUE(updated_accounts.append_cellslice_bool(accounts.get_root()));
+    shard.accounts = updated_accounts.finalize();
+    ASSERT_TRUE(tlb::pack_cell(root, shard));
+    id = BlockIdExt{masterchainId, shardIdAll, 0, root->get_hash().bits(), FileHash::zero()};
+    auto updated = MasterchainStateQ::fetch(id, td::BufferSlice{}, root);
+    ASSERT_TRUE(updated.is_ok());
+    state = updated.move_as_ok();
+    config = block::ConfigInfo::extract_config(root, id, 0xFFFF);
+    ASSERT_TRUE(config.is_ok());
+    ASSERT_TRUE(!config.ok()->is_special_smartcontract(destination));
+  }
   auto rejected_root = vm::CellBuilder().store_long(2, 2).store_zeroes(2)
       .store_long(2, 2).store_zeroes(1).store_long(-1, 8)
-      .store_bits(destination.cbits(), 256).store_zeroes(4 + 1 + 1).finalize();
+      .store_bits(destination.cbits(), 256).store_zeroes(4 + 1 + 1)
+      .store_long(accepted_loop ? 1 : 0, accepted_loop ? 1 : 0)
+      .store_long(accepted_loop ? 5000 : 0, accepted_loop ? 32 : 0).finalize();
   auto rejected_message = vm::std_boc_serialize(rejected_root);
   ASSERT_TRUE(rejected_message.is_ok());
   VmExecutionCounter counter;
@@ -404,6 +446,14 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
       }
       auto result = co_await td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
           i == 0 ? rejected_message.ok().clone() : td::BufferSlice{"not a bag of cells"}, 0, false, peer).wrap();
+      if (accepted_loop && i == 0) {
+        if (result.is_error()) {
+          LOG(ERROR) << result.error();
+        }
+        ASSERT_TRUE(result.is_ok());
+        EXPECT_EQ(bytes->used(), 0u);
+        continue;
+      }
       ASSERT_TRUE(result.is_error());
       if (mismatched_config) {
         EXPECT_EQ(result.error().message(), "external admission configuration is outside the work profile");
@@ -432,6 +482,13 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
     EXPECT(observed);
     EXPECT_EQ(counter.starts, mismatched_config ? 0u : 1u);
     EXPECT_EQ(counter.finishes, mismatched_config ? 0u : 1u);
+    if (accepted_loop) {
+      std::fprintf(stderr, "Accepted ordinary VM: %s\n", counter.messages.c_str());
+      EXPECT(counter.messages.find("credit=10000") != std::string::npos);
+      EXPECT(counter.messages.find("External message is accepted, stopping TVM") != std::string::npos);
+      EXPECT(counter.messages.find("accepted=true, success=true") != std::string::npos);
+      EXPECT(counter.messages.find("gas: used=436") != std::string::npos);
+    }
     co_return td::Unit{};
   });
 }
@@ -441,6 +498,9 @@ TEST(ExtMessagePool, WorkBudgetChargesFailuresAcrossPeerAndLocalSources) {
 }
 TEST(ExtMessagePool, WorkBudgetRejectsUnmatchedConfigurationWithoutDispatch) {
   exercise_work_dispatch(true);
+}
+TEST(ExtMessagePool, WorkBudgetChargesAcceptedOrdinaryVmStopsAtAccept) {
+  exercise_work_dispatch(false, true, true);
 }
 TEST(ExtMessagePool, WorkBudgetChargesRejectedOrdinaryVmReportingZeroGas) {
   exercise_work_dispatch(false, true);

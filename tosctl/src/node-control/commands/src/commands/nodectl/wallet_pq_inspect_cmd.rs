@@ -22,6 +22,11 @@ pub struct PqInspectInitialCmd {
 pub(super) struct InitialProofArgs {
     #[arg(long)]
     recovery_manifest: PathBuf,
+    /// Enrolled successor template that must match the actually installed tuple.
+    #[arg(long, requires = "expected_installed_template_wallet")]
+    installed_successor_manifest: Option<PathBuf>,
+    #[arg(long, requires = "installed_successor_manifest")]
+    expected_installed_template_wallet: Option<String>,
     /// Independently authenticated basechain wallet account ID, in hex.
     #[arg(long)]
     expected_wallet: String,
@@ -48,6 +53,7 @@ pub(super) struct InitialProof {
 
 pub(super) struct InitialContext {
     genesis: WalletGenesis,
+    installed: Option<SuccessorDeployment>,
     successor: Option<SuccessorDeployment>,
     provider: ProvenGetterProvider,
     max_age_seconds: u32,
@@ -70,7 +76,7 @@ impl InitialProofArgs {
             template,
             public_hash(&self.expected_wallet)?,
         )?;
-        successor.require_fresh_fee_key(self.context()?.enrollment().metadata())?;
+        successor.require_fresh_fee_key(self.context()?.current_metadata())?;
         Ok(successor)
     }
 
@@ -80,6 +86,21 @@ impl InitialProofArgs {
             self.code.load()?,
             public_hash(&self.expected_wallet)?,
         )?;
+        let installed =
+            match (&self.installed_successor_manifest, &self.expected_installed_template_wallet) {
+                (Some(path), Some(pin)) => {
+                    let (_, template) = InitialRecoveryManifest::parse_and_reconstruct(
+                        &bounded_public_file(path, MAX_MANIFEST_BYTES)?,
+                        self.code.load()?,
+                        public_hash(pin)?,
+                    )?;
+                    Some(SuccessorDeployment::new(template, public_hash(&self.expected_wallet)?)?)
+                }
+                (None, None) => None,
+                _ => anyhow::bail!(
+                    "installed enrollment requires manifest and independent template pin"
+                ),
+            };
         let config: ProofVerifierConfig =
             serde_json::from_slice(&bounded_public_file(&self.proof_config, 64 * 1024)?)?;
         anyhow::ensure!(
@@ -89,6 +110,7 @@ impl InitialProofArgs {
         let provider = ProvenGetterProvider::new(&config)?;
         Ok(InitialContext {
             genesis,
+            installed,
             successor: None,
             provider,
             max_age_seconds: self.max_age_seconds,
@@ -96,6 +118,12 @@ impl InitialProofArgs {
     }
     pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
         self.context()?.read(config_params).await
+    }
+    pub(super) fn with_installed(&self, manifest: PathBuf, pin: String) -> Self {
+        let mut next = self.clone();
+        next.installed_successor_manifest = Some(manifest);
+        next.expected_installed_template_wallet = Some(pin);
+        next
     }
 }
 
@@ -107,8 +135,14 @@ impl InitialContext {
     pub(super) fn successor(&self) -> Option<&SuccessorDeployment> {
         self.successor.as_ref()
     }
+    pub(super) fn pop_enrollment(&self) -> Option<&SuccessorDeployment> {
+        self.successor.as_ref().or(self.installed.as_ref())
+    }
+    pub(super) fn current_metadata(&self) -> &chain_block::Cell {
+        self.installed.as_ref().map_or_else(|| self.genesis.metadata(), |x| x.metadata())
+    }
     fn fee_init(&self) -> &chain_block::Cell {
-        match &self.successor {
+        match self.pop_enrollment() {
             Some(successor) => successor.vault_init(),
             None => self.genesis.vault_init(),
         }
@@ -118,7 +152,7 @@ impl InitialContext {
         checkpoint: contracts::MasterchainCheckpoint,
     ) -> anyhow::Result<ProvenAccountState> {
         use chain_block::{Deserializable, StateInit};
-        let init = match &self.successor {
+        let init = match self.pop_enrollment() {
             Some(successor) => successor.module_init(),
             None => self.genesis.module_init(),
         };
@@ -154,7 +188,7 @@ impl InitialContext {
     ) -> anyhow::Result<(ProvenAccountState, ProvenFeeVault)> {
         let address = format!("0:{}", self.fee_init().repr_hash().to_hex_string()).parse()?;
         let account = self.provider.read_account(&address, &ReadPolicy::Live).await?;
-        let view = match &self.successor {
+        let view = match self.pop_enrollment() {
             Some(successor) => {
                 ProvenFeeVault::bind_successor(&account, successor, now()?, self.max_age_seconds)?
             }
@@ -173,7 +207,9 @@ impl InitialContext {
         let genesis = &self.genesis;
         let provider = &self.provider;
         let wallet_address = format!("0:{}", genesis.wallet_init().repr_hash().to_hex_string());
-        let module_address = format!("0:{}", genesis.module_init().repr_hash().to_hex_string());
+        let module_init =
+            self.installed.as_ref().map_or_else(|| genesis.module_init(), |x| x.module_init());
+        let module_address = format!("0:{}", module_init.repr_hash().to_hex_string());
         let wallet = provider
             .read_account_with_config(&wallet_address.parse()?, config_params, &ReadPolicy::Live)
             .await?;
@@ -185,13 +221,23 @@ impl InitialContext {
             .await?;
         // Recheck the local clock after both asynchronous proof acquisitions.
         let observed_at = now()?;
-        let view = ProvenWalletState::bind_initial(
-            &wallet,
-            &module,
-            genesis,
-            observed_at,
-            self.max_age_seconds,
-        )?;
+        let view = match &self.installed {
+            Some(installed) => ProvenWalletState::bind_successor(
+                &wallet,
+                &module,
+                genesis,
+                installed,
+                observed_at,
+                self.max_age_seconds,
+            )?,
+            None => ProvenWalletState::bind_initial(
+                &wallet,
+                &module,
+                genesis,
+                observed_at,
+                self.max_age_seconds,
+            )?,
+        };
         Ok(InitialProof { wallet, module, view, observed_at })
     }
 }

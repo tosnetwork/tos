@@ -28,7 +28,7 @@ def main():
     source = root / 'validator/impl/ext-message-pool.cpp'
     original = source.read_bytes()
     if args.container:
-        for relative in ['test/test-ext-message-pool.cpp',
+        for relative in ['test/wallet-v5r2/post-accept-probe.boc', 'test/test-ext-message-pool.cpp',
                          'validator/impl/ext-message-pool.hpp',
                          'validator/impl/ext-message-work-profile.hpp',
                          'validator/admission-work-profile.h',
@@ -58,6 +58,9 @@ def main():
         ('skip-work-charge', b'    if (!work_admission_->try_consume()) {',
          b'    if (false) {', 'external message admission work budget exhausted',
          'WorkBudgetChargesFailuresAcrossPeerAndLocalSources'),
+        ('skip-accepted-work-charge', b'    if (!work_admission_->try_consume()) {',
+         b'    if (false) {', 'external message admission work budget exhausted',
+         'WorkBudgetChargesAcceptedOrdinaryVmStopsAtAccept'),
         ('skip-zero-gas-work-charge', b'    if (!work_admission_->try_consume()) {',
          b'    if (false) {', 'external message admission work budget exhausted',
          'WorkBudgetChargesRejectedOrdinaryVmReportingZeroGas'),

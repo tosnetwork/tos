@@ -1,0 +1,60 @@
+{
+  "base_commit": "a39da21238b3feef87729d36f83e350ff08013ea",
+  "source_state": "Tested uncommitted node test/documentation changes, transferred in handoff snapshot; client WIP separate",
+  "platform": "Linux AArch64 Release pool/checker in local container",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "test/test-ext-message-pool.cpp": "184910a14dc81cc0bca1441ff66bc3a3ef7da71e5721c2f69901727c6d1df043",
+    "test/wallet-v5r2/post-accept-probe.boc": "2be290813f5c2aabe727974b4dd2a5d670ae5a7c325f095119fee7d179dd0b79",
+    "scripts/check-ext-message-stop-accept.py": "ab88456b1e02a955e51f0a47cf32694f43b7294008a28f59a68370ae83d64b0c",
+    "scripts/check-ext-message-pool-controls.py": "ec7813506cec76a92290a527dbd6faa4806d2001534b0b0b352a0ac5e44592d4",
+    "validator/impl/external-message.cpp": "9bfd5d53f8fb72d3cf0b4b97edd0e94ef40edebb0ab9bbdddc1f487839fc39fe",
+    "validator/impl/ext-message-work-quote.hpp": "3b81f0f6fb56c3c9da43062c251dae4f3a01e7c023eca473993ff69703f875a9",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "7de6729008cfbaf5a7cf2fb116011e755d8181dfc1f7f01c2e0eab8ed8939873",
+    ".github/workflows/admission-work.yml": "04d47a7dd00fca16323c51bbd9562fd95046001d77cba314060bcc0899d365ed"
+  },
+  "stop_control": {
+    "passed": true,
+    "runs": {
+      "baseline": 0,
+      "disabled-stop-build": 0,
+      "disabled-stop": 1,
+      "restored-build": 0,
+      "restored": 0
+    },
+    "restored_green": true,
+    "source_sha256": "9bfd5d53f8fb72d3cf0b4b97edd0e94ef40edebb0ab9bbdddc1f487839fc39fe",
+    "scope": "Real pool/checker with synthetic masterchain state and owner-controlled account; no network or CPU calibration"
+  },
+  "charge_control": {
+    "baseline-build": 0,
+    "baseline": 0,
+    "skip-accepted-work-charge-build": 0,
+    "skip-accepted-work-charge": 1,
+    "restored-build": 0,
+    "restored": 0
+  },
+  "result": {
+    "restored_pool_tests": 14,
+    "vm_starts": 1,
+    "vm_finishes": 1,
+    "initial_credit": 10000,
+    "checker_gas_used": 436,
+    "disabled_stop_gas_used": 116106,
+    "shared_budget_exhaustion": true
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-checker-stop-accept-evidence.tar.gz",
+    "bytes": 88288,
+    "sha256": "9d04e46a8288b4220621cf010c2e0a077e45c2c708c053733037679e40cfbd33"
+  },
+  "commands": [
+    "python3 scripts/check-ext-message-stop-accept.py --container v5r2-admission-linux --build-dir /build-shadow --output-dir /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-stop-accept-controls",
+    "python3 scripts/check-ext-message-pool-controls.py --container v5r2-admission-linux --build-dir /build-shadow --mutation skip-accepted-work-charge --output-dir /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pool-stop-work-controls"
+  ],
+  "limits": [
+    "Synthetic frozen MC configuration and substituted ordinary code/data; not generated version-18 checker coverage",
+    "Source inspection covers SETGASLIMIT shared stop path; specific runtime test still pending",
+    "Not CPU/network calibration; previous full-transaction 30M result is not ordinary checker gas bound"
+  ]
+}

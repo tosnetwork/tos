@@ -451,7 +451,7 @@ impl PqFeeSessionInitialCmd {
             };
             anyhow::ensure!(!id.trim().is_empty(), "POP record ID must not be empty");
             let module = context.pop_module_at(proof.wallet.evidence().checkpoint.clone()).await?;
-            let request = match context.successor() {
+            let request = match context.pop_enrollment() {
                 Some(successor) => PopRequest::fresh_successor(
                     successor,
                     role,
@@ -471,7 +471,7 @@ impl PqFeeSessionInitialCmd {
             let vault = open_vault_file(file, Some(key), None).await?;
             let id = SecretId::new(id);
             let signer = VaultKey { vault: &vault, id: &id };
-            let submission = match context.successor() {
+            let submission = match context.pop_enrollment() {
                 Some(successor) => signer.sign_pop_successor(&request, successor, now).await?,
                 None => signer.sign_pop_initial(&request, context.enrollment(), now).await?,
             };

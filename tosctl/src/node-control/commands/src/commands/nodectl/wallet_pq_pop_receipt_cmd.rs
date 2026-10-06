@@ -142,7 +142,7 @@ impl RetainedPopFiles {
             &rpc,
         )
         .await?;
-        let request = match context.successor() {
+        let request = match context.pop_enrollment() {
             Some(successor) => {
                 PopRequest::from_successor_cell(retained, successor, module.transaction().now())?
             }
@@ -153,7 +153,7 @@ impl RetainedPopFiles {
             )?,
         };
         let receipts = FundedPopReceipts { fee: &fee, module: &module, fee_before, module_before };
-        match context.successor() {
+        match context.pop_enrollment() {
             Some(successor) => {
                 request.require_successor_funded_receipt(&receipts, &external, successor)?
             }

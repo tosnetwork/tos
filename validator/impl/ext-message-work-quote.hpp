@@ -9,7 +9,7 @@
 
 namespace tos::validator {
 
-// Initial TVM gas bound for external transactions without precompiled dispatch.
+// Initial TVM gas bound for stop-on-accept external admission without precompiled dispatch.
 // Before destination classification, include special-account execution: its
 // initial gas_limit may already equal special_gas_limit, and VmState adds credit.
 // This is not a CPU quote: parsing, lookup and instruction overshoot still need
@@ -32,7 +32,8 @@ inline td::Result<std::uint64_t> external_tvm_initial_gas_bound(std::uint64_t ga
   return std::max(ordinary, special_gas_limit + special_credit);
 }
 
-// ACCEPT can raise an ordinary account's limit to gas_max, bounded by the
+// Full transaction execution only: node admission stops at ACCEPT and uses
+// the initial bound above. ACCEPT can raise an ordinary account's limit to gas_max, bounded by the
 // configured gas_limit. Initial credit is therefore not a complete-attempt
 // bound. This remains a gas bound, not calibrated CPU work, and excludes the
 // separately bounded instruction overshoot, parsing and state lookup.

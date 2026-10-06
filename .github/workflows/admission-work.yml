@@ -11,6 +11,8 @@ on:
       - 'test/test-ext-message-*.cpp'
       - 'test/test-validator-options.cpp'
       - 'test/pq-native/data/c04-pq-genesis.boc'
+      - 'test/wallet-v5r2/post-accept-probe.boc'
+      - 'test/wallet-v5r2/post-accept-probe.fc'
       - 'crypto/block/transaction.*'
       - 'crypto/vm/**'
       - 'scripts/check-ext-message-*.py'
@@ -57,6 +59,9 @@ jobs:
         run: |
           python3 scripts/check-ext-message-pool-controls.py --build-dir build-admission --output-dir artifacts/admission/pool-controls
           python3 scripts/check-ext-message-pool-controls.py --manager-entrypoints --build-dir build-admission --output-dir artifacts/admission/manager-controls
+      - name: Stop-on-accept execution-config control
+        run: |
+          python3 scripts/check-ext-message-stop-accept.py --build-dir build-admission --output-dir artifacts/admission/stop-accept-controls
       - name: Record source identity
         if: always()
         run: |
