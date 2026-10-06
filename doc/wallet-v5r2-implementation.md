@@ -1,16 +1,23 @@
-# Wallet V5R2 implementation baseline
+# Wallet V5R2 implementation and validation record
 
 V5R2 is a full Wallet V5 revision with the V5R1 security and execution baseline,
 plus role-bound primary/rescue authentication and the paired rescue-fee route.
 A minimal receiver with a single-message execute operation is not the deliverable.
 This requirement supersedes treating the rescue-loop probe as the wallet implementation.
 
+For the current completion boundary and remaining R0–R4 gates, see
+[delivery status](wallet-v5r2-release-status.md). Historical sections below retain
+their original evidence scope; they are not cumulative release approval.
+
 ## Authoritative code and compatibility boundary
 
 The starting implementation is `crypto/smartcont/wallet-v5-code.fc`, with the
 existing Rust/JavaScript V5R1 SDK bytecode as the immutable compatibility control.
 Its current code hash is
-`086a86aa9913c0ec52277adbb7e4b5695964dbb8c817ad0c305cdd345bbfac69`.
+`47527d7483a0d15309661a8328539150bf35b496776c62eb60485af5211c9a9d`,
+recompiled and checked against both SDK embeddings on 2026-10-06. The earlier
+shared-engine baseline had hash `086a86aa9913c0ec52277adbb7e4b5695964dbb8c817ad0c305cdd345bbfac69`
+before the subsequent main security merge.
 The shared `wallet-v5-action-list.fc` is extracted directly from that implementation;
 the extraction produces exactly the same V5R1 code hash and frozen SDK BOC.
 
@@ -69,7 +76,7 @@ wallet authority. Changing that signature policy is a separate protocol change.
 5. Integrate all client surfaces and durable signer/restore behavior; approve
    release hardware pricing, independent review and final-head CI before release.
 
-Current completed work for this baseline: bytecode-preserving shared action engine,
+Historical foundation work for this baseline: bytecode-preserving shared action engine,
 266 V5R1 action cases (all 256 mode bytes, 0/1/254/255/256 actions and malformed
 lists), targeted action-guard mutation controls, and existing authentication tests.
 This is foundation work; it does not mark the full R2 receiver or client as done.
