@@ -767,6 +767,11 @@ target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
 target_link_libraries(test-ext-message-pool PRIVATE tos_validator validator-common tos_crypto common tdactor tdutils)
 
+add_executable(test-ext-message-manager test/test-td-main.cpp test/test-ext-message-manager.cpp)
+target_link_libraries(test-ext-message-manager PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-ext-message-manager PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
 add_executable(test-ext-message-ingress test/test-td-main.cpp test/test-ext-message-ingress.cpp)
 target_link_libraries(test-ext-message-ingress PRIVATE tos_external_message_parser)
 
@@ -1797,6 +1802,7 @@ tos_test(test-adnl-ext-input-budget)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
+tos_test(test-ext-message-manager)
 tos_test(test-ext-message-ingress)
 tos_test(test-ext-message-admission-budget)
 tos_test(test-msg-envelope)

@@ -41,11 +41,12 @@ jobs:
       - name: Build and run native boundaries
         run: |
           cmake -S . -B build-admission -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          cmake --build build-admission --target test-validator-options test-ext-message-admission-budget test-ext-message-pool validator-engine -j2
+          cmake --build build-admission --target test-validator-options test-ext-message-admission-budget test-ext-message-pool test-ext-message-manager validator-engine -j2
           mkdir -p artifacts/admission
           build-admission/test-validator-options 2>&1 | tee artifacts/admission/options.log
           build-admission/test-ext-message-admission-budget 2>&1 | tee artifacts/admission/budget.log
           build-admission/test-ext-message-pool 2>&1 | tee artifacts/admission/pool.log
+          build-admission/test-ext-message-manager 2>&1 | tee artifacts/admission/manager.log
           python3 scripts/check-ext-message-work-cli.py --engine build-admission/validator-engine/validator-engine --output-dir artifacts/admission/cli
       - name: Configuration deletion controls
         run: |
@@ -55,6 +56,7 @@ jobs:
       - name: Pool dispatch deletion controls
         run: |
           python3 scripts/check-ext-message-pool-controls.py --build-dir build-admission --output-dir artifacts/admission/pool-controls
+          python3 scripts/check-ext-message-pool-controls.py --manager-entrypoints --build-dir build-admission --output-dir artifacts/admission/manager-controls
       - name: Record source identity
         if: always()
         run: |

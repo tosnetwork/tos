@@ -1,0 +1,68 @@
+{
+  "base_commit": "dfd1c4efa35be8e11bd0fab43eb92387efae6f3f",
+  "source_state": "uncommitted changes on base commit; compiled source hashes match restored snapshot",
+  "platform": "Linux AArch64 Release clang",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "test/test-ext-message-manager.cpp": "906c7eb70bc5f20475d83f933e9aa4a1de95e4eee2695d0217d2d99568fcefb3",
+    "validator/manager.hpp": "2a363063bf6215947f99c5c1841cf4b98634341683bb1353d82c472bb1e2d9f2",
+    "validator/manager.cpp": "d9eb2c980fa12555f0ff48a6fab032a3ea3a85c6827d727239266f6f690bfcd2",
+    "validator/impl/liteserver.cpp": "970869ba76f3e4f4472dfebfa0c637242a17cc18f0a2b46ebfbcf1c6483d01bf",
+    "validator/impl/liteserver-cache.hpp": "b1ae25978345f74a2935a17e5da5b9c2d629458b1b17731637e34f261654df46",
+    "validator/impl/ext-message-pool.cpp": "e5acfb7bef80120b105c846b64272ce86cad7287b36d2b636b8995d47cb6afd1",
+    "validator/impl/ext-message-pool.hpp": "171c438c94fa6701dae4b372a2d40ce9175a5190af193a18b4499a57fc20e648",
+    "test/pq-native/data/c04-pq-genesis.boc": "4e833bf9650c48448969688b862abfd6ad31dd504aa9ab68757db683e47bb162",
+    "CMakeLists.txt": "6c13f6b52294ed5eb9aebc78b1269cbb0803068a3d8c2702bae13fa245303da5",
+    "scripts/check-ext-message-pool-controls.py": "5de2d994f4338116db0c8ab223491686f847a61d503c803484d6a4f95445eb86",
+    ".github/workflows/admission-work.yml": "ef28971d7ef7a856da3f1a2bc21c150272e57f15e3dffdd1bc19007d6f1e0a70",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "a042fea9dcdfcfa3f07dd3056c3133beccfb23a01cd691c289f646aeeb79347c"
+  },
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manager-admission-controls-final",
+  "command": "python3 scripts/check-ext-message-pool-controls.py --manager-entrypoints --container v5r2-admission-linux --build-dir /build-shadow --output-dir /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manager-admission-controls-final",
+  "results": {
+    "target": "test-ext-message-manager",
+    "source_sha256": "e5acfb7bef80120b105c846b64272ce86cad7287b36d2b636b8995d47cb6afd1",
+    "returncodes": {
+      "baseline-build": 0,
+      "baseline": 0,
+      "skip-shared-charge-build": 0,
+      "skip-shared-charge": 1,
+      "restored-build": 0,
+      "restored": 0
+    },
+    "logs": {
+      "baseline-build.log": {
+        "sha256": "b2f5e4314b0c5640bcf056a99f85faabcede2a4473a7c2b7b91f693ae0384c78",
+        "bytes": 305
+      },
+      "baseline.log": {
+        "sha256": "6f0c3f786d1e74c863ad2121fe84fc7665f64d313e816d0b700a9749877a5f5b",
+        "bytes": 2195
+      },
+      "restored-build.log": {
+        "sha256": "b2f5e4314b0c5640bcf056a99f85faabcede2a4473a7c2b7b91f693ae0384c78",
+        "bytes": 305
+      },
+      "restored.log": {
+        "sha256": "0d772c02d60f448d6c021c5b72da7b1a89dc16d81b160a17105b72c83c53fab9",
+        "bytes": 2195
+      },
+      "skip-shared-charge-build.log": {
+        "sha256": "b2f5e4314b0c5640bcf056a99f85faabcede2a4473a7c2b7b91f693ae0384c78",
+        "bytes": 305
+      },
+      "skip-shared-charge.log": {
+        "sha256": "96d54dac044150244fa55a77412f7afb820cda0f786593ce61e2f7e9018faa0f",
+        "bytes": 2953
+      }
+    },
+    "scope": "real manager broadcast/query and serialized liteserver shared work charge"
+  },
+  "scope": "Production manager broadcast/query handlers, LiteQuery TL parsing and LiteServerCacheImpl share one real pool. Three unique malformed inputs use three work units; following inputs through each of the three handlers observe exhaustion, including null and rotating source identities. Every completion releases input bytes. Deleting the shared charge fails all exhausted-route checks and leaves available work at three; restoration passes.",
+  "limitations": [
+    "Manager startup is replaced by a test harness installing a frozen state and explicit options; no database or network services start.",
+    "This does not cover HTTP routing, RPC disconnects, overlay transport, signatures or actual VM cost, end-to-end delivery, or mixed-load fairness.",
+    "Initial include/dependency and missing-cache harness failures are excluded; only final baseline/mutation/restoration results are acceptance evidence.",
+    "Remote dual-architecture CI has not run on this revision."
+  ]
+}

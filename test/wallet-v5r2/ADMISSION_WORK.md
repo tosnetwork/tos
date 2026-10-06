@@ -53,11 +53,12 @@ Linux x86-64 and AArch64. Its checks map to these boundaries:
 | --- | --- |
 | Token accounting, refill, overflow and initial gas quote | `test-ext-message-admission-budget` |
 | Pool dispatch, configuration matching, rejected VM call count, live options and queued shutdown | `test-ext-message-pool` |
+| Manager broadcast/query and serialized liteserver submissions sharing one work budget | `test-ext-message-manager` |
 | Profile parsing and options validation | `test-validator-options` |
 | Engine option registration and duplicate-option rejection | `scripts/check-ext-message-work-cli.py` |
 | Test sensitivity to setter, parsed-profile and hash-format guards | `scripts/check-ext-message-options-controls.py` |
 
-For a native checkout, build the three test targets and `validator-engine`, then
+For a native checkout, build the four test targets and `validator-engine`, then
 run the CLI probe with `--engine BUILD/validator-engine/validator-engine` and an
 external `--output-dir`. Run the options control script separately for
 `--boundary setter`, `parser-validation` and `parser-canonical`, supplying
@@ -69,3 +70,13 @@ The CLI probe supplies `--help` after the profile arguments and checks diagnosti
 as well as exit status: the engine intentionally exits with status 2 for help.
 It does not start a node. Its success establishes parser wiring, not runtime
 installation, network-origin coverage, calibration or release readiness.
+
+The manager test retains the production submission handlers, liteserver parser
+and cache, and shared pool. It substitutes startup with a frozen state and local
+options, without databases or network listeners. Three malformed submissions
+through different handlers consume a synthetic three-unit budget; subsequent
+submissions through each handler, with null and rotating source identities,
+observe the shared exhausted budget. `--manager-entrypoints` on the pool control
+runner deletes shared charging and requires that test to fail. This does not
+establish HTTP/ADNL transport coverage, actual signature rejection cost or mixed
+network-load fairness.

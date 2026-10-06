@@ -15,6 +15,8 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--container')
+    parser.add_argument('--manager-entrypoints', action='store_true',
+                        help='Check shared manager/broadcast/liteserver admission instead of pool-only boundaries')
     parser.add_argument('--container-source-dir', default='/checkout')
     parser.add_argument('--build-dir', required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
@@ -29,7 +31,9 @@ def main():
                          'validator/impl/ext-message-pool.hpp',
                          'validator/impl/ext-message-work-profile.hpp',
                          'validator/admission-work-profile.h',
-                         'validator/validator.h', 'validator/validator-options.hpp']:
+                         'validator/validator.h', 'validator/validator-options.hpp'] + (
+                             ['test/test-ext-message-manager.cpp', 'validator/manager.hpp']
+                             if args.manager_entrypoints else []):
             actual = subprocess.check_output(['docker', 'exec', args.container, 'sha256sum',
                                               args.container_source_dir + '/' + relative], text=True).split()[0]
             expected = hashlib.sha256((root / relative).read_bytes()).hexdigest()
@@ -67,6 +71,12 @@ def main():
          b'void ExtMessagePool::tear_down() {\n  return; // Controlled deletion of shutdown drain.',
          'Deadlock detected', 'StoppingPoolReleasesQueuedInput'),
     ]
+    target = 'test-ext-message-pool'
+    if args.manager_entrypoints:
+        target = 'test-ext-message-manager'
+        mutations = [('skip-shared-charge', b'    if (!work_admission_->try_consume()) {',
+                      b'    if (false) {', 'available:0 supported:true',
+                      'BroadcastQueryAndLiteServerShareWorkBudget')]
     for name, anchor, _, _, _ in mutations:
         if original.count(anchor) != 1:
             raise RuntimeError(f'{name}: expected exactly one mutation anchor')
@@ -88,9 +98,9 @@ def main():
             subprocess.run(['docker', 'exec', args.container, 'touch',
                             args.container_source_dir + '/validator/impl/ext-message-pool.cpp'], check=True)
         if run(name + '-build', ['cmake', '--build', args.build_dir, '--target',
-                                'test-ext-message-pool', '-j', '2']):
+                                target, '-j', '2']):
             raise RuntimeError(name + ' build failed')
-        command = [str(Path(args.build_dir) / 'test-ext-message-pool')]
+        command = [str(Path(args.build_dir) / target)]
         if test_name:
             command += ['--filter', test_name]
         return run(name, command)
@@ -113,9 +123,12 @@ def main():
             data = path.read_bytes()
             logs[path.name] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
         (output / 'results.json').write_text(json.dumps({
+            'target': target,
             'source_sha256': hashlib.sha256(original).hexdigest(),
             'returncodes': results, 'logs': logs,
-            'scope': 'actual pool coroutine, shared work charge, exact config pin, and failure VM-count regression',
+            'scope': ('real manager broadcast/query and serialized liteserver shared work charge'
+                      if args.manager_entrypoints else
+                      'actual pool coroutine, shared work charge, exact config pin, and failure VM-count regression'),
         }, indent=2) + '\n')
         if restored:
             raise RuntimeError('restored tests failed')
