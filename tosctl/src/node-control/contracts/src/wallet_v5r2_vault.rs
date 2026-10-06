@@ -2,8 +2,11 @@
 //! Vault-backed signing through authenticated V5R2 state gates. This does not
 //! approve actions, reserve counters, submit messages or establish finality.
 use crate::{
-    proven_getters::ProvenAccountState, wallet_v5r2::AuthAction,
-    wallet_v5r2_wallet_state::ProvenWalletState,
+    proven_getters::ProvenAccountState,
+    wallet_v5r2::AuthAction,
+    wallet_v5r2_genesis::SuccessorDeployment,
+    wallet_v5r2_prepare::PreparationAmounts,
+    wallet_v5r2_wallet_state::{MigrationEvidence, ProvenWalletState},
 };
 use chain_block::Cell;
 use secrets_vault::{types::secret_id::SecretId, vault::SecretVault};
@@ -60,5 +63,48 @@ impl VaultKey<'_> {
             load_bound(self.vault, self.id, Role::Rescue, view.rescue_public_key()).await?;
         let after = checked_time(before, clock()?)?;
         view.sign_rescue_submission(after, valid_until, action, &mut signer)
+    }
+    /// Prepare the exact approved successor and funding amounts using current
+    /// SLH custody. Revalidate the successor and proof after secret loading.
+    pub async fn sign_preparation(
+        &self,
+        view: &ProvenWalletState,
+        mut clock: impl FnMut() -> anyhow::Result<u32>,
+        valid_until: u32,
+        successor: &SuccessorDeployment,
+        amounts: PreparationAmounts,
+        policy: Option<&ProvenAccountState>,
+    ) -> anyhow::Result<Cell> {
+        let before = clock()?;
+        view.preparation_request(before, valid_until, successor, amounts, policy)?;
+        let mut signer =
+            load_bound(self.vault, self.id, Role::Rescue, view.rescue_public_key()).await?;
+        let after = checked_time(before, clock()?)?;
+        view.sign_preparation_submission(
+            after,
+            valid_until,
+            successor,
+            amounts,
+            policy,
+            &mut signer,
+        )
+    }
+
+    /// Sign migration only through the complete funded dual-POP and current
+    /// successor fee-custody gate, evaluated before and after secret loading.
+    pub async fn sign_migration(
+        &self,
+        view: &ProvenWalletState,
+        mut clock: impl FnMut() -> anyhow::Result<u32>,
+        valid_until: u32,
+        successor: &SuccessorDeployment,
+        evidence: &MigrationEvidence<'_>,
+    ) -> anyhow::Result<Cell> {
+        let before = clock()?;
+        view.migration_request(before, valid_until, successor, evidence)?;
+        let mut signer =
+            load_bound(self.vault, self.id, Role::Rescue, view.rescue_public_key()).await?;
+        let after = checked_time(before, clock()?)?;
+        view.sign_migration_submission(after, valid_until, successor, evidence, &mut signer)
     }
 }

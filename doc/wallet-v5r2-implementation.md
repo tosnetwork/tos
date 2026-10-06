@@ -2021,8 +2021,8 @@ No authorization decision is derived from Vault tags or a raw record ID.
 
 Ordinary rescue refuses Migrate before accessing custody and retains the existing
 signing gate's rejection as well. The funded dual-POP migration API remains the
-required migration path. Preparation, POP and migration do not yet have equivalent
-Vault convenience methods. Applications must still approve actions, use a trusted
+required migration path. Preparation and migration now have the equivalent Vault
+methods described below; POP still requires a directly loaded bound signer. Applications must still approve actions, use a trusted
 clock, authenticate current proof sources, reserve concurrent counters and fee
 leaves, submit exact bytes and check delivery/finality. These methods do not perform
 network I/O or prove that chain state cannot change after the observed checkpoint.
@@ -2039,3 +2039,33 @@ preflight; each fails the corresponding assertion and restoration passes.
 These are real Vault/native-signature operations with synthetic proof metadata,
 not live network evidence or full client release acceptance. Evidence:
 `test/wallet-v5r2/proven-vault-20261006.json`.
+
+
+### Vault-backed preparation and funded migration
+
+`VaultKey::sign_preparation` validates the exact approved successor, funding
+amounts, current wallet and applicable policy before loading the current SLH
+record. `VaultKey::sign_migration` first requires the complete `MigrationEvidence`
+gate: both funded POPs, their bound receipts and submissions, current successor
+state and fee-custody continuity. Both methods load only the rescue key bound to
+the proven current wallet. They sample the clock again, reject regression and
+invoke the existing strict signing method with that new time. They do not offer
+a seed-only migration bypass or authorize classical signatures.
+
+The existing preparation and migration tests now also exercise encrypted Vault
+loading using public fixture seeds. Preparation compares the exact request and
+passes the Vault-produced signature through the independent SLH verifier. Migration
+compares the signed request with the existing dual-POP gate's expected request.
+Missing records combined with invalid successor/POP evidence establish validation
+before custody access. Both tests reject backward clocks, stale proofs and expired
+requests after loading. Six semantic controls remove each method's preflight,
+clock ordering or post-load time refresh; each must fail its named test and
+specific assertion, and both restored tests must pass. The control runner is
+included in both architecture jobs of the rescue-context workflow.
+
+This extends the custody API, not the production acceptance claim: these tests
+use synthetic proof/receipt metadata. They do not establish live funded POP
+execution, device independence, nonce reservation, delivery or finality. The same
+immutable snapshot is checked twice; no newer network proof is fetched during
+loading. Full client flows and default-credit admission remain release gates.
+Evidence: `test/wallet-v5r2/vault-recovery-20261006.json`.

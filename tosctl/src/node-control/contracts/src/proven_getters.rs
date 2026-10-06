@@ -1112,6 +1112,64 @@ mod fee_state_tests {
         refresh_proof_data(wallet);
     }
     #[cfg(feature = "native-wallet-vault")]
+    async fn public_rescue_vault_fixture() -> (
+        tempfile::TempDir,
+        secrets_vault::vault::SecretVault,
+        secrets_vault::types::secret_id::SecretId,
+    ) {
+        use secrets_vault::{
+            crypto::{
+                factory::{AutoCryptoFactory, CryptoFactory},
+                key_material::KeyMaterial,
+                master_key::MasterKey,
+            },
+            events::null_handler::NullEventHandler,
+            memory::protected_memory::ProtectedMemory,
+            storage::file_json::FileJsonStorage,
+            types::{
+                algorithm::Algorithm, metadata::Metadata, secret::Secret, secret_id::SecretId,
+                store_mode::StoreMode,
+            },
+            vault::SecretVault,
+        };
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let master = MasterKey::from_key_material(
+            KeyMaterial::new_symmetric_key(ProtectedMemory::from_slice(&[0x77; 32]).await.unwrap())
+                .await
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let storage = FileJsonStorage::new(
+            master,
+            &dir.path().join("rescue.json"),
+            Box::new(AutoCryptoFactory {}),
+            false,
+        )
+        .await
+        .unwrap();
+        let vault = SecretVault::new(Arc::new(storage), Arc::new(NullEventHandler {}));
+        let id = SecretId::new("public.test.rescue");
+        let metadata = Metadata::new(Some(&id), Algorithm::None, true)
+            .with_tag(wallet_pq_signer::vault::PROFILE_TAG, wallet_pq_signer::vault::PROFILE_V1)
+            .with_tag(
+                wallet_pq_signer::vault::ROLE_TAG,
+                wallet_pq_signer::vault::role_tag(wallet_pq_signer::Role::Rescue),
+            );
+        let secret = Secret::from_protected_data(
+            ProtectedMemory::from_slice(&[0x22; 48]).await.unwrap(),
+            metadata,
+            AutoCryptoFactory {}.new_crypto().unwrap(),
+        )
+        .await
+        .unwrap();
+        vault.put(&secret, StoreMode::NewOnly).await.unwrap();
+        vault.flush().await.unwrap();
+        (dir, vault, id)
+    }
+
+    #[cfg(feature = "native-wallet-vault")]
     #[tokio::test]
     async fn vault_wallet_signing_rechecks_proofs_after_loading() {
         use crate::wallet_v5r2::AuthAction;
@@ -1326,8 +1384,8 @@ mod fee_state_tests {
     }
 
     #[cfg(feature = "native-wallet-signer")]
-    #[test]
-    fn native_migration_requires_both_funded_pops() {
+    #[tokio::test]
+    async fn native_migration_requires_both_funded_pops() {
         use crate::lms_fee_schedule::{Continuity, IntactState, RestoreBarrier};
         use crate::proven_transactions::ProvenTransaction;
         use crate::wallet_v5r2::{AuthAction, AuthRole};
@@ -1441,6 +1499,55 @@ mod fee_state_tests {
             policy: None,
         };
         let expected = view.migration_request(4620, 4700, &successor, &evidence).unwrap();
+        #[cfg(feature = "native-wallet-vault")]
+        {
+            use crate::wallet_v5r2_vault::VaultKey;
+            let (_dir, custody, id) = public_rescue_vault_fixture().await;
+            let key = VaultKey { vault: &custody, id: &id };
+            let signed =
+                key.sign_migration(&view, || Ok(4620), 4700, &successor, &evidence).await.unwrap();
+            assert_eq!(signed.reference(0).unwrap().repr_hash(), expected.cell().repr_hash());
+            let missing_id = secrets_vault::types::secret_id::SecretId::new("missing");
+            let missing = VaultKey { vault: &custody, id: &missing_id };
+            evidence.primary_request = &rescue.0;
+            let expected_error = view
+                .migration_request(4620, 4700, &successor, &evidence)
+                .err()
+                .unwrap()
+                .to_string();
+            let error = missing
+                .sign_migration(&view, || Ok(4620), 4700, &successor, &evidence)
+                .await
+                .err()
+                .unwrap()
+                .to_string();
+            assert_eq!(
+                error, expected_error,
+                "migration opened custody before funded POP validation"
+            );
+            evidence.primary_request = &primary.0;
+            for (after, deadline, label) in [
+                (4619, 4700, "regressed clock"),
+                (4631, 4700, "stale proof"),
+                (4621, 4621, "expired request"),
+            ] {
+                let mut calls = 0;
+                let result = key
+                    .sign_migration(
+                        &view,
+                        || {
+                            calls += 1;
+                            Ok(if calls == 1 { 4620 } else { after })
+                        },
+                        deadline,
+                        &successor,
+                        &evidence,
+                    )
+                    .await;
+                assert!(result.is_err(), "Vault migration accepted {label} after loading");
+                assert_eq!(calls, 2);
+            }
+        }
         let signed =
             view.sign_migration_submission(4620, 4700, &successor, &evidence, &mut signer).unwrap();
         assert_eq!(signed.reference(0).unwrap().repr_hash(), expected.cell().repr_hash());
@@ -1563,8 +1670,8 @@ mod fee_state_tests {
     }
 
     #[cfg(feature = "native-wallet-signer")]
-    #[test]
-    fn native_preparation_signing_binds_successor_and_current_rescue() {
+    #[tokio::test]
+    async fn native_preparation_signing_binds_successor_and_current_rescue() {
         use crate::wallet_v5r2_genesis::SuccessorDeployment;
         use crate::wallet_v5r2_policy::tests::policy;
         use crate::wallet_v5r2_prepare::PreparationAmounts;
@@ -1683,6 +1790,61 @@ mod fee_state_tests {
         let body = view
             .sign_preparation_submission(4620, 4700, &successor, amounts, None, &mut rescue)
             .unwrap();
+
+        #[cfg(feature = "native-wallet-vault")]
+        let body = {
+            use crate::wallet_v5r2_vault::VaultKey;
+            let (_dir, custody, id) = public_rescue_vault_fixture().await;
+            let key = VaultKey { vault: &custody, id: &id };
+            let signed = key
+                .sign_preparation(&view, || Ok(4620), 4700, &successor, amounts, None)
+                .await
+                .unwrap();
+            assert_eq!(
+                signed.reference(0).unwrap().repr_hash(),
+                body.reference(0).unwrap().repr_hash()
+            );
+            let missing_id = secrets_vault::types::secret_id::SecretId::new("missing");
+            let missing = VaultKey { vault: &custody, id: &missing_id };
+            let expected_error = view
+                .preparation_request(4620, 4700, &other, amounts, None)
+                .err()
+                .unwrap()
+                .to_string();
+            let error = missing
+                .sign_preparation(&view, || Ok(4620), 4700, &other, amounts, None)
+                .await
+                .err()
+                .unwrap()
+                .to_string();
+            assert_eq!(
+                error, expected_error,
+                "preparation opened custody before successor validation"
+            );
+            for (after, deadline, label) in [
+                (4619, 4700, "regressed clock"),
+                (4631, 4700, "stale proof"),
+                (4621, 4621, "expired request"),
+            ] {
+                let mut calls = 0;
+                let result = key
+                    .sign_preparation(
+                        &view,
+                        || {
+                            calls += 1;
+                            Ok(if calls == 1 { 4620 } else { after })
+                        },
+                        deadline,
+                        &successor,
+                        amounts,
+                        None,
+                    )
+                    .await;
+                assert!(result.is_err(), "Vault preparation accepted {label} after loading");
+                assert_eq!(calls, 2);
+            }
+            signed
+        };
         let mut body = SliceData::load_cell(body).unwrap();
         assert_eq!(body.get_next_u32().unwrap(), 0x46505233);
         assert_eq!(body.checked_drain_reference().unwrap().repr_hash(), request.cell().repr_hash());

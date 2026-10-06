@@ -1,0 +1,85 @@
+{
+  "base_commit": "c62a1e88757115c1208d4b0ca5d1dbee7d46dcfb",
+  "scope": "Vault-backed SLH preparation and funded dual-POP migration with preflight and post-load proof/time gates; synthetic proof metadata.",
+  "tests": {
+    "vault_feature_state_tests": 16,
+    "native_signer_feature_state_tests": 15,
+    "semantic_controls": {
+      "preparation_preflight": {
+        "exit": 101,
+        "semantic_witness": "preparation opened custody before successor validation"
+      },
+      "preparation_clock": {
+        "exit": 101,
+        "semantic_witness": "Vault preparation accepted regressed clock after loading"
+      },
+      "preparation_recheck": {
+        "exit": 101,
+        "semantic_witness": "Vault preparation accepted stale proof after loading"
+      },
+      "migration_preflight": {
+        "exit": 101,
+        "semantic_witness": "migration opened custody before funded POP validation"
+      },
+      "migration_clock": {
+        "exit": 101,
+        "semantic_witness": "Vault migration accepted regressed clock after loading"
+      },
+      "migration_recheck": {
+        "exit": 101,
+        "semantic_witness": "Vault migration accepted stale proof after loading"
+      }
+    },
+    "restored_named_tests": 2,
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-vault --lib fee_state_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "python3 test/wallet-v5r2/vault_recovery_controls.py --output <fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_vault.rs",
+      "bytes": 4576,
+      "sha256": "763e7a9667833c52a2d1a78571e71f847747f3e5e2ccf5096eff8310770345ba"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "bytes": 142703,
+      "sha256": "cea24805161f250124e9f349e23d3c889ad484cf71bcaea59424cd28c31b9d5e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/vault_recovery_controls.py",
+      "bytes": 3871,
+      "sha256": "7697c85df7d2021e3faa06765b7bcfd76e96f8a54e10c369dd95088af01c45ca"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 17195,
+      "sha256": "26638074f82a04d6052a0e0e873f4f44ebf56fc12329ccaca2762b0d68133506"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 133230,
+      "sha256": "e85401c268f64ed3504e648372d8f27c733761b3cdea8f1788253f8eae0100ba"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-recovery-controls/MANIFEST.json",
+      "bytes": 3326,
+      "sha256": "4dae3ed37214d090a7ba61777a2a06c59d4792b8f4d0cd64b6bef34862e29570"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Synthetic proof/receipt metadata is not live-chain funded execution evidence.",
+    "Same immutable proof is checked twice; caller provides trusted time, action approval, nonce reservations and current authenticated proofs.",
+    "No submission, finality or independent-device custody claim.",
+    "POP Vault convenience API and full client flows remain unfinished.",
+    "Default 10000 gas-credit admission remains failed; final-head Linux CI remains a release gate."
+  ]
+}
