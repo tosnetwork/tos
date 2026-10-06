@@ -684,7 +684,7 @@ struct ScanFixture {
   // One pass; nothing when the driver declines to start one.
   std::optional<std::vector<ReservedValidatorDelete>> pass(
       const ValidatorCleanupManager::CleanupExaminedFn& on_examined = {}) {
-    auto request = m.begin_pass(oracles.gc);
+    auto request = m.begin_tick(oracles.gc);
     if (!request) {
       return std::nullopt;
     }

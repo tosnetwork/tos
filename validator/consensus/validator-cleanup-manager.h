@@ -29,63 +29,46 @@
 #include "td/utils/Status.h"
 #include "validator/consensus/validator-cleanup.h"
 
-// Stateful driver of validator consensus-DB cleanup. The durable store is the only
-// backlog: every retired session's record stays there until its directory is
-// confirmed gone, and cleanup reads it with a stateless cursor scan. In memory there
-// is only
+// Driver of validator consensus-DB cleanup. The durable store is the only backlog:
+// every retired session's record stays there until its directory is confirmed gone,
+// and cleanup reads it with a cursor scan driven by a fixed-period tick. In memory
+// there is only
 //   (a) runtime retirements whose close is not yet confirmed (bounded by the groups
 //       the node runs; empty after a restart, since nothing is open then),
 //   (b) operations in flight -- reserved, deleting or erasing -- at most kMaxInFlight,
-//   (c) the live sessions' incarnation tokens, the scan cursor, and the scheduler.
+//   (c) the live sessions' incarnation tokens, the scan cursor and the running pass.
 // It has NO actor/DB dependencies, so it is unit-testable and can be driven through
 // every ordering deterministically; it must be confined to the owner's actor thread.
 //
-// A pass reads one page of at most kPageSize records strictly after the cursor
-// (begin_pass / on_page), runs the deletion gate on each record whose session is in
-// neither (a), (b) nor live, and picks up to kDispatchBudget eligible records. Each
-// pick is re-read by its key (on_point_read_result) and reserved only if the durable
-// record still equals the page copy, so a copy that a later retirement or an erase
-// made stale is never acted on. The cursor moves past the last record examined; if
-// the dispatch budget stopped the pass, the next pass starts at the first record it
-// did not examine. A page that reaches the end of the store wraps the cursor.
-//
-// Scheduling has one authority, this class, and one state:
-//   Idle     nothing scheduled; a trigger (kick) may schedule a pass.
-//   Queued   exactly one continuation message is pending.
-//   Running  a pass is in flight.
-//   Backoff  exactly one retry timer is pending; triggers do not shorten it.
-//   Paused   a clean sweep finished at the recorded GC block; a trigger resumes only
-//            when the GC block or the event count changed, or a failed delete is due.
-// Every scheduled callback carries the scheduler generation and is accepted only if
-// that generation is current and the state still expects it; disabling and every
-// transition that schedules something bump the generation, so a stale callback
-// changes nothing. After a pass (schedule_after_pass):
-//   - a failed page read (or no GC snapshot) backs off with the cursor unchanged and
-//     retries at the same cursor;
-//   - a sweep still mid-way continues at once if there is in-flight capacity, and
-//     otherwise waits Idle for a delete completion to free some;
-//   - a wrapped sweep with a failed point read, or with a failed delete since it began,
-//     backs off and then rescans from the start (the failed records are behind it);
-//   - a wrapped clean sweep starts another at once if a retirement, close or reopen
-//     happened since it began (a record behind the cursor may have become eligible),
-//     and otherwise pauses. Deletions still in flight never cause another sweep.
-// The backoff is 1, 2, 4 ... 64 seconds over consecutive failures and resets only
-// after an entirely error-free sweep: no failed page or point read, and every delete it
-// reserved completed without failure.
+// Every tick (begin_tick) runs at most one pass, and none while a pass is still
+// running or kMaxInFlight operations are in flight. A pass reads one page of at most
+// kPageSize records strictly after the cursor (on_page), runs the deletion gate on
+// each record whose session is in neither (a), (b) nor live, and picks up to
+// kDispatchBudget eligible records. Each pick is re-read by its key
+// (on_point_read_result) and reserved only if the durable record still equals the page
+// copy, so a copy that a later retirement or an erase made stale is never acted on.
+// The cursor moves past the last record examined; if the dispatch budget stopped the
+// pass, the next tick starts at the first record it did not examine. A page that
+// reaches the end of the store wraps the cursor, and the scan cycles forever: nothing
+// pauses it and no event schedules it. Errors need no special handling: a failed page
+// read leaves the cursor where it was for the next tick; a failed point read skips its
+// candidate, which the next cycle sees again; a failed delete releases its
+// reservation, and the next cycle sees the record again. The tick period is the only
+// retry pacing.
 //
 // Invariants (each covered by a test):
 //   - No durable record is lost: this class never erases a record itself; a record is
 //     erased only after its directory was confirmed gone (on_delete_completed).
 //   - A live or not-yet-close-confirmed session is never reserved.
 //   - An erased record is never re-admitted: the point read finds it gone.
-//   - Progress: retirements never move the cursor back, so with the GC block fixed a
-//     full sweep takes at most ceil(N / kPageSize) passes (one more when N is a
-//     multiple of it) plus one pass per kDispatchBudget eligible records it reserves,
-//     where N is the number of keys the sweep reads: the backlog at the start of the
-//     sweep PLUS every key inserted ahead of the cursor while it runs. It is therefore
-//     not a bound in the backlog size alone: unlimited churn ahead of the cursor can
-//     lengthen a sweep without limit. Passes of an unfinished sweep follow each other
-//     without waiting for an external trigger.
+//   - Progress: the cursor only moves forward within a cycle. A record that becomes
+//     eligible is examined within ceil(N / kPageSize) ticks, plus one tick per
+//     kDispatchBudget eligible records reserved ahead of it, plus every tick skipped at
+//     the in-flight cap, where N is the number of keys the cycle reads -- the store at
+//     the start of the cycle plus every key inserted ahead of the cursor during it.
+//     This assumes page reads eventually succeed, passes finish, and in-flight
+//     capacity frees: unlimited insertion ahead of the cursor can extend a cycle
+//     without limit, and a permanently unreadable page blocks progress through it.
 //   - Memory is O(open retirements + live groups + kMaxInFlight), independent of the
 //     size of the backlog.
 namespace tos::validator::consensus {
@@ -119,17 +102,8 @@ struct ValidatorCleanupPassSummary {
   size_t examined = 0;
   size_t reserved = 0;
   bool wrapped = false;
-  bool page_failed = false;   // the page read failed (or no GC snapshot): nothing examined
-  bool point_failed = false;  // a point read failed: that candidate is left for a later sweep
-};
-
-// What the owner must schedule: nothing, one continuation message, or one timer. The
-// callback must hand `generation` back to accept_scheduled.
-struct ValidatorCleanupScheduleAction {
-  enum class Kind { None, Queue, Timer };
-  Kind kind = Kind::None;
-  uint64_t generation = 0;
-  double delay_seconds = 0;
+  bool page_failed = false;   // the page read failed: nothing examined, cursor unchanged
+  bool point_failed = false;  // a point read failed: that candidate waits for the next cycle
 };
 
 class ValidatorCleanupManager {
@@ -137,9 +111,9 @@ class ValidatorCleanupManager {
   static constexpr size_t kPageSize = 256;
   static constexpr size_t kDispatchBudget = 16;
   static constexpr size_t kMaxInFlight = 64;
-  static constexpr uint64_t kMaxBackoffShift = 6;  // 2^6 = 64 seconds
+  // The tick period: one pass at most per tick, and the pacing of every retry.
+  static constexpr double kTickSeconds = 10.0;
   using CleanupExaminedFn = std::function<void(const ValidatorSessionId&, bool /*eligible*/)>;
-  enum class SchedState { Idle, Queued, Running, Backoff, Paused };
 
   // A group (initial creation or reopen) for `session` is about to be created. The
   // caller MUST first check !is_delete_in_flight(session) and defer creation while a
@@ -149,7 +123,6 @@ class ValidatorCleanupManager {
   void on_group_created(const ValidatorSessionId& session) {
     live_generation_[session] = ++next_generation_;
     open_retirements_.erase(session);
-    ++event_seq_;
   }
 
   // The current incarnation of `session` retired; its durable record is persisted
@@ -170,7 +143,6 @@ class ValidatorCleanupManager {
       gen = ++next_generation_;
     }
     open_retirements_[session] = gen;
-    ++event_seq_;
     return gen;
   }
 
@@ -180,7 +152,6 @@ class ValidatorCleanupManager {
     auto it = open_retirements_.find(session);
     if (it != open_retirements_.end() && it->second == generation) {
       open_retirements_.erase(it);
-      ++event_seq_;
     }
   }
 
@@ -190,62 +161,11 @@ class ValidatorCleanupManager {
     return in_flight_.count(session) > 0;
   }
 
-  // ---- scheduler -------------------------------------------------------------------
-
-  // A trigger (GC advance, close, erase ack, delete completion, start-up) at the
-  // durable GC block `gc`. Returns what to schedule, if anything.
-  ValidatorCleanupScheduleAction kick(const BlockIdExt& gc) {
-    switch (sched_) {
-      case SchedState::Queued:
-      case SchedState::Running:
-      case SchedState::Backoff:
-        return {};  // already decided; the demand is seen when the pass ends
-      case SchedState::Paused:
-        if (error_pending_) {
-          return enter_backoff();  // a failed delete after the pause: retry after a backoff
-        }
-        if (paused_gc_ && *paused_gc_ == gc && paused_event_seq_ == event_seq_) {
-          return {};
-        }
-        sched_ = SchedState::Idle;
-        return from_idle();
-      case SchedState::Idle:
-        return from_idle();
-    }
-    return {};
-  }
-
-  // A scheduled callback (continuation message or timer) with its generation. Accepted
-  // only if the generation is current and the state still expects it; then the owner
-  // must run a pass (begin_pass) and the state is Running.
-  bool accept_scheduled(uint64_t generation) {
-    if (generation != sched_gen_ || (sched_ != SchedState::Queued && sched_ != SchedState::Backoff)) {
-      return false;
-    }
-    sched_ = SchedState::Running;
-    return true;
-  }
-
-  // Cleanup was disabled: supersede every scheduled callback and any running pass.
-  void disable() {
-    ++sched_gen_;
-    sched_ = SchedState::Idle;
-    pass_ = Pass{};
-  }
-
-  // ---- one pass ----------------------------------------------------------------------
-
-  // Start a pass at the durable GC block `gc`: the page to read, or nothing when a pass
-  // is already running. A pass at an empty cursor starts a new sweep.
-  std::optional<ValidatorCleanupPageRequest> begin_pass(const BlockIdExt& gc) {
-    if (pass_.active) {
+  // A tick at the durable GC block `gc`: the page to read, or nothing when this tick is
+  // skipped because a pass is still running or in-flight capacity is exhausted.
+  std::optional<ValidatorCleanupPageRequest> begin_tick(const BlockIdExt& gc) {
+    if (pass_.active || in_flight_.size() >= kMaxInFlight) {
       return std::nullopt;
-    }
-    if (cursor_.empty()) {
-      ++sweep_id_;
-      sweep_start_event_seq_ = event_seq_;
-      sweep_error_ = false;
-      error_pending_ = false;  // this sweep retries everything a failure left behind
     }
     pass_ = Pass{};
     pass_.active = true;
@@ -254,17 +174,35 @@ class ValidatorCleanupManager {
     return ValidatorCleanupPageRequest{cursor_, kPageSize, pass_.token};
   }
 
+  // Whether `token` is the running pass. A page result for any other token -- success
+  // or failure -- must be dropped before it is looked at.
+  bool is_current_pass(uint64_t token) const {
+    return pass_.active && token == pass_.token && !pass_.page_examined;
+  }
+
+  // The page read of the running pass `token` failed: the pass ends having examined
+  // nothing, with the cursor unchanged. A stale token changes nothing.
+  std::optional<ValidatorCleanupPassSummary> abort_pass(uint64_t token) {
+    if (!is_current_pass(token)) {
+      return std::nullopt;
+    }
+    pass_ = Pass{};
+    ValidatorCleanupPassSummary summary;
+    summary.page_failed = true;
+    return summary;
+  }
+
   // The page read for `request`. Runs the deletion gate on every record not held by
   // (a), (b) or a live group and returns up to kDispatchBudget eligible records (fewer
   // when in-flight capacity is short) to confirm with a point read each. The cursor
   // moves past every record examined; an eligible record beyond the budget is not
-  // examined, so the next pass starts there.
+  // examined, so the next tick starts there.
   std::vector<PendingValidatorConsensusDbCleanup> on_page(const ValidatorCleanupPageRequest& request,
                                                           const ValidatorCleanupPage& page,
                                                           const ValidatorCleanupOracles& oracles,
                                                           const CleanupExaminedFn& on_examined = {}) {
     std::vector<PendingValidatorConsensusDbCleanup> candidates;
-    if (!pass_.active || request.token != pass_.token || pass_.page_examined) {
+    if (!is_current_pass(request.token)) {
       return candidates;
     }
     size_t capacity = kMaxInFlight > in_flight_.size() ? kMaxInFlight - in_flight_.size() : 0;
@@ -303,8 +241,8 @@ class ValidatorCleanupManager {
   // The point read of one candidate of the pass `token`: its durable record now
   // (nothing if gone), or a read error. A callback for another pass changes nothing.
   // Reserves the delete only if the record is unchanged since the page read and the
-  // session is still not held. A read error is not absence: the candidate is left for
-  // a later sweep, which this sweep's error outcome forces.
+  // session is still not held. A read error is not absence: the candidate is not
+  // reserved, and the next cycle examines it again.
   std::optional<ReservedValidatorDelete> on_point_read_result(
       uint64_t token, const PendingValidatorConsensusDbCleanup& candidate,
       const td::Result<std::optional<PendingValidatorConsensusDbCleanup>>& current,
@@ -320,13 +258,13 @@ class ValidatorCleanupManager {
     auto session = candidate.session_id;
     const auto& record = current.ok();
     if (!record || !(*record == candidate)) {
-      return std::nullopt;  // erased or superseded since the page read; the next sweep sees the new value
+      return std::nullopt;  // erased or superseded since the page read; the next cycle sees the new value
     }
     if (held_in_memory(session) || is_live(session) || in_flight_.size() >= kMaxInFlight) {
       return std::nullopt;
     }
     auto attempt = ++next_attempt_;
-    in_flight_[session] = InFlight{candidate, 0, attempt, InFlightState::Deleting, sweep_id_};
+    in_flight_[session] = InFlight{candidate, 0, attempt, InFlightState::Deleting};
     ++pass_.reserved;
     return ReservedValidatorDelete{candidate, 0, attempt};
   }
@@ -336,70 +274,24 @@ class ValidatorCleanupManager {
     return pass_.active && pass_.page_examined && pass_.unverified == 0;
   }
 
-  // Finish the running pass and return its outcome; a pass that reached the end of the
-  // store wraps the cursor. Must be followed by schedule_after_pass.
+  // Finish the running pass (once pass_verified) and return its outcome; a pass that
+  // reached the end of the store wraps the cursor.
   ValidatorCleanupPassSummary end_pass() {
     ValidatorCleanupPassSummary summary{pass_.examined, pass_.reserved, pass_.wrapped, false, pass_.point_failed};
     if (pass_.active && pass_.wrapped) {
       cursor_.clear();
-      ++completed_sweeps_;
+      ++completed_cycles_;
     }
     pass_ = Pass{};
     return summary;
   }
-
-  // The page read failed, or there was no GC snapshot: the pass ends having examined
-  // nothing, with the cursor unchanged. Must be followed by schedule_after_pass.
-  ValidatorCleanupPassSummary abort_pass() {
-    pass_ = Pass{};
-    ValidatorCleanupPassSummary summary;
-    summary.page_failed = true;
-    return summary;
-  }
-
-  // Decide what follows a pass (see the class comment).
-  ValidatorCleanupScheduleAction schedule_after_pass(const ValidatorCleanupPassSummary& summary, const BlockIdExt& gc) {
-    if (sched_ != SchedState::Running) {
-      return {};  // superseded (disabled) while the pass ran
-    }
-    if (summary.page_failed) {
-      return enter_backoff();  // retry at the same cursor
-    }
-    if (summary.point_failed) {
-      sweep_error_ = true;
-    }
-    if (!summary.wrapped) {
-      sched_ = SchedState::Idle;
-      return from_idle();  // continue the sweep if there is capacity
-    }
-    if (sweep_error_ || error_pending_) {
-      sweep_error_ = false;
-      error_pending_ = true;  // rescan from the start once the backoff ends
-      return enter_backoff();
-    }
-    // An error-free sweep resets the backoff -- once its own deletions have all
-    // completed without failure (a failure of one of them makes it not error-free).
-    reset_candidate_sweep_ = sweep_id_;
-    try_reset_backoff();
-    if (event_seq_ != sweep_start_event_seq_) {
-      sched_ = SchedState::Idle;
-      return from_idle();  // something happened during the sweep: sweep again
-    }
-    sched_ = SchedState::Paused;
-    paused_gc_ = gc;
-    paused_event_seq_ = event_seq_;
-    return {};
-  }
-
-  // ---- delete completion -------------------------------------------------------------
 
   // A dispatched delete ATTEMPT finished. Must be called only when the attempt truly
   // finished, never on a timeout. Rejected unless it matches the in-flight attempt.
   // On confirmed removal the entry moves to Erasing and the durable erase is
   // dispatched; the reservation is held until the erase is acknowledged. On failure
-  // the reservation is released and the record, still durable, is retried by a sweep
-  // after a backoff (it is behind the cursor). The caller then kicks: the freed
-  // capacity may resume an unfinished sweep.
+  // the reservation is released and the record, still durable, is seen again by the
+  // next cycle.
   void on_delete_completed(const ValidatorSessionId& session, uint64_t generation, uint64_t attempt_id,
                            bool confirmed_gone,
                            const std::function<void(const ValidatorSessionId&, uint64_t, uint64_t)>&
@@ -413,11 +305,7 @@ class ValidatorCleanupManager {
       it->second.state = InFlightState::Erasing;
       dispatch_durable_erase(session, generation, attempt_id);
     } else {
-      if (reset_candidate_sweep_ && *reset_candidate_sweep_ == it->second.sweep) {
-        reset_candidate_sweep_.reset();  // that sweep was not error-free after all
-      }
       in_flight_.erase(it);
-      error_pending_ = true;
     }
   }
 
@@ -429,20 +317,17 @@ class ValidatorCleanupManager {
       return;
     }
     in_flight_.erase(it);
-    try_reset_backoff();
   }
 
-  // ---- observers ---------------------------------------------------------------------
-
-  // No full sweep has completed yet in this process.
+  // No full cycle has completed yet in this process.
   bool in_first_scan() const {
-    return completed_sweeps_ == 0;
+    return completed_cycles_ == 0;
   }
-  SchedState schedule_state() const {
-    return sched_;
+  uint64_t completed_cycles() const {
+    return completed_cycles_;
   }
-  bool paused() const {
-    return sched_ == SchedState::Paused;
+  bool pass_running() const {
+    return pass_.active;
   }
   size_t in_flight_count() const {
     return in_flight_.size();
@@ -462,51 +347,12 @@ class ValidatorCleanupManager {
     return in_flight_.count(session) > 0 || open_retirements_.count(session) > 0 || live_generation_.count(session) > 0;
   }
 
-  // From Idle: at capacity stay Idle (a delete completion kicks again); an unresolved
-  // error at an empty cursor backs off; otherwise run a pass (continuing the sweep, or
-  // starting one).
-  ValidatorCleanupScheduleAction from_idle() {
-    if (in_flight_.size() >= kMaxInFlight) {
-      return {};
-    }
-    if (cursor_.empty() && error_pending_) {
-      return enter_backoff();
-    }
-    ++sched_gen_;
-    sched_ = SchedState::Queued;
-    return ValidatorCleanupScheduleAction{ValidatorCleanupScheduleAction::Kind::Queue, sched_gen_, 0};
-  }
-
-  // Reset the backoff once the candidate error-free sweep has no deletion in flight.
-  void try_reset_backoff() {
-    if (!reset_candidate_sweep_) {
-      return;
-    }
-    for (const auto& [session, op] : in_flight_) {
-      if (op.sweep == *reset_candidate_sweep_) {
-        return;
-      }
-    }
-    consecutive_failures_ = 0;
-    reset_candidate_sweep_.reset();
-  }
-
-  ValidatorCleanupScheduleAction enter_backoff() {
-    auto shift = std::min<uint64_t>(consecutive_failures_, kMaxBackoffShift);
-    ++consecutive_failures_;
-    ++sched_gen_;
-    sched_ = SchedState::Backoff;
-    return ValidatorCleanupScheduleAction{ValidatorCleanupScheduleAction::Kind::Timer, sched_gen_,
-                                          static_cast<double>(uint64_t{1} << shift)};
-  }
-
   enum class InFlightState { Deleting, Erasing };
   struct InFlight {
     PendingValidatorConsensusDbCleanup record;
     uint64_t generation = 0;
     uint64_t attempt_id = 0;
     InFlightState state = InFlightState::Deleting;
-    uint64_t sweep = 0;  // the sweep that reserved it
   };
   struct Pass {
     bool active = false;
@@ -530,28 +376,10 @@ class ValidatorCleanupManager {
   uint64_t next_attempt_ = 0;
   uint64_t next_token_ = 0;
 
-  // (c) scan: the cursor is the last key examined; empty means the start.
+  // (c) the cursor is the last key examined; empty means the start.
   std::string cursor_;
   Pass pass_;
-  uint64_t completed_sweeps_ = 0;
-  // Retirements, closes and reopens so far, and the count when the sweep began.
-  uint64_t event_seq_ = 0;
-  uint64_t sweep_start_event_seq_ = 0;
-  // A point read failed in the current sweep.
-  bool sweep_error_ = false;
-  // A failed point read or delete left records that need a rescan after a backoff.
-  bool error_pending_ = false;
-
-  // Scheduler.
-  SchedState sched_ = SchedState::Idle;
-  uint64_t sched_gen_ = 0;
-  uint64_t consecutive_failures_ = 0;
-  // Sweeps started so far, and the error-free sweep whose deletions must all succeed
-  // before the backoff resets.
-  uint64_t sweep_id_ = 0;
-  std::optional<uint64_t> reset_candidate_sweep_;
-  std::optional<BlockIdExt> paused_gc_;
-  uint64_t paused_event_seq_ = 0;
+  uint64_t completed_cycles_ = 0;
 };
 
 }  // namespace tos::validator::consensus

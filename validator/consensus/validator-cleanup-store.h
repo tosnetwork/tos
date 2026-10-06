@@ -77,9 +77,11 @@ inline void erase_validator_cleanup_record(td::KeyValue& kv, const ValidatorSess
 // fails the strict decode is dropped (a lost record can at worst leak an orphan
 // directory, never authorize deleting the wrong one); one bad record does not abort
 // the scan, but it does count toward `max_keys`, so a page is bounded by the keys
-// it examines and not only by the records it returns.
-inline ValidatorCleanupPage load_validator_cleanup_page(td::KeyValueReader& kv, const std::string& after_key,
-                                                        size_t max_keys) {
+// it examines and not only by the records it returns. A storage error during the
+// scan is returned as an error -- never a partial page -- so the caller examines
+// nothing and keeps its cursor; stopping because the page is full is not an error.
+inline td::Result<ValidatorCleanupPage> load_validator_cleanup_page(td::KeyValueReader& kv,
+                                                                    const std::string& after_key, size_t max_keys) {
   ValidatorCleanupPage page;
   if (max_keys == 0) {
     return page;
@@ -113,7 +115,7 @@ inline ValidatorCleanupPage load_validator_cleanup_page(td::KeyValueReader& kv, 
         return td::Status::OK();
       });
   if (!stopped) {
-    status.ensure();
+    TRY_STATUS(std::move(status));
     page.reached_end = true;
   }
   return page;
@@ -144,7 +146,7 @@ inline std::vector<PendingValidatorConsensusDbCleanup> load_validator_cleanup_re
   std::vector<PendingValidatorConsensusDbCleanup> records;
   std::string cursor;
   while (true) {
-    auto page = load_validator_cleanup_page(kv, cursor, 1024);
+    auto page = load_validator_cleanup_page(kv, cursor, 1024).move_as_ok();  // tools and tests only
     for (auto& record : page.records) {
       records.push_back(std::move(record));
     }

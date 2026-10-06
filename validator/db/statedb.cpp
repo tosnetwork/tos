@@ -240,7 +240,7 @@ void StateDb::erase_pending_validator_consensus_db_cleanup(ValidatorSessionId se
 
 void StateDb::get_pending_validator_consensus_db_cleanup_page(std::string after_key, size_t max_keys,
                                                               td::Promise<consensus::ValidatorCleanupPage> promise) {
-  promise.set_value(consensus::load_validator_cleanup_page(*kv_, after_key, max_keys));
+  promise.set_result(consensus::load_validator_cleanup_page(*kv_, after_key, max_keys));
 }
 
 void StateDb::get_pending_validator_consensus_db_cleanup_record(

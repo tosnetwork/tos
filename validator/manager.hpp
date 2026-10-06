@@ -312,7 +312,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   // Validator-group consensus-DB cleanup driver. The durable store is the backlog;
   // the driver holds only open retirements, in-flight deletes and its scan cursor
   // (see validator-cleanup-manager.h). Fed by the group lifecycle events below and
-  // driven by try_validator_consensus_db_cleanup(), which deletes only when the
+  // driven by a fixed-period tick (validator_cleanup_timer), which deletes only when the
   // runtime option (on by default) is set and the four-condition safety gate proves
   // a retired session obsolete against the durable GC snapshot. With cleanup
   // disabled nothing is scanned or deleted; records keep accumulating on disk.
@@ -674,8 +674,8 @@ class ValidatorManagerImpl : public ValidatorManager {
                                      td::Result<consensus::ValidatorCleanupPage> R);
   void validator_cleanup_point_read(td::uint64 pass_token, consensus::PendingValidatorConsensusDbCleanup candidate,
                                     td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> R);
-  // A continuation message or retry timer scheduled by the cleanup driver fired.
-  void validator_cleanup_scheduled(td::uint64 generation);
+  // The cleanup tick timer fired (see validator-cleanup-dispatch.h).
+  void validator_cleanup_timer();
   bool validator_cleanup_enabled();
   bool validator_cleanup_reserved(const consensus::ReservedValidatorDelete &reserved);
   void validator_cleanup_pass_finished(consensus::ValidatorCleanupPassSummary summary, td::Status status);
@@ -690,10 +690,6 @@ class ValidatorManagerImpl : public ValidatorManager {
   // Reclaims the observer per-group databases still queued for cleanup; see the
   // definition. Validator directories are never reclaimed here.
   void sweep_destroyed_consensus_dbs();
-  // A validator-group cleanup trigger: lets validator_cleanup_manager_ decide whether
-  // to schedule a pass (see validator-cleanup-dispatch.h). With cleanup disabled it
-  // supersedes anything scheduled and runs nothing.
-  void try_validator_consensus_db_cleanup();
   // The async delete worker reported a completed delete ATTEMPT (session,
   // generation, attempt_id) with its confirmed-gone result: feed it to the adapter.
   void validator_cleanup_delete_done(ValidatorSessionId session_id, td::uint64 generation, td::uint64 attempt_id,
