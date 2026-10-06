@@ -22,8 +22,11 @@
 // scan bounds with valid, decodable records placed just outside them, and the
 // decode-skip of malformed values.
 #include <algorithm>
+#include <functional>
+#include <optional>
 #include <set>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "td/db/RocksDb.h"
@@ -468,6 +471,9 @@ struct BacklogDrive {
   CleanupAncestorOfGcFn ancestor;
   size_t max_resident = 0;
   size_t pages = 0;
+  size_t erased_total = 0;
+  // Runs between a page read and its reply, i.e. while the page is in flight.
+  std::function<void()> while_page_in_flight;
 
   void run() {
     auto gc = make_checkpoint(500);
@@ -478,7 +484,11 @@ struct BacklogDrive {
     for (int round = 0; round < 10000; round++) {
       bool progressed = false;
       if (auto request = m.next_page_request()) {
-        m.on_page_loaded(*request, load_validator_cleanup_page(kv, request->after_key, request->max_keys));
+        auto page = load_validator_cleanup_page(kv, request->after_key, request->max_keys);
+        if (while_page_in_flight) {
+          while_page_in_flight();
+        }
+        m.on_page_loaded(*request, std::move(page));
         ++pages;
         progressed = true;
       }
@@ -490,6 +500,7 @@ struct BacklogDrive {
         m.on_delete_completed(item.record.session_id, item.generation, item.attempt_id, /*confirmed_gone=*/true,
                               [&](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) {
                                 erase_validator_cleanup_record(kv, s);
+                                ++erased_total;
                                 erased.emplace_back(s, g, a);
                               });
         progressed = true;
@@ -573,27 +584,115 @@ TEST(ValidatorCleanupStateDb, runtime_retirements_stay_within_the_resident_bound
   ASSERT_TRUE(m.pending_count() <= m.resident_limit());
 }
 
-// A page read before a retirement may carry the record that retirement superseded; it
-// is discarded and read again from the same cursor rather than admitted.
-TEST(ValidatorCleanupStateDb, page_racing_a_retirement_is_discarded) {
+// A page read before a retirement may carry the record that retirement superseded.
+// If the newer incarnation was retired, closed and evicted while the page was in
+// flight, admitting the page's copy would resurrect the superseded record: it must be
+// skipped, while the rest of the page is admitted and the sweep moves on.
+TEST(ValidatorCleanupStateDb, page_copy_of_a_session_retired_in_flight_is_skipped) {
   auto path = temp_db_path();
   {
     auto kv = td::RocksDb::open(path).move_as_ok();
     store_validator_cleanup_record(kv, make_record(1, 100));
-    ValidatorCleanupManager m(16);
+    store_validator_cleanup_record(kv, make_record(2, 100));  // older incarnation of session 2
+    ValidatorCleanupManager m(3);
     auto request = m.next_page_request();
     ASSERT_TRUE(request.has_value());
     auto page = load_validator_cleanup_page(kv, request->after_key, request->max_keys);
-    auto other = make_record(2, 100);
-    m.on_group_created(other.session_id);
-    m.on_group_retired(other);  // a retirement lands while the page is in flight
-    ASSERT_EQ(m.on_page_loaded(*request, std::move(page)), static_cast<size_t>(0));
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));  // only the runtime retirement
-    auto again = m.next_page_request();
-    ASSERT_TRUE(again.has_value());
-    ASSERT_TRUE(again->after_key == request->after_key);
-    ASSERT_EQ(m.on_page_loaded(*again, load_validator_cleanup_page(kv, again->after_key, again->max_keys)),
-              static_cast<size_t>(1));
+    ASSERT_EQ(page.records.size(), static_cast<size_t>(2));
+    // While the page is in flight: session 2 is recreated, retired again (new record),
+    // and closed; three more retirements evict it; sessions 3 and 4 then go live again,
+    // leaving room for both page records.
+    auto retire_and_close = [&](PendingValidatorConsensusDbCleanup rec) {
+      store_validator_cleanup_record(kv, rec);
+      m.on_group_created(rec.session_id);
+      auto gen = m.on_group_retired(rec);
+      m.on_close_confirmed(rec.session_id, gen);
+    };
+    auto newer = make_record(2, 300);
+    retire_and_close(newer);
+    retire_and_close(make_record(3, 300));
+    retire_and_close(make_record(4, 300));
+    retire_and_close(make_record(5, 300));
+    m.on_group_created(make_session_id(3));
+    m.on_group_created(make_session_id(4));
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));  // session 5
+    // Session 1 is admitted; session 2's stale copy is not.
+    ASSERT_EQ(m.on_page_loaded(*request, std::move(page)), static_cast<size_t>(1));
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(2));
+    // The skipped session's current record is still on disk and the adapter knows
+    // the store holds records it does not.
+    bool newer_on_disk = false;
+    for (const auto& r : load_validator_cleanup_records(kv)) {
+      newer_on_disk |= r == newer;
+    }
+    ASSERT_TRUE(newer_on_disk);
+  }
+  td::rmrf(path).ignore();
+}
+
+// A burst of retirements whose closes all arrive afterwards must not leave the window
+// over its limit once they are closed -- even with cleanup disabled, when no pass or
+// further retirement would trim it.
+TEST(ValidatorCleanupStateDb, window_is_trimmed_when_a_burst_of_retirements_closes) {
+  ValidatorCleanupManager m(8);
+  std::vector<std::pair<tos::ValidatorSessionId, uint64_t>> retired;
+  for (int i = 0; i < 20; i++) {
+    auto rec = make_record(static_cast<unsigned char>(i), 100);
+    m.on_group_created(rec.session_id);
+    retired.emplace_back(rec.session_id, m.on_group_retired(rec));
+  }
+  ASSERT_EQ(m.pending_count(), static_cast<size_t>(20));  // none evictable before its close
+  for (const auto& [session, gen] : retired) {
+    m.on_close_confirmed(session, gen);
+  }
+  ASSERT_TRUE(m.pending_count() <= m.resident_limit());
+}
+
+// Retirements of unrelated sessions landing while every page is in flight must not
+// starve paging: the cursor keeps advancing and the whole eligible backlog is reclaimed
+// while the churn is still going on, not only after it stops.
+TEST(ValidatorCleanupStateDb, unrelated_retirements_do_not_starve_paging) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    const size_t kEligible = 100;
+    for (size_t i = 0; i < kEligible; i++) {
+      store_validator_cleanup_record(kv, make_record(static_cast<unsigned char>(i), 100));
+    }
+    ValidatorCleanupManager m(16);
+    const size_t kChurn = 2000;
+    size_t churned = 0;
+    std::optional<size_t> churned_when_reclaimed;
+    BacklogDrive drive{kv, m, [](const tos::BlockIdExt& r) { return r.seqno() <= 500; }};
+    drive.while_page_in_flight = [&] {
+      if (!churned_when_reclaimed && drive.erased_total >= kEligible) {
+        churned_when_reclaimed = churned;
+      }
+      if (churned == kChurn) {
+        return;
+      }
+      // A distinct unrelated session retires (beyond the GC block, so it stays) and
+      // closes before the page reply arrives.
+      PendingValidatorConsensusDbCleanup rec;
+      rec.session_id = make_session_id(200);
+      rec.session_id.as_slice()[1] = static_cast<char>(churned & 0xff);
+      rec.session_id.as_slice()[2] = static_cast<char>((churned >> 8) & 0xff);
+      rec.retirement_checkpoint = make_checkpoint(900);
+      rec.dir_name = consensus_db_dir_name(kShard, 7, rec.session_id, td::Slice(""));
+      store_validator_cleanup_record(kv, rec);
+      m.on_group_created(rec.session_id);
+      auto gen = m.on_group_retired(rec);
+      m.on_close_confirmed(rec.session_id, gen);
+      ++churned;
+    };
+    drive.run();
+    ASSERT_EQ(drive.erased_total, kEligible);
+    ASSERT_TRUE(churned_when_reclaimed.has_value());
+    ASSERT_TRUE(churned_when_reclaimed.value() < kChurn);  // reclaimed under churn
+    for (const auto& r : load_validator_cleanup_records(kv)) {
+      ASSERT_EQ(r.retirement_checkpoint.seqno(), static_cast<tos::BlockSeqno>(900));
+    }
+    ASSERT_TRUE(drive.max_resident <= m.resident_limit() + 1);
   }
   td::rmrf(path).ignore();
 }
