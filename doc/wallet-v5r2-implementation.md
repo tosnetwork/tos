@@ -1836,3 +1836,20 @@ of an unresolved producer promise. Removing release fails this test semantically
 restoration passes all three native tests. This covers coroutine unwinding without
 requiring full node linkage, but does not replace the actual pool actor test or a
 network load test. Evidence: `test/wallet-v5r2/admission-coroutine-20261006.json`.
+
+### Combined admission helper experiment
+
+A private compiler-copy experiment combined the previously tested fee-bound and
+payload helper extractions, retaining all checks and the real LMS verifier.
+Preparation required 13,673 credit (13,647 before ACCEPT plus 26 for ACCEPT),
+versus the recorded 13,515 baseline. LMS remained 6,135; other admission work
+rose to 7,512. The complete preparation fixture runner passed with diagnostic
+20,000 credit, while default 10,000 admission failed as expected.
+
+Reject this candidate: it worsens the most expensive measured request class.
+AUTH and POP were not measured for this candidate because a preparation regression
+already disqualifies it. Production source was not modified. This is evidence
+against this particular compiler refactoring, not a proof that every safe
+optimization is exhausted or justification for changing the network gas credit.
+The reproducible `bounds-payload` variant and retained artifact hashes are indexed
+in `test/wallet-v5r2/admission-combined-helpers-20261006.json`.

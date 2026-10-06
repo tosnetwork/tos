@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def transform(source, variant):
+    if variant == "bounds-payload":
+        return transform(transform(source, "bounds"), "payload")
     if variant == "late-send":
         # Retain all admission checks; reconstruct send-only values after ACCEPT
         # so the compiler need not preserve them throughout fee/signature checks.
@@ -58,7 +60,7 @@ def prepare_output(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--variant", choices=("bounds", "bounds-inline", "payload", "late-send"), required=True
+        "--variant", choices=("bounds", "bounds-inline", "payload", "late-send", "bounds-payload"), required=True
     )
     parser.add_argument("--route", choices=("auth", "pop", "prepare"), required=True)
     parser.add_argument("--trees", type=Path, required=True)
