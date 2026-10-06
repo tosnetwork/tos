@@ -161,6 +161,47 @@ impl PopRequest {
         encode_pq_submission(0x50505333, &self.cell, self.role, signature)
     }
 
+    /// Generate a new CSPRNG challenge bound to the complete initial enrollment.
+    /// Time must come from fresh verified chain evidence. Retain this exact
+    /// request through funded execution and receipt verification; regenerating
+    /// during a retry creates a different possession proof.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn fresh_initial(
+        enrollment: &crate::wallet_v5r2_genesis::WalletGenesis,
+        role: AuthRole,
+        valid_until: u32,
+        proven_time: u32,
+    ) -> anyhow::Result<Self> {
+        let (request, _, _) = Self::from_enrolled(
+            enrollment.module_init(),
+            *enrollment.wallet_init().repr_hash().as_array(),
+            role,
+            wallet_pq_signer::fresh_pop_challenge()?,
+            valid_until,
+            proven_time,
+        )?;
+        Ok(request)
+    }
+
+    /// Generate a fresh challenge for a proposed successor before migration.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn fresh_successor(
+        enrollment: &crate::wallet_v5r2_genesis::SuccessorDeployment,
+        role: AuthRole,
+        valid_until: u32,
+        proven_time: u32,
+    ) -> anyhow::Result<Self> {
+        let (request, _, _) = Self::from_enrolled(
+            enrollment.module_init(),
+            *enrollment.wallet(),
+            role,
+            wallet_pq_signer::fresh_pop_challenge()?,
+            valid_until,
+            proven_time,
+        )?;
+        Ok(request)
+    }
+
     /// Sign this challenge only for the exact locally pinned enrollment. POP
     /// confers no authority and does not depend on primary retirement policy.
     /// Caller supplies fresh proof-checked chain time and a fresh challenge;
@@ -193,13 +234,14 @@ impl PopRequest {
     }
 
     #[cfg(feature = "native-wallet-signer")]
-    fn sign_enrolled(
-        &self,
+    fn from_enrolled(
         module_init: &Cell,
         wallet: [u8; 32],
+        role: AuthRole,
+        challenge: [u8; 32],
+        valid_until: u32,
         proven_time: u32,
-        signer: &mut wallet_pq_signer::Signer,
-    ) -> anyhow::Result<Cell> {
+    ) -> anyhow::Result<(Self, Cell, [u8; 32])> {
         use chain_block::SliceData;
         let init = StateInit::construct_from_cell(module_init.clone())?;
         let data = init.data.ok_or_else(|| anyhow::anyhow!("enrolled module data missing"))?;
@@ -219,11 +261,7 @@ impl PopRequest {
             data.remaining_bits() == 0 && data.remaining_references() == 0,
             "module data tail"
         );
-        let mut original = SliceData::load_cell(self.cell.clone())?;
-        original.move_by(32 + 32 + 256 + 8)?;
-        let challenge = *original.get_next_hash()?.as_array();
-        let valid_until = original.get_next_u32()?;
-        let expected = Self::new(
+        let request = Self::new(
             PopBinding {
                 global_id,
                 network,
@@ -232,10 +270,34 @@ impl PopRequest {
                 challenge,
                 valid_until,
             },
-            self.role,
+            role,
             policy,
             *primary.repr_hash().as_array(),
             rescue_key,
+            proven_time,
+        )?;
+        Ok((request, primary, rescue_key))
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    fn sign_enrolled(
+        &self,
+        module_init: &Cell,
+        wallet: [u8; 32],
+        proven_time: u32,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        use chain_block::SliceData;
+        let mut original = SliceData::load_cell(self.cell.clone())?;
+        original.move_by(32 + 32 + 256 + 8)?;
+        let challenge = *original.get_next_hash()?.as_array();
+        let valid_until = original.get_next_u32()?;
+        let (expected, primary, rescue_key) = Self::from_enrolled(
+            module_init,
+            wallet,
+            self.role,
+            challenge,
+            valid_until,
             proven_time,
         )?;
         anyhow::ensure!(

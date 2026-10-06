@@ -1446,9 +1446,9 @@ returning PPS3. Successor POP does not require installation in the wallet: it is
 needed before migration. PRIMARY POP remains allowed under REQUIRED policy and
 does not consult global primary retirement, because it grants no authority.
 
-These methods do not generate a fresh challenge or independently verify the supplied
-time. Callers must generate unpredictable, non-reused challenges and obtain fresh
-chain evidence. Successful signing is not possession-proof completion: the existing
+The signing methods do not independently verify the supplied time. Callers must
+obtain fresh chain evidence and use a new unpredictable challenge for each proof;
+the fresh constructors below supply that challenge. Successful signing is not possession-proof completion: the existing
 authenticated initial/successor receipt checks must still prove funded execution of
 that exact challenge. Tests use locally constructed enrollment, real signatures and
 independent primary verification, including wrong parties/keys/policy, expiry, and
@@ -1481,3 +1481,28 @@ funds submission, checks actual successor deployment, completes both fresh POPs,
 and proves migration and subsequent delivery. This API does not establish live
 chain acceptance or resolve the default 10,000-credit admission gate. Evidence:
 `test/wallet-v5r2/preparation-native-signing-20261006.json`.
+
+
+## Fresh POP challenge construction
+
+With `native-wallet-signer`, `PopRequest::fresh_initial` and `fresh_successor`
+derive the entire enrollment binding and generate a 256-bit challenge through
+`wallet_pq_signer::fresh_pop_challenge`, backed by OpenSSL `RAND_bytes`. RNG failure
+or an all-zero result returns an error and no usable challenge. There is no clock,
+counter or fixed-value fallback. The same enrollment parser is used by signing,
+while tests independently reconstruct expected POP wire cells.
+
+Create a fresh request for each new proof, retain that exact request for transport
+retries, sign against the intended enrolled key, and verify its funded execution
+using the existing authenticated receipt API. Randomness makes accidental reuse
+negligible; these constructors do not supply durable request storage, prevent VM
+snapshot rollback, verify caller-supplied chain time, or mark a receipt consumed.
+The low-level `PopRequest::new` remains available for deterministic encoding and
+explicit challenge workflows and does not claim to generate randomness.
+
+Local tests cover fresh initial and successor construction, deadline rejection,
+real bound signing and independent primary verification. Injected RNG status and
+zero-output tests exercise the wrapper's rejection behavior. Three additional
+semantic mutations ignore RNG failure, admit zero output, or replace both fresh
+constructors' random challenges with a constant. Evidence is indexed in
+`test/wallet-v5r2/fresh-pop-20261006.json`.

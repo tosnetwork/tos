@@ -1,0 +1,128 @@
+{
+  "base_commit": "74356294f8d26b7b5f6551a47043e439b7d4b45d",
+  "scope": "CSPRNG fresh POP construction bound to typed initial/successor enrollment; local signing and injected RNG-status tests, not live possession proof acceptance",
+  "tests": {
+    "wrapper": 3,
+    "feature_state": 13,
+    "pop_wire": 3,
+    "ownership_compile_fail": 2,
+    "clippy": "passed with -D warnings",
+    "workspace_format": "passed"
+  },
+  "controls": {
+    "pop_enrollment": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "pop_domain": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "pop_key": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "seed_wipe": {
+      "exit": 101,
+      "witness": "import_wipes_on_success_and_failure"
+    },
+    "failure_status": {
+      "exit": 101,
+      "witness": "bound_signatures_and_independent_primary_verification"
+    },
+    "proven_key": {
+      "exit": 101,
+      "witness": "native_wallet_signing_binds_proven_keys_and_policy"
+    },
+    "challenge_rng_status": {
+      "exit": 101,
+      "witness": "challenge_rng_failures_are_rejected"
+    },
+    "challenge_nonzero": {
+      "exit": 101,
+      "witness": "challenge_rng_failures_are_rejected"
+    },
+    "fresh_challenge": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "preparation_wallet": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_module_code": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_vault_code": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_namespace": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_domain": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_key": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_ready_policy": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/lib.rs",
+      "sha256": "6023463dbff1dcd89195d60b9c8c388024b4a9b592088ab6ebd126c43972862a",
+      "bytes": 9895
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs",
+      "sha256": "a1da496d2bbc183e77dd172f412de909c46f35d80ad2a5e608a0c9d5c81994e3",
+      "bytes": 15186
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "9fc3f155b17dac3e445f3db5f1727f72003df1ca8a4cbe49f74ba8ff4b3f7a44",
+      "bytes": 110659
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/rust_signer_controls.py",
+      "sha256": "6382d73d6134890075e5a5db69068e4090333b671bcb2aa9063c603840ed93c2",
+      "bytes": 6260
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fresh-pop-controls/MANIFEST.json",
+      "sha256": "e0ac20b17260365f6d13f4e53f88f0fadbe178b70ca8676a4f1e90e12d2e2d4c",
+      "bytes": 6247
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fresh-pop-controls/results.json",
+      "sha256": "8b1daf0fce6b90d60f2674d5c6813aa8afac9999fcb8950835ee42c7fc6a93f5",
+      "bytes": 1891
+    }
+  ],
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --lib",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "python3 test/wallet-v5r2/rust_signer_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2_pop",
+    "cargo clippy --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --all-targets -- -D warnings",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --doc",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limitations": [
+    "RNG failure injection tests the Rust wrapper status boundary; not an operating-system entropy failure experiment.",
+    "Random challenge uniqueness is probabilistic; no durable pending-request journal or snapshot rollback protection is added.",
+    "Fresh verified chain time and exact funded-execution receipts remain caller requirements.",
+    "Default-credit admission, production custody and full client lifecycle remain release gates."
+  ],
+  "retention": "Retain raw logs outside Git through review and release acceptance, at least through 2027-01-06."
+}

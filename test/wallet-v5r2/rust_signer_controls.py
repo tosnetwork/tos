@@ -75,6 +75,31 @@ def main():
         ),
     ]
 
+    cases.extend(
+        [
+            (
+                "challenge_rng_status",
+                wrapper,
+                "status != 1 || challenge == [0; 32]",
+                "challenge == [0; 32]",
+                "challenge_rng_failures_are_rejected",
+            ),
+            (
+                "challenge_nonzero",
+                wrapper,
+                "status != 1 || challenge == [0; 32]",
+                "status != 1",
+                "challenge_rng_failures_are_rejected",
+            ),
+            (
+                "fresh_challenge",
+                pop,
+                "wallet_pq_signer::fresh_pop_challenge()?",
+                "[7; 32]",
+                "native_pop_signing_binds_initial_and_successor_enrollment",
+            ),
+        ]
+    )
     preparation_witness = "native_preparation_signing_binds_successor_and_current_rescue"
     for name, old, new in [
         ("preparation_wallet", "successor.wallet() == &self.wallet", "true"),
@@ -123,7 +148,7 @@ def main():
             code, log = run(path, f"baseline-{index}")
             assert code == 0, log[-3000:]
         for name, path, old, new, witness in cases:
-            assert sources[path].count(old) == 1
+            assert sources[path].count(old) == (2 if name == "fresh_challenge" else 1)
             path.write_text(sources[path].replace(old, new))
             code, log = run(path, name)
             assert code != 0 and f"{witness} ... FAILED" in log, log[-3000:]

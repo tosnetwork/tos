@@ -1369,8 +1369,15 @@ mod fee_state_tests {
         let primary_hash = *g.module_data().reference(0).unwrap().repr_hash().as_array();
         let rescue_key: [u8; 32] = rescue.public_key().try_into().unwrap();
         for role in [AuthRole::Primary, AuthRole::Rescue] {
-            let req = PopRequest::new(
-                binding(),
+            let req = PopRequest::fresh_initial(&g, role, 4700, 4600).unwrap();
+            let another = PopRequest::fresh_initial(&g, role, 4700, 4600).unwrap();
+            assert_ne!(req.digest(), another.digest());
+            let mut encoded = SliceData::load_cell(req.cell().clone()).unwrap();
+            encoded.move_by(32 + 32 + 256 + 8).unwrap();
+            let mut expected_binding = binding();
+            expected_binding.challenge = *encoded.get_next_hash().unwrap().as_array();
+            let expected = PopRequest::new(
+                expected_binding,
                 role,
                 RescuePolicy::Required,
                 primary_hash,
@@ -1378,6 +1385,9 @@ mod fee_state_tests {
                 4600,
             )
             .unwrap();
+            assert_eq!(req.cell().repr_hash(), expected.cell().repr_hash());
+            assert!(PopRequest::fresh_initial(&g, role, 4600, 4600).is_err());
+            assert!(PopRequest::fresh_initial(&g, role, 8201, 4600).is_err());
             let signer = if role == AuthRole::Primary { &mut primary } else { &mut rescue };
             let submission = req.sign_initial(&g, 4620, signer).unwrap();
             let mut header = SliceData::load_cell(submission.clone()).unwrap();
@@ -1432,17 +1442,11 @@ mod fee_state_tests {
         );
         let successor =
             SuccessorDeployment::new(template, *g.wallet_init().repr_hash().as_array()).unwrap();
-        let mut b = binding();
-        b.module = *successor.module_init().repr_hash().as_array();
-        let req = PopRequest::new(
-            b,
-            AuthRole::Rescue,
-            RescuePolicy::Required,
-            primary_hash,
-            next.public_key().try_into().unwrap(),
-            4600,
-        )
-        .unwrap();
+        let req = PopRequest::fresh_successor(&successor, AuthRole::Rescue, 4700, 4600).unwrap();
+        let another =
+            PopRequest::fresh_successor(&successor, AuthRole::Rescue, 4700, 4600).unwrap();
+        assert_ne!(req.digest(), another.digest());
+        assert!(PopRequest::fresh_successor(&successor, AuthRole::Rescue, 4600, 4600).is_err());
         assert!(req.sign_successor(&successor, 4620, &mut rescue).is_err());
         assert!(req.sign_successor(&successor, 4620, &mut primary).is_err());
         assert!(req.sign_initial(&g, 4620, &mut next).is_err());

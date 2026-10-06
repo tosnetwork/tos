@@ -52,6 +52,25 @@ impl std::fmt::Display for Rejected {
 }
 impl std::error::Error for Rejected {}
 
+/// Generate a public 256-bit POP challenge with the platform-seeded CSPRNG.
+/// Failure (including an all-zero result) returns no usable challenge. Persist
+/// the resulting request for retries; generate a new challenge for a new proof.
+pub fn fresh_pop_challenge() -> Result<[u8; 32], Rejected> {
+    challenge_from_rng(|output| {
+        // SAFETY: output is a live writable 32-byte buffer; its length fits i32.
+        unsafe { openssl_sys::RAND_bytes(output.as_mut_ptr(), 32) }
+    })
+}
+
+fn challenge_from_rng(fill: impl FnOnce(&mut [u8; 32]) -> i32) -> Result<[u8; 32], Rejected> {
+    let mut challenge = [0; 32];
+    let status = fill(&mut challenge);
+    if status != 1 || challenge == [0; 32] {
+        return Err(Rejected);
+    }
+    Ok(challenge)
+}
+
 unsafe extern "C" {
     fn tos_wallet_pq_generate(role: i32) -> *mut c_void;
     fn tos_wallet_pq_import(role: i32, seed: *const u8, size: usize) -> *mut c_void;
@@ -178,6 +197,31 @@ impl Signer {
 mod tests {
     use super::*;
     use fips204::traits::{SerDes, Verifier};
+
+    #[test]
+    fn challenge_rng_failures_are_rejected() {
+        for status in [-1, 0] {
+            assert_eq!(
+                challenge_from_rng(|out| {
+                    *out = [7; 32];
+                    status
+                }),
+                Err(Rejected)
+            );
+        }
+        assert_eq!(challenge_from_rng(|_| 1), Err(Rejected));
+        assert_eq!(
+            challenge_from_rng(|out| {
+                *out = [7; 32];
+                1
+            }),
+            Ok([7; 32])
+        );
+        let first = fresh_pop_challenge().expect("CSPRNG");
+        let second = fresh_pop_challenge().expect("CSPRNG");
+        assert_ne!(first, second);
+        assert_ne!(first, [0; 32]);
+    }
 
     #[test]
     fn import_wipes_on_success_and_failure() {
