@@ -1,0 +1,215 @@
+{
+  "base_commit": "39d33572495102e4ddd416b9b5d54e4f3875644b",
+  "scope": "Initial manifest fee preflight and encrypted restoration bind fee input profile, full KDF namespace, tree identity and initial fee public key. Master wiped on early rejection and unpolled cancellation. Public fixture and synthetic initial identities only; no current authority, CLI or journal state recovery claim.",
+  "semantic_controls": {
+    "profile": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 0"
+    },
+    "account_index": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 1"
+    },
+    "key_generation": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 2"
+    },
+    "tree_id": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 5"
+    },
+    "network": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 6"
+    },
+    "global_id": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 7"
+    },
+    "key_binding": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 1"
+    },
+    "unpolled_wipe": {
+      "exit": 101,
+      "semantic_witness": "fee manifest unpolled restore retained master"
+    },
+    "preflight_wipe": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight retained master"
+    },
+    "restore_binding": {
+      "exit": 101,
+      "semantic_witness": "fee manifest restore accepted input 1"
+    }
+  },
+  "regression": {
+    "manifest_vault": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-vault",
+        "--lib",
+        "wallet_v5r2_manifest"
+      ],
+      "exit": 0
+    },
+    "manifest_signer": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-signer",
+        "--lib",
+        "wallet_v5r2_manifest"
+      ],
+      "exit": 0
+    },
+    "default_check": {
+      "command": [
+        "cargo",
+        "check",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts"
+      ],
+      "exit": 0
+    },
+    "fmt": {
+      "command": [
+        "make",
+        "-C",
+        "tosctl/src",
+        "fmt-check"
+      ],
+      "exit": 0
+    },
+    "ruff": {
+      "command": [
+        "/Users/tomisetsu/tos/.venv/bin/ruff",
+        "check",
+        "test/wallet-v5r2/manifest_fee_controls.py"
+      ],
+      "exit": 0
+    }
+  },
+  "results": {
+    "manifest_vault": [
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 259 filtered out; finished in 2.08s"
+    ],
+    "manifest_signer": [
+      "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 254 filtered out; finished in 1.27s"
+    ]
+  },
+  "retention_until": "2027-01-06",
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/account_index.log",
+      "size": 9680,
+      "sha256": "7031dbc78acfecc527949637a69a9658ffb6012ad8f90cf482c1fbfe3163f2b0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/baseline.log",
+      "size": 9036,
+      "sha256": "008664380862315691d6bc2c54fa1526dd23e8f7ccc48d313236009e782e7615"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/global_id.log",
+      "size": 9680,
+      "sha256": "b3fb4fbbe73d25d5e90d8c3c0e54021c9cee24837796a28fcbd27e77f35d70ab"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/key_binding.log",
+      "size": 11004,
+      "sha256": "13009873f2640d86ac050be1a3dc51c42d0fcce50e361610ac0d593a9ee44e54"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/key_generation.log",
+      "size": 9680,
+      "sha256": "14a22b2166cf607998eaea49b249833b504b5372d6bb7ed575f0f831e62b63e2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/network.log",
+      "size": 9680,
+      "sha256": "f8f8990608c37095722da9c7a03bf14f9df848ba56b4fd92ff8b1ffc202728da"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/preflight_wipe.log",
+      "size": 9679,
+      "sha256": "cb6d841d9316df4883a022807f8762a87197ec73432a3c65fbcbf74661372f4c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/profile.log",
+      "size": 10296,
+      "sha256": "f8c4d6d4baaae4f8e372bda3fb831413471a3005be66c71fdb99cdc31e29bdc9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/restore_binding.log",
+      "size": 12507,
+      "sha256": "4f7f9b5e0d879aa65a6b9baf3c9fd9a27f3f4d696bd7b9f473ec0f9f97a5be9a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/restored.log",
+      "size": 9036,
+      "sha256": "45b74396d28678cfb3e29f1bf955591ce700d71f11b55c54eaf4187bc88346c8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/results.json",
+      "size": 1076,
+      "sha256": "c5d2932de8cfeb19c6344852704dac7ec247f61861942eeabe5f6825cb6d8b42"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/tree_id.log",
+      "size": 9680,
+      "sha256": "37d33e3efc750a74425d0c629796cdc85ea3ca196597b2e83f5fe8fc0dca166d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-controls/unpolled_wipe.log",
+      "size": 9685,
+      "sha256": "28f288d965f95f62c9a380f0028c16604c16fe5b12c93197dbdf936bba3947c7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-regression/default_check.log",
+      "size": 1875,
+      "sha256": "90508c75ae28fab4ed71e6ddf4186bf5cd9633e887e05bf62b207bbd47c2a648"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-regression/fmt.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-regression/manifest_signer.log",
+      "size": 9470,
+      "sha256": "f8c762f520966c27f5a0c6b7382744986325c8992b85f94927d52a8f8fbbde4d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-regression/manifest_vault.log",
+      "size": 9474,
+      "sha256": "190f143c013241e96fa0699a43cbd02ad85f0c6b97815526a026ca88e806fd7f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-regression/results.json",
+      "size": 1070,
+      "sha256": "ff4608e767176d11fe699a8f126ff4c89e0a3b3286a50308b215e934f6d8a5b8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-fee-regression/ruff.log",
+      "size": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    }
+  ]
+}

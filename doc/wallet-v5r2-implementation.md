@@ -2789,3 +2789,34 @@ old writers and wait for the next-slot restore barrier before new signatures.
 The tests establish an SDK recovery path, not a CLI workflow, live proof service,
 funded rescue transaction or production admission. Evidence:
 `test/wallet-v5r2/fee-recovery-20261006.json`.
+
+
+### Initial recovery manifest fee binding
+
+`InitialRecoveryManifest::verify_initial_fee_master_and_wipe` performs read-only
+fee enrollment verification before custody storage is opened. It enforces the
+manifest's fee seed-input profile and derives using only its network, global id,
+account index, key generation and fee-tree identity. The supplied public path
+binds the derived seed to the manifest's fee public key without signing. The
+master is wiped on every return, including profile rejection.
+
+With `native-wallet-vault`, `restore_initial_fee_master_to_vault` uses the same
+manifest-bound namespace and the encrypted fee recovery adapter. It returns only
+the initial public key after new-only persistence, flush and bound readback.
+Unpolled cancellation wipes the input master. A successful preflight does not
+allow persistence to bypass its own key binding. Mnemonic validation must precede
+these resolved-master APIs when the declared profile is native mnemonic.
+
+Tests reconstruct identities from separately supplied code pins and wallet ID,
+then use an independently generated public fee fixture. Changed derivation
+metadata can preserve the wallet address but must still fail private-key binding.
+Tests also refuse incompatible enrolled network/global/tree contexts, wrong or
+short master input and wrong seed profile without a new record. Successful
+preflight/persistence wipes input, returns the correct public key and refuses
+overwrite. Ten semantic controls cover those namespace/profile/key bindings and
+both early-return and unpolled cleanup. Evidence:
+`test/wallet-v5r2/manifest-fee-20261006.json`.
+
+This is initial custody reconstruction only. It cannot authorize a retired fee
+tree, waive current proof/readiness checks or reconstruct spent-leaf state. The
+CLI fee recovery entry and current-chain takeover flow remain unfinished.

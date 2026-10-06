@@ -62,6 +62,9 @@ struct Wire {
 pub struct InitialRecoveryManifest {
     wire: Wire,
 }
+#[cfg(feature = "native-wallet-signer")]
+#[path = "wallet_v5r2_manifest_fee.rs"]
+mod fee_recovery;
 
 fn bytes<const N: usize>(value: &str) -> anyhow::Result<[u8; N]> {
     let decoded: [u8; N] =
