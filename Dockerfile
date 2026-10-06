@@ -15,7 +15,11 @@ RUN mkdir build && \
         cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DPORTABLE=1 -DTOS_ARCH= -DTOS_USE_JEMALLOC=ON .. && \
         ninja storage-daemon storage-daemon-cli toslibjson fift func gen_fif validator-engine validator-engine-console \
     generate-random-id dht-server lite-client tol rldp-http-proxy dht-server proxy-liteserver create-state \
-    blockchain-explorer emulator toslibjson http-proxy dht-ping-servers dht-resolve
+    blockchain-explorer emulator toslibjson http-proxy dht-ping-servers dht-resolve \
+    tos-pq-consensus-key tos-pq-controller tos-pq-vote && \
+        cmake -S /tos/crypto/pq/tools -B /tos/build-pq-key -GNinja -DCMAKE_BUILD_TYPE=Release \
+        -DOPENSSL_ROOT_DIR=/tos/build/third-party/openssl -DOPENSSL_USE_STATIC_LIBS=TRUE && \
+        ninja -C /tos/build-pq-key tos-pq-key
 
 FROM ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
@@ -45,6 +49,10 @@ COPY --from=builder /tos/build/emulator/libemulator.so /usr/local/bin/
 COPY --from=builder /tos/build/tol/tol /usr/local/bin/
 COPY --from=builder /tos/build/crypto/fift /usr/local/bin/
 COPY --from=builder /tos/build/crypto/func /usr/local/bin/
+COPY --from=builder /tos/build/crypto/pq/tos-pq-consensus-key /usr/local/bin/
+COPY --from=builder /tos/build/crypto/tos-pq-controller /usr/local/bin/
+COPY --from=builder /tos/build/crypto/tos-pq-vote /usr/local/bin/
+COPY --from=builder /tos/build-pq-key/tos-pq-key /usr/local/bin/
 COPY --from=builder /tos/crypto/smartcont/* /usr/share/tos/smartcont/
 COPY --from=builder /tos/build/crypto/smartcont/auto/* /usr/share/tos/smartcont/auto/
 COPY --from=builder /tos/crypto/fift/lib/* /usr/lib/fift/
