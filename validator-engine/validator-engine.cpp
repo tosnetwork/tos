@@ -96,6 +96,7 @@
 #include "common/delay.h"
 #include "interfaces/validator-manager.h"
 #include "pq/consensus-key-file.h"
+#include "pq/consensus-node-config.h"
 #include "pq/pq-elector.h"
 #include "pq/pq-stake-authorization.h"
 #include "tl-utils/lite-utils.hpp"
@@ -2628,10 +2629,15 @@ void ValidatorEngine::start_validator() {
         std::make_shared<const tos::pq::ValidatorPQKeyStore>(std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
     // The identity of the key is what the key derives, never what the configuration says:
     // a node cannot claim to hold a key it does not.
-    LOG(WARNING) << "post-quantum consensus custody: validator " << config_.pq_consensus->validator_id.value.to_hex()
-                 << " key "
-                 << td::base64_encode(
-                        td::Slice(store->consensus_key().key_id.data(), store->consensus_key().key_id.size()));
+    // Logged in the form `tos-pq-consensus-key show` and `bind-node` print, through the
+    // same formatter, so an operator compares the two as strings.
+    const auto &validator_id = config_.pq_consensus->validator_id.value;
+    const auto &key_id = store->consensus_key().key_id;
+    LOG(WARNING) << "post-quantum consensus custody: validator_id "
+                 << tos::pq::identity_hex(std::string_view(reinterpret_cast<const char *>(validator_id.data()), 32))
+                 << " key_id "
+                 << tos::pq::identity_hex(
+                        std::string_view(reinterpret_cast<const char *>(key_id.data()), key_id.size()));
     pq_consensus_signer_ = store;
     // Registration crosses an actor boundary, so nothing else may start until it has
     // answered. Were the rest of startup to run here, a refused custody would kill the
@@ -5994,6 +6000,31 @@ void ValidatorEngine::process_control_query(td::uint16 port, tos::adnl::AdnlNode
 
 void ValidatorEngine::run() {
   td::mkdir(db_root_).ensure();
+
+  // The configuration lock. The engine rewrites config.json whenever its configuration
+  // changes, so an operator tool that edits the file (tos-pq-consensus-key bind-node)
+  // must never run beside it. Both take this lock: the engine before it reads anything
+  // and for as long as it runs, the tool for its whole read-modify-write. A node started
+  // during such an edit stops here instead of reading the old file and writing it back.
+  {
+    const std::string lock_path = db_root_ + "/" + tos::pq::node_config_lock_name;
+    auto lock_R = td::FileFd::open(lock_path, td::FileFd::Read | td::FileFd::Write | td::FileFd::Create, 0600);
+    if (lock_R.is_error()) {
+      LOG(ERROR) << "cannot open the configuration lock " << lock_path << ": " << lock_R.move_as_error();
+      std::_Exit(2);
+    }
+    auto lock = lock_R.move_as_ok();
+    auto S = lock.lock(td::FileFd::LockFlags::Write, lock_path, 1);
+    if (S.is_error()) {
+      LOG(ERROR) << "the configuration lock " << lock_path
+                 << " is held by another process: a node already running on this database, or "
+                    "tos-pq-consensus-key bind-node editing its configuration: "
+                 << S;
+      std::_Exit(2);
+    }
+    config_lock_ = std::move(lock);
+  }
+
   tos::errorlog::ErrorLog::create(db_root_);
 
   auto Sr = load_global_config();
