@@ -1,6 +1,6 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 
-// Provisioning for the one post-quantum secret a validator host holds.
+// Provisioning for the post-quantum consensus keys a validator host holds.
 //
 // The node reads its consensus key from a file it does not create. This puts one there,
 // puts a saved one back, or says which key a file already holds -- under exactly the
@@ -38,12 +38,9 @@
 
 namespace {
 
+// Through the same formatter the node logs identities with, so the two read alike.
 void print_hex(std::string_view bytes) {
-  static const char digits[] = "0123456789abcdef";
-  for (unsigned char c : bytes) {
-    std::fputc(digits[c >> 4], stdout);
-    std::fputc(digits[c & 15], stdout);
-  }
+  std::fputs(tos::pq::identity_hex(bytes).c_str(), stdout);
 }
 
 // What a validator set records for this key, and nothing else. The identity is derived

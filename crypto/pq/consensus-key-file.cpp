@@ -47,6 +47,17 @@ ConsensusKeyFileError consensus_key_refusal(detail::SeedFileRefusal refusal) noe
   return ConsensusKeyFileError::read_failed;
 }
 
+std::string identity_hex(std::string_view bytes) {
+  static const char digits[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(2 * bytes.size());
+  for (const unsigned char c : bytes) {
+    out.push_back(digits[c >> 4]);
+    out.push_back(digits[c & 15]);
+  }
+  return out;
+}
+
 const char* describe(ConsensusKeyFileError error) noexcept {
   switch (error) {
     case ConsensusKeyFileError::cannot_open:

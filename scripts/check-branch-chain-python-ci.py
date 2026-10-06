@@ -28,6 +28,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-notarize-after-transient-resolve",
     "test-state-resolver-teardown",
     "test-custom-overlay-relay-dedup",
+    "test-pq-consensus-key-rotation",
 }
 
 RESTART_ORIGIN_TESTS = (
@@ -123,6 +124,15 @@ def main() -> int:
     require(
         re.search(rf"(?m)^\s*run: {re.escape(relay_ctest)}\s*$", text) is not None,
         "custom overlay relay deduplication gate is absent",
+    )
+    rotation_ctest = "ctest --test-dir build --output-on-failure -R '^test-pq-consensus-key-rotation$'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(rotation_ctest)}\s*$", text) is not None,
+        "multi-key PQ consensus custody and key schedule gate is absent",
+    )
+    require(
+        "uv run python test/integration/test_pq_consensus_key_rotation.py" in text,
+        "real-engine PQ consensus key rotation gate is absent",
     )
     real_state_ctest = "ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'"
     require(

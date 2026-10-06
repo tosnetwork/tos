@@ -1014,6 +1014,13 @@ td::Result<bool> Config::config_del_gc(tos::PublicKeyHash key) {
   return gc.erase(key);
 }
 
+namespace {
+// A 32-byte identity in the form the operator tools print it.
+std::string pq_identity_hex(const td::Bits256 &value) {
+  return tos::pq::identity_hex(std::string_view(reinterpret_cast<const char *>(value.data()), 32));
+}
+}  // namespace
+
 // The permission a validator gives for one election.
 //
 // It replaced a creator that generated Ed25519 keys, registered them as this node's
@@ -2694,13 +2701,13 @@ void ValidatorEngine::start_validator() {
           std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
       schedule.push_back(tos::pq::ConsensusKeyWindow{store->consensus_key().key_id, key.valid_from, key.expire_at});
       // The identity of the key is what the key derives, never what the configuration
-      // says: a node cannot claim to hold a key it does not.
-      LOG(WARNING) << "post-quantum consensus custody: validator " << config_.pq_consensus->validator_id.value.to_hex()
-                   << " key "
-                   << td::base64_encode(
-                          td::Slice(store->consensus_key().key_id.data(), store->consensus_key().key_id.size()))
-                   << " (" << tos::pq::consensus_key_id_hex(store->consensus_key().key_id) << ") valid from "
-                   << key.valid_from << ", expires " << key.expire_at;
+      // says: a node cannot claim to hold a key it does not. Logged in the form
+      // `tos-pq-consensus-key show` and `bind-node` print, through the same formatter, so
+      // an operator compares the two as strings; one line per key held.
+      LOG(WARNING) << "post-quantum consensus custody: validator_id "
+                   << pq_identity_hex(config_.pq_consensus->validator_id.value) << " key_id "
+                   << pq_identity_hex(tos::validator::PqConsensusCustody::key_id_of(*store).value) << " valid_from "
+                   << key.valid_from << " expire_at " << key.expire_at;
       pq_key_ids_by_file_[key.key_file] = tos::validator::PqConsensusCustody::key_id_of(*store);
       loaded_keys.push_back(Loaded{std::move(store), key.valid_from, key.expire_at});
     }
@@ -5048,8 +5055,9 @@ void ValidatorEngine::finish_add_pq_consensus_key(Config::PqConsensusKey key, to
     promise.set_value(create_control_query_error(installed.move_as_error_prefix("the validator manager refused: ")));
     return;
   }
-  LOG(WARNING) << "post-quantum consensus custody: validator " << validator_id.value.to_hex() << " added key "
-               << key_id.value.to_hex() << " valid from " << key.valid_from << ", expires " << key.expire_at;
+  LOG(WARNING) << "post-quantum consensus custody: validator_id " << pq_identity_hex(validator_id.value)
+               << " added key_id " << pq_identity_hex(key_id.value) << " valid_from " << key.valid_from
+               << " expire_at " << key.expire_at;
   pq_key_ids_by_file_[key.consensus_key_file] = key_id;
   config_.pq_consensus->keys.push_back(key);
   update_local_pq_validator_adnl_ids();
@@ -5144,8 +5152,8 @@ void ValidatorEngine::finish_del_pq_consensus_key(tos::ConsensusKeyId key_id, td
       ++it;
     }
   }
-  LOG(WARNING) << "post-quantum consensus custody: validator " << validator_id.value.to_hex() << " removed key "
-               << key_id.value.to_hex();
+  LOG(WARNING) << "post-quantum consensus custody: validator_id " << pq_identity_hex(validator_id.value)
+               << " removed key_id " << pq_identity_hex(key_id.value);
   update_local_pq_validator_adnl_ids();
   write_config([promise = std::move(promise)](td::Result<td::Unit> written) mutable {
     if (written.is_error()) {

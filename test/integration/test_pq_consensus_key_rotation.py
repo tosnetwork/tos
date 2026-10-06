@@ -92,6 +92,10 @@ async def wait_for_blocks(node, timeout: float) -> str:
     return "timeout"
 
 
+def successful_stats(node) -> int:
+    return len(re.findall(r'"success":\s*true', node.session_log_path.read_text(errors="replace")))
+
+
 async def stake(node, election: int, key_id: bytes | None = None):
     common = dict(
         election_date=election,
@@ -237,11 +241,11 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
         )
 
         # And through all of it, the group for the set listing A kept producing blocks.
-        stats_before = node.session_log_path.read_text(errors="replace").count('"success": true')
+        stats_before = successful_stats(node)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             await asyncio.sleep(1.0)
-            if node.session_log_path.read_text(errors="replace").count('"success": true') > stats_before:
+            if successful_stats(node) > stats_before:
                 break
         else:
             raise Failure("the node stopped producing blocks after the key changes")

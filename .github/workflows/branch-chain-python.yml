@@ -69,7 +69,7 @@ jobs:
             tos-proof-verify test-proof-verify proof-verify-fs-shim \
             test-n5-manager-db-fixture test-consensus \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
-            test-custom-overlay-relay-dedup \
+            test-custom-overlay-relay-dedup test-pq-consensus-key-rotation \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
             test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
             test-rate-limiter test-full-node-shard-admission test-full-node-master-admission \
@@ -120,6 +120,9 @@ jobs:
       # id, or they would keep the genuine one from reaching custom overlays.
       - name: Check custom overlay relay deduplication
         run: ctest --test-dir build --output-on-failure -R '^test-custom-overlay-relay-dedup$'
+
+      - name: Check several PQ consensus keys held for one validator
+        run: ctest --test-dir build --output-on-failure -R '^test-pq-consensus-key-rotation$'
 
       # C04 exercises the real Manager proof/apply path and cold RootDb
       # readback, including stale-context recovery and expiry controls.
@@ -219,6 +222,15 @@ jobs:
         run: >-
           uv run python test/integration/test_pq_unsafe_rotation_refusal.py
           --build-dir build --artifact-dir test/integration/.pq-unsafe-rotation-ci
+
+      # A consensus key rotation without downtime: a real engine holding A and B signs
+      # for the set listing A, authorizes the next stake with B, and changes its keys
+      # through the console while producing blocks; without A (absent or expired) it
+      # creates no group.
+      - name: Rotate a PQ consensus key with both keys held
+        run: >-
+          uv run python test/integration/test_pq_consensus_key_rotation.py
+          --build-dir build --artifact-dir test/integration/.pq-consensus-key-rotation-ci
 
   # Package allowlists left chain_block_json's test target uncompilable for two
   # days. Compile every workspace test target on every branch push, separately

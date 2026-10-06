@@ -78,12 +78,16 @@ if(TARGET tl_api)
                         OpenSSL::Crypto)
   # A directory flush that fails after the rename is reached through this shim, which
   # makes fsync on a directory fail while the test asks it to. LD_PRELOAD is a Linux
-  # mechanism here; elsewhere the test runs without that one case.
+  # mechanism here; elsewhere the test runs without that one case. The shim is test-only:
+  # it is outside the default build and is built through all-tests (or by name), never
+  # as part of the tool.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    add_library(test-fsync-dir-failure-shim SHARED
+    add_library(test-fsync-dir-failure-shim SHARED EXCLUDE_FROM_ALL
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/fsync-dir-failure-shim.cpp")
     target_link_libraries(test-fsync-dir-failure-shim PRIVATE ${CMAKE_DL_LIBS})
-    add_dependencies(tos-pq-consensus-key test-fsync-dir-failure-shim)
+    if(TARGET all-tests)
+      add_dependencies(all-tests test-fsync-dir-failure-shim)
+    endif()
     set(CONSENSUS_KEY_TOOL_SHIM_ARGS --fsync-shim "$<TARGET_FILE:test-fsync-dir-failure-shim>")
   else()
     set(CONSENSUS_KEY_TOOL_SHIM_ARGS)

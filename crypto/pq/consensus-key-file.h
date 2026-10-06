@@ -3,8 +3,9 @@
 
 // The validator node's own post-quantum consensus key, on disk.
 //
-// A validator host holds exactly one post-quantum secret: the hot consensus key it signs
-// finality, configuration votes and complaint votes with. The controller root, which
+// A validator host holds one kind of post-quantum secret: the hot consensus key it signs
+// finality, configuration votes and complaint votes with (two of them for a while during a
+// key rotation; see consensus-key-schedule.h). The controller root, which
 // authorises the stake and its own replacement, never reaches this machine, so a
 // compromised validator costs an operator the key it can rotate and not the authority
 // that rotates it.
@@ -54,6 +55,11 @@ const char* describe(ConsensusKeyFileError error) noexcept;
 // consensus seed with `detail::read_protected_seed` reports through this, so an operator
 // reads the same words whichever command refused the file.
 ConsensusKeyFileError consensus_key_refusal(detail::SeedFileRefusal refusal) noexcept;
+
+// An identity (a key_id, a validator id, a public key) as lowercase hexadecimal: the one
+// form `tos-pq-consensus-key` prints and the node logs, so an operator can compare the
+// two as strings.
+std::string identity_hex(std::string_view bytes);
 
 // Load the seed at `path` and derive the signer it stands for.
 //
