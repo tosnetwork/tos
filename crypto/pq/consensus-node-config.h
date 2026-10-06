@@ -105,7 +105,7 @@ NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& additi
 
 struct NodeConsensusKeyRemoval {
   std::string db_root;
-  std::string key;  // the absolute key file path it is configured at, or its 64-hex key id
+  std::string key;        // the absolute key file path it is configured at, or its 64-hex key id
   std::uint32_t now = 0;  // the time the remaining keys are judged expired at
 };
 

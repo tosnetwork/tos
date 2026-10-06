@@ -833,7 +833,13 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
     path = write_config(db, node_config())
 
     # Not bound yet: there is no validator to hold a second key for.
-    refuses_keys(tool, "add-node-key", [str(db), str(successor), "1000"], b"bind-node first", "an unbound node")
+    refuses_keys(
+        tool,
+        "add-node-key",
+        [str(db), str(successor), "1000"],
+        b"bind-node first",
+        "an unbound node",
+    )
     refuses_keys(tool, "list-node-keys", [str(db)], b"not bound", "listing an unbound node")
 
     if node_keys(tool, "bind-node", [str(db), str(primary), VALIDATOR_HEX]).returncode != 0:
@@ -858,7 +864,9 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
     }
     written = json.loads(path.read_text())
     if written["extraconfig"]["pq_consensus"] != two:
-        raise Failure(f"add-node-key wrote another binding: {json.dumps(written['extraconfig'], indent=1)}")
+        raise Failure(
+            f"add-node-key wrote another binding: {json.dumps(written['extraconfig'], indent=1)}"
+        )
     if {k: v for k, v in written.items() if k != "extraconfig"} != node_config():
         raise Failure("add-node-key changed fields other than the keys")
     if leftovers(db):
@@ -896,49 +904,97 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
             [str(db), str(third), "1000"],
             b"same election date",
         ),
-        "the bound key's own date for a new key": ([str(db), str(third), "0"], b"same election date"),
-        "the same key under another file name": ([str(db), str(same_seed), "2000"], b"configured twice"),
+        "the bound key's own date for a new key": (
+            [str(db), str(third), "0"],
+            b"same election date",
+        ),
+        "the same key under another file name": (
+            [str(db), str(same_seed), "2000"],
+            b"configured twice",
+        ),
         "a window that closes before it opens": (
             [str(db), str(third), "2100000000", "2100000000"],
             b"not after its window",
         ),
-        "a key that has already expired": ([str(db), str(third), "3000", "3001"], b"already have expired"),
-        "a configured file with another window": ([str(db), str(successor), "5000"], b"another window"),
+        "a key that has already expired": (
+            [str(db), str(third), "3000", "3001"],
+            b"already have expired",
+        ),
+        "a configured file with another window": (
+            [str(db), str(successor), "5000"],
+            b"another window",
+        ),
         "a relative key path": ([str(db), "b.key", "3000"], b"absolute"),
-        "a key readable by others": ([str(db), str(loose), "3000"], b"readable or writable by group or others"),
+        "a key readable by others": (
+            [str(db), str(loose), "3000"],
+            b"readable or writable by group or others",
+        ),
         "a missing key": ([str(db), str(home / "missing.key"), "3000"], b"cannot be opened"),
     }
     for why, (args, reason) in bad.items():
         refuses_keys(tool, "add-node-key", args, reason, why)
         unchanged(path, before, f"{why} was refused")
-    for args in ([str(db), str(third), "x"], [str(db), str(third), "3000", "-1"], [str(db), str(third), "4294967296"]):
+    for args in (
+        [str(db), str(third), "x"],
+        [str(db), str(third), "3000", "-1"],
+        [str(db), str(third), "4294967296"],
+    ):
         refused = node_keys(tool, "add-node-key", args)
         if refused.returncode == 0 or b"unix time" not in refused.stderr:
             raise Failure(f"add-node-key accepted a malformed time: {args!r}")
         unchanged(path, before, "a malformed time was refused")
     with held_lock(db / "config.json.lock"):
-        refuses_keys(tool, "add-node-key", [str(db), str(third), "3000"], b"held by a running node", "a running node")
+        refuses_keys(
+            tool,
+            "add-node-key",
+            [str(db), str(third), "3000"],
+            b"held by a running node",
+            "a running node",
+        )
     unchanged(path, before, "adding a key to a running node was refused")
 
     # A node holding several keys is not rebound in one step, not even deliberately.
-    refuses(tool, [str(db), str(third), VALIDATOR_HEX], b"remove-node-key", "rebinding a rotating node")
-    refuses(tool, ["--replace", str(db), str(third), VALIDATOR_HEX], b"remove-node-key", "replacing a rotating node")
+    refuses(
+        tool, [str(db), str(third), VALIDATOR_HEX], b"remove-node-key", "rebinding a rotating node"
+    )
+    refuses(
+        tool,
+        ["--replace", str(db), str(third), VALIDATOR_HEX],
+        b"remove-node-key",
+        "replacing a rotating node",
+    )
     unchanged(path, before, "rebinding a node with several keys was refused")
 
     # The bound key is removed by its identity once the set that lists it has ended; the
     # successor is then the node's only key, and the last key is never removed.
-    refuses_keys(tool, "remove-node-key", [str(db), "zz" * 32], b"64-hex key id", "a malformed key id")
-    refuses_keys(tool, "remove-node-key", [str(db), str(third)], b"no consensus key is configured", "an absent key")
-    refuses_keys(tool, "remove-node-key", [str(db), "11" * 32], b"no configured key", "an unknown key id")
+    refuses_keys(
+        tool, "remove-node-key", [str(db), "zz" * 32], b"64-hex key id", "a malformed key id"
+    )
+    refuses_keys(
+        tool,
+        "remove-node-key",
+        [str(db), str(third)],
+        b"no consensus key is configured",
+        "an absent key",
+    )
+    refuses_keys(
+        tool, "remove-node-key", [str(db), "11" * 32], b"no configured key", "an unknown key id"
+    )
     unchanged(path, before, "removing an absent key was refused")
     removed = node_keys(tool, "remove-node-key", [str(db), primary_id])
     if removed.returncode != 0 or bound_key_id(removed.stdout) != primary_id:
         raise Failure(f"remove-node-key failed: {removed!r}")
     after = json.loads(path.read_text())["extraconfig"]["pq_consensus"]
-    if after != {**pq_consensus(VALIDATOR_HEX, primary), "consensus_key_file": "", "keys": [rotation_key(successor, 1000)]}:
+    if after != {
+        **pq_consensus(VALIDATOR_HEX, primary),
+        "consensus_key_file": "",
+        "keys": [rotation_key(successor, 1000)],
+    }:
         raise Failure(f"remove-node-key left another binding: {after!r}")
     rest = path.read_bytes()
-    refuses_keys(tool, "remove-node-key", [str(db), str(successor)], b"last consensus key", "the last key")
+    refuses_keys(
+        tool, "remove-node-key", [str(db), str(successor)], b"last consensus key", "the last key"
+    )
     unchanged(path, rest, "removing the last key was refused")
 
     # The next rotation: a third key, added and then the successor removed by its path.
@@ -978,7 +1034,9 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
     # The expired one may go, and what is left is the single form again.
     if node_keys(tool, "remove-node-key", [str(db_expired), str(successor)]).returncode != 0:
         raise Failure("remove-node-key refused an expired key")
-    if json.loads(path_expired.read_text())["extraconfig"]["pq_consensus"] != pq_consensus(VALIDATOR_HEX, primary):
+    if json.loads(path_expired.read_text())["extraconfig"]["pq_consensus"] != pq_consensus(
+        VALIDATOR_HEX, primary
+    ):
         raise Failure("one unbounded key left was not written back in the single form")
 
     # One key left in the list form (a window of its own) is still one key: it can be
@@ -998,10 +1056,17 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
             }
         ),
     )
-    refuses(tool, [str(db_one), str(primary), VALIDATOR_HEX], b"--replace", "rebinding one listed key silently")
+    refuses(
+        tool,
+        [str(db_one), str(primary), VALIDATOR_HEX],
+        b"--replace",
+        "rebinding one listed key silently",
+    )
     rebound = node_keys(tool, "bind-node", ["--replace", str(db_one), str(primary), VALIDATOR_HEX])
     if rebound.returncode != 0:
-        raise Failure(f"bind-node --replace refused a node holding one listed key: {rebound.stderr!r}")
+        raise Failure(
+            f"bind-node --replace refused a node holding one listed key: {rebound.stderr!r}"
+        )
 
     # A window field the schema does not know, or one left out, is refused by name before
     # the decoder could default it and a rewrite make that permanent; so are both forms
