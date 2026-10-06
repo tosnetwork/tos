@@ -494,3 +494,7 @@ async fn open_vault_file(
 #[path = "wallet_pq_fee_cmd.rs"]
 mod fee;
 pub use fee::PqRestoreFeeInitialCmd;
+
+#[path = "wallet_pq_inspect_cmd.rs"]
+mod inspect;
+pub use inspect::PqInspectInitialCmd;

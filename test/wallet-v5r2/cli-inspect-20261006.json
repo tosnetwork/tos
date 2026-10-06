@@ -1,0 +1,103 @@
+{
+  "base_commit": "59a9f259f8090fc62028411fb49c2343ae617a55",
+  "scope": "CLI orchestration against a mock trusted verifier; no real proof verification or network acceptance",
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_inspect_controls.py --cli tosctl/src/target/debug/tosctl --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-inspect-controls",
+  "exit": 0,
+  "baseline": {
+    "valid": {
+      "exit": 0,
+      "requests": 2
+    },
+    "refusal": {
+      "exit": 1,
+      "requests": 1
+    },
+    "wrong_request": {
+      "exit": 1,
+      "requests": 1
+    },
+    "other_checkpoint": {
+      "exit": 1,
+      "requests": 2
+    },
+    "stale_account": {
+      "exit": 1,
+      "requests": 2
+    },
+    "wrong_wallet_pin": {
+      "exit": 1,
+      "requests": 0
+    },
+    "loose_age": {
+      "exit": 1,
+      "requests": 0
+    },
+    "module_data": {
+      "exit": 1,
+      "requests": 2
+    }
+  },
+  "restored": {
+    "valid": {
+      "exit": 0,
+      "requests": 2
+    },
+    "refusal": {
+      "exit": 1,
+      "requests": 1
+    },
+    "wrong_request": {
+      "exit": 1,
+      "requests": 1
+    },
+    "other_checkpoint": {
+      "exit": 1,
+      "requests": 2
+    },
+    "stale_account": {
+      "exit": 1,
+      "requests": 2
+    },
+    "wrong_wallet_pin": {
+      "exit": 1,
+      "requests": 0
+    },
+    "loose_age": {
+      "exit": 1,
+      "requests": 0
+    },
+    "module_data": {
+      "exit": 1,
+      "requests": 2
+    }
+  },
+  "semantic_control": "Deleting enrolled module-data equality admits substituted state; refusal assertion fails for module_data, then passes after restoration",
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-inspect.tar.gz",
+    "sha256": "838193880b32000fa8fefcdb1f6e1aa8cc4f13901f0fa59e9a80503b5a2200ce",
+    "bytes": 19461
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "sha256": "23b47472078a92b6d0239d1efee4cbfd32e7c6110bcb460f47329dd3d45cd9c8",
+      "bytes": 4081
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "sha256": "fbc676aec5be431a0b5274076d6e74a286c7a356c70a06fb58a27555798a7f95",
+      "bytes": 22878
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_inspect_initial.py",
+      "sha256": "e5b3b363e6a23122e88e55808d2dcf04e2b05fb9a1988a0f3313e0d09b99a77c",
+      "bytes": 8637
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_inspect_controls.py",
+      "sha256": "c41f3de17f6654c578252a9a9234a3ef438c6ba7f01de8bf79308fac3fdc0901",
+      "bytes": 2714
+    }
+  ]
+}

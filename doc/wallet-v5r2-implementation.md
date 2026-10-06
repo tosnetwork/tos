@@ -3022,3 +3022,48 @@ body while the new-signature barrier remains active. Three parser mutations
 (canonical amount, exhausted leaf, zero amount) must fail named assertions;
 restored code passes. Evidence:
 `test/wallet-v5r2/cached-fee-decode-20261006.json`.
+
+
+## Initial wallet inspection client
+
+`tosctl wallet pq-inspect-initial` (feature `pq-wallet`) reconstructs the initial
+wallet/module/vault identities from the public recovery manifest and independent
+wallet/code pins, then reads the wallet through the locally configured proof
+verifier in live mode. It reads the enrolled module at that exact authenticated
+masterchain checkpoint and binds both raw account states through
+`ProvenWalletState::bind_initial`. The local clock is sampled after both reads;
+stale observations, a changed module, a different checkpoint, inactive accounts
+and verifier refusals produce no success report. An already migrated wallet must
+use its successor enrollment; this initial-only command refuses that mismatch.
+
+Example (paths and pins must be supplied from local enrollment/release records):
+
+```sh
+tosctl wallet pq-inspect-initial \
+  --recovery-manifest recovery-manifest.json --expected-wallet "$WALLET_ID" \
+  --wallet-code wallet.boc --wallet-code-hash "$WALLET_CODE_HASH" \
+  --module-code module.boc --module-code-hash "$MODULE_CODE_HASH" \
+  --vault-code vault.boc --vault-code-hash "$VAULT_CODE_HASH" \
+  --proof-config proof-verifier.json --max-age-seconds 60
+```
+
+`proof-verifier.json` is the existing strict `ProofVerifierConfig` object with a
+locally trusted executable, anchor, live state file, bounded live age, and exactly
+one proof source (`liteserver_config` or `material_dir`). Its live age cannot exceed
+the command's wallet age policy. The command does not access signing keys. The
+verifier may update its own anti-rollback live-state record.
+
+The JSON report contains the proven checkpoint, identities, balances, state hashes
+and wallet counters. `primary_locally_enabled` describes only wallet-local policy;
+it is not global ConfigParam 48 authorization. Fee-vault state, POP execution,
+custody, spendability and delivery are outside this inspection. This command is a
+client state-acquisition step, not wallet readiness or release acceptance.
+
+The CLI harness uses a deliberately mocked local verifier around compiled account
+fixtures. Eight outcomes exercise actual CLI parsing, request sequencing, response
+binding and account enrollment checks. A module-data guard deletion must let the
+substituted module through and fail the named refusal assertion; restored code
+must pass. These checks do not establish cryptographic proof validity or live
+network availability. Real verifier/network integration remains required.
+
+Evidence: [CLI inspection controls](../test/wallet-v5r2/cli-inspect-20261006.json).

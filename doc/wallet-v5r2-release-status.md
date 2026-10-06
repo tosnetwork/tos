@@ -1,6 +1,7 @@
 # V5R2 delivery status — 2026-10-06
 
-Audited source: `412944640` on `feat/v5r2-rescue`. This is an implementation
+Initial audited source: `412944640` on `feat/v5r2-rescue`; subsequent client
+inspection evidence is recorded in the linked implementation record. This is an implementation
 candidate with substantial local evidence, **not a release-ready complete wallet**.
 The owner requirement remains a full V5R1-equivalent wallet with ML-DSA-44 primary
 authorization and SLH-DSA-SHA2-128s second/recovery authority, with no Ed25519
@@ -19,7 +20,7 @@ not certify all later source changes.
 | R0 | Protocol codecs, pairing/genesis builders, public recovery manifest and local compiled fixtures exist. | Freeze and independently authenticate the complete release code/ABI/vector bundle. A caller-supplied code pin is not release approval. |
 | R1 | Native crypto, both VM implementations, public fixture interop and parity runners exist. The observed fee admission minima are 12,600–13,515. | Complete final-head suite coverage, adversarial/worst-case hardware pricing and production pre-ACCEPT fit. Default 10,000 demonstrably fails. |
 | R2 | Full receiver, module, fee vault, policy and staged recovery candidate; 67 local dual-VM transactions include 22 continuous recovery transactions and recipient delivery. | Clear default-credit admission and validate all acceptance cases on the frozen release. Diagnostic credit 20,000 is not deployment clearance. |
-| R3 | Rust codecs, bound native signers, encrypted custody, tree rebuild/cache, journal allocation, restoration and cached retries are implemented. CLI provides key creation/restoration and initial public preparation. | Complete deploy/spend/POP/recovery client orchestration, authenticated current proof acquisition, funding/readiness lifecycle, old-device takeover/revocation and iOS/Android integration. Offline preparation commands do not supply these workflows. |
+| R3 | Rust codecs, bound native signers, encrypted custody, tree rebuild/cache, journal allocation, restoration and cached retries are implemented. CLI provides key creation/restoration, initial public preparation and proof-bound initial wallet/module inspection. | Complete deploy/spend/POP/recovery client orchestration, real-network validation of authenticated proof acquisition, funding/readiness lifecycle, old-device takeover/revocation and iOS/Android integration. Offline preparation commands do not supply these workflows. |
 | R4 | Draft PR 138 exists. Remote `9e77f4705` has a new CI run; later retry/parser changes are local at this checkpoint. | Passing relevant final-head CI, independent security/crypto review, explicit dependency acceptance and deployment confirmation. Neither approval nor deployment is inferred from tests. |
 
 The next substantial client task is to compose creation/custody/enrollment and
