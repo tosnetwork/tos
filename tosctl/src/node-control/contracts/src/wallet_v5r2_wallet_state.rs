@@ -4,6 +4,7 @@
 use crate::proven_getters::ProvenAccountState;
 use crate::wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole};
 use crate::wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis};
+use crate::wallet_v5r2_prepare::{PreparationAmounts, PreparationBinding, PreparationRequest};
 use chain_block::{Cell, CellType, SliceData};
 
 pub struct ProvenWalletState {
@@ -21,6 +22,8 @@ pub struct ProvenWalletState {
     policy: u8,
     primary_key: Vec<u8>,
     rescue_key: [u8; 32],
+    module_code: [u8; 32],
+    vault_code: [u8; 32],
     master_time: u32,
     wallet_time: u32,
     module_time: u32,
@@ -181,6 +184,11 @@ impl ProvenWalletState {
             policy,
             primary_key,
             rescue_key,
+            module_code: *module_code.repr_hash().as_array(),
+            vault_code: *SliceData::load_cell(birth.vault_init().clone())?
+                .checked_drain_reference()?
+                .repr_hash()
+                .as_array(),
             master_time: w.block_gen_utime,
             wallet_time: w.account.gen_utime,
             module_time: m.account.gen_utime,
@@ -275,6 +283,102 @@ impl ProvenWalletState {
         self.policy == 1 && self.retired & 2 == 0
     }
 
+    /// Build a preparation for the exact typed successor tuple. The caller
+    /// approves amounts and verifies current fee floors/caps separately. This
+    /// does not deploy anything or establish successor key possession.
+    pub fn preparation_request(
+        &self,
+        now: u32,
+        valid_until: u32,
+        successor: &SuccessorDeployment,
+        amounts: PreparationAmounts,
+        policy_source: Option<&ProvenAccountState>,
+    ) -> anyhow::Result<PreparationRequest> {
+        self.fresh(now)?;
+        anyhow::ensure!(valid_until > now, "preparation deadline expired by local clock");
+        anyhow::ensure!(successor.wallet() == &self.wallet, "preparation targets another wallet");
+        let module_code =
+            SliceData::load_cell(successor.module_init().clone())?.checked_drain_reference()?;
+        let vault_code =
+            SliceData::load_cell(successor.vault_init().clone())?.checked_drain_reference()?;
+        anyhow::ensure!(
+            module_code.repr_hash().as_array() == &self.module_code,
+            "successor module code mismatch"
+        );
+        anyhow::ensure!(
+            vault_code.repr_hash().as_array() == &self.vault_code,
+            "successor vault code mismatch"
+        );
+        let mut data = SliceData::load_cell(successor.module_data().clone())?;
+        data.move_by(8)?;
+        let global_id = i32::from_be_bytes(data.get_next_u32()?.to_be_bytes());
+        let network = *data.get_next_hash()?.as_array();
+        anyhow::ensure!(
+            global_id == self.global_id && network == self.network,
+            "successor namespace mismatch"
+        );
+        data.move_by(8 + 256)?;
+        match data.get_next_byte()? {
+            1 => self.require_global_primary(
+                policy_source
+                    .ok_or_else(|| anyhow::anyhow!("successor READY requires proven policy"))?,
+                now,
+            )?,
+            2 => (),
+            _ => anyhow::bail!("unsupported successor policy"),
+        }
+        PreparationRequest::new(
+            PreparationBinding {
+                global_id: self.global_id,
+                network: self.network,
+                wallet: self.wallet,
+                source_module: self.module,
+                valid_until,
+            },
+            successor.preparation_plan(amounts.module, amounts.vault),
+            self.module_time,
+        )
+    }
+
+    /// SLH-only preparation signing from the current installed module. It
+    /// remains available after primary retirement and counter exhaustion.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn sign_preparation_submission(
+        &self,
+        now: u32,
+        valid_until: u32,
+        successor: &SuccessorDeployment,
+        amounts: PreparationAmounts,
+        policy_source: Option<&ProvenAccountState>,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        let request =
+            self.preparation_request(now, valid_until, successor, amounts, policy_source)?;
+        let signature = signer.sign_bound(
+            wallet_pq_signer::Role::Rescue,
+            &self.rescue_key,
+            wallet_pq_signer::Purpose::Preparation,
+            request.digest(),
+        )?;
+        request.encode_submission(&signature)
+    }
+
+    fn require_global_primary(
+        &self,
+        policy_source: &ProvenAccountState,
+        now: u32,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            policy_source.evidence().checkpoint == self.checkpoint
+                && policy_source.evidence().block_gen_utime == self.master_time,
+            "retirement policy checkpoint mismatch"
+        );
+        let policy = policy_source
+            .config_param(48)
+            .ok_or_else(|| anyhow::anyhow!("proven ConfigParam 48 is missing"))?;
+        crate::wallet_v5r2_policy::require_primary(policy, &self.network, now)
+    }
+
     /// Construct a PRIMARY execute request only with ConfigParam 48 proven at
     /// this exact wallet checkpoint. An old or absent policy never authorizes it.
     /// This still does not approve actions or invoke a signer.
@@ -288,15 +392,7 @@ impl ProvenWalletState {
         self.fresh(now)?;
         anyhow::ensure!(valid_until > now, "primary deadline expired by local clock");
         anyhow::ensure!(self.primary_locally_enabled(), "wallet locally requires rescue");
-        anyhow::ensure!(
-            policy_source.evidence().checkpoint == self.checkpoint
-                && policy_source.evidence().block_gen_utime == self.master_time,
-            "retirement policy checkpoint mismatch"
-        );
-        let policy = policy_source
-            .config_param(48)
-            .ok_or_else(|| anyhow::anyhow!("proven ConfigParam 48 is missing"))?;
-        crate::wallet_v5r2_policy::require_primary(policy, &self.network, now)?;
+        self.require_global_primary(policy_source, now)?;
         anyhow::ensure!(
             self.primary_nonce < u64::MAX && self.seqno < u32::MAX,
             "primary execute counter exhausted"

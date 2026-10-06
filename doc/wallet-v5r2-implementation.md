@@ -1455,3 +1455,29 @@ independent primary verification, including wrong parties/keys/policy, expiry, a
 old-key/wrong-role refusal for successor POP. Three new mutations remove enrollment
 matching, replace the POP context with AUTH, and substitute the signer's own key;
 the Rust signer control suite detects them alongside its existing three controls.
+
+
+## Native preparation signing from proven wallet state
+
+`ProvenWalletState::preparation_request` constructs PRP3 for a typed
+`SuccessorDeployment`, requiring the same wallet, namespace and pinned module/vault
+code. Positive canonical deployment amounts and the deadline are bound into the
+request along with all three deployment witnesses. READY successors require
+ConfigParam 48 from the wallet's exact checkpoint to authorize primary operation;
+REQUIRED successors remain preparable after global primary retirement and wallet
+counter exhaustion. The snapshot must still be fresh.
+
+With `native-wallet-signer`, `sign_preparation_submission` signs that exact request
+with the installed module's SLH rescue key and the preparation-only context, then
+returns FPR3. A successor's new rescue key cannot substitute for the current key.
+Tests use synthetic proven-state fixtures and real signatures; verification passes
+through the VM C shim using the same pinned SLH implementation, so this is a
+separate integration boundary, not independent cryptographic implementation
+validation. Wrong contexts and digests fail verification. Seven added mutations
+remove wallet/code/namespace/policy binding or substitute the signing key/context.
+
+The caller still approves deployment amounts, obtains current network fee bounds,
+funds submission, checks actual successor deployment, completes both fresh POPs,
+and proves migration and subsequent delivery. This API does not establish live
+chain acceptance or resolve the default 10,000-credit admission gate. Evidence:
+`test/wallet-v5r2/preparation-native-signing-20261006.json`.

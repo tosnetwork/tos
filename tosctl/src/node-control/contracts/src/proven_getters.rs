@@ -970,15 +970,31 @@ mod fee_state_tests {
         primary_key: [u8; 1312],
         rescue_key: [u8; 32],
     ) -> (WalletGenesis, ProvenAccountState) {
-        let code = Cell::default();
-        let hash = *code.repr_hash().as_array();
-        let bundle = CodeBundle::new(
-            code.clone(),
-            code.clone(),
-            code,
-            CodeHashes { wallet: hash, module: hash, vault: hash },
+        fixture_with_parameters(
+            policy,
+            primary_key,
+            rescue_key,
+            Cell::default(),
+            Cell::default(),
+            (42, [1; 32]),
         )
-        .unwrap();
+    }
+    fn fixture_with_parameters(
+        policy: RescuePolicy,
+        primary_key: [u8; 1312],
+        rescue_key: [u8; 32],
+        module_code: Cell,
+        vault_code: Cell,
+        namespace: (i32, [u8; 32]),
+    ) -> (WalletGenesis, ProvenAccountState) {
+        let code = Cell::default();
+        let hash = *vault_code.repr_hash().as_array();
+        let hashes = CodeHashes {
+            wallet: *code.repr_hash().as_array(),
+            module: *module_code.repr_hash().as_array(),
+            vault: hash,
+        };
+        let bundle = CodeBundle::new(code, module_code, vault_code, hashes).unwrap();
         let mut key = [0; 60];
         key[..4].copy_from_slice(&1u32.to_be_bytes());
         key[4..8].copy_from_slice(&8u32.to_be_bytes());
@@ -986,8 +1002,8 @@ mod fee_state_tests {
         let genesis = WalletGenesis::new(
             bundle,
             GenesisParameters {
-                global_id: 42,
-                network: [1; 32],
+                global_id: namespace.0,
+                network: namespace.1,
                 wallet_id: 42,
                 primary_key,
                 rescue_key,
@@ -1168,6 +1184,161 @@ mod fee_state_tests {
         let body =
             view.sign_rescue_submission(4620, 4700, AuthAction::LockPrimary, &mut rescue).unwrap();
         assert_eq!(body.reference(0).unwrap().repr_hash(), expected.cell().repr_hash());
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    #[test]
+    fn native_preparation_signing_binds_successor_and_current_rescue() {
+        use crate::wallet_v5r2_genesis::SuccessorDeployment;
+        use crate::wallet_v5r2_policy::tests::policy;
+        use crate::wallet_v5r2_prepare::PreparationAmounts;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use chain_block::SliceData;
+        use tos_vm as _;
+        use wallet_pq_signer::{Role, Signer}; // Link the VM verifier shim, separately from the signer.
+        unsafe extern "C" {
+            fn tos_rust_slhdsa128s_verify(
+                m: *const u8,
+                m_sz: usize,
+                sig: *const u8,
+                sig_sz: usize,
+                ctx: *const u8,
+                ctx_sz: usize,
+                pk: *const u8,
+            ) -> i32;
+        }
+        let mut primary = Signer::import_and_wipe(Role::Primary, &mut [0x11; 32]).unwrap();
+        let mut rescue = Signer::import_and_wipe(Role::Rescue, &mut [0x22; 48]).unwrap();
+        let mut next = Signer::import_and_wipe(Role::Rescue, &mut [0x33; 48]).unwrap();
+        let (g, proof) = fixture_with_keys(
+            RescuePolicy::Required,
+            primary.public_key().try_into().unwrap(),
+            rescue.public_key().try_into().unwrap(),
+        );
+        let mut w = account_proof(proof, g.wallet_init());
+        let (_, proof) = fixture();
+        let m = account_proof(proof, g.module_init());
+        set_wallet_counters(&g, &mut w, u32::MAX, u64::MAX, u64::MAX, u64::MAX);
+        w.config_params.insert(48, policy([1; 32], 2, &[], true));
+        let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
+        let target = |policy, wallet| {
+            let (template, _) = fixture_with_keys(
+                policy,
+                primary.public_key().try_into().unwrap(),
+                next.public_key().try_into().unwrap(),
+            );
+            SuccessorDeployment::new(template, wallet).unwrap()
+        };
+        let successor = target(RescuePolicy::Required, *g.wallet_init().repr_hash().as_array());
+        let other = target(RescuePolicy::Required, [9; 32]);
+        let ready = target(RescuePolicy::Ready, *g.wallet_init().repr_hash().as_array());
+        let amounts = PreparationAmounts { module: 100, vault: 200 };
+        let different_code = {
+            let mut b = BuilderData::new();
+            b.append_u8(1).unwrap();
+            b.into_cell().unwrap()
+        };
+        for (module_code, vault_code, namespace, expected_error) in [
+            (
+                different_code.clone(),
+                Cell::default(),
+                (42, [1; 32]),
+                "successor module code mismatch",
+            ),
+            (Cell::default(), different_code, (42, [1; 32]), "successor vault code mismatch"),
+            (Cell::default(), Cell::default(), (43, [1; 32]), "successor namespace mismatch"),
+            (Cell::default(), Cell::default(), (42, [2; 32]), "successor namespace mismatch"),
+        ] {
+            let (template, _) = fixture_with_parameters(
+                RescuePolicy::Required,
+                primary.public_key().try_into().unwrap(),
+                next.public_key().try_into().unwrap(),
+                module_code,
+                vault_code,
+                namespace,
+            );
+            let target =
+                SuccessorDeployment::new(template, *g.wallet_init().repr_hash().as_array())
+                    .unwrap();
+            let result = view.preparation_request(4620, 4700, &target, amounts, None);
+            assert_eq!(
+                result.err().expect("foreign successor accepted").to_string(),
+                expected_error
+            );
+        }
+        let request = view.preparation_request(4620, 4700, &successor, amounts, None).unwrap();
+        assert_eq!(request.deployment_value(), 300);
+        let targets = request.cell().reference(0).unwrap();
+        for (i, cell) in [successor.module_init(), successor.metadata(), successor.vault_init()]
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(targets.reference(i).unwrap().repr_hash(), cell.repr_hash());
+        }
+        assert_ne!(
+            request.digest(),
+            view.preparation_request(
+                4620,
+                4700,
+                &successor,
+                PreparationAmounts { module: 101, vault: 200 },
+                None
+            )
+            .unwrap()
+            .digest()
+        );
+        assert!(view.preparation_request(4620, 4700, &other, amounts, None).is_err());
+        assert!(view.preparation_request(4620, 4620, &successor, amounts, None).is_err());
+        assert!(view.preparation_request(4700, 4750, &successor, amounts, None).is_err());
+        assert!(view.preparation_request(4620, 4700, &ready, amounts, None).is_err());
+        assert!(view.preparation_request(4620, 4700, &ready, amounts, Some(&w)).is_err());
+        w.config_params.insert(48, policy([1; 32], 0, &[], true));
+        assert!(view.preparation_request(4620, 4700, &ready, amounts, Some(&w)).is_ok());
+        w.evidence.block_gen_utime += 1;
+        assert!(view.preparation_request(4620, 4700, &ready, amounts, Some(&w)).is_err());
+        assert!(
+            view.sign_preparation_submission(4620, 4700, &successor, amounts, None, &mut primary)
+                .is_err()
+        );
+        assert!(
+            view.sign_preparation_submission(4620, 4700, &successor, amounts, None, &mut next)
+                .is_err()
+        );
+        let body = view
+            .sign_preparation_submission(4620, 4700, &successor, amounts, None, &mut rescue)
+            .unwrap();
+        let mut body = SliceData::load_cell(body).unwrap();
+        assert_eq!(body.get_next_u32().unwrap(), 0x46505233);
+        assert_eq!(body.checked_drain_reference().unwrap().repr_hash(), request.cell().repr_hash());
+        let mut cell = body.checked_drain_reference().unwrap();
+        let mut signature = Vec::new();
+        loop {
+            let mut s = SliceData::load_cell(cell).unwrap();
+            signature.extend(s.get_bytestring(0));
+            if s.remaining_references() == 0 {
+                break;
+            }
+            cell = s.checked_drain_reference().unwrap();
+        }
+        assert_eq!(signature.len(), 7856);
+        let verify = |digest: &[u8; 32], context: &[u8]| {
+            // All buffers remain live for the call; signature and public key
+            // have the exact suite widths required by the VM verifier shim.
+            unsafe {
+                tos_rust_slhdsa128s_verify(
+                    digest.as_ptr(),
+                    digest.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                    context.as_ptr(),
+                    context.len(),
+                    rescue.public_key().as_ptr(),
+                )
+            }
+        };
+        assert_eq!(verify(request.digest(), request.signing_context()), 1);
+        assert_eq!(verify(request.digest(), b"TOS-RESCUE-POP-v1"), 0);
+        assert_eq!(verify(&[0; 32], request.signing_context()), 0);
     }
 
     #[cfg(feature = "native-wallet-signer")]

@@ -23,6 +23,13 @@ pub struct PreparationPlan {
     pub vault_init: Cell,
 }
 
+/// Deployment amounts only; network compute/forwarding fees are additional.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreparationAmounts {
+    pub module: u128,
+    pub vault: u128,
+}
+
 pub struct PreparationRequest {
     cell: Cell,
     digest: [u8; 32],

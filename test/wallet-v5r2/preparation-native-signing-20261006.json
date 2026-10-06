@@ -1,0 +1,112 @@
+{
+  "base_commit": "78f961431ba25080d271e8c92271ed656de51121",
+  "scope": "Preparation signing from synthetic proven wallet state with real SLH signatures; no live-chain deployment or fee-admission clearance",
+  "tests": {
+    "feature_state": 13,
+    "default_state": 10,
+    "preparation_wire": 3,
+    "workspace_format": "passed"
+  },
+  "controls": {
+    "pop_enrollment": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "pop_domain": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "pop_key": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "seed_wipe": {
+      "exit": 101,
+      "witness": "import_wipes_on_success_and_failure"
+    },
+    "failure_status": {
+      "exit": 101,
+      "witness": "bound_signatures_and_independent_primary_verification"
+    },
+    "proven_key": {
+      "exit": 101,
+      "witness": "native_wallet_signing_binds_proven_keys_and_policy"
+    },
+    "preparation_wallet": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_module_code": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_vault_code": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_namespace": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_domain": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_key": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    },
+    "preparation_ready_policy": {
+      "exit": 101,
+      "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_prepare.rs",
+      "sha256": "98f206c0344c45846130847448aabc963e5e1b0a999900b656fd896ee37ba189",
+      "bytes": 6607
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "sha256": "d84e1efa8fc3661a44c45ef63a423dbbcf8871bf664b7dcbe8038460b97aa905",
+      "bytes": 18533
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "cf1c245f817230ba72b9cfb3ed01cd8e7a7513d448bb68d039c08841e7c9d108",
+      "bytes": 109895
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/rust_signer_controls.py",
+      "sha256": "88b97c2bb315af83d4d1ec66ac5f8dd56b049f4df87050169bc4d035a0e0699c",
+      "bytes": 5453
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-native-signing-controls/MANIFEST.json",
+      "sha256": "429adfeccb7a86f9898338b938974ae661c2bcf53fe1656ee00bbeab94fcc604",
+      "bytes": 5521
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-preparation-native-signing-controls/results.json",
+      "sha256": "e2c6a58f0b33100ec322056c118d1ffe5936f449c67ef850cf6ca53221889713",
+      "bytes": 1568
+    }
+  ],
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib fee_state_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2_prepare",
+    "python3 test/wallet-v5r2/rust_signer_controls.py --output <fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limitations": [
+    "Synthetic proof fixtures are not live cryptographic account proofs.",
+    "VM shim and signer use the same pinned SLH implementation; not independent crypto validation.",
+    "Caller still checks fee bounds, funds deployment, verifies both POPs, migration and delivery.",
+    "Default 10000-credit admission and production custody/client/release gates remain open."
+  ],
+  "retention": "Retain raw logs and manifest outside Git through review and release acceptance, at least through 2027-01-06."
+}

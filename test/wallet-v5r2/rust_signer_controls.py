@@ -25,7 +25,7 @@ def main():
             "--features",
             "native-wallet-signer",
             "--lib",
-            "native_wallet_signing_binds_proven_keys_and_policy",
+            "fee_state_tests",
         ],
     }
     commands[pop] = [
@@ -74,6 +74,34 @@ def main():
             "native_wallet_signing_binds_proven_keys_and_policy",
         ),
     ]
+
+    preparation_witness = "native_preparation_signing_binds_successor_and_current_rescue"
+    for name, old, new in [
+        ("preparation_wallet", "successor.wallet() == &self.wallet", "true"),
+        (
+            "preparation_module_code",
+            "module_code.repr_hash().as_array() == &self.module_code",
+            "true",
+        ),
+        ("preparation_vault_code", "vault_code.repr_hash().as_array() == &self.vault_code", "true"),
+        ("preparation_namespace", "global_id == self.global_id && network == self.network", "true"),
+        (
+            "preparation_domain",
+            "wallet_pq_signer::Purpose::Preparation",
+            "wallet_pq_signer::Purpose::Auth",
+        ),
+        (
+            "preparation_key",
+            "&self.rescue_key,\n            wallet_pq_signer::Purpose::Preparation",
+            "&signer.public_key().to_vec(),\n            wallet_pq_signer::Purpose::Preparation",
+        ),
+        (
+            "preparation_ready_policy",
+            '1 => self.require_global_primary(\n                policy_source\n                    .ok_or_else(|| anyhow::anyhow!("successor READY requires proven policy"))?,\n                now,\n            )?',
+            "1 => ()",
+        ),
+    ]:
+        cases.append((name, state, old, new, preparation_witness))
 
     def run(path, label):
         command = [
