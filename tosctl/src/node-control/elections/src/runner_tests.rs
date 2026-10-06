@@ -2338,3 +2338,33 @@ fn a_failed_first_reading_is_an_error_not_history() {
     assert_eq!(snapshot.attempted_at, 5);
     assert_eq!(snapshot.error.as_deref(), Some("boom"));
 }
+
+/// A pool whose controller changed and whose new controller cannot be read must not
+/// present the old controller's values as the new one's.
+#[test]
+fn a_failed_read_for_another_controller_keeps_the_values_with_their_own_controller() {
+    let a = MsgAddressInt::standard(-1, [0xA1; 32]);
+    let b = MsgAddressInt::standard(-1, [0xB2; 32]);
+    let thresholds = contracts::validator_controller::OperatingThresholds::default();
+    let later = (time_format::now() + 60 * 86_400) as u32;
+    let good =
+        operating_snapshot(&a, Ok(Some(controller_operations(later))), None, 10, &thresholds)
+            .expect("a reading");
+    assert_eq!(good.controller, a.to_string());
+
+    let failed = failed_operating_snapshot(Some(&good), Some(&b), "boom".into(), 20);
+    assert_eq!(failed.controller, a.to_string(), "the values stay with controller A");
+    assert_eq!(failed.attempted_controller, Some(b.to_string()));
+    assert_eq!(failed.funds, good.funds);
+    assert!(failed.stale);
+
+    // The same controller failing again names no other controller.
+    let again = failed_operating_snapshot(Some(&good), Some(&a), "boom".into(), 30);
+    assert_eq!(again.controller, a.to_string());
+    assert_eq!(again.attempted_controller, None);
+
+    // A first failure has no values; it names the controller it tried.
+    let first = failed_operating_snapshot(None, Some(&b), "boom".into(), 40);
+    assert_eq!(first.controller, b.to_string());
+    assert!(!first.stale);
+}

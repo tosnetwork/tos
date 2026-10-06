@@ -351,6 +351,10 @@ pub struct OperatingAuthorizationSnapshot {
     /// and every attempt since has failed.
     #[serde(default)]
     pub stale: bool,
+    /// The controller the failed attempt was for, when it differs from `controller`
+    /// (the one the values above belong to) or no values exist yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempted_controller: Option<String>,
     pub funds: String,
     pub allowance: String,
     pub per_request_limit: String,

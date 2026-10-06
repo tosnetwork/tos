@@ -1495,8 +1495,13 @@ pub(crate) fn failed_operating_snapshot(
         Some(previous) => previous.clone(),
         None => OperatingAuthorizationSnapshot::default(),
     };
-    if let Some(controller) = controller {
-        snapshot.controller = controller.to_string();
+    // The values keep the identity they were read for. A failed read for another
+    // controller is named separately, never written over them.
+    snapshot.attempted_controller = controller
+        .map(ToString::to_string)
+        .filter(|attempted| previous.is_none() || *attempted != snapshot.controller);
+    if previous.is_none() {
+        snapshot.controller = snapshot.attempted_controller.clone().unwrap_or_default();
     }
     snapshot.stale = snapshot.checked_at > 0;
     snapshot.attempted_at = now;
@@ -1529,6 +1534,7 @@ pub(crate) fn operating_snapshot(
         attempted_at: now,
         error: None,
         stale: false,
+        attempted_controller: None,
         funds: state.funds.to_string(),
         allowance: state.allowance.to_string(),
         per_request_limit: state.limit.to_string(),
