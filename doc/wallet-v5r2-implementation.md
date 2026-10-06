@@ -1015,13 +1015,22 @@ open. Default-credit admission remains a failed release gate.
 
 ### Proven fee observation to durable signing adapter
 
-The Unix journal now offers `open_proven` and `sign_proven_fee`. Opening requires
+The Unix journal offers `open_proven`, `preview_proven` and `sign_proven_fee`. Opening requires
 fresh authenticated enrollment-bound vault state and retains the existing
 next-slot restore barrier. Signing checks freshness again, requires the complete
 journal route to match, and refuses a deadline already expired by local time.
 It derives the current leaf from both journal state and the proven chain counter,
 then builds the exact FEE4 intent from that vault/config/epoch. The caller cannot
 supply a separate route, leaf, configuration hash or digest to this entry point.
+
+`preview_proven` performs the same freshness, route and local capacity checks
+without writing a reservation or invoking a signer. Repeated previews do not
+consume leaves. A chain-only candidate can still be refused because unbroadcast
+local reservations consumed the slot or a restored journal is waiting for its
+next slot. `sign_proven_fee` uses this shared preflight and still rechecks and
+durably reserves before signing. A preview never grants permission to sign later;
+it can become stale. Migration coordination must use the successor's actual
+custody session; its current chain-only check does not establish that continuity.
 
 The existing reserve-sign-verify-cache sequence fsyncs the reservation before
 calling the backend. Verification receives the public key from the bound vault
@@ -1034,10 +1043,13 @@ A synthetic proven-account test with a framing-only backend checks durable
 record/digest presence before signing, both verification calls with the bound
 key, exact intent construction, cache retry bytes, restore waits, expiry,
 wrong-route rejection, chain high-water and leaf consumption on failed checks.
-Seven semantic controls remove or substitute the relevant bindings. This proves
+Nine semantic controls remove or substitute the relevant bindings, including
+the restore barrier and local reservation high water used by preview. This proves
 adapter ordering/binding, not cryptographic validity or real-network V5R2 proofs.
 Inner action authorization, live fee/admission bounds, production key custody,
 preparation/POP/payment receipts and cross-device ownership remain separate gates.
+Preview-specific evidence is retained in
+`test/wallet-v5r2/proven-fee-preview-20261006.json`.
 
 ### Current wallet/module observation binding
 

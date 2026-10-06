@@ -1,0 +1,92 @@
+{
+  "base_commit": "c9d90ad40c584e21165c1abb5942a54f3c257d26",
+  "scope": "Proof-bound read-only fee journal preview, shared by fee signing; local reservations and restore barriers remain authoritative.",
+  "tests": {
+    "default_proven_fee_tests": 2,
+    "feature_schedule_and_journal": 20,
+    "feature_fee_state": 15,
+    "format": "passed",
+    "ruff": "passed"
+  },
+  "controls": {
+    "route": {
+      "exit": 101,
+      "semantic_failure": "wrong route invoked signer"
+    },
+    "freshness": {
+      "exit": 101,
+      "semantic_failure": "preflight invoked signer"
+    },
+    "deadline": {
+      "exit": 101,
+      "semantic_failure": "preflight invoked signer"
+    },
+    "key": {
+      "exit": 101,
+      "semantic_failure": "verification key substitution"
+    },
+    "export": {
+      "exit": 101,
+      "semantic_failure": "cache was not reverified before export"
+    },
+    "counter": {
+      "exit": 101,
+      "semantic_failure": "chain counter ignored"
+    },
+    "config": {
+      "exit": 101,
+      "semantic_failure": "proven fee intent mismatch"
+    },
+    "preview_restore": {
+      "exit": 101,
+      "semantic_failure": "preview bypassed restore barrier"
+    },
+    "preview_local_counter": {
+      "exit": 101,
+      "semantic_failure": "preview ignored local high water"
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "sha256": "b89ab91570dde259fbb88c5fc69f8f2acf1d8a8e286825b92c0091660f6f6c67",
+      "bytes": 107208
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/proven_fee_sign_controls.py",
+      "sha256": "d3fdea6c2d0e537ce4e8696ff270a6956e819d9e675d95106c4a79141218612e",
+      "bytes": 3492
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_journal.rs",
+      "sha256": "91f5b7fc0cf11338b312da5fab9d1df6707510c1e09751ee461997f725fbf97b",
+      "bytes": 19633
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "0378955df14c087821bea3774aaa92b7130f4d22ca3448ef05cb384dac81e4c1",
+      "bytes": 128257
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-fee-preview-controls/MANIFEST.json",
+      "sha256": "ab0d9d7c62840e1dbdde8b7ee4a8f3c3bddabd437b55cc4c2ecdcb86258a1209",
+      "bytes": 3266
+    }
+  ],
+  "commands": [
+    "python3 test/wallet-v5r2/proven_fee_sign_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib lms_fee",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "make -C tosctl/src fmt-check"
+  ],
+  "runner_note": "After running controls, failure matching was tightened to exact named tests; all nine retained logs were rechecked against those exact witnesses.",
+  "limitations": [
+    "Synthetic proven-account fixtures and framing-only signer test adapter ordering, not live-chain proof acquisition or LMS cryptographic validity.",
+    "A preview is not a durable reservation, anti-rollback proof or permission to sign.",
+    "Migration signing still checks chain-only capacity; connecting its coordinator to the actual successor custody session remains open.",
+    "Default-credit admission, reserve affordability and other production release gates remain open."
+  ],
+  "retention": "Retain raw output outside Git through review and release acceptance, at least through 2027-01-06."
+}

@@ -1970,6 +1970,49 @@ mod fee_state_tests {
 
     #[cfg(unix)]
     #[test]
+    fn proven_fee_preview_binds_custody_and_snapshot() {
+        use crate::lms_fee_journal::FeeJournal;
+        use std::os::unix::fs::PermissionsExt;
+        let (g, mut state) = fixture();
+        let initial = ProvenInitialFeeVault::bind(&state, &g, 4620, 30).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut journal = FeeJournal::open_proven(dir.path(), &initial, 4620).unwrap();
+        assert!(
+            journal.preview_proven(&initial, 4620).is_err(),
+            "preview bypassed restore barrier"
+        );
+        state.evidence.block_gen_utime = 8210;
+        state.evidence.account.gen_utime = 8200;
+        let view = ProvenInitialFeeVault::bind(&state, &g, 8220, 30).unwrap();
+        let before = std::fs::read(dir.path().join("fee-reservations")).unwrap();
+        assert_eq!(journal.preview_proven(&view, 8220).unwrap().leaf, 8);
+        assert_eq!(journal.preview_proven(&view, 8220).unwrap().leaf, 8);
+        assert_eq!(std::fs::read(dir.path().join("fee-reservations")).unwrap(), before);
+        assert!(journal.preview_proven(&view, 8231).is_err(), "preview accepted stale proof");
+        for leaf in 8..12 {
+            assert_eq!(
+                journal.preview_proven(&view, 8220).unwrap().leaf,
+                leaf,
+                "preview ignored local high water"
+            );
+            journal.reserve(8200, view.next_leaf(), leaf, [6; 32]).unwrap();
+        }
+        assert_eq!(view.chain_leaf_candidate(8220).unwrap(), 8);
+        assert!(
+            journal.preview_proven(&view, 8220).is_err(),
+            "preview reused locally reserved leaf"
+        );
+        let other = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(other.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut route = view.route();
+        route.tree_id = [9; 32];
+        let wrong = FeeJournal::open(other.path(), route, 4600).unwrap();
+        assert!(wrong.preview_proven(&view, 8220).is_err(), "preview accepted wrong journal route");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn proven_fee_signing_uses_journal_and_bound_key() {
         use crate::lms_fee_journal::FeeJournal;
         use crate::wallet_v5r2::AuthRole;

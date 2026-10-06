@@ -217,10 +217,8 @@ impl FeeJournal {
         V: FnMut(&[u8; 60], u32, &[u8; 32], &[u8]) -> anyhow::Result<bool>,
     {
         use crate::wallet_v5r2_fee::{FeeBinding, FeeIntent};
-        vault.validate_freshness(now)?;
-        anyhow::ensure!(self.route == vault.route(), "proven vault and journal route mismatch");
+        let plan = self.preview_proven(vault, now)?;
         anyhow::ensure!(valid_until > now, "fee deadline already expired by local clock");
-        let plan = self.preview(vault.proven_time(), vault.next_leaf())?;
         let intent = FeeIntent::new(
             FeeBinding {
                 vault: vault.route().vault,
@@ -247,6 +245,19 @@ impl FeeJournal {
         );
         let body = intent.encode_external(&signature)?;
         Ok(SignedFeeMessage { vault: vault.route().vault, intent, body })
+    }
+
+    /// Observe capacity using both authenticated chain state and this locked
+    /// journal's local reservations and restore barrier. This neither reserves
+    /// a leaf nor permits signing; reserve again before invoking the backend.
+    pub fn preview_proven(
+        &self,
+        vault: &crate::wallet_v5r2_state::ProvenFeeVault,
+        now: u32,
+    ) -> anyhow::Result<ReservationPlan> {
+        vault.validate_freshness(now)?;
+        anyhow::ensure!(self.route == vault.route(), "proven vault and journal route mismatch");
+        self.preview(vault.proven_time(), vault.next_leaf())
     }
 
     pub fn preview(
