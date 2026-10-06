@@ -32,7 +32,9 @@ def run(tool: Path, args: list[str], stdin: bytes = b"") -> subprocess.Completed
 
 
 def field(output: bytes, name: str, digits: str = "64") -> str:
-    m = re.search(rb"^" + name.encode() + rb"\s+([0-9a-f]{" + digits.encode() + rb"})$", output, re.M)
+    m = re.search(
+        rb"^" + name.encode() + rb"\s+([0-9a-f]{" + digits.encode() + rb"})$", output, re.M
+    )
     if not m:
         raise Failure(f"no {name} in {output!r}")
     return m.group(1).decode()

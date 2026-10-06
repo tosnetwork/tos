@@ -84,7 +84,17 @@ class Fixture:
     below, everything they reach is a double."""
 
     def __init__(
-        self, name, ref_tips, target_tips, *, armed=True, disabled=False, log="", restart=True, fork=False, fork_after=None
+        self,
+        name,
+        ref_tips,
+        target_tips,
+        *,
+        armed=True,
+        disabled=False,
+        log="",
+        restart=True,
+        fork=False,
+        fork_after=None,
     ):
         self.run_dir = Path(tempfile.mkdtemp(prefix=f"rejoin_{name}_"))
         self.experiment = SimpleNamespace(rpc_addresses=[f"127.0.0.1:{8111 + i}" for i in range(4)])
@@ -170,10 +180,27 @@ Fixture.record_f01_process = REAL.record_f01_process
 
 
 async def _run(
-    name, ref_tips, target_tips, *, armed=True, disabled=False, log="", restart=True, fork=False, fork_after=None
+    name,
+    ref_tips,
+    target_tips,
+    *,
+    armed=True,
+    disabled=False,
+    log="",
+    restart=True,
+    fork=False,
+    fork_after=None,
 ):
     fixture = Fixture(
-        name, ref_tips, target_tips, armed=armed, disabled=disabled, log=log, restart=restart, fork=fork, fork_after=fork_after
+        name,
+        ref_tips,
+        target_tips,
+        armed=armed,
+        disabled=disabled,
+        log=log,
+        restart=restart,
+        fork=fork,
+        fork_after=fork_after,
     )
     VESTAGE.json_rpc_call = fixture.rpc
     try:
@@ -199,7 +226,9 @@ async def main() -> int:
             failures.append(f"{label}: {detail}")
 
     # 1. Positive control: real reported pattern -> passes; no erase -> NOT_EXERCISED.
-    outcome, res = await _run("control_reported_height_pattern", [27, 33, 49], [27, 35, 55], log=PASSLOG)
+    outcome, res = await _run(
+        "control_reported_height_pattern", [27, 33, 49], [27, 35, 55], log=PASSLOG
+    )
     check("control_reported_height_pattern", outcome == "passed", outcome)
     check(
         "control_reported_height_pattern.post_cleanup NOT_EXERCISED",
@@ -208,7 +237,9 @@ async def main() -> int:
     )
 
     # 2. Reviewer counterexample: chain freezes after catch-up. MUST now fail.
-    outcome, res = await _run("chain_freezes_after_downtime", [27, 33, 33], [27, 33, 33], log=PASSLOG)
+    outcome, res = await _run(
+        "chain_freezes_after_downtime", [27, 33, 33], [27, 33, 33], log=PASSLOG
+    )
     check(
         "chain_freezes_after_downtime rejected (was: passed)",
         outcome == "TimeoutError",
@@ -216,7 +247,9 @@ async def main() -> int:
     )
 
     # 3. Reviewer counterexample: target already ahead, never progresses. MUST now fail.
-    outcome, res = await _run("target_replays_preexisting_height_only", [27, 33, 49], [60, 60, 60], log=PASSLOG)
+    outcome, res = await _run(
+        "target_replays_preexisting_height_only", [27, 33, 49], [60, 60, 60], log=PASSLOG
+    )
     check(
         "target_replays_preexisting_height_only rejected (was: passed)",
         outcome == "TimeoutError",
@@ -231,7 +264,9 @@ async def main() -> int:
         ("short_ttls_but_never_runs", True, False),
         ("cleanup_disabled_and_never_runs", False, True),
     ):
-        outcome, res = await _run(name, [27, 33, 49], [27, 35, 55], armed=armed, disabled=disabled, log="")
+        outcome, res = await _run(
+            name, [27, 33, 49], [27, 35, 55], armed=armed, disabled=disabled, log=""
+        )
         check(f"{name} sync passes", outcome == "passed", outcome)
         check(
             f"{name} post_cleanup NOT_EXERCISED",
@@ -240,12 +275,15 @@ async def main() -> int:
         )
         check(
             f"{name} reports cleanup in effect = {not disabled}",
-            res.get("consensus_cleanup_in_effect") is (not disabled) and res.get("short_gc_ttls") is armed,
+            res.get("consensus_cleanup_in_effect") is (not disabled)
+            and res.get("short_gc_ttls") is armed,
             (res.get("consensus_cleanup_in_effect"), res.get("short_gc_ttls")),
         )
 
     # 6. Post-cleanup recovery IS asserted when a real durable erase preceded the restart.
-    outcome, res = await _run("post_cleanup_recovery_exercised", [27, 33, 49], [27, 35, 55], log=ERASELOG)
+    outcome, res = await _run(
+        "post_cleanup_recovery_exercised", [27, 33, 49], [27, 35, 55], log=ERASELOG
+    )
     check("post_cleanup_recovery_exercised sync passes", outcome == "passed", outcome)
     check(
         "post_cleanup_recovery_exercised post_cleanup passed",
@@ -255,7 +293,9 @@ async def main() -> int:
 
     # 6b. Target advances by seqno but on a DIVERGENT chain at every height: block-id
     # disagreement must reject it (a seqno-only check would have passed this).
-    outcome, res = await _run("target_on_divergent_chain", [27, 33, 49], [27, 35, 55], log=PASSLOG, fork=True)
+    outcome, res = await _run(
+        "target_on_divergent_chain", [27, 33, 49], [27, 35, 55], log=PASSLOG, fork=True
+    )
     check(
         "target_on_divergent_chain rejected by block-id agreement",
         outcome == "AssertionError" and "block-id disagreement" in res.get("error", ""),
@@ -266,11 +306,17 @@ async def main() -> int:
     # ABOVE it, so it disagrees at fresh_tip (49). Comparing only at the early height would
     # accept this; comparing at fresh_tip must reject it. This is the reviewer's narrow P2.
     outcome, res = await _run(
-        "fork_after_shared_downtime_height", [27, 33, 49], [27, 35, 55], log=PASSLOG, fork_after=33,
+        "fork_after_shared_downtime_height",
+        [27, 33, 49],
+        [27, 35, 55],
+        log=PASSLOG,
+        fork_after=33,
     )
     check(
         "fork_after_shared_downtime_height rejected at fresh_tip",
-        outcome == "AssertionError" and "block-id disagreement" in res.get("error", "") and "seqno 49" in res.get("error", ""),
+        outcome == "AssertionError"
+        and "block-id disagreement" in res.get("error", "")
+        and "seqno 49" in res.get("error", ""),
         f"{outcome}: {res.get('error', res)}",
     )
 
@@ -278,7 +324,9 @@ async def main() -> int:
     outcome, res = await _run("control_restart_skipped", [27, 33, 49], [27, 35, 55], restart=False)
     check("control_restart_skipped times out", outcome == "TimeoutError", outcome)
 
-    outcome, res = await _run("control_fatal_after_restart", [27, 33, 49], [27, 35, 55], log="FATAL synthetic failure\n")
+    outcome, res = await _run(
+        "control_fatal_after_restart", [27, 33, 49], [27, 35, 55], log="FATAL synthetic failure\n"
+    )
     check("control_fatal_after_restart rejected", outcome == "AssertionError", outcome)
 
     outcome, res = await _run("control_peers_do_not_advance", [27, 27, 27], [27, 35, 55])

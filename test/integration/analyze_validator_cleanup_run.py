@@ -76,7 +76,9 @@ FATAL = re.compile(
 
 def _git_head() -> str:
     try:
-        return subprocess.check_output(["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True).strip()
+        return subprocess.check_output(
+            ["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True
+        ).strip()
     except Exception:
         return "unknown"
 
@@ -106,8 +108,15 @@ def _parse_node(text: str) -> dict:
     reserves = {}
     for m in RESERVE.finditer(text):
         # keep the FIRST reserve position for a ticket
-        reserves.setdefault(_key(m), {"gc": int(m.group("gc")), "ret": int(m.group("ret")),
-                                      "dir": m.group("dir"), "pos": m.start()})
+        reserves.setdefault(
+            _key(m),
+            {
+                "gc": int(m.group("gc")),
+                "ret": int(m.group("ret")),
+                "dir": m.group("dir"),
+                "pos": m.start(),
+            },
+        )
     done_ok = {}
     for m in DELETE_DONE.finditer(text):
         if m.group("gone") == "1":
@@ -116,7 +125,9 @@ def _parse_node(text: str) -> dict:
     for m in ERASE_ACK.finditer(text):
         acked.setdefault(_key(m), m.start())
 
-    applied = [(int(m.group("seqno")), m.start(), m.group("root")) for m in APPLIED_MC.finditer(text)]
+    applied = [
+        (int(m.group("seqno")), m.start(), m.group("root")) for m in APPLIED_MC.finditer(text)
+    ]
     accepted = [(int(m.group("seqno")), m.start()) for m in FINALIZE_MC.finditer(text)]
     fatals = [ln[:400] for ln in text.splitlines() if FATAL.search(ln)]
 
@@ -128,10 +139,14 @@ def _parse_node(text: str) -> dict:
             if r["pos"] < done_ok[k] < acked[k]:
                 completed.append({"key": k, "gc": r["gc"], "dir": r["dir"]})
             else:
-                ordering_violations.append({"key": k, "reserve": r["pos"], "delete_done": done_ok[k], "ack": acked[k]})
+                ordering_violations.append(
+                    {"key": k, "reserve": r["pos"], "delete_done": done_ok[k], "ack": acked[k]}
+                )
 
-    last_delete_pos = max([done_ok.get(c["key"], 0) for c in completed] + [acked.get(c["key"], 0) for c in completed],
-                          default=None)
+    last_delete_pos = max(
+        [done_ok.get(c["key"], 0) for c in completed] + [acked.get(c["key"], 0) for c in completed],
+        default=None,
+    )
     return {
         "reserves": reserves,
         "completed": completed,
@@ -179,7 +194,9 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
         # eligibility relation + per-op gc, over every reserve / completed op.
         for r in p["reserves"].values():
             if r["ret"] > r["gc"]:
-                eligibility_violations.append(f"{nd.name}: dir={r['dir']} retirement_seqno={r['ret']} > gc_seqno={r['gc']}")
+                eligibility_violations.append(
+                    f"{nd.name}: dir={r['dir']} retirement_seqno={r['ret']} > gc_seqno={r['gc']}"
+                )
         node_gc_used = [c["gc"] for c in p["completed"]]
         for c in p["completed"]:
             if c["gc"] <= 0:
@@ -199,7 +216,11 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
         cdir = nd / "consensus"
         if cdir.is_dir():
             for child in cdir.iterdir():
-                if child.is_dir() and child.name.startswith("consensus.") and ".observer." not in child.name:
+                if (
+                    child.is_dir()
+                    and child.name.startswith("consensus.")
+                    and ".observer." not in child.name
+                ):
                     present_here += 1
         present_validator_dirs_total += present_here
 
@@ -231,19 +252,21 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
                 progressed = True  # no deletes on this node -> nothing to survive
                 validators_with_progress += 1
 
-        per_node.append({
-            "node": nd.name,
-            "has_log": True,
-            "is_validator": is_validator,
-            "completed_ordered_deletes": n_completed,
-            "ordering_violations": len(p["ordering_violations"]),
-            "gc_seqnos_used": sorted(set(node_gc_used)),
-            "max_applied_mc_seqno": max_applied,
-            "max_accepted_mc_seqno": max_accepted,
-            "validator_dirs_present_at_end": present_here,
-            "applied_beyond_delete_horizon": progressed,
-            "fatal_lines": len(p["fatals"]),
-        })
+        per_node.append(
+            {
+                "node": nd.name,
+                "has_log": True,
+                "is_validator": is_validator,
+                "completed_ordered_deletes": n_completed,
+                "ordering_violations": len(p["ordering_violations"]),
+                "gc_seqnos_used": sorted(set(node_gc_used)),
+                "max_applied_mc_seqno": max_applied,
+                "max_accepted_mc_seqno": max_accepted,
+                "validator_dirs_present_at_end": present_here,
+                "applied_beyond_delete_horizon": progressed,
+                "fatal_lines": len(p["fatals"]),
+            }
+        )
 
     fatal_total = sum(n.get("fatal_lines", 0) for n in per_node)
 
@@ -263,7 +286,9 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
 
     # --- completeness gating (INCONCLUSIVE, never silent pass) ---
     if expected_validators is None:
-        inconclusive.append("run manifest missing validator_count; cannot confirm node completeness")
+        inconclusive.append(
+            "run manifest missing validator_count; cannot confirm node completeness"
+        )
     elif len(validator_nodes) != expected_validators:
         inconclusive.append(
             f"expected {expected_validators} validators (manifest) but found {len(validator_nodes)} with mc progress: "
@@ -272,21 +297,35 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
 
     # --- hard failures ---
     if ordering_violations_total:
-        failures.append(f"{ordering_violations_total} ticket(s) whose reserve/delete_done/erase_ack were OUT OF ORDER")
+        failures.append(
+            f"{ordering_violations_total} ticket(s) whose reserve/delete_done/erase_ack were OUT OF ORDER"
+        )
     if gc_zero_completed:
-        failures.append(f"{gc_zero_completed} completed delete(s) whose own reserve had gc_seqno==0")
+        failures.append(
+            f"{gc_zero_completed} completed delete(s) whose own reserve had gc_seqno==0"
+        )
     if eligibility_violations:
-        failures.append(f"{len(eligibility_violations)} reserve(s) with retirement_seqno > gc_seqno")
+        failures.append(
+            f"{len(eligibility_violations)} reserve(s) with retirement_seqno > gc_seqno"
+        )
     if completed_total > 0 and present_validator_dirs_total == 0:
-        failures.append("cleanup deleted EVERY validator-group dir (no live group retained -> over-reach)")
+        failures.append(
+            "cleanup deleted EVERY validator-group dir (no live group retained -> over-reach)"
+        )
     if fatal_total:
         failures.append(f"{fatal_total} fatal/crash diagnostics in node logs")
     if agreement_ok is False:
-        failures.append(f"validators applied DIFFERENT masterchain block ids at seqno {agreement_seqno} (fork/divergence)")
+        failures.append(
+            f"validators applied DIFFERENT masterchain block ids at seqno {agreement_seqno} (fork/divergence)"
+        )
     elif agreement_ok is None:
-        inconclusive.append("no common masterchain milestone across validators to check block-id agreement")
+        inconclusive.append(
+            "no common masterchain milestone across validators to check block-id agreement"
+        )
     if completed_total == 0:
-        inconclusive.append("no ordered validator-group delete completed on the real path (nothing to accept)")
+        inconclusive.append(
+            "no ordered validator-group delete completed on the real path (nothing to accept)"
+        )
 
     if failures:
         verdict = "FAIL"
