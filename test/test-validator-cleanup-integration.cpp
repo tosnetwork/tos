@@ -26,7 +26,7 @@
 // doing real filesystem deletes, and a real RootDb/StateDb on a real td::actor
 // Scheduler. The only thing the harness substitutes for the manager is the
 // environment-specific head of try_validator_consensus_db_cleanup: the enable flag
-// (true here; compile-time false in production) and the GC-snapshot oracles (injected
+// (true here; the validator option, on by default, in production) and the GC-snapshot oracles (injected
 // here; built from a MasterchainState in production). Everything the integration test
 // actually asserts about -- async completion, token threading, durable erase, and the
 // retry-pacing / no-hot-loop property -- is the shared code, not a hand-rolled copy.
@@ -745,8 +745,10 @@ void scenario_inflight_single_dimension_token_rejection() {
 //     distinct guarantees. The store uses synced writes -- sync=true -- but that is a
 //     property of the implementation, not something a clean-reopen test can establish.)
 // Abnormal process exit (kill without destructors, WAL replay on reopen), the
-// interruption ordering between real operations, and power-loss are DISTINCT layers,
-// still owned by the enablement bundle (see doc: subprocess crash-recovery driver).
+// interruption ordering between real operations, and power-loss are DISTINCT layers:
+// the subprocess crash-recovery scenario below covers a hard kill after the retirement
+// commit, and test/integration/crash_boundary_recovery.py a real-node crash between the
+// confirmed delete and the record erase. Power loss is not covered.
 //
 // IMPORTANT: session A must leave SCOPE before session B is constructed. A.stop() alone
 // only requests teardown; it is A's Scheduler DESTRUCTOR (run at end of A's scope) that
@@ -885,7 +887,8 @@ void scenario_reopen_reconciles_dangling_record() {
 //
 // Boundary implemented: "retirement synchronously committed, delete not started". The
 // second boundary ("real delete confirmed, record erase not committed") is inherently
-// racy without a controllable-worker seam and is left to the enablement bundle.
+// racy without a controllable-worker seam here; it is produced on a real node by
+// --test-consensus-cleanup-crash-before-erase (test/integration/crash_boundary_recovery.py).
 //
 // Child entry points (re-exec'd, so each starts single-threaded):
 

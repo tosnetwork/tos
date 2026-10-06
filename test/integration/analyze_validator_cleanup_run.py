@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze a validator-election experiment run for GATED validator-cleanup evidence.
+"""Analyze a validator-election experiment run for validator consensus-DB cleanup evidence.
 
 Reads the per-node engine logs of a run produced by
 
@@ -7,7 +7,7 @@ Reads the per-node engine logs of a run produced by
         --enable-consensus-cleanup --duration-seconds <N> ...
 
 and emits a tri-state verdict (PASS / FAIL / INCONCLUSIVE) about the REAL validator-group
-cleanup path (Finding 1), keyed on the distinguishable `VALCLEANUP reserve|delete_done|
+cleanup path, keyed on the distinguishable `VALCLEANUP reserve|delete_done|
 erase_ack` trace (manager.cpp), NOT the observer startup sweep's "reclaimed ..." log.
 
 What this run CAN establish (and only this):

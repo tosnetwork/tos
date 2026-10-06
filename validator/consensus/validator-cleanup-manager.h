@@ -21,19 +21,19 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <optional>
 #include <vector>
 
 #include "validator/consensus/validator-cleanup.h"
 
-// Stateful adapter (B2-8a) that drives validator consensus-DB cleanup while
-// enforcing the safety invariants the pure coordinator cannot: generation-scoped
-// closure, an in-flight-delete reservation that fences reopen, and erase bound to
-// the retiring incarnation. It has NO actor/DB dependencies so it is unit-testable
+// Stateful adapter that drives validator consensus-DB cleanup while enforcing
+// the safety invariants the pure coordinator cannot: generation-scoped closure,
+// an in-flight-delete reservation that fences reopen, and erase bound to the
+// retiring incarnation. It has NO actor/DB dependencies so it is unit-testable
 // and can be driven through every crash/reopen ordering deterministically; the
 // ValidatorManager forwards group lifecycle events here and supplies the GC
 // oracles, a live-query, an (async) deleter, and a durable erase. Must be confined
-// to the manager's actor thread. Deletion is not enabled until the manager is
-// wired to call this and the gate is flipped (B2-8b/B2-8c).
+// to the manager's actor thread.
 namespace tos::validator::consensus {
 
 // A record reserved for deletion. The caller threads BOTH tokens back through
@@ -158,10 +158,13 @@ class ValidatorCleanupManager {
   // Deleting+Erasing reservations ACROSS passes (so a slow async worker cannot let
   // in-flight work grow unbounded). scan_budget / max_outstanding default to
   // unbounded for callers that only want the dispatch cap.
-  // `on_examined`, if set, is called for EVERY Pending record this pass actually examined,
-  // with (session, eligible). It lets an acceptance harness prove -- per session -- that a
-  // record was evaluated and what the decision was, rather than inferring examination from
-  // budget arithmetic (the scan can stop early on dispatch_budget / max_outstanding).
+  // `on_examined`, if set, is called with (session, eligible) for a Pending record this
+  // pass examined whenever that record's decision differs from the last one reported for
+  // it -- always on its first examination in this process, and again when it flips (an
+  // ineligible record becoming eligible, or a failed delete returning to Pending and being
+  // re-examined). It proves, per session, that a record was evaluated and what was decided,
+  // without inferring examination from budget arithmetic; reporting only changes keeps it
+  // bounded to a few lines per record although passes run on every GC advance.
   using CleanupExaminedFn = std::function<void(const ValidatorSessionId&, bool /*eligible*/)>;
   std::vector<ReservedValidatorDelete> begin_eligible_deletes(
       const BlockIdExt& gc_checkpoint, const CleanupAncestorOfGcFn& ancestor_or_equal_of_gc,
@@ -189,7 +192,8 @@ class ValidatorCleanupManager {
         auto is_closed = [&entry](const ValidatorSessionId&) { return entry.closed; };
         bool eligible = validator_cleanup_eligible(entry.record, gc_checkpoint, ancestor_or_equal_of_gc,
                                                    gc_shard_catchain_seqno, is_live, is_closed);
-        if (on_examined) {
+        if (on_examined && entry.last_reported_eligible != eligible) {
+          entry.last_reported_eligible = eligible;
           on_examined(it->first, eligible);
         }
         if (eligible) {
@@ -238,6 +242,7 @@ class ValidatorCleanupManager {
       dispatch_durable_erase(session, generation, attempt_id);
     } else {
       it->second.state = EntryState::Pending;  // retry with a fresh attempt on a later pass
+      it->second.last_reported_eligible.reset();  // report the retry's decision again
       --outstanding_;
     }
   }
@@ -279,6 +284,9 @@ class ValidatorCleanupManager {
     bool closed = false;
     EntryState state = EntryState::Pending;
     uint64_t attempt_id = 0;  // token of the current Deleting/Erasing attempt
+    // Last eligibility decision passed to on_examined, so repeated passes over an
+    // unchanged record do not report it again.
+    std::optional<bool> last_reported_eligible;
   };
   std::map<ValidatorSessionId, Entry> pending_;
   // Incarnation token of each currently-live session (created, not yet retired).

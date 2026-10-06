@@ -29,7 +29,7 @@
 #include "tos/tos-types.h"
 #include "validator/consensus/db-path.h"
 
-// Validator-group consensus-DB cleanup (Finding 1).
+// Validator-group consensus-DB cleanup.
 //
 // Unlike the observer cleanup queue (db-path.h), a validator consensus DB holds
 // own-votes and leader-window recovery state, so deleting one for a session that
@@ -37,11 +37,11 @@
 // authority therefore cannot be "this directory name was queued"; it must be
 // bound to a checkpoint that proves the session is permanently retired.
 //
-// This header is the observational core (PR A): the durable record, its strict
-// encoding, and the *pure* deletion predicate. It is consulted by nothing in the
-// retirement/sweep paths yet -- enabling deletion is PR B. Keeping the predicate
-// pure and header-only lets the safety logic be proven with falsifiable tests,
-// independent of the actor/DB stack.
+// This header is the pure core: the durable record, its strict encoding, and the
+// deletion predicate. The manager's cleanup adapter (validator-cleanup-manager.h)
+// consults the predicate before every delete. Keeping the predicate pure and
+// header-only lets the safety logic be proven with falsifiable tests, independent
+// of the actor/DB stack.
 namespace tos::validator::consensus {
 
 // One durable cleanup intent: a validator session, the masterchain checkpoint at
@@ -386,7 +386,7 @@ struct ValidatorCleanupSweepResult {
   size_t delete_attempts = 0;  // eligible records for which the deleter was invoked this pass
 };
 
-// Record-centric cleanup sweep (B2-6), pure over injected dependencies so the full
+// Record-centric cleanup sweep, pure over injected dependencies so the full
 // decision + delete + erase + reconciliation is unit-testable and can be driven by
 // deterministic fault injection. For each pending record:
 //   * if not eligible (validator_cleanup_eligible: not live, closed, on-chain

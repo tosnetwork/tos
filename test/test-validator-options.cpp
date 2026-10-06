@@ -30,5 +30,22 @@ int main() {
     std::fprintf(stderr, "archive FD explicit limit was not preserved\n");
     return 1;
   }
+
+  // Retired validator consensus databases are deleted by default; without it a
+  // validator's disk grows by one RocksDB directory per session forever.
+  if (!options->get_validator_consensus_cleanup_enabled()) {
+    std::fprintf(stderr, "validator consensus cleanup is not on by default\n");
+    return 1;
+  }
+  options.write().set_validator_consensus_cleanup_enabled(false);
+  if (options->get_validator_consensus_cleanup_enabled()) {
+    std::fprintf(stderr, "validator consensus cleanup opt-out was not preserved\n");
+    return 1;
+  }
+  // The crash fault injection is test-only and must never be armed by default.
+  if (options->get_test_crash_cleanup_before_erase()) {
+    std::fprintf(stderr, "cleanup crash fault injection is armed by default\n");
+    return 1;
+  }
   return 0;
 }

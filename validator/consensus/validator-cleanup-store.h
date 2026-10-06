@@ -27,7 +27,7 @@
 #include "td/utils/port/path.h"
 #include "validator/consensus/validator-cleanup.h"
 
-// Key-value persistence for validator cleanup records (Finding 1), kept separate
+// Key-value persistence for validator cleanup records, kept separate
 // from validator-cleanup.h so the pure record/predicate core has no dependency on
 // the KeyValue layer. StateDb's methods are thin wrappers over these functions,
 // and tests exercise the SAME functions against a real RocksDb -- so disabling a
@@ -46,7 +46,7 @@ inline void store_validator_cleanup_record(td::KeyValue& kv, const PendingValida
 // Atomically persist a validator retirement: the destroyed-session fence (already
 // encoded by the caller as a single key/value) together with every newly-retiring
 // cleanup record, in ONE synced write batch. This is the durable precondition for
-// PR B's "persist intent before the actor is allowed to close" flow: if the actor
+// the "persist intent before the actor is allowed to close" retirement flow: if the actor
 // may begin retiring, the fence and the cleanup intents are already on disk
 // together. The record keys are written directly here (not via
 // store_validator_cleanup_record) because that helper opens its own batch and
@@ -127,7 +127,7 @@ inline bool path_is_confirmed_absent(const std::string& full) {
 // destroy_inner (RocksDb::destroy + rmrf + confirmed-absent stat), and shares
 // their assumption that the consensus root is a node-owned, trusted directory --
 // symlinks planted inside it are out of scope, exactly as for those paths.
-// Performs NO eligibility check: the caller (the cleanup orchestrator, B2-6) must
+// Performs NO eligibility check: the caller (the cleanup orchestrator) must
 // have already established -- under the checkpoint-bound four-condition rule --
 // that deleting this session's directory is safe. This is the last step, not the
 // decision.

@@ -43,7 +43,7 @@
 //   void try_validator_consensus_db_cleanup();
 // The gate check, the GC-snapshot oracles, and begin_eligible_deletes stay in the
 // owner's try_validator_consensus_db_cleanup (they are environment-specific: the
-// production gate is compile-time false and the oracles come from a MasterchainState;
+// production gate is the validator option and the oracles come from a MasterchainState;
 // a test supplies its own gate and injected oracles). Everything after the reserved
 // batch is produced -- worker creation, dispatch, completion, durable erase, and the
 // re-trigger placement -- is shared here.
@@ -51,7 +51,7 @@ namespace tos::validator::consensus {
 
 // Dispatch each already-reserved delete to the worker, OFF the owner's message stack.
 // The worker is created lazily on first use (so a caller that never reserves anything
-// -- e.g. production with the gate off -- never allocates it). The completion promise
+// -- e.g. a node started with --disable-validator-consensus-cleanup -- never allocates it). The completion promise
 // carries the confirmed-gone result plus the (session, generation, attempt_id) token
 // back to Self::validator_cleanup_delete_done, so the adapter can reject a stale or
 // duplicate completion. The reservation and the worker-creation fence stay held until

@@ -16,12 +16,13 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "validator/consensus/validator-cleanup.h"
-#include "validator/consensus/validator-cleanup-manager.h"
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "td/utils/tests.h"
-
-#include <string>
+#include "validator/consensus/validator-cleanup-manager.h"
+#include "validator/consensus/validator-cleanup.h"
 
 using namespace tos::validator::consensus;
 
@@ -641,7 +642,7 @@ TEST(ValidatorCleanup, fault_injection_scenarios) {
   }
 }
 
-// The stateful adapter (B2-8a): generation-scoped closure, in-flight-delete
+// The stateful adapter: generation-scoped closure, in-flight-delete
 // fencing, reopen handling, and incarnation-bound erase.
 TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
   auto gc = make_checkpoint(500);
@@ -913,6 +914,55 @@ TEST(ValidatorCleanup, cleanup_manager_bounds_scan_and_outstanding) {
     auto b = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10, 1000, 2);
     ASSERT_TRUE(b.empty());  // outstanding == max -> none reserved
   }
+}
+
+// A cleanup pass runs on every GC advance, so the per-record examination report must
+// fire only when a record's decision changes: once on first examination, again when
+// it flips to eligible, and again after a failed delete puts it back for a retry.
+// Repeating it on every pass would write one line per pending record per GC advance.
+TEST(ValidatorCleanup, cleanup_manager_reports_each_decision_once) {
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+  };
+  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+  std::vector<std::pair<tos::ValidatorSessionId, bool>> reports;
+  auto on_examined = [&reports](const tos::ValidatorSessionId& s, bool eligible) { reports.emplace_back(s, eligible); };
+  auto pass = [&](ValidatorCleanupManager& m) {
+    return m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10, 1000, 1000, on_examined);
+  };
+
+  ValidatorCleanupManager m;
+  auto rec = make_record(7, 100);
+  auto sid = rec.session_id;
+  m.on_group_created(sid);
+  auto gen = m.on_group_retired(rec);  // not yet closed -> ineligible
+
+  ASSERT_TRUE(pass(m).empty());
+  ASSERT_EQ(reports.size(), static_cast<size_t>(1));
+  ASSERT_TRUE(reports[0].first == sid);
+  ASSERT_TRUE(!reports[0].second);
+  // Unchanged decision on later passes: no new report.
+  for (int i = 0; i < 5; i++) {
+    ASSERT_TRUE(pass(m).empty());
+  }
+  ASSERT_EQ(reports.size(), static_cast<size_t>(1));
+
+  // Closing makes it eligible: the flip is reported once and the record reserved.
+  m.on_close_confirmed(sid, gen);
+  auto reserved = pass(m);
+  ASSERT_EQ(reserved.size(), static_cast<size_t>(1));
+  ASSERT_EQ(reports.size(), static_cast<size_t>(2));
+  ASSERT_TRUE(reports[1].second);
+
+  // A failed delete returns it to Pending; the retry's decision is reported again,
+  // even though it is the same decision as before the attempt.
+  auto no_erase = [](const tos::ValidatorSessionId&, uint64_t, uint64_t) {};
+  m.on_delete_completed(sid, reserved[0].generation, reserved[0].attempt_id, /*confirmed_gone=*/false, no_erase);
+  ASSERT_EQ(pass(m).size(), static_cast<size_t>(1));
+  ASSERT_EQ(reports.size(), static_cast<size_t>(3));
+  ASSERT_TRUE(reports[2].second);
 }
 
 // Generation bookkeeping must not grow with historical session churn, and a

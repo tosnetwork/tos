@@ -309,24 +309,22 @@ class ValidatorManagerImpl : public ValidatorManager {
   // plus multiple observers).
   std::set<std::string> pending_consensus_db_cleanup_;
 
-  // Validator-group consensus-DB cleanup adapter (Finding 1 / PR B/B2-8). Owns the
-  // durable cleanup records, per-incarnation generations, closure tracking, and
-  // the in-flight-delete reservation. Fed by the group lifecycle events below and
-  // driven by try_validator_consensus_db_cleanup(). Actual deletion is gated OFF
-  // by kValidatorConsensusCleanupEnabled until a post-genesis enablement; with the
-  // gate off the adapter only accumulates shadow state and deletes nothing.
+  // Validator-group consensus-DB cleanup adapter. Owns the durable cleanup records,
+  // per-incarnation generations, closure tracking, and the in-flight-delete
+  // reservation. Fed by the group lifecycle events below and driven by
+  // try_validator_consensus_db_cleanup(), which deletes only when the runtime option
+  // (on by default) is set and the four-condition safety gate proves a retired
+  // session obsolete against the durable GC snapshot. With cleanup disabled the
+  // adapter only accumulates records and deletes nothing.
   consensus::ValidatorCleanupManager validator_cleanup_manager_;
 
   // Dedicated actor that runs the blocking validator-DB filesystem delete off the
-  // manager actor thread (created lazily on the first gated cleanup dispatch).
+  // manager actor thread (created lazily on the first cleanup dispatch).
   td::actor::ActorOwn<consensus::ValidatorConsensusCleanupWorker> validator_cleanup_worker_;
 
-  // Compile-time gate for enabling validator consensus-DB deletion. Deliberately
-  // false: a normal build must never delete. Live deletion is turned on ONLY via an
-  // explicit runtime opt-in for acceptance (never a blanket compile-time enable that
-  // would arm every build from this branch). The four-condition safety gate +
-  // GC-snapshot oracles remain the runtime protection against wrongful deletion.
-  static constexpr bool kValidatorConsensusCleanupEnabled = false;
+  // Pending count written by the last "VALCLEANUP pass" line, so a pass that changed
+  // nothing (the common case, one per GC advance) is not logged again.
+  std::optional<size_t> validator_cleanup_last_logged_pending_;
   // Max directory deletions dispatched per cleanup pass, so a large backlog cannot
   // make a single manager turn do unbounded filesystem work.
   static constexpr size_t kValidatorConsensusCleanupBudget = 16;
@@ -694,7 +692,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void sweep_destroyed_consensus_dbs();
   // Drives one validator-group cleanup pass through validator_cleanup_manager_:
   // builds the GC-snapshot oracles, deletes eligible directories, and erases their
-  // durable records. A no-op while kValidatorConsensusCleanupEnabled is false.
+  // durable records. A no-op when validator consensus cleanup is disabled.
   void try_validator_consensus_db_cleanup();
   // The async delete worker reported a completed delete ATTEMPT (session,
   // generation, attempt_id) with its confirmed-gone result: feed it to the adapter.

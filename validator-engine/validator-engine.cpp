@@ -1788,8 +1788,12 @@ td::Status ValidatorEngine::load_global_config() {
   if (state_ttl_ != 0) {
     validator_options_.write().set_state_ttl(state_ttl_);
   }
-  if (enable_validator_consensus_cleanup_) {
-    validator_options_.write().set_validator_consensus_cleanup_enabled(true);
+  validator_options_.write().set_validator_consensus_cleanup_enabled(validator_consensus_cleanup_);
+  if (validator_consensus_cleanup_) {
+    LOG(INFO) << "validator consensus cleanup: enabled";
+  } else {
+    LOG(WARNING) << "validator consensus cleanup: disabled; retired validator consensus databases are kept and "
+                    "the database grows without bound";
   }
   if (test_crash_cleanup_before_erase_) {
     validator_options_.write().set_test_crash_cleanup_before_erase(true);
@@ -6241,6 +6245,10 @@ int main(int argc, char *argv[]) {
   std::string measurement_node_id;
   std::optional<td::IPAddress> json_rpc_bind_address;
   bool json_rpc_readonly = false;
+  struct {
+    bool enable = false;
+    bool disable = false;
+  } validator_consensus_cleanup_flags;
 
   td::OptionParser p;
   p.set_description("validator or full node for TOS network");
@@ -6342,17 +6350,29 @@ int main(int argc, char *argv[]) {
     acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_key_proof_ttl, v); });
     return td::Status::OK();
   });
-  p.add_option('\0', "enable-validator-consensus-cleanup",
-               "ACCEPTANCE ONLY: arm live deletion of obsolete validator consensus-DB directories (Finding 1). "
-               "Default off; a normal deployment must not set this.",
+  p.add_option(
+      '\0', "enable-validator-consensus-cleanup",
+      "delete the consensus database directory (<db>/consensus/) of each retired validator-set session once "
+      "it is provably obsolete: its retirement block is an ancestor of the durable GC block, the session is "
+      "obsolete on-chain, no current or next group can use it, and its database is closed. On by default; "
+      "this flag states the default explicitly",
+      [&]() {
+        validator_consensus_cleanup_flags.enable = true;
+        acts.push_back([&x]() { td::actor::send_closure(x, &ValidatorEngine::set_validator_consensus_cleanup, true); });
+      });
+  p.add_option('\0', "disable-validator-consensus-cleanup",
+               "keep retired validator consensus database directories on disk (e.g. for forensics). A validator grows "
+               "without bound in this mode; retirements are still recorded and are reclaimed after a restart without "
+               "this flag",
                [&]() {
+                 validator_consensus_cleanup_flags.disable = true;
                  acts.push_back(
-                     [&x]() { td::actor::send_closure(x, &ValidatorEngine::set_enable_validator_consensus_cleanup, true); });
+                     [&x]() { td::actor::send_closure(x, &ValidatorEngine::set_validator_consensus_cleanup, false); });
                });
   p.add_option('\0', "test-consensus-cleanup-crash-before-erase",
-               "ACCEPTANCE FAULT INJECTION ONLY: after the consensus directory is confirmed deleted but before the "
-               "durable cleanup record is erased, exit abruptly to reproduce the mid-flight crash state. Default off; "
-               "a normal deployment must never set this.",
+               "TEST-ONLY FAULT INJECTION: after a consensus directory is confirmed deleted but before its durable "
+               "cleanup record is erased, exit abruptly to reproduce the mid-flight crash state. Default off; never "
+               "set this on a real node.",
                [&]() {
                  acts.push_back([&x]() {
                    td::actor::send_closure(x, &ValidatorEngine::set_test_crash_cleanup_before_erase, true);
@@ -7082,6 +7102,11 @@ int main(int argc, char *argv[]) {
   auto S = p.run(argc, argv);
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
+    std::_Exit(2);
+  }
+  if (validator_consensus_cleanup_flags.enable && validator_consensus_cleanup_flags.disable) {
+    LOG(ERROR) << "--enable-validator-consensus-cleanup and --disable-validator-consensus-cleanup are mutually "
+                  "exclusive";
     std::_Exit(2);
   }
   if (json_rpc_bind_address) {

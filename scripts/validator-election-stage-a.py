@@ -4980,9 +4980,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--enable-consensus-cleanup",
         action="store_true",
         help=(
-            "ACCEPTANCE ONLY: arm the gated validator consensus-DB cleanup on every "
-            "engine (--enable-validator-consensus-cleanup) so live deletion of obsolete "
-            "validator groups runs during this election experiment. Default off."
+            "pass --enable-validator-consensus-cleanup explicitly and shorten the engines' "
+            "state/archive TTLs so the GC floor, and with it the deletion of obsolete "
+            "validator consensus databases, advances within this run. Cleanup itself is "
+            "on by default in the engine."
         ),
     )
     parser.add_argument(
