@@ -204,7 +204,11 @@ class RoleTest(unittest.TestCase):
 
     def test_without_the_role_a_lite_server_is_allowed(self) -> None:
         result = self.role(
-            "check", VALIDATOR_ID=None, PQ_CONSENSUS_KEY_FILE=None, LITESERVER="true"
+            "check",
+            str(self.config),
+            VALIDATOR_ID=None,
+            PQ_CONSENSUS_KEY_FILE=None,
+            LITESERVER="true",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -264,10 +268,21 @@ class RoleTest(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), before)
 
     def test_loopback_json_rpc_is_allowed(self) -> None:
-        for custom in ("--json-rpc-address 127.0.0.1:8081", "--json-rpc-address=[::1]:8081"):
+        for custom in (
+            "--json-rpc-address 127.0.0.1:8081",
+            "--json-rpc-address=[::1]:8081",
+            "--json-rpc-address 127.255.0.9:1",
+            "--verbosity 3\n--json-rpc-address\t127.0.0.1:65535",
+        ):
             with self.subTest(custom=custom):
-                result = self.role("check", CUSTOM_ARG=custom)
+                result = self.role("check", str(self.config), CUSTOM_ARG=custom)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_persisted_binding_alone_keeps_the_role(self) -> None:
+        self.assertEqual(self.apply().returncode, 0)
+        result = self.role("check", str(self.config), VALIDATOR_ID=None, PQ_CONSENSUS_KEY_FILE=None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already binds a validator", result.stdout)
 
     # ---- refusals
 
@@ -339,9 +354,69 @@ class RoleTest(unittest.TestCase):
             "--json-rpc-address 0.0.0.0:8081",
             "--verbosity 3 --json-rpc-address=203.0.113.5:8081",
             "--json-rpc-address",
+            # Every line of CUSTOM_ARG reaches the engine, not only the first.
+            "--verbosity 3\n--json-rpc-readonly --json-rpc-address 0.0.0.0:8081",
+            "--verbosity\t3\t--json-rpc-address=0.0.0.0:8081",
+            # The engine resolves host names; only a literal loopback IP is provably local.
+            "--json-rpc-address 127.validator.example:8081",
+            "--json-rpc-address localhost:8081",
+            "--json-rpc-address 127.0.0.256:8081",
+            "--json-rpc-address 127.1:8081",
+            "--json-rpc-address [::2]:8081",
+            "--json-rpc-address 127.0.0.1",
+            "--json-rpc-address 127.0.0.1:0",
+            "--json-rpc-address 127.0.0.1:65536",
+            "--json-rpc-address 127.0.0.1:8081 --json-rpc-address 0.0.0.0:8082",
         ):
             with self.subTest(custom=custom):
                 self.assert_refused("loopback only", CUSTOM_ARG=custom)
+
+    def test_configured_lite_servers_with_the_role_are_refused(self) -> None:
+        config = json.loads(ENGINE_CONFIG)
+        config["liteservers"] = [{"@type": "engine.liteServer", "id": "AAAA", "port": 30003}]
+        self.config.write_text(json.dumps(config))
+        self.assert_refused("configures 1 lite server(s)")
+
+    def write_bound_config(self, **fields: object) -> None:
+        config = json.loads(ENGINE_CONFIG)
+        config["extraconfig"] = {
+            "@type": "engine.validator.extraConfig",
+            "state_serializer_enabled": True,
+            "pq_consensus": {
+                "@type": "engine.validator.pqConsensus",
+                "validator_id": VALIDATOR_ID_B64,
+                "consensus_key_file": str(self.seed),
+            },
+        }
+        config.update(fields)
+        self.config.write_text(json.dumps(config))
+
+    def test_bound_node_without_the_variables_still_refuses_public_services(self) -> None:
+        cases = (
+            ({}, {"LITESERVER": "true"}, "a validator runs no lite server"),
+            ({}, {"CUSTOM_ARG": "--json-rpc-address 0.0.0.0:8081"}, "loopback only"),
+            (
+                {"liteservers": [{"@type": "engine.liteServer", "id": "AAAA", "port": 30003}]},
+                {},
+                "configures 1 lite server(s)",
+            ),
+        )
+        for fields, env, reason in cases:
+            with self.subTest(reason=reason):
+                self.write_bound_config(**fields)
+                before = self.config.read_bytes()
+                result = self.role(
+                    "check", str(self.config), VALIDATOR_ID=None, PQ_CONSENSUS_KEY_FILE=None, **env
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(reason, result.stderr)
+                self.assertEqual(self.config.read_bytes(), before)
+
+    def test_unreadable_config_is_refused(self) -> None:
+        self.config.write_text("{not json")
+        result = self.role("check", str(self.config), VALIDATOR_ID=None, PQ_CONSENSUS_KEY_FILE=None)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot parse", result.stderr)
 
     def test_missing_config_is_refused(self) -> None:
         self.config.unlink()
@@ -445,6 +520,20 @@ class EntrypointTest(unittest.TestCase):
         self.assertIn("a validator runs no lite server", result.stderr)
         self.assertEqual(self.engine_calls(), [])
         self.assertEqual(list(self.db.iterdir()), [])
+
+    def test_lite_server_node_restarted_as_validator_is_refused(self) -> None:
+        self.assertEqual(self.run_init(LITESERVER="true").returncode, 0)
+        result = self.run_init(**self.validator_env())
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+        self.assertIn("configures 1 lite server(s)", result.stderr)
+        self.assertEqual(len(self.engine_calls()), 2, "only the first, full-node run started it")
+
+    def test_bound_node_restarted_with_a_lite_server_is_refused(self) -> None:
+        self.assertEqual(self.run_init(**self.validator_env()).returncode, 0)
+        result = self.run_init(LITESERVER="true")
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+        self.assertIn("a validator runs no lite server", result.stderr)
+        self.assertEqual(len(self.engine_calls()), 2, "only the first, validator run started it")
 
     def test_bad_key_stops_before_anything_is_created(self) -> None:
         self.seed.chmod(0o644)

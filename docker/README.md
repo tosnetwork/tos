@@ -150,9 +150,14 @@ key file, the container refuses to start, and changing the identity a node
 signs for is a deliberate edit of that file.
 
 A validator serves no public queries. The role is refused together with
-`LITESERVER`, and with a `--json-rpc-address` in `CUSTOM_ARG` that is not a
-loopback address. Keep the console port (CONSOLE_PORT) unpublished; wallets
-and explorers use separate RPC nodes.
+`LITESERVER`, with lite servers already configured in `config.json` (a node
+that ran as a lite server cannot be turned into a validator by setting the
+variables), and with any `--json-rpc-address` in `CUSTOM_ARG` that is not a
+literal loopback address (`127.x.y.z:port` or `[::1]:port`; host names are
+refused because the node resolves them). Once `config.json` binds a
+validator, the same rules apply on every start even if the variables are
+removed. Keep the console port (CONSOLE_PORT) unpublished; wallets and
+explorers use separate RPC nodes.
 
 Back the seed up offline and encrypted, never on the host. The controller root
 key (`tos-pq-key`) and the controller actions it signs (`tos-pq-controller`)

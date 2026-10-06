@@ -9,7 +9,7 @@ fi
 
 # Validator role (opt-in). Checked before anything is downloaded or created,
 # so a misconfigured validator stops here instead of starting as a full node.
-/var/tos-work/scripts/validator-role.sh check || { echo "Validator role refused"; exit 4; }
+/var/tos-work/scripts/validator-role.sh check /var/tos-work/db/config.json || { echo "Validator role refused"; exit 4; }
 
 # global config
 if [ ! -z "$GLOBAL_CONFIG_URL" ]; then

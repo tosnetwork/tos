@@ -11,8 +11,13 @@
 # node's config.json, which makes the engine load the key and act as that
 # validator. Setting only one of them is refused rather than guessed at.
 #
-#   validator-role.sh check          validate the environment; changes nothing
+#   validator-role.sh check CONFIG   validate the environment and CONFIG (which
+#                                    may not exist yet); changes nothing
 #   validator-role.sh apply CONFIG   check, then write the binding into CONFIG
+#
+# The role is in effect when the variables are set or when CONFIG already
+# binds a validator: a node bound on an earlier start stays a validator after
+# the variables are removed, and the same rules apply to it.
 #
 # The key file is checked with the rules the engine itself applies when it
 # loads a seed: not a symbolic link, a regular file of exactly 32 bytes, owned
@@ -21,9 +26,11 @@
 # before the node starts, instead of by the engine after it has started. The
 # seed's content is never read or printed by this script.
 #
-# A validator serves no public queries: a lite server (LITESERVER) or a
-# JSON-RPC listener on a non-loopback address (--json-rpc-address in
-# CUSTOM_ARG) is refused together with the validator role.
+# A validator serves no public queries. With the role in effect this refuses
+# LITESERVER, lite servers already configured in CONFIG, and any
+# --json-rpc-address in CUSTOM_ARG that is not a literal loopback address
+# (127.0.0.0/8 or [::1]); a host name is refused because the engine resolves
+# it. CUSTOM_ARG is split exactly as init.sh expands it for the engine.
 #
 # The binding is written once. A config.json that already names a different
 # validator or key file is refused, not rewritten: changing the identity a
@@ -88,19 +95,55 @@ check_key_file() {
     refuse "directory $directory of the consensus key is group- or world-writable (mode $dir_mode)"
 }
 
+# A literal loopback IP and a port: 127.a.b.c:port or [::1]:port. Anything
+# else, host names included, is not provably loopback.
 loopback_address() {
-  case "$1" in
-    127.* | localhost:* | "[::1]":*) return 0 ;;
+  local value="$1" host port octet
+  case "$value" in
+    "[::1]":*) port="${value#\[::1\]:}" ;;
+    *:*)
+      host="${value%:*}"
+      port="${value##*:}"
+      [[ "$host" =~ ^127\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+      for octet in "${BASH_REMATCH[@]:1}"; do
+        ((10#$octet <= 255)) || return 1
+      done
+      ;;
     *) return 1 ;;
   esac
+  [[ "$port" =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535))
+}
+
+# Whether CONFIG already binds a validator. A config that cannot be read is
+# refused rather than taken as unbound.
+config_binds_validator() {
+  local config="$1"
+  [ -e "$config" ] || return 1
+  command -v jq >/dev/null || refuse "jq is required to read $config"
+  local bound
+  bound="$(jq -r 'if (.extraconfig.pq_consensus | type) == "object" then "yes" else "no" end' \
+    "$config")" || refuse "cannot parse $config"
+  [ "$bound" = "yes" ]
 }
 
 check_no_public_service() {
+  local config="$1"
   if [ -n "${LITESERVER:-}" ]; then
     refuse "LITESERVER is set; a validator runs no lite server. Serve queries from a separate RPC node"
   fi
+  if [ -e "$config" ]; then
+    command -v jq >/dev/null || refuse "jq is required to read $config"
+    local lite
+    lite="$(jq -r '(.liteservers // []) | length' "$config")" || refuse "cannot parse $config"
+    [ "$lite" = "0" ] ||
+      refuse "$config configures $lite lite server(s); a validator runs none. Remove them from config.json"
+  fi
+  # init.sh passes $CUSTOM_ARG unquoted, so the engine receives the words of
+  # its word splitting and pathname expansion, from the same directory. Split
+  # it the same way here, never only its first line.
   local words=() i value
-  read -r -a words <<<"${CUSTOM_ARG:-}"
+  # shellcheck disable=SC2206
+  words=(${CUSTOM_ARG:-})
   for ((i = 0; i < ${#words[@]}; i++)); do
     case "${words[i]}" in
       --json-rpc-address=*) value="${words[i]#--json-rpc-address=}" ;;
@@ -115,21 +158,27 @@ check_no_public_service() {
 }
 
 check() {
+  local config="$1"
   if ! role_requested; then
-    echo "[=] Validator role disabled (VALIDATOR_ID and PQ_CONSENSUS_KEY_FILE are not set)"
+    if ! config_binds_validator "$config"; then
+      echo "[=] Validator role disabled (VALIDATOR_ID and PQ_CONSENSUS_KEY_FILE are not set)"
+      return 0
+    fi
+    check_no_public_service "$config"
+    echo "[=] $config already binds a validator; the validator role stays in effect"
     return 0
   fi
   [ -n "${VALIDATOR_ID:-}" ] ||
     refuse "PQ_CONSENSUS_KEY_FILE is set without VALIDATOR_ID; both are needed for the validator role"
   normalized_validator_id >/dev/null
   check_key_file
-  check_no_public_service
+  check_no_public_service "$config"
   echo "[+] Validator role: controller $(normalized_validator_id), consensus key $PQ_CONSENSUS_KEY_FILE"
 }
 
 apply() {
   local config="$1"
-  check
+  check "$config"
   role_requested || return 0
   [ -f "$config" ] || refuse "node config $config does not exist; initialize the node first"
   command -v jq >/dev/null || refuse "jq is required to edit $config"
@@ -170,10 +219,13 @@ apply() {
 }
 
 case "${1:-}" in
-  check) check ;;
+  check)
+    [ $# -eq 2 ] || refuse "usage: $0 check CONFIG"
+    check "$2"
+    ;;
   apply)
     [ $# -eq 2 ] || refuse "usage: $0 apply CONFIG"
     apply "$2"
     ;;
-  *) refuse "usage: $0 check | apply CONFIG" ;;
+  *) refuse "usage: $0 check CONFIG | apply CONFIG" ;;
 esac
