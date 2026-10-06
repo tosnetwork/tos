@@ -138,6 +138,7 @@ mod tests {
                 load_bound(&vault, &id, role, &wrong_key).await.is_err(),
                 "wrong enrollment accepted"
             );
+            drop(vault);
             let wrong_master = open(&path, 0x78).await;
             assert!(
                 load_bound(&wrong_master, &id, role, &key).await.is_err(),

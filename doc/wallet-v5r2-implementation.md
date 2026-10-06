@@ -1916,3 +1916,32 @@ can still have stale in-memory snapshots: this repair does not provide exclusive
 writer ownership, cross-process merge safety or rollback protection. Safe PQ key
 creation must retain those as explicit prerequisites. Evidence:
 `test/wallet-v5r2/vault-persistence-20261006.json`.
+
+### Exclusive ownership of file Vault snapshots
+
+Every `FileJsonStorage::new` now obtains a nonblocking exclusive OS lock before
+reading or auto-migrating the file. The descriptor remains owned by the instance
+until destruction. Public standalone migration obtains the same lock; an internal
+migration helper reuses constructor ownership without recursively locking.
+Canonical parent paths and a stable filename-appended `.lock` sidecar keep atomic
+replacement of the data file from changing the locked inode. The sidecar is never
+unlinked by the library. Symlink Vault aliases are refused; Unix hard-link aliases,
+unsafe lock ownership/permissions and nonregular lock files are also refused.
+
+The test suite checks a second instance and standalone migration are refused while
+held, reopening works after drop, alias paths are refused, and a separate child
+process cannot open until the parent's instance closes. Deleting OS acquisition
+causes both local-instance and child-process false acceptance; removing migration
+acquisition causes migration false acceptance. Both controls restore passing tests.
+The PQ wrong-master test now closes its previous Vault before reopening, so it
+continues to test decryption rejection instead of accidentally testing lock refusal.
+
+This is a cooperating-library local ownership guarantee, not protection against
+an owner who replaces the lock file, software that ignores locks, restore of an
+older closed snapshot or cross-device replicas. Parent directory trust and actual
+filesystem locking semantics remain deployment requirements. The current API has
+no separately unlocked read-only mode; callers should share one instance through
+`Arc`. This closes the known simultaneous-instance stale-snapshot overwrite path
+for callers using the updated backend; PQ creation still needs its own store,
+flush, reread and failure-path validation. Evidence:
+`test/wallet-v5r2/vault-ownership-20261006.json`.

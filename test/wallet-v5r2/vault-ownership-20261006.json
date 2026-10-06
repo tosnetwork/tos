@@ -1,0 +1,101 @@
+{
+  "base_commit": "2c9a77362a1381590867cc156c6d789eacefc82f",
+  "scope": "Cooperating file Vault lifetime ownership before snapshot loading and migration, including actual child-process exclusion.",
+  "tests": {
+    "storage_tests_passed": 53,
+    "full_vault_tests_passed": 232,
+    "full_vault_ignored": {
+      "count": 1,
+      "name": "secret_input::tests::fd_refusal_child",
+      "reason": "child-only test invoked by parent test"
+    },
+    "ownership_semantic_controls": {
+      "lock": {
+        "exit": 101,
+        "semantic_witness": "second Vault instance acquired held lock"
+      },
+      "migration": {
+        "exit": 101,
+        "semantic_witness": "migration acquired held Vault lock"
+      }
+    },
+    "pq_semantic_controls": {
+      "profile": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid profile"
+      },
+      "role": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid role"
+      },
+      "expiration": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid expiration"
+      },
+      "enrollment": {
+        "exit": 101,
+        "semantic_witness": "wrong enrollment accepted"
+      }
+    },
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p secrets-vault --lib",
+    "python3 test/wallet-v5r2/vault_ownership_controls.py --output <fresh-directory>",
+    "python3 test/wallet-v5r2/vault_signer_controls.py --output <fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/secrets-vault/src/storage/file_json.rs",
+      "bytes": 26831,
+      "sha256": "8d04c46a3e29627982bb8669900db7798b0d7a9d0f7c664cb9f3be75ba2842a5"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/secrets-vault/README.md",
+      "bytes": 9006,
+      "sha256": "bfb3c41171c051c5e8237d16ae0985ad8c9fc203fdf219f5c5ab6c6d1d546b00"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/vault.rs",
+      "bytes": 6966,
+      "sha256": "24cee3a22a13211979af46cbbacca83fa5fe99b79376f5578eb79d03b56ce547"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/vault_ownership_controls.py",
+      "bytes": 2789,
+      "sha256": "5313ff9cd7214eb7417236b89808caa90d5b73d3b71283ec7293fadf58886ae9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 16863,
+      "sha256": "82cae4a993612b81b6622c555ef82940e83af9d224b893b639ce703764f32893"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 125090,
+      "sha256": "2cfeeb191e7c157066bb555263aec57fc033cdd6238922e870574af50f3bdaf0"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-ownership-controls/MANIFEST.json",
+      "bytes": 1812,
+      "sha256": "683b34b6ad73b63117d3d502e1e7aa852453bdf2aaca097392957ceddc384c8b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-ownership-pq-controls/MANIFEST.json",
+      "bytes": 1605,
+      "sha256": "fc7fcbe662995bf652f1ed300df3bdf892bb528a205693cf05085338498d91d1"
+    }
+  ],
+  "limitations": [
+    "Unix/macOS local test evidence; Linux CI pending, Windows not validated.",
+    "All file instances are exclusive, including read-only use of current API; callers must share one instance or close before reopening/migration.",
+    "Trusted parent directory and cooperating library required. Do not delete stable lock inode; old or bypassing software does not honor this lock.",
+    "No closed-snapshot rollback, cross-device safety or power-loss fault campaign established.",
+    "PQ creation and default gas-credit admission remain unfinished."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}

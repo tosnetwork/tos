@@ -10,6 +10,28 @@ A Rust library for secure secret management with pluggable storage backends and 
 - **Secret types** — Ed25519 key pairs, AES-256-GCM symmetric keys, arbitrary binary blobs
 - **Async API** — fully async with `tokio`
 
+## File storage ownership
+
+A file-backed instance takes an exclusive operating-system lock before loading
+its snapshot and holds it until the storage instance is dropped. Share one
+`SecretVault`/storage instance through `Arc` inside a process; opening the same
+file again while it is live fails, including read-only usage of the current API.
+Standalone migration takes the same lock. Close all instances before migration
+or reopening with another master key.
+
+The lock uses a stable `<vault filename>.lock` sidecar. Do not delete this file
+while any process may use the Vault; its existence alone does not mean the lock
+is held. Parent paths are canonicalized; vault symlink and Unix hard-link aliases
+are rejected. Unix lock files must be regular, single-linked, owned by the current
+user and mode 0600. Keep the parent directory trusted. Programs that bypass this
+library, old versions without locking, shared filesystem lock semantics and
+rollback of a closed Vault remain outside this ownership guarantee.
+
+Saves use exclusive random mode-0600 temporary files, atomic replacement and
+Unix directory synchronization. A failed save can leave persistence uncertain;
+this locking mechanism does not turn a multi-step application workflow into a
+transaction or provide cross-device anti-rollback protection.
+
 ## Quick Start
 
 ### As a Library

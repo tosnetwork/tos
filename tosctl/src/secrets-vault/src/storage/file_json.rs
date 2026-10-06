@@ -128,6 +128,7 @@ pub struct FileJsonStorage {
     tree: tokio::sync::RwLock<SecretNode>,
     crypto_factory: Box<dyn CryptoFactory>,
     crypto: Box<dyn Crypto>,
+    _writer_lock: std::fs::File,
 }
 
 impl FileJsonStorage {
@@ -139,10 +140,10 @@ impl FileJsonStorage {
         crypto_factory: Box<dyn CryptoFactory>,
         auto_migrate: bool,
     ) -> anyhow::Result<Self> {
-        if let Some(parent) = file_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
+        let requested_path = file_path.to_owned();
+        let (owned_path, writer_lock) =
+            tokio::task::spawn_blocking(move || Self::acquire_writer(&requested_path)).await??;
+        let file_path = owned_path.as_path();
         let crypto = crypto_factory.new_crypto()?;
 
         let tree = if tokio::fs::metadata(&file_path).await.is_ok() {
@@ -158,7 +159,7 @@ impl FileJsonStorage {
                     );
                 }
 
-                Self::migrate(file_path, master_key.key_material(), crypto.as_ref()).await?;
+                Self::migrate_locked(file_path, master_key.key_material(), crypto.as_ref()).await?;
                 json = tokio::fs::read_to_string(&file_path).await?;
                 storage_file = serde_json::from_str(&json)?;
             }
@@ -174,7 +175,68 @@ impl FileJsonStorage {
             tree: tokio::sync::RwLock::new(tree),
             crypto_factory,
             crypto,
+            _writer_lock: writer_lock,
         })
+    }
+
+    // Every file-backed instance, including readers with a cached snapshot,
+    // participates in this lock. Keep the stable sidecar inode after closing:
+    // deleting it would let a new opener lock a different inode concurrently.
+    fn acquire_writer(requested: &Path) -> anyhow::Result<(PathBuf, std::fs::File)> {
+        let parent = requested
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let parent = std::fs::canonicalize(parent)?;
+        let name =
+            requested.file_name().ok_or_else(|| anyhow::anyhow!("Vault filename required"))?;
+        let path = parent.join(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                anyhow::ensure!(
+                    metadata.is_file() && !metadata.file_type().is_symlink(),
+                    "Vault path must be a regular non-symlink file"
+                );
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    anyhow::ensure!(metadata.nlink() == 1, "Vault hard-link aliases are forbidden");
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let mut lock_name = name.to_os_string();
+        lock_name.push(".lock");
+        let lock_path = parent.join(lock_name);
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        anyhow::ensure!(
+            !std::fs::symlink_metadata(&lock_path).is_ok_and(|m| m.file_type().is_symlink()),
+            "Vault lock must not be a symlink"
+        );
+        let lock = options.open(&lock_path)?;
+        let metadata = lock.metadata()?;
+        anyhow::ensure!(metadata.is_file(), "Vault lock must be a regular file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            anyhow::ensure!(
+                metadata.nlink() == 1
+                    && metadata.uid() == unsafe { libc::geteuid() }
+                    && metadata.mode() & 0o777 == 0o600,
+                "Unsafe Vault lock ownership or permissions"
+            );
+        }
+        lock.try_lock()
+            .map_err(|_| anyhow::anyhow!("Vault is already open or cannot be locked"))?;
+        Ok((path, lock))
     }
 
     pub fn file_path(&self) -> &Path {
@@ -354,6 +416,17 @@ impl FileJsonStorage {
     }
 
     pub async fn migrate(
+        file_path: &Path,
+        master_key: &KeyMaterial,
+        crypto: &dyn Crypto,
+    ) -> anyhow::Result<()> {
+        let requested_path = file_path.to_owned();
+        let (owned_path, _writer_lock) =
+            tokio::task::spawn_blocking(move || Self::acquire_writer(&requested_path)).await??;
+        Self::migrate_locked(&owned_path, master_key, crypto).await
+    }
+
+    async fn migrate_locked(
         file_path: &Path,
         master_key: &KeyMaterial,
         crypto: &dyn Crypto,
@@ -570,6 +643,93 @@ impl Storage for FileJsonStorage {
 mod persistence_tests {
     use super::FileJsonStorage;
     use std::os::unix::fs::{symlink, PermissionsExt};
+
+    async fn open(path: &std::path::Path) -> anyhow::Result<FileJsonStorage> {
+        use crate::crypto::{
+            factory::AutoCryptoFactory, key_material::KeyMaterial, master_key::MasterKey,
+        };
+        use crate::memory::protected_memory::ProtectedMemory;
+        let material =
+            KeyMaterial::new_symmetric_key(ProtectedMemory::from_slice(&[0x77; 32]).await?).await?;
+        FileJsonStorage::new(
+            MasterKey::from_key_material(material).await?,
+            path,
+            Box::new(AutoCryptoFactory {}),
+            false,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn writer_lock_blocks_reopen_and_migration_until_drop() {
+        use crate::storage::storage_trait::Storage;
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("vault.json");
+        let first = open(&path).await.expect("first instance");
+        first.flush().await.expect("persist");
+        assert!(open(&path).await.is_err(), "second Vault instance acquired held lock");
+        assert!(
+            FileJsonStorage::migrate(&path, first.master_key.key_material(), first.crypto.as_ref())
+                .await
+                .is_err(),
+            "migration acquired held Vault lock"
+        );
+        drop(first);
+        let reopened = open(&path).await.expect("release permits reopen");
+        drop(reopened);
+        assert!(path.with_file_name("vault.json.lock").exists(), "stable lock inode removed");
+        let alias = dir.path().join("alias.json");
+        symlink(&path, &alias).expect("alias");
+        assert!(open(&alias).await.is_err(), "symlink alias accepted");
+        std::fs::remove_file(&alias).expect("remove symlink");
+        std::fs::hard_link(&path, &alias).expect("hard link");
+        assert!(open(&alias).await.is_err(), "hard-link alias accepted");
+        std::fs::remove_file(&alias).expect("remove alias");
+        open(&path).await.expect("original still available");
+    }
+
+    #[tokio::test]
+    async fn writer_lock_blocks_other_process() {
+        const CHILD_PATH: &str = "TOS_TEST_VAULT_LOCK_CHILD_PATH";
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            let should_open = std::env::var_os("TOS_TEST_VAULT_LOCK_RELEASED").is_some();
+            assert_eq!(
+                open(std::path::Path::new(&path)).await.is_ok(),
+                should_open,
+                "child Vault ownership mismatch"
+            );
+            return;
+        }
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("vault.json");
+        let first = open(&path).await.expect("parent owns Vault");
+        let child = |released: bool| {
+            let mut command =
+                std::process::Command::new(std::env::current_exe().expect("test executable"));
+            command
+                .args([
+                    "--exact",
+                    "storage::file_json::persistence_tests::writer_lock_blocks_other_process",
+                    "--nocapture",
+                ])
+                .env(CHILD_PATH, &path)
+                .env_remove("TOS_TEST_VAULT_LOCK_RELEASED");
+            if released {
+                command.env("TOS_TEST_VAULT_LOCK_RELEASED", "1");
+            }
+            let output = command.output().expect("child process");
+            assert!(
+                output.status.success(),
+                "child ownership test failed: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        };
+        child(false);
+        drop(first);
+        child(true);
+    }
 
     #[tokio::test]
     async fn save_does_not_follow_predictable_temporary_symlink() {
