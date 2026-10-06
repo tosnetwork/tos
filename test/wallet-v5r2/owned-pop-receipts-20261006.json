@@ -1,0 +1,28 @@
+{
+  "base_commit": "23b3eb434",
+  "scope": "Shared owned POP receipt acquisition for initial and successor CLI paths. This is not complete migration orchestration, network proof acquisition or production admission.",
+  "commands": [
+    "source <artifacts>/20261005-baseline/env.sh; cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet",
+    "<test-venv>/bin/python test/wallet-v5r2/cli_pop_receipt_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fee-session-tree <artifacts>/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --fixture <artifacts>/20261006-native-fee-integration/native/sdk-genesis.json --output <fresh-directory>",
+    "<test-venv>/bin/python test/wallet-v5r2/cli_sign_primary.py --fee-session-prepare --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fee-session-tree <artifacts>/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --successor-fee-fixture <artifacts>/20261006-successor-fee-recovery-fixture --fixture <artifacts>/20261006-native-fee-integration/native/sdk-genesis.json --output <fresh-directory>"
+  ],
+  "exits": [
+    0,
+    0,
+    0
+  ],
+  "semantic_deletions": [
+    "challenge: receipt CLI accepted wrong_challenge",
+    "enrollment: receipt CLI accepted wrong_enrollment",
+    "prestate: receipt CLI accepted wrong_prestate"
+  ],
+  "restored_initial": "3 funded POPs, 9 receipt cases and native SLH lock pass",
+  "successor": "2 prepared deployments, 3 funded POPs and 9 receipt cases pass",
+  "limits": "Local mocked account-proof acquisition with native crypto/transactions and HTTP history adapter; diagnostic 20000 admission credit, default 10000 still rejected.",
+  "artifact": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-owned-pop-receipts.tar.gz",
+    "bytes": 904301,
+    "sha256": "6995f54212c964390a15c3af66629146813be8e276c305f357eea4ff44eb914a",
+    "retain_until": "2027-01-06"
+  }
+}

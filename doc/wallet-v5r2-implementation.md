@@ -3493,3 +3493,20 @@ proof evidence.
 The before/after results and independent deletion of each new signing guard are
 indexed in `test/wallet-v5r2/fee-rollover-gate-20261006.json`. Full client migration
 orchestration and historical/cross-wallet fee-key reuse tracking remain open.
+
+### Shared owned POP receipts for migration composition (2026-10-06)
+
+The receipt CLI now delegates retained-file loading and authenticated fee/module
+history traversal to `RetainedPopFiles::verify_at`. It returns an owned
+`VerifiedFundedPop`: the exact decoded challenge, external message, both proven
+transactions and both verified pre-state cells. Callers can borrow two role
+receipts together without loading the files again or treating a JSON success
+report as proof. Initial and successor receipt commands retain their existing
+flags and output semantics.
+
+This is the receipt-acquisition component of client migration, not a migration
+command. A migration caller must still supply the original wallet/module proof,
+match both receipts and the live successor vault to that authenticated checkpoint,
+and obtain continuity from the still-locked successor journal. Historical POP
+verification alone does not establish current fee custody or available leaves.
+Regression evidence is indexed in `test/wallet-v5r2/owned-pop-receipts-20261006.json`.
