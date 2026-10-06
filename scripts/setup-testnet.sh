@@ -130,7 +130,6 @@ install -m644 "$REPO/scripts/tos-pq-dht.service" /etc/systemd/system/tos-pq-dht.
 install -m644 "$REPO/scripts/tos-pq-validator@.service" /etc/systemd/system/tos-pq-validator@.service
 install -m644 "$REPO/scripts/tos-pq-observer@.service" /etc/systemd/system/tos-pq-observer@.service
 install -m644 "$REPO/scripts/tos-pq-lite-client.service" /etc/systemd/system/tos-pq-lite-client.service
-install -m644 "$REPO/scripts/tos-local-session-logs.logrotate" /etc/logrotate.d/tos-local-session-logs
 install -d /usr/local/libexec/tos
 install -m755 "$REPO/scripts/run-local-lite-client.py" /usr/local/libexec/tos/run-local-lite-client.py
 # The traffic and election services run as root. They run a root-owned snapshot
