@@ -10,10 +10,10 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use chain_block::{
-    fail, AccountId, BurningConfig, Coins, ConfigParam12, ConfigParam18, ConfigParam8,
-    ConfigParamEnum, ConfigParams, FundamentalSmcAddresses, GasLimitsPrices, GlobalCapabilities,
-    GlobalVersion, Mask, MsgAddressInt, MsgForwardPrices, Result, SizeLimitsConfig, StorageInfo,
-    StoragePrices, UInt256, WorkchainDescr, SUPPORTED_VERSION,
+    accrued_storage_fee, fail, AccountId, BurningConfig, Coins, ConfigParam12, ConfigParam18,
+    ConfigParam8, ConfigParamEnum, ConfigParams, FundamentalSmcAddresses, GasLimitsPrices,
+    GlobalCapabilities, GlobalVersion, Mask, MsgAddressInt, MsgForwardPrices, Result,
+    SizeLimitsConfig, StorageInfo, StoragePrices, UInt256, WorkchainDescr, SUPPORTED_VERSION,
 };
 use num::BigInt;
 
@@ -74,37 +74,19 @@ impl Default for AccStoragePrices {
 }
 
 impl AccStoragePrices {
-    /// Calculate storage fee for provided data
+    /// Storage fee accrued from `last_paid` to `now`, computed as the node does
+    /// (see `accrued_storage_fee`). Special accounts never reach this: the
+    /// storage phase does not charge them. A fee beyond u128 is an error.
     pub fn calc_storage_fees(
         &self,
         cells: u64,
         bits: u64,
-        mut last_paid: u32,
+        last_paid: u32,
         now: u32,
         is_masterchain: bool,
     ) -> Result<u128> {
-        if now <= last_paid
-            || last_paid == 0
-            || self.prices.is_empty()
-            || now <= self.prices[0].utime_since
-        {
-            return Ok(0);
-        }
-        let mut fee = BigInt::default();
-        // storage prices config contains prices array for some time intervals
-        // to calculate account storage fee we need to sum fees for all intervals since last
-        // storage fee pay calculated by formula `(cells * cell_price + bits * bits_price) * interval`
-        for i in 0..self.prices.len() {
-            let prices = &self.prices[i];
-            let end = if i < self.prices.len() - 1 { self.prices[i + 1].utime_since } else { now };
-
-            if end >= last_paid {
-                let delta = end - prices.utime_since.max(last_paid);
-                fee += prices.calc_storage_fee(cells, bits, delta as u64, is_masterchain);
-                last_paid = end;
-            }
-        }
-
+        let fee: BigInt =
+            accrued_storage_fee(&self.prices, cells, bits, last_paid, now, false, is_masterchain)?;
         let fee = fee.try_into()?;
         Ok(fee)
     }
@@ -419,3 +401,7 @@ impl BlockchainConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/test_storage_fees.rs"]
+mod tests_storage_fees;
