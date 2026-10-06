@@ -6,9 +6,37 @@
 #include "td/utils/tests.h"
 #include "validator/impl/ext-message-admission-budget.hpp"
 #include "validator/impl/ext-message-work-budget.hpp"
+#include "validator/impl/ext-message-work-quote.hpp"
 
 namespace tos::validator {
 namespace {
+
+TEST(ExtMessageWorkQuote, IncludesSpecialAccountCreditInInitialGas) {
+  auto special = external_tvm_initial_gas_bound(1000000, 70000000, 10000, false);
+  ASSERT_TRUE(special.is_ok());
+  EXPECT_EQ(special.ok(), 70010000u);
+  auto ordinary = external_tvm_initial_gas_bound(30000000, 0, 20000, false);
+  ASSERT_TRUE(ordinary.is_ok());
+  EXPECT_EQ(ordinary.ok(), 20000u);
+  auto capped = external_tvm_initial_gas_bound(9, 7, 20000, false);
+  ASSERT_TRUE(capped.is_ok());
+  EXPECT_EQ(capped.ok(), 14u);
+}
+
+TEST(ExtMessageWorkQuote, RefusesUncalibratedPrecompiledProfile) {
+  auto result = external_tvm_initial_gas_bound(30000000, 70000000, 20000, true);
+  ASSERT_TRUE(result.is_error());
+  EXPECT_EQ(result.error().message(), "external admission precompiled execution profile is not calibrated");
+}
+
+TEST(ExtMessageWorkQuote, RejectsUnsupportedSignedVmRange) {
+  constexpr auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  EXPECT(external_tvm_initial_gas_bound(1, maximum, 1, false).is_error());
+  EXPECT(external_tvm_initial_gas_bound(maximum + 1, 0, maximum + 1, false).is_error());
+  auto boundary = external_tvm_initial_gas_bound(1, maximum - 1, 1, false);
+  ASSERT_TRUE(boundary.is_ok());
+  EXPECT_EQ(boundary.ok(), maximum);
+}
 
 TEST(ExtMessageWorkBudget, ChargesEveryAttemptUntilTimedRefill) {
   ExtMessageWorkBudget budget(100, 20, 10, 1000);

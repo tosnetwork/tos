@@ -13,6 +13,9 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    controls = parser.add_mutually_exclusive_group()
+    controls.add_argument('--quote-gas-bound', action='store_true')
+    controls.add_argument('--precompiled-profile', action='store_true')
     parser.add_argument('--build-dir', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args()
@@ -20,9 +23,20 @@ def main():
     build = args.build_dir.resolve()
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    header = root / 'validator/impl/ext-message-work-budget.hpp'
+    header = root / ('validator/impl/ext-message-work-quote.hpp' if args.quote_gas_bound or args.precompiled_profile
+                     else 'validator/impl/ext-message-work-budget.hpp')
     original = header.read_bytes()
-    anchor = b'    available_ -= quote;'
+    anchor = b'special_gas_limit + special_credit' if args.quote_gas_bound else b'    available_ -= quote;'
+    replacement = b'special_gas_limit' if args.quote_gas_bound else b'    // Controlled deletion of work debit.'
+    mutation = 'missing-special-credit' if args.quote_gas_bound else 'missing-debit'
+    expected_test = 'IncludesSpecialAccountCreditInInitialGas' if args.quote_gas_bound else 'ChargesEveryAttemptUntilTimedRefill'
+    expected_assertion = 'special.ok()' if args.quote_gas_bound else 'available'
+    if args.precompiled_profile:
+        anchor = b'  if (has_precompiled_contracts) {'
+        replacement = b'  if (false) {'
+        mutation = 'unpriced-precompiled'
+        expected_test = 'RefusesUncalibratedPrecompiledProfile'
+        expected_assertion = 'result.is_error()'
     if original.count(anchor) != 1:
         raise RuntimeError('expected exactly one debit mutation anchor')
     results = {}
@@ -42,12 +56,12 @@ def main():
     if build_and_test('baseline'):
         raise RuntimeError('baseline failed')
     try:
-        header.write_bytes(original.replace(anchor, b'    // Controlled deletion of work debit.'))
-        if build_and_test('missing-debit') == 0:
-            raise RuntimeError('missing debit unexpectedly passed')
-        failure = (output / 'missing-debit.log').read_text(errors='replace')
-        if 'ChargesEveryAttemptUntilTimedRefill' not in failure or 'available' not in failure:
-            raise RuntimeError('mutation did not fail at the work accounting assertion')
+        header.write_bytes(original.replace(anchor, replacement))
+        if build_and_test(mutation) == 0:
+            raise RuntimeError(mutation + ' unexpectedly passed')
+        failure = (output / (mutation + '.log')).read_text(errors='replace')
+        if expected_test not in failure or expected_assertion not in failure:
+            raise RuntimeError(mutation + ' did not fail at the expected assertion')
     finally:
         header.write_bytes(original)
         if build_and_test('restored'):
@@ -59,7 +73,7 @@ def main():
         (output / 'results.json').write_text(json.dumps({
             'source_sha256': hashlib.sha256(original).hexdigest(),
             'returncodes': results, 'logs': files,
-            'scope': 'token bucket only; not pool dispatch or VM execution counts',
+            'scope': 'token bucket / initial gas bound only; not pool dispatch, CPU calibration or VM execution counts',
         }, indent=2) + '\n')
 
 

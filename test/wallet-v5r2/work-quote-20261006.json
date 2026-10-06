@@ -1,0 +1,106 @@
+{
+  "base_commit": "4f900004776a09bb4af590e4a0082c810e52d6e3",
+  "source_state": "uncommitted changes on base commit",
+  "sources": {
+    "validator/impl/ext-message-work-quote.hpp": "df8ba35e2a65695588a67011cafac96d9af9d8d066f4078d616c7a7015ab4ab6",
+    "test/test-ext-message-admission-budget.cpp": "a90225945874e5c494dbd5f06cd1ab73ca2875612b40959b0f6817a184ac4e08",
+    "scripts/check-ext-message-work-budget.py": "a1ac1bccb57ae3f095c6995a8760777d06f1624a281f719649d7f1f26946be34"
+  },
+  "retain_until": "2027-01-06",
+  "platform": "macOS arm64, Release",
+  "scope": "initial TVM gas bound only; not a complete CPU quote or production dispatch integration",
+  "finding": "special-account initial gas includes credit; ConfigParam 45 fallback may reset initial limits, so this helper refuses nonempty precompiled profiles",
+  "controls": {
+    "20261006-work-quote-controls-final": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-quote-controls-final",
+      "results": {
+        "source_sha256": "df8ba35e2a65695588a67011cafac96d9af9d8d066f4078d616c7a7015ab4ab6",
+        "returncodes": {
+          "baseline-build": 0,
+          "baseline": 0,
+          "missing-special-credit-build": 0,
+          "missing-special-credit": 1,
+          "restored-build": 0,
+          "restored": 0
+        },
+        "logs": {
+          "baseline-build.log": {
+            "sha256": "c2ed93ffd93c840755c0e91392ae593b1b52de9b7aaf6c208123feaceb1dde2e",
+            "bytes": 63
+          },
+          "baseline.log": {
+            "sha256": "ba294047e3b5f4c48d3e0b94c25d92f1000cabf23c9792834132322f0fb8c8c9",
+            "bytes": 991
+          },
+          "missing-special-credit-build.log": {
+            "sha256": "38e2ef270418840abbbaa6c17cb5914b2237bfcf75389332b8f5569434d9a3df",
+            "bytes": 409
+          },
+          "missing-special-credit.log": {
+            "sha256": "682f19286403b8ef38733ed423512534a3d9d45657484c664b9e1992c6d7c63b",
+            "bytes": 1615
+          },
+          "restored-build.log": {
+            "sha256": "38e2ef270418840abbbaa6c17cb5914b2237bfcf75389332b8f5569434d9a3df",
+            "bytes": 409
+          },
+          "restored.log": {
+            "sha256": "ff011ee92a34ee1b2d5664606e6c0c86def053314abe88e8ba81debd75d7cd9e",
+            "bytes": 985
+          }
+        },
+        "scope": "token bucket / initial gas bound only; not pool dispatch, CPU calibration or VM execution counts"
+      }
+    },
+    "20261006-precompiled-profile-controls": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-precompiled-profile-controls",
+      "results": {
+        "source_sha256": "df8ba35e2a65695588a67011cafac96d9af9d8d066f4078d616c7a7015ab4ab6",
+        "returncodes": {
+          "baseline-build": 0,
+          "baseline": 0,
+          "unpriced-precompiled-build": 0,
+          "unpriced-precompiled": 1,
+          "restored-build": 0,
+          "restored": 0
+        },
+        "logs": {
+          "baseline-build.log": {
+            "sha256": "c2ed93ffd93c840755c0e91392ae593b1b52de9b7aaf6c208123feaceb1dde2e",
+            "bytes": 63
+          },
+          "baseline.log": {
+            "sha256": "c3156525eed08a204738d71d213d34c7ce9a987385e452eead86ed5f9059cc20",
+            "bytes": 986
+          },
+          "restored-build.log": {
+            "sha256": "38e2ef270418840abbbaa6c17cb5914b2237bfcf75389332b8f5569434d9a3df",
+            "bytes": 409
+          },
+          "restored.log": {
+            "sha256": "ae76758e7c8cb9a4c15a53f43a712ac6ad4f5edfee4693d247c905107b20a7ad",
+            "bytes": 986
+          },
+          "unpriced-precompiled-build.log": {
+            "sha256": "38e2ef270418840abbbaa6c17cb5914b2237bfcf75389332b8f5569434d9a3df",
+            "bytes": 409
+          },
+          "unpriced-precompiled.log": {
+            "sha256": "f9d8f93ded1285d19ed408b441ef2502df01a5990dc9e7fc730d5edf36fe8aee",
+            "bytes": 3047
+          }
+        },
+        "scope": "token bucket / initial gas bound only; not pool dispatch, CPU calibration or VM execution counts"
+      }
+    }
+  },
+  "commands": [
+    "python3 scripts/check-ext-message-work-budget.py --quote-gas-bound --build-dir build --output-dir <retained-output>",
+    "python3 scripts/check-ext-message-work-budget.py --precompiled-profile --build-dir build --output-dir <retained-output>"
+  ],
+  "remaining": [
+    "Derive supported profiles from exact dispatch snapshot",
+    "Calibrate non-VM costs and instruction overshoot",
+    "Native/custom engine support and fair admission"
+  ]
+}
