@@ -58,7 +58,7 @@ fn launch() -> Chain {
     let account: Account = state
         .read_accounts()
         .expect("accounts")
-        .account(&config.address())
+        .account(config.address())
         .expect("account lookup")
         .expect("the zerostate deploys the configuration contract")
         .read_account()
