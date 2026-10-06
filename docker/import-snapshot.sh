@@ -141,6 +141,28 @@ require_new_database() {
   done < <(find "$DB_DIR" -mindepth 1 -maxdepth 1 -print0)
 }
 
+# Refuse if any RocksDB LOCK file under the database is held. RocksDB takes
+# the same kind of lock as the engine's configuration lock (fcntl F_SETLK,
+# F_WRLCK, the whole file) on <dir>/LOCK of every database it opens, so a
+# held one means a process -- a node from before the configuration lock, or
+# anything else with a RocksDB open here -- is using the database. Each lock
+# is tried from a separate short-lived process and released at once.
+refuse_held_rocksdb_locks() {
+  local lock state
+  while IFS= read -r -d '' lock; do
+    state="$(perl -MFcntl=O_RDWR,O_NOFOLLOW,F_SETLK,F_WRLCK,SEEK_SET -e '
+      sysopen(my $fh, $ARGV[0], O_RDWR | O_NOFOLLOW) or do { print "unreadable: $!"; exit 0 };
+      my $request = pack("s s x4 q q i x4", F_WRLCK, SEEK_SET, 0, 0, 0);
+      print fcntl($fh, F_SETLK, $request) ? "free" : "held: $!";
+    ' -- "$lock")" || fail "cannot test the RocksDB lock $lock"
+    case "$state" in
+      free) ;;
+      held:*) fail "the RocksDB lock $lock is held by another process (${state#held: }): something has this database open; stop it before importing" ;;
+      *) fail "cannot test the RocksDB lock $lock (${state#unreadable: })" ;;
+    esac
+  done < <(find "$DB_DIR" -name LOCK -type f -print0)
+}
+
 import_requested() {
   case "${SNAPSHOT_IMPORT:-}" in
     1 | true) return 0 ;;
@@ -200,7 +222,13 @@ esac
 # the import is refused. The file is created if missing and never removed:
 # removing it would let two processes lock two different files.
 # Stopping the node first is still required; the lock catches a node that was
-# not stopped, it does not replace stopping it.
+# not stopped, it does not replace stopping it. flock(1)/flock(2) is not used
+# here and is not the engine's primitive: on Linux it is independent of fcntl
+# record locks and would not exclude the engine.
+#
+# In the container this is a second line of defence. init.sh runs the import
+# before it initializes or execs the engine, once, guarded by the
+# .snapshot-imported marker, so no engine of that container can be running.
 CONFIG_LOCK="$DB_DIR/config.json.lock"
 if [ "${TOS_SNAPSHOT_CONFIG_LOCK_PID:-}" != "$$" ]; then
   [ ! -L "$CONFIG_LOCK" ] || fail "$CONFIG_LOCK is a symbolic link; import only into a new database"
@@ -236,6 +264,7 @@ fi
 if [ -e "$LEGACY_MARKER" ]; then
   fail "the database holds an earlier unverified snapshot import ($LEGACY_MARKER); start from an empty database to import a verified one"
 fi
+refuse_held_rocksdb_locks
 require_new_database
 
 # ---- Staging: download, verify, list, unpack. The database is not touched.
@@ -319,6 +348,7 @@ linked="$(find "$extract" -type f -links +1 -print -quit)"
 
 # ---- Install: move verified entries into place, then write the marker.
 
+refuse_held_rocksdb_locks
 require_new_database "; it appeared while the snapshot was staged, so something else is writing this database. The import requires exclusive write access to the database: stop the validator and any other importer, and let no other container write it until the import ends"
 for entry in "${entries[@]}"; do
   mv -T -- "$entry" "$DB_DIR/${entry##*/}" || fail "cannot move ${entry##*/} into the database"

@@ -677,20 +677,23 @@ class ImportSnapshotTest(unittest.TestCase):
         self.assertIn("config.json.lock is held by another process", result.stderr)
         self.assertFalse((self.db / ".snapshot-imported").exists())
 
-    def hold_lock_as_the_engine_does(self) -> subprocess.Popen[str]:
-        # A separate process holding the lock the way validator-engine does
-        # (td::FileFd::lock: fcntl F_SETLK, F_WRLCK, the whole file) until
-        # its stdin closes.
+    def hold_lock_as_the_engine_does(
+        self, path: Path | None = None, primitive: str = "lockf"
+    ) -> subprocess.Popen[str]:
+        # A separate process holding PATH (default: the configuration lock)
+        # until its stdin closes. "lockf" is the engine's and RocksDB's
+        # primitive (td::FileFd::lock, fs_posix LockFile: fcntl F_SETLK,
+        # F_WRLCK, the whole file); "flock" is flock(2), which is not.
         holder = subprocess.Popen(
             [
                 sys.executable,
                 "-c",
                 "import fcntl, os, sys\n"
                 "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\n"
-                "fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                f"fcntl.{primitive}(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
                 "print('locked', flush=True)\n"
                 "sys.stdin.read()\n",
-                str(self.db / "config.json.lock"),
+                str(path or self.db / "config.json.lock"),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -715,6 +718,68 @@ class ImportSnapshotTest(unittest.TestCase):
         self.assertIn("config.json.lock is held by another process", result.stderr)
         self.assertEqual(tree(self.db), before)
         self.assertFalse((self.db / ".snapshot-imported").exists())
+
+    def release(self, holder: subprocess.Popen[str]) -> None:
+        assert holder.stdin is not None and holder.stdout is not None
+        holder.stdin.close()
+        holder.wait(timeout=30)
+        holder.stdout.close()
+
+    def test_held_rocksdb_lock_is_refused(self) -> None:
+        (self.db / "celldb").mkdir()
+        rocksdb_lock = self.db / "celldb" / "LOCK"
+        rocksdb_lock.touch()
+        holder = self.hold_lock_as_the_engine_does(rocksdb_lock)
+        try:
+            url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+            before = tree(self.db)
+            result = self.run_import(**self.enabled(url, digest))
+        finally:
+            self.release(holder)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("RocksDB lock", result.stderr)
+        self.assertIn("is held by another process", result.stderr)
+        self.assertEqual(tree(self.db), before)
+
+    def test_unheld_rocksdb_lock_is_refused_only_as_existing_data(self) -> None:
+        (self.db / "celldb").mkdir()
+        (self.db / "celldb" / "LOCK").touch()
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("the database directory is not new: it contains celldb", result.stderr)
+        self.assertNotIn("RocksDB lock", result.stderr)
+
+    def test_flock_is_not_the_engines_lock(self) -> None:
+        # flock(2) and fcntl record locks are independent on Linux: an
+        # flock-held configuration lock neither excludes the engine nor
+        # stops the import. Only the engine's own primitive does.
+        holder = self.hold_lock_as_the_engine_does(primitive="flock")
+        try:
+            url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+            result = self.run_import(**self.enabled(url, digest))
+        finally:
+            self.release(holder)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_init_imports_before_the_engine_is_ever_started(self) -> None:
+        # Like upstream's entrypoint: the import runs once, before init.sh
+        # initializes the database and before it execs the engine, so no
+        # engine of this container can run beside it.
+        lines = INIT_SCRIPT.read_text().splitlines()
+        imports = [
+            i for i, line in enumerate(lines) if "import-snapshot.sh" in line and "||" in line
+        ]
+        engine = [
+            i
+            for i, line in enumerate(lines)
+            # Every engine run on the database (TEST mode's -h touches none).
+            if line.strip().startswith(("validator-engine ", "exec validator-engine "))
+            and "--db" in line
+        ]
+        self.assertEqual(len(imports), 1)
+        self.assertGreaterEqual(len(engine), 2, "initialize and exec")
+        self.assertLess(imports[0], min(engine))
 
     def test_lock_is_held_through_the_import(self) -> None:
         probe = self.root / "lock-probe"

@@ -227,7 +227,12 @@ The import script (`docker/import-snapshot.sh`) then:
   from before it reads the database until it exits, and refuses if another
   process holds it. A node started during the import refuses to start. The
   lock catches a node that was not stopped; it does not replace stopping it.
-  The lock file is created if missing and left in place;
+  The lock file is created if missing and left in place. It also refuses if
+  any RocksDB `LOCK` file under the database is held (RocksDB takes the same
+  kind of lock on every database it opens). `flock` is a different lock that
+  the node neither takes nor sees; holding the files with it excludes nothing.
+  In the container the import runs before the entrypoint initializes or starts
+  the node, once, so the lock is a second line of defence there;
 - imports only into a new database: before downloading, and again immediately
   before installing, the database directory may hold nothing but the node's
   `config.json`, `keyring/` and `tos-global.config`, the empty
