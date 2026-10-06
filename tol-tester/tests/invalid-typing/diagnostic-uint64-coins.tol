@@ -1,0 +1,9 @@
+fun store(amount: uint64): cell {
+    return beginCell().storeCoins(amount).endCell();
+}
+fun onInternalMessage(in: InMessage) { store(7); }
+/**
+@compilation_should_fail
+@stderr can not pass `uint64` to `coins`
+@stderr as coins
+ */

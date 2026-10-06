@@ -63,3 +63,9 @@ Each is kept with its TeX source where one exists.
 The shielded pool's byte-frozen implementation profile and genesis manifest
 are in [`artifacts/shielded-pool/`](../artifacts/shielded-pool/). Its ceremony
 operator runbook is in [`artifacts/phase2/`](../artifacts/phase2/).
+
+## Compiler guidance
+
+| Document | What it covers |
+| --- | --- |
+| [tol-compiler-diagnostics.md](tol-compiler-diagnostics.md) | Fixed getter IDs, query correlation warnings, and symbolic inline assembly |

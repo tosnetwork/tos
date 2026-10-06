@@ -18,6 +18,7 @@
 #include "ast-visitor.h"
 #include "compilation-errors.h"
 #include "compiler-state.h"
+#include "lexer.h"
 #include "type-system.h"
 
 #include <vector>
@@ -51,9 +52,9 @@
  *   inside `.collect()`. The injection-point constraint is
  *   sign-off-blocking per v6.
  *
- *   Algorithm (syntactic, intentionally conservative — false
- *   positives on unusual propagation idioms are tolerated, false
- *   negatives on missing propagation are not):
+ *   Algorithm (syntactic): typed fields are explicit evidence; manual
+ *   adjacency is only a heuristic. Unknown propagation receives uncertainty
+ *   wording, rather than being reported as a proven omission:
  *
  *     for each onInternalMessage handler `fun_ref`:
  *       maintain a stack of ScopeRecord, each tracking
@@ -63,7 +64,7 @@
  *         - inbound_envelope_struct: the type behind that lazy
  *           bind, IF it has a `queryId` field
  *         - inbound_query_id_local: the LocalVar bound by the
- *           manual parse sequence
+ *           adjacent manual parse sequence on one unaliased slice
  *             `val body = in.body; body.loadUint(32); val q = body.loadUint(64)`
  *         - disclaimed: did the scope call `disclaim_query_id()`?
  *         - saw_reply_emit: every `createMessage({...body: ...})`
@@ -91,7 +92,8 @@
  *   `ast_dot_access` reading `<envelope_local>.queryId` or an
  *   `ast_reference` to the manual queryId local. Anything else
  *   (computed expressions, `0`, calls, etc.) falls through to
- *   "not propagated".
+ *   "cannot prove propagation". A literal constant replacing an explicitly
+ *   typed inbound queryId can be diagnosed as missing propagation.
  */
 
 namespace tol {
@@ -190,6 +192,27 @@ static bool is_slice_loadUint_from_local(AnyExprV expr, LocalVarPtr slice_local,
   return v_call->get_num_args() == 1 && is_int_literal_value(v_call->get_arg(0), width);
 }
 
+// Unknown helpers may consume a slice even when it is nested in an argument.
+// Do not follow aliases or guess what those helpers do.
+class ReferencesLocalVisitor final : public ASTVisitorFunctionBody {
+  LocalVarPtr local;
+  bool found = false;
+  void visit(V<ast_reference> v) override {
+    found |= v->sym == local;
+  }
+
+ public:
+  explicit ReferencesLocalVisitor(LocalVarPtr local) : local(local) {
+  }
+  bool should_visit_function(FunctionPtr) override {
+    return false;
+  }
+  bool contains(AnyExprV expr) {
+    parent::visit(expr);
+    return found;
+  }
+};
+
 class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
   // Per-scope analysis record. Each receiver-scope marker pushes a new
   // ScopeRecord; the function entry pushes the implicit top-level scope.
@@ -199,9 +222,12 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     StructPtr inbound_envelope_struct = nullptr;
     LocalVarPtr inbound_envelope_local = nullptr;
     LocalVarPtr inbound_body_slice_local = nullptr;
+    bool manual_prefix_available = false;
     bool manual_opcode_loaded = false;
+    AnyExprV manual_query_id_load = nullptr;
     LocalVarPtr inbound_query_id_local = nullptr;
     bool disclaimed = false;
+    bool saw_unresolved_helper = false;
 
     bool is_marker_scope = false;
     std::string_view contract_name;        // empty for function-level scope
@@ -210,6 +236,7 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     struct ReplySite {
       AnyV at;             // call site for diagnostic anchoring
       bool propagated;     // true iff queryId: <envelope>.queryId
+      bool unknown = false;
     };
     std::vector<ReplySite> saw_reply_emit;
 
@@ -244,6 +271,13 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     }
 
     if (scope.saw_reply_emit.empty()) {
+      if (scope.saw_unresolved_helper || scope.inbound_query_id_local) {
+        err("cannot prove whether a helper replies with the inbound `queryId`; "
+            "manual opcode:u32/queryId:u64 inference is a heuristic, not a field declaration. "
+            "Use a typed reply or `disclaim_query_id()` for intentional fire-and-forget.")
+            .warning(anchor, cur_f);
+        return;
+      }
       err("inbound envelope carries `queryId` but the receiver emits no reply — "
           "call `disclaim_query_id()` to acknowledge fire-and-forget. "
           "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md \xc2\xa7""4.4 / "
@@ -254,6 +288,14 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
 
     for (const ScopeRecord::ReplySite& site : scope.saw_reply_emit) {
       if (!site.propagated) {
+        if (site.unknown || scope.inbound_query_id_local) {
+          err("cannot prove that the reply propagates inbound `queryId` — "
+              "raw, computed and helper sends are not traced; adjacent opcode:u32/queryId:u64 loads "
+              "are only a heuristic. Use a typed reply sourced from the inbound field, "
+              "or `disclaim_query_id()` for intentional fire-and-forget.")
+              .warning(site.at, cur_f);
+          continue;
+        }
         err("reply does not propagate inbound `queryId` — "
             "set `body.queryId` from the inbound queryId or call "
             "`disclaim_query_id()`. "
@@ -291,6 +333,29 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
   //     rhs: ast_lazy_operator
   //            -> ast_function_call (callee: <Struct>.fromSlice, arg: in.body)
   void visit(V<ast_assign> v) override {
+    // Replacing the slice ends the prefix observation; the following 64-bit
+    // read no longer belongs to the slice whose opcode was read. Destructured
+    // assignments can replace the tracked local just like a direct assignment.
+    if (!scope_stack.empty() && cur_scope().inbound_body_slice_local &&
+        ReferencesLocalVisitor(cur_scope().inbound_body_slice_local).contains(v->get_lhs())) {
+      cur_scope().manual_prefix_available = false;
+      cur_scope().manual_opcode_loaded = false;
+      cur_scope().manual_query_id_load = nullptr;
+    }
+    if (!scope_stack.empty()) {
+      auto& s = cur_scope();
+      auto rhs = v->get_rhs();
+      // Alias creation also includes destructuring and nested expressions,
+      // not only a declaration with one local on the left.
+      if (s.inbound_body_slice_local && !s.inbound_query_id_local &&
+          !is_slice_loadUint_from_local(rhs, s.inbound_body_slice_local, 32) &&
+          !is_slice_loadUint_from_local(rhs, s.inbound_body_slice_local, 64) &&
+          ReferencesLocalVisitor(s.inbound_body_slice_local).contains(rhs)) {
+        s.manual_prefix_available = false;
+        s.manual_opcode_loaded = false;
+        s.manual_query_id_load = nullptr;
+      }
+    }
     parent::visit(v);
 
     if (!in_param_ref || scope_stack.empty()) {
@@ -316,15 +381,18 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     if (!s.inbound_envelope_local && !s.inbound_query_id_local) {
       if (!s.inbound_body_slice_local && is_in_dot_body(rhs, in_param_ref)) {
         s.inbound_body_slice_local = lhs_var;
+        s.manual_prefix_available = true;
         return;
       }
-      if (s.inbound_body_slice_local && !s.manual_opcode_loaded && is_slice_loadUint_from_local(rhs, s.inbound_body_slice_local, 32)) {
-        s.manual_opcode_loaded = true;
-        return;
-      }
-      if (s.inbound_body_slice_local && s.manual_opcode_loaded && is_slice_loadUint_from_local(rhs, s.inbound_body_slice_local, 64)) {
+      if (rhs == s.manual_query_id_load) {
         s.inbound_query_id_local = lhs_var;
         return;
+      }
+      if (s.inbound_body_slice_local && !is_slice_loadUint_from_local(rhs, s.inbound_body_slice_local, 32) &&
+          ReferencesLocalVisitor(s.inbound_body_slice_local).contains(rhs)) {
+        s.manual_prefix_available = false;
+        s.manual_opcode_loaded = false;
+        s.manual_query_id_load = nullptr;
       }
     }
 
@@ -397,7 +465,30 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     ScopeRecord& s = cur_scope();
 
     FunctionPtr fun_ref = v->fun_maybe;
+    // Only the first two adjacent, supported reads of this exact slice can
+    // identify a possible correlation field. Any other use before the second
+    // read (skips, aliases, helper parsers, size queries) ends inference.
+    if (s.inbound_body_slice_local && !s.inbound_query_id_local &&
+        ReferencesLocalVisitor(s.inbound_body_slice_local).contains(v)) {
+      if (s.manual_prefix_available && is_slice_loadUint_from_local(v, s.inbound_body_slice_local, 32)) {
+        s.manual_prefix_available = false;
+        s.manual_opcode_loaded = true;
+      } else if (s.manual_opcode_loaded && is_slice_loadUint_from_local(v, s.inbound_body_slice_local, 64)) {
+        s.manual_opcode_loaded = false;
+        s.manual_query_id_load = v;
+      } else {
+        s.manual_prefix_available = false;
+        s.manual_opcode_loaded = false;
+        s.manual_query_id_load = nullptr;
+      }
+    }
+
+    if (!fun_ref || !fun_ref->is_builtin()) {
+      s.saw_unresolved_helper = true;
+    }
     if (!fun_ref) {
+      // Calls through function values may send or consume a slice as well.
+      // Preserve uncertainty even though there is no statically resolved callee.
       return;
     }
 
@@ -409,7 +500,7 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     }
 
     if (fun_ref->name == "sendRawMessage") {
-      s.saw_reply_emit.push_back({v, /*propagated=*/false});
+      s.saw_reply_emit.push_back({v, /*propagated=*/false, /*unknown=*/true});
       return;
     }
 
@@ -426,7 +517,7 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     // expected: ast_object_literal (CreateMessageOptions { ... }).
     if (options_arg->kind != ast_object_literal) {
       // non-literal options argument — record reply but cannot prove propagation
-      s.saw_reply_emit.push_back({v, /*propagated=*/false});
+      s.saw_reply_emit.push_back({v, /*propagated=*/false, /*unknown=*/true});
       return;
     }
     auto v_options_lit = options_arg->as<ast_object_literal>();
@@ -464,7 +555,7 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
           return;
         }
       }
-      s.saw_reply_emit.push_back({v, /*propagated=*/false});
+      s.saw_reply_emit.push_back({v, /*propagated=*/false, /*unknown=*/true});
       return;
     }
     auto v_body_lit = body_init->as<ast_object_literal>();
@@ -485,6 +576,7 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
 
     // walk the literal's fields, find `queryId:`, check its rhs.
     bool propagated = false;
+    bool unknown = true;
     auto v_body_obj = v_body_lit->get_body();
     for (int i = 0, n = v_body_obj->get_num_fields(); i < n; ++i) {
       auto v_field = v_body_obj->get_field(i);
@@ -495,13 +587,63 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
         continue;
       }
       AnyExprV init_val = v_field->get_init_val();
+      unknown = init_val->kind != ast_int_const;
       if (is_envelope_dot_queryId(init_val, s.inbound_envelope_local) || is_reference_to_local(init_val, s.inbound_query_id_local)) {
         propagated = true;
       }
       break;
     }
 
-    s.saw_reply_emit.push_back({v, propagated});
+    s.saw_reply_emit.push_back({v, propagated, unknown});
+  }
+
+  template <class VControl>
+  void visit_manual_control(VControl v) {
+    // This pass is not a control-flow analysis. Inference across branches or
+    // loops would claim adjacency on paths it has never examined.
+    auto invalidate = [&] {
+      if (!scope_stack.empty()) {
+        auto& s = cur_scope();
+        s.manual_prefix_available = false;
+        s.manual_opcode_loaded = false;
+        s.manual_query_id_load = nullptr;
+      }
+    };
+    invalidate();
+    visit_children(v);
+    invalidate();
+  }
+
+  void visit(V<ast_ternary_operator> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_null_coalesce_operator> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_match_expression> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_binary_operator> v) override {
+    if (v->tok == tok_logical_and || v->tok == tok_logical_or) {
+      visit_manual_control(v);
+    } else {
+      parent::visit(v);
+    }
+  }
+  void visit(V<ast_if_statement> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_while_statement> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_repeat_statement> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_do_while_statement> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_try_catch_statement> v) override {
+    visit_manual_control(v);
   }
 
 public:

@@ -1,0 +1,14 @@
+@method_id(100001)
+get fun get_state(): bool {
+    return true;
+}
+
+fun onInternalMessage(in: InMessage) {}
+
+/**
+@compilation_should_fail
+@stderr diagnostic-fixed-id-4.tol:1: error:
+@stderr_avoid @method_id can be specified only for regular functions
+@stderr top-level `get fun` derives its method ID
+@stderr keep `@method_id` and remove only `get`
+ */
