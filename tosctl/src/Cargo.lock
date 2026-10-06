@@ -5306,6 +5306,8 @@ dependencies = [
 name = "wallet-pq-signer"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "cc",
  "chrono",
  "fips204",

@@ -1,0 +1,89 @@
+{
+  "base_commit": "58d1a2ec930ad31c677171c0c38f28f3b9f889dd",
+  "scope": "Local library PQ seed creation, encrypted persistence and enrollment-bound readback; not complete production custody or chain activation.",
+  "tests": {
+    "creation_tests_passed": 3,
+    "all_signer_unit_tests_passed": 8,
+    "compile_fail_doctests_passed": 2,
+    "semantic_controls": {
+      "rng_status": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid seed randomness"
+      },
+      "rng_zero": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid seed randomness"
+      },
+      "overwrite": {
+        "exit": 101,
+        "semantic_witness": "overwrote existing PQ key"
+      },
+      "store_error": {
+        "exit": 101,
+        "semantic_witness": "returned signer after store failure"
+      },
+      "flush_error": {
+        "exit": 101,
+        "semantic_witness": "returned signer after flush failure"
+      },
+      "readback_key": {
+        "exit": 101,
+        "semantic_witness": "returned signer after readback failure"
+      }
+    },
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --features vault",
+    "python3 test/wallet-v5r2/vault_creation_controls.py --output <fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/vault.rs",
+      "bytes": 15449,
+      "sha256": "0a9cf34b5f28e0c008f82214d1c444120bd2270e0d156dd301aa02e655fcf5ec"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/Cargo.toml",
+      "bytes": 527,
+      "sha256": "60c000b8ce0ab89516f6301f4b0d6a1a4741a5acc2d003453c25e5cbe0aac11e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.lock",
+      "bytes": 148689,
+      "sha256": "0146a83c753803ae1c4172d0fcf9256122693988511c9a0ef191f2783f47fe83"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/vault_creation_controls.py",
+      "bytes": 3289,
+      "sha256": "55ee31f7d58f7ca664738e9523239bf3a037ae2eea5b4d4e5f0fa017489e9100"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 16975,
+      "sha256": "4f04067989d635864864b086551b9b36d3d01ed5209c80d7a931fba124a3b379"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 127321,
+      "sha256": "2b955d923d6d1936c4c5e596f2196ee5dc78e4a3e6d0a6f11ce215141cc2f99a"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-creation-controls/MANIFEST.json",
+      "bytes": 2484,
+      "sha256": "e47ddaf73f9f28697a6d40cb9fb75904b6a3bac811edd1e3e8be0828f5547b5a"
+    }
+  ],
+  "limitations": [
+    "Tests use unfunded ephemeral random keys and public fixed fault-test seeds/master keys only.",
+    "Backend flush and readback depend on authenticated encrypted storage and exclusive ownership; not independent power-loss durability proof.",
+    "Errors/cancellation may leave records persisted; never automatically delete or overwrite uncertain keys.",
+    "UI/CLI, separate devices, backup/restore, revocation and master-key deployment remain open.",
+    "Linux final-head CI pending; default 10000 gas-credit admission remains failed."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}

@@ -1945,3 +1945,37 @@ no separately unlocked read-only mode; callers should share one instance through
 for callers using the updated backend; PQ creation still needs its own store,
 flush, reread and failure-path validation. Evidence:
 `test/wallet-v5r2/vault-ownership-20261006.json`.
+
+### Fresh PQ creation through the Vault adapter
+
+`wallet_pq_signer::vault::create_new` generates a role-specific seed directly in
+protected memory using OpenSSL's platform-seeded random generator. It rejects
+random-generator failure and all-zero output. A protected copy is imported and
+wiped to derive the expected public key; the temporary native handle is destroyed.
+The original protected seed becomes a versioned PQ blob with the fixed role tag.
+The adapter stores it with `NewOnly`, requires `flush` success, drops its temporary
+record and loads the stored seed through `load_bound` with the generated public
+key. Only that successfully rebound signer is returned.
+
+The caller must supply an authenticated encrypted backend with exclusive writer
+ownership, keep role custody separate and enroll the returned public key through
+the wallet's existing proof and possession gates. This API does not create or fund
+an on-chain wallet and does not export seed bytes. A persistence error or cancelled
+future may leave a record already stored. The adapter neither deletes that record
+nor overwrites it on retry; the caller must resolve uncertain creation explicitly.
+A successful backend flush/readback is not an independent hardware durability or
+backup guarantee.
+
+Tests create fresh ephemeral ML-DSA-44 and SLH keys, reject duplicate IDs, close and
+reopen real encrypted file storage, and produce native POP signatures with the
+recovered keys. A fault-injecting wrapper around the real backend reports store
+or flush errors after writing, or substitutes another seed on readback. Creation
+returns no signer in all three cases, while the original stored record survives.
+RNG failure and all-zero output must leave no record. Six semantic controls remove
+RNG status/zero checks, permit overwrite, ignore store/flush errors or remove the
+readback key binding; each must fail its explicit false-acceptance assertion.
+
+This completes a local library creation path, not production custody acceptance.
+UI/CLI provisioning, secure master-key management, isolated rescue devices,
+backup/restore, revocation, closed-snapshot anti-rollback and actual chain
+activation remain open. Evidence: `test/wallet-v5r2/vault-creation-20261006.json`.

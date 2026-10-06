@@ -1,11 +1,16 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
-//! Load independently enrolled PQ keys from versioned Vault blob records.
+//! Create and load independently enrolled PQ keys from versioned Vault blob records.
 //! The caller selects and authenticates the storage backend and keeps primary
 //! and rescue custody separate. This adapter does not prove device isolation,
 //! backup safety, revocation, chain state or approval to sign an action.
 use crate::{Rejected, Role, Signer};
 use secrets_vault::{
-    types::{algorithm::Algorithm, secret::Secret, secret_id::SecretId},
+    crypto::factory::{AutoCryptoFactory, CryptoFactory},
+    memory::protected_memory::ProtectedMemory,
+    types::{
+        algorithm::Algorithm, metadata::Metadata, secret::Secret, secret_id::SecretId,
+        store_mode::StoreMode,
+    },
     vault::SecretVault,
 };
 
@@ -18,6 +23,62 @@ pub fn role_tag(role: Role) -> &'static str {
         Role::Primary => "ml-dsa-44",
         Role::Rescue => "slh-dsa-sha2-128s",
     }
+}
+
+/// Create a fresh PQ seed record without overwriting an existing ID. The caller
+/// must provide authenticated encrypted storage with exclusive writer ownership.
+/// Return a signer only after store, flush and public-key-bound readback succeed.
+/// On failure/cancellation a record may already exist: do not delete or overwrite
+/// it automatically. Resolve uncertain persistence before retrying enrollment.
+pub async fn create_new(
+    vault: &SecretVault,
+    id: &SecretId,
+    role: Role,
+) -> Result<Signer, Rejected> {
+    create_with_rng(vault, id, role, |seed| {
+        // SAFETY: seed is a live writable protected buffer of 32 or 48 bytes.
+        unsafe { openssl_sys::RAND_bytes(seed.as_mut_ptr(), seed.len() as i32) }
+    })
+    .await
+}
+
+async fn create_with_rng(
+    vault: &SecretVault,
+    id: &SecretId,
+    role: Role,
+    fill: impl FnOnce(&mut [u8]) -> i32,
+) -> Result<Signer, Rejected> {
+    let size = match role {
+        Role::Primary => 32,
+        Role::Rescue => 48,
+    };
+    let mut seed = ProtectedMemory::new(size).map_err(|_| Rejected)?;
+    {
+        let mut locked = seed.lock_mut().await.map_err(|_| Rejected)?;
+        let status = fill(&mut locked);
+        if status != 1 || locked.iter().all(|byte| *byte == 0) {
+            return Err(Rejected);
+        }
+    }
+    let expected_key = {
+        let mut copy = seed.clone().await.map_err(|_| Rejected)?;
+        let mut locked = copy.lock_mut().await.map_err(|_| Rejected)?;
+        Signer::import_and_wipe(role, &mut locked)?.public_key().to_vec()
+    };
+    let metadata = Metadata::new(Some(id), Algorithm::None, true)
+        .with_tag(PROFILE_TAG, PROFILE_V1)
+        .with_tag(ROLE_TAG, role_tag(role));
+    let secret = Secret::from_protected_data(
+        seed,
+        metadata,
+        AutoCryptoFactory {}.new_crypto().map_err(|_| Rejected)?,
+    )
+    .await
+    .map_err(|_| Rejected)?;
+    vault.put(&secret, StoreMode::NewOnly).await.map_err(|_| Rejected)?;
+    vault.flush().await.map_err(|_| Rejected)?;
+    drop(secret);
+    load_bound(vault, id, role, &expected_key).await
 }
 
 /// Open a seed record and bind the derived key to independently authenticated
@@ -175,6 +236,164 @@ mod tests {
                 load_bound(&vault, &id, Role::Primary, &key).await.is_err(),
                 "accepted invalid {bad}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod creation_tests {
+    use super::*;
+    use secrets_vault::{
+        crypto::{key_material::KeyMaterial, master_key::MasterKey},
+        events::null_handler::NullEventHandler,
+        storage::{file_json::FileJsonStorage, storage_trait::Storage},
+        types::secret_spec::SecretSpec,
+    };
+    use std::{path::Path, sync::Arc};
+
+    #[derive(Clone, Copy)]
+    enum Failure {
+        None,
+        Store,
+        Flush,
+        Read,
+    }
+    struct FaultStorage {
+        inner: FileJsonStorage,
+        failure: Failure,
+    }
+
+    #[async_trait::async_trait]
+    impl Storage for FaultStorage {
+        async fn flush(&self) -> anyhow::Result<()> {
+            self.inner.flush().await?;
+            anyhow::ensure!(!matches!(self.failure, Failure::Flush), "injected flush failure");
+            Ok(())
+        }
+        async fn store(&self, secret: &Secret, mode: StoreMode) -> anyhow::Result<()> {
+            self.inner.store(secret, mode).await?;
+            anyhow::ensure!(!matches!(self.failure, Failure::Store), "injected store failure");
+            Ok(())
+        }
+        async fn load(&self, id: &SecretId) -> anyhow::Result<Secret> {
+            let actual = self.inner.load(id).await?;
+            if matches!(self.failure, Failure::Read) {
+                let seed = ProtectedMemory::from_slice(&[0x42; 32]).await?;
+                return Secret::from_protected_data(
+                    seed,
+                    actual.metadata().clone(),
+                    AutoCryptoFactory {}.new_crypto()?,
+                )
+                .await;
+            }
+            Ok(actual)
+        }
+        async fn generate_secret(
+            &self,
+            spec: &SecretSpec,
+            id: &SecretId,
+        ) -> anyhow::Result<Secret> {
+            self.inner.generate_secret(spec, id).await
+        }
+        async fn store_vec(
+            &self,
+            records: Vec<(ProtectedMemory, Metadata, StoreMode)>,
+        ) -> anyhow::Result<()> {
+            self.inner.store_vec(records).await
+        }
+        async fn load_metadata(&self, id: &SecretId) -> anyhow::Result<Option<Metadata>> {
+            self.inner.load_metadata(id).await
+        }
+        async fn list_metadata(&self) -> anyhow::Result<Vec<Metadata>> {
+            self.inner.list_metadata().await
+        }
+        async fn delete(&self, id: &SecretId) -> anyhow::Result<()> {
+            self.inner.delete(id).await
+        }
+        fn format_version(&self) -> anyhow::Result<u32> {
+            self.inner.format_version()
+        }
+    }
+
+    async fn open(path: &Path, failure: Failure) -> SecretVault {
+        let key = ProtectedMemory::from_slice(&[0x77; 32]).await.expect("public master fixture");
+        let master = MasterKey::from_key_material(
+            KeyMaterial::new_symmetric_key(key).await.expect("material"),
+        )
+        .await
+        .expect("master");
+        let inner = FileJsonStorage::new(master, path, Box::new(AutoCryptoFactory {}), false)
+            .await
+            .expect("storage");
+        SecretVault::new(Arc::new(FaultStorage { inner, failure }), Arc::new(NullEventHandler {}))
+    }
+
+    #[tokio::test]
+    async fn creates_reopens_and_never_replaces_existing_keys() {
+        for role in [Role::Primary, Role::Rescue] {
+            let dir = tempfile::tempdir().expect("directory");
+            let path = dir.path().join("vault.json");
+            let id = SecretId::new("pq.created");
+            let vault = open(&path, Failure::None).await;
+            let created = create_new(&vault, &id, role).await.expect("create new PQ seed");
+            let key = created.public_key().to_vec();
+            drop(created);
+            assert!(create_new(&vault, &id, role).await.is_err(), "overwrote existing PQ key");
+            drop(vault);
+            let reopened = open(&path, Failure::None).await;
+            let mut signer = load_bound(&reopened, &id, role, &key).await.expect("durable key");
+            assert_eq!(
+                signer
+                    .sign_bound(role, &key, crate::Purpose::Pop, &[9; 32])
+                    .expect("native PQ signature")
+                    .len(),
+                role.signature_bytes()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_rng_failure_and_zero_without_storing() {
+        let dir = tempfile::tempdir().expect("directory");
+        let vault = open(&dir.path().join("vault.json"), Failure::None).await;
+        let id = SecretId::new("pq.failed-rng");
+        for (status, byte) in [(0, 0x11), (-1, 0x11), (1, 0)] {
+            let result = create_with_rng(&vault, &id, Role::Primary, |seed| {
+                seed.fill(byte);
+                status
+            })
+            .await;
+            assert!(result.is_err(), "accepted invalid seed randomness");
+            assert!(!vault.exists(&id).await.expect("lookup"), "stored invalid seed randomness");
+        }
+    }
+
+    #[tokio::test]
+    async fn persistence_errors_and_wrong_readback_never_return_signer() {
+        for failure in [Failure::Store, Failure::Flush, Failure::Read] {
+            let dir = tempfile::tempdir().expect("directory");
+            let path = dir.path().join("vault.json");
+            let vault = open(&path, failure).await;
+            let id = SecretId::new("pq.uncertain");
+            let result = create_with_rng(&vault, &id, Role::Primary, |seed| {
+                seed.fill(0x11);
+                1
+            })
+            .await;
+            let reason = match failure {
+                Failure::Store => "store",
+                Failure::Flush => "flush",
+                _ => "readback",
+            };
+            assert!(result.is_err(), "returned signer after {reason} failure");
+            drop(vault);
+            // Storage may have succeeded before reporting failure. Never erase it.
+            let reopened = open(&path, Failure::None).await;
+            let mut seed = [0x11; 32];
+            let expected = Signer::import_and_wipe(Role::Primary, &mut seed).expect("public seed");
+            load_bound(&reopened, &id, Role::Primary, expected.public_key())
+                .await
+                .expect("uncertain record preserved");
         }
     }
 }

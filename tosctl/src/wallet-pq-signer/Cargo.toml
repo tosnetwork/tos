@@ -22,3 +22,5 @@ fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44
 tokio = { version = "1", features = ["macros", "rt"] }
 tempfile = "3"
 chrono = "0.4"
+anyhow = "1"
+async-trait = "0.1"
