@@ -135,7 +135,8 @@ The generator emits zerostates, their hashes, and bootstrap wallet/configuration
 keys. Protect those private files according to the launch ceremony. The generated
 ConfigParam 47 admits the exact controller artifact compiled from this checkout;
 it does not initialize any controller's operating authorization or deploy its
-account. See [controller funding](Local-PQ-Network.md#controller-funding-before-election-rehearsal).
+account. See the validator lifecycle in
+[Production-Node.md](Production-Node.md#9-validator-lifecycle).
 
 Independently decode the generated BOC and verify ConfigParams 8/19/30/34/47,
 the four published identities, algorithm 1, weight 17 each, and exact public-key
@@ -145,15 +146,10 @@ Do not reuse an older zerostate hash after changing these inputs.
 
 ## Local three-process fault-tolerance rehearsal
 
-The local installer now prepares four PQ genesis identities and four independent
-services. To rehearse one unavailable validator, stop its own service after setup:
-
-```bash
-sudo ./scripts/setup-testnet.sh --clean
-sudo systemctl stop tos-pq-validator@4
-```
-
-See [Local PQ network](Local-PQ-Network.md) for the local development profile.
+The local network installer, which is maintained outside this repository,
+prepares four PQ genesis identities and four independent services. To rehearse
+one unavailable validator, stop its own service after setup, for example
+`sudo systemctl stop tos-pq-validator@4`.
 This is deliberately a one-offline-validator test. It must prove that:
 
 - all three running nodes converge on the same masterchain and workchain

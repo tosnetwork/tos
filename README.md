@@ -130,9 +130,9 @@ cd tosctl/src
 cargo build --locked
 ```
 
-For a disposable development network, use the [local PQ deployment guide](doc/Local-PQ-Network.md).
-It covers controller operating authorization, elections, failure diagnosis
-and health MCP setup. Read the reset instructions before running a command
+The development team's local network tooling and its operating notes are
+maintained outside this repository. For running a node on a shared network,
+see the [production node design](doc/Production-Node.md). Read the reset instructions before running a command
 that replaces chain data; local wallet and ceremony fixtures are not
 production keys.
 

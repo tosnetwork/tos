@@ -1,9 +1,9 @@
 # Production node configuration (design)
 
 Status: **design for review, not an accepted operating procedure.** This
-document is the production counterpart of
-[Local-PQ-Network.md](Local-PQ-Network.md). The local document describes a
-disposable development chain built by one script. This one describes how an
+document is the production counterpart of the development team's local network
+tooling, which is maintained outside this repository. That tooling builds a
+disposable development chain with one script. This one describes how an
 independent operator should configure and start a node on a shared network:
 
 - which roles exist and how each is exposed;
@@ -287,8 +287,8 @@ startup sweep that exists today only removes *observer* directories.
 
 ## 7. Service definitions
 
-The repository has no production unit; the `scripts/tos-pq-*.service` files
-are development templates. Proposed validator unit:
+The repository has no production unit; the local network's `tos-pq-*.service`
+files, kept with that tooling, are development templates. Proposed validator unit:
 
 ```ini
 [Unit]

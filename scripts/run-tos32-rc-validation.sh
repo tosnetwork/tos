@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Run the tos32 release-candidate local testnet validation loop.
 #
-# Native-only (wc=0): drives the native TVM testnet installed by
-# scripts/setup-testnet.sh (a 4-node systemd cluster). Each node is probed
+# Native-only (wc=0): drives the native TVM testnet installed by the local
+# network installer, setup-testnet.sh, which is maintained outside this
+# repository (a 4-node systemd cluster). Each node is probed
 # through its own liteserver via tos-lite-client (ADNL); there is no
 # custom-workchain JSON-RPC surface. Assumes setup-testnet.sh has already installed the
-# cluster, unless TOS_RC_SETUP=1 is set.
+# cluster, unless TOS_RC_SETUP=1 is set, which runs the installer named by
+# LOCAL_NETWORK_SETUP.
 
 set -euo pipefail
 
@@ -124,10 +126,11 @@ echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 uname -a
 
 if [ "${TOS_RC_SETUP:-0}" != "0" ] && [ -n "${TOS_RC_SETUP:-}" ]; then
-  $SUDO "$ROOT/scripts/setup-testnet.sh" --clean
+  : "${LOCAL_NETWORK_SETUP:?set LOCAL_NETWORK_SETUP to the local network installer (setup-testnet.sh)}"
+  $SUDO TOS_ROOT="$ROOT" "$LOCAL_NETWORK_SETUP" --clean
 fi
 
-"$ROOT/scripts/testnet-ctl.sh" start
+$SUDO systemctl start tos-pq-dht tos-pq-validator@{1,2,3,4}
 trap collect_logs EXIT
 
 check_all_nodes

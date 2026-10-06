@@ -28,10 +28,9 @@ Validators are the verification backbone for AI actor workflows. Agent runners, 
 A deployed PQ controller needs explicit root-authorized operating funding before
 it can relay a pool stake. Account balance alone is not spending authorization.
 Keep operator capital for the storage floor and fees separate from the recorded
-operating funds and pool principal. See [controller initialization and election
-checks](Local-PQ-Network.md#controller-funding-before-election-rehearsal) for the
-SDK/signing steps, state checks and rejection diagnostics. The monetary examples
-there are local development values, not production recommendations.
+operating funds and pool principal. See the validator lifecycle in
+[Production-Node.md](Production-Node.md#9-validator-lifecycle) for the
+SDK/signing steps, state checks and renewal by deficit.
 
 ## Production Hardware Requirements
 
