@@ -7,6 +7,20 @@ if [ ! -z "$TEST" ]; then
   exit 0;
 fi
 
+# Validator role (opt-in). Checked before anything is downloaded or created,
+# so a misconfigured validator stops here instead of starting as a full node.
+# These values reach the engine's command line as single words. Only
+# CUSTOM_ARG is split into several, and it is what the validator role parses.
+for name in VALIDATOR_PORT CONSOLE_PORT LITE_PORT STATE_TTL ARCHIVE_TTL THREADS VERBOSITY; do
+    value="${!name:-}"
+    if [ -n "$value" ] && [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        echo "$name must be a decimal number, not '$value'"
+        exit 4
+    fi
+done
+
+/var/tos-work/scripts/validator-role.sh check /var/tos-work/db/config.json || { echo "Validator role refused"; exit 4; }
+
 # global config
 if [ ! -z "$GLOBAL_CONFIG_URL" ]; then
     echo -e "\e[1;32m[+]\e[0m Downloading provided global config."
@@ -128,6 +142,10 @@ else
     fi
 fi
 
+# Written last: the control and liteserver steps above edit the engine's own
+# formatting of config.json textually, and this step rewrites it with jq.
+/var/tos-work/scripts/validator-role.sh apply /var/tos-work/db/config.json || { echo "Validator role refused"; exit 4; }
+
 echo -e "\e[1;32m[+]\e[0m Starting validator-engine:"
-echo validator-engine -c /var/tos-work/db/config.json -C /var/tos-work/db/tos-global.config --db /var/tos-work/db --state-ttl $STATE_TTL --archive-ttl $ARCHIVE_TTL --threads $THREADS --verbosity $VERBOSITY $CUSTOM_ARG
-exec validator-engine -c /var/tos-work/db/config.json -C /var/tos-work/db/tos-global.config --db /var/tos-work/db --state-ttl $STATE_TTL --archive-ttl $ARCHIVE_TTL --threads $THREADS --verbosity $VERBOSITY $CUSTOM_ARG
+echo validator-engine -c /var/tos-work/db/config.json -C /var/tos-work/db/tos-global.config --db /var/tos-work/db --state-ttl "$STATE_TTL" --archive-ttl "$ARCHIVE_TTL" --threads "$THREADS" --verbosity "$VERBOSITY" $CUSTOM_ARG
+exec validator-engine -c /var/tos-work/db/config.json -C /var/tos-work/db/tos-global.config --db /var/tos-work/db --state-ttl "$STATE_TTL" --archive-ttl "$ARCHIVE_TTL" --threads "$THREADS" --verbosity "$VERBOSITY" $CUSTOM_ARG
