@@ -1,0 +1,73 @@
+{
+  "status": "local-source-bound",
+  "scope": "fee wire framing and JS cell buffer isolation; not a durable signer, live proof service or broadcast/finality acceptance",
+  "suite": {
+    "files": 61,
+    "tests": 722,
+    "core_wallet_typecheck": "passed",
+    "restored_focused_tests": 20
+  },
+  "sources": {
+    "sdk/js/packages/wallets/src/V5R2Fee.ts": "7c38a3c9213f438f30e26699a833b2cdce5b3c277a17ee0d05a359e9048a6201",
+    "sdk/js/packages/wallets/src/V5R2Fee.test.ts": "a773426804b7b5577c1169938a16d214411fbd45304423fd0cccfb964f301ccf",
+    "sdk/js/packages/core/src/boc/BitString.ts": "99d1fbb5f9bb523d2b3e8cf8278f85f028032670f5c0fd75e3ad870c471e43d9",
+    "sdk/js/packages/core/src/boc/Cell.ts": "3e9bde68a8d971520fba9efb3b1ccf4ef7d00cd7e27b6ec5ab6860de8c71530e",
+    "sdk/js/packages/core/src/boc/Cell.test.ts": "10daffae32b6dd533e3e4c228ccc17adde7ed93c40a1fdd3ffc35873fff67ccc"
+  },
+  "controls": {
+    "20261007-js-fee": {
+      "results": {
+        "source_sha256": "7c38a3c9213f438f30e26699a833b2cdce5b3c277a17ee0d05a359e9048a6201",
+        "results": [
+          {
+            "name": "primary-auth",
+            "exit": 1,
+            "semantic_failure": true,
+            "log_sha256": "17de498fc7e089ed9369139b974d28ced5b1624cca6925695454bf1002ebcbc9"
+          },
+          {
+            "name": "current-slot",
+            "exit": 1,
+            "semantic_failure": true,
+            "log_sha256": "3cb60905bb680d6ccc11319e3ac6936cd174540b24009c22a282c234b6978e15"
+          },
+          {
+            "name": "hss-profile",
+            "exit": 1,
+            "semantic_failure": true,
+            "log_sha256": "f982211b434e6f201fc5a74d3125e9d2c07c327b76d397de1f2ede008b901135"
+          }
+        ]
+      },
+      "index": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-js-fee/controls.json",
+      "sha256": "b431f03b14c5972c6c49aebdbd9cf567d982589a3c4ec9eca1d3a803a6f9f198"
+    },
+    "20261007-js-cell-isolation": {
+      "results": [
+        {
+          "name": "input-copy",
+          "exit": 1,
+          "semantic_failure": true,
+          "restored_source_sha256": "99d1fbb5f9bb523d2b3e8cf8278f85f028032670f5c0fd75e3ad870c471e43d9",
+          "log_sha256": "5d9f874902cd3c5adf300aeac8e93b652c4b52bb491497f3d52f52e9808f68eb"
+        },
+        {
+          "name": "view-copy",
+          "exit": 1,
+          "semantic_failure": true,
+          "restored_source_sha256": "99d1fbb5f9bb523d2b3e8cf8278f85f028032670f5c0fd75e3ad870c471e43d9",
+          "log_sha256": "f8851d7960ef7dba7f7a393b498150ae4695569abb57ba8f2b33f804717bb470"
+        },
+        {
+          "name": "hash-copy",
+          "exit": 1,
+          "semantic_failure": true,
+          "restored_source_sha256": "3e9bde68a8d971520fba9efb3b1ccf4ef7d00cd7e27b6ec5ab6860de8c71530e",
+          "log_sha256": "13858d6beccf7064879217d770fad8e8c2fa2078b8580783f6c1d084ba6cc409"
+        }
+      ],
+      "index": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-js-cell-isolation/controls.json",
+      "sha256": "a15f29b1a416e20fe3f3cae2d263ac245d32c6076a579040b15920cc495c99a9"
+    }
+  }
+}

@@ -39,6 +39,8 @@ export type { V5R2Role, V5R2Action, V5R2Binding } from "./V5R2Auth.js";
 export { WalletV5R2 } from "./WalletV5R2.js";
 export { V5R2PopRequest, V5R2PreparationRequest } from "./V5R2Recovery.js";
 export type { V5R2RecoveryBinding, V5R2PreparationPlan } from "./V5R2Recovery.js";
+export { V5R2FeeIntent, validateV5R2FeePayload } from "./V5R2Fee.js";
+export type { V5R2FeeClass, V5R2FeeBinding } from "./V5R2Fee.js";
 export type { V5R2Policy, V5R2CodeBundle, V5R2CodePins, V5R2GenesisParameters } from "./WalletV5R2.js";
 
 // Signer
