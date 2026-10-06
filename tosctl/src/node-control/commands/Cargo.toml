@@ -5,7 +5,7 @@ edition = "2024"
 license = 'GPL-3.0'
 
 [features]
-pq-wallet = ["dep:wallet-pq-signer"]
+pq-wallet = ["dep:wallet-pq-signer", "contracts/native-wallet-signer"]
 
 [dependencies]
 wallet-pq-signer = { path = "../../wallet-pq-signer", features = ["vault"], optional = true }

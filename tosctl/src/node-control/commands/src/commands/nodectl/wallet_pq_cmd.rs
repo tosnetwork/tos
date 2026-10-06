@@ -9,7 +9,7 @@ use secrets_vault::{
     vault::SecretVault,
 };
 use std::{
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -106,6 +106,13 @@ impl PqRestoreKeyCmd {
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
+        self.run_with_manifest(None).await
+    }
+
+    async fn run_with_manifest(
+        &self,
+        manifest: Option<&contracts::wallet_v5r2_manifest::InitialRecoveryManifest>,
+    ) -> anyhow::Result<()> {
         let (context, expected_key) = self.enrollment()?;
         let phrase_source = secret_input::select_source(
             self.mnemonic_file.as_deref(),
@@ -134,6 +141,14 @@ impl PqRestoreKeyCmd {
             tos_native_mnemonic::private_seed(phrase, password)
                 .map_err(|_| anyhow::anyhow!("native mnemonic or password rejected"))?,
         );
+        if let Some(manifest) = manifest {
+            let mut checked = Zeroizing::new(*master);
+            manifest.verify_initial_master_and_wipe(
+                &mut *checked,
+                self.role.native(),
+                contracts::wallet_v5r2_manifest::SeedProfile::NativeMnemonic,
+            )?;
+        }
         let derived = wallet_pq_signer::kdf::derive_signer_and_wipe(
             &mut *master,
             context,
@@ -294,5 +309,67 @@ impl PqCreateKeyCmd {
         .await?;
         restore.report(signer.public_key(), "key_record_created");
         Ok(())
+    }
+}
+
+/// Initial recovery is offline custody reconstruction, not current chain authority.
+#[derive(clap::Args, Clone)]
+#[command(about = "Restore an initial PQ key after independent code and wallet identity checks")]
+pub struct PqRestoreInitialCmd {
+    #[command(flatten)]
+    key: PqRestoreKeyCmd,
+    #[arg(long)]
+    recovery_manifest: PathBuf,
+    /// Independently authenticated basechain wallet account ID (32-byte hex).
+    #[arg(long)]
+    expected_wallet: String,
+    #[arg(long)]
+    wallet_code: PathBuf,
+    #[arg(long)]
+    module_code: PathBuf,
+    #[arg(long)]
+    vault_code: PathBuf,
+    /// Release code hashes must be authenticated separately from the manifest.
+    #[arg(long)]
+    wallet_code_hash: String,
+    #[arg(long)]
+    module_code_hash: String,
+    #[arg(long)]
+    vault_code_hash: String,
+}
+
+fn bounded_public_file(path: &Path, limit: usize) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(std::fs::metadata(path)?.is_file(), "public recovery input must be a file");
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?.take((limit as u64) + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes.len() <= limit, "public recovery input size limit");
+    Ok(bytes)
+}
+fn public_hash(text: &str) -> anyhow::Result<[u8; 32]> {
+    hex::decode(text)?.try_into().map_err(|_| anyhow::anyhow!("expected 32-byte public hash"))
+}
+impl PqRestoreInitialCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        use contracts::{
+            wallet_v5r2_genesis::{CodeBundle, CodeHashes},
+            wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
+        };
+        self.key.enrollment()?;
+        let expected = public_hash(&self.expected_wallet)?;
+        let pins = CodeHashes {
+            wallet: public_hash(&self.wallet_code_hash)?,
+            module: public_hash(&self.module_code_hash)?,
+            vault: public_hash(&self.vault_code_hash)?,
+        };
+        let encoded = bounded_public_file(&self.recovery_manifest, MAX_MANIFEST_BYTES)?;
+        let code = CodeBundle::new(
+            chain_block::read_single_root_boc(bounded_public_file(&self.wallet_code, 256 * 1024)?)?,
+            chain_block::read_single_root_boc(bounded_public_file(&self.module_code, 256 * 1024)?)?,
+            chain_block::read_single_root_boc(bounded_public_file(&self.vault_code, 256 * 1024)?)?,
+            pins,
+        )?;
+        let (manifest, _) =
+            InitialRecoveryManifest::parse_and_reconstruct(&encoded, code, expected)?;
+        self.key.run_with_manifest(Some(&manifest)).await
     }
 }

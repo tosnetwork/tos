@@ -1,0 +1,173 @@
+{
+  "base_commit": "82d74c610c78ed13904c2ac2d9ff83f6f630889c",
+  "scope": "Actual CLI initial PQ key restoration with independently pinned code/wallet reconstruction and manifest-to-master binding before encrypted custody.",
+  "tests": {
+    "restored_cli_outcomes": {
+      "primary-account_index": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-key_generation": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-primary_seed_profile": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-trusted-wallet": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-code-pin": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-manifest-size": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-code-size": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-restore": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "primary-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-account_index": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-key_generation": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-rescue_seed_profile": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-trusted-wallet": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-code-pin": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-manifest-size": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-code-size": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-restore": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "rescue-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      }
+    },
+    "binding_control": "Manifest binding bypass accepted mismatched account index; restored CLI rejects it.",
+    "existing_restore_controls": {
+      "custody_preflight": {
+        "exit": 1,
+        "semantic_witness": "CLI opened custody before enrollment validation"
+      },
+      "exact_password": {
+        "exit": 1,
+        "semantic_witness": "CLI rejected valid exact-password recovery"
+      },
+      "record_id": {
+        "exit": 1,
+        "semantic_witness": "CLI lost record-id preflight"
+      },
+      "key_width": {
+        "exit": 1,
+        "semantic_witness": "CLI lost key-width preflight"
+      },
+      "duplicate_fd": {
+        "exit": 1,
+        "semantic_witness": "CLI lost duplicate-fd preflight"
+      }
+    },
+    "default_commands_check": "passed",
+    "workspace_format_and_ruff": "passed"
+  },
+  "commands": [
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet",
+    "python test/wallet-v5r2/cli_initial_controls.py --cli <tosctl> --genesis-driver <v5r2_genesis_encode> --fixture <compiled-genesis-fixture> --output <fresh-directory>",
+    "python3 test/wallet-v5r2/cli_restore_controls.py --cli <tosctl> --output <fresh-directory>",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --locked -p commands --lib --no-default-features",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_cmd.rs",
+      "bytes": 14331,
+      "sha256": "56ee01fc7541922b50365a87ebcb1def41c084fd40c8c99a103586702110a8af"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_cmd.rs",
+      "bytes": 71750,
+      "sha256": "f26e48ed6811e0d160f1f787e429a5379ea96f5075386d12126dcff961a7ad9c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/Cargo.toml",
+      "bytes": 1495,
+      "sha256": "4646f9afaeb893bf0198031ed9685ff418c80f361cf9c433f0d7dd77e59b3976"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_initial_restore.py",
+      "bytes": 8171,
+      "sha256": "6c69c166fc8ea998d46b780c772eda75a44ac2309e8eaf7f2ce355afad57b414"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_initial_controls.py",
+      "bytes": 2995,
+      "sha256": "a51487feb09f8045b56a741fb8721b83998f70a53614a880aa9191358a8bea2a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 19920,
+      "sha256": "a50c7271a9265d9662f542960287942f3e853668862580dcb387d6759f08e88e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 160503,
+      "sha256": "2f5b4e89827b53d1b74ceffacd4db5fb9bba768567b2010a395bb1cd3400b958"
+    }
+  ],
+  "fixture": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-recovery-integration/native/sdk-genesis.json",
+    "bytes": 59004,
+    "sha256": "bf73d4456aaff495a044ee6d39a059622c3e86dbf87d205c84d2869470523483"
+  },
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-initial-controls/MANIFEST.json",
+      "bytes": 20367,
+      "sha256": "153e0c3831f7200cfa2c4548df498acb519196841cf39d224e6c0eff4af4ca3f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-initial-restore-regression/MANIFEST.json",
+      "bytes": 30284,
+      "sha256": "7f01d4ac65627e84233151f31b31c29041b97340bdd8b37eb3c186c7604fa4e8"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Offline initial-key custody only; no current chain authority, successor recovery, LMS restoration or wallet readiness claim.",
+    "Caller independently authenticates wallet address, code hashes and enrolled public key/namespace.",
+    "Public mnemonic fixtures and local compiled-code inputs; no production secrets or release provenance claim.",
+    "Final-head CI, full creation orchestration and default-credit admission remain pending."
+  ]
+}

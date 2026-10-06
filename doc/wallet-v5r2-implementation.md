@@ -2466,3 +2466,42 @@ nonzero status and assertion text with the repaired reader. The three local
 budget controls and two parser controls pass, including restored positives.
 The Linux-only complete pool control still requires the next x86-64 CI run.
 Evidence: `test/wallet-v5r2/native-log-repair-20261006.json`.
+
+### CLI initial-manifest key restoration
+
+`tosctl wallet pq-restore-initial` combines bounded initial identity reconstruction
+with the existing protected mnemonic-to-Vault recovery path. It requires all
+`pq-restore-key` enrollment/custody options, plus `--recovery-manifest`,
+`--expected-wallet` (basechain account ID, 32-byte hex), three BOC paths
+`--wallet-code`, `--module-code`, `--vault-code`, and separately authenticated
+`--wallet-code-hash`, `--module-code-hash`, `--vault-code-hash` values. Do not obtain
+the expected wallet or release pins solely from the manifest being checked.
+
+Public input validation and `CodeBundle`/manifest reconstruction precede mnemonic
+input and Vault opening. The CLI reads at most 16 KiB plus one byte for a manifest
+and 256 KiB plus one byte for each code BOC, rejecting oversize files. Code hashes
+are checked against the separately supplied pins. Once the native mnemonic and
+exact password have been validated, a wiped copy of the resolved master is
+checked against the manifest's initial role and derivation metadata. The existing
+independent enrollment/public-key check also runs before persistent custody is
+opened. Only then does the established new-only Vault restore/flush/readback run.
+This command accepts only the native-mnemonic input profile for the selected role.
+
+Success retains the `key_record_restored` public JSON output. It does not deploy
+accounts, authorize the initial key after rotation, restore LMS state, establish
+current chain readiness or implement successor recovery. Callers still obtain
+live authenticated state before any signing or submission. This is an offline
+initial-key recovery command, not a complete wallet recovery declaration.
+
+Eighteen actual CLI outcomes cover both roles: successful restoration, duplicate
+refusal without changing the encrypted file, changed account index/generation,
+wrong seed-input profile, wrong independent wallet/code pin and oversized manifest
+or code. Public identity/resource failures use a missing mnemonic path to prove
+that validation stops before reading secrets. Rejected preflight leaves neither
+Vault data nor its lock file. Tests use public native mnemonic vectors with an
+exact whitespace-bearing password and compiled-code fixtures in disposable
+custody directories. A rebuilt-binary control bypasses the manifest-to-master
+binding and must fail because mismatched derivation metadata is accepted; the
+restored CLI passes all eighteen outcomes. Existing restore controls are rerun
+after extracting the shared optional-manifest execution path.
+Evidence: `test/wallet-v5r2/cli-initial-20261006.json`.
