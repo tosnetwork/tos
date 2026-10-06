@@ -168,6 +168,21 @@ expires after 30 days. A network that runs longer must re-run the tool before
 then. `--check` shows what is left and whether a renewal is due. The development root seeds are
 deterministic fixtures and must never control real funds.
 
+### Updating the drivers on a running network
+
+The root-run drivers execute a snapshot under `/usr/local/lib/tos-dev-services`,
+not the checkout. To deploy changed driver code:
+
+1. Stop `tos-pq-elections` right after a round's four `stake_accepted` events.
+2. Stop `tos-pq-transfers` only while its status reads `confirmed`:
+   `sudo jq -r .kind /data/transfers/status.json`. If it is stopped between
+   `submitting` and `confirmed`, it refuses to start again with
+   "previous transfer is unresolved". In that case, check the sender's last
+   transaction and the recipient's credit for the submitted amount before
+   recording any resolution. Do not clear the status to force a restart.
+3. Run `scripts/install-root-services.sh`, as `setup-testnet.sh` does, then
+   start both services again.
+
 ### Diagnose a missing stake confirmation
 
 | Observation | Check and response |
