@@ -149,10 +149,13 @@ erased.
 Cleanup is on by default; the engine logs `validator consensus cleanup:
 enabled` at start-up, and refuses to start if both flags are given. Running a
 validator with `--disable-validator-consensus-cleanup` grows its disk without
-bound; records accumulate meanwhile. After a restart without the flag the
-engine reads them back a bounded page at a time (at most 4096 resident at once)
-and reclaims them over many bounded passes, each only once it passes the
-conditions above, so a large backlog drains gradually rather than at start-up.
+bound; records accumulate meanwhile. After a restart without the flag nothing
+is loaded at start-up: the engine scans the stored records 256 at a time,
+deletes at most 16 per pass (64 in flight), and reclaims each record only once
+it passes the conditions above, so a large backlog drains gradually and memory
+does not grow with it. A scan that finds nothing to do pauses until the GC block
+moves or a session retires or closes. Each record is re-read just before its
+deletion, so a copy that changed or disappeared since the scan is skipped.
 
 Each deletion is logged as `VALCLEANUP reserve`, `VALCLEANUP delete_done ...
 confirmed_gone=1` and `VALCLEANUP erase_ack`. These lines are logged at INFO,

@@ -544,6 +544,12 @@ void RootDb::get_pending_validator_consensus_db_cleanup_page(std::string after_k
                           max_keys, std::move(promise));
 }
 
+void RootDb::get_pending_validator_consensus_db_cleanup_record(
+    ValidatorSessionId session_id, td::Promise<std::optional<consensus::PendingValidatorConsensusDbCleanup>> promise) {
+  td::actor::send_closure(state_db_, &StateDb::get_pending_validator_consensus_db_cleanup_record, session_id,
+                          std::move(promise));
+}
+
 void RootDb::update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) {
   td::actor::send_closure(state_db_, &StateDb::update_async_serializer_state, std::move(state), std::move(promise));
 }

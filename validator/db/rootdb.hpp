@@ -136,6 +136,9 @@ class RootDb : public Db {
                                                     td::Promise<td::Unit> promise) override;
   void get_pending_validator_consensus_db_cleanup_page(std::string after_key, size_t max_keys,
                                                        td::Promise<consensus::ValidatorCleanupPage> promise) override;
+  void get_pending_validator_consensus_db_cleanup_record(
+      ValidatorSessionId session_id,
+      td::Promise<std::optional<consensus::PendingValidatorConsensusDbCleanup>> promise) override;
 
   void update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) override;
   void get_async_serializer_state(td::Promise<AsyncSerializerState> promise) override;

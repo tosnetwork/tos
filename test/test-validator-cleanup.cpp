@@ -16,7 +16,10 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <map>
+#include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -642,376 +645,297 @@ TEST(ValidatorCleanup, fault_injection_scenarios) {
   }
 }
 
-// The stateful adapter: generation-scoped closure, in-flight-delete
-// fencing, reopen handling, and incarnation-bound erase.
-TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
-  auto gc = make_checkpoint(500);
-  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
-  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
-    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;  // g=10 > r=7
-  };
-  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
-  auto live = [](const tos::ValidatorSessionId&) { return true; };
-  std::set<std::string> erased;
+// The cleanup driver over an in-memory store with the store's key order and paging
+// semantics. Each pass runs synchronously: page read, examination, one point read per
+// candidate, reservation.
+namespace {
 
-  auto rec = make_record(1, 100);  // shard kShard, cc 7
-  auto sid = rec.session_id;
+struct ScanFixture {
+  ValidatorCleanupManager m;
+  std::map<std::string, PendingValidatorConsensusDbCleanup> store;
+  ValidatorCleanupOracles oracles;
+  std::set<tos::ValidatorSessionId> live;
 
-  // --- Startup-loaded obsolete record: eligible -> reserved -> confirmed delete ->
-  // durable erase dispatched (reservation still held, record NOT dropped) -> erase
-  // acknowledged -> record dropped and reservation released. ---
-  {
-    ValidatorCleanupManager m;
-    m.on_loaded_at_startup(rec);
-    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
-    ASSERT_EQ(batch.size(), static_cast<size_t>(1));
-    ASSERT_TRUE(m.is_delete_in_flight(sid));  // reserved/fenced during the async delete
-    erased.clear();
-    uint64_t erase_gen = 0;
-    uint64_t erase_attempt = 0;
-    m.on_delete_completed(batch[0].record.session_id, batch[0].generation, batch[0].attempt_id, /*confirmed_gone=*/true,
+  ScanFixture() {
+    oracles.gc = make_checkpoint(500);
+    oracles.ancestor_or_equal_of_gc = [](const tos::BlockIdExt& r) { return r.seqno() <= 500; };
+    oracles.gc_shard_catchain_seqno = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+      return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;  // g=10 > r=7
+    };
+    oracles.is_live = [this](const tos::ValidatorSessionId& s) { return live.count(s) > 0; };
+  }
+  void put(const PendingValidatorConsensusDbCleanup& r) {
+    store[validator_cleanup_key(r.session_id)] = r;
+  }
+  ValidatorCleanupPage read(const std::string& after, size_t max_keys) const {
+    ValidatorCleanupPage page;
+    auto it = after.empty() ? store.begin() : store.upper_bound(after);
+    for (; it != store.end() && page.records.size() < max_keys; ++it) {
+      page.records.push_back(it->second);
+      page.last_key = it->first;
+    }
+    page.reached_end = it == store.end();
+    return page;
+  }
+  std::optional<PendingValidatorConsensusDbCleanup> get(const tos::ValidatorSessionId& s) const {
+    auto it = store.find(validator_cleanup_key(s));
+    return it == store.end() ? std::nullopt : std::optional<PendingValidatorConsensusDbCleanup>{it->second};
+  }
+  // One pass; nothing when the driver declines to start one.
+  std::optional<std::vector<ReservedValidatorDelete>> pass(
+      const ValidatorCleanupManager::CleanupExaminedFn& on_examined = {}) {
+    auto request = m.begin_pass(oracles.gc);
+    if (!request) {
+      return std::nullopt;
+    }
+    auto candidates = m.on_page(*request, read(request->after_key, request->max_keys), oracles, on_examined);
+    std::vector<ReservedValidatorDelete> reserved;
+    for (const auto& c : candidates) {
+      if (auto r = m.on_point_read(c, get(c.session_id), oracles.is_live)) {
+        reserved.push_back(*r);
+      }
+    }
+    ASSERT_TRUE(m.pass_verified());
+    m.end_pass();
+    return reserved;
+  }
+  // Complete a reserved delete; on success erase the record and acknowledge the erase.
+  void complete(const ReservedValidatorDelete& r, bool gone) {
+    std::vector<std::tuple<tos::ValidatorSessionId, uint64_t, uint64_t>> acks;
+    m.on_delete_completed(r.record.session_id, r.generation, r.attempt_id, gone,
                           [&](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) {
-                            erased.insert(s.to_hex());
-                            erase_gen = g;
-                            erase_attempt = a;
+                            store.erase(validator_cleanup_key(s));
+                            acks.emplace_back(s, g, a);
                           });
-    ASSERT_TRUE(erased.count(sid.to_hex()) == 1);
-    ASSERT_TRUE(m.is_delete_in_flight(sid));                // reservation HELD until the erase is acked
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));   // record NOT dropped yet
-    m.on_erase_acknowledged(sid, erase_gen, erase_attempt);
-    ASSERT_TRUE(!m.is_delete_in_flight(sid));
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));   // dropped only after the durable ack
+    for (const auto& [s, g, a] : acks) {
+      m.on_erase_acknowledged(s, g, a);
+    }
   }
+};
 
-  // --- Generation-scoped closure: a stale close ack (older incarnation) does NOT
-  // make the record eligible; only the matching generation does. ---
-  {
-    ValidatorCleanupManager m;
-    m.on_group_created(sid);                 // gen 1
-    auto gen = m.on_group_retired(rec);      // retired at gen 1
-    ASSERT_EQ(gen, static_cast<uint64_t>(1));
-    m.on_close_confirmed(sid, 0);            // stale ack (gen 0) -> ignored
-    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());  // not closed yet
-    m.on_close_confirmed(sid, 1);            // correct generation -> closed
-    ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
-  }
+}  // namespace
 
-  // --- Reopen drops the pending record (directory reused by a live group). ---
-  {
-    ValidatorCleanupManager m;
-    m.on_group_created(sid);      // gen 1
-    m.on_group_retired(rec);      // pending
-    m.on_close_confirmed(sid, 1);
-    m.on_group_created(sid);      // reopen -> gen 2, pending dropped
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
-    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());
-  }
+// The driver's per-session invariants: a durable obsolete record is reserved, held in
+// flight through its durable erase, and released only on the erase ack; a retirement
+// awaiting its close (for the right incarnation), a reopened or live session is never
+// reserved; an unconfirmed delete erases nothing and is retried by a later scan; an
+// in-flight session is not reserved twice; completions bind to the exact attempt.
+TEST(ValidatorCleanup, cleanup_manager_enforces_driver_invariants) {
+  auto rec = make_record(1, 100);  // shard kShard, cc 7: obsolete at the GC block
+  auto sid = rec.session_id;
 
-  // --- A live session is never reserved even if loaded + (would be) closed. ---
   {
-    ValidatorCleanupManager m;
-    m.on_loaded_at_startup(rec);
-    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, live, 10).empty());
-  }
-
-  // --- Unconfirmed delete: no erase dispatched, reservation cleared (back to
-  // Pending), record retained, eligible again. ---
-  {
-    ValidatorCleanupManager m;
-    m.on_loaded_at_startup(rec);
-    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
-    ASSERT_EQ(batch.size(), static_cast<size_t>(1));
+    ScanFixture f;
+    f.put(rec);
+    auto reserved = f.pass().value();
+    ASSERT_EQ(reserved.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(f.m.is_delete_in_flight(sid));
     bool erase_dispatched = false;
-    m.on_delete_completed(batch[0].record.session_id, batch[0].generation, batch[0].attempt_id,
-                          /*confirmed_gone=*/false,
-                          [&](const tos::ValidatorSessionId&, uint64_t, uint64_t) { erase_dispatched = true; });
-    ASSERT_TRUE(!erase_dispatched);  // no durable erase on an unconfirmed delete
-    ASSERT_TRUE(!m.is_delete_in_flight(sid));
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
-    // Retried next pass.
-    ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
+    uint64_t g = 0;
+    uint64_t a = 0;
+    f.m.on_delete_completed(sid, reserved[0].generation, reserved[0].attempt_id, true,
+                            [&](const tos::ValidatorSessionId&, uint64_t gen, uint64_t att) {
+                              erase_dispatched = true;
+                              g = gen;
+                              a = att;
+                            });
+    ASSERT_TRUE(erase_dispatched);
+    ASSERT_TRUE(f.m.is_delete_in_flight(sid));  // held until the erase is acknowledged
+    f.m.on_erase_acknowledged(sid, g, a);
+    ASSERT_TRUE(!f.m.is_delete_in_flight(sid));
   }
 
-  // --- In-flight fence: while reserved, a second begin must not re-reserve it. ---
+  // Generation-scoped closure: only the close ack of the retired incarnation counts.
   {
-    ValidatorCleanupManager m;
-    m.on_loaded_at_startup(rec);
-    ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
-    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());  // already in flight
-    ASSERT_TRUE(m.is_delete_in_flight(sid));
+    ScanFixture f;
+    f.put(rec);
+    f.m.on_group_created(sid);
+    auto gen = f.m.on_group_retired(rec);
+    f.m.on_close_confirmed(sid, gen + 1);  // stale / foreign ack
+    ASSERT_TRUE(f.pass().value().empty());
+    f.m.on_close_confirmed(sid, gen);
+    ASSERT_EQ(f.pass().value().size(), static_cast<size_t>(1));
   }
 
-  // --- Operation-token binding: a completion or erase-ack for the WRONG generation
-  // OR the WRONG attempt must not act on the current entry. ---
+  // Reopened after its retirement closed: live again, never reserved.
   {
-    ValidatorCleanupManager m;
-    m.on_loaded_at_startup(rec);  // retired_generation 0
-    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
-    ASSERT_EQ(batch.size(), static_cast<size_t>(1));
-    auto gen = batch[0].generation;
-    auto att = batch[0].attempt_id;
+    ScanFixture f;
+    f.put(rec);
+    f.m.on_group_created(sid);
+    f.m.on_close_confirmed(sid, f.m.on_group_retired(rec));
+    f.m.on_group_created(sid);
+    ASSERT_TRUE(f.pass().value().empty());
+  }
+
+  // Live per the owner's oracle: never reserved.
+  {
+    ScanFixture f;
+    f.put(rec);
+    f.live.insert(sid);
+    ASSERT_TRUE(f.pass().value().empty());
+  }
+
+  // Unconfirmed delete: no erase, reservation released, record kept, retried later.
+  {
+    ScanFixture f;
+    f.put(rec);
+    auto reserved = f.pass().value();
+    ASSERT_EQ(reserved.size(), static_cast<size_t>(1));
+    f.complete(reserved[0], /*gone=*/false);
+    ASSERT_TRUE(!f.m.is_delete_in_flight(sid));
+    ASSERT_TRUE(f.get(sid).has_value());
+    ASSERT_EQ(f.pass().value().size(), static_cast<size_t>(1));  // the scan wrapped and sees it again
+  }
+
+  // In flight: not reserved again by a later scan.
+  {
+    ScanFixture f;
+    f.put(rec);
+    ASSERT_EQ(f.pass().value().size(), static_cast<size_t>(1));
+    ASSERT_TRUE(f.pass().value().empty());
+    ASSERT_TRUE(f.m.is_delete_in_flight(sid));
+  }
+
+  // Completions and erase acks bind to the exact generation and attempt.
+  {
+    ScanFixture f;
+    f.put(rec);
+    auto r = f.pass().value().at(0);
     bool wrong_erase = false;
-    auto record_erase = [&](const tos::ValidatorSessionId&, uint64_t, uint64_t) { wrong_erase = true; };
-    // Wrong generation, and wrong attempt -> both ignored; entry stays Deleting.
-    m.on_delete_completed(sid, gen + 1, att, /*confirmed_gone=*/true, record_erase);
-    m.on_delete_completed(sid, gen, att + 1, /*confirmed_gone=*/true, record_erase);
+    auto note = [&](const tos::ValidatorSessionId&, uint64_t, uint64_t) { wrong_erase = true; };
+    f.m.on_delete_completed(sid, r.generation + 1, r.attempt_id, true, note);
+    f.m.on_delete_completed(sid, r.generation, r.attempt_id + 1, true, note);
     ASSERT_TRUE(!wrong_erase);
-    ASSERT_TRUE(m.is_delete_in_flight(sid));
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
-    // Correct completion -> dispatches erase; then WRONG-generation and WRONG-attempt
-    // erase acks are ignored, and only the correct one drops the record.
-    uint64_t erase_gen = 0;
-    uint64_t erase_att = 0;
-    m.on_delete_completed(sid, gen, att, true, [&](const tos::ValidatorSessionId&, uint64_t g, uint64_t a) {
-      erase_gen = g;
-      erase_att = a;
-    });
-    m.on_erase_acknowledged(sid, erase_gen + 1, erase_att);  // wrong gen -> ignored
-    m.on_erase_acknowledged(sid, erase_gen, erase_att + 1);  // wrong attempt -> ignored
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
-    m.on_erase_acknowledged(sid, erase_gen, erase_att);  // correct
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
+    uint64_t g = 0;
+    uint64_t a = 0;
+    f.m.on_delete_completed(sid, r.generation, r.attempt_id, true,
+                            [&](const tos::ValidatorSessionId&, uint64_t gen, uint64_t att) {
+                              g = gen;
+                              a = att;
+                            });
+    f.m.on_erase_acknowledged(sid, g + 1, a);
+    f.m.on_erase_acknowledged(sid, g, a + 1);
+    ASSERT_TRUE(f.m.is_delete_in_flight(sid));
+    f.m.on_erase_acknowledged(sid, g, a);
+    ASSERT_TRUE(!f.m.is_delete_in_flight(sid));
   }
 }
 
-// Retries are fair: with more eligible-but-failing records than the per-pass
-// budget, every record is attempted across successive passes (round-robin), so a
-// failing prefix cannot starve later records. Without the cursor, every pass would
-// re-attempt only the first `budget` records.
-TEST(ValidatorCleanup, cleanup_manager_retries_fairly) {
-  auto gc = make_checkpoint(500);
-  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
-  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
-    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
-  };
-  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
-
-  ValidatorCleanupManager m;
-  const int kRecords = 5;
-  for (int i = 0; i < kRecords; i++) {
-    m.on_loaded_at_startup(make_record(static_cast<unsigned char>(i), 100));  // all eligible
+// The dispatch budget stops the cursor at the first eligible record it cannot take, so
+// the next pass examines it; nothing is skipped and every record is reserved once.
+TEST(ValidatorCleanup, cleanup_manager_budget_stops_the_cursor) {
+  ScanFixture f;
+  const size_t kRecords = 40;
+  for (size_t i = 0; i < kRecords; i++) {
+    f.put(make_record(static_cast<unsigned char>(i), 100));
   }
-
-  std::set<std::string> attempted;
-  // 3 passes of budget 2, every delete fails (unconfirmed -> back to Pending).
-  for (int pass = 0; pass < 3; pass++) {
-    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*budget=*/2);
+  std::set<std::string> reserved;
+  size_t passes = 0;
+  while (reserved.size() < kRecords && passes < 10) {
+    // The keys the next pass should reserve: the first kDispatchBudget left in key order.
+    std::vector<std::string> expected;
+    for (auto it = f.store.begin(); it != f.store.end() && expected.size() < ValidatorCleanupManager::kDispatchBudget;
+         ++it) {
+      expected.push_back(it->first);
+    }
+    auto batch = f.pass().value();
+    ASSERT_EQ(batch.size(), expected.size());
+    for (size_t k = 0; k < batch.size(); k++) {
+      // In key order, with nothing skipped: the cursor stopped at the first record the
+      // budget could not take, so this pass resumed exactly there.
+      ASSERT_TRUE(validator_cleanup_key(batch[k].record.session_id) == expected[k]);
+      ASSERT_TRUE(reserved.insert(batch[k].record.session_id.to_hex()).second);  // never twice
+    }
+    // Only the pass that reaches the end of the store wraps the cursor.
+    ASSERT_EQ(f.m.cursor().empty(), reserved.size() == kRecords);
     for (const auto& r : batch) {
-      attempted.insert(r.record.session_id.to_hex());
-      m.on_delete_completed(r.record.session_id, r.generation, r.attempt_id, /*confirmed_gone=*/false,
-                            [](const tos::ValidatorSessionId&, uint64_t, uint64_t) {});
+      f.complete(r, true);
+    }
+    ++passes;
+  }
+  ASSERT_EQ(reserved.size(), kRecords);
+  ASSERT_EQ(passes, static_cast<size_t>(3));  // ceil(40 / 16)
+  ASSERT_TRUE(f.store.empty());
+}
+
+// In-flight work is capped across passes: with completions withheld, at most
+// kMaxInFlight deletes are ever reserved.
+TEST(ValidatorCleanup, cleanup_manager_caps_in_flight) {
+  ScanFixture f;
+  for (int i = 0; i < 100; i++) {
+    f.put(make_record(static_cast<unsigned char>(i), 100));
+  }
+  size_t reserved = 0;
+  for (int pass = 0; pass < 20; pass++) {
+    if (auto batch = f.pass()) {
+      reserved += batch->size();
     }
   }
-  // ceil(5/2)=3 passes suffice to touch all 5 under round-robin; a begin-anchored
-  // scan would have attempted only 2.
-  ASSERT_EQ(attempted.size(), static_cast<size_t>(kRecords));
+  ASSERT_EQ(reserved, ValidatorCleanupManager::kMaxInFlight);
+  ASSERT_EQ(f.m.in_flight_count(), ValidatorCleanupManager::kMaxInFlight);
 }
 
-// Defensive: re-retiring a session whose delete is already in flight must not
-// overwrite the in-flight entry or disturb the outstanding count (cannot happen in
-// production, but the adapter must stay robust).
+// Re-retiring a session whose delete is in flight cannot happen (creation is fenced),
+// but must not disturb the in-flight operation if it did.
 TEST(ValidatorCleanup, cleanup_manager_ignores_re_retire_while_in_flight) {
-  auto gc = make_checkpoint(500);
-  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
-  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
-    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
-  };
-  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
-
-  ValidatorCleanupManager m;
+  ScanFixture f;
   auto rec = make_record(1, 100);
-  auto sid = rec.session_id;
-  m.on_loaded_at_startup(rec);
-  auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*dispatch*/ 10, /*scan*/ 1000,
-                                        /*max_outstanding*/ 2);
-  ASSERT_EQ(batch.size(), static_cast<size_t>(1));
-  ASSERT_TRUE(m.is_delete_in_flight(sid));
-
-  // Re-retire the same session while its delete is in flight: must be a no-op on
-  // the in-flight entry, returning its existing generation and NOT consuming an
-  // outstanding slot. If it overwrote, a second begin would see max_outstanding
-  // already consumed by a phantom and the entry would be Pending again.
-  auto re_gen = m.on_group_retired(rec);
-  ASSERT_EQ(re_gen, batch[0].generation);
-  ASSERT_TRUE(m.is_delete_in_flight(sid));              // still in flight, not reset to Pending
-  ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
-  // max_outstanding is 2 and exactly one slot is used: another eligible record can
-  // still be reserved (proving outstanding_ was not corrupted to 2 by the overwrite).
-  m.on_loaded_at_startup(make_record(2, 100));
-  auto b2 = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10, 1000, 2);
-  ASSERT_EQ(b2.size(), static_cast<size_t>(1));
+  f.put(rec);
+  auto r = f.pass().value().at(0);
+  ASSERT_EQ(f.m.on_group_retired(rec), r.generation);
+  ASSERT_TRUE(f.m.is_delete_in_flight(rec.session_id));
+  ASSERT_EQ(f.m.open_retirement_count(), static_cast<size_t>(0));
+  f.complete(r, true);
+  ASSERT_TRUE(!f.m.is_delete_in_flight(rec.session_id));
 }
 
-// A late startup load (block application can create/retire a group before the
-// load callback returns) must NOT overwrite a runtime incarnation with
-// generation-0/closed=true.
-TEST(ValidatorCleanup, startup_load_does_not_overwrite_runtime_incarnation) {
-  auto gc = make_checkpoint(500);
-  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
-  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
-    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
-  };
-  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
-  auto rec = make_record(1, 100);
-  auto sid = rec.session_id;
-
-  // Runtime incarnation retired but NOT yet closed; then a late load arrives.
-  {
-    ValidatorCleanupManager m;
-    m.on_group_created(sid);
-    auto gen = m.on_group_retired(rec);   // closed == false
-    m.on_loaded_at_startup(rec);          // late load -> must be ignored (runtime wins)
-    // If the load had overwritten the entry to closed=true it would be eligible now.
-    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());
-    // The real incarnation's close makes it eligible -- proving the retained entry
-    // is the runtime one awaiting close, not an overwritten closed=true load.
-    m.on_close_confirmed(sid, gen);
-    ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
-  }
-
-  // A live (created, not retired) session: a late load must not create a pending
-  // entry for it at all.
-  {
-    ValidatorCleanupManager m;
-    m.on_group_created(sid);
-    m.on_loaded_at_startup(rec);
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
-  }
-}
-
-// begin_eligible_deletes bounds both the entries examined per pass (scan_budget)
-// and the total concurrent in-flight reservations across passes (max_outstanding),
-// independently of the per-pass dispatch budget.
-TEST(ValidatorCleanup, cleanup_manager_bounds_scan_and_outstanding) {
-  auto gc = make_checkpoint(500);
-  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
-  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
-    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
-  };
-  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
-
-  // scan_budget=1 with two eligible records and a large dispatch budget: only ONE
-  // entry is examined, so only one is reserved (unbounded scan would reserve both).
-  {
-    ValidatorCleanupManager m;
-    m.on_loaded_at_startup(make_record(1, 100));
-    m.on_loaded_at_startup(make_record(2, 100));
-    auto b = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*dispatch*/ 10, /*scan*/ 1);
-    ASSERT_EQ(b.size(), static_cast<size_t>(1));
-  }
-
-  // max_outstanding=2 with five eligible records and a large dispatch budget: the
-  // first pass reserves 2; a second pass (nothing completed) reserves 0 because the
-  // outstanding cap is reached (unbounded would reserve all 5 in one pass).
-  {
-    ValidatorCleanupManager m;
-    for (int i = 0; i < 5; i++) {
-      m.on_loaded_at_startup(make_record(static_cast<unsigned char>(i), 100));
-    }
-    auto a = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*dispatch*/ 10, /*scan*/ 1000,
-                                      /*max_outstanding*/ 2);
-    ASSERT_EQ(a.size(), static_cast<size_t>(2));
-    auto b = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10, 1000, 2);
-    ASSERT_TRUE(b.empty());  // outstanding == max -> none reserved
-  }
-}
-
-// A cleanup pass runs on every GC advance, so the per-record examination report must
-// fire only when a record's decision changes: once on first examination, again when
-// it flips to eligible, and again after a failed delete puts it back for a retry.
-// Repeating it on every pass would write one line per pending record per GC advance.
-TEST(ValidatorCleanup, cleanup_manager_reports_each_decision_once) {
-  auto gc = make_checkpoint(500);
-  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
-  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
-    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
-  };
-  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
-  std::vector<std::pair<tos::ValidatorSessionId, bool>> reports;
-  auto on_examined = [&reports](const tos::ValidatorSessionId& s, bool eligible) { reports.emplace_back(s, eligible); };
-  auto pass = [&](ValidatorCleanupManager& m) {
-    return m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10, 1000, 1000, on_examined);
-  };
-
-  ValidatorCleanupManager m;
-  auto rec = make_record(7, 100);
-  auto sid = rec.session_id;
-  m.on_group_created(sid);
-  auto gen = m.on_group_retired(rec);  // not yet closed -> ineligible
-
-  ASSERT_TRUE(pass(m).empty());
-  ASSERT_EQ(reports.size(), static_cast<size_t>(1));
-  ASSERT_TRUE(reports[0].first == sid);
-  ASSERT_TRUE(!reports[0].second);
-  // Unchanged decision on later passes: no new report.
-  for (int i = 0; i < 5; i++) {
-    ASSERT_TRUE(pass(m).empty());
-  }
-  ASSERT_EQ(reports.size(), static_cast<size_t>(1));
-
-  // Closing makes it eligible: the flip is reported once and the record reserved.
-  m.on_close_confirmed(sid, gen);
-  auto reserved = pass(m);
-  ASSERT_EQ(reserved.size(), static_cast<size_t>(1));
+// Every examined record is reported with its decision.
+TEST(ValidatorCleanup, cleanup_manager_reports_each_examined_record) {
+  ScanFixture f;
+  f.put(make_record(1, 100));
+  f.put(make_record(2, 900));  // retired after the GC block: not eligible
+  std::map<std::string, bool> reports;
+  f.pass([&](const tos::ValidatorSessionId& s, bool eligible) { reports[s.to_hex()] = eligible; });
   ASSERT_EQ(reports.size(), static_cast<size_t>(2));
-  ASSERT_TRUE(reports[1].second);
-
-  // A failed delete returns it to Pending; the retry's decision is reported again,
-  // even though it is the same decision as before the attempt.
-  auto no_erase = [](const tos::ValidatorSessionId&, uint64_t, uint64_t) {};
-  m.on_delete_completed(sid, reserved[0].generation, reserved[0].attempt_id, /*confirmed_gone=*/false, no_erase);
-  ASSERT_EQ(pass(m).size(), static_cast<size_t>(1));
-  ASSERT_EQ(reports.size(), static_cast<size_t>(3));
-  ASSERT_TRUE(reports[2].second);
+  ASSERT_TRUE(reports[make_session_id(1).to_hex()]);
+  ASSERT_TRUE(!reports[make_session_id(2).to_hex()]);
 }
 
-// Generation bookkeeping must not grow with historical session churn, and a
-// re-created session must get a STRICTLY GREATER incarnation so a stale close ack
-// from an older incarnation can never match the newer one.
+// Per-session memory is released: after many full lifecycles nothing remains, and a
+// re-created session gets a strictly greater incarnation whose close a stale ack for
+// the old one cannot stand in for.
 TEST(ValidatorCleanup, cleanup_manager_reclaims_generation_state) {
-  auto gc = make_checkpoint(500);
-  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
-  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
-    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
-  };
-  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
-
-  // Full lifecycle for many distinct sessions; after each completes, NO per-session
-  // bookkeeping should remain. If the live-generation map were kept per session
-  // (the earlier unbounded design), live_session_count would grow to N.
-  ValidatorCleanupManager m;
-  const int kSessions = 200;
-  for (int i = 0; i < kSessions; i++) {
+  ScanFixture f;
+  for (int i = 0; i < 200; i++) {
     auto rec = make_record(static_cast<unsigned char>(i), 100);
-    auto sid = rec.session_id;
-    m.on_group_created(sid);
-    auto gen = m.on_group_retired(rec);
-    m.on_close_confirmed(sid, gen);
-    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 100);
-    for (const auto& r : batch) {
-      m.on_delete_completed(
-          r.record.session_id, r.generation, r.attempt_id, /*confirmed_gone=*/true,
-          [&m](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) { m.on_erase_acknowledged(s, g, a); });
+    f.put(rec);
+    f.m.on_group_created(rec.session_id);
+    f.m.on_close_confirmed(rec.session_id, f.m.on_group_retired(rec));
+  }
+  for (int pass = 0; pass < 40 && !f.store.empty(); pass++) {
+    auto batch = f.pass();
+    ASSERT_TRUE(batch.has_value());
+    for (const auto& r : *batch) {
+      f.complete(r, true);
     }
   }
-  ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
-  ASSERT_EQ(m.live_session_count(), static_cast<size_t>(0));  // reclaimed, not linear in kSessions
+  ASSERT_EQ(f.store.size(), static_cast<size_t>(0));
+  ASSERT_EQ(f.m.in_flight_count(), static_cast<size_t>(0));
+  ASSERT_EQ(f.m.open_retirement_count(), static_cast<size_t>(0));
+  ASSERT_EQ(f.m.live_session_count(), static_cast<size_t>(0));
 
-  // Re-creation: the new incarnation's generation strictly exceeds the old, and a
-  // stale close ack for the old generation does not close the new entry.
-  ValidatorCleanupManager m2;
+  ScanFixture g;
   auto rec = make_record(1, 100);
-  auto sid = rec.session_id;
-  m2.on_group_created(sid);
-  auto gen_a = m2.on_group_retired(rec);
-  m2.on_group_created(sid);  // reopen -> new incarnation, drops the prior pending
-  auto rec2 = make_record(1, 100);
-  auto gen_b = m2.on_group_retired(rec2);
-  ASSERT_TRUE(gen_b > gen_a);                // globally monotonic
-  m2.on_close_confirmed(sid, gen_a);         // stale ack -> ignored
-  ASSERT_TRUE(m2.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());
-  m2.on_close_confirmed(sid, gen_b);         // correct incarnation -> closes
-  ASSERT_EQ(m2.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
+  g.put(rec);
+  g.m.on_group_created(rec.session_id);
+  auto gen_a = g.m.on_group_retired(rec);
+  g.m.on_group_created(rec.session_id);  // reopened before the close
+  auto gen_b = g.m.on_group_retired(rec);
+  ASSERT_TRUE(gen_b > gen_a);
+  g.m.on_close_confirmed(rec.session_id, gen_a);  // stale
+  ASSERT_TRUE(g.pass().value().empty());
+  g.m.on_close_confirmed(rec.session_id, gen_b);
+  ASSERT_EQ(g.pass().value().size(), static_cast<size_t>(1));
 }
 
 // Pin the literal key prefix and range end independently of the helpers, so a

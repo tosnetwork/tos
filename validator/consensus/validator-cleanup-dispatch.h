@@ -18,6 +18,10 @@
 */
 #pragma once
 
+#include <optional>
+#include <string>
+#include <vector>
+
 #include "td/actor/actor.h"
 #include "validator/consensus/validator-cleanup-manager.h"
 #include "validator/consensus/validator-cleanup-worker.h"
@@ -36,16 +40,24 @@
 // by whichever caller's tests run -- there is only one copy.
 //
 // `Self` must expose, as actor-reachable methods with these exact signatures:
+//   void try_validator_consensus_db_cleanup();
+//   void validator_cleanup_page_loaded(ValidatorCleanupPageRequest request,
+//                                      td::Result<ValidatorCleanupPage> page);
+//   void validator_cleanup_point_read(PendingValidatorConsensusDbCleanup candidate,
+//                                     td::Result<std::optional<PendingValidatorConsensusDbCleanup>> current);
 //   void validator_cleanup_delete_done(ValidatorSessionId, td::uint64 generation,
 //                                      td::uint64 attempt_id, bool confirmed_gone);
 //   void validator_cleanup_erase_acked(ValidatorSessionId, td::uint64 generation,
 //                                      td::uint64 attempt_id);
-//   void try_validator_consensus_db_cleanup();
-// The gate check, the GC-snapshot oracles, and begin_eligible_deletes stay in the
-// owner's try_validator_consensus_db_cleanup (they are environment-specific: the
-// production gate is the validator option and the oracles come from a MasterchainState;
-// a test supplies its own gate and injected oracles). Everything after the reserved
-// batch is produced -- worker creation, dispatch, completion, durable erase, and the
+// and, as plain methods called on the owner's thread:
+//   bool validator_cleanup_reserved(const ReservedValidatorDelete& reserved);
+//     (returns whether to dispatch the delete now; the manager always does, a test
+//     harness may hold it to model a worker that has not run yet)
+//   void validator_cleanup_pass_finished(ValidatorCleanupPassSummary summary, td::Status status);
+// The gate check and the GC-snapshot oracles stay with the owner (they are
+// environment-specific: the production gate is the validator option and the oracles
+// come from a MasterchainState; a test supplies its own). Everything else -- the page
+// read, the point reads, worker creation, dispatch, completion, durable erase, and the
 // re-trigger placement -- is shared here.
 namespace tos::validator::consensus {
 
@@ -108,22 +120,91 @@ void complete_validator_delete(td::actor::ActorId<Self> self_id, ValidatorCleanu
       });
 }
 
-// A record was actually removed (durable erase committed): outstanding capacity is
+// A record was actually removed (durable erase committed): in-flight capacity is
 // freed and the backlog shrank by one. Re-triggering a pass here is loop-safe because
 // each re-trigger is paid for by a completed removal -- the backlog is monotonically
-// decreasing -- so it cannot spin. This is the ONLY completion-path re-trigger.
-//
-// The re-trigger is a DIRECT, synchronous call on the owner (not a deferred
-// send_closure): it runs within the same actor turn as the erase-ack, before the next
-// mailbox message. That ordering matters -- e.g. an erase-ack immediately followed by a
-// group-creation request must reserve the freed session's next delete BEFORE the
-// creation runs, so creation hits the in-flight fence. `self` is the owner actor, on
-// whose thread this executes.
+// decreasing -- so it cannot spin. This is the ONLY completion-path re-trigger. A
+// group created for a session before its delete is reserved is safe regardless of
+// ordering: the reservation itself (on_point_read) refuses a live session.
 template <class Self>
 void acknowledge_validator_erase(Self* self, ValidatorCleanupManager& adapter, const ValidatorSessionId& session,
                                  td::uint64 generation, td::uint64 attempt_id) {
   adapter.on_erase_acknowledged(session, generation, attempt_id);
   self->try_validator_consensus_db_cleanup();
+}
+
+// Start a pass at the durable GC block `gc`: read the next page of records after the
+// adapter's cursor. Returns false when the adapter declines (a pass is running, or
+// scanning is paused at this GC block).
+template <class Self>
+bool start_validator_cleanup_pass(td::actor::ActorId<Self> self_id, ValidatorCleanupManager& adapter,
+                                  td::actor::ActorId<Db> db, const BlockIdExt& gc) {
+  auto request = adapter.begin_pass(gc);
+  if (!request) {
+    return false;
+  }
+  auto after_key = request->after_key;
+  auto max_keys = request->max_keys;
+  td::actor::send_closure(db, &Db::get_pending_validator_consensus_db_cleanup_page, std::move(after_key), max_keys,
+                          [self_id, request = std::move(*request)](td::Result<ValidatorCleanupPage> R) mutable {
+                            td::actor::send_closure(self_id, &Self::validator_cleanup_page_loaded, std::move(request),
+                                                    std::move(R));
+                          });
+  return true;
+}
+
+// The page of a running pass arrived. Examine it against `oracles` (nothing when the
+// durable GC snapshot is unavailable, which ends the pass with the cursor unchanged)
+// and point-read each candidate.
+template <class Self>
+void handle_validator_cleanup_page(Self* self, td::actor::ActorId<Self> self_id, ValidatorCleanupManager& adapter,
+                                   td::actor::ActorId<Db> db, const ValidatorCleanupPageRequest& request,
+                                   td::Result<ValidatorCleanupPage> R,
+                                   const std::optional<ValidatorCleanupOracles>& oracles,
+                                   const ValidatorCleanupManager::CleanupExaminedFn& on_examined) {
+  if (R.is_error() || !oracles) {
+    adapter.abort_pass();
+    self->validator_cleanup_pass_finished(
+        ValidatorCleanupPassSummary{},
+        R.is_error() ? R.move_as_error() : td::Status::Error("no durable GC snapshot for the pass"));
+    return;
+  }
+  auto candidates = adapter.on_page(request, R.ok(), *oracles, on_examined);
+  for (auto& candidate : candidates) {
+    auto session = candidate.session_id;
+    td::actor::send_closure(db, &Db::get_pending_validator_consensus_db_cleanup_record, session,
+                            [self_id, candidate = std::move(candidate)](
+                                td::Result<std::optional<PendingValidatorConsensusDbCleanup>> current) mutable {
+                              td::actor::send_closure(self_id, &Self::validator_cleanup_point_read,
+                                                      std::move(candidate), std::move(current));
+                            });
+  }
+  if (adapter.pass_verified()) {
+    self->validator_cleanup_pass_finished(adapter.end_pass(), td::Status::OK());
+  }
+}
+
+// The point read of one candidate arrived. A failed read counts as "not there": the
+// candidate is skipped and the next scan sees it again.
+template <class Self>
+void handle_validator_cleanup_point_read(Self* self, td::actor::ActorId<Self> self_id, ValidatorCleanupManager& adapter,
+                                         td::actor::ActorOwn<ValidatorConsensusCleanupWorker>& worker,
+                                         const std::string& db_root,
+                                         const PendingValidatorConsensusDbCleanup& candidate,
+                                         td::Result<std::optional<PendingValidatorConsensusDbCleanup>> R,
+                                         const CleanupSessionIsLiveFn& is_live) {
+  std::optional<PendingValidatorConsensusDbCleanup> current;
+  if (R.is_ok()) {
+    current = R.move_as_ok();
+  }
+  if (auto reserved = adapter.on_point_read(candidate, current, is_live)) {
+    if (self->validator_cleanup_reserved(*reserved)) {
+      dispatch_reserved_validator_deletes(self_id, worker, db_root, std::vector<ReservedValidatorDelete>{*reserved});
+    }
+  }
+  if (adapter.pass_verified()) {
+    self->validator_cleanup_pass_finished(adapter.end_pass(), td::Status::OK());
+  }
 }
 
 }  // namespace tos::validator::consensus

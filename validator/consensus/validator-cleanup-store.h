@@ -119,9 +119,26 @@ inline ValidatorCleanupPage load_validator_cleanup_page(td::KeyValueReader& kv, 
   return page;
 }
 
-// Load every record, page by page. For offline tools and tests only: the node
-// pages the backlog through ValidatorCleanupManager so its resident set stays
-// bounded however many records a long period with cleanup disabled left behind.
+// The current durable record for one session (a point read), or nothing if there is
+// none or it does not decode. Cleanup re-reads a record this way just before
+// reserving its delete, so a page copy that a later retirement or erase made stale
+// is never acted on.
+inline std::optional<PendingValidatorConsensusDbCleanup> load_validator_cleanup_record(
+    td::KeyValueReader& kv, const ValidatorSessionId& session_id) {
+  std::string value;
+  auto status = kv.get(td::Slice{validator_cleanup_key(session_id)}, value);
+  if (status.is_error() || status.ok() != td::KeyValueReader::GetStatus::Ok) {
+    return std::nullopt;
+  }
+  auto decoded = decode_validator_cleanup_record(value);
+  if (!decoded || !(decoded.value().session_id == session_id)) {
+    return std::nullopt;
+  }
+  return std::move(decoded.value());
+}
+
+// Load every record, page by page. For offline tools and tests only: the node scans
+// the store a page at a time and never holds the backlog in memory.
 inline std::vector<PendingValidatorConsensusDbCleanup> load_validator_cleanup_records(td::KeyValueReader& kv) {
   std::vector<PendingValidatorConsensusDbCleanup> records;
   std::string cursor;

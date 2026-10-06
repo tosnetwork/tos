@@ -185,7 +185,7 @@ async def _run(
         return (type(exc).__name__, {"error": str(exc)})
 
 
-PASSLOG = "VALCLEANUP pass gc_seqno=0 pending=0 reserved=0\n" * 3
+PASSLOG = "VALCLEANUP pass gc_seqno=0 examined=0 reserved=0 wrapped=1 in_flight=0\n" * 3
 ERASELOG = PASSLOG + "VALCLEANUP erase_ack session=abcd generation=1 attempt=1\n"
 
 

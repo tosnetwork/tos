@@ -161,6 +161,11 @@ class Db : public td::actor::Actor {
   // empty), in key order; see consensus::load_validator_cleanup_page.
   virtual void get_pending_validator_consensus_db_cleanup_page(
       std::string after_key, size_t max_keys, td::Promise<consensus::ValidatorCleanupPage> promise) = 0;
+  // The current record for one session, or nothing; see
+  // consensus::load_validator_cleanup_record.
+  virtual void get_pending_validator_consensus_db_cleanup_record(
+      ValidatorSessionId session_id,
+      td::Promise<std::optional<consensus::PendingValidatorConsensusDbCleanup>> promise) = 0;
 
   virtual void update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) = 0;
   virtual void get_async_serializer_state(td::Promise<AsyncSerializerState> promise) = 0;

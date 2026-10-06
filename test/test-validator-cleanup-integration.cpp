@@ -151,30 +151,19 @@ td::Ref<ValidatorManagerOptions> make_options() {
   return opts;
 }
 
-// Result of a non-dispatching reservation (the "slow worker" probe): whether an
-// eligible delete was reserved, and its live (generation, attempt_id) operation token.
-struct ReservedInfo {
-  bool reserved = false;
-  td::uint64 generation = 0;
-  td::uint64 attempt_id = 0;
-};
-
-// The harness actor. It owns the real adapter + worker + a real Db id, and exposes the
-// exact `Self` surface validator-cleanup-dispatch.h drives, so the shared glue runs
-// here identically to the manager. The GC oracles and the enable flag are injected.
+// The harness actor. It owns the real driver + worker + a real Db id, and exposes the
+// exact `Self` surface validator-cleanup-dispatch.h drives, so the shared glue -- page
+// read, point reads, dispatch, completion, durable erase, re-trigger -- runs here
+// identically to the manager. The GC oracles and the enable flag are injected.
 class CleanupHarness : public td::actor::Actor {
  public:
   CleanupHarness(td::actor::ActorId<Db> db, std::string db_root, tos::BlockIdExt gc_checkpoint,
-                 tos::CatchainSeqno gc_shard_cc, std::set<tos::ValidatorSessionId> live, size_t dispatch_budget,
-                 size_t scan_budget, size_t max_outstanding)
+                 tos::CatchainSeqno gc_shard_cc, std::set<tos::ValidatorSessionId> live)
       : db_(db)
       , db_root_(std::move(db_root))
       , gc_checkpoint_(gc_checkpoint)
       , gc_shard_cc_(gc_shard_cc)
-      , live_(std::move(live))
-      , dispatch_budget_(dispatch_budget)
-      , scan_budget_(scan_budget)
-      , max_outstanding_(max_outstanding) {
+      , live_(std::move(live)) {
   }
 
   // --- the Self surface consumed by the shared dispatch glue -------------------
@@ -182,16 +171,30 @@ class CleanupHarness : public td::actor::Actor {
     if (!enabled_) {
       return;
     }
-    ++pass_count_;
-    auto ancestor = [](const tos::BlockIdExt&) { return true; };
-    auto cc = [this](tos::ShardIdFull) -> std::optional<tos::CatchainSeqno> { return gc_shard_cc_; };
-    auto is_live = [this](const tos::ValidatorSessionId& s) { return live_.count(s) > 0; };
-    auto reserved = adapter_.begin_eligible_deletes(gc_checkpoint_, ancestor, cc, is_live, dispatch_budget_,
-                                                    scan_budget_, max_outstanding_);
-    for (const auto& item : reserved) {
-      ++attempt_count_[item.record.session_id];
+    if (start_validator_cleanup_pass(actor_id(this), adapter_, db_, gc_checkpoint_)) {
+      ++pass_count_;
+    } else {
+      rerun_ = true;
     }
-    dispatch_reserved_validator_deletes(actor_id(this), worker_, db_root_, reserved);
+  }
+  void validator_cleanup_page_loaded(ValidatorCleanupPageRequest request, td::Result<ValidatorCleanupPage> R) {
+    handle_validator_cleanup_page(this, actor_id(this), adapter_, db_, request, std::move(R), oracles(), {});
+  }
+  void validator_cleanup_point_read(PendingValidatorConsensusDbCleanup candidate,
+                                    td::Result<std::optional<PendingValidatorConsensusDbCleanup>> R) {
+    handle_validator_cleanup_point_read(this, actor_id(this), adapter_, worker_, db_root_, candidate, std::move(R),
+                                        is_live());
+  }
+  bool validator_cleanup_reserved(const ReservedValidatorDelete& reserved) {
+    ++attempt_count_[reserved.record.session_id];
+    last_reserved_ = reserved;
+    return !hold_dispatch_;
+  }
+  void validator_cleanup_pass_finished(ValidatorCleanupPassSummary, td::Status) {
+    if (rerun_) {
+      rerun_ = false;
+      try_validator_consensus_db_cleanup();
+    }
   }
   void validator_cleanup_delete_done(tos::ValidatorSessionId session, td::uint64 generation, td::uint64 attempt_id,
                                      bool confirmed_gone) {
@@ -207,8 +210,14 @@ class CleanupHarness : public td::actor::Actor {
   void set_enabled(bool e) {
     enabled_ = e;
   }
-  void load_startup_record(PendingValidatorConsensusDbCleanup record) {
-    adapter_.on_loaded_at_startup(std::move(record));
+  // Hold every reservation instead of dispatching it, modelling a worker that has not
+  // run yet: the entry stays in flight with a real (generation, attempt_id) until a
+  // completion is injected.
+  void set_hold_dispatch(bool hold) {
+    hold_dispatch_ = hold;
+  }
+  void last_reserved(td::Promise<std::optional<ReservedValidatorDelete>> promise) {
+    promise.set_value(std::optional<ReservedValidatorDelete>(last_reserved_));
   }
   void group_created(tos::ValidatorSessionId session) {
     adapter_.on_group_created(session);
@@ -218,25 +227,6 @@ class CleanupHarness : public td::actor::Actor {
   }
   void close_confirmed(tos::ValidatorSessionId session, td::uint64 generation) {
     adapter_.on_close_confirmed(session, generation);
-  }
-  // Reserve up to one eligible delete (Pending -> Deleting) WITHOUT dispatching it to
-  // the worker. This models a slow/controllable worker whose delete has been reserved
-  // but not yet completed: the entry stays in flight, with a real (generation,
-  // attempt_id), until a completion is injected -- letting a test hold it in Deleting
-  // and probe single-dimension token rejection. Uses the same oracles as a real pass.
-  void reserve_one(td::Promise<ReservedInfo> promise) {
-    auto ancestor = [](const tos::BlockIdExt&) { return true; };
-    auto cc = [this](tos::ShardIdFull) -> std::optional<tos::CatchainSeqno> { return gc_shard_cc_; };
-    auto is_live = [this](const tos::ValidatorSessionId& s) { return live_.count(s) > 0; };
-    auto reserved = adapter_.begin_eligible_deletes(gc_checkpoint_, ancestor, cc, is_live, /*dispatch_budget=*/1,
-                                                    scan_budget_, max_outstanding_);
-    ReservedInfo info;
-    if (!reserved.empty()) {
-      info.reserved = true;
-      info.generation = reserved.front().generation;
-      info.attempt_id = reserved.front().attempt_id;
-    }
-    promise.set_value(std::move(info));
   }
   // Inject a completion directly, as a stale/duplicate worker callback would arrive.
   // Synchronous: the promise resolves only AFTER validator_cleanup_delete_done has run,
@@ -266,6 +256,18 @@ class CleanupHarness : public td::actor::Actor {
   }
 
  private:
+  CleanupSessionIsLiveFn is_live() {
+    return [this](const tos::ValidatorSessionId& s) { return live_.count(s) > 0; };
+  }
+  std::optional<ValidatorCleanupOracles> oracles() {
+    ValidatorCleanupOracles o;
+    o.gc = gc_checkpoint_;
+    o.ancestor_or_equal_of_gc = [](const tos::BlockIdExt&) { return true; };
+    o.gc_shard_catchain_seqno = [this](tos::ShardIdFull) -> std::optional<tos::CatchainSeqno> { return gc_shard_cc_; };
+    o.is_live = is_live();
+    return o;
+  }
+
   ValidatorCleanupManager adapter_;
   td::actor::ActorOwn<ValidatorConsensusCleanupWorker> worker_;
   td::actor::ActorId<Db> db_;
@@ -273,10 +275,10 @@ class CleanupHarness : public td::actor::Actor {
   tos::BlockIdExt gc_checkpoint_;
   tos::CatchainSeqno gc_shard_cc_;
   std::set<tos::ValidatorSessionId> live_;
-  size_t dispatch_budget_;
-  size_t scan_budget_;
-  size_t max_outstanding_;
   bool enabled_ = true;
+  bool hold_dispatch_ = false;
+  bool rerun_ = false;
+  std::optional<ReservedValidatorDelete> last_reserved_;
   td::uint64 pass_count_ = 0;
   td::uint64 erase_ack_count_ = 0;
   td::uint64 completed_delete_count_ = 0;
@@ -288,8 +290,7 @@ class CleanupHarness : public td::actor::Actor {
 class HarnessSession {
  public:
   HarnessSession(std::string db_root, tos::BlockIdExt gc_checkpoint, tos::CatchainSeqno gc_shard_cc,
-                 std::set<tos::ValidatorSessionId> live, size_t dispatch_budget, size_t scan_budget,
-                 size_t max_outstanding)
+                 std::set<tos::ValidatorSessionId> live)
       : db_root_(std::move(db_root)), scheduler_({1}) {
     auto opts = make_options();
     scheduler_.run_in_context([&] {
@@ -298,8 +299,7 @@ class HarnessSession {
       // cleanup DB ops forward to StateDb and never call back into the (empty) manager.
       db_ = td::actor::create_actor<RootDb>("db", td::actor::ActorId<ValidatorManager>{}, db_root_, opts);
       harness_ = td::actor::create_actor<CleanupHarness>("cleanup-harness", db_.get(), db_root_, gc_checkpoint,
-                                                         gc_shard_cc, std::move(live), dispatch_budget, scan_budget,
-                                                         max_outstanding);
+                                                         gc_shard_cc, std::move(live));
     });
   }
   HarnessSession(const HarnessSession&) = delete;
@@ -333,9 +333,6 @@ class HarnessSession {
       cursor = page.last_key;
     }
   }
-  void load_startup_record(PendingValidatorConsensusDbCleanup record) {
-    run_in_ctx([&] { td::actor::send_closure(harness_.get(), &CleanupHarness::load_startup_record, record); });
-  }
   td::uint64 group_retired(PendingValidatorConsensusDbCleanup record) {
     return ask<td::uint64>([&](td::Promise<td::uint64> promise) {
       td::actor::send_closure(harness_.get(), &CleanupHarness::group_retired, record, std::move(promise));
@@ -347,9 +344,12 @@ class HarnessSession {
   void close_confirmed(tos::ValidatorSessionId session, td::uint64 generation) {
     run_in_ctx([&] { td::actor::send_closure(harness_.get(), &CleanupHarness::close_confirmed, session, generation); });
   }
-  ReservedInfo reserve_one() {
-    return ask<ReservedInfo>([&](td::Promise<ReservedInfo> promise) {
-      td::actor::send_closure(harness_.get(), &CleanupHarness::reserve_one, std::move(promise));
+  void set_hold_dispatch(bool hold) {
+    run_in_ctx([&] { td::actor::send_closure(harness_.get(), &CleanupHarness::set_hold_dispatch, hold); });
+  }
+  std::optional<ReservedValidatorDelete> last_reserved() {
+    return ask<std::optional<ReservedValidatorDelete>>([&](auto promise) {
+      td::actor::send_closure(harness_.get(), &CleanupHarness::last_reserved, std::move(promise));
     });
   }
   void inject_delete_done(tos::ValidatorSessionId session, td::uint64 generation, td::uint64 attempt_id, bool gone) {
@@ -495,15 +495,11 @@ void scenario_happy_drain() {
     records.push_back(r);
   }
 
-  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, /*dispatch=*/16, /*scan=*/256,
-                   /*outstanding=*/64);
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
   s.persist_retirement(records);
-  // Load the durable records back through the real DB path and feed the adapter.
+  // The durable records are the backlog: the pass reads them through the real DB path.
   auto loaded = s.load_pending();
   LOG_CHECK(loaded.size() == N) << "expected " << N << " persisted records, got " << loaded.size();
-  for (auto& r : loaded) {
-    s.load_startup_record(r);
-  }
 
   s.fire_cleanup_pass();
   bool done = s.wait_until([&] { return s.erase_ack_count() >= N; }, 30.0);
@@ -542,7 +538,7 @@ void scenario_stale_completion_rejected() {
   auto r = make_record(42, 100);
   create_consensus_dir(root, r.dir_name);
 
-  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
   s.persist_retirement({r});
 
   // Drive through a real incarnation so there is a genuine generation to be stale to.
@@ -590,9 +586,8 @@ void scenario_persistent_failure_no_hot_loop() {
   auto blocked = block_dir_removal(root, r.dir_name);
 
   {
-    HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
     s.persist_retirement({r});
-    s.load_startup_record(r);
 
     // Fire one pass and wait for the worker to actually FINISH the (failed) delete --
     // not just reserve it. With perms still blocked, drive an extra window so an
@@ -634,7 +629,7 @@ void scenario_mixed_failure_bounded_retries() {
     return;
   }
   auto root = temp_root("mixed");
-  const size_t kHealthy = 20;  // > dispatch budget below, so draining needs re-triggers
+  const size_t kHealthy = 20;  // > the per-pass dispatch budget, so draining needs re-triggers
   std::vector<PendingValidatorConsensusDbCleanup> healthy;
   for (size_t i = 0; i < kHealthy; i++) {
     auto r = make_record(static_cast<unsigned char>(100 + i), 100);
@@ -646,14 +641,10 @@ void scenario_mixed_failure_bounded_retries() {
   auto blocked = block_dir_removal(root, fail.dir_name);
 
   {
-    HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, /*dispatch=*/8, /*scan=*/256,
-                     /*outstanding=*/64);
+    HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
     std::vector<PendingValidatorConsensusDbCleanup> all = healthy;
     all.push_back(fail);
     s.persist_retirement(all);
-    for (auto& r : all) {
-      s.load_startup_record(r);
-    }
 
     // Drain the healthy backlog (each success re-triggers a pass), then drive a short
     // extra window so an unconditional-retrigger regression on the failing dir has
@@ -690,8 +681,8 @@ void scenario_mixed_failure_bounded_retries() {
 
 // ---------------------------------------------------------------------------------
 // Scenario 5: single-dimension token rejection while the entry is genuinely IN FLIGHT.
-// Models a slow/controllable worker: reserve_one drives the real adapter to reserve the
-// delete (Pending -> Deleting) but does NOT dispatch it to the worker, so the entry
+// Models a slow/controllable worker: a real pass reserves the delete, but the harness
+// holds it instead of dispatching it to the worker, so the entry
 // stays in flight with a real (generation, attempt_id) until a completion is injected.
 // A completion that mismatches on EXACTLY ONE token dimension must be rejected -- the
 // reservation held and the durable record intact -- and only the fully-matching
@@ -708,17 +699,19 @@ void scenario_inflight_single_dimension_token_rejection() {
   auto root = temp_root("inflight");
   auto r = make_record(55, 100);
 
-  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
   s.persist_retirement({r});
-  s.load_startup_record(r);
 
   // Reserve without dispatching: the entry is now genuinely Deleting (in flight) with a
   // real token, and will stay so until we inject a completion.
-  auto resv = s.reserve_one();
-  LOG_CHECK(resv.reserved) << "reserve_one did not reserve the eligible delete";
-  LOG_CHECK(s.is_delete_in_flight(r.session_id)) << "entry is not in flight after reservation";
-  auto G = resv.generation;
-  auto A = resv.attempt_id;
+  s.set_hold_dispatch(true);
+  s.fire_cleanup_pass();
+  bool reserved = s.wait_until([&] { return s.is_delete_in_flight(r.session_id); }, 30.0);
+  LOG_CHECK(reserved) << "the pass did not reserve the eligible delete";
+  auto resv = s.last_reserved();
+  LOG_CHECK(resv.has_value()) << "no reservation recorded";
+  auto G = resv->generation;
+  auto A = resv->attempt_id;
 
   // Wrong generation ONLY (attempt and Deleting state both correct): must be rejected.
   s.inject_delete_done(r.session_id, G + 1, A, /*gone=*/true);
@@ -787,18 +780,15 @@ void scenario_reopen_reloads_and_drains() {
 
   // Session A: persist the retirement records, then "exit" without deleting anything.
   {
-    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
     a.persist_retirement(records);
     a.stop();
   }
   // Session B: fresh RootDb + fresh adapter on the SAME root. Reload and reconcile.
   {
-    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
     auto loaded = b.load_pending();
     LOG_CHECK(loaded.size() == N) << "reopen did not reload the " << N << " persisted records: got " << loaded.size();
-    for (auto& r : loaded) {
-      b.load_startup_record(r);
-    }
     b.fire_cleanup_pass();
     bool done = b.wait_until([&] { return b.erase_ack_count() >= N; }, 30.0);
     LOG_CHECK(done) << "post-reopen drain did not erase all records (acked " << b.erase_ack_count() << ")";
@@ -827,11 +817,8 @@ void scenario_reopen_no_resurrection() {
 
   // Session A: persist, reconcile to completion (dirs deleted + records erased), exit.
   {
-    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
     a.persist_retirement(records);
-    for (const auto& r : records) {
-      a.load_startup_record(r);
-    }
     a.fire_cleanup_pass();
     bool done = a.wait_until([&] { return a.erase_ack_count() >= N; }, 30.0);
     LOG_CHECK(done) << "pre-reopen drain did not complete";
@@ -840,7 +827,7 @@ void scenario_reopen_no_resurrection() {
   }
   // Session B: nothing should reload, and no dir should reappear.
   {
-    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
     auto loaded = b.load_pending();
     LOG_CHECK(loaded.empty()) << "a fully-cleaned session resurrected " << loaded.size() << " records after reopen";
     for (const auto& r : records) {
@@ -865,7 +852,7 @@ void scenario_reopen_reconciles_dangling_record() {
   // Session A: persist the record but never create (or already removed) the dir, i.e.
   // the durable state of a crash between a completed delete and its erase.
   {
-    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
     a.persist_retirement({r});
     a.stop();
   }
@@ -874,10 +861,9 @@ void scenario_reopen_reconciles_dangling_record() {
   // Session B: reload the dangling record and reconcile it (erase), since its directory
   // is already confirmed gone.
   {
-    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
     auto loaded = b.load_pending();
     LOG_CHECK(loaded.size() == 1) << "dangling record not reloaded after reopen: got " << loaded.size();
-    b.load_startup_record(loaded.front());
     b.fire_cleanup_pass();
     bool done = b.wait_until([&] { return b.erase_ack_count() >= 1; }, 30.0);
     LOG_CHECK(done) << "dangling record (dir already gone) was not reconciled/erased after reopen";
@@ -910,7 +896,7 @@ void scenario_reopen_reconciles_dangling_record() {
 // then HARD-EXIT with no destructors -- the crash point. Returns process exit code.
 int run_crash_phase_a(const std::string& root) {
   auto r = make_record(kCrashSeed, kCrashRetireSeqno);
-  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
   s.persist_retirement({r});          // synchronous: returns only after the synced commit
   create_consensus_dir(root, r.dir_name);
   // HARD exit: `_exit` skips atexit handlers and C++ destructors, so `s` (and its RootDb)
@@ -926,11 +912,10 @@ int run_crash_phase_a(const std::string& root) {
 // survived the unclean reopen, then drives it to a clean delete + erase. Returns exit code.
 int run_crash_phase_b(const std::string& root) {
   auto r = make_record(kCrashSeed, kCrashRetireSeqno);
-  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
   auto loaded = s.load_pending();
   LOG_CHECK(loaded.size() == 1) << "retirement record did not survive a hard kill + unclean reopen: got "
                                 << loaded.size();
-  s.load_startup_record(loaded.front());
   s.fire_cleanup_pass();
   bool done = s.wait_until([&] { return s.erase_ack_count() >= 1; }, 30.0);
   LOG_CHECK(done) << "post-crash drain did not erase the recovered record";

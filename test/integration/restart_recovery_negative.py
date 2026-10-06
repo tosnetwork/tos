@@ -23,8 +23,8 @@ cleanup ARMED. One startup cleanup pass evaluates them all. Asserts:
     via the ordinary path -- examined eligible, reserved, the deleter confirms the
     already-absent dir gone, and the durable orphan record is erase-acked -- with no fault.
   NON-VACUOUS: every injected record was read back through the production decoder
-    (POISON_LOADABLE), and a pass examined the WHOLE pending set (max_pending < scan
-    budget), so the poisons were examined, not skipped.
+    (POISON_LOADABLE), and a pass wrapped -- it scanned to the end of the durable store --
+    so the poisons were examined, not skipped.
 
 Usage: uv run python test/integration/restart_recovery_negative.py [NODE_DIR] [--seconds N]
 NODE_DIR defaults to node2 of the newest .validator-election-experiment run.
@@ -44,11 +44,12 @@ REPO = Path(__file__).resolve().parents[2]
 BUILD = REPO / "build"
 INJECT = BUILD / "inject-validator-cleanup-record"
 ENGINE = BUILD / "validator-engine/validator-engine"
-SCAN_BUDGET = 256  # kValidatorConsensusCleanupScanBudget
 
 FATAL = re.compile(r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b")
 RESERVE = re.compile(r"VALCLEANUP reserve session=(?P<session>\S+)")
-PASS = re.compile(r"VALCLEANUP pass gc_seqno=(?P<gc>\d+) pending=(?P<pending>\d+) reserved=(?P<reserved>\d+)")
+PASS = re.compile(
+    r"VALCLEANUP pass gc_seqno=(?P<gc>\d+) examined=(?P<examined>\d+) reserved=(?P<reserved>\d+) wrapped=(?P<wrapped>[01])"
+)
 EVAL = re.compile(r"VALCLEANUP eval session=(?P<session>\S+) eligible=(?P<eligible>[01])")
 DELETE_DONE = re.compile(r"VALCLEANUP delete_done session=(?P<session>\S+).* confirmed_gone=(?P<gone>[01])")
 ERASE_ACK = re.compile(r"VALCLEANUP erase_ack session=(?P<session>\S+)")
@@ -172,7 +173,8 @@ def main() -> int:
     text = restart_log.read_text(errors="replace")
     fatals = [ln[:400] for ln in text.splitlines() if FATAL.search(ln)]
     reserves = {m.group("session") for m in RESERVE.finditer(text)}
-    passes = [(int(m.group("gc")), int(m.group("pending")), int(m.group("reserved"))) for m in PASS.finditer(text)]
+    passes = [(int(m.group("gc")), int(m.group("examined")), int(m.group("reserved")), int(m.group("wrapped")))
+              for m in PASS.finditer(text)]
     # per-session eligibility DECISIONS the engine actually made this run (definitive: a
     # session appears here iff a pass examined it, with the decision it reached).
     evals: dict[str, set[int]] = {}
@@ -205,6 +207,8 @@ def main() -> int:
         failures.append(f"engine exited on its own before shutdown (code {early_exit_code}) -- crash/early-exit")
     if not passes:
         failures.append("no VALCLEANUP cleanup pass ran after reopen")
+    elif not any(p[3] == 1 for p in passes):
+        failures.append("no cleanup pass scanned to the end of the durable store (no wrapped=1)")
     # instrument-live: control must be EXAMINED, judged eligible, reserved, deleted, erased.
     c = results["control"]
     if not c["evaluated"] or c["eligible_decisions"] != [1]:
