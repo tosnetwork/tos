@@ -1,0 +1,135 @@
+{
+  "base_commit": "2777960616ff8592ce7eec9be0880600e9eb35c4",
+  "scope": "Proof-bound native LMS fee signing after durable reservation, input cleanup on all returns, verified cached retry and restore barrier. Public test secrets and synthetic proof metadata only. Protected fee custody and tree generation remain incomplete.",
+  "semantic_controls": {
+    "preflight_wipe": {
+      "exit": 101,
+      "semantic_witness": "native fee preflight retained seed"
+    },
+    "identifier": {
+      "exit": 101,
+      "semantic_witness": "native fee preflight consumed a leaf 1"
+    },
+    "local_deadline": {
+      "exit": 101,
+      "semantic_witness": "native fee accepted invalid preflight 2"
+    }
+  },
+  "regression": {
+    "proven_fee": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-signer",
+        "--lib",
+        "fee_state_tests"
+      ],
+      "exit": 0
+    },
+    "journal": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-signer",
+        "--lib",
+        "lms_fee_"
+      ],
+      "exit": 0
+    },
+    "fmt": {
+      "command": [
+        "make",
+        "-C",
+        "tosctl/src",
+        "fmt-check"
+      ],
+      "exit": 0
+    },
+    "ruff": {
+      "command": [
+        "/Users/tomisetsu/tos/.venv/bin/ruff",
+        "check",
+        "test/wallet-v5r2/native_fee_journal_controls.py"
+      ],
+      "exit": 0
+    }
+  },
+  "results": {
+    "proven_fee": [
+      "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 242 filtered out; finished in 4.45s"
+    ],
+    "journal": [
+      "test result: ok. 22 passed; 0 failed; 1 ignored; 0 measured; 235 filtered out; finished in 0.25s"
+    ]
+  },
+  "retention_until": "2027-01-06",
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-controls/baseline.log",
+      "size": 4604,
+      "sha256": "2e5be41791748e4548fae31b39f8f51fa605df209209b9f0c7838a55e003f575"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-controls/identifier.log",
+      "size": 5390,
+      "sha256": "4d50c4f47f5e5cfe5350f09b5081004694cf14ce892d66c7b8b3ae6e102d7c64"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-controls/local_deadline.log",
+      "size": 5333,
+      "sha256": "e75c6b0a16d32f13211573e3bf7bd937bea838222c675d397a23db56fb71259f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-controls/preflight_wipe.log",
+      "size": 5715,
+      "sha256": "7aca810d0f756f269834f9d907c1727df0e540abbaf75d6d9590114865a27427"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-controls/restored.log",
+      "size": 4716,
+      "sha256": "3f967e429799cea4de415a567f9157dda89c055489e812af0549207004bf8669"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-controls/results.json",
+      "size": 323,
+      "sha256": "4995e8be7311c4ad5366943d036c91e70fe2b22b7d156cf03d59c3655b36e489"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-regression/fmt.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-regression/journal.log",
+      "size": 6682,
+      "sha256": "7a4e1318f406a63e38e90e517e1871d18190ad506af43b2c1d61dedc0b27996b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-regression/proven_fee.log",
+      "size": 5991,
+      "sha256": "29ace124d6544863d967e0b547343dca643cc5e635f3ece06c2f952168e53db7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-regression/results.json",
+      "size": 850,
+      "sha256": "b30398691bfc2c8506177e171b347a97bd118559b6272d7d8d092c9fa768d8f0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-journal-regression/ruff.log",
+      "size": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    }
+  ]
+}

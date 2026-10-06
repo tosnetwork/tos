@@ -23,6 +23,9 @@ use std::{
 
 #[path = "lms_fee_cache.rs"]
 mod cache;
+#[cfg(feature = "native-wallet-signer")]
+#[path = "lms_fee_native.rs"]
+mod native;
 
 const MAGIC: &[u8; 8] = b"TOSLMS01";
 const HEADER_SIZE: u64 = 112;

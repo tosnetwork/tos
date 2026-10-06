@@ -2502,6 +2502,210 @@ mod fee_state_tests {
     }
 
     #[cfg(unix)]
+    #[cfg(feature = "native-wallet-signer")]
+    #[test]
+    fn native_fee_signing_preserves_proof_reservation_and_seed_cleanup() {
+        use crate::{
+            lms_fee_journal::FeeJournal,
+            wallet_v5r2::AuthRole,
+            wallet_v5r2_fee::{FeeClass, FeePayload},
+            wallet_v5r2_pop::{PopBinding, PopRequest},
+        };
+        use std::os::unix::fs::PermissionsExt;
+        let v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../wallet-pq-signer/tests/fixtures/lms-fee-signature.json"
+        ))
+        .unwrap();
+        let key: [u8; 60] =
+            hex::decode(v["public_key"].as_str().unwrap()).unwrap().try_into().unwrap();
+        let old = hex::decode(v["signature"].as_str().unwrap()).unwrap();
+        let path: [u8; 640] = old[2192..].try_into().unwrap();
+        let code = Cell::default();
+        let hash = *code.repr_hash().as_array();
+        let g = WalletGenesis::new(
+            CodeBundle::new(
+                code.clone(),
+                code.clone(),
+                code,
+                CodeHashes { wallet: hash, module: hash, vault: hash },
+            )
+            .unwrap(),
+            GenesisParameters {
+                global_id: 42,
+                network: [1; 32],
+                wallet_id: 42,
+                primary_key: [2; 1312],
+                rescue_key: [3; 32],
+                policy: RescuePolicy::Required,
+                fee_tree_id: [4; 32],
+                fee_public_key: key,
+                epoch0: 1000,
+            },
+        )
+        .unwrap();
+        let (_, state) = fixture();
+        let mut state = account_proof(state, g.vault_init());
+        let early = ProvenInitialFeeVault::bind(&state, &g, 4620, 30).unwrap();
+        // Synthetic proof metadata and framing-only inner POP: no chain execution claim.
+        fn payload(g: &WalletGenesis) -> FeePayload {
+            let pop = PopRequest::new(
+                PopBinding {
+                    global_id: 42,
+                    network: [1; 32],
+                    account: *g.wallet_init().repr_hash().as_array(),
+                    module: *g.module_init().repr_hash().as_array(),
+                    challenge: [6; 32],
+                    valid_until: 11900,
+                },
+                AuthRole::Rescue,
+                RescuePolicy::Required,
+                [2; 32],
+                [3; 32],
+                11800,
+            )
+            .unwrap();
+            FeePayload::from_submission(
+                FeeClass::Pop,
+                pop.encode_submission(&vec![0; 7856]).unwrap(),
+            )
+            .unwrap()
+        }
+        fn seed() -> [u8; 48] {
+            let mut s = [0x44; 48];
+            s[32..].fill(0x55);
+            s
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut journal = FeeJournal::open_proven(dir.path(), &early, 4620).unwrap();
+        let mut secret = seed();
+        assert!(
+            journal
+                .sign_proven_fee_with_seed_and_wipe(
+                    &early,
+                    4620,
+                    4700,
+                    100,
+                    payload(&g),
+                    &mut secret,
+                    &path
+                )
+                .is_err()
+        );
+        assert_eq!(secret, [0; 48], "native fee preflight retained seed");
+        state.evidence.block_gen_utime = 11810;
+        state.evidence.account.gen_utime = 11800;
+        let view = ProvenInitialFeeVault::bind(&state, &g, 11820, 30).unwrap();
+        for kind in 0..4 {
+            let mut secret = seed().to_vec();
+            let mut now = 11820;
+            let mut deadline = 11900;
+            match kind {
+                0 => {
+                    secret.pop();
+                }
+                1 => secret[32] ^= 1,
+                2 => deadline = 11810,
+                _ => now = 11831,
+            }
+            let result = journal.sign_proven_fee_with_seed_and_wipe(
+                &view,
+                now,
+                deadline,
+                100,
+                payload(&g),
+                &mut secret,
+                &path,
+            );
+            assert!(result.is_err(), "native fee accepted invalid preflight {kind}");
+            assert!(secret.iter().all(|b| *b == 0), "native fee rejected input retained seed");
+            assert_eq!(
+                std::fs::metadata(dir.path().join("fee-reservations")).unwrap().len(),
+                112,
+                "native fee preflight consumed a leaf {kind}"
+            );
+        }
+        let mut secret = seed();
+        let signed = journal
+            .sign_proven_fee_with_seed_and_wipe(
+                &view,
+                11820,
+                11900,
+                100,
+                payload(&g),
+                &mut secret,
+                &path,
+            )
+            .unwrap();
+        assert_eq!(secret, [0; 48]);
+        assert_eq!(signed.intent().leaf(), 12);
+        let record = std::fs::read(dir.path().join("fee-reservations")).unwrap();
+        assert_eq!(record.len(), 184);
+        assert_eq!(&record[120..152], signed.intent().digest());
+        let signature =
+            journal.cached_signature_verified(&key, 12, *signed.intent().digest()).unwrap();
+        assert_eq!(
+            signed.body().repr_hash(),
+            signed.intent().encode_external(&signature).unwrap().repr_hash()
+        );
+        drop(journal);
+        let mut reopened = FeeJournal::open_proven(dir.path(), &view, 11820).unwrap();
+        assert_eq!(
+            reopened.cached_signature_verified(&key, 12, *signed.intent().digest()).unwrap(),
+            signature
+        );
+        let mut secret = seed();
+        assert!(
+            reopened
+                .sign_proven_fee_with_seed_and_wipe(
+                    &view,
+                    11820,
+                    11900,
+                    100,
+                    payload(&g),
+                    &mut secret,
+                    &path
+                )
+                .is_err()
+        );
+        assert_eq!(secret, [0; 48]);
+        assert_eq!(std::fs::read(dir.path().join("fee-reservations")).unwrap(), record);
+        for corrupt_seed in [true, false] {
+            let d = tempfile::tempdir().unwrap();
+            std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut j = FeeJournal::open_proven(d.path(), &early, 4620).unwrap();
+            let mut secret = seed();
+            let mut bad_path = path;
+            if corrupt_seed {
+                secret[0] ^= 1;
+            } else {
+                bad_path[0] ^= 1;
+            }
+            assert!(
+                j.sign_proven_fee_with_seed_and_wipe(
+                    &view,
+                    11820,
+                    11900,
+                    100,
+                    payload(&g),
+                    &mut secret,
+                    &bad_path
+                )
+                .is_err()
+            );
+            assert_eq!(secret, [0; 48]);
+            assert_eq!(
+                j.preview_proven(&view, 11820).unwrap().leaf,
+                13,
+                "native failure reused reserved leaf"
+            );
+            assert!(
+                !d.path().join("fee-signature-0000000c").exists(),
+                "native failure cached signature"
+            );
+        }
+    }
+
     #[test]
     fn proven_fee_signing_uses_journal_and_bound_key() {
         use crate::lms_fee_journal::FeeJournal;

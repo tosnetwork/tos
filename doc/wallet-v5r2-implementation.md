@@ -2603,9 +2603,10 @@ verification failures clear every output byte; derivation context storage is
 cleared before return. The caller owns the seed buffer and must protect and wipe
 it. No full stack/snapshot erasure or side-channel audit claim is made.
 
-There is deliberately no Rust public signer API for this primitive yet. It owns
-no persistent state, cannot prove leaf uniqueness and must not be called with
-real secrets until journal and custody integration are complete. The new source
+The primitive has no public unreserved Rust signing API. It owns no persistent
+state and cannot prove leaf uniqueness. The proof-bound journal adapter below
+provides reservation integration; protected custody remains incomplete, so this
+is not an operational signer for real secrets. The new source
 is not a replacement for the reservation/restore barriers or exclusive custody.
 It also does not generate authentication trees. RFC 8554 section 9.2 remains the
 state-reuse constraint: <https://www.rfc-editor.org/rfc/rfc8554.html#section-9.2>.
@@ -2618,3 +2619,30 @@ semantic controls remove post-signature verification or either output-clearing
 step and must fail named assertions before restored tests pass. Evidence:
 `test/wallet-v5r2/native-fee-signing-20261006.json`. This is an internal primitive
 and interoperability result, not production fee-signer completion.
+
+
+### Proof-bound native fee signing with seed cleanup
+
+With `native-wallet-signer`,
+`FeeJournal::sign_proven_fee_with_seed_and_wipe` connects the fixed native signer
+and verifier to the existing proven route, freshness, local deadline, restore
+barrier and durable reservation checks. It accepts borrowed SEED[32] || I[16]
+and a public 640-byte authentication path. Width and identifier mismatches are
+rejected before reserving a leaf. A cleanup guard wipes the caller's seed on
+all returns; the native-call path additionally wipes it immediately after the
+call, before verification or caching. Invalid secret material or a bad path
+found after reservation burns that leaf and produces no cache entry.
+
+Successful signatures are verified against the proven public key and retained
+for exact-byte retries. Reopening retains cached output but enforces the normal
+restore barrier for new signing. The test uses a fixed public cryptographic
+fixture and synthetic proof metadata with a framing-only inner POP; it does not
+prove transaction execution, live proof acquisition or funded POP completion.
+Three semantic controls remove preflight cleanup, identifier binding and the
+local deadline guard and require named assertion failures. Both CI architectures
+run the controls. Evidence: `test/wallet-v5r2/native-fee-journal-20261006.json`.
+
+Encrypted fee-seed custody, authenticated tree/path generation, old-device
+revocation and hardware rollback resistance remain separate unfinished gates.
+The caller must also authorize the inner action and establish fee affordability;
+a valid fee signature alone does not establish either condition.
