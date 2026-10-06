@@ -1,0 +1,190 @@
+{
+  "base_commit": "84da9f11034bed8fe299e3bef64b68fde9780cb0",
+  "scope": "Rust ownership wrapper over native C ABI and opt-in proven-state AUTH signing; not persistence, live finality or production client acceptance",
+  "tests": {
+    "wrapper_unit": 2,
+    "compile_fail_ownership": 2,
+    "feature_enabled_state": 11,
+    "default_feature_state": 10,
+    "clippy_all_targets": "pass with -D warnings",
+    "workspace_fmt_check": "pass",
+    "default_backend_dependency": "absent in normal contracts dependency graph"
+  },
+  "controls": {
+    "seed_wipe": {
+      "exit": 101,
+      "witness": "import_wipes_on_success_and_failure"
+    },
+    "failure_status": {
+      "exit": 101,
+      "witness": "bound_signatures_and_independent_primary_verification"
+    },
+    "proven_key": {
+      "exit": 101,
+      "witness": "native_wallet_signing_binds_proven_keys_and_policy"
+    }
+  },
+  "recovery_parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 65,
+    "observed_transactions": 65,
+    "differences": [],
+    "success": true
+  },
+  "module_parity": {
+    "scope": "Replay actual PQ module, wallet and recipient transactions in both executors.",
+    "groups": [
+      {
+        "configuration": "c99827baba0a0ad1ecf69573d5b995f19a5e3c54dedd50c7194ccb7715656368",
+        "transactions": 15,
+        "differences": []
+      },
+      {
+        "configuration": "c8ff0ac076f3d9c638b49a4f1db49f9792d1d79e271e80f8c6b8c22baa96a0ec",
+        "transactions": 4,
+        "differences": []
+      }
+    ]
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/build.rs",
+      "sha256": "6cd1a5a5c5900ec88bc735c96b6edc9dfde3a00d5b97f18fd5087174030a4141",
+      "bytes": 1993
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/examples/public_fixture.rs",
+      "sha256": "959e1a9d074dc621d7f12d3a431a373105b54e75beff9aff22874b7bfefc16b5",
+      "bytes": 1944
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/lib.rs",
+      "sha256": "f69775a980c04389c35eebdac6ca1e2204ffa85766a5209b880b4323dbb151c9",
+      "bytes": 8416
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/Cargo.toml",
+      "sha256": "c32df39ecb6917dedf3e83883a0d97e34b6a2862c5890a7de1ddd2c9b213f50a",
+      "bytes": 303
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.toml",
+      "sha256": "328681054ddcfb24ad9ac63e3cc2a97dab8ff77afd71d89b8e7bd4c8d0541520",
+      "bytes": 583
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.lock",
+      "sha256": "eed85a97b2969220e3aec535fa3a30df3041ebe22ff8dc99468f5718a8441f83",
+      "bytes": 148610
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/Cargo.toml",
+      "sha256": "c72d60cb9f9e682e928573dd95122bbb88f2ff692793d78750fd129444152b45",
+      "bytes": 1506
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "sha256": "55d099b734b1896e23fcb330a63d6d56ff4495ed73fc96ee882b6c1ceed6e039",
+      "bytes": 14643
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "03b8aea4fb087a54590d07744ea6f8e51fb93600773ef249212fe53f2d071a0e",
+      "bytes": 97194
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/rust_signer_controls.py",
+      "sha256": "a7ae1d016e3e1a1b38dbabd52e86919244c2fdd841b126d89540617fb781d0d5",
+      "bytes": 3176
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "96d4fb8478e18f5f63f53ec3c93182090a4258f39996cffc8aa8a5d30fe86dd5",
+      "bytes": 13687
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-wallet-signer-controls/MANIFEST.json",
+      "sha256": "5a1be924093b1675a87034975a51b5958ae9ab733553a6bf52ff9fde63b1b291",
+      "bytes": 3758
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-wallet-signer-controls/results.json",
+      "sha256": "a7d229836839c438f2b6a653569923da9a28a6b5723e8dcaa11ac157bbd4b509",
+      "bytes": 318
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-wallet-signer-controls/unit-doc-tests.log",
+      "sha256": "bc0f91ec3c957b4b0c5717ec45c51d435279b00425410323914133ca71d6ae6d",
+      "bytes": 743
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-wallet-signer-controls/feature-state-tests.log",
+      "sha256": "ebd1275955fe388d595bdbb752e5f4ab8f24413f9a8213c6f5e4ec67b02f4bd8",
+      "bytes": 5605
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-wallet-signer-controls/default-feature-tests.log",
+      "sha256": "a3e0ea7ee365b5b28f9f9133ac7f856e4943930434e83dba76a1704c1339a698",
+      "bytes": 5509
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-wallet-signer-controls/default-dependencies.log",
+      "sha256": "93b504f3e2db6ca25b84933514733a951d78910a2648bcb4dc80db452208f596",
+      "bytes": 98577
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-wallet-signer-controls/clippy.log",
+      "sha256": "47048d13bc6e782958d613924b4831f9010cbe2d147ac2972fd8b0e0807a3153",
+      "bytes": 671
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-wallet-signer-controls/fmt-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-signer-recovery/MANIFEST.json",
+      "sha256": "2b6793ecfdeb7b54845e41fb53b3a626fe49746476fc690bd384cc2f537c64bd",
+      "bytes": 35633
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-signer-recovery/parity.json",
+      "sha256": "fc5486aa00685a20f157ad28e20734cb1b72fea84a346061288c32d0f1f34136",
+      "bytes": 280
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-signer-module/MANIFEST.json",
+      "sha256": "fa5e5877e173036bc2c47920504bb01ef34162f324a7bfb8678e26112efc86bc",
+      "bytes": 11499
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-signer-module/parity.json",
+      "sha256": "6695655647564dfca9649fbf3c559a814c20ed8c46599ff1605a31962955dfbe",
+      "bytes": 420
+    }
+  ],
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib fee_state_tests",
+    "cargo clippy --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --all-targets -- -D warnings",
+    "python test/wallet-v5r2/rust_signer_controls.py --output <fresh-directory>",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture",
+    "Use sdk_auth_parity.py full recovery flags and module_tx_parity.py from rescue-context.yml, with --native-signer tosctl/src/target/debug/examples/public_fixture. Set baseline env.sh; use fresh directories and optionally hardlink retained public LMS trees."
+  ],
+  "retention": "Retain raw inputs, logs and manifests through 2027-01-06 or later release review.",
+  "limitations": [
+    "Proven-state tests construct synthetic proof objects, not live chain proofs",
+    "Native cryptography remains subject to independent review",
+    "Recovery still uses diagnostic 20000 credit; default admission fails",
+    "Rust public_fixture is only a fixed public test-key executable, not a production signing CLI",
+    "Persistence, backup, device isolation, approval, nonce coordination, POP/preparation client integration and transport remain open",
+    "Latest-head architecture CI pending"
+  ]
+}

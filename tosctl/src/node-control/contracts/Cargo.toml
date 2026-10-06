@@ -4,7 +4,11 @@ version = "0.3.0"
 edition = "2024"
 license = 'GPL-3.0'
 
+[features]
+native-wallet-signer = ["dep:wallet-pq-signer"]
+
 [dependencies]
+wallet-pq-signer = { path = "../../wallet-pq-signer", optional = true }
 anyhow = "1.0"
 async-trait = "0.1.89"
 common = { path = "../common" }

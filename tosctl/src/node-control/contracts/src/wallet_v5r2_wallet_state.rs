@@ -19,6 +19,8 @@ pub struct ProvenWalletState {
     primary_nonce: u64,
     rescue_nonce: u64,
     policy: u8,
+    primary_key: Vec<u8>,
+    rescue_key: [u8; 32],
     master_time: u32,
     wallet_time: u32,
     module_time: u32,
@@ -160,8 +162,28 @@ impl ProvenWalletState {
                 && original.get_next_hash()?.as_array() == &network,
             "recovery namespace mismatch"
         );
-        md.move_by(8 + 256)?;
+        md.move_by(8)?;
+        let rescue_key = *md.get_next_hash()?.as_array();
         let policy = md.get_next_byte()?;
+        let mut key_cell = md.checked_drain_reference()?;
+        let mut primary_key = Vec::with_capacity(1312);
+        while primary_key.len() < 1312 {
+            let remaining = 1312usize
+                .checked_sub(primary_key.len())
+                .ok_or_else(|| anyhow::anyhow!("primary key length overflow"))?;
+            let chunk = remaining.min(127);
+            let mut key = ordinary(&key_cell)?;
+            anyhow::ensure!(
+                key.remaining_bits()
+                    == chunk.checked_mul(8).ok_or_else(|| anyhow::anyhow!("key bits overflow"))?
+                    && key.remaining_references() == usize::from(remaining > 127),
+                "noncanonical enrolled primary key"
+            );
+            primary_key.extend(key.get_next_bytes(chunk)?);
+            if remaining > 127 {
+                key_cell = key.checked_drain_reference()?;
+            }
+        }
         let result = Self {
             checkpoint: w.checkpoint.clone(),
             global_id,
@@ -175,6 +197,8 @@ impl ProvenWalletState {
             primary_nonce,
             rescue_nonce,
             policy,
+            primary_key,
+            rescue_key,
             master_time: w.block_gen_utime,
             wallet_time: w.account.gen_utime,
             module_time: m.account.gen_utime,
@@ -211,6 +235,57 @@ impl ProvenWalletState {
     }
     pub fn retired(&self) -> u16 {
         self.retired
+    }
+    pub fn primary_public_key(&self) -> &[u8] {
+        &self.primary_key
+    }
+    pub fn rescue_public_key(&self) -> &[u8; 32] {
+        &self.rescue_key
+    }
+
+    /// Sign only after caller approval of the actions. All request identity,
+    /// counters, policy and expected key come from this authenticated snapshot.
+    /// This neither reserves a nonce nor submits a transaction.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn sign_primary_submission(
+        &self,
+        policy_source: &ProvenAccountState,
+        now: u32,
+        valid_until: u32,
+        actions: Cell,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        let request = self.primary_request(policy_source, now, valid_until, actions)?;
+        self.sign_submission(request, signer)
+    }
+
+    /// Policy-independent rescue signing; caller must approve the action and
+    /// verify successor deployment/POP when migrating. No transport is implied.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn sign_rescue_submission(
+        &self,
+        now: u32,
+        valid_until: u32,
+        action: AuthAction,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        let request = self.rescue_request(now, valid_until, action)?;
+        self.sign_submission(request, signer)
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    fn sign_submission(
+        &self,
+        request: AuthRequest,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        let (role, key): (_, &[u8]) = match request.role() {
+            AuthRole::Primary => (wallet_pq_signer::Role::Primary, &self.primary_key),
+            AuthRole::Rescue => (wallet_pq_signer::Role::Rescue, &self.rescue_key),
+        };
+        let signature =
+            signer.sign_bound(role, key, wallet_pq_signer::Purpose::Auth, request.digest())?;
+        request.encode_submission(&signature)
     }
     /// Local state only. Global ConfigParam 48 must ALSO authorize PRIMARY;
     /// this boolean is never sufficient permission to sign a primary request.

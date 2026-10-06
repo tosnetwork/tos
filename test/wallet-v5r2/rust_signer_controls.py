@@ -1,0 +1,85 @@
+"""Require semantic failures for Rust signer wiping, rejection and enrollment binding."""
+
+import argparse
+import json
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=False)
+    wrapper = ROOT / "tosctl/src/wallet-pq-signer/src/lib.rs"
+    state = ROOT / "tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs"
+    sources = {path: path.read_text() for path in (wrapper, state)}
+    commands = {
+        wrapper: ["-p", "wallet-pq-signer", "--lib"],
+        state: [
+            "-p",
+            "contracts",
+            "--features",
+            "native-wallet-signer",
+            "--lib",
+            "native_wallet_signing_binds_proven_keys_and_policy",
+        ],
+    }
+    cases = [
+        ("seed_wipe", wrapper, "self.0.zeroize();", "", "import_wipes_on_success_and_failure"),
+        (
+            "failure_status",
+            wrapper,
+            "if status != 1 {\n            return Err(Rejected);\n        }\n        Ok(output)",
+            "if false {\n            return Err(Rejected);\n        }\n        Ok(output)",
+            "bound_signatures_and_independent_primary_verification",
+        ),
+        (
+            "proven_key",
+            state,
+            "signer.sign_bound(role, key, wallet_pq_signer::Purpose::Auth, request.digest())?",
+            "signer.sign_bound(role, &signer.public_key().to_vec(), wallet_pq_signer::Purpose::Auth, request.digest())?",
+            "native_wallet_signing_binds_proven_keys_and_policy",
+        ),
+    ]
+
+    def run(path, label):
+        command = [
+            "cargo",
+            "test",
+            "--manifest-path",
+            str(ROOT / "tosctl/src/Cargo.toml"),
+            "--locked",
+            *commands[path],
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        log = result.stdout + result.stderr
+        (args.output / f"{label}.log").write_text(log)
+        return result.returncode, log
+
+    results = {}
+    try:
+        for index, path in enumerate(sources):
+            code, log = run(path, f"baseline-{index}")
+            assert code == 0, log[-3000:]
+        for name, path, old, new, witness in cases:
+            assert sources[path].count(old) == 1
+            path.write_text(sources[path].replace(old, new))
+            code, log = run(path, name)
+            assert code != 0 and f"{witness} ... FAILED" in log, log[-3000:]
+            results[name] = {"exit": code, "witness": witness}
+            path.write_text(sources[path])
+    finally:
+        for path, source in sources.items():
+            path.write_text(source)
+        for index, path in enumerate(sources):
+            code, log = run(path, f"restored-{index}")
+            assert code == 0, log[-3000:]
+    (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+    print("Three Rust signer controls detected; restored tests pass")
+
+
+if __name__ == "__main__":
+    main()

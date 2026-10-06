@@ -963,6 +963,13 @@ mod fee_state_tests {
         fixture_with_policy(RescuePolicy::Required)
     }
     fn fixture_with_policy(policy: RescuePolicy) -> (WalletGenesis, ProvenAccountState) {
+        fixture_with_keys(policy, [2; 1312], [3; 32])
+    }
+    fn fixture_with_keys(
+        policy: RescuePolicy,
+        primary_key: [u8; 1312],
+        rescue_key: [u8; 32],
+    ) -> (WalletGenesis, ProvenAccountState) {
         let code = Cell::default();
         let hash = *code.repr_hash().as_array();
         let bundle = CodeBundle::new(
@@ -982,8 +989,8 @@ mod fee_state_tests {
                 global_id: 42,
                 network: [1; 32],
                 wallet_id: 42,
-                primary_key: [2; 1312],
-                rescue_key: [3; 32],
+                primary_key,
+                rescue_key,
                 policy,
                 fee_tree_id: [4; 32],
                 fee_public_key: key,
@@ -1088,6 +1095,81 @@ mod fee_state_tests {
         assert!(wallet.account.set_data(w.into_cell().unwrap()));
         refresh_proof_data(wallet);
     }
+    #[cfg(feature = "native-wallet-signer")]
+    #[test]
+    fn native_wallet_signing_binds_proven_keys_and_policy() {
+        use crate::wallet_v5r2::AuthAction;
+        use crate::wallet_v5r2_policy::tests::policy;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use chain_block::SliceData;
+        use fips204::traits::{SerDes, Verifier};
+        use wallet_pq_signer::{Role, Signer};
+        let mut primary = Signer::import_and_wipe(Role::Primary, &mut [0x11; 32]).unwrap();
+        let mut rescue = Signer::import_and_wipe(Role::Rescue, &mut [0x22; 48]).unwrap();
+        let (g, proof) = fixture_with_keys(
+            RescuePolicy::Ready,
+            primary.public_key().try_into().unwrap(),
+            rescue.public_key().try_into().unwrap(),
+        );
+        let mut w = account_proof(proof, g.wallet_init());
+        let (_, proof) = fixture();
+        let m = account_proof(proof, g.module_init());
+        let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
+        assert_eq!(view.primary_public_key(), primary.public_key());
+        assert_eq!(view.rescue_public_key(), rescue.public_key());
+        assert!(
+            view.sign_primary_submission(&w, 4620, 4700, Cell::default(), &mut primary).is_err()
+        );
+        w.config_params.insert(48, policy([1; 32], 0, &[], true));
+        let expected = view.primary_request(&w, 4620, 4700, Cell::default()).unwrap();
+        let body =
+            view.sign_primary_submission(&w, 4620, 4700, Cell::default(), &mut primary).unwrap();
+        let mut body = SliceData::load_cell(body).unwrap();
+        assert_eq!(body.get_next_u32().unwrap(), 0x53554233);
+        assert_eq!(
+            body.checked_drain_reference().unwrap().repr_hash(),
+            expected.cell().repr_hash()
+        );
+        let mut cell = body.checked_drain_reference().unwrap();
+        let mut signature = Vec::new();
+        loop {
+            let mut s = SliceData::load_cell(cell).unwrap();
+            signature.extend(s.get_bytestring(0));
+            if s.remaining_references() == 0 {
+                break;
+            }
+            cell = s.checked_drain_reference().unwrap();
+        }
+        let key = fips204::ml_dsa_44::PublicKey::try_from_bytes(
+            view.primary_public_key().try_into().unwrap(),
+        )
+        .unwrap();
+        assert!(key.verify(
+            expected.digest(),
+            &signature.try_into().unwrap(),
+            expected.signing_context()
+        ));
+        let mut wrong = Signer::import_and_wipe(Role::Primary, &mut [0x99; 32]).unwrap();
+        assert!(view.sign_primary_submission(&w, 4620, 4700, Cell::default(), &mut wrong).is_err());
+        assert!(
+            view.sign_primary_submission(&w, 4620, 4700, Cell::default(), &mut rescue).is_err()
+        );
+        assert!(
+            view.sign_primary_submission(&w, 4700, 4750, Cell::default(), &mut primary).is_err()
+        );
+        w.config_params.insert(48, policy([1; 32], 2, &[], true));
+        assert!(
+            view.sign_primary_submission(&w, 4620, 4700, Cell::default(), &mut primary).is_err()
+        );
+        assert!(
+            view.sign_rescue_submission(4620, 4700, AuthAction::LockPrimary, &mut primary).is_err()
+        );
+        let expected = view.rescue_request(4620, 4700, AuthAction::LockPrimary).unwrap();
+        let body =
+            view.sign_rescue_submission(4620, 4700, AuthAction::LockPrimary, &mut rescue).unwrap();
+        assert_eq!(body.reference(0).unwrap().repr_hash(), expected.cell().repr_hash());
+    }
+
     #[test]
     fn primary_request_requires_current_proven_policy() {
         use crate::wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole};

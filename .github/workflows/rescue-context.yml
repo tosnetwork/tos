@@ -71,6 +71,12 @@ jobs:
         run: |
           python test/wallet-v5r2/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer
           python test/wallet-v5r2/pq_signer_controls.py --c-api --build build --output artifacts/context/wallet-pq-signer-c
+      - name: Rust native wallet signer and proven-key controls
+        run: |
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests
+          python test/wallet-v5r2/rust_signer_controls.py --output artifacts/context/rust-wallet-signer-controls
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule
@@ -123,7 +129,7 @@ jobs:
             ln artifacts/context/r2-fee-auth/native/PUBLIC-TEST-ONLY-lms-tree \
               "artifacts/context/r2-fee-pop$role/native/PUBLIC-TEST-ONLY-lms-tree"
             python test/wallet-v5r2/sdk_auth_parity.py --pop-role "$role" \
-              --native-signer build/crypto/pq/test-wallet-pq-signer-fixture \
+              --native-signer "$CARGO_TARGET_DIR/debug/examples/public_fixture" \
               --auth-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_auth_encode" \
               --pop-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_pop_encode" \
               --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
@@ -134,7 +140,7 @@ jobs:
           ln artifacts/context/r2-fee-auth/native/PUBLIC-TEST-ONLY-lms-tree \
             artifacts/context/r2-fee-prepare/native/PUBLIC-TEST-ONLY-lms-tree
           python test/wallet-v5r2/sdk_auth_parity.py \
-            --native-signer build/crypto/pq/test-wallet-pq-signer-fixture \
+            --native-signer "$CARGO_TARGET_DIR/debug/examples/public_fixture" \
             --auth-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_auth_encode" \
             --pop-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_pop_encode" \
             --preparation-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_prepare_encode" \

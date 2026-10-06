@@ -1397,3 +1397,40 @@ This is an in-process integration boundary, not a completed Rust wrapper or key
 store. Authenticated enrollment, request approval, seed persistence/backup,
 device isolation and client transport remain required. Supplying a matching
 expected key is not itself proof of chain state or user consent.
+
+## Rust signer ownership and proven-state signing
+
+The workspace `wallet-pq-signer` crate compiles the existing wallet-only native
+backend and C ABI from the pinned repository sources, using the OpenSSL dependency's
+include/link metadata. It provides a non-copyable, single-thread opaque owner with
+automatic destruction, fixed role/purpose enums, and no raw-pointer or private-key
+export. Seed import wipes the supplied mutable buffer on success, rejection and
+unwinding; other seed copies and storage remain the caller's responsibility.
+Native signatures are reverified before return, and Rust exports no output when
+the native operation reports failure. Primary signatures are also tested with the
+separate `fips204` verifier and a wrong-context negative control.
+
+With the opt-in `contracts/native-wallet-signer` feature, `ProvenWalletState`
+offers `sign_primary_submission` and `sign_rescue_submission`. These construct the
+request from the authenticated wallet/module snapshot, derive the expected key
+from the exact installed module data, and return SUB3 only after key-bound signing.
+PRIMARY still requires fresh matching ConfigParam 48; retirement, stale proof,
+wrong role and a different key refuse signing. Rescue remains independent of the
+primary policy. The default contracts build does not link the signing backend.
+
+The proof-binding tests use synthetic authenticated-state fixtures, not live chain
+finality. They exercise real signing, canonical submission/request binding and
+independent primary verification. Controls delete seed wiping, ignore native
+failure status, and replace the proven key with the signer's own key; each must
+fail semantically. Caller action approval, concurrent-request/nonce coordination,
+encrypted persistence, backup, device isolation, POP/preparation client integration
+and transport remain open. This feature does not activate a wallet or alter gas.
+
+Local validation includes two wrapper unit tests, two compile-fail ownership tests,
+11 feature-enabled state tests and 10 default-feature state tests, plus three
+semantic deletion controls. The Rust public-test-key fixture driver (fixed public
+test seeds; not a production CLI) signs the 65-transaction recovery suite and the
+19-transaction module/wallet/recipient suite, with matching native/Rust receipts.
+The recovery suite still uses diagnostic 20,000 credit. Both architecture CI jobs
+now exercise the Rust signer in SDK recovery/POP, retaining the direct C++ signer
+module suite as well. Evidence is indexed in `rust-signer-20261006.json`.

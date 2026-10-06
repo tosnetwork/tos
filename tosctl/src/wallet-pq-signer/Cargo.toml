@@ -1,0 +1,16 @@
+[package]
+name = "wallet-pq-signer"
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-2.0-or-later"
+publish = false
+
+[dependencies]
+openssl-sys = "0.9"
+zeroize = "1"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44"] }

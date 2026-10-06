@@ -881,6 +881,7 @@ dependencies = [
  "tos_sandbox",
  "tos_vm",
  "tracing",
+ "wallet-pq-signer",
 ]
 
 [[package]]
@@ -5299,6 +5300,16 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
+]
+
+[[package]]
+name = "wallet-pq-signer"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "fips204",
+ "openssl-sys",
+ "zeroize",
 ]
 
 [[package]]

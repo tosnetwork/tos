@@ -19,6 +19,7 @@ members = [
     'tl/api',
     'toscenter-rs',
     'vm',
+    'wallet-pq-signer',
     'sandbox',
 ]
 resolver = '2'
