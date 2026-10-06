@@ -759,10 +759,44 @@ class BindNodeCallTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("has no usable bind-node command", result.stderr)
 
-    def test_unconfirmed_durability_is_flushed_and_continues(self) -> None:
+    def with_sync_stub(self, status: int) -> dict[str, str]:
+        # A sync that records its arguments and answers with `status`.
+        directory = self.tmp / "sync-bin"
+        directory.mkdir(exist_ok=True)
+        write_executable(
+            directory / "sync",
+            f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" >"{self.tmp}/sync-call"\nexit {status}\n',
+        )
+        return {"PATH": f"{directory}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+
+    def test_unconfirmed_durability_is_flushed_again_and_continues(self) -> None:
+        result = self.apply(
+            STUB_STATUS="3",
+            STUB_OUTPUT="db: the directory could not be flushed",
+            **self.with_sync_stub(0),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("flushed again and confirmed", result.stdout)
+        # The configuration and its directory, each fsynced and checked.
+        self.assertEqual(
+            (self.tmp / "sync-call").read_text().splitlines(),
+            ["--", str(self.config), str(self.db)],
+        )
+
+    def test_failed_flush_stops_the_container(self) -> None:
+        result = self.apply(
+            STUB_STATUS="3",
+            STUB_OUTPUT="db: the directory could not be flushed",
+            **self.with_sync_stub(1),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not be flushed to disk; the node was not started", result.stderr)
+
+    def test_real_flush_of_the_configuration_succeeds(self) -> None:
+        # The image's coreutils sync with file arguments, on a real directory.
         result = self.apply(STUB_STATUS="3", STUB_OUTPUT="db: the directory could not be flushed")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("flushed with sync", result.stdout)
+        self.assertIn("flushed again and confirmed", result.stdout)
 
     def test_missing_tool_is_refused(self) -> None:
         result = self.apply(TOS_PQ_CONSENSUS_KEY_TOOL=str(self.tmp / "absent"))

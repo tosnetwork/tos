@@ -445,11 +445,15 @@ apply() {
       echo "[+] Validator binding in $config"
       ;;
     3)
-      # In place, but the directory flush failed. Flush everything before the
-      # node starts on it rather than start on a binding a crash could lose.
+      # In place, but bind-node's flush of the directory failed. A bare sync(2)
+      # reports nothing, so it proves nothing: fsync the configuration and its
+      # directory again with sync FILE..., which reports each failure, and
+      # start only if both succeed.
       printf '%s\n' "$output" >&2
-      sync || refuse "the binding in $config is in place but could not be flushed"
-      echo "[+] Validator binding in $config (flushed with sync after bind-node reported it not durable)"
+      if ! sync -- "$config" "$(dirname -- "$config")"; then
+        refuse "the binding in $config is in place but could not be flushed to disk; the node was not started. Check the volume's health and free space (dmesg, df), then restart the container: the binding is kept, and a binding a crash lost is written again on the next start"
+      fi
+      echo "[+] Validator binding in $config (bind-node could not confirm it on disk; flushed again and confirmed)"
       ;;
     2)
       refuse "$tool has no usable bind-node command (exit 2); install a key tool that can bind a node"
