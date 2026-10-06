@@ -443,20 +443,26 @@ apply() {
   status=$?
   set -e
   case "$status" in
-    0)
-      printf '%s\n' "$output"
-      echo "[+] Validator binding in $config"
-      ;;
-    3)
-      # In place, but bind-node's flush of the directory failed. A bare sync(2)
-      # reports nothing, so it proves nothing: fsync the configuration and its
-      # directory again with sync FILE..., which reports each failure, and
-      # start only if both succeed.
-      printf '%s\n' "$output" >&2
+    0 | 3)
+      # 3: written, but bind-node's flush of the directory failed. 0 includes
+      # "unchanged", which bind-node answers without flushing anything, so a
+      # binding written by an earlier start whose flush failed would otherwise
+      # be taken as durable. Either way, fsync the configuration and its
+      # directory with sync FILE..., which reports each failure (a bare
+      # sync(2) reports nothing), and start only if both succeed.
+      if [ "$status" = 3 ]; then
+        printf '%s\n' "$output" >&2
+      else
+        printf '%s\n' "$output"
+      fi
       if ! sync -- "$config" "$(dirname -- "$config")"; then
         refuse "the binding in $config is in place but could not be flushed to disk; the node was not started. Check the volume's health and free space (dmesg, df), then restart the container: the binding is kept, and a binding a crash lost is written again on the next start"
       fi
-      echo "[+] Validator binding in $config (bind-node could not confirm it on disk; flushed again and confirmed)"
+      if [ "$status" = 3 ]; then
+        echo "[+] Validator binding in $config (bind-node could not confirm it on disk; flushed again and confirmed)"
+      else
+        echo "[+] Validator binding in $config (flushed and confirmed)"
+      fi
       ;;
     2)
       refuse "$tool has no usable bind-node command (exit 2); install a key tool that can bind a node"

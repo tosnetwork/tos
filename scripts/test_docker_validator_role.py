@@ -787,6 +787,31 @@ class BindNodeCallTest(unittest.TestCase):
             ["--", str(self.config), str(self.db)],
         )
 
+    def test_success_is_flushed_and_confirmed_too(self) -> None:
+        result = self.apply(STUB_STATUS="0", STUB_OUTPUT="", **self.with_sync_stub(0))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("flushed and confirmed", result.stdout)
+        self.assertEqual(
+            (self.tmp / "sync-call").read_text().splitlines(),
+            ["--", str(self.config), str(self.db)],
+        )
+
+    def test_retry_after_a_failed_flush_still_requires_the_flush(self) -> None:
+        # First start: written, flush unconfirmed, and the second flush fails.
+        first = self.apply(
+            STUB_STATUS="3",
+            STUB_OUTPUT="db: the directory could not be flushed",
+            **self.with_sync_stub(1),
+        )
+        self.assertNotEqual(first.returncode, 0)
+        # Restart: bind-node finds the same binding and answers 0 ("unchanged")
+        # without flushing; the flush still fails, so the node must not start.
+        second = self.apply(
+            STUB_STATUS="0", STUB_OUTPUT="config unchanged", **self.with_sync_stub(1)
+        )
+        self.assertNotEqual(second.returncode, 0, second.stdout)
+        self.assertIn("could not be flushed to disk; the node was not started", second.stderr)
+
     def test_failed_flush_stops_the_container(self) -> None:
         result = self.apply(
             STUB_STATUS="3",
