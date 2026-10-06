@@ -132,50 +132,223 @@ custom_words() {
 # line, so a later one there would make the engine run from a database and
 # configuration this script never inspected. Refused for every role.
 #
-# The engine accepts short options bundled into one word, and an option that
-# takes an argument consumes the rest of the word, or the next word when it
-# ends the word: -dD/x sets the database, while -C/x/Dc.json and -lDc only
-# carry values. A single-dash word is therefore walked letter by letter with
-# the engine's own short-option table (validator-engine.cpp registrations;
-# test_docker_validator_role.py fails if the two drift apart). A letter the
-# engine does not know is refused, as the engine would refuse to start.
-# Values of long options are not skipped, so a value spelled like a short
-# option is refused rather than missed.
-SHORT_OPTIONS_WITH_ARGUMENT="vCcIDflsmbAKSTUFtu"
-SHORT_OPTIONS_WITHOUT_ARGUMENT="VhdM"
+# To see what the engine sees, CUSTOM_ARG's words are parsed with the
+# engine's own command-line algorithm (td::OptionParser::run), over the
+# engine's own option table (the registrations in validator-engine.cpp;
+# test_docker_validator_role.py fails if they drift apart):
+#   - a word not starting with '-', or "-" alone, is not an option;
+#   - "--" ends the options: every later word is not an option;
+#   - "--name=value" or "--name": an option that takes an argument takes
+#     the text after '=' or else the whole next word, whatever it starts
+#     with; a flag given "=value" is an error;
+#   - "-abc": letters are short options in turn; one that takes an
+#     argument takes the rest of the word, or the whole next word when it
+#     ends the word, and ends the bundle.
+# An unknown option, a flag with a value or a missing argument is refused:
+# the engine would refuse to start on it too. The words before CUSTOM_ARG
+# on init.sh's command line are complete options with their values, so the
+# engine starts CUSTOM_ARG in the same state as this parser does.
+LONG_OPTIONS_WITH_ARGUMENT="
+  verbosity
+  measurement-jsonl
+  measurement-node-id
+  global-config
+  local-config
+  ip
+  db
+  fift-dir
+  logname
+  state-ttl
+  mempool-num
+  block-ttl
+  archive-ttl
+  key-proof-ttl
+  sync-before
+  truncate-db
+  session-logs
+  unsafe-catchain-restore
+  unsafe-catchain-rotate
+  add-shard
+  threads
+  user
+  shutdown-at
+  celldb-compress-depth
+  max-archive-fd
+  archive-preload-period
+  celldb-cache-size
+  celldb-cache-min-size
+  celldb-cell-cache-max-size
+  catchain-max-block-delay
+  catchain-max-block-delay-slow
+  collect-validator-telemetry
+  broadcast-speed-catchain
+  broadcast-speed-public
+  broadcast-speed-private
+  broadcast-speed-fast-sync
+  initial-sync-delay
+  fullnode-ratelimit-window-size
+  fullnode-ratelimit-global
+  fullnode-ratelimit-heavy
+  fullnode-ratelimit-medium
+  full-node-master-trusted
+  auto-sign
+  accept-certs-from
+  sync-shards-upto
+  shard-block-retainer
+  db-event-fifo
+  health-node-id
+  health-diagnostic
+  exporter-address
+  json-rpc-address
+  json-rpc-cors-origin
+  json-rpc-readyz-threshold
+  json-rpc-request-timeout
+  json-rpc-response-timeout
+  json-rpc-api-key
+  json-rpc-cache-ttl
+  json-rpc-trusted-proxy
+  quic-flood-control
+  persistent-state-download-cap
+  persistent-state-processing-cap
+  persistent-state-single-file-cap
+  persistent-state-resident-cap
+  persistent-state-max-returned-dag-bytes-per-parse
+  persistent-state-max-cells-per-parse
+  persistent-state-max-scaffolding-bytes-per-parse
+  persistent-state-max-total-cell-bytes-per-parse
+  persistent-state-spool-per-import-cap
+  persistent-state-spool-total-cap
+  persistent-state-spool-reservation-ratio-percent
+"
+LONG_OPTIONS_WITHOUT_ARGUMENT="
+  version
+  help
+  daemonize
+  enable-validator-consensus-cleanup
+  test-consensus-cleanup-crash-before-erase
+  not-all-shards
+  enable-precompiled-smc
+  disable-rocksdb-stats
+  nonfinal-ls
+  celldb-direct-io
+  celldb-preload-all
+  celldb-in-memory
+  celldb-v2
+  celldb-disable-bloom-filter
+  unsynced-liteserver
+  fast-state-serializer
+  disable-state-serializer
+  permanent-celldb
+  skip-key-sync
+  parallel-validation
+  health-native-core-v2
+  health-native-core-v3
+  health-core-metrics
+  json-rpc-readonly
+  json-rpc-expose-consensus-status
+  json-rpc-trust-proxy-headers
+  persistent-state-allow-oversize-single-file
+  dht-server
+"
+SHORT_OPTIONS="v=verbosity V=version h=help C=global-config c=local-config I=ip D=db f=fift-dir d=daemonize l=logname s=state-ttl m=mempool-num b=block-ttl A=archive-ttl K=key-proof-ttl S=sync-before T=truncate-db U=unsafe-catchain-restore F=unsafe-catchain-rotate M=not-all-shards t=threads u=user"
 
-refuse_location() {
-  refuse "CUSTOM_ARG sets '$1'; the database and its configuration are fixed by the entrypoint"
+# The options CUSTOM_ARG gives the engine, as long names and values, in order.
+ENGINE_OPTION_NAMES=()
+ENGINE_OPTION_VALUES=()
+
+long_option_kind() {
+  local name="$1"
+  if [[ "$LONG_OPTIONS_WITH_ARGUMENT" == *$'\n'"  $name"$'\n'* ]]; then
+    echo argument
+  elif [[ "$LONG_OPTIONS_WITHOUT_ARGUMENT" == *$'\n'"  $name"$'\n'* ]]; then
+    echo flag
+  else
+    echo unknown
+  fi
+}
+
+short_option_name() {
+  local letter="$1" entry
+  for entry in $SHORT_OPTIONS; do
+    if [ "${entry%%=*}" = "$letter" ]; then
+      printf '%s' "${entry#*=}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+parse_engine_options() {
+  ENGINE_OPTION_NAMES=()
+  ENGINE_OPTION_VALUES=()
+  local count=${#CUSTOM_WORDS[@]} i=0 j word name value kind letter
+  while ((i < count)); do
+    word="${CUSTOM_WORDS[i]}"
+    i=$((i + 1))
+    if [[ "$word" != -* || "$word" == "-" ]]; then
+      continue
+    fi
+    if [ "$word" = "--" ]; then
+      break
+    fi
+    if [[ "$word" == --* ]]; then
+      name="${word#--}"
+      value=""
+      local has_value=no
+      if [[ "$name" == *=* ]]; then
+        value="${name#*=}"
+        name="${name%%=*}"
+        has_value=yes
+      fi
+      kind="$(long_option_kind "$name")"
+      case "$kind" in
+        argument)
+          if [ "$has_value" = no ]; then
+            ((i < count)) || refuse "CUSTOM_ARG ends with --$name, which needs a value"
+            value="${CUSTOM_WORDS[i]}"
+            i=$((i + 1))
+          fi
+          ;;
+        flag)
+          [ "$has_value" = no ] || refuse "CUSTOM_ARG gives a value to --$name, which takes none"
+          ;;
+        *) refuse "CUSTOM_ARG word '$word' is not a validator-engine option" ;;
+      esac
+      ENGINE_OPTION_NAMES+=("$name")
+      ENGINE_OPTION_VALUES+=("$value")
+      continue
+    fi
+    for ((j = 1; j < ${#word}; j++)); do
+      letter="${word:j:1}"
+      name="$(short_option_name "$letter")" ||
+        refuse "CUSTOM_ARG word '$word' uses -$letter, which is not a validator-engine option"
+      value=""
+      if [ "$(long_option_kind "$name")" = argument ]; then
+        if ((j + 1 < ${#word})); then
+          value="${word:j+1}"
+        else
+          ((i < count)) || refuse "CUSTOM_ARG ends with -$letter, which needs a value"
+          value="${CUSTOM_WORDS[i]}"
+          i=$((i + 1))
+        fi
+        ENGINE_OPTION_NAMES+=("$name")
+        ENGINE_OPTION_VALUES+=("$value")
+        break
+      fi
+      ENGINE_OPTION_NAMES+=("$name")
+      ENGINE_OPTION_VALUES+=("")
+    done
+  done
 }
 
 check_custom_arg_keeps_location() {
-  local i=0 j word letter
-  while ((i < ${#CUSTOM_WORDS[@]})); do
-    word="${CUSTOM_WORDS[i]}"
-    i=$((i + 1))
-    case "$word" in
-      --db | --db=* | --local-config | --local-config=*) refuse_location "$word" ;;
-      --* | -) continue ;;
-      -*) ;;
-      *) continue ;;
+  local i
+  for ((i = 0; i < ${#ENGINE_OPTION_NAMES[@]}; i++)); do
+    case "${ENGINE_OPTION_NAMES[i]}" in
+      db | local-config)
+        refuse "CUSTOM_ARG sets --${ENGINE_OPTION_NAMES[i]} '${ENGINE_OPTION_VALUES[i]}'; the database and its configuration are fixed by the entrypoint"
+        ;;
     esac
-    for ((j = 1; j < ${#word}; j++)); do
-      letter="${word:j:1}"
-      case "$letter" in
-        D | c) refuse_location "-$letter in $word" ;;
-      esac
-      if [[ "$SHORT_OPTIONS_WITHOUT_ARGUMENT" == *"$letter"* ]]; then
-        continue
-      fi
-      if [[ "$SHORT_OPTIONS_WITH_ARGUMENT" == *"$letter"* ]]; then
-        # The argument is the rest of this word, or the whole next word.
-        if ((j + 1 == ${#word})); then
-          i=$((i + 1))
-        fi
-        break
-      fi
-      refuse "CUSTOM_ARG word '$word' uses -$letter, which is not a validator-engine option"
-    done
   done
 }
 
@@ -216,14 +389,9 @@ check_no_public_service() {
       refuse "$config configures $lite lite server(s); a validator runs none. Remove them from config.json"
   fi
   local i value
-  for ((i = 0; i < ${#CUSTOM_WORDS[@]}; i++)); do
-    case "${CUSTOM_WORDS[i]}" in
-      --json-rpc-address=*) value="${CUSTOM_WORDS[i]#--json-rpc-address=}" ;;
-      --json-rpc-address)
-        value="${CUSTOM_WORDS[i + 1]:-}"
-        ;;
-      *) continue ;;
-    esac
+  for ((i = 0; i < ${#ENGINE_OPTION_NAMES[@]}; i++)); do
+    [ "${ENGINE_OPTION_NAMES[i]}" = json-rpc-address ] || continue
+    value="${ENGINE_OPTION_VALUES[i]}"
     loopback_address "$value" ||
       refuse "CUSTOM_ARG binds JSON-RPC to '$value'; a validator may bind it to loopback only"
   done
@@ -233,6 +401,7 @@ check() {
   local config effective
   config="$1"
   custom_words
+  parse_engine_options
   check_custom_arg_keeps_location
   effective="$(effective_config "$config")"
   if ! role_requested; then

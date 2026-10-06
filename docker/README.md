@@ -167,11 +167,15 @@ recover in its place is checked instead. Keep the console port (CONSOLE_PORT)
 unpublished; wallets and explorers use separate RPC nodes.
 
 For every role, `CUSTOM_ARG` may not move the database or its configuration:
-`-D`/`--db` and `-c`/`--local-config` are refused, also inside a bundle of
-short options (`-dD/x`), because the entrypoint checks the configuration in
-`/var/tos-work/db`. An attached value is not an option: `-C/x/Dc.json`,
-`-l/var/log/c.log` and `-vD` (verbosity "D") are accepted, as the node reads
-them. A short option letter the node does not know is refused.
+`-D`/`--db` and `-c`/`--local-config` are refused, because the entrypoint
+checks the configuration in `/var/tos-work/db`. `CUSTOM_ARG` is read the way
+the node reads its command line, with the node's own option table: an option
+that takes a value takes the next word even when it starts with `-`
+(`--logname -v --db /x` sets the database), short options may be bundled
+(`-dD/x` sets it; `-vD` is verbosity "D"), and nothing after `--` is an
+option. An unknown option, a value given to a flag, or a missing value is
+refused, as the node would refuse it. `STATE_TTL`, `ARCHIVE_TTL`, `THREADS`,
+`VERBOSITY` and the port settings must be decimal numbers.
 
 Back the seed up offline and encrypted, never on the host. The controller root
 key (`tos-pq-key`) and the controller actions it signs (`tos-pq-controller`)

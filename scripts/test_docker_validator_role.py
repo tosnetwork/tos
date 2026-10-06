@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import random
 import re
 import shutil
 import socket
@@ -417,7 +418,6 @@ class RoleTest(unittest.TestCase):
         for custom in (
             "--json-rpc-address 0.0.0.0:8081",
             "--verbosity 3 --json-rpc-address=203.0.113.5:8081",
-            "--json-rpc-address",
             # Every line of CUSTOM_ARG reaches the engine, not only the first.
             "--verbosity 3\n--json-rpc-readonly --json-rpc-address 0.0.0.0:8081",
             "--verbosity\t3\t--json-rpc-address=0.0.0.0:8081",
@@ -565,30 +565,92 @@ class RoleTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("uses -q, which is not a validator-engine option", result.stderr)
 
-    def test_short_option_table_matches_the_engine(self) -> None:
-        # Every short option the engine registers, split by whether its
-        # callback takes an argument, must be what the script walks with.
-        source = ENGINE_SOURCE.read_text()
-        registrations = re.findall(
-            r"add_(?:checked_)?option\(\s*'(\\0|.)',\s*\"([^\"]+)\"(.*?)\[&\]\(([^)]*)\)",
-            source,
-            re.S,
-        )
-        letters = [(letter, bool(params.strip())) for letter, _, _, params in registrations]
-        short = [(letter, takes) for letter, takes in letters if letter != "\\0"]
-        self.assertGreater(len(short), 15, "the engine's option registrations were not found")
-        self.assertEqual(len({letter for letter, _ in short}), len(short))
+    def test_option_table_matches_the_engine(self) -> None:
+        # Every option the engine registers -- its long name, its short
+        # letter, and whether its callback takes an argument -- must be what
+        # the script parses CUSTOM_ARG with. All registrations must be read.
+        options = engine_option_table()
         script = ROLE.read_text()
-        with_argument = re.search(r'^SHORT_OPTIONS_WITH_ARGUMENT="([^"]*)"$', script, re.M)
-        without_argument = re.search(r'^SHORT_OPTIONS_WITHOUT_ARGUMENT="([^"]*)"$', script, re.M)
-        assert with_argument is not None and without_argument is not None
+
+        def listed(variable: str) -> list[str]:
+            match = re.search(rf'^{variable}="\n(.*?)\n"$', script, re.M | re.S)
+            assert match is not None, variable
+            return [line.strip() for line in match.group(1).splitlines()]
+
         self.assertEqual(
-            sorted(with_argument.group(1)), sorted(letter for letter, takes in short if takes)
+            sorted(listed("LONG_OPTIONS_WITH_ARGUMENT")),
+            sorted(name for name, (_, takes) in options.items() if takes),
         )
         self.assertEqual(
-            sorted(without_argument.group(1)),
-            sorted(letter for letter, takes in short if not takes),
+            sorted(listed("LONG_OPTIONS_WITHOUT_ARGUMENT")),
+            sorted(name for name, (_, takes) in options.items() if not takes),
         )
+        short = re.search(r'^SHORT_OPTIONS="([^"]*)"$', script, re.M)
+        assert short is not None
+        self.assertEqual(
+            sorted(short.group(1).split()),
+            sorted(f"{letter}={name}" for name, (letter, _) in options.items() if letter),
+        )
+
+    def test_engine_option_parsing_is_followed_word_by_word(self) -> None:
+        refused = (
+            # A long option that takes an argument takes the next word, even
+            # one starting with '-', so the option after it is real.
+            "--logname -v --db /other",
+            "--logname -v --local-config /other.json",
+            "--global-config -C -D/other",
+            "--session-logs --threads --db=/other",
+            "plain --db /other",
+            "--logname=x -dD /other",
+            # What the engine refuses to start on.
+            "--no-such-option",
+            "--daemonize=1",
+            "--threads",
+            "-l",
+            "-dq",
+        )
+        accepted = (
+            "--logname -D",
+            "--logname --db",
+            "--logname=--db=/other",
+            "--json-rpc-cors-origin -c",
+            "-l -D",
+            "-vD/x",
+            "-- --db /other",
+            "--verbosity 3 -- -D/other",
+            "-",
+        )
+        for custom in refused:
+            with self.subTest(custom=custom):
+                result = self.role(
+                    "check",
+                    str(self.config),
+                    VALIDATOR_ID=None,
+                    PQ_CONSENSUS_KEY_FILE=None,
+                    CUSTOM_ARG=custom,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("VALIDATOR_ROLE_REFUSED", result.stderr)
+        for custom in accepted:
+            with self.subTest(custom=custom):
+                result = self.role(
+                    "check",
+                    str(self.config),
+                    VALIDATOR_ID=None,
+                    PQ_CONSENSUS_KEY_FILE=None,
+                    CUSTOM_ARG=custom,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_json_rpc_address_is_read_as_the_engine_reads_it(self) -> None:
+        # Consumed as logname's value: no listener is configured at all.
+        result = self.role(
+            "check", str(self.config), CUSTOM_ARG="--logname --json-rpc-address 0.0.0.0:1"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Its own value may start with '-' and is still checked.
+        self.assert_refused("loopback only", CUSTOM_ARG="--json-rpc-address -0.0.0.0:1")
+        self.assert_refused("needs a value", CUSTOM_ARG="--json-rpc-address")
 
     def test_recovery_config_is_inspected_when_config_is_missing(self) -> None:
         # The engine renames config.json.tmp into place when config.json is
@@ -868,6 +930,16 @@ class EntrypointTest(unittest.TestCase):
         self.assertIn("a validator runs no lite server", result.stderr)
         self.assertEqual(len(self.engine_calls()), calls, "the engine was not run again")
 
+    def test_numeric_settings_cannot_add_engine_words(self) -> None:
+        # Only CUSTOM_ARG is split into several engine words; the numbers
+        # init.sh passes must stay one word each.
+        for name in ("VERBOSITY", "THREADS", "STATE_TTL", "ARCHIVE_TTL"):
+            with self.subTest(name=name):
+                result = self.run_init(**{name: "3 --db /other-db"})
+                self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+                self.assertIn(f"{name} must be a decimal number", result.stdout)
+                self.assertEqual(self.engine_calls(), [])
+
     def test_bad_key_stops_before_anything_is_created(self) -> None:
         self.seed.chmod(0o644)
         result = self.run_init(**self.validator_env())
@@ -881,6 +953,41 @@ class EntrypointTest(unittest.TestCase):
             dockerfile, r"COPY [^\n]*\./docker/validator-role\.sh[^\n]* /var/tos-work/scripts/"
         )
         self.assertRegex(dockerfile, r"chmod \+x [^\n]*/var/tos-work/scripts/validator-role\.sh")
+
+
+def engine_option_table() -> dict[str, tuple[str, bool]]:
+    """long name -> (short letter or "", takes an argument), from the source."""
+    source = ENGINE_SOURCE.read_text()
+    calls = re.findall(r"\bp\.add_(?:checked_)?option\(", source)
+    registrations = re.findall(
+        r"\bp\.add_(?:checked_)?option\(\s*('(?:\\0|.)'|0),\s*\"([^\"]+)\",(.*?)\[[^\]]*\]\s*\(([^)]*)\)",
+        source,
+        re.S,
+    )
+    assert len(calls) > 50 and len(registrations) == len(calls), (len(calls), len(registrations))
+    table: dict[str, tuple[str, bool]] = {}
+    for short, name, _, params in registrations:
+        letter = "" if short in ("'\\0'", "0") else short[1]
+        assert name not in table, name
+        table[name] = (letter, bool(params.strip()))
+    return table
+
+
+FIXED_PORT, OTHER_PORT = 41001, 41002
+
+
+def local_config(port: int) -> str:
+    """A minimal local config the engine builds a database config.json from."""
+    return json.dumps(
+        {
+            "@type": "config.local",
+            "local_ids": [],
+            "dht": [],
+            "validators": [],
+            "liteservers": [{"@type": "liteserver.config.random.local", "port": port}],
+            "control": [],
+        }
+    )
 
 
 def free_local_port() -> int:
@@ -908,57 +1015,140 @@ def find_built(relative: str, variable: str) -> Path | None:
 class RealEngineTest(unittest.TestCase):
     """The built engine reads back the binding the role wrote."""
 
-    def test_helper_refuses_exactly_the_bundles_that_move_the_database(self) -> None:
-        # The engine creates its database directory before it reads the
-        # global config, so a missing global config shows which database a
-        # command line selects without starting anything.
+    def test_option_table_matches_the_built_engine_help(self) -> None:
         engine = find_built("validator-engine/validator-engine", "TOS_VALIDATOR_ENGINE")
         if engine is None:
             self.skipTest("no built validator-engine; set TOS_VALIDATOR_ENGINE to run this test")
-        with tempfile.TemporaryDirectory(prefix="validator-engine-bundle-") as scratch:
+        shown = subprocess.run([str(engine), "-h"], capture_output=True, text=True, timeout=60)
+        rows = re.findall(r"^  (?:-(.), )?--([a-z0-9-]+)(<arg>)?", shown.stdout, re.M)
+        self.assertGreater(len(rows), 20, shown.stdout[-2000:])
+        table = engine_option_table()
+        for letter, name, takes in rows:
+            with self.subTest(option=name):
+                self.assertEqual(table.get(name), (letter, bool(takes)))
+
+    def test_helper_agrees_with_the_engine_on_a_corpus(self) -> None:
+        # For each command-line tail, the real engine shows which database it
+        # opens (it creates the directory before anything else) and which
+        # local config it builds that database's config.json from (the two
+        # local configs differ only in a lite server port). The helper must
+        # refuse exactly the tails that change either. A tail the engine
+        # refuses before choosing a database never runs; either verdict is
+        # safe there.
+        engine = find_built("validator-engine/validator-engine", "TOS_VALIDATOR_ENGINE")
+        if engine is None:
+            self.skipTest("no built validator-engine; set TOS_VALIDATOR_ENGINE to run this test")
+        with tempfile.TemporaryDirectory(prefix="validator-engine-corpus-") as scratch:
             root = Path(scratch)
-            for word in (
-                "-dD{}/moved",
-                "-MdD{}/moved",
-                "-vD{}/moved",
-                "-C{}/Dc.json",
-                "-l{}/c.log",
-                "-f{}/fiftD",
-                "-d",
-            ):
-                spelled = word.format(root)
-                with self.subTest(word=word):
-                    for entry in root.iterdir():
-                        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+            global_config = json.loads(ENGINE_GLOBAL_CONFIG.read_text())
+            global_config["dht"]["static_nodes"]["nodes"] = []
+            global_config.pop("liteservers", None)
+            global_path = root / "global.json"
+            global_path.write_text(json.dumps(global_config))
+            other_db, other_local = root / "other", root / "other.json"
+            fixed_db, fixed_local = root / "fixed", root / "fixed.json"
+            tokens = [
+                "--logname",
+                "-v",
+                "--db",
+                str(other_db),
+                "--local-config",
+                str(other_local),
+                "-D" + str(other_db),
+                "-dD" + str(other_db),
+                "-dc" + str(other_local),
+                "-c",
+                "-D",
+                "-l",
+                "--",
+                "plain",
+                "--threads",
+                "4",
+                "--verbosity=3",
+                "--db=" + str(other_db),
+                "--daemonize",
+                "--daemonize=1",
+                "-M",
+                "-Mv",
+                "3",
+                "--session-logs",
+                "--json-rpc-readonly",
+                "-vD",
+                "-x",
+                "--no-such",
+                "--local-config=" + str(other_local),
+                "-dl",
+                "-",
+            ]
+            generator = random.Random(20261006)
+            corpus = [
+                ["--logname", "-v", "--db", str(other_db)],
+                ["--logname", "-v", "--local-config", str(other_local)],
+                ["--global-config", "-C", "-D" + str(other_db)],
+                [],
+            ]
+            corpus += [
+                [generator.choice(tokens) for _ in range(generator.randint(1, 5))]
+                for _ in range(120)
+            ]
+            work = root / "work"
+            undecided = 0
+            verdicts: set[bool] = set()
+            for words in corpus:
+                with self.subTest(words=" ".join(words)):
+                    for path in (fixed_db, other_db, work):
+                        shutil.rmtree(path, ignore_errors=True)
+                    work.mkdir()
+                    for path, port in ((fixed_local, FIXED_PORT), (other_local, OTHER_PORT)):
+                        path.write_text(local_config(port))
                     subprocess.run(
                         [
                             str(engine),
-                            "--db",
-                            str(root / "fixed"),
+                            "-c",
+                            str(fixed_local),
                             "-C",
-                            str(root / "missing-global.json"),
-                            spelled,
+                            str(global_path),
+                            "--db",
+                            str(fixed_db),
+                            *words,
                         ],
+                        cwd=work,
                         capture_output=True,
                         timeout=60,
                         check=False,
                     )
-                    moved = (root / "moved").is_dir()
-                    self.assertTrue(
-                        moved or (root / "fixed").is_dir(), "the engine chose no database"
+                    if not fixed_db.is_dir() and not other_db.is_dir():
+                        undecided += 1
+                        continue
+                    chosen = other_db if other_db.is_dir() else fixed_db
+                    created = chosen / "config.json"
+                    # A local config other than the fixed one: the other port,
+                    # or none built at all (a file the engine could not use).
+                    engine_moved = (
+                        chosen == other_db
+                        or not created.is_file()
+                        or json.loads(created.read_text())["liteservers"][0]["port"] != FIXED_PORT
                     )
+                    verdicts.add(engine_moved)
                     helper = subprocess.run(
                         ["bash", str(ROLE), "check", str(root / "config.json")],
                         env={
                             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                            "CUSTOM_ARG": spelled,
+                            # One word per argument, exactly as the engine got them.
+                            "CUSTOM_ARG": " ".join(words),
                         },
                         capture_output=True,
                         text=True,
                         timeout=60,
                         check=False,
                     )
-                    self.assertEqual(helper.returncode != 0, moved, helper.stderr)
+                    self.assertEqual(helper.returncode != 0, engine_moved, helper.stderr)
+                    for path in root.iterdir():
+                        if path not in (global_path, work):
+                            shutil.rmtree(path) if path.is_dir() else path.unlink()
+            # The corpus must exercise both answers, mostly on decided runs.
+            self.assertEqual(verdicts, {True, False})
+            self.assertLess(undecided, len(corpus) // 2)
 
     @requires_bind_node
     def test_engine_loads_the_bound_validator_and_key(self) -> None:
