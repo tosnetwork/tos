@@ -60,7 +60,7 @@ impl ProofAttestationCmd {
 pub struct ProofAttestationDeployCmd {
     #[arg(long, help = "Local record name; defaults to attestation-<address prefix>")]
     name: Option<String>,
-    #[arg(long, help = "Owner address; must match the funding wallet")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner address; must match the funding wallet")]
     owner: String,
     #[arg(
         long,
@@ -98,7 +98,12 @@ pub struct ProofAttestationLsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show Proof Attestation state by address or local record name")]
 pub struct ProofAttestationShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Proof Attestation address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        conflicts_with = "name",
+        help = "Proof Attestation address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local record name from `agent attestation ls`")]
     name: Option<String>,
@@ -118,7 +123,12 @@ enum ProofAttestationOperation {
 pub struct ProofAttestationSendCmd {
     #[arg(long, value_enum)]
     operation: ProofAttestationOperation,
-    #[arg(long, conflicts_with = "name", help = "Proof Attestation address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        conflicts_with = "name",
+        help = "Proof Attestation address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local record name from `agent attestation ls`")]
     name: Option<String>,

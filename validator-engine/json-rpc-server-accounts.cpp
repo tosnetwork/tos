@@ -17,6 +17,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "json-rpc-server-internal.h"
+#include "json-rpc-server-storage.h"
 
 #include "auto/tl/lite_api.hpp"
 #include "tl/tl_object_parse.h"
@@ -69,6 +70,14 @@ td::Result<ParsedAccountState> ParsedAccountState::parse(
     res.last_trans_lt = info.last_trans_lt;
     res.last_trans_hash_b64 = td::base64_encode(info.last_trans_hash.as_slice());
     res.sync_utime = info.gen_utime;
+
+    // The storage phase's own inputs, read from the same account state as the
+    // balance, code and data below and served as "storage_stat".
+    auto storage_stat = parse_account_storage_stat(info.root);
+    if (storage_stat.is_error()) {
+      return storage_stat.move_as_error_prefix("account storage metadata: ");
+    }
+    res.storage_stat = storage_stat.move_as_ok();
 
     if (info.root.not_null()) {
       block::gen::Account::Record_account account;
@@ -155,8 +164,11 @@ std::string ParsedAccountState::to_address_info_json() const {
       << ",\"sync_utime\":" << sync_utime
       << ",\"extra_currencies\":[]"
       << ",\"state\":" << td::JsonString(td::Slice(state_str))
-      << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash))
-      << "}";
+      << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash));
+  if (storage_stat) {
+    sb << ",\"storage_stat\":" << account_storage_stat_json(storage_stat.value());
+  }
+  sb << "}";
   return sb.as_cslice().str();
 }
 
@@ -187,7 +199,11 @@ std::string ParsedAccountState::to_extended_info_json(const std::string& addr_st
       << ",\"code\":" << td::JsonString(td::Slice(code_b64))
       << ",\"data\":" << td::JsonString(td::Slice(data_b64))
       << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash)) << "}"
-      << ",\"revision\":0}";
+      << ",\"revision\":0";
+  if (storage_stat) {
+    sb << ",\"storage_stat\":" << account_storage_stat_json(storage_stat.value());
+  }
+  sb << "}";
   return sb.as_cslice().str();
 }
 
