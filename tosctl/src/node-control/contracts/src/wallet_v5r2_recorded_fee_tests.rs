@@ -169,7 +169,12 @@ async fn recorded_fee_custody_matches_executed_messages() {
             journal.retry_proven_fee(&view, now + 31, signed.intent()).is_err(),
             "proof-bound retry accepted stale proof"
         );
-        let retry = journal.retry_proven_fee(&view, now, signed.intent()).unwrap();
+        let restored_intent = crate::wallet_v5r2_fee::FeeIntent::from_cached_cell(
+            signed.intent().cell().clone(),
+            view.route().epoch0,
+        )
+        .unwrap();
+        let retry = journal.retry_proven_fee(&view, now, &restored_intent).unwrap();
         assert_eq!(
             write_boc(retry.body()).unwrap(),
             write_boc(signed.body()).unwrap(),
@@ -241,6 +246,10 @@ async fn recorded_fee_custody_matches_executed_messages() {
         )
         .await
         .unwrap();
+    let expected_body = write_boc(signed.body()).unwrap();
+    let pending = dir.path().join("pending-fee-intent.boc");
+    std::fs::write(&pending, write_boc(signed.intent().cell()).unwrap()).unwrap();
+    drop(signed);
     drop(vault);
     drop(journal);
     let mut journal = FeeJournal::open(&directory, view.route(), retry_time).unwrap();
@@ -251,10 +260,15 @@ async fn recorded_fee_custody_matches_executed_messages() {
         "restart lost new-signature barrier"
     );
     let before_retry = std::fs::read(directory.join("fee-reservations")).unwrap();
-    let retry = journal.retry_proven_fee(&current, retry_time, signed.intent()).unwrap();
+    let restored_intent = crate::wallet_v5r2_fee::FeeIntent::from_cached_cell(
+        read_single_root_boc(std::fs::read(&pending).unwrap()).unwrap(),
+        epoch0,
+    )
+    .unwrap();
+    let retry = journal.retry_proven_fee(&current, retry_time, &restored_intent).unwrap();
     assert_eq!(
         write_boc(retry.body()).unwrap(),
-        write_boc(signed.body()).unwrap(),
+        expected_body,
         "previous-slot restart retry changed signature"
     );
     let different = crate::wallet_v5r2_fee::FeeIntent::new(
@@ -262,7 +276,7 @@ async fn recorded_fee_custody_matches_executed_messages() {
             vault: view.route().vault,
             config_hash: *view.config_hash(),
             epoch0,
-            leaf: signed.intent().leaf(),
+            leaf: restored_intent.leaf(),
             valid_until: sign_time + 600,
             value: 5_000_000_001,
         },

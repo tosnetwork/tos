@@ -153,6 +153,7 @@ jobs:
           python test/wallet-v5r2/sdk_auth_controls.py --pop --output artifacts/context/pop-sdk-controls
           python test/wallet-v5r2/sdk_auth_controls.py --prepare --output artifacts/context/prepare-sdk-controls
           python test/wallet-v5r2/sdk_auth_controls.py --fee --output artifacts/context/fee-sdk-controls
+          python test/wallet-v5r2/cached_fee_decode_controls.py --output artifacts/context/fee-cached-decode-controls
           python test/wallet-v5r2/sdk_auth_controls.py --genesis --output artifacts/context/genesis-sdk-controls
       - name: Durable fee reservation deletion controls
         if: matrix.runner == 'ubuntu-24.04'

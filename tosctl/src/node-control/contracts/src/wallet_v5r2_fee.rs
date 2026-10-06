@@ -73,6 +73,9 @@ pub struct FeeIntent {
     digest: [u8; 32],
     binding: FeeBinding,
 }
+#[path = "wallet_v5r2_fee_decode.rs"]
+mod decode;
+
 impl FeeIntent {
     /// Construct a new signing intent using only a current-slot leaf. The
     /// previous-slot delivery allowance is not permission for new signatures.
@@ -92,6 +95,10 @@ impl FeeIntent {
             "new fee signature requires current slot"
         );
         anyhow::ensure!(binding.value > 0, "fee value must be positive");
+        Self::encode(binding, payload)
+    }
+
+    fn encode(binding: FeeBinding, payload: FeePayload) -> anyhow::Result<Self> {
         let mut b = BuilderData::new();
         b.append_u32(0x46454534)?;
         b.append_raw(b"TOS-RESCUE-FEE-v1", 136)?;
@@ -157,6 +164,7 @@ impl FeeIntent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("wallet_v5r2_fee_decode_tests.rs");
     use crate::{
         wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole},
         wallet_v5r2_pop::{PopBinding, PopRequest, RescuePolicy},

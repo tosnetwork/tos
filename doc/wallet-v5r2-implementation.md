@@ -2990,3 +2990,28 @@ must each trigger a named assertion before restored-code success.
 The latter is an isolated fee-cache probe at synthetic time, not a claim that
 its reused inner fixture payload remains authorized at that time. Evidence:
 `test/wallet-v5r2/proven-fee-retry-20261006.json`.
+
+### Restoring a pending fee intent
+
+`FeeIntent::from_cached_cell` restores canonical fee wire data for cache lookup.
+The caller supplies `epoch0` from authenticated enrollment; the wire cell does
+not encode it. The decoder checks ordinary cells, fixed constructor/domain,
+recognized fee class, canonical basechain address, bounded leaf, positive amount,
+complete structural payload and no trailing bits/references. Re-encoding must
+produce the identical cell hash, rejecting non-shortest coin encodings rather
+than silently normalizing an intent to a different digest.
+
+Decoding grants no authority and does not refresh an expired deadline. The
+restored object must pass `retry_proven_fee`, including verified cache lookup,
+current state/expiry/consumption checks and the caller's remaining broadcast
+gates. New signing still constructs a fresh current-slot intent through the
+existing signing path. No on-disk format or automatic file publication is added
+by the decoder; callers protect their pending transaction metadata.
+
+The recorded custody test restores all six intent cells before re-export. Its
+restart probe writes a pending intent BOC, drops the original signed object,
+closes custody and the journal, then reloads the file and reproduces the original
+body while the new-signature barrier remains active. Three parser mutations
+(canonical amount, exhausted leaf, zero amount) must fail named assertions;
+restored code passes. Evidence:
+`test/wallet-v5r2/cached-fee-decode-20261006.json`.

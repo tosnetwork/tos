@@ -1,0 +1,129 @@
+{
+  "base_commit": "c00e34876d247c3be0daceecedfe92fa0862312b",
+  "scope": "Canonical pending fee intent decoding, six recorded fee body comparisons, and file reload after dropping the original signed object during a restart barrier. Public test keys, synthetic proof metadata and diagnostic 20000 credit; no live deployment or production admission claim.",
+  "parser_controls": {
+    "baseline": {
+      "exit": 0,
+      "semantic_witness": null
+    },
+    "canonical": {
+      "exit": 101,
+      "semantic_witness": "cached parser accepted noncanonical amount"
+    },
+    "leaf": {
+      "exit": 101,
+      "semantic_witness": "cached parser accepted exhausted leaf"
+    },
+    "value": {
+      "exit": 101,
+      "semantic_witness": "cached parser accepted zero value"
+    },
+    "restored": {
+      "exit": 0,
+      "semantic_witness": null
+    }
+  },
+  "custody_result": {
+    "scope": "Encrypted public test seeds, actual executed bodies, synthetic proof metadata; diagnostic credit 20000",
+    "messages": [
+      {
+        "route": 0,
+        "leaf": 12,
+        "body_hash": "0a526c80f2155336a05926105f26af43dad2b52f11d52e39394d16f85b7fc4fe"
+      },
+      {
+        "route": 0,
+        "leaf": 13,
+        "body_hash": "62b126e1cae70aec9c66f9bb9bb491a7fb5b6c79dfb9348bdff9e90e5c6a4d98"
+      },
+      {
+        "route": 1,
+        "leaf": 16,
+        "body_hash": "b900533f241795201ae6dcddb4edbb9bf05bbd27065ac8dd10cf414dd35f063a"
+      },
+      {
+        "route": 1,
+        "leaf": 17,
+        "body_hash": "902f680b3e9b86f71563ef44529a29340367638abb177f98c7aab21af48e7870"
+      },
+      {
+        "route": 0,
+        "leaf": 16,
+        "body_hash": "59c8e4583424418305b835c351f4f0fce347707c28b6576c7f312fdb88ea4316"
+      },
+      {
+        "route": 1,
+        "leaf": 18,
+        "body_hash": "70025a6b03f4f5cb82df7fe86efc397d711f956dd17a122da2b7333a2c0f2fc3"
+      }
+    ],
+    "stale_clock_rejected_without_reservation": true,
+    "reopened_encrypted_vault": true,
+    "exact_cached_retry_after_vault_drop": true,
+    "previous_slot_retry_during_restart_barrier": true
+  },
+  "custody_runner": {
+    "baseline": {
+      "exit": 0,
+      "semantic_witness": null
+    }
+  },
+  "fee_unit_passed": 7,
+  "rust_format_exit": 0,
+  "included_tests_format_exit": 0,
+  "ruff_exit": 0,
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/cached_fee_decode_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cached-fee-parser-controls",
+    "python3 test/wallet-v5r2/recorded_fee_custody.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cached-fee-custody",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2_fee::",
+    "make -C tosctl/src fmt-check"
+  ],
+  "fixture_indices": [
+    "test/wallet-v5r2/native-fee-integration-20261006.json",
+    "test/wallet-v5r2/recorded-fee-custody-20261006.json"
+  ],
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cached-fee-decode.tar.gz",
+    "sha256": "b5aa39da9c25c8c1d35ce7da5d621fcf87e44a510297f4cb9007e9c7f1150d0f",
+    "bytes": 4032
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "d8f670534179d8099c8662198c219525ba4d207f6977281c5dc10266ebea9f66",
+      "bytes": 23759
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "sha256": "8e4bfaaa8b6c5c2a22ec789cbe7770aead998e403846097f608bacdeda855982",
+      "bytes": 192599
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_fee.rs",
+      "sha256": "82e55daef39927b9fd83dfebb691d207bb57633947c3f43f72606f5f973a2113",
+      "bytes": 15119
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_fee_tests.rs",
+      "sha256": "85e312bae0132decb43f90bb75245e24844f162e1c70bee62c0d06618648e12c",
+      "bytes": 13201
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cached_fee_decode_controls.py",
+      "sha256": "6cbf0f73628a7e3e82b5fb5ecd8ba103d599629adf35532203f5068a05b9d51d",
+      "bytes": 2540
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_fee_decode.rs",
+      "sha256": "a0460678b51e3672cfc5318456312b97368e47656e79e211b483373f9da2be9f",
+      "bytes": 2337
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_fee_decode_tests.rs",
+      "sha256": "c0a4d5634188d82e9aad1ab13615ffa84123d5fce6393e75697d867c077cb9da",
+      "bytes": 3308
+    }
+  ]
+}
