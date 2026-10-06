@@ -113,6 +113,48 @@ def main():
                 f"--{role}-code-hash",
                 payload[role + "_pin"],
             ]
+        enrollment = {
+            field: payload[field]
+            for field in (
+                "global_id",
+                "network",
+                "wallet_id",
+                "primary_key",
+                "rescue_key",
+                "fee_tree_id",
+                "fee_public_key",
+            )
+        }
+        enrollment.update(
+            policy="RESCUE_READY" if payload["policy"] == 1 else "SLH_REQUIRED",
+            fee_epoch0=payload["epoch0"],
+            derivation=payload["recovery_derivation"],
+        )
+        enrollment_file = protected("enrollment.json", json.dumps(enrollment).encode())
+        prepared = directory / "prepared"
+        code_args = []
+        for name in ("wallet", "module", "vault"):
+            for flag in (f"--{name}-code", f"--{name}-code-hash"):
+                code_args += [flag, common[common.index(flag) + 1]]
+        prepare = subprocess.run(
+            [
+                str(args.cli.resolve()),
+                "wallet",
+                "pq-prepare-initial",
+                "--enrollment-file",
+                enrollment_file,
+                "--output-dir",
+                str(prepared),
+                *code_args,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        assert prepare.returncode == 0, prepare.stderr
+        generated = json.loads((prepared / "recovery-manifest.json").read_text())
+        assert generated == manifest, "CLI preparation differs from SDK recovery manifest"
+        manifest = generated
         for role in ("primary", "rescue"):
             vault = directory / (role + ".json")
             manifest_path = directory / (role + "-manifest.json")

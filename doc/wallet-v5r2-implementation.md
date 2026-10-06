@@ -2505,3 +2505,45 @@ binding and must fail because mismatched derivation metadata is accepted; the
 restored CLI passes all eighteen outcomes. Existing restore controls are rerun
 after extracting the shared optional-manifest execution path.
 Evidence: `test/wallet-v5r2/cli-initial-20261006.json`.
+
+### CLI initial public bundle preparation
+
+`tosctl wallet pq-prepare-initial --enrollment-file public-enrollment.json
+--output-dir new-bundle` accepts the same six code-path/hash options as
+`pq-restore-initial`. It validates independently pinned code and strict public
+JSON, calls the deterministic genesis/manifest builder, then writes
+`wallet-state-init.boc`, `module-state-init.boc`, `vault-state-init.boc` and
+`recovery-manifest.json` into a new directory. Each file is created exclusively,
+synced and read back exactly; the directory and its parent are synced before
+success. The manifest is written last. Failures preserve a possibly partial
+bundle, and retries refuse an existing directory instead of erasing or replacing
+it. This ordering does not claim atomic all-or-nothing directory publication or
+power-loss fault coverage.
+
+Enrollment fields are `global_id`, `network` (32-byte hex), `wallet_id`,
+`primary_key` (1312-byte hex), `rescue_key` (32-byte hex), `policy`
+(`RESCUE_READY` or `SLH_REQUIRED`), `fee_tree_id` (32-byte hex), `fee_public_key`
+(60-byte hex), `fee_epoch0` and `derivation`. The latter contains `account_index`,
+`key_generation`, `primary_seed_profile`, `rescue_seed_profile` and
+`fee_seed_profile`, using the closed manifest input-profile identifiers.
+Unknown fields, including secret material, are rejected. Only public enrollment
+is accepted; no signing secrets or classical authorization algorithm are added.
+
+The command returns `initial_wallet_prepared`, basechain wallet/module/vault
+identities and the fee configuration hash. It does not generate the LMS tree,
+prove fee-tree freshness or custody, verify any private key, fund/deploy accounts
+or run the required per-key POP. Supplied public keys and derivation metadata
+remain enrollment claims until the corresponding recovery/possession checks.
+Use fresh fee material from the eventual production signing backend, not the
+public test-only LMS adapter. The complete creation workflow remains gated on
+that backend, state custody and authenticated funded POP acceptance.
+
+Nine CLI outcomes compare both policies' three StateInit files against the SDK
+fixture adapter, and cover duplicate/partial-directory preservation, unsupported
+policy, wrong key width, unknown fields and wrong code pins before output writes.
+A rebuilt-binary policy substitution must fail the requested-policy assertion;
+restoring the CLI passes all outcomes. The eighteen initial-key restoration
+outcomes now consume the actual CLI-prepared manifest and compare it with the
+SDK output; their manifest-binding bypass control is rerun after sharing the
+code-loading options. Public fixture keys and local code pins remain test-only.
+Evidence: `test/wallet-v5r2/cli-prepare-20261006.json`.

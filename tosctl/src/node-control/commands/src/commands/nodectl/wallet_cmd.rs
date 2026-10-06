@@ -69,6 +69,8 @@ pub enum WalletAction {
     PqRestoreKey(super::wallet_pq_cmd::PqRestoreKeyCmd),
     #[cfg(feature = "pq-wallet")]
     PqRestoreInitial(super::wallet_pq_cmd::PqRestoreInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqPrepareInitial(super::wallet_pq_cmd::PqPrepareInitialCmd),
     /// Create one PQ key with a new recoverable 24-word backup
     #[cfg(feature = "pq-wallet")]
     PqCreateKey(super::wallet_pq_cmd::PqCreateKeyCmd),
@@ -384,6 +386,8 @@ impl WalletCmd {
             WalletAction::PqRestoreKey(cmd) => cmd.run().await,
             #[cfg(feature = "pq-wallet")]
             WalletAction::PqRestoreInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqPrepareInitial(cmd) => cmd.run().await,
             #[cfg(feature = "pq-wallet")]
             WalletAction::PqCreateKey(cmd) => cmd.run().await,
             WalletAction::Create(cmd) => cmd.run(&self.config).await,

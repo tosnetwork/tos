@@ -323,6 +323,12 @@ pub struct PqRestoreInitialCmd {
     /// Independently authenticated basechain wallet account ID (32-byte hex).
     #[arg(long)]
     expected_wallet: String,
+    #[command(flatten)]
+    code: InitialCodeArgs,
+}
+
+#[derive(clap::Args, Clone)]
+struct InitialCodeArgs {
     #[arg(long)]
     wallet_code: PathBuf,
     #[arg(long)]
@@ -350,26 +356,134 @@ fn public_hash(text: &str) -> anyhow::Result<[u8; 32]> {
 }
 impl PqRestoreInitialCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
-        use contracts::{
-            wallet_v5r2_genesis::{CodeBundle, CodeHashes},
-            wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
-        };
+        use contracts::wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES};
         self.key.enrollment()?;
         let expected = public_hash(&self.expected_wallet)?;
+        let encoded = bounded_public_file(&self.recovery_manifest, MAX_MANIFEST_BYTES)?;
+        let code = self.code.load()?;
+        let (manifest, _) =
+            InitialRecoveryManifest::parse_and_reconstruct(&encoded, code, expected)?;
+        self.key.run_with_manifest(Some(&manifest)).await
+    }
+}
+
+impl InitialCodeArgs {
+    fn load(&self) -> anyhow::Result<contracts::wallet_v5r2_genesis::CodeBundle> {
+        use contracts::wallet_v5r2_genesis::{CodeBundle, CodeHashes};
         let pins = CodeHashes {
             wallet: public_hash(&self.wallet_code_hash)?,
             module: public_hash(&self.module_code_hash)?,
             vault: public_hash(&self.vault_code_hash)?,
         };
-        let encoded = bounded_public_file(&self.recovery_manifest, MAX_MANIFEST_BYTES)?;
-        let code = CodeBundle::new(
+        CodeBundle::new(
             chain_block::read_single_root_boc(bounded_public_file(&self.wallet_code, 256 * 1024)?)?,
             chain_block::read_single_root_boc(bounded_public_file(&self.module_code, 256 * 1024)?)?,
             chain_block::read_single_root_boc(bounded_public_file(&self.vault_code, 256 * 1024)?)?,
             pins,
+        )
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InitialEnrollment {
+    global_id: i32,
+    network: String,
+    wallet_id: u32,
+    primary_key: String,
+    rescue_key: String,
+    policy: String,
+    fee_tree_id: String,
+    fee_public_key: String,
+    fee_epoch0: u32,
+    derivation: contracts::wallet_v5r2_manifest::RecoveryDerivation,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Prepare initial PQ wallet identities and public recovery files; no deployment or readiness"
+)]
+pub struct PqPrepareInitialCmd {
+    #[command(flatten)]
+    code: InitialCodeArgs,
+    /// Strict public enrollment JSON; never include private signing material.
+    #[arg(long)]
+    enrollment_file: PathBuf,
+    /// A new directory. Existing or partially written bundles are never overwritten.
+    #[arg(long)]
+    output_dir: PathBuf,
+}
+fn public_bytes<const N: usize>(text: &str) -> anyhow::Result<[u8; N]> {
+    hex::decode(text)?.try_into().map_err(|_| anyhow::anyhow!("public enrollment field width"))
+}
+impl PqPrepareInitialCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        use contracts::{
+            wallet_v5r2_genesis::GenesisParameters,
+            wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
+            wallet_v5r2_pop::RescuePolicy,
+        };
+        let enrollment: InitialEnrollment = serde_json::from_slice(&bounded_public_file(
+            &self.enrollment_file,
+            MAX_MANIFEST_BYTES,
+        )?)
+        .map_err(|_| anyhow::anyhow!("invalid public enrollment encoding"))?;
+        let policy = match enrollment.policy.as_str() {
+            "RESCUE_READY" => RescuePolicy::Ready,
+            "SLH_REQUIRED" => RescuePolicy::Required,
+            _ => anyhow::bail!("unsupported initial rescue policy"),
+        };
+        let (manifest, genesis) = InitialRecoveryManifest::prepare(
+            self.code.load()?,
+            GenesisParameters {
+                global_id: enrollment.global_id,
+                network: public_bytes(&enrollment.network)?,
+                wallet_id: enrollment.wallet_id,
+                primary_key: public_bytes(&enrollment.primary_key)?,
+                rescue_key: public_bytes(&enrollment.rescue_key)?,
+                policy,
+                fee_tree_id: public_bytes(&enrollment.fee_tree_id)?,
+                fee_public_key: public_bytes(&enrollment.fee_public_key)?,
+                epoch0: enrollment.fee_epoch0,
+            },
+            enrollment.derivation,
         )?;
-        let (manifest, _) =
-            InitialRecoveryManifest::parse_and_reconstruct(&encoded, code, expected)?;
-        self.key.run_with_manifest(Some(&manifest)).await
+        let mut files = Vec::new();
+        for (name, cell) in [
+            ("wallet-state-init.boc", genesis.wallet_init()),
+            ("module-state-init.boc", genesis.module_init()),
+            ("vault-state-init.boc", genesis.vault_init()),
+        ] {
+            files.push((name, chain_block::write_boc(cell)?));
+        }
+        // The public manifest is last. Any uncertain partial directory is retained.
+        files.push(("recovery-manifest.json", manifest.to_json()?));
+        std::fs::create_dir(&self.output_dir)?;
+        for (name, bytes) in &files {
+            let path = self.output_dir.join(name);
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            anyhow::ensure!(
+                bounded_public_file(&path, bytes.len())? == *bytes,
+                "prepared bundle readback mismatch"
+            );
+        }
+        std::fs::File::open(&self.output_dir)?.sync_all()?;
+        let parent = self
+            .output_dir
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        std::fs::File::open(parent)?.sync_all()?;
+        println!(
+            "{}",
+            serde_json::json!({"status":"initial_wallet_prepared", "workchain":0,
+            "wallet":hex::encode(genesis.wallet_init().repr_hash().as_array()),
+            "module":hex::encode(genesis.module_init().repr_hash().as_array()),
+            "vault":hex::encode(genesis.vault_init().repr_hash().as_array()),
+            "fee_config_hash":hex::encode(genesis.config_hash())})
+        );
+        Ok(())
     }
 }

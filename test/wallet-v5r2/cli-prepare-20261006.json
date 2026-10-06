@@ -1,0 +1,189 @@
+{
+  "base_commit": "9b5fdd442e77fb1e9732c0367926fcd0ccda1181",
+  "scope": "Actual CLI generation of initial public manifest and three StateInit BOCs from supplied enrollment and independent code pins; CLI restoration consumes that generated manifest.",
+  "tests": {
+    "preparation_outcomes": {
+      "RESCUE_READY": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "RESCUE_READY-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "SLH_REQUIRED": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "SLH_REQUIRED-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "invalid-policy": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "invalid-primary_key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "invalid-secret_seed": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "wrong-pin": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "partial": {
+        "exit": 1,
+        "expected_success": false
+      }
+    },
+    "preparation_mutation": "Policy mutation changes prepared identity; restored CLI preserves both policies.",
+    "restoration_outcomes": {
+      "primary-account_index": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-key_generation": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-primary_seed_profile": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-trusted-wallet": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-code-pin": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-manifest-size": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-code-size": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-restore": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "primary-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-account_index": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-key_generation": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-rescue_seed_profile": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-trusted-wallet": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-code-pin": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-manifest-size": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-code-size": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-restore": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "rescue-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      }
+    },
+    "restoration_mutation": "Manifest binding bypass accepted mismatched account index; restored CLI rejects it.",
+    "default_build_format_and_ruff": "passed"
+  },
+  "commands": [
+    "python test/wallet-v5r2/cli_prepare_controls.py --cli <tosctl> --genesis-driver <v5r2_genesis_encode> --fixture <sdk-genesis.json> --output <fresh-directory>",
+    "python test/wallet-v5r2/cli_initial_controls.py --cli <tosctl> --genesis-driver <v5r2_genesis_encode> --fixture <sdk-genesis.json> --output <fresh-directory>",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --locked -p commands --lib --no-default-features",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_cmd.rs",
+      "bytes": 18763,
+      "sha256": "9ab2ebf8802d15dd98abce7e2c3ab0d757d1bb302b570ac694a4d5838fb82f81"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_cmd.rs",
+      "bytes": 71959,
+      "sha256": "4b9295cb373e025271b9ae18c45f65d931c99342f64c28be96c3fb632580fc88"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_prepare_initial.py",
+      "bytes": 5655,
+      "sha256": "5b802ddcaa30031bb2dca9b895a752a0de0963563a684ac2979024276583bae9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_prepare_controls.py",
+      "bytes": 2924,
+      "sha256": "e28c97795cf2f6e1f874a28083700619e2930f0335cf528bd7d6ad4c6ea1b2c3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_initial_restore.py",
+      "bytes": 9721,
+      "sha256": "feae9743638f670a9bb3e761149fdbe77b2bf43da02097578abfbcf7423d2bd4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 20329,
+      "sha256": "958c5d4638a049744b9f6fad2ffee55ac69c902f6aed876f74e496063c02e902"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 163254,
+      "sha256": "ff5c36cd72d454e9474f7685e63b075081127489ae1fbecce2b6e1acec7cf314"
+    }
+  ],
+  "fixture": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-recovery-integration/native/sdk-genesis.json",
+    "bytes": 59004,
+    "sha256": "bf73d4456aaff495a044ee6d39a059622c3e86dbf87d205c84d2869470523483"
+  },
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-prepare-controls-final/MANIFEST.json",
+      "bytes": 11816,
+      "sha256": "62c7b32e2854d7f2f955a1f612c165a6ef989737fb506d18c61561a01bf546d4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-prepare-restore-controls/MANIFEST.json",
+      "bytes": 20594,
+      "sha256": "a907dbc60bf3bd58974ba53334afbecc2b29d117b3cd6c43be58b3012524860e"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Supplied public enrollment only; no LMS tree generation or proof of fee-tree freshness/custody.",
+    "No account deployment, current authority or funded POP acceptance.",
+    "Partial output directories are preserved and retries refused; no all-or-nothing publication or power-loss fault coverage.",
+    "Local compiled-code fixtures and public keys; no production release trust claim.",
+    "Production fee signer, complete creation lifecycle, default-credit admission and final-head CI remain gates."
+  ]
+}
