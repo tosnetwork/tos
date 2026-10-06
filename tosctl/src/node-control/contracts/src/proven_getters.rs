@@ -2648,6 +2648,70 @@ mod fee_state_tests {
             signed.body().repr_hash(),
             signed.intent().encode_external(&signature).unwrap().repr_hash()
         );
+        #[cfg(feature = "native-wallet-vault")]
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(
+            async {
+                use crate::lms_fee_vault::{restore_seed_and_wipe, tests::open};
+                use secrets_vault::types::secret_id::SecretId;
+                let vault_dir = tempfile::tempdir().unwrap();
+                let vault_file = vault_dir.path().join("vault.json");
+                let id = SecretId::new("fee");
+                let vault = open(&vault_file).await;
+                let mut input = seed();
+                restore_seed_and_wipe(&vault, &id, &mut input, &key, 12, &path).await.unwrap();
+                assert_eq!(input, [0; 48]);
+                drop(vault);
+                let vault = open(&vault_file).await;
+                let journal_dir = tempfile::tempdir().unwrap();
+                std::fs::set_permissions(
+                    journal_dir.path(),
+                    std::fs::Permissions::from_mode(0o700),
+                )
+                .unwrap();
+                let mut j = FeeJournal::open_proven(journal_dir.path(), &early, 4620).unwrap();
+                let mut reads = 0;
+                let stale = j
+                    .sign_proven_fee_from_vault(
+                        &vault,
+                        &id,
+                        &view,
+                        || {
+                            reads += 1;
+                            if reads == 1 { 11820 } else { 11831 }
+                        },
+                        11900,
+                        100,
+                        payload(&g),
+                        &path,
+                    )
+                    .await;
+                assert!(stale.is_err(), "fee vault signed after proof expired during load");
+                assert_eq!(reads, 2, "fee vault failed to refresh local clock");
+                assert_eq!(
+                    std::fs::metadata(journal_dir.path().join("fee-reservations")).unwrap().len(),
+                    112,
+                    "fee vault consumed leaf on stale loaded proof"
+                );
+                let from_vault = j
+                    .sign_proven_fee_from_vault(
+                        &vault,
+                        &id,
+                        &view,
+                        || 11820,
+                        11900,
+                        100,
+                        payload(&g),
+                        &path,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(from_vault.body().repr_hash(), signed.body().repr_hash());
+                assert_eq!(
+                    j.cached_signature_verified(&key, 12, *signed.intent().digest()).unwrap(),
+                    signature
+                );
+            },
+        );
         drop(journal);
         let mut reopened = FeeJournal::open_proven(dir.path(), &view, 11820).unwrap();
         assert_eq!(

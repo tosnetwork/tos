@@ -2605,8 +2605,9 @@ it. No full stack/snapshot erasure or side-channel audit claim is made.
 
 The primitive has no public unreserved Rust signing API. It owns no persistent
 state and cannot prove leaf uniqueness. The proof-bound journal adapter below
-provides reservation integration; protected custody remains incomplete, so this
-is not an operational signer for real secrets. The new source
+provides reservation integration, and the encrypted-record adapter below adds
+bound storage/loading. The full client recovery and device-takeover workflow
+remains incomplete, so this is not a production-ready fee signer. The new source
 is not a replacement for the reservation/restore barriers or exclusive custody.
 It also does not generate authentication trees. RFC 8554 section 9.2 remains the
 state-reuse constraint: <https://www.rfc-editor.org/rfc/rfc8554.html#section-9.2>.
@@ -2642,8 +2643,9 @@ Three semantic controls remove preflight cleanup, identifier binding and the
 local deadline guard and require named assertion failures. Both CI architectures
 run the controls. Evidence: `test/wallet-v5r2/native-fee-journal-20261006.json`.
 
-Encrypted fee-seed custody, authenticated tree/path generation, old-device
-revocation and hardware rollback resistance remain separate unfinished gates.
+The encrypted-record adapter below adds fee-seed storage/loading. Authenticated
+tree/path generation, old-device revocation and hardware rollback resistance
+remain separate unfinished gates.
 The caller must also authorize the inner action and establish fee affordability;
 a valid fee signature alone does not establish either condition.
 
@@ -2663,5 +2665,39 @@ fee-seed custody, not a restored signer or proof of exclusive device ownership.
 The fixture is the existing independently generated public LMS enrollment and
 leaf-12 path. Removal controls require root comparison, fixed-profile checking
 and seed cleanup to fail named assertions. Evidence:
-`test/wallet-v5r2/fee-seed-binding-20261006.json`. Full tree generation and encrypted
-fee-key record lifecycle remain unfinished.
+`test/wallet-v5r2/fee-seed-binding-20261006.json`. The encrypted fee-key record lifecycle is covered below; full tree generation
+and client recovery integration remain unfinished.
+
+
+### Encrypted fee records and journal-bound signing
+
+With `native-wallet-vault`, `lms_fee_vault::restore_seed_and_wipe` imports a
+48-byte fee seed into a versioned encrypted blob record. It verifies enrollment
+without signing, uses `NewOnly`, flushes, then reads back and independently binds
+the decrypted seed again. A guard installed before future construction clears
+the input even if the future is never polled. Failed or cancelled persistence
+may leave a record; callers must resolve it rather than deleting or overwriting
+it. This API receives an already derived seed and an independently authenticated
+public key/path. Master/mnemonic restoration and tree rebuilding still need a
+complete fee-specific client flow.
+
+`FeeJournal::sign_proven_fee_from_vault` loads only a correctly tagged, unexpired
+blob with matching record identity and algorithm. Its private loader returns
+protected memory only inside the adapter; no public fee-seed export or unreserved
+signer handle is added. The loaded seed is bound to the proven public key using
+the selected leaf's authentication path before the existing journal signing
+operation. A trusted local clock is sampled again after asynchronous loading;
+a proof that expires during that wait is rejected before reservation. The
+existing proven-time slot selection, restore barrier, durable reservation,
+post-signature verification and exact cache retry remain in force.
+
+Tests use a real encrypted file backend, fixed public test seeds and synthetic
+proof metadata: wrong enrollment leaves no new record; duplicate import preserves
+the file; close/reopen and exact signed-message/cache parity succeed; untagged
+records and stale post-load proofs fail. Six semantic deletion controls cover
+pre-store binding, load binding, record profile, new-only storage, unpolled
+cleanup and post-load clock sampling. Evidence:
+`test/wallet-v5r2/fee-vault-20261006.json`. These results do not establish live
+proof acquisition, a production deployment, independent device custody or
+hardware rollback resistance. The caller must keep the encrypted Vault and
+journal exclusively owned and revoke an old device during takeover.

@@ -35,6 +35,8 @@ pub mod liquid_controller;
 #[cfg(unix)]
 pub mod lms_fee_journal;
 pub mod lms_fee_schedule;
+#[cfg(feature = "native-wallet-vault")]
+pub mod lms_fee_vault;
 pub mod native_registry;
 pub mod nominator;
 pub mod nominator_pool;

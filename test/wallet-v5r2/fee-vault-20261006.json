@@ -1,0 +1,172 @@
+{
+  "base_commit": "4ea68aff5f74f752e89fbc390fdaadc80f6b482b",
+  "scope": "Encrypted fee seed import with pre-store and readback binding, new-only storage, cancellation cleanup, private bound loading, and proof-bound journal signing with post-load clock sampling. Fixed public fixture and synthetic proof metadata. Full tree generation, mnemonic client flow and takeover remain incomplete.",
+  "semantic_controls": {
+    "prestore_binding": {
+      "exit": 101,
+      "semantic_witness": "fee restore persisted wrong seed"
+    },
+    "load_binding": {
+      "exit": 101,
+      "semantic_witness": "fee vault loaded wrong enrollment"
+    },
+    "record_profile": {
+      "exit": 101,
+      "semantic_witness": "fee vault accepted untagged record"
+    },
+    "new_only": {
+      "exit": 101,
+      "semantic_witness": "fee restore overwrote enrolled record"
+    },
+    "unpolled_wipe": {
+      "exit": 101,
+      "semantic_witness": "unpolled fee restore retained seed"
+    },
+    "fresh_clock": {
+      "exit": 101,
+      "semantic_witness": "fee vault signed after proof expired during load"
+    }
+  },
+  "regression": {
+    "proven_fee": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-vault",
+        "--lib",
+        "fee_state_tests"
+      ],
+      "exit": 0
+    },
+    "journal_vault": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-vault",
+        "--lib",
+        "lms_fee_"
+      ],
+      "exit": 0
+    },
+    "fmt": {
+      "command": [
+        "make",
+        "-C",
+        "tosctl/src",
+        "fmt-check"
+      ],
+      "exit": 0
+    },
+    "ruff": {
+      "command": [
+        "/Users/tomisetsu/tos/.venv/bin/ruff",
+        "check",
+        "test/wallet-v5r2/fee_vault_controls.py"
+      ],
+      "exit": 0
+    }
+  },
+  "results": {
+    "proven_fee": [
+      "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 244 filtered out; finished in 6.78s"
+    ],
+    "journal_vault": [
+      "test result: ok. 23 passed; 0 failed; 1 ignored; 0 measured; 238 filtered out; finished in 0.24s"
+    ]
+  },
+  "retention_until": "2027-01-06",
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/baseline-fee_vault_restore_binds_reopens_and_never_overwrites.log",
+      "size": 4582,
+      "sha256": "19316f991815e6bfbd26a6ecf8c484b7973a167fd39b1cd6a3768b4eac987b56"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/baseline-native_fee_signing_preserves_proof_reservation_and_seed_cleanup.log",
+      "size": 4604,
+      "sha256": "35c2ffe8c5a5b1b250a16efada247095c41d2fbe834dbeb328ba57cb5358b3c3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/fresh_clock.log",
+      "size": 5997,
+      "sha256": "6a2040870bf5cb6fd43e0b3f4855f1d089754570f92863fa52178725f5c22f52"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/load_binding.log",
+      "size": 7330,
+      "sha256": "885208a33bfce36f5a23db69ff5eb89c5a48dced5e560f85b3598b695573fd42"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/new_only.log",
+      "size": 5240,
+      "sha256": "c92ef3c8ceb0b2d023cedc1d59d68eaaf56ed8381db5101d0d9d9a3846577405"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/prestore_binding.log",
+      "size": 5235,
+      "sha256": "6e2b6f3fafa3d98abb01e54157430f8c52b7c6efcdcb6d05ea24c59f8e3778dd"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/record_profile.log",
+      "size": 5237,
+      "sha256": "705fe84bb74c96a353c981e3c5d42955d683570d2adb3b9bc9a43102fbc740a2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/restored-fee_vault_restore_binds_reopens_and_never_overwrites.log",
+      "size": 4694,
+      "sha256": "711bb9fbf848d51a6c436755f55df5b0e8c666b831a999d21e22f79bd404db6b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/restored-native_fee_signing_preserves_proof_reservation_and_seed_cleanup.log",
+      "size": 4604,
+      "sha256": "e8efceb74f5a0a400322f8b4c863b244d189810f796e5c87666b9194b1ae4c74"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/results.json",
+      "size": 637,
+      "sha256": "fa493d2105bd2acd3b60f1ef230716242be162390c6c648dad7998a0b88d47ad"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-controls/unpolled_wipe.log",
+      "size": 5625,
+      "sha256": "05a88b652620ed235b54275ede58d00b79c1b2df37902f9b8fa2ef483646135b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-regression/fmt.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-regression/journal_vault.log",
+      "size": 6769,
+      "sha256": "053a10d3afe5cfba25f76affb29a1c40254ffdb43cba3b9975463ae502bb7d7e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-regression/proven_fee.log",
+      "size": 6176,
+      "sha256": "78bf5ac795e1c7257da7621b39cbe81a5d250c6bd3e6397afcf7bf9cafed3205"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-regression/results.json",
+      "size": 845,
+      "sha256": "e3b671ec795efcf1d00a5d6acd4feeb3e2fbe48092a0333bd5facc4f32196017"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-vault-regression/ruff.log",
+      "size": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    }
+  ]
+}
