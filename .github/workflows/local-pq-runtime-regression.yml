@@ -1,0 +1,50 @@
+name: Local PQ runtime regression
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'scripts/*local*pq*'
+      - 'scripts/*root*services*'
+      - 'scripts/setup-testnet.sh'
+      - 'scripts/*nominator*'
+      - 'scripts/pq-config-wallet-first-stake-e2e.py'
+      - 'test/tostester/**'
+      - 'tools/shielded-pool-circuit/**'
+      - 'crypto/smartcont/tos-shielded-pool-v1.fc'
+      - '.github/workflows/local-pq-runtime-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-pq-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Retain exact source for reproducible offline review
+        run: |
+          mkdir -p "$RUNNER_TEMP/local-pq-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/local-pq-evidence/commit.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/local-pq-evidence/source.tar.gz"
+      - name: Existing snapshot security regressions
+        run: |
+          python3 -m venv "$RUNNER_TEMP/testenv"
+          "$RUNNER_TEMP/testenv/bin/pip" install 'pytest>=9,<10'
+          "$RUNNER_TEMP/testenv/bin/python" -m pytest -q scripts/test_install_root_services.py --junitxml="$RUNNER_TEMP/local-pq-evidence/snapshot.xml"
+      - name: Retain regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: local-pq-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/local-pq-evidence
+          retention-days: 3
+          if-no-files-found: error
