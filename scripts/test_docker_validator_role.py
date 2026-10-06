@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import socket
 import stat
@@ -26,6 +27,7 @@ REPO = Path(__file__).resolve().parent.parent
 ROLE = REPO / "docker" / "validator-role.sh"
 INIT = REPO / "docker" / "init.sh"
 DOCKERFILE = REPO / "Dockerfile"
+ENGINE_SOURCE = REPO / "validator-engine" / "validator-engine.cpp"
 ENGINE_GLOBAL_CONFIG = REPO / "tosctl" / "src" / "adnl" / "tests" / "config" / "testnet.json"
 
 VALIDATOR_ID = "0123456789abcdef" * 4
@@ -417,7 +419,12 @@ class RoleTest(unittest.TestCase):
         "--db=/other-db",
         "-D /other-db",
         "-D/other-db",
-        "-vD /other-db",
+        # Bundles in which D or c is reached as an option letter.
+        "-dD/other-db",
+        "-dD /other-db",
+        "-dc/other-db/config.json",
+        "-MdD/other-db",
+        "-hc /other-db/config.json",
         "--local-config /other-db/config.json",
         "--local-config=/other-db/config.json",
         "-c /other-db/config.json",
@@ -460,7 +467,21 @@ class RoleTest(unittest.TestCase):
         self.assertIn("fixed by the entrypoint", result.stderr)
 
     def test_options_that_keep_the_database_are_allowed(self) -> None:
-        for custom in ("--verbosity 3", "-v 3", "--db-event-fifo /tmp/fifo", "--threads 4"):
+        for custom in (
+            "--verbosity 3",
+            "-v 3",
+            "--db-event-fifo /tmp/fifo",
+            "--threads 4",
+            # Attached values of options that take an argument, however they
+            # are spelled, never move the database.
+            "-C/config/global.json",
+            "-l/var/log/consensus.log",
+            "-f/opt/config/fift",
+            "-vD/x",
+            "-dl/var/log/Dc.log",
+            "-l -D",
+            "-t 4 -d",
+        ):
             with self.subTest(custom=custom):
                 result = self.role(
                     "check",
@@ -470,6 +491,42 @@ class RoleTest(unittest.TestCase):
                     CUSTOM_ARG=custom,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unknown_short_option_is_refused(self) -> None:
+        result = self.role(
+            "check",
+            str(self.config),
+            VALIDATOR_ID=None,
+            PQ_CONSENSUS_KEY_FILE=None,
+            CUSTOM_ARG="-dq",
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("uses -q, which is not a validator-engine option", result.stderr)
+
+    def test_short_option_table_matches_the_engine(self) -> None:
+        # Every short option the engine registers, split by whether its
+        # callback takes an argument, must be what the script walks with.
+        source = ENGINE_SOURCE.read_text()
+        registrations = re.findall(
+            r"add_(?:checked_)?option\(\s*'(\\0|.)',\s*\"([^\"]+)\"(.*?)\[&\]\(([^)]*)\)",
+            source,
+            re.S,
+        )
+        letters = [(letter, bool(params.strip())) for letter, _, _, params in registrations]
+        short = [(letter, takes) for letter, takes in letters if letter != "\\0"]
+        self.assertGreater(len(short), 15, "the engine's option registrations were not found")
+        self.assertEqual(len({letter for letter, _ in short}), len(short))
+        script = ROLE.read_text()
+        with_argument = re.search(r'^SHORT_OPTIONS_WITH_ARGUMENT="([^"]*)"$', script, re.M)
+        without_argument = re.search(r'^SHORT_OPTIONS_WITHOUT_ARGUMENT="([^"]*)"$', script, re.M)
+        assert with_argument is not None and without_argument is not None
+        self.assertEqual(
+            sorted(with_argument.group(1)), sorted(letter for letter, takes in short if takes)
+        )
+        self.assertEqual(
+            sorted(without_argument.group(1)),
+            sorted(letter for letter, takes in short if not takes),
+        )
 
     def test_recovery_config_is_inspected_when_config_is_missing(self) -> None:
         # The engine renames config.json.tmp into place when config.json is
@@ -680,6 +737,58 @@ def find_built(relative: str, variable: str) -> Path | None:
 
 class RealEngineTest(unittest.TestCase):
     """The built engine reads back the binding the role wrote."""
+
+    def test_helper_refuses_exactly_the_bundles_that_move_the_database(self) -> None:
+        # The engine creates its database directory before it reads the
+        # global config, so a missing global config shows which database a
+        # command line selects without starting anything.
+        engine = find_built("validator-engine/validator-engine", "TOS_VALIDATOR_ENGINE")
+        if engine is None:
+            self.skipTest("no built validator-engine; set TOS_VALIDATOR_ENGINE to run this test")
+        with tempfile.TemporaryDirectory(prefix="validator-engine-bundle-") as scratch:
+            root = Path(scratch)
+            for word in (
+                "-dD{}/moved",
+                "-MdD{}/moved",
+                "-vD{}/moved",
+                "-C{}/Dc.json",
+                "-l{}/c.log",
+                "-f{}/fiftD",
+                "-d",
+            ):
+                spelled = word.format(root)
+                with self.subTest(word=word):
+                    for entry in root.iterdir():
+                        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+                    subprocess.run(
+                        [
+                            str(engine),
+                            "--db",
+                            str(root / "fixed"),
+                            "-C",
+                            str(root / "missing-global.json"),
+                            spelled,
+                        ],
+                        capture_output=True,
+                        timeout=60,
+                        check=False,
+                    )
+                    moved = (root / "moved").is_dir()
+                    self.assertTrue(
+                        moved or (root / "fixed").is_dir(), "the engine chose no database"
+                    )
+                    helper = subprocess.run(
+                        ["bash", str(ROLE), "check", str(root / "config.json")],
+                        env={
+                            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                            "CUSTOM_ARG": spelled,
+                        },
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                        check=False,
+                    )
+                    self.assertEqual(helper.returncode != 0, moved, helper.stderr)
 
     def test_engine_loads_the_bound_validator_and_key(self) -> None:
         engine = find_built("validator-engine/validator-engine", "TOS_VALIDATOR_ENGINE")

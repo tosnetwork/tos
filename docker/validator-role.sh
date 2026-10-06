@@ -129,21 +129,52 @@ custom_words() {
 # from that database, or from -c/--local-config when no config.json exists
 # there yet. init.sh names both, and CUSTOM_ARG follows them on the command
 # line, so a later one there would make the engine run from a database and
-# configuration this script never inspected. Refused for every role. A
-# single-dash word is refused when it contains D or c anywhere, because the
-# engine accepts short options bundled into one word (-vD/other).
+# configuration this script never inspected. Refused for every role.
+#
+# The engine accepts short options bundled into one word, and an option that
+# takes an argument consumes the rest of the word, or the next word when it
+# ends the word: -dD/x sets the database, while -C/x/Dc.json and -lDc only
+# carry values. A single-dash word is therefore walked letter by letter with
+# the engine's own short-option table (validator-engine.cpp registrations;
+# test_docker_validator_role.py fails if the two drift apart). A letter the
+# engine does not know is refused, as the engine would refuse to start.
+# Values of long options are not skipped, so a value spelled like a short
+# option is refused rather than missed.
+SHORT_OPTIONS_WITH_ARGUMENT="vCcIDflsmbAKSTUFtu"
+SHORT_OPTIONS_WITHOUT_ARGUMENT="VhdM"
+
+refuse_location() {
+  refuse "CUSTOM_ARG sets '$1'; the database and its configuration are fixed by the entrypoint"
+}
+
 check_custom_arg_keeps_location() {
-  local word
-  for word in "${CUSTOM_WORDS[@]}"; do
+  local i=0 j word letter
+  while ((i < ${#CUSTOM_WORDS[@]})); do
+    word="${CUSTOM_WORDS[i]}"
+    i=$((i + 1))
     case "$word" in
-      --db | --db=* | --local-config | --local-config=*)
-        refuse "CUSTOM_ARG sets '$word'; the database and its configuration are fixed by the entrypoint"
-        ;;
-      --*) ;;
-      -*[Dc]*)
-        refuse "CUSTOM_ARG sets '$word'; the database and its configuration are fixed by the entrypoint"
-        ;;
+      --db | --db=* | --local-config | --local-config=*) refuse_location "$word" ;;
+      --* | -) continue ;;
+      -*) ;;
+      *) continue ;;
     esac
+    for ((j = 1; j < ${#word}; j++)); do
+      letter="${word:j:1}"
+      case "$letter" in
+        D | c) refuse_location "-$letter in $word" ;;
+      esac
+      if [[ "$SHORT_OPTIONS_WITHOUT_ARGUMENT" == *"$letter"* ]]; then
+        continue
+      fi
+      if [[ "$SHORT_OPTIONS_WITH_ARGUMENT" == *"$letter"* ]]; then
+        # The argument is the rest of this word, or the whole next word.
+        if ((j + 1 == ${#word})); then
+          i=$((i + 1))
+        fi
+        break
+      fi
+      refuse "CUSTOM_ARG word '$word' uses -$letter, which is not a validator-engine option"
+    done
   done
 }
 
