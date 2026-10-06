@@ -34,7 +34,6 @@ with tests; deployment records and their frozen profiles belong in `artifacts/`.
 | [FullNode.md](FullNode.md) | Running a full node |
 | [LiteClient.md](LiteClient.md) | Using the lite client |
 | [Validator.md](Validator.md) | Running a validator |
-| [Production-Node.md](Production-Node.md) | Production node roles, key custody, options, retention and validator lifecycle (design; lists open gaps) |
 | [validator-genesis-bootstrap.md](validator-genesis-bootstrap.md) | Post-quantum genesis validator bootstrap and `validator-pq.pub` |
 
 ## Release process

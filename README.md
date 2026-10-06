@@ -130,11 +130,9 @@ cd tosctl/src
 cargo build --locked
 ```
 
-The development team's local network tooling and its operating notes are
-maintained outside this repository. For running a node on a shared network,
-see the [production node design](doc/Production-Node.md). Read the reset instructions before running a command
-that replaces chain data; local wallet and ceremony fixtures are not
-production keys.
+Network deployment settings, for the local development network as well as
+production, are maintained outside this repository. Local wallet and ceremony
+fixtures are never production keys.
 
 ## Repository map
 

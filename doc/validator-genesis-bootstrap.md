@@ -135,8 +135,7 @@ The generator emits zerostates, their hashes, and bootstrap wallet/configuration
 keys. Protect those private files according to the launch ceremony. The generated
 ConfigParam 47 admits the exact controller artifact compiled from this checkout;
 it does not initialize any controller's operating authorization or deploy its
-account. See the validator lifecycle in
-[Production-Node.md](Production-Node.md#9-validator-lifecycle).
+account; both are part of each operator's validator onboarding.
 
 Independently decode the generated BOC and verify ConfigParams 8/19/30/34/47,
 the four published identities, algorithm 1, weight 17 each, and exact public-key
