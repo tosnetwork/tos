@@ -3183,6 +3183,7 @@ that keeps an exclusively owned initial fee journal open across requests. It loa
 and validates the public H20 cache, binds fee-vault reads to the locally pinned
 initial enrollment and uses fresh proofs for each request. The request vocabulary
 is `status`, `lock` (explicit TTL, decimal nanoTOS value and new output directory),
+`pop` (explicit `primary` or `rescue` role, TTL, value and new output directory),
 `retry` (persisted intent and new output directory), and `quit`.
 
 The implemented lock composition signs SLH from current wallet state, writes the
@@ -3245,3 +3246,50 @@ missing report as proof that a signature was not produced or a message was not
 delivered. `fee_message_cached` reports an exact signed external message only.
 
 Evidence: [fee-session signing, lifecycle and crash controls](../test/wallet-v5r2/cli-fee-session-20261006.json).
+
+## Fee-session initial possession proofs
+
+The `pop` request signs a fresh `POP3` challenge for the exact pinned initial
+wallet/module enrollment and wraps its `PPS3` submission in fee class 2. PRIMARY
+POP uses ML-DSA-44; RESCUE POP uses SLH-DSA-SHA2-128s. The optional command-line
+arguments `--primary-vault-file`, `--primary-record-id` and
+`--primary-vault-key-file` must be supplied together for PRIMARY POP. RESCUE POP
+uses the existing rescue custody arguments. PRIMARY AUTH remains excluded from
+fee-vault funding; possession proves neither authorization nor recovery readiness.
+
+The command checks current wallet/module proofs, generates a CSPRNG challenge,
+writes `pop-request.boc` before opening custody, signs only the bound role/key,
+and rechecks the initial enrollment after secret loading. Lock and POP share the
+same durable pending-intent, journal reservation, native LMS signature cache and
+exact external export path. Cached retry retains the original challenge; issuing
+another `pop` generates a new challenge and consumes a new fee leaf.
+
+```json
+{"command":"pop","role":"primary","valid_for_seconds":600,"value_nanotos":"5000000000","output_dir":"/absolute/new-primary-pop"}
+{"command":"pop","role":"rescue","valid_for_seconds":600,"value_nanotos":"5000000000","output_dir":"/absolute/new-rescue-pop"}
+```
+
+The example amount is a local fixture value. It is not a live affordability or
+reserve estimate. Neither the command nor a signed POP file asserts that funded
+execution happened; authenticated fee and module receipts remain necessary.
+Successor enrollment, migration orchestration, broadcast and live receipt
+acquisition remain separate client work.
+
+The local integration runner uses real encrypted custody and three consecutive
+PRIMARY/RESCUE/PRIMARY POPs at leaves 4–6, checks fresh challenges and exact retry
+bytes without new journal entries, and executes each message through the native
+fee vault and module. Module data is unchanged and no authorization message is
+emitted. The mock proof source advances to the fee-account state produced by each
+transaction, and consumed retries fail. A subsequent SLH lock at leaf 7 continues
+from those same fee/module account states and changes wallet authority only then.
+All these executions use diagnostic credit 20,000; default 10,000 still rejects
+the POP fee messages. Real cryptographic proof acquisition is not exercised.
+
+Both role-substitution and fixed-challenge mutations fail their specific semantic
+assertions; restored native POP and subsequent lock execution pass. The existing
+abrupt-export recovery controls and normal cached retry also pass after the
+shared signing-path refactor. PRIMARY signing/payment (seven cases), inspection
+(eight cases), restore-barrier/exclusive-owner/reopen and idle cancellation
+regressions pass.
+
+Evidence: [fee-funded CLI POP and recovery controls](../test/wallet-v5r2/cli-fee-pop-20261006.json).

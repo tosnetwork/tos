@@ -17,10 +17,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     source = ROOT / "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs"
     original = source.read_text()
-    anchor = "                let signed = journal.retry_proven_fee(&view, now()?, &intent)?;\n                export(&output_dir, &signed)"
-    persisted = '                // Persist the complete intent before any stateful fee signature.\n                put(&output_dir, "pending-intent.boc", &chain_block::write_boc(intent.cell())?)?;'
+    anchor = "        let signed = journal.retry_proven_fee(&view, now()?, &intent)?;\n        export(&output_dir, &signed)"
+    persisted = '        // Persist the complete intent before any stateful fee signature.\n        put(&output_dir, "pending-intent.boc", &chain_block::write_boc(intent.cell())?)?;'
     assert original.count(anchor) == original.count(persisted) == 1
-    injected = original.replace(anchor, "                std::process::exit(73);\n" + anchor)
+    injected = original.replace(anchor, "        std::process::exit(73);\n" + anchor)
 
     def build(label):
         result = subprocess.run(

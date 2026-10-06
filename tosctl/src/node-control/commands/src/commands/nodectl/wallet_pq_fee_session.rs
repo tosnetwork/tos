@@ -7,15 +7,16 @@ use super::{
 };
 use contracts::{
     lms_fee_journal::{FeeJournal, SignedFeeMessage},
-    wallet_v5r2::AuthAction,
+    wallet_v5r2::{AuthAction, AuthRole},
     wallet_v5r2_fee::{FeeBinding, FeeClass, FeeIntent, FeePayload},
+    wallet_v5r2_pop::PopRequest,
     wallet_v5r2_vault::VaultKey,
 };
 use std::io::{BufRead, Read, Write};
 
 #[derive(clap::Args, Clone)]
 #[command(
-    about = "Hold an initial rescue-fee journal session; JSON-line status/lock/retry/quit, no broadcast"
+    about = "Hold an initial rescue-fee journal session; JSON-line status/lock/pop/retry/quit, no broadcast"
 )]
 pub struct PqFeeSessionInitialCmd {
     #[command(flatten)]
@@ -38,6 +39,13 @@ pub struct PqFeeSessionInitialCmd {
     rescue_record_id: String,
     #[arg(long)]
     rescue_vault_key_file: PathBuf,
+    /// Primary custody is needed only for a PRIMARY possession proof.
+    #[arg(long, requires_all = ["primary_record_id", "primary_vault_key_file"])]
+    primary_vault_file: Option<PathBuf>,
+    #[arg(long, requires_all = ["primary_vault_file", "primary_vault_key_file"])]
+    primary_record_id: Option<String>,
+    #[arg(long, requires_all = ["primary_vault_file", "primary_record_id"])]
+    primary_vault_key_file: Option<PathBuf>,
 }
 
 #[derive(serde::Deserialize)]
@@ -45,8 +53,16 @@ pub struct PqFeeSessionInitialCmd {
 enum Request {
     Status,
     Lock { valid_for_seconds: u32, value_nanotos: String, output_dir: PathBuf },
+    Pop { role: PopRole, valid_for_seconds: u32, value_nanotos: String, output_dir: PathBuf },
     Retry { intent: PathBuf, output_dir: PathBuf },
     Quit,
+}
+
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PopRole {
+    Primary,
+    Rescue,
 }
 
 fn fee_clock() -> u32 {
@@ -186,12 +202,12 @@ impl PqFeeSessionInitialCmd {
         tree: &wallet_pq_signer::fee::FeeTree,
     ) -> anyhow::Result<serde_json::Value> {
         let view = context.fee().await?;
-        match request {
+        let (pop_role, valid_for_seconds, value_nanotos, output_dir) = match request {
             Request::Status => {
                 let plan = journal.preview_proven(&view, now()?)?;
-                Ok(
+                return Ok(
                     serde_json::json!({"status":"leaf_available", "leaf":plan.leaf, "proven_time":view.proven_time(), "scope":"reservation capacity only; not signing or payment readiness"}),
-                )
+                );
             }
             Request::Retry { intent, output_dir } => {
                 let intent = FeeIntent::from_cached_cell(
@@ -204,76 +220,122 @@ impl PqFeeSessionInitialCmd {
                 let signed = journal.retry_proven_fee(&view, now()?, &intent)?;
                 std::fs::create_dir(&output_dir)?;
                 put(&output_dir, "pending-intent.boc", &chain_block::write_boc(intent.cell())?)?;
-                export(&output_dir, &signed)
+                return export(&output_dir, &signed);
             }
             Request::Lock { valid_for_seconds, value_nanotos, output_dir } => {
-                anyhow::ensure!((1..=3600).contains(&valid_for_seconds), "fee TTL out of range");
-                anyhow::ensure!(
-                    !value_nanotos.is_empty() && value_nanotos.bytes().all(|b| b.is_ascii_digit()),
-                    "value must be exact decimal nanoTOS"
-                );
-                let value = value_nanotos.parse::<u128>()?;
-                anyhow::ensure!(value > 0, "fee value must be positive");
-                journal.preview_proven(&view, now()?)?;
-                let proof = context.read(&[]).await?;
-                let deadline = now()?
-                    .checked_add(valid_for_seconds)
-                    .ok_or_else(|| anyhow::anyhow!("deadline overflow"))?;
-                proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;
-                std::fs::create_dir(&output_dir)?;
-                let rescue = open_vault_file(
-                    &self.rescue_vault_file,
-                    Some(&self.rescue_vault_key_file),
-                    None,
-                )
-                .await?;
-                let id = SecretId::new(&self.rescue_record_id);
-                let submission = VaultKey { vault: &rescue, id: &id }
-                    .sign_rescue(&proof.view, now, deadline, AuthAction::LockPrimary)
-                    .await?;
-                drop(rescue);
-                let view = context.fee().await?;
-                let plan = journal.preview_proven(&view, now()?)?;
-                proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;
-                let intent = FeeIntent::new(
-                    FeeBinding {
-                        vault: view.route().vault,
-                        config_hash: *view.config_hash(),
-                        epoch0: view.route().epoch0,
-                        leaf: plan.leaf,
-                        valid_until: deadline,
-                        value,
-                    },
-                    FeePayload::from_submission(FeeClass::RescueAuth, submission.clone())?,
-                    view.proven_time(),
-                )?;
-                // Persist the complete intent before any stateful fee signature.
-                put(&output_dir, "pending-intent.boc", &chain_block::write_boc(intent.cell())?)?;
-                let fee =
-                    open_vault_file(&self.fee_vault_file, Some(&self.fee_vault_key_file), None)
-                        .await?;
-                let id = SecretId::new(&self.fee_record_id);
-                let signed = journal
-                    .sign_proven_fee_from_vault_tree(
-                        &fee,
-                        &id,
-                        &view,
-                        fee_clock,
-                        deadline,
-                        value,
-                        FeePayload::from_submission(FeeClass::RescueAuth, submission)?,
-                        tree,
-                    )
-                    .await?;
-                drop(fee);
-                anyhow::ensure!(
-                    signed.intent().digest() == intent.digest(),
-                    "fee signing changed the persisted intent"
-                );
-                let signed = journal.retry_proven_fee(&view, now()?, &intent)?;
-                export(&output_dir, &signed)
+                (None, valid_for_seconds, value_nanotos, output_dir)
+            }
+            Request::Pop { role, valid_for_seconds, value_nanotos, output_dir } => {
+                (Some(role), valid_for_seconds, value_nanotos, output_dir)
             }
             Request::Quit => anyhow::bail!("session already closing"),
+        };
+        anyhow::ensure!((1..=3600).contains(&valid_for_seconds), "fee TTL out of range");
+        anyhow::ensure!(
+            !value_nanotos.is_empty() && value_nanotos.bytes().all(|b| b.is_ascii_digit()),
+            "value must be exact decimal nanoTOS"
+        );
+        let value = value_nanotos.parse::<u128>()?;
+        anyhow::ensure!(value > 0, "fee value must be positive");
+        journal.preview_proven(&view, now()?)?;
+        let proof = context.read(&[]).await?;
+        let deadline = now()?
+            .checked_add(valid_for_seconds)
+            .ok_or_else(|| anyhow::anyhow!("deadline overflow"))?;
+        let (class, submission) = if let Some(role) = pop_role {
+            let (role, file, key, id) = match role {
+                PopRole::Primary => (
+                    AuthRole::Primary,
+                    self.primary_vault_file
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("PRIMARY POP custody is required"))?,
+                    self.primary_vault_key_file
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("PRIMARY POP key file is required"))?,
+                    self.primary_record_id
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("PRIMARY POP record is required"))?,
+                ),
+                PopRole::Rescue => (
+                    AuthRole::Rescue,
+                    &self.rescue_vault_file,
+                    &self.rescue_vault_key_file,
+                    &self.rescue_record_id,
+                ),
+            };
+            anyhow::ensure!(!id.trim().is_empty(), "POP record ID must not be empty");
+            let request = PopRequest::fresh_initial(
+                context.enrollment(),
+                role,
+                deadline,
+                proof.wallet.evidence().block_gen_utime,
+            )?;
+            std::fs::create_dir(&output_dir)?;
+            // Retain this exact fresh challenge before opening signing custody.
+            put(&output_dir, "pop-request.boc", &chain_block::write_boc(request.cell())?)?;
+            let vault = open_vault_file(file, Some(key), None).await?;
+            let id = SecretId::new(id);
+            let submission = VaultKey { vault: &vault, id: &id }
+                .sign_pop_initial(&request, context.enrollment(), now)
+                .await?;
+            drop(vault);
+            // Possession does not authorize spending, even for a PRIMARY key.
+            // Revalidate the initial enrollment after asynchronous secret loading.
+            context.read(&[]).await?;
+            (FeeClass::Pop, submission)
+        } else {
+            proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;
+            std::fs::create_dir(&output_dir)?;
+            let rescue =
+                open_vault_file(&self.rescue_vault_file, Some(&self.rescue_vault_key_file), None)
+                    .await?;
+            let id = SecretId::new(&self.rescue_record_id);
+            let submission = VaultKey { vault: &rescue, id: &id }
+                .sign_rescue(&proof.view, now, deadline, AuthAction::LockPrimary)
+                .await?;
+            drop(rescue);
+            (FeeClass::RescueAuth, submission)
+        };
+        let view = context.fee().await?;
+        let plan = journal.preview_proven(&view, now()?)?;
+        if pop_role.is_none() {
+            proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;
         }
+        let intent = FeeIntent::new(
+            FeeBinding {
+                vault: view.route().vault,
+                config_hash: *view.config_hash(),
+                epoch0: view.route().epoch0,
+                leaf: plan.leaf,
+                valid_until: deadline,
+                value,
+            },
+            FeePayload::from_submission(class, submission.clone())?,
+            view.proven_time(),
+        )?;
+        // Persist the complete intent before any stateful fee signature.
+        put(&output_dir, "pending-intent.boc", &chain_block::write_boc(intent.cell())?)?;
+        let fee =
+            open_vault_file(&self.fee_vault_file, Some(&self.fee_vault_key_file), None).await?;
+        let id = SecretId::new(&self.fee_record_id);
+        let signed = journal
+            .sign_proven_fee_from_vault_tree(
+                &fee,
+                &id,
+                &view,
+                fee_clock,
+                deadline,
+                value,
+                FeePayload::from_submission(class, submission)?,
+                tree,
+            )
+            .await?;
+        drop(fee);
+        anyhow::ensure!(
+            signed.intent().digest() == intent.digest(),
+            "fee signing changed the persisted intent"
+        );
+        let signed = journal.retry_proven_fee(&view, now()?, &intent)?;
+        export(&output_dir, &signed)
     }
 }

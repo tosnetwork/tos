@@ -276,6 +276,14 @@ jobs:
             --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-session-crash-controls
+      - name: Fee session dual-role POP and challenge controls
+        run: |
+          python test/wallet-v5r2/cli_fee_pop_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
+            --output artifacts/context/cli-fee-pop-controls
       - name: Compiled-code manifest reconstruction controls
         run: |
           python test/wallet-v5r2/manifest_integration_controls.py \

@@ -1,0 +1,103 @@
+{
+  "base_commit": "1908e82b60e80ec0da795f5fc51055c0840563ed",
+  "scope": "Real encrypted native per-role POP and journal-backed LMS signing, native fee/module execution and subsequent wallet lock; mocked proof acquisition and diagnostic credit 20000. Not authenticated network receipts, complete migration client or default admission.",
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_fee_pop_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --fee-session-tree /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-pop-controls",
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_fee_session_crash_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --fee-session-tree /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-pop-crash-regression"
+  ],
+  "exit": 0,
+  "pop_results": {
+    "outcomes": [
+      {
+        "role": "primary",
+        "leaf": 4,
+        "message_hash": "b610252cebe8864ab5ea70c2bbfc44326d36a7793e743cb9ac3cf7561e36d33c",
+        "challenge": "8aa75307065f52f3a5927298b2817543f1a46622d36840ec5f8d7e8244827df7",
+        "no_authority_emitted": true
+      },
+      {
+        "role": "rescue",
+        "leaf": 5,
+        "message_hash": "c5c60e5a439979e28ae86ae02117dc66b3150709f3daede995ee62cb0075f6d7",
+        "challenge": "974760683aa9c36fae2092e20e4d28d08d88ce6b4dc7a78c3c2e2fb853e16bfc",
+        "no_authority_emitted": true
+      },
+      {
+        "role": "primary",
+        "leaf": 6,
+        "message_hash": "5d2af7a1081625c2f193458f840b9bb8863db82387f951c717739565eb388a88",
+        "challenge": "aa6625f3a45f06ee2369dd7075e3312ae85b2e669302781dd2dceaa51bc0a952",
+        "no_authority_emitted": true
+      }
+    ],
+    "subsequent_lock_leaf": 7,
+    "diagnostic_credit": 20000,
+    "scope": "Mock proof acquisition, real encrypted native signatures and local VM execution; POP grants no authority; not production admission or live finality"
+  },
+  "semantic_controls": {
+    "role_substitution": "POP signed the wrong role",
+    "fixed_challenge": "POP reused a possession challenge",
+    "missing_persisted_intent": "cached signature lost its persisted intent"
+  },
+  "regressions": {
+    "abrupt_export_crash_recovery": true,
+    "exact_cached_restart_retry": true,
+    "primary_cli_and_recipient_cases": 7,
+    "inspection_cli_cases": 8,
+    "restore_barrier_exclusive_owner_reopen_sigterm": true
+  },
+  "checks": [
+    "cargo fmt --all --check",
+    "Ruff changed Python runners",
+    "git diff --check"
+  ],
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-pop.tar.gz",
+    "sha256": "9c8eb0baa5da999d9c226ea7ad4eb73165921032ef48408d1887e6387075c1ad",
+    "bytes": 630094
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "b02a5b5e459ff2361a8b6cb859afc45613088a25459c22741017a6e7911feeb0",
+      "bytes": 26854
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_crash_controls.py",
+      "sha256": "b54a4655a6bb9331365db85cc4f872e61c9e34b8661bafd9efbdbd4a6e72d511",
+      "bytes": 3361
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_sign.py",
+      "sha256": "701e19be63341d30880a0832438a2276d2109b684c686fda19ea32af28f1a6bf",
+      "bytes": 13282
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_sign_primary.py",
+      "sha256": "c20a89eaec4e74fa582b396426d17db4af44bd448632a9cc495fa30074b18035",
+      "bytes": 23552
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs",
+      "sha256": "fecc32b4ee896a705f3e1066a096bfd874f76aa9d6516303bfae6e9951b1fe88",
+      "bytes": 14472
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "sha256": "cabe94a14e6af7dc0539f8a1852e4d320285b3c93c9b13b86a32dd79a622ca0b",
+      "bytes": 5932
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_pop_controls.py",
+      "sha256": "18cc269d7637b5511a535c06eb03a60ec2967e54964f11a784d1add25af0e72e",
+      "bytes": 3884
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_pop.py",
+      "sha256": "282d32a79480088682271b217b3bb64e5ba88666703bd7b081127743c83047a2",
+      "bytes": 8695
+    }
+  ],
+  "ci": "Prior head 9e77f4705 run 37425950481 completed with the stale manifest-count failure; repaired current head requires new ARM/x86 CI."
+}

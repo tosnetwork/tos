@@ -88,6 +88,15 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
         "--rescue-vault-key-file",
         str(root / "encryption"),
     ]
+    if args.fee_session_pop:
+        command += [
+            "--primary-vault-file",
+            str(root / "vault.json"),
+            "--primary-record-id",
+            "primary",
+            "--primary-vault-key-file",
+            str(root / "encryption"),
+        ]
     reports = []
     process = None
     selector = None
@@ -136,6 +145,12 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
             time.sleep(min(1, max(0.01, boundary + 1 - time.time())))
         available = request(dict(command="status"))
         assert available["status"] == "leaf_available" and available["leaf"] == 4, available
+        if args.fee_session_pop:
+            from cli_fee_session_pop import check_pop_flow
+
+            check_pop_flow(args, root, request, journal, payload, codes, data, addresses)
+            stop()
+            return
         signed_dir = root / "signed"
         lock_request = dict(
             command="lock",

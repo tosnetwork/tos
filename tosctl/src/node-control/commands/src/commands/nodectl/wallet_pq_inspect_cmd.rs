@@ -74,6 +74,9 @@ impl InitialProofArgs {
 }
 
 impl InitialContext {
+    pub(super) fn enrollment(&self) -> &WalletGenesis {
+        &self.genesis
+    }
     pub(super) async fn fee(&self) -> anyhow::Result<ProvenFeeVault> {
         let address =
             format!("0:{}", self.genesis.vault_init().repr_hash().to_hex_string()).parse()?;

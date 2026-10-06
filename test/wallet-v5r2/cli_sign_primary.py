@@ -62,7 +62,10 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--rescue-lock", action="store_true")
     parser.add_argument("--fee-session-tree", type=Path)
+    parser.add_argument("--fee-session-pop", action="store_true")
     args = parser.parse_args()
+    if args.fee_session_pop:
+        assert args.fee_session_tree, "POP test needs the native fee tree"
     if args.fee_session_tree:
         args.rescue_lock = True
     args.output.mkdir(parents=True, exist_ok=False)
@@ -168,33 +171,40 @@ def main():
             "--vault-key-file",
             keyfile,
         ]
-        restore = subprocess.run(
-            cli
-            + [
-                "pq-restore-key",
-                *custody,
-                "--role",
-                signing_role,
-                "--expected-public-key",
-                payload[signing_role + "_key"],
-                "--network-tag",
-                payload["network"],
-                "--global-id",
-                str(payload["global_id"]),
-                "--account-index",
-                "5",
-                "--key-generation",
-                "7",
-                "--mnemonic-file",
-                file("words", vector["phrase"].encode()),
-                "--password-file",
-                file("password", vector["password"].encode()),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
+        restore_command = cli + [
+            "pq-restore-key",
+            *custody,
+            "--role",
+            signing_role,
+            "--expected-public-key",
+            payload[signing_role + "_key"],
+            "--network-tag",
+            payload["network"],
+            "--global-id",
+            str(payload["global_id"]),
+            "--account-index",
+            "5",
+            "--key-generation",
+            "7",
+            "--mnemonic-file",
+            file("words", vector["phrase"].encode()),
+            "--password-file",
+            file("password", vector["password"].encode()),
+        ]
+        restore = subprocess.run(restore_command, capture_output=True, text=True, timeout=180)
         assert restore.returncode == 0, restore.stderr
+        if args.fee_session_pop:
+            primary_command = list(restore_command)
+            for option, value in [
+                ("--role", "primary"),
+                ("--record-id", "primary"),
+                ("--expected-public-key", payload["primary_key"]),
+            ]:
+                primary_command[primary_command.index(option) + 1] = value
+            restored_primary = subprocess.run(
+                primary_command, capture_output=True, text=True, timeout=180
+            )
+            assert restored_primary.returncode == 0, restored_primary.stderr
         verifier = root / "verifier"
         verifier.write_text(f"#!{sys.executable}\n" + VERIFIER)
         verifier.chmod(0o700)
