@@ -76,7 +76,9 @@ def main():
     assert not options.gas_trace or options.credit_probe, "--gas-trace requires --credit-probe"
     assert not options.recovery_delete_transition or options.recovery
     assert not options.recovery or options.prepare
-    assert not options.migration_gate or (options.recovery and options.genesis_driver)
+    assert not options.migration_gate or (
+        options.recovery and options.genesis_driver and options.cache_driver
+    )
     assert not options.delete_preparation_guard or options.prepare
     assert (
         sum(
@@ -877,8 +879,11 @@ def main():
                             .ref(pop_signed(next_signer, challenge, 1))
                         )
 
-                    def migration_signer():
+                    def migration_signer(continuity):
                         target = out / "recovery/sdk-migration.boc"
+                        continuity_path = out / "recovery/fee-continuity.json"
+                        assert not continuity_path.exists()
+                        continuity_path.write_text(json.dumps(continuity, indent=2) + "\n")
                         subprocess.run(
                             [
                                 sys.executable,
@@ -887,6 +892,8 @@ def main():
                                 str(out),
                                 "--output",
                                 str(target),
+                                "--continuity",
+                                str(continuity_path),
                             ],
                             check=True,
                         )

@@ -1189,6 +1189,7 @@ mod fee_state_tests {
     #[cfg(feature = "native-wallet-signer")]
     #[test]
     fn native_migration_requires_both_funded_pops() {
+        use crate::lms_fee_schedule::{Continuity, IntactState, RestoreBarrier};
         use crate::proven_transactions::ProvenTransaction;
         use crate::wallet_v5r2::{AuthAction, AuthRole};
         use crate::wallet_v5r2_genesis::SuccessorDeployment;
@@ -1279,6 +1280,16 @@ mod fee_state_tests {
         }
         let p = funded(&primary);
         let r = funded(&rescue);
+        // Synthetic custody fixture, independent of the chain's accepted counter.
+        let local = IntactState {
+            route: crate::wallet_v5r2_state::ProvenFeeVault::bind_successor(
+                &vault, &successor, 4620, 30,
+            )
+            .unwrap()
+            .route(),
+            next_unreserved: 0,
+            last_proven_time: 4600,
+        };
         let mut evidence = MigrationEvidence {
             primary_request: &primary.0,
             primary_receipts: &p,
@@ -1287,6 +1298,7 @@ mod fee_state_tests {
             rescue_receipts: &r,
             rescue_external: &rescue.5,
             vault: &vault,
+            fee_continuity: Continuity::Intact(local),
             policy: None,
         };
         let expected = view.migration_request(4620, 4700, &successor, &evidence).unwrap();
@@ -1362,6 +1374,29 @@ mod fee_state_tests {
             assert!(exhausted.account.set_data(b.into_cell().unwrap()));
             refresh_proof_data(&mut exhausted);
             let e = MigrationEvidence { vault: &exhausted, ..evidence };
+            assert!(view.migration_request(4620, 4700, &successor, &e).is_err(), "{reason}");
+        }
+        let mut wrong_route = local.route;
+        wrong_route.tree_id[0] ^= 1;
+        for (continuity, reason) in [
+            (
+                Continuity::Intact(IntactState { next_unreserved: 8, ..local }),
+                "migration ignored local reservations",
+            ),
+            (
+                Continuity::Intact(IntactState { route: wrong_route, ..local }),
+                "migration accepted wrong custody route",
+            ),
+            (
+                Continuity::Intact(IntactState { last_proven_time: 4601, ..local }),
+                "migration accepted regressed custody time",
+            ),
+            (
+                Continuity::Restored(RestoreBarrier::new(local.route, 4600).unwrap()),
+                "migration ignored custody restore barrier",
+            ),
+        ] {
+            let e = MigrationEvidence { fee_continuity: continuity, ..evidence };
             assert!(view.migration_request(4620, 4700, &successor, &e).is_err(), "{reason}");
         }
         for stale_checkpoint in [false, true] {
@@ -1979,6 +2014,10 @@ mod fee_state_tests {
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut journal = FeeJournal::open_proven(dir.path(), &initial, 4620).unwrap();
         assert!(
+            journal.observed_continuity(4600).is_err(),
+            "exported continuity before restore barrier"
+        );
+        assert!(
             journal.preview_proven(&initial, 4620).is_err(),
             "preview bypassed restore barrier"
         );
@@ -1991,6 +2030,10 @@ mod fee_state_tests {
         assert_eq!(std::fs::read(dir.path().join("fee-reservations")).unwrap(), before);
         assert!(journal.preview_proven(&view, 8231).is_err(), "preview accepted stale proof");
         for leaf in 8..12 {
+            let local = journal.observed_continuity(8200).unwrap();
+            assert_eq!(local.route, view.route());
+            assert_eq!(local.last_proven_time, 8200);
+            assert_eq!(local.next_unreserved, if leaf == 8 { 0 } else { leaf });
             assert_eq!(
                 journal.preview_proven(&view, 8220).unwrap().leaf,
                 leaf,
@@ -1999,6 +2042,7 @@ mod fee_state_tests {
             journal.reserve(8200, view.next_leaf(), leaf, [6; 32]).unwrap();
         }
         assert_eq!(view.chain_leaf_candidate(8220).unwrap(), 8);
+        assert!(journal.observed_continuity(8200).is_err(), "exported exhausted continuity");
         assert!(
             journal.preview_proven(&view, 8220).is_err(),
             "preview reused locally reserved leaf"

@@ -118,6 +118,7 @@ def main():
     if args.genesis_driver and not args.pop_role:
         recovery = json.loads((out / "native/recovery-summary.json").read_text())
         assert recovery["proven_wallet_migration_gate"] is True
+        assert recovery["migration_custody_observed"] is True
         subprocess.run(
             [
                 sys.executable,

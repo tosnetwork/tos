@@ -92,6 +92,19 @@ fn execute(
     let (bound_route, bound_key, journal) =
         session.as_mut().ok_or_else(|| anyhow::anyhow!("missing session"))?;
     anyhow::ensure!(*bound_route == route && *bound_key == public_key, "session route/key changed");
+    if input.mode == "continuity" {
+        let state = journal.observed_continuity(input.proven_time)?;
+        return Ok(serde_json::json!({
+            "global_id": state.route.global_id,
+            "network": hex::encode(state.route.network),
+            "vault": hex::encode(state.route.vault),
+            "tree_id": hex::encode(state.route.tree_id),
+            "epoch0": state.route.epoch0,
+            "next_unreserved": state.next_unreserved,
+            "last_proven_time": state.last_proven_time,
+            "backend_calls": 0
+        }));
+    }
     if input.mode == "preview" {
         let plan = journal.preview(input.proven_time, 0)?;
         return Ok(serde_json::json!({"leaf": plan.leaf, "backend_calls": 0}));

@@ -2,6 +2,7 @@
 //! Test-only adapter: actual execution cells with explicitly synthetic proof
 //! metadata. Never expose this constructor through a production client API.
 use super::*;
+use crate::lms_fee_schedule::{Continuity, FeeRoute, IntactState};
 use crate::proven_transactions::ProvenTransaction;
 use crate::wallet_v5r2::AuthRole;
 use crate::wallet_v5r2_genesis::{
@@ -186,6 +187,22 @@ fn recorded_dual_pop_migration_gate() {
     let wallet = account(&read("lock-wallet"), now);
     let old_module = account(&read("prepare-module"), now);
     let view = ProvenWalletState::bind_initial(&wallet, &old_module, &birth, now, 30).unwrap();
+    // This comes from the still-running fixture custody process through its
+    // private stdin/stdout channel, not from the accepted chain leaf counter.
+    let local = json(&PathBuf::from(
+        std::env::var("TOS_V5R2_MIGRATION_CONTINUITY").expect("active custody observation"),
+    ));
+    let fee_continuity = Continuity::Intact(IntactState {
+        route: FeeRoute {
+            global_id: local["global_id"].as_i64().unwrap().try_into().unwrap(),
+            network: bytes(&local["network"]),
+            vault: bytes(&local["vault"]),
+            tree_id: bytes(&local["tree_id"]),
+            epoch0: local["epoch0"].as_u64().unwrap().try_into().unwrap(),
+        },
+        next_unreserved: local["next_unreserved"].as_u64().unwrap().try_into().unwrap(),
+        last_proven_time: local["last_proven_time"].as_u64().unwrap().try_into().unwrap(),
+    });
     let evidence = MigrationEvidence {
         primary_request: &primary_request,
         primary_receipts: &primary_receipts,
@@ -194,6 +211,7 @@ fn recorded_dual_pop_migration_gate() {
         rescue_receipts: &rescue_receipts,
         rescue_external: &rescue_external,
         vault: &vault,
+        fee_continuity,
         policy: None,
     };
     let mut signer =

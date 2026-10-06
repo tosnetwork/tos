@@ -260,6 +260,14 @@ impl FeeJournal {
         self.preview(vault.proven_time(), vault.next_leaf())
     }
 
+    /// Snapshot the active custody session after enforcing its restore barrier.
+    /// This observation is not a reservation or an anti-rollback certificate.
+    /// Keep it on the trusted local custody channel and recheck before signing.
+    pub fn observed_continuity(&self, proven_time: u32) -> anyhow::Result<IntactState> {
+        self.preview(proven_time, 0)?;
+        Ok(IntactState { last_proven_time: proven_time, ..self.state })
+    }
+
     pub fn preview(
         &self,
         proven_time: u32,

@@ -1029,8 +1029,12 @@ consume leaves. A chain-only candidate can still be refused because unbroadcast
 local reservations consumed the slot or a restored journal is waiting for its
 next slot. `sign_proven_fee` uses this shared preflight and still rechecks and
 durably reserves before signing. A preview never grants permission to sign later;
-it can become stale. Migration coordination must use the successor's actual
-custody session; its current chain-only check does not establish that continuity.
+it can become stale. `observed_continuity` exports the active session's local
+high water and route only after checking its restore barrier and capacity.
+The migration gate requires this trusted local custody input separately from
+chain state. It is not an attestation suitable for an untrusted RPC channel or
+proof of exclusive ownership across devices; a caller must preserve custody
+continuity and recheck/reserve before the later fee signature.
 
 The existing reserve-sign-verify-cache sequence fsyncs the reservation before
 calling the backend. Verification receives the public key from the bound vault
@@ -1043,8 +1047,8 @@ A synthetic proven-account test with a framing-only backend checks durable
 record/digest presence before signing, both verification calls with the bound
 key, exact intent construction, cache retry bytes, restore waits, expiry,
 wrong-route rejection, chain high-water and leaf consumption on failed checks.
-Nine semantic controls remove or substitute the relevant bindings, including
-the restore barrier and local reservation high water used by preview. This proves
+Ten semantic controls remove or substitute the relevant bindings, including
+the restore barrier, local reservation high water and continuity export guard. This proves
 adapter ordering/binding, not cryptographic validity or real-network V5R2 proofs.
 Inner action authorization, live fee/admission bounds, production key custody,
 preparation/POP/payment receipts and cross-device ownership remain separate gates.
@@ -1573,8 +1577,8 @@ five existing POP receipt controls. Evidence is indexed in
 
 `ProvenWalletState::migration_request` and `sign_migration_submission` consume
 `MigrationEvidence`: distinct PRIMARY and RESCUE requests, both fee-vault/module
-receipt pairs and their exact external submissions, plus a current successor-vault
-proof. The existing native `sign_rescue_submission` rejects raw `Migrate` actions;
+receipt pairs and their exact external submissions, a current successor-vault
+proof and local fee continuity from the successor's custody session. The existing native `sign_rescue_submission` rejects raw `Migrate` actions;
 callers must use the gated migration method. The low-level AUTH wire encoder remains
 available and does not claim to enforce a client lifecycle.
 
@@ -1586,9 +1590,10 @@ transaction must also be recent under the wallet snapshot's maximum-age policy.
 The current successor vault must be live and match that checkpoint, masterchain
 time, trust anchor and exact enrollment. It must have an available leaf in the
 current proven slot; an unexhausted tree alone is insufficient when that slot's
-four leaves have already been consumed. This chain-only capacity observation is
-not permission to sign: local unbroadcast reservations and restore barriers can
-still prohibit using a leaf that the chain has not consumed.
+four leaves have already been consumed. The gate combines the proven chain
+counter with local reservations and rejects a different custody route, regressed
+proof time or an active restore barrier. Local continuity must never be inferred
+from chain state. The result is an observation, not a durable fee reservation.
 READY successors still need current global primary authorization; REQUIRED
 successors do not. Migration uses the installed rescue key and existing epoch
 rules, preserving recovery after execute counters are exhausted.
@@ -1596,10 +1601,11 @@ rules, preserving recovery after execute counters are exhausted.
 The new gate test uses synthetic successful transaction metadata and placeholder
 POP signatures to isolate client validation. It is not a successful VM execution
 of those POPs. It exercises a real native SLH migration signature; earlier funded
-POP receipt tests separately use actual recorded native transaction pairs. Ten
+POP receipt tests separately use actual recorded native transaction pairs. Fourteen
 semantic deletion controls cover generic signing bypass, duplicate roles, stale
 POPs, receipt/vault checkpoint substitution, non-live vault acceptance, exhausted
-fee trees, exhausted current slots, and removal of either funded-POP verification. Both architecture CI
+fee trees, exhausted current slots, local custody reservations/route/time/restore,
+and removal of either funded-POP verification. Both architecture CI
 jobs run the new control suite.
 
 This closes the native client signing bypass, not the full release gate. Callers
@@ -1670,3 +1676,25 @@ The 67-transaction dual-VM flow still uses diagnostic 20,000 credit. Public-chai
 proof/finality, production custody, reserve readiness and default-credit admission
 remain open. Evidence is indexed in
 `test/wallet-v5r2/recorded-migration-gate-20261006.json`.
+
+### Local custody continuity at migration signing
+
+`MigrationEvidence::fee_continuity` is now mandatory. The gate calls the same
+reservation planner as fee signing with both the proven accepted counter and
+the local custody observation. It refuses locally exhausted slots, a mismatched
+route, regressed proof time and a pending restore barrier before producing a
+migration signature. Four additional semantic deletion controls exercise these
+conditions independently of the chain-only capacity tests.
+
+In the full recovery harness, the successor's still-running fee signer exports
+`observed_continuity` over its private stdin/stdout pipe after signing both POPs.
+The exact response is retained as `recovery/fee-continuity.json` and passed to the
+test-only migration adapter. It is not reconstructed from the chain counter.
+The signer remains open through migration and the subsequent payment, whose fee
+signature still requires its own durable reservation and verification.
+
+This snapshot does not reserve future capacity, authenticate an untrusted RPC
+response, prevent concurrent reservations elsewhere, or establish rollback-free
+cross-device custody. The caller must keep custody ownership intact and recheck
+before fee signing. Fixture keys remain public and chain proof metadata remains
+synthetic. Evidence: `test/wallet-v5r2/migration-custody-20261006.json`.

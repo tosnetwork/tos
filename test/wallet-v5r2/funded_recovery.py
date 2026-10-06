@@ -274,7 +274,10 @@ def _run(
     )
     migration_body = auth(old.root, 2, 4, migration)
     if migration_signer:
-        gated = migration_signer()
+        assert new_session is not None, "migration requires active successor custody session"
+        continuity = new_session.call("continuity", now)
+        assert "error" not in continuity and continuity["backend_calls"] == 0, continuity
+        gated = migration_signer(continuity)
         assert (
             gated.bits == migration_body.bits and gated.refs[0].hash == migration_body.refs[0].hash
         ), "gated migration differs from expected request"
@@ -337,5 +340,6 @@ def _run(
         "primary_pop_signing_used": True,
         "funded_pop_roles": [1, 2],
         "proven_wallet_migration_gate": migration_signer is not None,
+        "migration_custody_observed": migration_signer is not None and new_session is not None,
         "production_admission_passed": False,
     }

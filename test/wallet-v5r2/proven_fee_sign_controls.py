@@ -35,7 +35,7 @@ def main():
             "if let Some(barrier) = self.barrier {",
             "if let Some(barrier) = None::<RestoreBarrier> {",
             1,
-            "preview bypassed restore barrier",
+            "exported continuity before restore barrier",
         ),
         (
             "preview_local_counter",
@@ -43,6 +43,13 @@ def main():
             "Continuity::Intact(IntactState { next_unreserved: 0, ..self.state })",
             1,
             "preview ignored local high water",
+        ),
+        (
+            "preview_continuity_export",
+            "self.preview(proven_time, 0)?;",
+            "",
+            1,
+            "exported continuity before restore barrier",
         ),
     ]
 
@@ -88,7 +95,7 @@ def main():
         code, log = run("restored")
         assert code == 0 and "2 passed" in log, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("9 proven fee preview/signing controls detected; restored tests pass")
+    print("10 proven fee preview/signing controls detected; restored tests pass")
 
 
 if __name__ == "__main__":

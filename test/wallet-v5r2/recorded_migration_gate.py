@@ -14,7 +14,9 @@ def main():
     parser.add_argument("--fixtures", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--verify-execution", action="store_true")
+    parser.add_argument("--continuity", type=Path)
     args = parser.parse_args()
+    assert args.verify_execution or args.continuity, "trusted local custody observation required"
     output = args.output.resolve()
     suffix = ".execution" if args.verify_execution else ""
     log = output.with_suffix(suffix + ".log")
@@ -31,6 +33,8 @@ def main():
         TOS_V5R2_MIGRATION_FIXTURES=str(args.fixtures.resolve()),
         TOS_V5R2_MIGRATION_OUTPUT=str(output),
     )
+    if args.continuity:
+        env["TOS_V5R2_MIGRATION_CONTINUITY"] = str(args.continuity.resolve())
     result = subprocess.run(
         [
             "cargo",

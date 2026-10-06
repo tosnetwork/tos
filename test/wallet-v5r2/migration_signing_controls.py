@@ -65,7 +65,7 @@ def main():
         (
             "vault_exhaustion",
             state,
-            "fee.chain_leaf_candidate(now)?;",
+            "fee.plan(now, evidence.fee_continuity)?;",
             "",
             "accepted exhausted successor fee tree",
         ),
@@ -79,6 +79,33 @@ def main():
             "accepted exhausted successor slot",
         )
     )
+    for name, old, new, witness in [
+        (
+            "custody_reservations",
+            "chain_next_leaf.max(local_next)",
+            "chain_next_leaf",
+            "migration ignored local reservations",
+        ),
+        (
+            "custody_route",
+            "state.route != route",
+            "false",
+            "migration accepted wrong custody route",
+        ),
+        (
+            "custody_time",
+            "proven_time < state.last_proven_time",
+            "false",
+            "migration accepted regressed custody time",
+        ),
+        (
+            "custody_restore",
+            "proven_time < barrier.resume_at",
+            "false",
+            "migration ignored custody restore barrier",
+        ),
+    ]:
+        cases.append((name, schedule, old, new, witness))
     for role in ("primary", "rescue"):
         statement = f"evidence.{role}_request.require_successor_funded_receipt(\n            evidence.{role}_receipts,\n            evidence.{role}_external,\n            successor,\n        )?;"
         cases.append((f"{role}_funding", state, statement, "", f"{role} funded POP bypassed"))

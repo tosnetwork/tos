@@ -1,0 +1,235 @@
+{
+  "base_commit": "7ef014e25058dece8debadb0379e1a1426e4473d",
+  "scope": "Mandatory local custody continuity at native migration signing, populated from the active successor fee signer in continuous dual-VM recovery.",
+  "tests": {
+    "schedule_and_journal": 20,
+    "feature_fee_state": 15,
+    "format": "passed",
+    "ruff": "passed",
+    "migration_snapshot_matches_active_driver_response": true,
+    "actual_migration_body_execution_verified": true
+  },
+  "migration_controls": {
+    "generic_bypass": {
+      "exit": 101,
+      "semantic_failure": "ungated migration signed"
+    },
+    "both_roles": {
+      "exit": 101,
+      "semantic_failure": "accepted duplicate rescue POPs"
+    },
+    "fresh_pop": {
+      "exit": 101,
+      "semantic_failure": "accepted stale or unrelated POP"
+    },
+    "receipt_checkpoint": {
+      "exit": 101,
+      "semantic_failure": "accepted stale or unrelated POP"
+    },
+    "vault_checkpoint": {
+      "exit": 101,
+      "semantic_failure": "accepted unproven successor vault"
+    },
+    "vault_live": {
+      "exit": 101,
+      "semantic_failure": "accepted unproven successor vault"
+    },
+    "vault_exhaustion": {
+      "exit": 101,
+      "semantic_failure": "accepted exhausted successor fee tree"
+    },
+    "vault_slot_capacity": {
+      "exit": 101,
+      "semantic_failure": "accepted exhausted successor slot"
+    },
+    "custody_reservations": {
+      "exit": 101,
+      "semantic_failure": "migration ignored local reservations"
+    },
+    "custody_route": {
+      "exit": 101,
+      "semantic_failure": "migration accepted wrong custody route"
+    },
+    "custody_time": {
+      "exit": 101,
+      "semantic_failure": "migration accepted regressed custody time"
+    },
+    "custody_restore": {
+      "exit": 101,
+      "semantic_failure": "migration ignored custody restore barrier"
+    },
+    "primary_funding": {
+      "exit": 101,
+      "semantic_failure": "primary funded POP bypassed"
+    },
+    "rescue_funding": {
+      "exit": 101,
+      "semantic_failure": "rescue funded POP bypassed"
+    }
+  },
+  "fee_controls": {
+    "route": {
+      "exit": 101,
+      "semantic_failure": "wrong route invoked signer"
+    },
+    "freshness": {
+      "exit": 101,
+      "semantic_failure": "preflight invoked signer"
+    },
+    "deadline": {
+      "exit": 101,
+      "semantic_failure": "preflight invoked signer"
+    },
+    "key": {
+      "exit": 101,
+      "semantic_failure": "verification key substitution"
+    },
+    "export": {
+      "exit": 101,
+      "semantic_failure": "cache was not reverified before export"
+    },
+    "counter": {
+      "exit": 101,
+      "semantic_failure": "chain counter ignored"
+    },
+    "config": {
+      "exit": 101,
+      "semantic_failure": "proven fee intent mismatch"
+    },
+    "preview_restore": {
+      "exit": 101,
+      "semantic_failure": "exported continuity before restore barrier"
+    },
+    "preview_local_counter": {
+      "exit": 101,
+      "semantic_failure": "preview ignored local high water"
+    },
+    "preview_continuity_export": {
+      "exit": 101,
+      "semantic_failure": "exported continuity before restore barrier"
+    }
+  },
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 67,
+    "observed_transactions": 67,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 6,
+    "final_chain_time": 1780007190,
+    "transactions": 22,
+    "recipient_received": true,
+    "primary_auth_signing_used": false,
+    "primary_pop_signing_used": true,
+    "funded_pop_roles": [
+      1,
+      2
+    ],
+    "proven_wallet_migration_gate": true,
+    "migration_custody_observed": true,
+    "production_admission_passed": false
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "sha256": "948ebbe59e3ddb574b84bb367648e6235a9fe642b7a6bfdbf9875316ec468e06",
+      "bytes": 109077
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/funded_recovery.py",
+      "sha256": "2a4ef118a330f22f036ba5cc633771e67444b8bb26d36706ab9b78f82d5598dd",
+      "bytes": 13563
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/migration_signing_controls.py",
+      "sha256": "13ad340c8740f045c965138dc7c639849b0a699530195d612c3848e5db971077",
+      "bytes": 5600
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/proven_fee_sign_controls.py",
+      "sha256": "411d3a4afeabbdd53bb3be995314876cd9b3f738c3348dba4d0b830bf0629e2b",
+      "bytes": 3700
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/recorded_migration_gate.py",
+      "sha256": "b6eeed8ef17e2fe9d77c335b75153bb8eea936561ebee476f1dd56982a624478",
+      "bytes": 2547
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/sdk_auth_parity.py",
+      "sha256": "849f5c68c47128cf419a32904486ba73399ec2db8f55f006496a1cfef1cac46b",
+      "bytes": 5997
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_fee_delivery.py",
+      "sha256": "413f15723ee466c6a12f45f38e753e482f882a61dd77a9b82722fd56182cf0ad",
+      "bytes": 51469
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/examples/lms_fee_cache_fixture.rs",
+      "sha256": "f766fa734c9a805624c094fc1c8626c8fbbdf006e95540bdb3b5956f6cd8f7ee",
+      "bytes": 7875
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_journal.rs",
+      "sha256": "75c7beba9d41ba5c3da7bc630413bcaed4a1c73efbcd2e297993805b50918628",
+      "bytes": 20081
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "7b78b50ac46787be6ab6401c0a01169181fdb34f35a43b86d16a51276e93f836",
+      "bytes": 130260
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_migration_tests.rs",
+      "sha256": "252cc681af6d4cad2b1ce54251afc29b0b6a77709d992a26893671b5313ef11a",
+      "bytes": 12754
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "sha256": "fbc676aec5be431a0b5274076d6e74a286c7a356c70a06fb58a27555798a7f95",
+      "bytes": 22878
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-migration-custody-controls/MANIFEST.json",
+      "sha256": "2e9da5c816daf431f23f2cf28b64f46cb35423c30650f8f83044bc39fb53a6d2",
+      "bytes": 4413
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-continuity-export-controls/MANIFEST.json",
+      "sha256": "b0d423b8b69424e86913d6766337e8c714b390bbe325605780e5c26d764e6e2e",
+      "bytes": 2835
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-custody-migration-recovery/MANIFEST.json",
+      "sha256": "bde67e6873020e85fa7c5d011fea56775d3e5cb7709b1fcc36d394b5e60872ab",
+      "bytes": 40404
+    }
+  ],
+  "commands": [
+    "python3 test/wallet-v5r2/migration_signing_controls.py --output <fresh-directory>",
+    "python3 test/wallet-v5r2/proven_fee_sign_controls.py --output <fresh-directory>",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example lms_fee_cache_fixture",
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/sdk_auth_parity.py --native-signer tosctl/src/target/debug/examples/public_fixture --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --fee-driver tosctl/src/target/debug/examples/v5r2_fee_encode --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib lms_fee",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limitations": [
+    "Local continuity is trusted caller-supplied custody input, not a chain attestation. A snapshot does not reserve a leaf or prevent concurrent reservations, rollback or custody on another device.",
+    "The integration keeps the actual public-fixture signer process open; standalone recorded replay files are historical observations and not current custody evidence.",
+    "Actual transaction cells and signatures are exercised, but chain proof metadata and checkpoints remain synthetic.",
+    "The diagnostic 20000 gas credit does not clear the failed default 10000 admission gate.",
+    "Production secret custody, reserve affordability, public-chain finality and other release gates remain open."
+  ],
+  "retention": "Retain raw output outside Git through review and release acceptance, at least through 2027-01-06."
+}

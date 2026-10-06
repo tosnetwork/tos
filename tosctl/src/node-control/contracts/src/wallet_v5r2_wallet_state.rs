@@ -17,6 +17,8 @@ pub struct MigrationEvidence<'a> {
     pub rescue_receipts: &'a crate::wallet_v5r2_pop::FundedPopReceipts<'a>,
     pub rescue_external: &'a Cell,
     pub vault: &'a ProvenAccountState,
+    /// Supplied by the trusted local custody session, never inferred from chain state.
+    pub fee_continuity: crate::lms_fee_schedule::Continuity,
     pub policy: Option<&'a ProvenAccountState>,
 }
 
@@ -410,7 +412,7 @@ impl ProvenWalletState {
             now,
             self.max_age,
         )?;
-        fee.chain_leaf_candidate(now)?;
+        fee.plan(now, evidence.fee_continuity)?;
         evidence.primary_request.require_successor_funded_receipt(
             evidence.primary_receipts,
             evidence.primary_external,
