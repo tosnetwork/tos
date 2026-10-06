@@ -2178,6 +2178,11 @@ fn controller_operations(expires: u32) -> contracts::validator_controller::Contr
             funding_processing: 3_000_000_000,
         },
         elections_interval_secs: 3600,
+        checkpoint: contracts::MasterchainCheckpoint {
+            seqno: 99,
+            root_hash: "ab".repeat(32),
+            file_hash: "cd".repeat(32),
+        },
     }
 }
 
@@ -2260,7 +2265,7 @@ async fn an_unreadable_operating_authorization_is_reported_and_retried() {
 fn a_provider_without_chain_access_publishes_nothing() {
     let controller = MsgAddressInt::standard(-1, controller_addr());
     let thresholds = contracts::validator_controller::OperatingThresholds::default();
-    assert_eq!(operating_snapshot(&controller, Ok(None), 1, &thresholds), None);
+    assert_eq!(operating_snapshot(&controller, Ok(None), None, 1, &thresholds), None);
 }
 
 #[test]
@@ -2273,4 +2278,63 @@ fn operating_thresholds_come_from_the_elections_config() {
     assert_eq!(thresholds.target_runway_secs, 10 * 86_400);
     assert_eq!(thresholds.runway_warn_percent, 50);
     assert_eq!(thresholds.expiry_warn_secs, 2 * 86_400);
+}
+
+#[tokio::test]
+async fn a_controller_that_cannot_be_found_marks_the_last_reading_historical() {
+    let mut harness = TestHarness::new().with_pool();
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    let pool = harness.pool_mock.as_mut().expect("pool");
+    pool.expect_address().returning(pool_address);
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = calls.clone();
+    pool.expect_get_roles().returning(move || {
+        if counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            Ok(NominatorRoles {
+                owner_address: wallet_address(),
+                validator_address: wallet_address(),
+                controller_address: MsgAddressInt::standard(-1, controller_addr()),
+            })
+        } else {
+            Err(anyhow::anyhow!("get_roles exit_code=-13"))
+        }
+    });
+    let later = (time_format::now() + 60 * 86_400) as u32;
+    harness
+        .provider_mock
+        .expect_controller_operations()
+        .times(1)
+        .returning(move |_| Ok(Some(controller_operations(later))));
+    let mut runner = harness.build("node-1");
+
+    runner.refresh_operating_authorizations().await;
+    let good = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(good.error.is_none() && !good.stale);
+    assert_eq!(good.block_seqno, 99);
+
+    // Make the reading due again; the pool's controller can no longer be read.
+    if let Some(snapshot) =
+        runner.nodes.get_mut("node-1").and_then(|n| n.operating_authorization.as_mut())
+    {
+        snapshot.checked_at -= 1_000;
+    }
+    runner.refresh_operating_authorizations().await;
+    let failed = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(failed.error.as_deref().is_some_and(|e| e.contains("pool's controller")), "{failed:?}");
+    assert!(failed.stale, "old values must be marked historical");
+    assert_eq!(failed.funds, good.funds, "the last values stay visible");
+    assert_eq!(failed.checked_at, good.checked_at - 1_000, "checked_at names the old read");
+    assert!(failed.attempted_at > failed.checked_at);
+    let published = runner.build_validators_snapshot().await;
+    assert_eq!(published.controlled_nodes[0].operating_authorization, Some(failed));
+}
+
+#[test]
+fn a_failed_first_reading_is_an_error_not_history() {
+    let controller = MsgAddressInt::standard(-1, controller_addr());
+    let snapshot = failed_operating_snapshot(None, Some(&controller), "boom".into(), 5);
+    assert!(!snapshot.stale);
+    assert_eq!(snapshot.checked_at, 0);
+    assert_eq!(snapshot.attempted_at, 5);
+    assert_eq!(snapshot.error.as_deref(), Some("boom"));
 }

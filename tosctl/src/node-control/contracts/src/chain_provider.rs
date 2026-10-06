@@ -165,6 +165,26 @@ pub trait ChainProvider: Send + Sync {
     /// Query the balance (in nanotos) of an address.
     async fn get_balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64>;
 
+    /// The balance as of one masterchain checkpoint. Like the pinned get-method,
+    /// the block identity comes from the endpoint: informational reads only.
+    async fn get_balance_at_unverified(
+        &self,
+        _address: &MsgAddressInt,
+        _checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<u64> {
+        anyhow::bail!("checkpoint-pinned balance reads are unsupported")
+    }
+
+    /// A configuration parameter as of one masterchain checkpoint. The response
+    /// does not name its block; informational reads only.
+    async fn get_config_param_at_unverified(
+        &self,
+        _param_id: u32,
+        _checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<ConfigParamEnum> {
+        anyhow::bail!("checkpoint-pinned configuration reads are unsupported")
+    }
+
     /// Broadcast a serialized BOC (bag-of-cells) message to the network.
     async fn send_boc(&self, boc: &[u8]) -> anyhow::Result<()>;
 
@@ -351,6 +371,25 @@ impl ChainProvider for DefaultChainProvider {
 
     async fn send_boc(&self, boc: &[u8]) -> anyhow::Result<()> {
         self.client.send_boc(&boc.to_vec()).await
+    }
+
+    async fn get_balance_at_unverified(
+        &self,
+        address: &MsgAddressInt,
+        checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<u64> {
+        let info = self.client.get_address_information_at(address, checkpoint.seqno).await?;
+        validate_masterchain_checkpoint(&info.block_id, checkpoint)
+            .context("pinned balance read returned another block")?;
+        Ok(info.balance)
+    }
+
+    async fn get_config_param_at_unverified(
+        &self,
+        param_id: u32,
+        checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<ConfigParamEnum> {
+        self.client.get_config_param_at(param_id, checkpoint.seqno).await
     }
 
     async fn get_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum> {

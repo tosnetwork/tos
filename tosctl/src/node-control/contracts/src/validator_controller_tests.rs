@@ -10,6 +10,8 @@ use tl_api::tos::tvm::{
 const NANO: u128 = 1_000_000_000;
 const NOW: u64 = 1_791_250_000;
 const ELECTED_FOR: u32 = 65_536;
+/// A controller balance that covers any reserve these tests ask for.
+const RICH: u128 = 1_000_000 * NANO;
 
 /// The fee fixture of the local funding helper's tests (`prices()`): a flat prefix of
 /// 100 gas for 1_000_000, then `gas_price` per 2^16 gas; forwarding with lump 10^7, bit
@@ -156,6 +158,7 @@ fn renewal_deposits_only_the_deficit() {
     let plan = plan_renewal(
         &controller(),
         &state(30 * NANO, 5 * NANO),
+        RICH,
         &fees,
         false,
         NOW,
@@ -174,13 +177,15 @@ fn a_surplus_renews_with_a_zero_deposit() {
     let fees = fees();
     let mut ask = request(100 * NANO);
     ask.expires_at = (NOW + 90 * DAY) as u32;
-    let plan = plan_renewal(&controller(), &state(150 * NANO, 1), &fees, false, NOW, &ask).unwrap();
+    let plan =
+        plan_renewal(&controller(), &state(150 * NANO, 1), RICH, &fees, false, NOW, &ask).unwrap();
     assert_eq!(plan.deposit, 0);
     assert_eq!(plan.funds_after, 150 * NANO);
     assert_eq!(plan.expires_at, ask.expires_at);
     assert_eq!(plan.required_value, fees.funding_processing);
     // Exactly at the target is also zero.
-    let plan = plan_renewal(&controller(), &state(100 * NANO, 1), &fees, false, NOW, &ask).unwrap();
+    let plan =
+        plan_renewal(&controller(), &state(100 * NANO, 1), RICH, &fees, false, NOW, &ask).unwrap();
     assert_eq!(plan.deposit, 0);
 }
 
@@ -189,6 +194,7 @@ fn the_payload_is_the_layout_the_contract_parses() {
     let plan = plan_renewal(
         &controller(),
         &state(30 * NANO, 0),
+        RICH,
         &fees(),
         false,
         NOW,
@@ -210,44 +216,46 @@ fn the_payload_is_the_layout_the_contract_parses() {
 fn renewal_refusals() {
     let fees = fees();
     let current = state(30 * NANO, 30 * NANO);
-    let pending = plan_renewal(&controller(), &current, &fees, true, NOW, &request(100 * NANO));
+    let pending =
+        plan_renewal(&controller(), &current, RICH, &fees, true, NOW, &request(100 * NANO));
     assert!(pending.unwrap_err().to_string().contains("pending"));
 
     let mut other = request(100 * NANO);
     other.payer = MsgAddressInt::standard(-1, [0xBB; 32]);
-    let refused = plan_renewal(&controller(), &current, &fees, false, NOW, &other);
+    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &other);
     assert!(refused.unwrap_err().to_string().contains("recorded payer"));
     other.allow_payer_change = true;
-    assert!(plan_renewal(&controller(), &current, &fees, false, NOW, &other).is_ok());
+    assert!(plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &other).is_ok());
 
     // A controller never funded reports itself as payer; any payer may start.
     let unset = OperatingState { payer: controller(), expires: 0, ..state(0, 0) };
     let mut first = request(100 * NANO);
     first.payer = MsgAddressInt::standard(-1, [0xBB; 32]);
-    assert!(plan_renewal(&controller(), &unset, &fees, false, NOW, &first).is_ok());
+    assert!(plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first).is_ok());
     first.payer = controller();
-    assert!(plan_renewal(&controller(), &unset, &fees, false, NOW, &first).is_err());
+    assert!(plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first).is_err());
 
     let mut low_limit = request(100 * NANO);
     low_limit.limit = fees.grant - 1;
-    let refused = plan_renewal(&controller(), &current, &fees, false, NOW, &low_limit);
+    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit);
     assert!(refused.unwrap_err().to_string().contains("per-request limit"));
     low_limit.limit = fees.grant;
-    assert!(plan_renewal(&controller(), &current, &fees, false, NOW, &low_limit).is_ok());
+    assert!(plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit).is_ok());
 
     let mut low_allowance = request(100 * NANO);
     low_allowance.allowance = fees.grant - 1;
-    let refused = plan_renewal(&controller(), &current, &fees, false, NOW, &low_allowance);
+    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_allowance);
     assert!(refused.unwrap_err().to_string().contains("allowance"));
 
     let mut past = request(100 * NANO);
     past.expires_at = NOW as u32;
-    let refused = plan_renewal(&controller(), &current, &fees, false, NOW, &past);
+    let refused = plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &past);
     assert!(refused.unwrap_err().to_string().contains("not in the future"));
 
     let tiny = plan_renewal(
         &controller(),
         &state(0, 0),
+        RICH,
         &fees,
         false,
         NOW,
@@ -257,7 +265,7 @@ fn renewal_refusals() {
 
     let mut huge = request(COINS_LIMIT - 1);
     huge.margin = COINS_LIMIT - 1;
-    assert!(plan_renewal(&controller(), &state(0, 0), &fees, false, NOW, &huge).is_err());
+    assert!(plan_renewal(&controller(), &state(0, 0), RICH, &fees, false, NOW, &huge).is_err());
 }
 
 fn inputs<'a>(
@@ -510,4 +518,205 @@ fn null_cells_are_recognised_in_every_rendering() {
     assert!(!stack_entry_is_null(&stack, 3).unwrap());
     assert!(stack_entry_is_null(&stack, 4).is_err());
     assert!(stack_entry_is_null(&stack, 5).is_err());
+}
+
+/// The relay checks `balance - msg_value >= funds + floor`, and a deposit raises
+/// balance and funds by the same amount, so a new floor needs its own capital.
+#[test]
+fn a_new_floor_needs_capital_the_deposit_cannot_supply() {
+    let fees = fees();
+    let mut current = state(30 * NANO, 30 * NANO);
+    current.floor = 0;
+    // Balance holds exactly the recorded funds: nothing for a floor.
+    let ask = RenewalRequest { floor: 10 * NANO, ..request(100 * NANO) };
+    let plan = plan_renewal(&controller(), &current, 30 * NANO, &fees, false, NOW, &ask).unwrap();
+    assert_eq!(plan.deposit, 70 * NANO);
+    assert_eq!(plan.capital_after, 100 * NANO, "the deposit adds to balance and funds alike");
+    assert_eq!(plan.capital_top_up, 10 * NANO, "the new floor must be funded separately");
+    let projected = plan.projected_state();
+    assert_eq!(projected.funds, 100 * NANO);
+    assert_eq!(projected.floor, 10 * NANO);
+    let ctl = controller();
+    let without = assess(
+        &OperatingInputs { balance: Some(plan.capital_after), ..inputs(&projected, &fees, &ctl) },
+        &thresholds(),
+    )
+    .unwrap();
+    assert!(
+        without.warnings.contains(&OperatingWarning::CapitalBelowReserve {
+            balance: 100 * NANO,
+            required: 110 * NANO
+        }),
+        "{:?}",
+        without.warnings
+    );
+    let with = assess(
+        &OperatingInputs {
+            balance: Some(plan.capital_after + plan.capital_top_up),
+            ..inputs(&projected, &fees, &ctl)
+        },
+        &thresholds(),
+    )
+    .unwrap();
+    assert!(!with.blocks_next_stake(), "{:?}", with.warnings);
+
+    // Enough capital already: no top-up.
+    let plan = plan_renewal(&controller(), &current, 40 * NANO, &fees, false, NOW, &ask).unwrap();
+    assert_eq!(plan.capital_top_up, 0);
+}
+
+/// Answers pinned reads only, and records the block each one named. An unpinned
+/// read is an error: it would be "latest" state, which can differ from the block the
+/// other values came from.
+struct PinnedOnlyChain {
+    head: u32,
+    seen: std::sync::Mutex<Vec<(&'static str, u32)>>,
+}
+
+impl PinnedOnlyChain {
+    fn record(&self, what: &'static str, seqno: u32) {
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.push((what, seqno));
+        }
+    }
+}
+
+fn block_id(seqno: u32) -> chain_rpc_client::v2::data_models::BlockIdExt {
+    chain_rpc_client::v2::data_models::BlockIdExt {
+        r#type: "tos.blockIdExt".to_owned(),
+        workchain: -1,
+        shard: i64::MIN,
+        seqno,
+        root_hash: vec![0x11; 32],
+        file_hash: vec![0x22; 32],
+    }
+}
+
+#[async_trait::async_trait]
+impl ChainProvider for PinnedOnlyChain {
+    async fn run_get_method(
+        &self,
+        _address: String,
+        method: &str,
+        _stack: Vec<StackEntry>,
+    ) -> anyhow::Result<TvmStackParser> {
+        anyhow::bail!("unpinned get-method {method}")
+    }
+    async fn run_get_method_at_unverified(
+        &self,
+        _address: String,
+        method: &str,
+        _stack: Vec<StackEntry>,
+        checkpoint: &crate::MasterchainCheckpoint,
+    ) -> anyhow::Result<TvmStackParser> {
+        self.record("getter", checkpoint.seqno);
+        let cell = BuilderData::new().into_cell()?;
+        let cell_entry = StackEntry::Tvm_StackEntryCell(StackEntryCell {
+            cell: tl_cell::Cell { bytes: write_boc(&cell)? },
+        });
+        Ok(TvmStackParser::new(match method {
+            "controller_state" => {
+                vec![number("0"), number("4"), number("1"), number("7"), cell_entry]
+            }
+            "operating_state" => vec![
+                number("1000000000000"),
+                number("1000000000000"),
+                number("20000000000"),
+                number("10000000000"),
+                number("1893456000"),
+                address_slice(&payer()),
+            ],
+            "relay_pending" | "relay_retry_fees" => vec![StackEntry::Tvm_StackEntryUnsupported],
+            other => anyhow::bail!("unexpected getter {other}"),
+        }))
+    }
+    async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+        anyhow::bail!("unpinned balance")
+    }
+    async fn get_balance_at_unverified(
+        &self,
+        _address: &MsgAddressInt,
+        checkpoint: &crate::MasterchainCheckpoint,
+    ) -> anyhow::Result<u64> {
+        self.record("balance", checkpoint.seqno);
+        Ok(2_000_000_000_000)
+    }
+    async fn get_config_param_at_unverified(
+        &self,
+        param_id: u32,
+        checkpoint: &crate::MasterchainCheckpoint,
+    ) -> anyhow::Result<ConfigParamEnum> {
+        self.record("config", checkpoint.seqno);
+        Ok(match param_id {
+            20 => ConfigParamEnum::ConfigParam20(gas(true, 10_000 * 65_536)),
+            24 => ConfigParamEnum::ConfigParam24(forward()),
+            15 => ConfigParamEnum::ConfigParam15(chain_block::ConfigParam15 {
+                validators_elected_for: ELECTED_FOR,
+                elections_start_before: 1,
+                elections_end_before: 1,
+                stake_held_for: 1,
+            }),
+            other => anyhow::bail!("unexpected parameter {other}"),
+        })
+    }
+    async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
+        anyhow::bail!("no sends")
+    }
+    async fn get_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum> {
+        anyhow::bail!("unpinned parameter {param_id}")
+    }
+    async fn get_address_info(
+        &self,
+        _address: &MsgAddressInt,
+    ) -> anyhow::Result<crate::chain_provider::AddressInfo> {
+        anyhow::bail!("unpinned address info")
+    }
+    async fn get_extended_address_info(
+        &self,
+        _address: &MsgAddressInt,
+    ) -> anyhow::Result<crate::chain_provider::ExtendedAddressInfo> {
+        anyhow::bail!("unpinned address info")
+    }
+    async fn get_wallet_info(
+        &self,
+        _address: &MsgAddressInt,
+    ) -> anyhow::Result<crate::chain_provider::WalletInfo> {
+        anyhow::bail!("not a wallet")
+    }
+    async fn get_masterchain_info(&self) -> anyhow::Result<crate::chain_provider::MasterchainInfo> {
+        Ok(chain_rpc_client::v2::data_models::GetMasterchainInfoRes {
+            r#type: None,
+            last: block_id(self.head),
+            state_root_hash: String::new(),
+            init: None,
+        })
+    }
+    async fn get_shards(&self, _seqno: u32) -> anyhow::Result<crate::chain_provider::ShardsInfo> {
+        anyhow::bail!("no shards")
+    }
+    async fn get_block_transactions_page(
+        &self,
+        _workchain: i32,
+        _shard: i64,
+        _seqno: u32,
+        _after_lt: Option<u64>,
+        _after_account: Option<&str>,
+        _count: u32,
+    ) -> anyhow::Result<crate::chain_provider::BlockTransactionsPage> {
+        anyhow::bail!("no blocks")
+    }
+}
+
+#[tokio::test]
+async fn every_planning_input_is_read_at_one_block() {
+    let chain = PinnedOnlyChain { head: 4242, seen: std::sync::Mutex::new(Vec::new()) };
+    let operations = read_controller_operations(&chain, &controller()).await.unwrap();
+    assert_eq!(operations.checkpoint.seqno, 4242);
+    assert_eq!(operations.checkpoint.root_hash, "11".repeat(32));
+    assert_eq!(operations.authority.nonce, 4);
+    assert_eq!(operations.balance, 2_000_000_000_000);
+    assert_eq!(operations.fees, fees());
+    let seen = chain.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 8, "{seen:?}");
+    assert!(seen.iter().all(|(_, seqno)| *seqno == 4242), "{seen:?}");
 }

@@ -6,7 +6,7 @@
 //! authorization has expired. This module encodes that authorization, reads it back,
 //! prices the grant from the live fee configuration exactly as `stake-relay.fc` does,
 //! and plans a renewal by deficit. It never signs: the controller root key is offline.
-use crate::ChainProvider;
+use crate::{ChainProvider, MasterchainCheckpoint};
 use anyhow::Context;
 use chain_block::{
     BuilderData, Cell, Coins, ConfigParamEnum, Deserializable, GasLimitsPrices, IBitstring,
@@ -491,6 +491,27 @@ pub struct RenewalPlan {
     /// `required_value` plus the margin.
     pub message_value: u128,
     pub payload: Cell,
+    /// The controller's balance once the request is accepted: the contract reserves
+    /// the prior balance plus the deposit and refunds the rest.
+    pub capital_after: u128,
+    /// A plain transfer the controller still needs so that `balance >= funds + floor`
+    /// holds for the next relay. The deposit cannot supply it: it raises the balance
+    /// and the recorded funds by the same amount.
+    pub capital_top_up: u128,
+}
+
+impl RenewalPlan {
+    /// The authorization this request installs, as `operating_state` will report it.
+    pub fn projected_state(&self) -> OperatingState {
+        OperatingState {
+            funds: self.funds_after,
+            allowance: self.allowance,
+            limit: self.limit,
+            floor: self.floor,
+            expires: self.expires_at,
+            payer: self.payer.clone(),
+        }
+    }
 }
 
 /// Plans a renewal by deficit: `deposit = max(0, funds_target - funds)`, because the
@@ -500,6 +521,7 @@ pub struct RenewalPlan {
 pub fn plan_renewal(
     controller: &MsgAddressInt,
     state: &OperatingState,
+    balance: u128,
     fees: &RelayFees,
     relay_pending: bool,
     now: u64,
@@ -555,6 +577,9 @@ pub fn plan_renewal(
     );
     let required_value = add(deposit, fees.funding_processing, "required message value")?;
     let message_value = add(required_value, request.margin, "message value")?;
+    let capital_after = add(balance, deposit, "balance after the deposit")?;
+    let capital_top_up =
+        add(funds_after, request.floor, "funds + floor")?.saturating_sub(capital_after);
     let payload = operating_funding_payload(&OperatingFunding {
         payer: &request.payer,
         deposit,
@@ -574,6 +599,8 @@ pub fn plan_renewal(
         required_value,
         message_value,
         payload,
+        capital_after,
+        capital_top_up,
     })
 }
 
@@ -601,37 +628,62 @@ pub struct ControllerOperations {
     pub balance: u128,
     pub fees: RelayFees,
     pub elections_interval_secs: u32,
+    /// The masterchain block every value above was read at.
+    pub checkpoint: MasterchainCheckpoint,
 }
 
-/// Reads the getters and the fee configuration a status check or a renewal needs.
+/// The current masterchain head, as a checkpoint to pin reads to.
+pub async fn latest_checkpoint(chain: &dyn ChainProvider) -> anyhow::Result<MasterchainCheckpoint> {
+    let last = chain.get_masterchain_info().await?.last;
+    anyhow::ensure!(last.workchain == -1, "the masterchain head is not a masterchain block");
+    Ok(MasterchainCheckpoint {
+        seqno: last.seqno,
+        root_hash: hex::encode(&last.root_hash),
+        file_hash: hex::encode(&last.file_hash),
+    })
+}
+
+/// Reads the getters and the fee configuration a status check or a renewal needs,
+/// all at the current masterchain head: one block, so a relay landing between two
+/// reads cannot make them disagree. Activity after that block can still change them.
 pub async fn read_controller_operations(
     chain: &dyn ChainProvider,
     controller: &MsgAddressInt,
+) -> anyhow::Result<ControllerOperations> {
+    let checkpoint = latest_checkpoint(chain).await?;
+    read_controller_operations_at(chain, controller, checkpoint).await
+}
+
+/// [`read_controller_operations`] at an explicit checkpoint.
+pub async fn read_controller_operations_at(
+    chain: &dyn ChainProvider,
+    controller: &MsgAddressInt,
+    checkpoint: MasterchainCheckpoint,
 ) -> anyhow::Result<ControllerOperations> {
     anyhow::ensure!(
         controller.workchain_id() == -1,
         "a validator controller is a masterchain account"
     );
     let address = controller.to_string();
-    let authority = ControllerAuthority::decode(
-        &chain.run_get_method(address.clone(), "controller_state", vec![]).await?,
-    )?;
-    let state = OperatingState::decode(
-        &chain.run_get_method(address.clone(), "operating_state", vec![]).await?,
-    )?;
-    let pending = chain.run_get_method(address.clone(), "relay_pending", vec![]).await?;
-    let relay_pending = !stack_entry_is_null(&pending, 0).context("relay_pending")?;
-    let retry = chain.run_get_method(address, "relay_retry_fees", vec![]).await?;
-    let retry_fees_held = !stack_entry_is_null(&retry, 0).context("relay_retry_fees")?;
-    let balance = u128::from(chain.get_balance(controller).await?);
-    let fees = RelayFees::from_config(
-        chain.get_config_param(20).await?,
-        chain.get_config_param(24).await?,
-    )?;
-    let elections_interval_secs = match chain.get_config_param(15).await? {
-        ConfigParamEnum::ConfigParam15(value) => value.validators_elected_for,
-        other => anyhow::bail!("live ConfigParam 15 has unexpected representation: {other:?}"),
+    let getter = |method: &'static str| {
+        chain.run_get_method_at_unverified(address.clone(), method, vec![], &checkpoint)
     };
+    let authority = ControllerAuthority::decode(&getter("controller_state").await?)?;
+    let state = OperatingState::decode(&getter("operating_state").await?)?;
+    let pending = getter("relay_pending").await?;
+    let relay_pending = !stack_entry_is_null(&pending, 0).context("relay_pending")?;
+    let retry = getter("relay_retry_fees").await?;
+    let retry_fees_held = !stack_entry_is_null(&retry, 0).context("relay_retry_fees")?;
+    let balance = u128::from(chain.get_balance_at_unverified(controller, &checkpoint).await?);
+    let fees = RelayFees::from_config(
+        chain.get_config_param_at_unverified(20, &checkpoint).await?,
+        chain.get_config_param_at_unverified(24, &checkpoint).await?,
+    )?;
+    let elections_interval_secs =
+        match chain.get_config_param_at_unverified(15, &checkpoint).await? {
+            ConfigParamEnum::ConfigParam15(value) => value.validators_elected_for,
+            other => anyhow::bail!("live ConfigParam 15 has unexpected representation: {other:?}"),
+        };
     Ok(ControllerOperations {
         authority,
         state,
@@ -640,6 +692,7 @@ pub async fn read_controller_operations(
         balance,
         fees,
         elections_interval_secs,
+        checkpoint,
     })
 }
 

@@ -1061,19 +1061,19 @@ impl ElectionRunner {
             if fresh {
                 continue;
             }
+            let previous = node.operating_authorization.as_ref();
             let controller = match pool.get_roles().await {
                 Ok(roles) => roles.controller_address,
                 Err(e) => {
-                    tracing::warn!(
-                        "node [{}] cannot read the pool's controller for its operating authorization: {:#}",
-                        node_id,
-                        e
-                    );
+                    let error = format!("cannot read the pool's controller: {e:#}");
+                    let snapshot = failed_operating_snapshot(previous, None, error, now);
+                    log_operating_authorization(node_id, &snapshot);
+                    node.operating_authorization = Some(snapshot);
                     continue;
                 }
             };
             let reading = node.api.controller_operations(&controller).await;
-            let snapshot = operating_snapshot(&controller, reading, now, &thresholds);
+            let snapshot = operating_snapshot(&controller, reading, previous, now, &thresholds);
             if let Some(snapshot) = &snapshot {
                 log_operating_authorization(node_id, snapshot);
             }
@@ -1483,18 +1483,35 @@ fn operating_thresholds(config: &ElectionsConfig) -> OperatingThresholds {
 
 /// What the elections task publishes about a controller's operating authorization.
 /// `None` when the provider cannot read it at all.
+/// A failed read. The last successful values, if any, stay visible but are marked
+/// historical; a reader must not take them for the current state.
+pub(crate) fn failed_operating_snapshot(
+    previous: Option<&OperatingAuthorizationSnapshot>,
+    controller: Option<&MsgAddressInt>,
+    error: String,
+    now: u64,
+) -> OperatingAuthorizationSnapshot {
+    let mut snapshot = match previous {
+        Some(previous) => previous.clone(),
+        None => OperatingAuthorizationSnapshot::default(),
+    };
+    if let Some(controller) = controller {
+        snapshot.controller = controller.to_string();
+    }
+    snapshot.stale = snapshot.checked_at > 0;
+    snapshot.attempted_at = now;
+    snapshot.error = Some(error);
+    snapshot
+}
+
 pub(crate) fn operating_snapshot(
     controller: &MsgAddressInt,
     reading: anyhow::Result<Option<ControllerOperations>>,
+    previous: Option<&OperatingAuthorizationSnapshot>,
     now: u64,
     thresholds: &OperatingThresholds,
 ) -> Option<OperatingAuthorizationSnapshot> {
-    let failed = |error: String| OperatingAuthorizationSnapshot {
-        controller: controller.to_string(),
-        checked_at: now,
-        error: Some(error),
-        ..Default::default()
-    };
+    let failed = |error: String| failed_operating_snapshot(previous, Some(controller), error, now);
     let operations = match reading {
         Ok(Some(operations)) => operations,
         Ok(None) => return None,
@@ -1508,7 +1525,10 @@ pub(crate) fn operating_snapshot(
     Some(OperatingAuthorizationSnapshot {
         controller: controller.to_string(),
         checked_at: now,
+        block_seqno: operations.checkpoint.seqno,
+        attempted_at: now,
         error: None,
+        stale: false,
         funds: state.funds.to_string(),
         allowance: state.allowance.to_string(),
         per_request_limit: state.limit.to_string(),
@@ -1529,12 +1549,22 @@ const RENEWAL_HINT: &str = "prepare a renewal with `tosctl controller operations
 
 fn log_operating_authorization(node_id: &str, snapshot: &OperatingAuthorizationSnapshot) {
     if let Some(error) = &snapshot.error {
-        tracing::warn!(
-            "node [{}] controller {} operating authorization could not be checked: {}",
-            node_id,
-            snapshot.controller,
-            error
-        );
+        if snapshot.stale {
+            tracing::warn!(
+                "node [{}] controller {} operating authorization could not be checked: {}; the published values are from {} and may be out of date",
+                node_id,
+                snapshot.controller,
+                error,
+                time_format::format_ts(snapshot.checked_at)
+            );
+        } else {
+            tracing::warn!(
+                "node [{}] controller {} operating authorization could not be checked: {}",
+                node_id,
+                snapshot.controller,
+                error
+            );
+        }
         return;
     }
     tracing::info!(

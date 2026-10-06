@@ -268,6 +268,24 @@ impl ClientJsonRpc {
         decode_config_param(config_info, param_id)
     }
 
+    /// The parameter as of masterchain block `seqno`. The response does not echo
+    /// the block, so this is only as faithful as the endpoint.
+    pub async fn get_config_param_at(
+        &self,
+        param_id: u32,
+        seqno: u32,
+    ) -> anyhow::Result<ConfigParamEnum> {
+        anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
+        let config_info = self
+            .json_rpc_read(
+                "getConfigParam",
+                serde_json::json!({"config_id": param_id, "seqno": seqno}),
+            )
+            .await
+            .with_context(|| format!("getConfigParam({param_id}) at seqno {seqno}"))?;
+        decode_config_param(config_info, param_id)
+    }
+
     /// Return the exact on-chain value cell. Pool maintenance compares its
     /// representation hash, so decoding and reserializing is not sufficient.
     pub async fn get_config_param_cell(&self, param_id: u32) -> anyhow::Result<Cell> {
@@ -603,6 +621,24 @@ impl ClientJsonRpc {
         })?;
         let address_info = serde_json::from_value::<GetAddressInformationRes>(res)?;
         Ok(address_info)
+    }
+
+    /// The account as of masterchain block `seqno`; the response carries the block
+    /// it was read at, which the caller checks.
+    pub async fn get_address_information_at(
+        &self,
+        address: &MsgAddressInt,
+        seqno: u32,
+    ) -> anyhow::Result<GetAddressInformationRes> {
+        anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
+        let res = self
+            .json_rpc_read(
+                "getAddressInformation",
+                serde_json::json!({"address": address.to_string(), "seqno": seqno}),
+            )
+            .await
+            .with_context(|| format!("getAddressInformation({address}) at seqno {seqno}"))?;
+        Ok(serde_json::from_value::<GetAddressInformationRes>(res)?)
     }
 
     pub async fn get_account_capability(

@@ -16,8 +16,9 @@ use anyhow::Context;
 use chain_block::MsgAddressInt;
 use colored::Colorize;
 use contracts::validator_controller::{
-    ControllerOperations, OperatingAssessment, OperatingThresholds, RenewalPlan, RenewalRequest,
-    authorization_valid_until, funds_for_runway, plan_renewal, read_controller_operations,
+    ControllerOperations, OperatingAssessment, OperatingInputs, OperatingThresholds, RenewalPlan,
+    RenewalRequest, assess, authorization_valid_until, funds_for_runway, plan_renewal,
+    read_controller_operations,
 };
 
 const NANO: u128 = 1_000_000_000;
@@ -226,6 +227,11 @@ fn status_json(
     serde_json::json!({
         "controller": controller.to_string(),
         "now": now,
+        "block": {
+            "seqno": operations.checkpoint.seqno,
+            "root_hash": operations.checkpoint.root_hash,
+            "file_hash": operations.checkpoint.file_hash,
+        },
         "authorized": !state.is_unset(controller),
         "funds": state.funds.to_string(),
         "allowance": state.allowance.to_string(),
@@ -296,6 +302,10 @@ fn print_status(
     println!("  {:<24} {}", "Stakes remaining:", assessment.stakes_remaining);
     println!("  {:<24} {}", "Runway:", days(assessment.runway_secs));
     println!("  {:<24} {}", "Checked at:", format_ts(now));
+    println!(
+        "  {:<24} masterchain block {} (every value above is from this block)",
+        "Read at:", operations.checkpoint.seqno
+    );
     println!();
     if assessment.warnings.is_empty() {
         println!("  {} no warnings", "OK".green().bold());
@@ -421,6 +431,7 @@ impl ControllerOperationsPlanCmd {
         let plan = plan_renewal(
             &controller,
             &operations.state,
+            operations.balance,
             &operations.fees,
             operations.relay_pending,
             now,
@@ -428,10 +439,23 @@ impl ControllerOperationsPlanCmd {
         )?;
         let valid_until = authorization_valid_until(now, self.valid_for)?;
         let assessment = operations.assess(&controller, now, &thresholds)?;
+        let projected = assess(
+            &OperatingInputs {
+                controller: &controller,
+                state: &plan.projected_state(),
+                fees: &operations.fees,
+                balance: Some(plan.capital_after),
+                relay_pending: false,
+                now,
+                elections_interval_secs: operations.elections_interval_secs,
+            },
+            &thresholds,
+        )?;
         let rendered = render_plan(&PlanOutput {
             controller: &controller,
             operations: &operations,
             plan: &plan,
+            projected: &projected,
             global_id,
             valid_until,
             root_seed: &self.root_seed,
@@ -456,6 +480,9 @@ pub(crate) struct PlanOutput<'a> {
     pub controller: &'a MsgAddressInt,
     pub operations: &'a ControllerOperations,
     pub plan: &'a RenewalPlan,
+    /// The authorization the plan installs, assessed at the balance the plan leaves
+    /// without the separate top-up.
+    pub projected: &'a OperatingAssessment,
     pub global_id: i32,
     pub valid_until: u32,
     pub root_seed: &'a str,
@@ -466,17 +493,26 @@ pub(crate) struct RenderedPlan {
     pub text: String,
 }
 
+/// One POSIX shell word: unchanged when it holds only characters no shell treats
+/// specially, otherwise single-quoted with embedded quotes escaped.
+pub(crate) fn shell_quote(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word.chars().all(|c| c.is_ascii_alphanumeric() || "_-./:=@%+,".contains(c));
+    if plain { word.to_string() } else { format!("'{}'", word.replace('\'', "'\\''")) }
+}
+
 /// The offline signing command and what the payer then sends, exactly as printed.
 pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPlan> {
     use base64::Engine;
     let plan = output.plan;
     let authority = &output.operations.authority;
+    let checkpoint = &output.operations.checkpoint;
     let payload_b64 =
         base64::engine::general_purpose::STANDARD.encode(chain_block::write_boc(&plan.payload)?);
     let controller_hex = hex::encode(output.controller.address().get_bytestring(0));
     let sign_command = format!(
         "tos-pq-controller fund-operations {} {} {} {} {} {} {}",
-        output.root_seed,
+        shell_quote(output.root_seed),
         output.global_id,
         controller_hex,
         authority.epoch,
@@ -491,8 +527,20 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
         ),
         Err(_) => "the message value exceeds what a wallet transfer can carry".to_string(),
     };
+    let staleness = format!(
+        "read at masterchain block {} (root hash {}); a relay or root action after that \
+         block changes the funds, epoch or nonce and invalidates this plan, so re-run it \
+         immediately before signing",
+        checkpoint.seqno, checkpoint.root_hash
+    );
     let json = serde_json::json!({
         "controller": output.controller.to_string(),
+        "block": {
+            "seqno": checkpoint.seqno,
+            "root_hash": checkpoint.root_hash,
+            "file_hash": checkpoint.file_hash,
+        },
+        "validity": staleness.clone(),
         "payer": plan.payer.to_string(),
         "deposit": plan.deposit.to_string(),
         "funds_after": plan.funds_after.to_string(),
@@ -502,6 +550,10 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
         "expires_at": plan.expires_at,
         "required_value": plan.required_value.to_string(),
         "message_value": plan.message_value.to_string(),
+        "capital_after": plan.capital_after.to_string(),
+        "capital_top_up": plan.capital_top_up.to_string(),
+        "projected_warnings": output.projected.warnings,
+        "projected_blocks_next_stake": output.projected.blocks_next_stake(),
         "global_id": output.global_id,
         "epoch": authority.epoch,
         "nonce": authority.nonce,
@@ -510,9 +562,26 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
         "sign_command": sign_command.clone(),
         "send_command": send_command.clone(),
     });
+    let top_up_step = if plan.capital_top_up > 0 {
+        format!(
+            "0. The new floor is not covered by the controller's balance, and the deposit\n\
+             \x20  cannot cover it (it raises balance and funds alike). Send {} to the\n\
+             \x20  controller as a plain transfer, separate from the request below, or every\n\
+             \x20  relay fails the capital check (balance >= funds + floor).\n\n",
+            tos(plan.capital_top_up)
+        )
+    } else {
+        String::new()
+    };
+    let mut projected_lines = String::new();
+    for warning in &output.projected.warnings {
+        let label = if warning.blocks_next_stake() { "[BLOCKING]" } else { "[WARNING]" };
+        projected_lines.push_str(&format!("  {label} after renewal: {warning}\n"));
+    }
     let text = format!(
         "Kind 4 renewal (deposit by deficit; every other field replaces the stored one)\n\
          {rule}\n\
+         \x20 Inputs:              {staleness}\n\
          \x20 Payer:               {payer}\n\
          \x20 Deposit:             {deposit}\n\
          \x20 Funds after:         {funds_after}\n\
@@ -522,9 +591,13 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
          \x20 Expires at:          {expires}\n\
          \x20 Required value:      {required} (deposit + gas_fee(-1, 200000) + control_value)\n\
          \x20 Message value:       {value}\n\
+         \x20 Balance after:       {capital_after}\n\
+         \x20 Capital top-up:      {top_up}\n\
          \x20 Root epoch / nonce:  {epoch} / {nonce}\n\
          \x20 Valid until:         {valid_until}\n\
-         \x20 Payload (kind 4):    {payload_b64}\n\n\
+         \x20 Payload (kind 4):    {payload_b64}\n\
+         {projected_lines}\n\
+         {top_up_step}\
          1. Where the controller root seed is held (offline), run:\n\n\
          \x20  {sign_command}\n\n\
          2. Send its output as the body of a bounceable message from the payer wallet\n\
@@ -543,6 +616,8 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
         expires = plan.expires_at,
         required = tos(plan.required_value),
         value = tos(plan.message_value),
+        capital_after = tos(plan.capital_after),
+        top_up = tos(plan.capital_top_up),
         epoch = authority.epoch,
         nonce = authority.nonce,
         valid_until = output.valid_until,
@@ -583,6 +658,21 @@ mod tests {
                 funding_processing: 3_000_000_000,
             },
             elections_interval_secs: 65_536,
+            checkpoint: contracts::MasterchainCheckpoint {
+                seqno: 777,
+                root_hash: "ab".repeat(32),
+                file_hash: "cd".repeat(32),
+            },
+        }
+    }
+
+    fn no_warnings() -> OperatingAssessment {
+        OperatingAssessment {
+            grant: 6 * NANO,
+            stakes_remaining: 0,
+            runway_secs: 0,
+            expires_in_secs: 0,
+            warnings: vec![],
         }
     }
 
@@ -622,7 +712,8 @@ mod tests {
         assert_eq!(request.floor, 10 * NANO, "the floor is kept");
         assert_eq!(u64::from(request.expires_at), NOW + 30 * DAY);
         let plan =
-            plan_renewal(&controller(), &ops.state, &ops.fees, false, NOW, &request).unwrap();
+            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
+                .unwrap();
         assert_eq!(plan.deposit, 240 * NANO - 30 * NANO);
     }
 
@@ -635,7 +726,8 @@ mod tests {
         assert_eq!(request.funds_target, 30 * NANO);
         assert_eq!(request.allowance, 30 * NANO);
         let plan =
-            plan_renewal(&controller(), &ops.state, &ops.fees, false, NOW, &request).unwrap();
+            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
+                .unwrap();
         assert_eq!(plan.deposit, 0);
         assert_eq!(u64::from(plan.expires_at), NOW + 90 * DAY);
         assert_eq!(plan.message_value, ops.fees.funding_processing + NANO);
@@ -684,11 +776,13 @@ mod tests {
         let ops = operations(funded(30 * NANO));
         let request = plan_cmd(&[]).request(&controller(), &ops, NOW).unwrap();
         let plan =
-            plan_renewal(&controller(), &ops.state, &ops.fees, false, NOW, &request).unwrap();
+            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
+                .unwrap();
         let rendered = render_plan(&PlanOutput {
             controller: &controller(),
             operations: &ops,
             plan: &plan,
+            projected: &no_warnings(),
             global_id: -217,
             valid_until: (NOW + 1800) as u32,
             root_seed: "/secure/root.seed",
@@ -718,5 +812,83 @@ mod tests {
     fn exact_tos_rendering() {
         assert_eq!(tos(0), "0.000000000 TOS");
         assert_eq!(tos(6_441_234_567), "6.441234567 TOS");
+    }
+
+    #[test]
+    fn a_seed_path_with_shell_metacharacters_stays_one_word() {
+        assert_eq!(shell_quote("/secure/root.seed"), "/secure/root.seed");
+        assert_eq!(shell_quote("/mnt/USB key/root.seed"), "'/mnt/USB key/root.seed'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+        assert_eq!(shell_quote("$HOME/x;rm"), "'$HOME/x;rm'");
+        assert_eq!(shell_quote(""), "''");
+
+        let ops = operations(funded(30 * NANO));
+        let request = plan_cmd(&[]).request(&controller(), &ops, NOW).unwrap();
+        let plan =
+            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
+                .unwrap();
+        let rendered = render_plan(&PlanOutput {
+            controller: &controller(),
+            operations: &ops,
+            plan: &plan,
+            projected: &no_warnings(),
+            global_id: 3,
+            valid_until: (NOW + 60) as u32,
+            root_seed: "/mnt/USB key/root.seed",
+        })
+        .unwrap();
+        let sign_command = rendered.json["sign_command"].as_str().unwrap();
+        assert!(
+            sign_command
+                .starts_with("tos-pq-controller fund-operations '/mnt/USB key/root.seed' 3 "),
+            "{sign_command}"
+        );
+    }
+
+    #[test]
+    fn the_plan_names_its_block_and_the_capital_a_new_floor_needs() {
+        // Balance equals the recorded funds, and the renewal raises the floor.
+        let mut state = funded(30 * NANO);
+        state.floor = 0;
+        let mut ops = operations(state);
+        ops.balance = 30 * NANO;
+        let request = plan_cmd(&["--floor-nanotos", "10000000000"])
+            .request(&controller(), &ops, NOW)
+            .unwrap();
+        let plan =
+            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
+                .unwrap();
+        assert_eq!(plan.capital_top_up, 10 * NANO);
+        let projected = assess(
+            &OperatingInputs {
+                controller: &controller(),
+                state: &plan.projected_state(),
+                fees: &ops.fees,
+                balance: Some(plan.capital_after),
+                relay_pending: false,
+                now: NOW,
+                elections_interval_secs: ops.elections_interval_secs,
+            },
+            &OperatingThresholds::default(),
+        )
+        .unwrap();
+        assert!(projected.blocks_next_stake(), "{:?}", projected.warnings);
+        let rendered = render_plan(&PlanOutput {
+            controller: &controller(),
+            operations: &ops,
+            plan: &plan,
+            projected: &projected,
+            global_id: 3,
+            valid_until: (NOW + 60) as u32,
+            root_seed: "ROOTSEED",
+        })
+        .unwrap();
+        assert_eq!(rendered.json["capital_top_up"], (10 * NANO).to_string());
+        assert_eq!(rendered.json["projected_blocks_next_stake"], true);
+        assert_eq!(rendered.json["block"]["seqno"], 777);
+        assert!(rendered.text.contains("masterchain block 777"));
+        assert!(rendered.text.contains("invalidates this plan"));
+        assert!(rendered.text.contains("0. The new floor is not covered"));
+        assert!(rendered.text.contains("[BLOCKING] after renewal"));
     }
 }

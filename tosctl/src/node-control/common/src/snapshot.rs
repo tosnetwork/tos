@@ -336,11 +336,21 @@ pub struct ValidatorNodeSnapshot {
 pub struct OperatingAuthorizationSnapshot {
     /// Controller address.
     pub controller: String,
-    /// When this was read (unix seconds).
+    /// When the values below were read (unix seconds); zero if never.
     pub checked_at: u64,
-    /// The read failed; nothing below is current.
+    /// The masterchain block the values below were read at.
+    #[serde(default)]
+    pub block_seqno: u32,
+    /// When the last read was attempted (unix seconds).
+    #[serde(default)]
+    pub attempted_at: u64,
+    /// The last attempt failed with this error.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The values below are historical: they come from the read at `checked_at`,
+    /// and every attempt since has failed.
+    #[serde(default)]
+    pub stale: bool,
     pub funds: String,
     pub allowance: String,
     pub per_request_limit: String,
