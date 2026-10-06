@@ -290,6 +290,21 @@ jobs:
       - name: Outbound message size limits hold on both sides
         run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_message_size_limits
 
+      # The sandbox charges storage as the node does. The node's own
+      # compute_storage_fees checks every row of the shared vector file, and the
+      # Rust helper and the executor are then held to the same rows. A cargo
+      # filter that matches nothing passes, so each run must report its tests.
+      - name: Storage fees agree with the node
+        run: |
+          cmake --build build --target test-storage-fee-vectors -j2
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-storage-fee-vectors$'
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p chain_block --lib storage_fee_tests \
+            2>&1 | tee "$RUNNER_TEMP/storage-fee-helper.log"
+          grep -Eq "test result: ok\. [1-9][0-9]* passed" "$RUNNER_TEMP/storage-fee-helper.log"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_storage_fees \
+            2>&1 | tee "$RUNNER_TEMP/storage-fee-executor.log"
+          grep -Eq "test result: ok\. [1-9][0-9]* passed" "$RUNNER_TEMP/storage-fee-executor.log"
+
       # The token bridge's completion guarantees rest on fee arithmetic and on
       # how send modes 1, 2, 16 and 64 fail and bounce. The sandbox runs the Rust
       # executor; this records every transaction of its bridge suite and replays

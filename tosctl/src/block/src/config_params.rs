@@ -30,6 +30,10 @@ use std::collections::BTreeMap;
 #[path = "tests/test_config_params.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "tests/test_storage_fees.rs"]
+mod storage_fee_tests;
+
 /*
 1.6.3. Quick access through the header of masterchain blocks
 _ config_addr:uint256
@@ -1400,6 +1404,84 @@ impl StoragePrices {
             + 0xffff)
             >> 16u8
     }
+}
+
+/// Storage fee, in nanotomi, that an account using `cells` and `bits` accrues
+/// from `last_paid` to `now` under the price history `prices` (ConfigParam 18,
+/// ordered by `utime_since`).
+///
+/// This is the node's `StoragePrices::compute_storage_fees`: start in the
+/// period in force at `last_paid`, end every period at the next one's start or
+/// at `now`, whichever comes first, add up the cost of every period in units of
+/// 2^-16 nanotomi, and round up once at the end. Rounding each period on its
+/// own, or letting a period run past `now`, charges a different amount.
+///
+/// Prices whose `utime_since` does not strictly increase are refused before
+/// anything else is looked at: the node does not load such a table, so there
+/// is no fee to compute from it.
+pub fn accrued_storage_fee(
+    prices: &[StoragePrices],
+    cells: u64,
+    bits: u64,
+    last_paid: u32,
+    now: u32,
+    is_special: bool,
+    is_masterchain: bool,
+) -> Result<BigInt> {
+    for pair in prices.windows(2) {
+        if let [earlier, later] = pair {
+            if earlier.utime_since >= later.utime_since {
+                fail!(BlockError::InvalidData(format!(
+                    "storage prices must start at strictly increasing times, \
+                     got {} then {}",
+                    earlier.utime_since, later.utime_since
+                )))
+            }
+        }
+    }
+    let first = match prices.first() {
+        Some(first) => first,
+        None => return Ok(BigInt::default()),
+    };
+    if now <= last_paid || last_paid == 0 || is_special || now <= first.utime_since {
+        return Ok(BigInt::default());
+    }
+    // The period in force at last_paid; the first one if last_paid precedes them all.
+    let start = prices.iter().rposition(|period| period.utime_since <= last_paid).unwrap_or(0);
+    let mut upto = last_paid.max(first.utime_since);
+    let mut total = BigInt::default();
+    for (index, period) in prices.iter().enumerate().skip(start) {
+        if upto >= now {
+            break;
+        }
+        let next = index.checked_add(1).and_then(|next| prices.get(next));
+        let valid_until = match next {
+            Some(next) => now.min(next.utime_since),
+            None => now,
+        };
+        if upto < valid_until {
+            if upto < period.utime_since {
+                fail!(BlockError::InvalidData(format!(
+                    "storage fee interval starting at {upto} precedes its period at {}",
+                    period.utime_since
+                )))
+            }
+            let seconds = valid_until.checked_sub(upto).ok_or_else(|| {
+                error!(BlockError::InvalidData("storage fee interval is negative".to_string()))
+            })?;
+            let (bit_price, cell_price) = if is_masterchain {
+                (period.mc_bit_price_ps, period.mc_cell_price_ps)
+            } else {
+                (period.bit_price_ps, period.cell_price_ps)
+            };
+            let per_second = BigInt::from(cells) * BigInt::from(cell_price)
+                + BigInt::from(bits) * BigInt::from(bit_price);
+            total += per_second * BigInt::from(seconds);
+        }
+        upto = valid_until;
+    }
+    // Divide by 2^16, rounding up, once.
+    Ok((total + BigInt::from(0xffffu32)) >> 16u8)
 }
 
 const STORAGE_PRICES_TAG: u8 = 0xCC;
