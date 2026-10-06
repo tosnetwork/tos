@@ -3,11 +3,16 @@
 //!
 //! Mode 3 means a wallet that cannot pay its fees still accepts the external message
 //! and advances its seqno, but sends nothing. The reserve below is therefore checked
-//! before sending, and is an upper bound of the wallet's own charge: storage due since
-//! it last paid, its computation, the import of the external message, and the
-//! forwarding of the outbound one.
+//! before sending, and is an upper bound of the wallet's own charge: storage accrued
+//! since it last paid plus any storage debt it already carries, its computation, the
+//! import of the external message, and the forwarding of the outbound one.
+//!
+//! The storage terms come from the account's own storage metadata (used cells and
+//! bits, last paid, due payment), never from an estimate: code and data alone omit
+//! the account's library dictionary, its extra currencies under older global
+//! versions, and any debt.
 use crate::validator_controller::{forward_fee, gas_fee};
-use chain_block::{Cell, GasLimitsPrices, MsgForwardPrices, StoragePrices, UInt256};
+use chain_block::{Account, Cell, GasLimitsPrices, MsgForwardPrices, StoragePrices, UInt256};
 use std::collections::HashSet;
 
 /// An upper bound for the computation of any supported wallet sending one message.
@@ -17,10 +22,6 @@ pub const WALLET_SEND_GAS_BOUND: u64 = 20_000;
 pub const ENVELOPE_BITS: u64 = 1_600;
 /// Cells around a body in either message.
 pub const ENVELOPE_CELLS: u64 = 2;
-/// The account's own cells besides code and data (the account root and its state
-/// init), each at most one full cell, as an upper bound.
-pub const ACCOUNT_OVERHEAD_CELLS: u64 = 2;
-pub const ACCOUNT_OVERHEAD_BITS: u64 = 2 * 1023;
 /// Far beyond any message a wallet can send; a guard against an unbounded walk.
 const MAX_MESSAGE_CELLS: usize = 1 << 16;
 
@@ -47,34 +48,46 @@ pub fn tree_size(roots: &[&Cell]) -> anyhow::Result<(u64, u64)> {
     Ok((cells, bits))
 }
 
-/// A wallet's storage, as fees see it.
+/// A wallet's storage, as the storage phase sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WalletStorage {
     pub cells: u64,
     pub bits: u64,
-    /// When the wallet last paid for storage: the time of its last transaction.
+    /// When the wallet last paid for storage.
     pub last_paid: u32,
+    /// Storage debt already recorded on the account, charged with the next fees.
+    pub due_payment: u128,
 }
 
 impl WalletStorage {
-    /// An upper bound of the storage an account with this code and data uses.
-    pub fn from_state(code: &Cell, data: &Cell, last_paid: u32) -> anyhow::Result<Self> {
-        let (cells, bits) = tree_size(&[code, data])?;
+    /// The storage metadata the account itself records.
+    pub fn from_account(account: &Account) -> anyhow::Result<Self> {
+        let info = account
+            .storage_info()
+            .ok_or_else(|| anyhow::anyhow!("the wallet account does not exist"))?;
         Ok(Self {
-            cells: cells
-                .checked_add(ACCOUNT_OVERHEAD_CELLS)
-                .ok_or_else(|| anyhow::anyhow!("cell count overflows"))?,
-            bits: bits
-                .checked_add(ACCOUNT_OVERHEAD_BITS)
-                .ok_or_else(|| anyhow::anyhow!("bit count overflows"))?,
-            last_paid,
+            cells: info.used().cells(),
+            bits: info.used().bits(),
+            last_paid: info.last_paid(),
+            due_payment: info.due_payment().map_or(0, |due| due.as_u128()),
         })
     }
 }
 
-/// Masterchain storage due at `now`, over every price period since `last_paid`,
-/// rounded up per period as the executor does.
+/// What the storage phase charges at `now`: the recorded debt plus the masterchain
+/// fees accrued over every price period since `last_paid`, rounded up per period as
+/// the executor does.
 pub fn storage_due(
+    prices: &[StoragePrices],
+    storage: &WalletStorage,
+    now: u32,
+) -> anyhow::Result<u128> {
+    storage_accrued(prices, storage, now)?
+        .checked_add(storage.due_payment)
+        .ok_or_else(|| anyhow::anyhow!("storage fee overflows"))
+}
+
+fn storage_accrued(
     prices: &[StoragePrices],
     storage: &WalletStorage,
     now: u32,
@@ -197,7 +210,7 @@ mod tests {
             cell_price: 65_536,
             ..Default::default()
         };
-        let storage = WalletStorage { cells: 3, bits: 100, last_paid: 1 };
+        let storage = WalletStorage { cells: 3, bits: 100, last_paid: 1, due_payment: 0 };
         let reserve = wallet_send_reserve(&SendFeeInputs {
             gas: &gas,
             forward: &forward,
@@ -229,12 +242,16 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let storage = WalletStorage { cells: 3, bits: 100, last_paid: 900 };
+        let storage = WalletStorage { cells: 3, bits: 100, last_paid: 900, due_payment: 0 };
         // 100 s at (100 + 1500) and 500 s at (200 + 3000), each rounded up.
         let first = (100 * 1_600 + 0xffff) >> 16;
         let second = (500 * 3_200 + 0xffff) >> 16;
         assert_eq!(storage_due(&prices, &storage, 1_500).unwrap(), first + second);
         assert_eq!(storage_due(&prices, &storage, 900).unwrap(), 0);
         assert_eq!(storage_due(&[], &storage, 1_500).unwrap(), 0);
+        // Recorded debt is charged on top, even when nothing new has accrued.
+        let indebted = WalletStorage { due_payment: 7, ..storage };
+        assert_eq!(storage_due(&prices, &indebted, 1_500).unwrap(), first + second + 7);
+        assert_eq!(storage_due(&prices, &indebted, 900).unwrap(), 7);
     }
 }

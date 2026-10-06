@@ -93,7 +93,11 @@ pub struct VoteOfferCastCmd {
         Without --wallet the message body and the value to send are printed for an \
         external masterchain wallet: the contract ignores a proposal from any other \
         workchain and keeps its value.\n\n\
-        With --wallet the wallet must hold the value plus its own fees, read at one block. \
+        --wallet is refused for now: bounding the wallet's own fees needs its storage \
+        metadata (used cells and bits, last paid, storage debt), which the node's JSON-RPC \
+        does not publish, and a mode-3 send that cannot pay its fees sends nothing. \
+        Where it is available, the wallet must hold the value plus its own fees, read at \
+        one block. \
         The report's status is registered only when the configuration contract is then \
         observed holding the proposal, new or with a later expiry; that is observed state \
         and does not prove this transaction caused it."
@@ -129,7 +133,9 @@ pub struct VoteOfferCreateCmd {
     /// Value in nanoTOS sent above price + 2^30; the contract returns the change
     #[arg(long, default_value_t = 1_000_000_000)]
     margin_nanotos: u64,
-    /// Masterchain wallet from config that sends the proposal; prints the message otherwise
+    /// Masterchain wallet from config that sends the proposal (currently refused: the
+    /// node does not publish the storage metadata its fee bound needs); prints the
+    /// message otherwise
     #[arg(long)]
     wallet: Option<String>,
     /// Confirm sending non-interactively
@@ -442,7 +448,7 @@ impl VoteOfferCreateCmd {
             wallet_address.workchain_id()
         );
         let (reserve, balance) =
-            pinned_wallet_reserve(&chain, &rpc_client, &wallet_address, &prepared.body).await?;
+            pinned_wallet_reserve(&chain, &wallet_address, &prepared.body).await?;
         sender_can_pay(wallet_name, balance, value, reserve)?;
         if !self.yes {
             // The prompt goes to stderr so that stdout carries only the report.
@@ -647,32 +653,15 @@ impl ProposalSummary<'_> {
 /// last transaction (when it last paid) to shortly after now.
 async fn pinned_wallet_reserve(
     chain: &contracts::DefaultChainProvider,
-    rpc_client: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
     wallet: &chain_block::MsgAddressInt,
     body: &chain_block::Cell,
 ) -> anyhow::Result<(u128, u64)> {
-    use base64::Engine;
-    use chain_block::{ConfigParamEnum, read_single_root_boc};
+    use chain_block::ConfigParamEnum;
     use contracts::ChainProvider;
-    use contracts::wallet::send_fees::{SendFeeInputs, WalletStorage, wallet_send_reserve};
+    use contracts::wallet::send_fees::{SendFeeInputs, wallet_send_reserve};
     let checkpoint = contracts::validator_controller::latest_checkpoint(chain).await?;
     let account = chain.get_address_info_at_unverified(wallet, &checkpoint).await?;
-    let code = read_single_root_boc(
-        account.code.as_deref().ok_or_else(|| anyhow::anyhow!("the wallet has no code"))?,
-    )?;
-    let data = read_single_root_boc(
-        account.data.as_deref().ok_or_else(|| anyhow::anyhow!("the wallet has no data"))?,
-    )?;
-    let last = &account.last_transaction_id;
-    let hash = base64::engine::general_purpose::STANDARD.encode(&last.hash);
-    let transactions = rpc_client.get_transactions(wallet, last.lt, &hash, 1).await?;
-    let last_paid = transactions
-        .transactions
-        .first()
-        .filter(|transaction| transaction.lt == last.lt)
-        .map(|transaction| transaction.utime)
-        .ok_or_else(|| anyhow::anyhow!("the wallet's last transaction was not found"))?;
-    let storage = WalletStorage::from_state(&code, &data, last_paid)?;
+    let storage = wallet_storage_from_rpc(wallet, &account)?;
     let gas = match chain.get_config_param_at_unverified(20, &checkpoint).await? {
         ConfigParamEnum::ConfigParam20(value) => value,
         other => anyhow::bail!("live ConfigParam 20 has unexpected representation: {other:?}"),
@@ -695,6 +684,26 @@ async fn pinned_wallet_reserve(
         body,
     })?;
     Ok((reserve, account.balance))
+}
+
+/// The wallet's storage metadata (used cells and bits, last paid, recorded debt), as
+/// the storage phase will charge it. The node's JSON-RPC answers an account with its
+/// balance, code, data and last transaction only: neither it nor any other method
+/// returns the raw account, and code and data are not a bound (they omit the
+/// library dictionary, extra currencies under older global versions, and any debt).
+/// So the wallet's own charge cannot be bounded and sending is refused rather than
+/// guessed; the printed body can still be sent from an external wallet.
+pub(crate) fn wallet_storage_from_rpc(
+    wallet: &chain_block::MsgAddressInt,
+    _account: &contracts::chain_provider::AddressInfo,
+) -> anyhow::Result<contracts::wallet::send_fees::WalletStorage> {
+    anyhow::bail!(
+        "cannot bound the fees of wallet {wallet}: the node's JSON-RPC does not publish an \
+         account's storage metadata (used cells and bits, last paid, storage debt), and \
+         with mode 3 a wallet that cannot pay sends nothing while still advancing its \
+         seqno. Run without --wallet and send the printed body from an external \
+         masterchain wallet with value + margin for its fees"
+    )
 }
 
 /// The wallet must hold the value and its own fees.
@@ -1759,6 +1768,31 @@ mod offer_create_tests {
             ProposalOutcome::WalletAcceptedUnconfirmed,
             "an unchanged proposal is not this request's registration"
         );
+    }
+
+    /// Without the account's storage metadata the wallet's charge has no bound, so a
+    /// send is refused rather than sized from code and data.
+    #[test]
+    fn a_wallet_send_fails_closed_without_storage_metadata() {
+        let info: contracts::chain_provider::AddressInfo =
+            serde_json::from_value(serde_json::json!({
+                "@type": "raw.fullAccountState",
+                "balance": "1000000000000",
+                "code": "",
+                "data": "",
+                "last_transaction_id": {"@type": "internal.transactionId", "lt": "5", "hash": ""},
+                "block_id": {
+                    "@type": "tos.blockIdExt", "workchain": -1, "shard": "-9223372036854775808",
+                    "seqno": 1, "root_hash": "", "file_hash": ""
+                },
+                "sync_utime": 1,
+                "state": "active",
+            }))
+            .unwrap();
+        let wallet = chain_block::MsgAddressInt::standard(-1, [0xAA; 32]);
+        let error = wallet_storage_from_rpc(&wallet, &info).unwrap_err().to_string();
+        assert!(error.contains("storage metadata"), "{error}");
+        assert!(error.contains("without --wallet"), "{error}");
     }
 
     #[test]

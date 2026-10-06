@@ -251,7 +251,11 @@ async fn v5_transfer_is_bound_to_network_global_id() {
 /// still sends: the reserve covers the wallet's whole mode-3 charge, including
 /// storage due after a long idle period. Mode 3 ignores action errors, so a reserve
 /// below the real charge would show here as the target receiving nothing.
-async fn the_send_reserve_covers_the_wallet_charge(version: WalletVersion) {
+///
+/// `debt` puts that much storage debt on the account first, as a wallet carries after
+/// its balance once fell short of storage and a later top-up did not clear it: the
+/// next external send pays the debt with its storage phase.
+async fn the_send_reserve_covers_the_wallet_charge(version: WalletVersion, debt: u64) {
     use contracts::wallet::send_fees::{SendFeeInputs, WalletStorage, wallet_send_reserve};
     let mut fixture = Fixture::new(version).await;
     let deploy = fixture.signed_transfer(GLOBAL_ID, 0, true).await;
@@ -279,15 +283,13 @@ async fn the_send_reserve_covers_the_wallet_charge(version: WalletVersion) {
     )
     .expect("body");
 
-    let account = fixture.bc.get_account(&fixture.address).expect("deployed").clone();
-    let code = account.get_code().expect("code");
-    let data = account.get_data().expect("data");
-    let storage = WalletStorage::from_state(&code, &data, account.last_paid()).expect("storage");
-    let used = account.storage_info().expect("storage info").used();
-    assert!(
-        storage.cells >= used.cells() && storage.bits >= used.bits(),
-        "{version}: the storage estimate {storage:?} is below the account's own {used:?}"
-    );
+    let mut account = fixture.bc.get_account(&fixture.address).expect("deployed").clone();
+    if debt > 0 {
+        account.set_due_payment(Some(chain_block::Coins::from(debt)));
+        fixture.bc.set_account(fixture.address.clone(), account.clone());
+    }
+    let storage = WalletStorage::from_account(&account).expect("storage");
+    assert_eq!(storage.due_payment, u128::from(debt));
     let config = fixture.bc.config_params();
     let gas = config.gas_prices(true).expect("gas prices");
     let forward = config.fwd_prices(true).expect("forward prices");
@@ -328,15 +330,32 @@ async fn the_send_reserve_covers_the_wallet_charge(version: WalletVersion) {
 
 #[tokio::test]
 async fn v3_send_reserve_covers_the_wallet_charge() {
-    the_send_reserve_covers_the_wallet_charge(WalletVersion::V3R2).await;
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V3R2, 0).await;
 }
 
 #[tokio::test]
 async fn v4_send_reserve_covers_the_wallet_charge() {
-    the_send_reserve_covers_the_wallet_charge(WalletVersion::V4R2).await;
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V4R2, 0).await;
 }
 
 #[tokio::test]
 async fn v5_send_reserve_covers_the_wallet_charge() {
-    the_send_reserve_covers_the_wallet_charge(WalletVersion::V5R1).await;
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V5R1, 0).await;
+}
+
+/// Storage debt below the freeze threshold: the next send pays it, and the reserve
+/// counts it.
+#[tokio::test]
+async fn v3_send_reserve_covers_outstanding_storage_debt() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V3R2, 2 * TOS).await;
+}
+
+#[tokio::test]
+async fn v4_send_reserve_covers_outstanding_storage_debt() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V4R2, 2 * TOS).await;
+}
+
+#[tokio::test]
+async fn v5_send_reserve_covers_outstanding_storage_debt() {
+    the_send_reserve_covers_the_wallet_charge(WalletVersion::V5R1, 2 * TOS).await;
 }
