@@ -643,6 +643,30 @@ def check_bind_node(tool: Path, work: Path, home: Path, shim: Path | None) -> No
     os.mkfifo(db_fifo / "config.json", 0o600)
     refuses(tool, [str(db_fifo), str(key), VALIDATOR_HEX], b"not a regular file", "a FIFO", timeout=20)
 
+    # The lock file persists and the engine opens it for writing at every start, so a
+    # refusal about whose configuration this is must not leave one behind: created by
+    # the wrong user, it would keep the node from starting although nobody holds it. A
+    # database that has no regular configuration of this user's gets no lock file.
+    for db_refused in (private_dir(work, "db-empty-lock"), db_link, db_fifo):
+        refuses(tool, [str(db_refused), str(key), VALIDATOR_HEX], b"configuration", "a database that is not this user's", timeout=20)
+        if (db_refused / "config.json.lock").exists():
+            raise Failure(f"a refused bind-node left a lock file in {db_refused.name}")
+
+    # A key file that is a FIFO is refused at once too, by bind-node and by every reader
+    # of the seed, rather than waited on until something writes to it.
+    fifo_key = home / "fifo.key"
+    os.mkfifo(fifo_key, 0o600)
+    refuses(tool, [str(db3), str(fifo_key), VALIDATOR_HEX], b"not a regular file", "a FIFO key file", timeout=20)
+    for command in ("show", "export"):
+        try:
+            done = subprocess.run(
+                [str(tool), command, str(fifo_key)], capture_output=True, timeout=20
+            )
+        except subprocess.TimeoutExpired:
+            raise Failure(f"{command} hung on a FIFO key file")
+        if done.returncode == 0 or b"not a regular file" not in done.stderr:
+            raise Failure(f"{command} did not refuse a FIFO key file: {done!r}")
+
     # A config.json.tmp left by an interrupted engine write may be the newer of the two;
     # which one is right is the operator's call, so nothing is edited until it is gone.
     db_tmp = private_dir(work, "db-tmp")

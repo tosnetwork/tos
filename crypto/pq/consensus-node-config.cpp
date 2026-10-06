@@ -352,6 +352,27 @@ NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, 
   const std::string path = db_root + "/config.json";
   result.config_path = path;
 
+  // Whose database this is decides who may create its lock file. The lock persists, and
+  // the engine opens it for writing at every start: one created by any other user (root
+  // running this by mistake, say) would keep the node from starting although nobody
+  // holds it. So the configuration has to exist and be this user's before anything is
+  // created; the same facts are checked again once the lock is held.
+  {
+    struct stat owner{};
+    if (::lstat(path.c_str(), &owner) != 0) {
+      why = errno_text(path + ": cannot open the configuration");
+      return NodeBindingOutcome::refused;
+    }
+    if (!S_ISREG(owner.st_mode)) {
+      why = path + ": the configuration is not a regular file (a symbolic link is refused)";
+      return NodeBindingOutcome::refused;
+    }
+    if (owner.st_uid != ::geteuid()) {
+      why = path + ": the configuration is owned by another user; run this as the node's service account";
+      return NodeBindingOutcome::refused;
+    }
+  }
+
   // Held from here until the new configuration is in place: no engine starts, and no
   // other binder reads, until then.
   Descriptor config_lock(take_config_lock(db_root, why));

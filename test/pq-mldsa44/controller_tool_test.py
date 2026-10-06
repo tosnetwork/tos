@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import os
 import re
 import subprocess
 import sys
@@ -115,6 +116,18 @@ def check(controller: Path, consensus: Path, work: Path) -> None:
             raise Failure(f"init-data printed data for {why}")
         if reason not in refused.stderr:
             raise Failure(f"init-data refused {why} without saying why: {refused.stderr[:300]!r}")
+
+    # A root seed path that is a FIFO is refused at once, not waited on.
+    fifo = keys / "fifo.seed"
+    os.mkfifo(fifo, 0o600)
+    try:
+        refused = subprocess.run(
+            [str(controller), "init-data", str(fifo), consensus_id], capture_output=True, timeout=20
+        )
+    except subprocess.TimeoutExpired:
+        raise Failure("init-data hung on a FIFO root seed")
+    if refused.returncode == 0 or b"is not a regular file" not in refused.stderr:
+        raise Failure(f"init-data did not refuse a FIFO root seed: {refused.stderr!r}")
 
     # The state init lands where the witness says the controller lives.
     # Any cell serves as code here; the fixture test uses the compiled controller.
