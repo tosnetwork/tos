@@ -13,6 +13,7 @@ REQUIRED_NATIVE_TARGETS = {
     "toslibjson",
     "generate-random-id",
     "tos-pq-consensus-key",
+    "tos-pq-controller",
     "dht-server",
     "validator-engine-console",
     "validator-engine",
