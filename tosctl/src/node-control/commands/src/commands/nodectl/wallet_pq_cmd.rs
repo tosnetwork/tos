@@ -8,7 +8,11 @@ use secrets_vault::{
     types::secret_id::SecretId,
     vault::SecretVault,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use wallet_pq_signer::{Role, kdf::DerivationContext};
 use zeroize::Zeroizing;
 
@@ -140,6 +144,23 @@ impl PqRestoreKeyCmd {
             "derived PQ key does not match enrolled public key"
         );
         drop(derived);
+        let vault = self.open_vault().await?;
+        let id = SecretId::new(self.record_id.as_str());
+        let signer = wallet_pq_signer::vault::restore_mnemonic(
+            &vault,
+            &id,
+            self.role.native(),
+            phrase,
+            password,
+            context,
+            &expected_key,
+        )
+        .await?;
+        self.report(signer.public_key(), "key_record_restored");
+        Ok(())
+    }
+
+    async fn open_vault(&self) -> anyhow::Result<SecretVault> {
         // Retain no plaintext Vault encryption key after constructing protected memory.
         let source = secret_input::select_source(
             self.vault_key_file.as_deref(),
@@ -165,24 +186,113 @@ impl PqRestoreKeyCmd {
         )
         .await?;
         let vault = SecretVault::new(Arc::new(storage), Arc::new(NullEventHandler {}));
+        Ok(vault)
+    }
+
+    fn report(&self, public_key: &[u8], status: &str) {
+        println!(
+            "{}",
+            serde_json::json!({"status":status, "record_id":self.record_id,
+            "role":wallet_pq_signer::vault::role_tag(self.role.native()), "public_key":hex::encode(public_key),
+            "network_tag":self.network_tag, "global_id":self.global_id, "account_index":self.account_index,
+            "key_generation":self.key_generation})
+        );
+    }
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Create one PQ key with a new 24-word recovery backup; no wallet deployment")]
+pub struct PqCreateKeyCmd {
+    #[arg(long)]
+    vault_file: PathBuf,
+    #[arg(long)]
+    record_id: String,
+    #[arg(long, value_enum)]
+    role: PqRole,
+    /// Write a new mode-0600 plaintext recovery backup; keep it offline. Never overwritten.
+    #[arg(long)]
+    mnemonic_backup_file: PathBuf,
+    #[arg(long)]
+    network_tag: String,
+    #[arg(long, allow_hyphen_values = true)]
+    global_id: i32,
+    #[arg(long)]
+    account_index: u32,
+    #[arg(long)]
+    key_generation: u32,
+    #[arg(long, conflicts_with = "vault_key_fd")]
+    vault_key_file: Option<PathBuf>,
+    #[arg(long, conflicts_with = "vault_key_file")]
+    vault_key_fd: Option<i32>,
+}
+
+fn save_new_backup(path: &Path, phrase: &str) -> anyhow::Result<()> {
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(phrase.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    temporary.persist_noclobber(path)?;
+    std::fs::File::open(parent)?.sync_all()?;
+    let saved = secret_input::read_secret(&secret_input::SecretSource::File(path.to_path_buf()))?;
+    anyhow::ensure!(saved.as_slice() == phrase.as_bytes(), "mnemonic backup readback mismatch");
+    Ok(())
+}
+
+impl PqCreateKeyCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let mut restore = PqRestoreKeyCmd {
+            vault_file: self.vault_file.clone(),
+            record_id: self.record_id.clone(),
+            role: self.role,
+            expected_public_key: "00".repeat(self.role.native().public_key_bytes()),
+            network_tag: self.network_tag.clone(),
+            global_id: self.global_id,
+            account_index: self.account_index,
+            key_generation: self.key_generation,
+            mnemonic_file: None,
+            mnemonic_fd: None,
+            password_file: None,
+            password_fd: None,
+            vault_key_file: self.vault_key_file.clone(),
+            vault_key_fd: self.vault_key_fd,
+        };
+        let (context, _) = restore.enrollment()?;
+        let vault = restore.open_vault().await?;
         let id = SecretId::new(self.record_id.as_str());
+        anyhow::ensure!(
+            !vault.exists(&id).await?,
+            "PQ record already exists; no new backup generated"
+        );
+        let words = Zeroizing::new(tos_native_mnemonic::generate(24)?);
+        let phrase = Zeroizing::new(words.join(" "));
+        let mut master = Zeroizing::new(tos_native_mnemonic::private_seed(&phrase, "")?);
+        let derived = wallet_pq_signer::kdf::derive_signer_and_wipe(
+            &mut *master,
+            context,
+            self.role.native(),
+        )?;
+        let public_key = derived.public_key().to_vec();
+        drop(derived);
+        restore.expected_public_key = hex::encode(&public_key);
+        // Persist and verify the recovery material before storing a derived key.
+        // Any later uncertainty preserves the backup and any possibly written record.
+        save_new_backup(&self.mnemonic_backup_file, &phrase)?;
+        let saved = secret_input::read_secret(&secret_input::SecretSource::File(
+            self.mnemonic_backup_file.clone(),
+        ))?;
+        let saved =
+            std::str::from_utf8(&saved).map_err(|_| anyhow::anyhow!("backup is not UTF-8"))?;
         let signer = wallet_pq_signer::vault::restore_mnemonic(
             &vault,
             &id,
             self.role.native(),
-            phrase,
-            password,
+            saved,
+            "",
             context,
-            &expected_key,
+            &public_key,
         )
         .await?;
-        println!(
-            "{}",
-            serde_json::json!({"status":"key_record_restored", "record_id":self.record_id,
-            "role":wallet_pq_signer::vault::role_tag(self.role.native()), "public_key":hex::encode(signer.public_key()),
-            "network_tag":self.network_tag, "global_id":self.global_id, "account_index":self.account_index,
-            "key_generation":self.key_generation})
-        );
+        restore.report(signer.public_key(), "key_record_created");
         Ok(())
     }
 }

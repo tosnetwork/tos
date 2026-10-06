@@ -105,6 +105,8 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p secrets-vault --lib secret_input::
           python test/wallet-v5r2/cli_restore.py --cli "$CARGO_TARGET_DIR/debug/tosctl" --output artifacts/context/pq-cli-restore
           python test/wallet-v5r2/cli_restore_controls.py --cli "$CARGO_TARGET_DIR/debug/tosctl" --output artifacts/context/pq-cli-controls
+          python test/wallet-v5r2/cli_create.py --cli "$CARGO_TARGET_DIR/debug/tosctl" --output artifacts/context/pq-cli-create
+          python test/wallet-v5r2/cli_create_controls.py --cli "$CARGO_TARGET_DIR/debug/tosctl" --output artifacts/context/pq-cli-create-controls
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule

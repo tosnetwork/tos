@@ -1,0 +1,154 @@
+{
+  "base_commit": "6830864b6262b48edbfdddbd57ee29c12de09260",
+  "scope": "Actual CLI creation of one recoverable PQ role: fresh 24-word native backup durably persisted without overwrite before new encrypted Vault seed storage.",
+  "tests": {
+    "cli_creation_outcomes": {
+      "primary-existing-backup": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-create": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "primary-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "primary-recover-backup": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "rescue-existing-backup": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-create": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "rescue-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "rescue-recover-backup": {
+        "exit": 0,
+        "expected_success": true
+      }
+    },
+    "creation_controls": {
+      "backup_overwrite": {
+        "exit": 1,
+        "semantic_witness": "CLI creation outcome primary-existing-backup"
+      },
+      "duplicate_preflight": {
+        "exit": 1,
+        "semantic_witness": "duplicate creation generated a new backup"
+      },
+      "word_count": {
+        "exit": 1,
+        "semantic_witness": "new PQ key did not use 24 words"
+      }
+    },
+    "restore_controls_after_shared_helper_extraction": {
+      "custody_preflight": {
+        "exit": 1,
+        "semantic_witness": "CLI opened custody before enrollment validation"
+      },
+      "exact_password": {
+        "exit": 1,
+        "semantic_witness": "CLI rejected valid exact-password recovery"
+      },
+      "record_id": {
+        "exit": 1,
+        "semantic_witness": "CLI lost record-id preflight"
+      },
+      "key_width": {
+        "exit": 1,
+        "semantic_witness": "CLI lost key-width preflight"
+      },
+      "duplicate_fd": {
+        "exit": 1,
+        "semantic_witness": "CLI lost duplicate-fd preflight"
+      }
+    },
+    "default_commands_check": "passed",
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet",
+    "python3 test/wallet-v5r2/cli_create.py --cli <built-tosctl> --output <fresh-directory>",
+    "python3 test/wallet-v5r2/cli_create_controls.py --cli <built-tosctl> --output <another-fresh-directory>",
+    "python3 test/wallet-v5r2/cli_restore_controls.py --cli <built-tosctl> --output <third-fresh-directory>",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --locked -p commands --lib --no-default-features",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_cmd.rs",
+      "bytes": 11229,
+      "sha256": "d1850dae428a58449e7c6239ee0732bffa2404f26a633914135f285d82e598d2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_cmd.rs",
+      "bytes": 71541,
+      "sha256": "e7e9ac4015e360cb16747835566d84235ded4efda5380a67e580ce90621e41e6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_create.py",
+      "bytes": 5253,
+      "sha256": "617699f3cc5afbbc8dd03945630f1fbc24e0160f6bd7c4d36af5cc7ca6a87cc7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_create_controls.py",
+      "bytes": 3480,
+      "sha256": "44487e0afe6342d2c891d345ada1752188c265d9a66bc66ecbc9b887eb1538f3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_restore.py",
+      "bytes": 8862,
+      "sha256": "03792c3dbb12283d109cdf0278b3be122679baee3794e4149231daebc622530d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_restore_controls.py",
+      "bytes": 4583,
+      "sha256": "9f1903f19961d6308c40c766695bb4d205b164a0ba18af5eb6d02e435046c40f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 18725,
+      "sha256": "056838213b6b9083daaea41f9210bb75244ab0a54377709f0f70c5af7f0a214b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 149019,
+      "sha256": "ebe0d051a4b1500a192dd4ba9c979afa444605a61315302d0c4593b398223739"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-pq-create/MANIFEST.json",
+      "bytes": 4562,
+      "sha256": "870fb12576ecd790c869432e05d4641b93e81375e3ba0009a7d3423efe9c3ad4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-pq-create-controls/MANIFEST.json",
+      "bytes": 13330,
+      "sha256": "8c9653dae2c0fa24b3eaf494fb560f56d6132852e8af475f4e8c1d2e8cbc483a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-create-restore-controls/MANIFEST.json",
+      "bytes": 29935,
+      "sha256": "182f17cfb3d7da18988369201c259b879d34a8721f6fb9c3ec7943007d6952fa"
+    }
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Creates one PQ custody key, not the complete wallet/module/fee-vault identity or on-chain deployment.",
+    "Empty mnemonic password for newly generated backups; restoration supports exact password input.",
+    "Backup is plaintext in a mode-0600 file; off-device backup verification and independent custody remain caller duties.",
+    "File/directory sync and readback tested normally; no exhaustive power-loss, filesystem tampering or device isolation claim.",
+    "Full manifest/creation orchestration, fee custody/restore, transaction/mobile flow, default-credit admission and final-head CI remain release gates."
+  ]
+}

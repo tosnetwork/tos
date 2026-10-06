@@ -2277,3 +2277,52 @@ This command restores one custody record. Complete wallet creation/manifest
 workflows, transaction CLI/mobile integration, independent-device custody, LMS
 loss handling, default-credit admission and final-head deployment acceptance
 remain release gates. Evidence: `test/wallet-v5r2/cli-restore-20261006.json`.
+
+
+### Recoverable PQ key creation through the CLI
+
+The same `pq-wallet` build feature now enables `wallet pq-create-key`. It creates
+one selected PRIMARY or RESCUE role with a newly generated native 24-word mnemonic
+and the empty mnemonic password. Vault encryption-key input remains protected
+file/FD/hidden prompt input. The public namespace fields and target record are
+explicit; this key-level command does not assemble or deploy a complete wallet.
+Each invocation generates a new master, so separate invocations do not implicitly
+claim a shared master or independent physical devices.
+
+After public input validation and exclusive Vault opening, an existing record
+is rejected before generating a new backup. The command derives the public key,
+writes the recovery phrase to a mode-0600 same-directory temporary file, syncs the
+file, persists it without clobbering an existing destination, syncs the parent
+and checks exact protected readback. Only then does it read the saved backup and
+use the bound mnemonic restoration path to persist the derived role. A later
+failure preserves the recovery backup and any uncertain record. There is no
+automatic deletion/overwrite retry. Success reports `key_record_created` and
+public key/namespace metadata, never the mnemonic or a wallet-ready claim.
+
+```sh
+tosctl wallet pq-create-key --role rescue --record-id wallet.rescue \
+  --vault-file /secure/rescue.json --vault-key-file /secure/vault-key.hex \
+  --mnemonic-backup-file /secure/new-rescue.words \
+  --network-tag "$NETWORK_TAG" --global-id 42 --account-index 5 --key-generation 7
+```
+
+The mnemonic backup is plaintext recovery material despite its restrictive file
+permissions; keep it offline as directed by the custody plan. A shared device
+holding both masters can access both authorities. Filesystem durability and
+trusted-directory assumptions remain the same as the encrypted Vault backend.
+
+Eight actual CLI outcomes cover both roles: existing-backup refusal, successful
+creation, duplicate-record refusal before another backup appears, and recovery
+from that saved backup into another encrypted Vault with the same public key.
+Tests check 24 words, mode 0600, no mnemonic in output or encrypted Vault, and
+unchanged existing data. Fresh test secrets live only in disposable directories
+and are removed when the harness exits. Three rebuilt-binary controls permit
+backup overwrite, remove the duplicate preflight or generate only 12 words;
+each must fail its specific command assertion, then restored commands pass.
+The existing restore CLI controls are rerun after extracting the shared Vault
+opening and public reporting helpers.
+
+This completes a recoverable key-creation primitive, not full wallet creation,
+manifest authentication, verified off-device backup, readiness, deployment or
+mobile acceptance. No power-loss/device-isolation claim follows from these local
+filesystem tests. Evidence: `test/wallet-v5r2/cli-create-20261006.json`.
