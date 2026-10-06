@@ -52,6 +52,7 @@ pub mod wallet;
 pub mod wallet_v5r2;
 pub mod wallet_v5r2_fee;
 pub mod wallet_v5r2_genesis;
+pub mod wallet_v5r2_manifest;
 mod wallet_v5r2_policy;
 pub mod wallet_v5r2_pop;
 pub mod wallet_v5r2_prepare;

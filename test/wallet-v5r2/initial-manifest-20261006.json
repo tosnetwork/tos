@@ -1,0 +1,133 @@
+{
+  "base_commit": "0c8c4b81d607bc582b5e58d71c789694000645f0",
+  "scope": "Strict bounded initial public recovery manifest with independently pinned code and independently trusted wallet identity; not live authority.",
+  "tests": {
+    "manifest_baseline_and_restored": "3 passed each",
+    "semantic_controls": {
+      "schema": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed schema"
+      },
+      "kdf": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed kdf"
+      },
+      "workchain": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted wrong workchain"
+      },
+      "fee_profile": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed fee_profile"
+      },
+      "policy": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed policy"
+      },
+      "trusted_wallet": {
+        "exit": 101,
+        "semantic_witness": "manifest ignored trusted wallet"
+      },
+      "canonical_hex": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted noncanonical hex"
+      },
+      "input_limit": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted oversized input"
+      },
+      "unknown_field": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted unknown field"
+      },
+      "unknown_derivation": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted unknown derivation field"
+      },
+      "wallet_code": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed wallet_code"
+      },
+      "wallet_identity": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed wallet_state_init"
+      },
+      "module_code": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed module_code"
+      },
+      "module_identity": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed module_state_init"
+      },
+      "vault_code": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed vault_code"
+      },
+      "vault_identity": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed vault_state_init"
+      },
+      "fee_config": {
+        "exit": 101,
+        "semantic_witness": "manifest accepted changed fee_config_hash"
+      }
+    },
+    "genesis_regression": "4 passed",
+    "format_and_ruff": "passed"
+  },
+  "commands": [
+    "python3 test/wallet-v5r2/manifest_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2_genesis",
+    "make -C tosctl/src fmt-check",
+    "ruff check test/wallet-v5r2/manifest_controls.py",
+    "ruff format --check test/wallet-v5r2/manifest_controls.py"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_manifest.rs",
+      "bytes": 14828,
+      "sha256": "8297f9fc9b5b6b47603c7d7273734e39205a860292cee2c547af0947e4cfd052"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_genesis.rs",
+      "bytes": 16865,
+      "sha256": "5ac791a97e1ae866362173dbaa6bc7c7ffae89b3f0b319f48c77c2b42b06345c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lib.rs",
+      "bytes": 5536,
+      "sha256": "b0f3884b6e77cc118206d108be7a97aac7261d16609ec81d29837d8f2740f1a0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/manifest_controls.py",
+      "bytes": 5064,
+      "sha256": "009f195e6eba1ef1bd52dacbdb1feb349e481e659cbcd41f20ca4b140e57e973"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 18906,
+      "sha256": "54029e7d30c1a341f2bf6b2c34195978d6bc887e45f7cfbf3ca8cc9c49afea62"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 151318,
+      "sha256": "7c1bb298e4b963a927ad2d96ed2b5c808b1db7bd33f66f72e05f521ec0a99663"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-initial-manifest-controls/MANIFEST.json",
+      "bytes": 5097,
+      "sha256": "e62dc497e10a8561dea97e7344a657905a65195acb1330d6a4392dcb44d8613d"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Dummy code cells and public key fixtures; no compiled-contract deployment or possession proof.",
+    "Declared KDF namespace and seed input formats require recovered-key comparison; identity reconstruction does not authenticate those metadata claims.",
+    "Independent trust anchors must not come from the same manifest.",
+    "Initial identities do not establish current authority after rotation; authenticated live state, retirement, funded POP and fee journal remain separate.",
+    "CLI orchestration, authenticated backup transport, successor manifest and final-head CI remain pending."
+  ]
+}

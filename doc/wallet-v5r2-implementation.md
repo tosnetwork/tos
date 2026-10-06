@@ -2326,3 +2326,39 @@ This completes a recoverable key-creation primitive, not full wallet creation,
 manifest authentication, verified off-device backup, readiness, deployment or
 mobile acceptance. No power-loss/device-isolation claim follows from these local
 filesystem tests. Evidence: `test/wallet-v5r2/cli-create-20261006.json`.
+
+
+## Initial public recovery manifest (2026-10-06)
+
+`wallet_v5r2_manifest::InitialRecoveryManifest` prepares and reconstructs the
+initial wallet, rescue module and fee vault identities. The strict JSON profile
+`TOS-WALLET-V5R2-INITIAL-RECOVERY-v1` records public enrollment inputs, the fixed
+PQ KDF identifier, declared master-input formats and derivation namespace,
+release code hashes, all three StateInit hashes and the fee configuration hash.
+It contains no private seed or mutable LMS leaf counter.
+
+Reconstruction requires an independently trusted basechain wallet address and
+an independently pinned `CodeBundle`; reading those trust anchors from the same
+manifest defeats the binding. The parser bounds input to 16 KiB before JSON
+parsing, rejects unknown and duplicate fields, unsupported profiles and policies,
+noncanonical hexadecimal and invalid field widths, and reconstructs identities
+through `WalletGenesis`. Both RESCUE_READY and SLH_REQUIRED remain supported.
+The seed profile enum has only native mnemonic and raw 32-byte master formats;
+it does not introduce classical wallet authorization.
+
+Declared account index, key generation and seed-input formats are recovery hints
+until actual recovered public keys are compared against enrollment. Address
+reconstruction alone does not authenticate those derivation claims or prove
+backup possession. `last_observed_epoch` is explicitly untrusted display metadata
+and cannot affect reconstruction or authorization. An initial manifest can remain
+valid after rotation: current authenticated chain state, retirement checks,
+funded POP and durable fee-journal continuity remain mandatory separate gates.
+This format does not supply authenticated backup transport or successor recovery.
+
+Three local tests cover both policies, identity reconstruction, hint independence,
+malformed inputs and independent trust anchors. Seventeen semantic deletion
+controls each fail a named assertion when a guard is removed, followed by passing
+restored tests. Both CI architectures run these controls. Fixtures use dummy code
+cells and public test keys; these tests do not prove deployment or real-key
+possession. Complete creation/CLI orchestration with compiled release code remains
+pending. Evidence: `test/wallet-v5r2/initial-manifest-20261006.json`.

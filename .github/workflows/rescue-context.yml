@@ -127,6 +127,9 @@ jobs:
           python test/wallet-v5r2/sdk_genesis_vectors.py --successor --output /tmp/v5r2-successor-vectors.json
           cmp /tmp/v5r2-successor-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/successor-wire.json
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2
+      - name: Initial recovery manifest semantic controls
+        run: |
+          python test/wallet-v5r2/manifest_controls.py --output artifacts/context/initial-manifest-controls
       - name: Wallet SDK semantic deletion controls
         if: matrix.runner == 'ubuntu-24.04'
         run: |

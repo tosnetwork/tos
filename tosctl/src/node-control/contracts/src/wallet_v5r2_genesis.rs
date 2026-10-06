@@ -20,6 +20,13 @@ pub struct CodeBundle {
     vault: Cell,
 }
 impl CodeBundle {
+    pub fn hashes(&self) -> CodeHashes {
+        CodeHashes {
+            wallet: *self.wallet.repr_hash().as_array(),
+            module: *self.module.repr_hash().as_array(),
+            vault: *self.vault.repr_hash().as_array(),
+        }
+    }
     pub fn new(wallet: Cell, module: Cell, vault: Cell, pins: CodeHashes) -> anyhow::Result<Self> {
         for (code, pin) in [(&wallet, pins.wallet), (&module, pins.module), (&vault, pins.vault)] {
             anyhow::ensure!(
@@ -32,6 +39,7 @@ impl CodeBundle {
     }
 }
 
+#[derive(Clone)]
 pub struct GenesisParameters {
     pub global_id: i32,
     pub network: [u8; 32],
@@ -293,7 +301,7 @@ impl SuccessorDeployment {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     fn hash(v: u8) -> [u8; 32] {
         let mut h = [0; 32];
@@ -305,7 +313,7 @@ mod tests {
         b.append_u8(v).expect("byte");
         b.into_cell().expect("cell")
     }
-    fn bundle() -> CodeBundle {
+    pub(crate) fn bundle() -> CodeBundle {
         CodeBundle::new(
             byte(1),
             byte(2),
@@ -318,7 +326,7 @@ mod tests {
         )
         .expect("fixture pins")
     }
-    fn parameters() -> GenesisParameters {
+    pub(crate) fn parameters() -> GenesisParameters {
         let mut key = [0; 60];
         key[..4].copy_from_slice(&1u32.to_be_bytes());
         key[4..8].copy_from_slice(&8u32.to_be_bytes());
