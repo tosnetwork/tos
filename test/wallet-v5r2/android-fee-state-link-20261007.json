@@ -15,5 +15,16 @@
     "jni/x86/libtos_mobile_pq.so": "999491a44b626afddff50ce317cf6c473cf1483812c31427b251977c757afe9b",
     "jni/x86_64/libtos_mobile_pq.so": "d06f394ae804f55b68d2621fb54aa67771db1c3d73e94c37c5fa32f14858440b"
   },
-  "bundle_manifest_sha256": "d43428118febde1b3154ff18774d9e0958ee153effae25c98741c380c2b038fb"
+  "bundle_manifest_sha256": "d43428118febde1b3154ff18774d9e0958ee153effae25c98741c380c2b038fb",
+  "initial_before_complete_dependency_alignment": {
+    "jni_libraries": {
+      "jni/arm64-v8a/libtos_mobile_pq.so": "c35bf3741e91ae60686834c5f3199465a3c4cadc15c776d0da07be97b2a37606",
+      "jni/armeabi-v7a/libtos_mobile_pq.so": "4b252cca0ed56a59e149f671b3dc2d69d332f8ba1c7340d9dd2fd05e94c84f51",
+      "jni/x86/libtos_mobile_pq.so": "999491a44b626afddff50ce317cf6c473cf1483812c31427b251977c757afe9b",
+      "jni/x86_64/libtos_mobile_pq.so": "d06f394ae804f55b68d2621fb54aa67771db1c3d73e94c37c5fa32f14858440b"
+    },
+    "note": "Initial artifact hashes preceded complete transitive alignment; use final hashes below."
+  },
+  "lock_sha256": "8d1a2d649dad0ede260a4305b1bad4377d8d97d7e9f64dc81c8609624aeeea4a",
+  "dependency_inventory": "Full standalone lock selected versions/checksums verified against the canonical source lock"
 }
