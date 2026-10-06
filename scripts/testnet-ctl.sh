@@ -23,7 +23,12 @@ p=json.load(open('/data/shielded-pool/deployment.json'))
 print('Shielded pool:', p['address'], '(local development key)')
 POOL
         else echo 'Shielded pool: no verified deployment receipt'; fi ;;
-    check) cd "$REPO"; uv run python scripts/local_pq_testnet.py check ;;
+    check)
+        cd "$REPO"
+        uv run python scripts/local_pq_testnet.py check
+        if [[ -f /data/configs/node-7.json ]]; then
+            sudo /usr/bin/python3 -I -S /usr/local/lib/tos-dev-services/current/src/scripts/check-local-pq-elections.py
+        fi ;;
     deploy-pool) cd "$REPO"; sudo "$(command -v uv)" run python scripts/local_pq_testnet.py deploy ;;
     logs)
         node="${2:-1}"

@@ -23,23 +23,51 @@ jobs:
   focused:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: test/tostester/src:scripts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Persistent deficit-policy regressions
-        env:
-          PYTHONPATH: scripts
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      - name: Prepare the locked Python API and dependencies
+        run: |
+          uv sync --frozen --no-dev
+          uv run --frozen test/tostester/generate_tl.py
+      - name: Actual funding, wire, crash recovery and snapshot regressions
         run: |
           mkdir -p "$RUNNER_TEMP/local-pq-evidence"
           git rev-parse HEAD > "$RUNNER_TEMP/local-pq-evidence/commit.txt"
           set -o pipefail
-          python3 -m unittest discover -s scripts -p test_local_pq_funding_policy.py -v 2>&1 | tee "$RUNNER_TEMP/local-pq-evidence/policy.log"
-      - name: Retain exact regression sources for independent reproduction
+          uv run --frozen pytest -q -p no:cacheprovider \
+            scripts/test_local_pq_funding_policy.py scripts/test_local_pq_fund_controllers.py \
+            scripts/test_local_pq_funding.py scripts/test_local_pq_transactions.py \
+            scripts/test_local_pq_election_evidence.py scripts/test_local_pq_election_resume.py \
+            scripts/test_local_pq_election_health.py scripts/test_local_pq_elections.py \
+            scripts/test_local_pq_transfers.py scripts/test_local_pq_privacy.py \
+            scripts/test_install_root_services.py scripts/test_local_pq_resources.py \
+            --junitxml="$RUNNER_TEMP/local-pq-evidence/regressions.xml" \
+            2>&1 | tee "$RUNNER_TEMP/local-pq-evidence/regressions.log"
+      - name: The wire oracle must kill a deposit/allowance field swap
+        run: |
+          uv run --frozen python - <<'PY'
+          import pytest
+          import local_pq_funding as funding
+          original = funding.operating_payload
+          funding.operating_payload = lambda payer, deposit, allowance, limit, floor, expires: original(payer, allowance, deposit, limit, floor, expires)
+          status = pytest.main(["-q", "-p", "no:cacheprovider", "scripts/test_local_pq_fund_controllers.py::test_unequal_deposit_and_allowance_have_the_contract_field_order"])
+          assert status == 1, f"field-swap control must fail its assertion, not pass or fail to collect: {status}"
+          PY
+      - name: Retain exact source inputs for independent reproduction
         if: always()
         run: |
-          git archive --format=tar.gz --output="$RUNNER_TEMP/local-pq-evidence/sources.tar.gz" HEAD scripts test/tostester crypto/smartcont tools/shielded-pool-circuit tl .github/workflows pyproject.toml uv.lock tosctl/src/node-control/contracts
+          mkdir -p "$RUNNER_TEMP/local-pq-evidence"
+          git archive --format=tar.gz --output="$RUNNER_TEMP/local-pq-evidence/sources.tar.gz" HEAD scripts test/tostester crypto/smartcont tools/shielded-pool-circuit tl .github/workflows pyproject.toml uv.lock tosctl/src/node-control/contracts doc/Local-PQ-Network.md doc/local-pq-network-defects-20261006.md
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -75,11 +103,16 @@ jobs:
         run: |
           set -o pipefail
           timeout 900 python3 scripts/check-local-pq-generator.py --checkout "$GITHUB_WORKSPACE" --generator tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic | tee "$RUNNER_TEMP/generator-isolation.log"
+      - name: Real protected installer admission and runtime-reader negative control
+        run: |
+          set -o pipefail
+          sudo python3 scripts/check-local-pq-protected-resources.py --checkout "$GITHUB_WORKSPACE" --generator tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic | tee "$RUNNER_TEMP/generator-protected.log"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: local-pq-generator-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             ${{ runner.temp }}/generator-isolation.log
+            ${{ runner.temp }}/generator-protected.log
             tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic
           retention-days: 3

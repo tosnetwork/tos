@@ -53,11 +53,22 @@ def test_every_field_is_bound_into_the_payload(field, value):
 @pytest.mark.parametrize("field", ["deposit", "allowance", "limit", "floor"])
 @pytest.mark.parametrize("value", [0, -1, 1 << 120])
 def test_amounts_must_be_positive_and_fit_var_uint16(field, value):
-    with pytest.raises(ValueError):
-        payload(**{field: value})
+    if field == "deposit" and value == 0:
+        assert payload(deposit=0).hash != payload().hash
+    else:
+        with pytest.raises(ValueError):
+            payload(**{field: value})
 
 
 @pytest.mark.parametrize("expires", [0, 1 << 32])
 def test_expiry_must_fit_uint32(expires):
     with pytest.raises(ValueError):
         payload(expires=expires)
+
+
+def test_unequal_deposit_and_allowance_have_the_contract_field_order():
+    cs = payload(deposit=80 * NANO, allowance=60 * NANO).begin_parse()
+    assert cs.load_address() == PAYER
+    assert [cs.load_coins() for _ in range(4)] == [80 * NANO, 60 * NANO, 20 * NANO, 10 * NANO]
+    assert cs.load_uint(32) == 1793838000
+    assert cs.remaining_bits == cs.remaining_refs == 0
