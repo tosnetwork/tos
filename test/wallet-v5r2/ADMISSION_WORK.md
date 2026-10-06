@@ -88,3 +88,20 @@ account code, balances and gas-price parameters remain unchanged. The
 equal one and the attempt consumes work. A targeted charge-deletion control
 must fail this test. Basechain 20,000-credit calibration and full release genesis
 acceptance remain separate gates.
+
+## Explicit genesis candidate
+
+A wrapper may define both `v5r2-network-tag` (the chosen public 256-bit AUTH
+namespace) and `v5r2-admission-candidate` before including
+`crypto/smartcont/gen-zerostate.fif`. This generates version 18 and basechain
+ConfigParam 21 credit 20,000. Masterchain ConfigParam 20 stays at credit 10,000;
+all other gas-price fields are unchanged. Omitting the candidate flag retains
+the existing version-16 default or version-17 AUTH-only profile. The candidate
+requires the namespace before any wallet key generation.
+
+The [genesis evidence](admission-genesis-20261006.json) reads actual generated
+BOCs and includes version/credit mutations and an early-namespace-guard deletion.
+This is a configuration candidate for further acceptance work. Rust defaults,
+the separate localnet generator, opcode version boundaries, full default-credit
+transaction parity, calibrated node rates and public-network activation remain
+pending; generating a BOC does not establish these gates.

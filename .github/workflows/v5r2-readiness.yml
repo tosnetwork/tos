@@ -71,7 +71,8 @@ jobs:
         run: |
           uv run python -m pytest -q test/tostester/tests/tostester/test_zerostate_auth_policy.py \
             test/tostester/tests/tostester/test_zerostate_supply.py \
-            -k 'auth_policy or initial_retirement or missing_policy or version16_retains or bad_namespace' \
+            test/tostester/tests/tostester/test_zerostate_fee_schedule.py \
+            -k 'auth_policy or initial_retirement or missing_policy or version16_retains or bad_namespace or admission_candidate or deployment_schedule or test_schedule' \
             > "$RUNNER_TEMP/v5r2-evidence/genesis.log" 2>&1
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

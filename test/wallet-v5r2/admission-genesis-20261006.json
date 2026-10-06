@@ -1,0 +1,99 @@
+{
+  "base_commit": "cc102a9c65274d446a534b554120ff1207833d12",
+  "source_state": "uncommitted changes on base commit",
+  "platform": "macOS AArch64 native create-state",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "crypto/smartcont/gen-zerostate.fif": "e837c6a29ffdf605ebd723f65db1eaa29982061480982122dce4f3814d828d4e",
+    "test/tostester/tests/tostester/test_zerostate_supply.py": "e5b0666debe3a991c926eb815d49f54d0060af921568c57e54ed403637506226",
+    "test/tostester/tests/tostester/test_zerostate_fee_schedule.py": "f70371fb3b4e36c9758908ca1c617e90cf052a72391efaf8605e0fb7b495ece8",
+    ".github/workflows/v5r2-readiness.yml": "6ce3b8e37ae4e63e45b71c0378990445a309d5bc4ecdc42eb5fd6dddd28a23bc",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "206d3c81817256a4d74eb421a627e5ce1f6953fe58b4e78ff879b45c4e4cd65c"
+  },
+  "tool": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue/build/crypto/create-state",
+    "sha256": "f564b4aa093b0c973df5e4c1a58e2d7deabdc8a0ceba46b25047944590bc647a"
+  },
+  "command": "PYTHONPATH=test/tostester/src TOS_ROOT=/Users/tomisetsu/tos-v5r2-rescue /Users/tomisetsu/tos/.venv/bin/python -m pytest -q test/tostester/tests/tostester/test_zerostate_auth_policy.py test/tostester/tests/tostester/test_zerostate_supply.py test/tostester/tests/tostester/test_zerostate_fee_schedule.py -k \"auth_policy or initial_retirement or missing_policy or version16_retains or bad_namespace or admission_candidate or deployment_schedule or test_schedule\" --basetemp=/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression",
+  "returncode": 0,
+  "tests_passed": 19,
+  "generated_profiles": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_admission_candidate_param0/mutated/zerostate.boc",
+      "sha256": "ef7476ffe96ac40b5775127704e4fbffbd38d0868d30a21e6cf1907561e73cdf",
+      "bytes": 21721,
+      "version": 17,
+      "masterchain_credit": 10000,
+      "basechain_credit": 20000
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_admission_candidate_param0/restored/zerostate.boc",
+      "sha256": "ecb2a97de646a61b4c8c4db60215a6a594aaa99af4c6f88810d08c7e8ff9392d",
+      "bytes": 21721,
+      "version": 18,
+      "masterchain_credit": 10000,
+      "basechain_credit": 20000
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_admission_candidate_param1/mutated/zerostate.boc",
+      "sha256": "e7f1b564c96152df996fd2c5ad1583309ceb180477c339d56ccbd6c0f8bf9917",
+      "bytes": 21721,
+      "version": 18,
+      "masterchain_credit": 10000,
+      "basechain_credit": 10000
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_admission_candidate_param1/restored/zerostate.boc",
+      "sha256": "ecb2a97de646a61b4c8c4db60215a6a594aaa99af4c6f88810d08c7e8ff9392d",
+      "bytes": 21721,
+      "version": 18,
+      "masterchain_credit": 10000,
+      "basechain_credit": 20000
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_canonical_genesis_auth_po0/admission18/zerostate.boc",
+      "sha256": "ecb2a97de646a61b4c8c4db60215a6a594aaa99af4c6f88810d08c7e8ff9392d",
+      "bytes": 21721,
+      "version": 18,
+      "masterchain_credit": 10000,
+      "basechain_credit": 20000
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_canonical_genesis_auth_po0/candidate17/zerostate.boc",
+      "sha256": "8f2dccc686f5b0b35f55b777ddecad233587ea80c133dba70e9a492e7c5f38d3",
+      "bytes": 21721,
+      "version": 17,
+      "masterchain_credit": 10000,
+      "basechain_credit": 10000
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_canonical_genesis_auth_po0/default16/zerostate.boc",
+      "sha256": "b78f93abd030ecb225cde0a9586dd954c12a3e15dcccd50a62e6f8f76c8b644f",
+      "bytes": 21567,
+      "version": 16,
+      "masterchain_credit": 10000,
+      "basechain_credit": 10000
+    }
+  ],
+  "logs": {
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression.log": {
+      "sha256": "45ff3c303cac72ff1d55ee07d31cce48f281779b4e23d52a7abf830a23878cda",
+      "bytes": 114
+    },
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_admission_candidate_requi0/guarded.stderr.raw": {
+      "sha256": "adefc606180a8a9eba6f4ec88521de613c6104213fe3596cca2b2f3195f940cc",
+      "bytes": 887
+    },
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-genesis-regression/test_admission_candidate_requi0/unguarded.stderr.raw": {
+      "sha256": "49eaa8057cc98575b70c797a34ab13cf074fdc721a33f5e952f2408a241bca66",
+      "bytes": 1122
+    }
+  },
+  "scope": "Explicit admission candidate generates version18, basechain credit20000 and masterchain credit10000. All remaining gas fields equal legacy profiles. Generated version17 and credit10000 mutants fail candidate assertions; restored templates pass. Early namespace-guard deletion reaches wallet-key generation instead of the required early rejection. Existing AUTH policy regressions pass.",
+  "limitations": [
+    "Canonical genesis candidate only; default profile remains unchanged.",
+    "Rust defaults and separate localnet generator remain unsynchronized with the candidate.",
+    "Opcode version boundaries, actual default-config dual-VM transaction corpus and calibrated node work rates are pending.",
+    "No public chain activation or production release acceptance."
+  ]
+}

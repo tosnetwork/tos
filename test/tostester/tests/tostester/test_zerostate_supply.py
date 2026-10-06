@@ -20,6 +20,8 @@ from pytosiq_core.tlb.config import (
     ConfigParam15,
     ConfigParam16,
     ConfigParam17,
+    ConfigParam20,
+    ConfigParam21,
     ConfigParam28,
     ConfigParam34,
 )
@@ -970,7 +972,10 @@ def test_public_pq_manifest_packer_roundtrip_and_rejections(tmp_path):
 
 def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
     network_tag = bytes(range(32))
-    for label, enabled in (("default16", False), ("candidate17", True)):
+    baseline_wc = None
+    baseline_mc = None
+    for label, enabled, admission in (("default16", False, False), ("candidate17", True, False),
+                                       ("admission18", True, True)):
         directory = tmp_path / label
         directory.mkdir()
         _write_pq_manifest(directory)
@@ -978,6 +983,7 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
         wrapper = directory / "profile.fif"
         wrapper.write_text(
             (f"0x{network_tag.hex()} constant v5r2-network-tag\n" if enabled else "")
+            + ("true constant v5r2-admission-candidate\n" if admission else "")
             + f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n'
         )
         subprocess.run(
@@ -989,7 +995,20 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
         )
         state = _load_masterchain_state(directory / "zerostate.boc")
         cfg = state.custom.config.config
-        assert ConfigParam8.deserialize(cfg[8].copy()).version == (17 if enabled else 16)
+        assert ConfigParam8.deserialize(cfg[8].copy()).version == (18 if admission else 17 if enabled else 16)
+        mc_gas = ConfigParam20.deserialize(cfg[20].copy())
+        wc_gas = ConfigParam21.deserialize(cfg[21].copy())
+        assert mc_gas.other.gas_credit == 10000
+        assert wc_gas.other.gas_credit == (20000 if admission else 10000)
+        wc_fields = dict(vars(wc_gas.other))
+        wc_fields.pop("gas_credit")
+        wc_fields.update(flat_gas_limit=wc_gas.flat_gas_limit, flat_gas_price=wc_gas.flat_gas_price)
+        mc_fields = dict(vars(mc_gas.other))
+        mc_fields.update(flat_gas_limit=mc_gas.flat_gas_limit, flat_gas_price=mc_gas.flat_gas_price)
+        if baseline_wc is None:
+            baseline_wc, baseline_mc = wc_fields, mc_fields
+        assert wc_fields == baseline_wc, "candidate changed another basechain gas field"
+        assert mc_fields == baseline_mc, "candidate changed a masterchain gas field"
         assert (48 in cfg) == enabled
         assert (48 in ConfigParam9.deserialize(cfg[9].copy()).mandatory_params) == enabled
         assert (48 in ConfigParam10.deserialize(cfg[10].copy()).critical_params) == enabled
@@ -1004,3 +1023,70 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
                 == "5e4380aedc95f8cb72de55f7506de0269b47c03ad1d1ed0e5184c332544262c0"
             )
             assert record.remaining_bits == record.remaining_refs == 0
+
+
+def _generate_admission_candidate(directory, source):
+    directory.mkdir()
+    _write_pq_manifest(directory)
+    (directory / "main-wallet.pk").write_bytes(b"\x53" * 32)
+    template = directory / "candidate-template.fif"
+    template.write_text(source)
+    wrapper = directory / "candidate.fif"
+    wrapper.write_text(
+        f"0x{bytes(range(32)).hex()} constant v5r2-network-tag\n"
+        "true constant v5r2-admission-candidate\n"
+        f'"{template}" include\n'
+    )
+    result = subprocess.run(_create_state_command(wrapper), cwd=directory, capture_output=True,
+                            env=_mainnet_genesis_env())
+    (directory / "generation.stdout.raw").write_bytes(result.stdout)
+    (directory / "generation.stderr.raw").write_bytes(result.stderr)
+    result.check_returncode()
+    return _load_masterchain_state(directory / "zerostate.boc").custom.config.config
+
+
+def _assert_admission_candidate(cfg):
+    assert ConfigParam8.deserialize(cfg[8].copy()).version == 18, "candidate version"
+    assert ConfigParam21.deserialize(cfg[21].copy()).other.gas_credit == 20000, "candidate credit"
+    assert ConfigParam20.deserialize(cfg[20].copy()).other.gas_credit == 10000, "masterchain credit"
+
+
+@pytest.mark.parametrize("boundary", ["version", "credit"])
+def test_admission_candidate_parameter_mutation_is_detected(tmp_path, boundary):
+    source = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    if boundary == "version":
+        anchor, replacement = "18 capCreateStats", "17 capCreateStats"
+    else:
+        anchor, replacement = "30 *M 30 *M 20000 60 *M", "30 *M 30 *M 10000 60 *M"
+    assert source.count(anchor) == 1
+    mutated = _generate_admission_candidate(tmp_path / "mutated", source.replace(anchor, replacement))
+    with pytest.raises(AssertionError, match="candidate " + boundary):
+        _assert_admission_candidate(mutated)
+    _assert_admission_candidate(_generate_admission_candidate(tmp_path / "restored", source))
+
+
+def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path):
+    wrapper = tmp_path / "missing-tag.fif"
+    wrapper.write_text("true constant v5r2-admission-candidate\n"
+                       f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n')
+    result = subprocess.run(_create_state_command(wrapper), cwd=tmp_path, capture_output=True,
+                            env=_mainnet_genesis_env())
+    assert result.returncode != 0
+    assert b"V5R2 admission candidate requires an explicit AUTH network tag" in result.stderr
+    assert not (tmp_path / "main-wallet.pk").exists()
+    (tmp_path / "guarded.stderr.raw").write_bytes(result.stderr)
+
+    # Removing the early guard must make this boundary check fail, even if a
+    # later configuration validation eventually rejects the missing policy.
+    source = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    guard = '  def? v5r2-network-tag not abort"V5R2 admission candidate requires an explicit AUTH network tag"'
+    assert source.count(guard) == 1
+    mutated = tmp_path / "without-guard.fif"
+    mutated.write_text(source.replace(guard, "  // Controlled deletion of early namespace validation."))
+    wrapper.write_text("true constant v5r2-admission-candidate\n" f'"{mutated}" include\n')
+    result = subprocess.run(_create_state_command(wrapper), cwd=tmp_path, capture_output=True,
+                            env=_mainnet_genesis_env())
+    (tmp_path / "unguarded.stderr.raw").write_bytes(result.stderr)
+    with pytest.raises(AssertionError, match="early namespace guard"):
+        assert b"V5R2 admission candidate requires an explicit AUTH network tag" in result.stderr, "early namespace guard"
+    assert (tmp_path / "main-wallet.pk").exists(), "unguarded candidate reached custody generation"

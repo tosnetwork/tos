@@ -5,6 +5,10 @@
 "PQ.fif" include
 "Lists.fif" include
 
+def? v5r2-admission-candidate {
+  def? v5r2-network-tag not abort"V5R2 admission candidate requires an explicit AUTH network tag"
+} if
+
 // =====================================================================
 //  CANONICAL MAINNET GENESIS — Native (wc=0) only
 // =====================================================================
@@ -132,6 +136,11 @@ Masterchain swap
 def? v5r2-network-tag {
   17 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
 } if
+// Explicit candidate for admission measurements; activation still requires a
+// calibrated node work budget and the frozen release acceptance corpus.
+def? v5r2-admission-candidate {
+  18 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
+} if
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
@@ -202,6 +211,9 @@ config.special!
 // chain's zerostate, not in the contract, so `profile_hash`, the genesis
 // state hash and the deployment address are all unmoved.
 436907 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
+def? v5r2-admission-candidate {
+  436907 30 *M 30 *M 20000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
+} if
 // masterchain gas (aligned with production)
 655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000 config.mc_gas_prices!
 // lump_price bit_price cell_price ihr_factor first_frac next_frac
