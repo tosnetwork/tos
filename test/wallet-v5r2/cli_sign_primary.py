@@ -60,6 +60,7 @@ def main():
     parser.add_argument("--genesis-driver", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--rescue-lock", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     cli = [str(args.cli.resolve()), "wallet"]
@@ -71,6 +72,7 @@ def main():
     for key in ("recovery_manifest", "recovery_derivation", "existing_wallet", "expected_wallet"):
         payload.pop(key, None)
     payload["network"] = vectors["context"]["network_hex"]
+    signing_role = "rescue" if args.rescue_lock else "primary"
     results = {}
     with tempfile.TemporaryDirectory(prefix="pq-primary-cli-") as tmp:
         root = Path(tmp)
@@ -92,6 +94,11 @@ def main():
             check=True,
         )
         payload["primary_key"] = (root / "primary.pub").read_bytes().hex()
+        if args.rescue_lock:
+            payload["rescue_key"] = subprocess.check_output(
+                [os.environ["SLH_TOOL"], "keygen", vector["derived"]["SLH-DSA-SHA2-128s"]],
+                text=True,
+            ).split()[0]
 
         def genesis(data):
             r = subprocess.run(
@@ -128,7 +135,9 @@ def main():
             account_index=5,
             key_generation=7,
             primary_seed_profile="tos-native-mnemonic-v1",
-            rescue_seed_profile="raw-master-32-v1",
+            rescue_seed_profile="tos-native-mnemonic-v1"
+            if args.rescue_lock
+            else "raw-master-32-v1",
             fee_seed_profile="raw-master-32-v1",
         )
         output = genesis(payload)
@@ -138,7 +147,7 @@ def main():
             "--vault-file",
             str(root / "vault.json"),
             "--record-id",
-            "primary",
+            signing_role,
             "--vault-key-file",
             keyfile,
         ]
@@ -148,9 +157,9 @@ def main():
                 "pq-restore-key",
                 *custody,
                 "--role",
-                "primary",
+                signing_role,
                 "--expected-public-key",
-                payload["primary_key"],
+                payload[signing_role + "_key"],
                 "--network-tag",
                 payload["network"],
                 "--global-id",
@@ -272,6 +281,8 @@ def main():
             "wrong_record",
             "duplicate",
         ):
+            if args.rescue_lock and mode == "unsafe_actions":
+                continue
             chosen = policy(2 if mode == "retired" else 0)
             scenario = dict(
                 mode="valid",
@@ -290,7 +301,7 @@ def main():
             deadline = int(time.time()) + (-1 if mode == "expired" else 600)
             destination = root / ("valid" if mode == "duplicate" else mode)
             command = cli + [
-                "pq-sign-primary-initial",
+                "pq-lock-primary-initial" if args.rescue_lock else "pq-sign-primary-initial",
                 *common,
                 *custody,
                 "--actions",
@@ -300,6 +311,9 @@ def main():
                 "--output-dir",
                 str(destination),
             ]
+            if args.rescue_lock:
+                idx = command.index("--actions")
+                del command[idx : idx + 2]
             if mode == "unsafe_actions":
                 bad = Cell().uint(0x0EC3C86D, 32).uint(0, 8).ref(Cell()).ref(message)
                 command[command.index("--actions") + 1] = file("unsafe.boc", bad.boc())
@@ -313,13 +327,32 @@ def main():
             r = subprocess.run(command, capture_output=True, text=True, timeout=90)
             (args.output / (mode + ".stdout")).write_text(r.stdout)
             (args.output / (mode + ".stderr")).write_text(r.stderr)
-            assert (r.returncode == 0) == (mode == "valid"), (mode, r.stderr)
+            success = mode == "valid" or (
+                args.rescue_lock and mode in ("retired", "missing_policy")
+            )
+            assert (r.returncode == 0) == success, (mode, r.stderr)
             results[mode] = dict(exit=r.returncode)
-            if mode == "valid":
+            if success:
                 report = json.loads(r.stdout)
                 submission = from_boc((destination / "submission.boc").read_bytes())
                 request = submission.refs[0]
                 assert report["auth_digest"] == Cell().raw(b"TOS-AUTH").ref(request).hash.hex()
+                if args.rescue_lock:
+                    from cli_lock_primary import execute_lock
+
+                    results[mode].update(
+                        execute_lock(
+                            submission,
+                            report,
+                            codes,
+                            data,
+                            addresses,
+                            None if mode == "missing_policy" else chosen,
+                            args.output,
+                            mode,
+                        )
+                    )
+                    continue
                 assert report["actions_hash"] == actions.hash.hex()
                 assert request.refs[0].refs[0].hash == actions.hash
                 assert report["submission_hash"] == submission.hash.hex()
@@ -455,8 +488,9 @@ def main():
                 if mode == "duplicate":
                     assert before == {p.name: p.read_bytes() for p in destination.iterdir()}
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+    label = "SLH lock" if args.rescue_lock else "primary signing"
     print(
-        f"{len(results)} primary signing CLI outcomes passed; native recipient delivery and refusal controls passed"
+        f"{len(results)} {label} CLI outcomes passed; native execution and refusal controls passed"
     )
 
 

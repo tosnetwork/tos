@@ -1,0 +1,59 @@
+{
+  "base_commit": "f70d0d50c0ab8bf891682fae25c5f1b941412a04",
+  "scope": "Actual encrypted SLH CLI signing and local native module/wallet lock, epoch transition, replay and corrupt-signature refusal. Proof responses are mocked; no fee authorization, broadcast or live finality.",
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_lock_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-slh-lock-controls",
+  "exit": 0,
+  "restored_outcomes": {
+    "valid": 0,
+    "retired": 0,
+    "missing_policy": 0,
+    "expired": 1,
+    "wrong_record": 1,
+    "duplicate": 1
+  },
+  "native_success_cases": [
+    "valid",
+    "retired",
+    "missing_policy"
+  ],
+  "native_replay_exit": 1803,
+  "native_corrupt_signature_exit": 1808,
+  "semantic_control": "Replacing all three LockPrimary selections with an empty Execute signs a different valid action and fails CLI did not sign a lock action; restored lock passes.",
+  "regressions": {
+    "primary_cli_signing_and_recipient_delivery": 7,
+    "inspection_cli": 8
+  },
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-slh-lock.tar.gz",
+    "sha256": "fe453d1a2f9b58e65339f5b2103313731b9ae718fbfe18705e0024b7cd04aeb6",
+    "bytes": 420865
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_lock_cmd.rs",
+      "sha256": "351fbc7e581935c6a0ae7bb9669e2633b01b6178289b59224605c212bc152720",
+      "bytes": 3167
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_sign_cmd.rs",
+      "sha256": "3a69ea5f68e2dd7425432184002bdd751153fef82aef785e6623b1aa3a0c64a2",
+      "bytes": 4421
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_lock_controls.py",
+      "sha256": "2dfdc110d8ea53a86b714b5935609522110f375807ac61fd431a8730e5b40723",
+      "bytes": 2966
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_lock_primary.py",
+      "sha256": "86e1e32b1df57119e96df45d8f540c07b284f41b29325eee24a0723880667e90",
+      "bytes": 4012
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_sign_primary.py",
+      "sha256": "08920a1cf9791a5b9a5be45684dbafe117794bcca8c4cc4676adc663ee9e53b3",
+      "bytes": 21840
+    }
+  ]
+}

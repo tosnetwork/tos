@@ -502,3 +502,7 @@ pub use inspect::PqInspectInitialCmd;
 #[path = "wallet_pq_sign_cmd.rs"]
 mod sign;
 pub use sign::PqSignPrimaryInitialCmd;
+
+#[path = "wallet_pq_lock_cmd.rs"]
+mod lock;
+pub use lock::PqLockPrimaryInitialCmd;

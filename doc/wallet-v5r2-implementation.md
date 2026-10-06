@@ -3141,3 +3141,37 @@ broadcast, finality on a live network, a funded relayer wallet transaction or a
 complete application pending-transaction manager.
 
 Evidence: [PRIMARY CLI recipient delivery](../test/wallet-v5r2/cli-primary-delivery-20261006.json).
+
+
+## Initial SLH lock client
+
+`tosctl wallet pq-lock-primary-initial` signs only the exact RESCUE `lock_primary`
+action using the enrolled SLH-DSA-SHA2-128s key in encrypted custody. It accepts the
+same proof, manifest, independent code/account pins, deadline, Vault and output
+arguments as `pq-sign-primary-initial`, without `--actions`. The initial wallet and
+module must match current authenticated state; an already migrated tuple requires
+its successor enrollment and is not accepted by this initial-only entrypoint.
+
+The command does not request ConfigParam 48 or depend on PRIMARY retirement policy.
+It checks the rescue request before opening custody, uses the bound native SLH
+signer with post-load freshness checks, and rechecks expiry after signing. Output
+is the exact SUB3 body and its public binding report in a new durable directory.
+`rescue_lock_submission_signed` means a signature exists, not that the wallet is
+locked on chain. The CLI does not yet submit an LMS fee authorization or broadcast
+this body. Once executed by the wallet, locking retires PRIMARY and advances the
+authority epoch; signing the request alone does neither.
+
+The actual CLI is tested with mnemonic-derived encrypted rescue custody, mock
+proof responses, and the complete compiled native module/wallet. Three successful
+cases cover ordinary, globally retired PRIMARY and missing global-policy states.
+Each checks the exact RESCUE role/lock action, successful module forwarding, the
+wallet's retired bit and advanced epoch, reset nonces, no outgoing payment, rejected
+replay with unchanged authority state, and rejection of a corrupted SLH signature.
+Expired requests, missing custody records and duplicate output paths are also
+refused. Replacing the lock action with an ordinary empty execution must produce a
+validly signed but different action and fail the exact-lock assertion; restoring
+the command must pass. This is local execution evidence, not live finality or
+fee-funded recovery acceptance. PRIMARY signing/payment regressions cover the
+shared durable output writer extracted for these two commands.
+
+Evidence: [SLH lock CLI execution and controls](../test/wallet-v5r2/cli-slh-lock-20261006.json).
