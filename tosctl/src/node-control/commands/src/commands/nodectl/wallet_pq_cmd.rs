@@ -498,3 +498,7 @@ pub use fee::PqRestoreFeeInitialCmd;
 #[path = "wallet_pq_inspect_cmd.rs"]
 mod inspect;
 pub use inspect::PqInspectInitialCmd;
+
+#[path = "wallet_pq_sign_cmd.rs"]
+mod sign;
+pub use sign::PqSignPrimaryInitialCmd;

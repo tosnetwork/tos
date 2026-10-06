@@ -2,7 +2,7 @@
 use super::{InitialCodeArgs, PathBuf, bounded_public_file, public_hash};
 use common::app_config::ProofVerifierConfig;
 use contracts::{
-    proven_getters::{ProvenGetterProvider, ReadPolicy},
+    proven_getters::{ProvenAccountState, ProvenGetterProvider, ReadPolicy},
     wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
     wallet_v5r2_wallet_state::ProvenWalletState,
 };
@@ -12,6 +12,12 @@ use contracts::{
     about = "Inspect the proven initial PQ wallet/module pair; no signing or readiness claim"
 )]
 pub struct PqInspectInitialCmd {
+    #[command(flatten)]
+    proof: InitialProofArgs,
+}
+
+#[derive(clap::Args, Clone)]
+pub(super) struct InitialProofArgs {
     #[arg(long)]
     recovery_manifest: PathBuf,
     /// Independently authenticated basechain wallet account ID, in hex.
@@ -27,12 +33,19 @@ pub struct PqInspectInitialCmd {
     max_age_seconds: u32,
 }
 
-fn now() -> anyhow::Result<u32> {
+pub(super) fn now() -> anyhow::Result<u32> {
     Ok(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs().try_into()?)
 }
 
-impl PqInspectInitialCmd {
-    pub async fn run(&self) -> anyhow::Result<()> {
+pub(super) struct InitialProof {
+    pub wallet: ProvenAccountState,
+    pub module: ProvenAccountState,
+    pub view: ProvenWalletState,
+    pub observed_at: u32,
+}
+
+impl InitialProofArgs {
+    pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
         let (_, genesis) = InitialRecoveryManifest::parse_and_reconstruct(
             &bounded_public_file(&self.recovery_manifest, MAX_MANIFEST_BYTES)?,
             self.code.load()?,
@@ -47,7 +60,9 @@ impl PqInspectInitialCmd {
         let provider = ProvenGetterProvider::new(&config)?;
         let wallet_address = format!("0:{}", genesis.wallet_init().repr_hash().to_hex_string());
         let module_address = format!("0:{}", genesis.module_init().repr_hash().to_hex_string());
-        let wallet = provider.read_account(&wallet_address.parse()?, &ReadPolicy::Live).await?;
+        let wallet = provider
+            .read_account_with_config(&wallet_address.parse()?, config_params, &ReadPolicy::Live)
+            .await?;
         let module = provider
             .read_account(
                 &module_address.parse()?,
@@ -63,6 +78,15 @@ impl PqInspectInitialCmd {
             observed_at,
             self.max_age_seconds,
         )?;
+        Ok(InitialProof { wallet, module, view, observed_at })
+    }
+}
+
+impl PqInspectInitialCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let InitialProof { wallet, module, view, observed_at } = self.proof.read(&[]).await?;
+        let wallet_address = &wallet.evidence().account.address;
+        let module_address = &module.evidence().account.address;
         let checkpoint = &wallet.evidence().checkpoint;
         println!(
             "{}",

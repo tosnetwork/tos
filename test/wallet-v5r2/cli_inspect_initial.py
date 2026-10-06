@@ -43,6 +43,8 @@ if scenario["mode"] == "other_checkpoint" and request["mode"] == "historical":
 out = dict(status="verified", interface="tos-proof-verify/1", mode=request["mode"],
     anchor=anchor, target=target, account=account,
     request_sha256=hashlib.sha256(request_bytes).hexdigest())
+if "config_params" in scenario:
+    out["config_params"] = scenario["config_params"] if request.get("config_params") else []
 if scenario["mode"] == "wrong_request":
     out["request_sha256"] = "ff"*32
 if request["mode"] == "live":

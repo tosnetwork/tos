@@ -3067,3 +3067,45 @@ must pass. These checks do not establish cryptographic proof validity or live
 network availability. Real verifier/network integration remains required.
 
 Evidence: [CLI inspection controls](../test/wallet-v5r2/cli-inspect-20261006.json).
+
+
+## Initial PRIMARY signing client
+
+`tosctl wallet pq-sign-primary-initial` composes the initial proof-reader with the
+native ML-DSA-44 encrypted Vault signer. It requests ConfigParam 48 with the live
+wallet proof, reads the module at that same checkpoint, validates the strict V5
+OutList and checks local/global PRIMARY policy before opening custody. The signer
+binds the selected record to the enrolled primary public key and rechecks time and
+policy after loading it. After signing, the CLI rechecks freshness and expiry
+before writing a new output directory; existing outputs are never overwritten.
+
+Use the same manifest, independent code/wallet pins, proof configuration and age
+arguments as `pq-inspect-initial`, plus:
+
+```sh
+  --actions approved-actions.boc --valid-until "$DEADLINE" \
+  --vault-file primary-vault.json --record-id primary \
+  --vault-key-file protected-vault-key --output-dir new-primary-submission
+```
+
+The actions BOC must be the owner's approved full OutList, including recipients,
+values and message bodies. The command emits `submission.boc` (internal SUB3 body)
+and `binding.json` (checkpoint, actions hash, AUTH digest, counters and deadline).
+It does not reserve a wallet nonce, create an LMS fee authorization, broadcast, or
+establish delivery. A failure after output-directory creation leaves the partial
+directory for inspection; a caller must not infer signing failure or resend under
+new counters automatically. The local proof verifier may update its live-state
+anti-rollback record even if later signing fails.
+
+Seven CLI outcomes cover signing, retired/missing global policy, expiry, unsafe
+send mode, wrong custody record and preservation of existing output. The positive
+uses a public test mnemonic restored into a real encrypted Vault, signs through
+the native backend, and executes that randomized signature in the compiled module
+with successful action-phase forwarding. A corrupted signature is rejected by the
+module. Proof responses are mocked at the trusted local verifier boundary: this
+proves client composition and module signature execution, not network proof
+acquisition, a complete fee-funded payment or recipient delivery. Removing the
+global retirement guard must make the CLI sign under the retired policy and fail
+the refusal assertion; restoration must recover all seven outcomes.
+
+Evidence: [PRIMARY CLI signing controls](../test/wallet-v5r2/cli-primary-signing-20261006.json).

@@ -1,0 +1,149 @@
+{
+  "base_commit": "46b9e219be800fdd3a74f3afcec0fb583b790e67",
+  "scope": "Actual encrypted Vault and randomized PRIMARY signature executed in native module; proof verifier is mocked. No fee-funded broadcast or recipient delivery claim.",
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_primary_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-primary-controls",
+  "exit": 0,
+  "baseline": {
+    "valid": {
+      "exit": 0,
+      "module_signature_execution": {
+        "exit": 0,
+        "gas": 79405,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "corrupt_signature_exit": 1808
+    },
+    "retired": {
+      "exit": 1
+    },
+    "missing_policy": {
+      "exit": 1
+    },
+    "expired": {
+      "exit": 1
+    },
+    "unsafe_actions": {
+      "exit": 1
+    },
+    "wrong_record": {
+      "exit": 1
+    },
+    "duplicate": {
+      "exit": 1
+    }
+  },
+  "restored": {
+    "valid": {
+      "exit": 0,
+      "module_signature_execution": {
+        "exit": 0,
+        "gas": 79405,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "corrupt_signature_exit": 1808
+    },
+    "retired": {
+      "exit": 1
+    },
+    "missing_policy": {
+      "exit": 1
+    },
+    "expired": {
+      "exit": 1
+    },
+    "unsafe_actions": {
+      "exit": 1
+    },
+    "wrong_record": {
+      "exit": 1
+    },
+    "duplicate": {
+      "exit": 1
+    }
+  },
+  "inspection_regression": {
+    "valid": {
+      "exit": 0,
+      "requests": 2
+    },
+    "refusal": {
+      "exit": 1,
+      "requests": 1
+    },
+    "wrong_request": {
+      "exit": 1,
+      "requests": 1
+    },
+    "other_checkpoint": {
+      "exit": 1,
+      "requests": 2
+    },
+    "stale_account": {
+      "exit": 1,
+      "requests": 2
+    },
+    "wrong_wallet_pin": {
+      "exit": 1,
+      "requests": 0
+    },
+    "loose_age": {
+      "exit": 1,
+      "requests": 0
+    },
+    "module_data": {
+      "exit": 1,
+      "requests": 2
+    }
+  },
+  "semantic_control": "Removing the global retirement guard permits real PRIMARY CLI signing under retired policy and fails the retired refusal assertion; restored guard passes.",
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-primary-signing.tar.gz",
+    "sha256": "7ddaf52ecb0c4aa46b9f236f8f5288696b7dc8a7ae5a7e8e18c869fa6563af09",
+    "bytes": 60946
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_sign_cmd.rs",
+      "sha256": "a0f1cbe55d30f1a2bd7af4cd46463d0595695edd586511e1810c6dd0bcc4b4a7",
+      "bytes": 4317
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "sha256": "8d1258f3cc7a20c496e3152774532bce04c4c7922e1f44815a0f26bde084a202",
+      "bytes": 4867
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_policy.rs",
+      "sha256": "85fe11b34555f58281c43ea7406f50191d0676cab70485ffc675615f87960085",
+      "bytes": 4651
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_sign_primary.py",
+      "sha256": "87ecfc8143d366da3ed02ed48dda60959da37b87223bebdcadadcab646748124",
+      "bytes": 12831
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_primary_controls.py",
+      "sha256": "e14fed5bd209490443a6d9cf2b52c9b15ac7efea63cecdba77db0ed4a8b32b9a",
+      "bytes": 2844
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_inspect_initial.py",
+      "sha256": "ad0484c2b81d0aa3e7d22e27beb5bbc71809fb9ebc368efac15d7a2291a6fd11",
+      "bytes": 8762
+    }
+  ]
+}

@@ -213,6 +213,13 @@ jobs:
             --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
             --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-prepare-controls
+      - name: Initial primary signing CLI retirement controls
+        run: |
+          python test/wallet-v5r2/cli_primary_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --output artifacts/context/cli-primary-controls
       - name: Initial wallet inspection proof-binding controls
         run: |
           python test/wallet-v5r2/cli_inspect_controls.py \
