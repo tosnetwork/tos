@@ -113,18 +113,18 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::B
   ExecConfigKey key{config_snapshot.mc_block_id, wc, state.utime};
   auto& exec_config = exec_configs_[key];
   alarm_timestamp().relax(td::Timestamp::in(60.0));
-  if (exec_config.nolog == nullptr) {
-    exec_config.nolog = CO_TRY(ExtMessageQ::ExecutionConfig::create(*config_snapshot.config, wc, state.utime, false));
-    exec_config.log = CO_TRY(ExtMessageQ::ExecutionConfig::create(*config_snapshot.config, wc, state.utime, true));
+  if (exec_config == nullptr) {
+    exec_config = CO_TRY(ExtMessageQ::ExecutionConfig::create(*config_snapshot.config, wc, state.utime, false));
     if (exec_configs_.size() > 16) {
       std::erase_if(exec_configs_, [&](const auto& item) {
-        return item.second.nolog == nullptr || item.first.utime + 60 < state.utime;
+        return item.second == nullptr || item.first.utime + 60 < state.utime;
       });
     }
   }
 
-  CO_TRY(run_message(wc, std::move(account), unpack_account, state.utime, state.lt + 1, message->root_cell(),
-                     exec_config));
+  // Admission failures must not trigger a second VM execution just to collect logs.
+  CO_TRY(ExtMessageQ::run_message_on_account(wc, &account, state.utime, state.lt + 1, message->root_cell(),
+                                            *exec_config));
   result.timings.vm = timer.elapsed();
   co_return result;
 }
@@ -174,26 +174,6 @@ td::Result<bool> ExtMessageChecker::check_workchain_execution(const td::Ref<ExtM
                                        << wc);
   }
   return false;
-}
-
-td::Status ExtMessageChecker::run_message(WorkchainId wc, block::Account account,
-                                          const std::function<td::Result<block::Account>()>& rebuild_account,
-                                          UnixTime utime, LogicalTime lt, const td::Ref<vm::Cell>& msg_root,
-                                          ExecConfigPair& exec_config) {
-  auto status = ExtMessageQ::run_message_on_account(wc, &account, utime, lt, msg_root, *exec_config.nolog);
-  if (status.is_ok()) {
-    return status;
-  }
-  auto rebuilt = rebuild_account();
-  if (rebuilt.is_error()) {
-    return status;
-  }
-  auto retry_account = rebuilt.move_as_ok();
-  auto status_with_log = ExtMessageQ::run_message_on_account(wc, &retry_account, utime, lt, msg_root, *exec_config.log);
-  if (status_with_log.is_error()) {
-    return status_with_log;
-  }
-  return status;
 }
 
 td::actor::Task<ExtMessageChecker::ResolvedState> ExtMessageChecker::resolve_state(td::Ref<MasterchainState> mc_state,

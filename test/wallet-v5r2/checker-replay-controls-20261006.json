@@ -1,0 +1,63 @@
+{
+  "fixed_sources": {
+    "validator/impl/ext-message-checker.cpp": "080ef0c13ba023e4f2f04b9dbe673b9a878931614db7c3b31504eb6207ed6a85",
+    "validator/impl/ext-message-checker.hpp": "575d4b7abd53f0eacd0411d1c024e2378504b1652dd763eea69904681cceca13"
+  },
+  "replay_reference": "47451af9d08ae5c907c1fa3fc64c8001b39ee49b",
+  "returncodes": {
+    "baseline-build": 0,
+    "baseline": 0,
+    "replay-enabled-build": 0,
+    "replay-enabled": 1,
+    "restored-build": 0,
+    "restored": 0
+  },
+  "logs": {
+    "baseline-build.log": {
+      "sha256": "6a4cec9e6fb8cca2c7c52002b38be5b6817d88c946406a4b9735737d92ef8a48",
+      "bytes": 494
+    },
+    "baseline.log": {
+      "sha256": "dd680097b0dc861afcfd0548e7ab688cffc4ddc33d5709b1a768c0e381a083af",
+      "bytes": 1520
+    },
+    "replay-enabled-build.log": {
+      "sha256": "6a4cec9e6fb8cca2c7c52002b38be5b6817d88c946406a4b9735737d92ef8a48",
+      "bytes": 494
+    },
+    "replay-enabled.log": {
+      "sha256": "dc58a52efe43723df825bc50fdc15e268dbee9d694055f4dd70f7847e25c3153",
+      "bytes": 11292
+    },
+    "restored-build.log": {
+      "sha256": "6a4cec9e6fb8cca2c7c52002b38be5b6817d88c946406a4b9735737d92ef8a48",
+      "bytes": 494
+    },
+    "restored.log": {
+      "sha256": "ce947250d6196f6bbf6830119228f8edd94dd7d37eeacec6751c6bcbae0bbc4e",
+      "bytes": 1522
+    }
+  },
+  "scope": "actual checker and VM, rejected empty-body config-contract message; not PQ signature load tests",
+  "base_commit": "47451af9d08ae5c907c1fa3fc64c8001b39ee49b",
+  "source_state": "uncommitted changes on base commit",
+  "sources": {
+    "validator/impl/ext-message-checker.cpp": "080ef0c13ba023e4f2f04b9dbe673b9a878931614db7c3b31504eb6207ed6a85",
+    "validator/impl/ext-message-checker.hpp": "575d4b7abd53f0eacd0411d1c024e2378504b1652dd763eea69904681cceca13",
+    "test/test-ext-message-pool.cpp": "128e57548db352644058765710ef5a85be8661dc50ecc2395520095804bf710d",
+    "scripts/check-ext-message-replay-controls.py": "2de52f0fecc6b9e4f56124396052976be25eea29accd3eef296563a48930075a",
+    "test/pq-native/data/c04-pq-genesis.boc": "4e833bf9650c48448969688b862abfd6ad31dd504aa9ab68757db683e47bb162"
+  },
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-checker-replay-controls",
+  "retain_until": "2027-01-06",
+  "platform": "Linux arm64, Release clang",
+  "command": "python3 scripts/check-ext-message-replay-controls.py --container v5r2-admission-linux --output-dir <retained-output>",
+  "result": "6 baseline and restored tests pass; historical replay fails with starts=2 and finishes=2 instead of 1",
+  "observation": "Transaction-layer DEBUG logs immediately surrounding vm.run; fixture must reach both events or test fails",
+  "remaining": [
+    "Successful accepted-message VM count fixture",
+    "PQ bad-signature and mixed-network workload cases",
+    "Global all-source calibrated work-budget integration",
+    "Actual release genesis and full dual-VM transaction matrix"
+  ]
+}

@@ -14,12 +14,17 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
+#include <filesystem>
+
+#include "block/block-parse.h"
+#include "td/utils/filesystem.h"
 #include "td/actor/TestScheduler.h"
 #include "td/utils/tests.h"
 #include "validator/impl/ext-message-checker.hpp"
 #include "validator/impl/ext-message-pool.hpp"
 #include "validator/impl/shard.hpp"
 #include "vm/boc.h"
+#include "vm/vm.h"
 
 namespace tos::validator {
 namespace {
@@ -173,4 +178,71 @@ TEST(ExtMessagePool, QueuedRequestUsesFreshLimitsWithoutCountingDispatch) {
     co_return td::Unit{};
   });
 }
+}  // namespace tos::validator
+
+namespace tos::validator {
+namespace {
+class VmExecutionCounter final : public td::LogInterface {
+ public:
+  unsigned starts{0}, finishes{0};
+  std::string messages;
+  void append(td::CSlice message, int) override {
+    const auto text = message.str();
+    starts += text.find("starting VM") != std::string::npos;
+    finishes += text.find("VM terminated with exit code") != std::string::npos;
+    messages += text;
+  }
+};
+
+TEST(ExtMessageChecker, RejectedContractExecutesVmExactlyOnce) {
+  ASSERT_TRUE(vm::init_vm().is_ok());
+  const auto path = std::filesystem::path(__FILE__).parent_path() / "pq-native/data/c04-pq-genesis.boc";
+  auto file = td::read_file(path.string());
+  ASSERT_TRUE(file.is_ok());
+  auto root = vm::std_boc_deserialize(file.move_as_ok());
+  ASSERT_TRUE(root.is_ok());
+  auto state_root = root.move_as_ok();
+  BlockIdExt id{masterchainId, shardIdAll, 0, state_root->get_hash().bits(), FileHash::zero()};
+  auto extracted = block::ConfigInfo::extract_config(state_root, id, 0xFFFF);
+  ASSERT_TRUE(extracted.is_ok());
+  auto address_cell = extracted.ok()->get_config_param(0);
+  ASSERT_TRUE(address_cell.not_null());
+  StdSmcAddress address;
+  ASSERT_TRUE(vm::load_cell_slice(address_cell).fetch_bits_to(address));
+  auto state_result = MasterchainStateQ::fetch(id, td::BufferSlice{}, state_root);
+  ASSERT_TRUE(state_result.is_ok());
+  td::Ref<MasterchainState> state = state_result.move_as_ok();
+  // Valid external envelope, but an empty body cannot authorize the config
+  // contract. Count the transaction layer's actual vm.run entry/exit logs.
+  auto message = vm::CellBuilder().store_long(2, 2).store_zeroes(2)
+      .store_long(2, 2).store_zeroes(1).store_long(-1, 8)
+      .store_bits(address.cbits(), 256).store_zeroes(4 + 1 + 1).finalize();
+  auto encoded = vm::std_boc_serialize(message);
+  ASSERT_TRUE(encoded.is_ok());
+  VmExecutionCounter counter;
+  auto previous_log = td::log_interface;
+  auto previous_level = GET_VERBOSITY_LEVEL();
+  td::log_interface = &counter;
+  SET_VERBOSITY_LEVEL(VERBOSITY_NAME(DEBUG));
+  {
+    SCOPE_EXIT {
+      td::log_interface = previous_log;
+      SET_VERBOSITY_LEVEL(previous_level);
+    };
+    td::actor::TestScheduler scheduler;
+    scheduler.run([&]() -> td::actor::Task<td::Unit> {
+      auto checker = td::actor::create_actor<ExtMessageChecker>("vm-count", td::actor::ActorId<ValidatorManager>{});
+      auto result = co_await td::actor::ask(checker.get(), &ExtMessageChecker::check,
+          encoded.move_as_ok(), state->get_ext_msg_limits(), state).wrap();
+      ASSERT_TRUE(result.is_error());
+      co_return td::Unit{};
+    });
+  }
+  if (counter.starts != 1 || counter.finishes != 1) {
+    LOG(ERROR) << counter.messages;
+  }
+  EXPECT_EQ(counter.starts, 1u);
+  EXPECT_EQ(counter.finishes, 1u);
+}
+}  // namespace
 }  // namespace tos::validator
