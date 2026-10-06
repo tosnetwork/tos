@@ -1,0 +1,19 @@
+{
+  "status": "local build evidence only",
+  "scope": "Android four-ABI Rust state library, JNI and Kotlin wrapper compile/link; no emulator execution, signed cache export or complete recovery acceptance",
+  "command": "./gradlew :lib:security:assembleDebug --no-daemon --max-workers=2",
+  "dependencies": "exported selected versions/checksums verified against canonical source Cargo.lock",
+  "sources": {
+    "lib/security/src/main/cpp/pq_jni.cpp": "739ff5fa8f40b8591f545e34d9731ddf059b840e3dd9e9bc9a95227d2889c3af",
+    "lib/security/src/main/java/network/tos/security/pq/FeeStateNative.kt": "2b2d3ef8413fbb38e1f4f5a3a8fd6612a355d540e80cd7d49e055508d6eb11ec",
+    "lib/security/src/main/cpp/CMakeLists.txt": "9a5dca7ff3ca21ed77c247c9962c7c22e842de0b782767580f33b89810f23d88",
+    "lib/security/build.gradle.kts": "48a9664a8675bdce0ec8ab89befbebb72607ecd7a76beec433b7993a93cf2f19"
+  },
+  "jni_libraries": {
+    "jni/arm64-v8a/libtos_mobile_pq.so": "c35bf3741e91ae60686834c5f3199465a3c4cadc15c776d0da07be97b2a37606",
+    "jni/armeabi-v7a/libtos_mobile_pq.so": "4b252cca0ed56a59e149f671b3dc2d69d332f8ba1c7340d9dd2fd05e94c84f51",
+    "jni/x86/libtos_mobile_pq.so": "999491a44b626afddff50ce317cf6c473cf1483812c31427b251977c757afe9b",
+    "jni/x86_64/libtos_mobile_pq.so": "d06f394ae804f55b68d2621fb54aa67771db1c3d73e94c37c5fa32f14858440b"
+  },
+  "bundle_manifest_sha256": "d43428118febde1b3154ff18774d9e0958ee153effae25c98741c380c2b038fb"
+}
