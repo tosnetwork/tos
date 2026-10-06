@@ -64,16 +64,23 @@ target_compile_definitions(tos_pq_controller_root PRIVATE MLD_CONFIG_FILE="conse
 target_link_libraries(tos_pq_controller_root PUBLIC tos_pq_consensus PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
 
 # Provisioning for the node's consensus key. It links the same library the node loads
-# the key with, so the two cannot disagree about what a valid key file is.
-add_executable(tos-pq-consensus-key "${CMAKE_CURRENT_SOURCE_DIR}/consensus-key-tool.cpp")
-set_target_properties(tos-pq-consensus-key PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-# The tool includes OpenSSL headers itself; link the same OpenSSL::Crypto target so its
-# headers come from the library it links, not from whatever the system search path holds.
-target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus OpenSSL::Crypto)
-add_test(NAME consensus-key-tool
-         COMMAND "${CMAKE_COMMAND}" -E env python3
-                 "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/consensus_key_tool_test.py"
-                 --tool "$<TARGET_FILE:tos-pq-consensus-key>")
+# the key with, so the two cannot disagree about what a valid key file is, and the
+# engine's own TL schema for the node configuration it edits, so it cannot write a
+# configuration the engine would read differently. The standalone verifier build has no
+# TL schema, and no tool.
+if(TARGET tl_api)
+  add_executable(tos-pq-consensus-key "${CMAKE_CURRENT_SOURCE_DIR}/consensus-key-tool.cpp"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/consensus-node-config.cpp")
+  set_target_properties(tos-pq-consensus-key PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+  # The tool includes OpenSSL headers itself; link the same OpenSSL::Crypto target so its
+  # headers come from the library it links, not from whatever the system search path holds.
+  target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus tl_api tdutils
+                        OpenSSL::Crypto)
+  add_test(NAME consensus-key-tool
+           COMMAND "${CMAKE_COMMAND}" -E env python3
+                   "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/consensus_key_tool_test.py"
+                   --tool "$<TARGET_FILE:tos-pq-consensus-key>")
+endif()
 
 set(PQ_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44")
 add_executable(test-pq-mldsa44-wrapper "${PQ_TEST_DIR}/test.cpp")

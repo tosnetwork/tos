@@ -24,8 +24,10 @@ using detail::directory_is_private;
 using detail::parent_directory;
 using detail::SeedBuffer;
 
+}  // namespace
+
 // The shared refusal, in the words this key's operator needs.
-ConsensusKeyFileError as_consensus_error(detail::SeedFileRefusal refusal) noexcept {
+ConsensusKeyFileError consensus_key_refusal(detail::SeedFileRefusal refusal) noexcept {
   switch (refusal) {
     case detail::SeedFileRefusal::cannot_open:
       return ConsensusKeyFileError::cannot_open;
@@ -44,8 +46,6 @@ ConsensusKeyFileError as_consensus_error(detail::SeedFileRefusal refusal) noexce
   }
   return ConsensusKeyFileError::read_failed;
 }
-
-}  // namespace
 
 const char* describe(ConsensusKeyFileError error) noexcept {
   switch (error) {
@@ -76,7 +76,7 @@ const char* describe(ConsensusKeyFileError error) noexcept {
 std::variant<ValidatorPQKeyStore, ConsensusKeyFileError> load_consensus_key(std::string_view path) noexcept {
   SeedBuffer seed;
   if (auto refused = detail::read_protected_seed(path, seed)) {
-    return as_consensus_error(*refused);
+    return consensus_key_refusal(*refused);
   }
   auto store = ValidatorPQKeyStore::from_seed(
       std::string_view(reinterpret_cast<const char*>(seed.bytes.data()), seed.bytes.size()));

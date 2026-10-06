@@ -10,9 +10,11 @@
 // that rotates it.
 //
 // The file is a dedicated 32-byte ML-DSA-44 seed, the format `tos-pq-key` writes, kept
-// apart from the ADNL/Ed25519 keyring. It is never read through that keyring and never
-// leaves this machine through an export path: the expanded secret exists only in the
-// signer this builds, and the seed buffer is wiped once it has.
+// apart from the ADNL/Ed25519 keyring. It is never read through that keyring, and the node
+// has no path that sends it anywhere: the expanded secret exists only in the signer this
+// builds, and the seed buffer is wiped once it has. The one deliberate way a seed leaves
+// a file is the operator's `tos-pq-consensus-key export`, for the offline ceremony that
+// binds a key to its controller; it is a command an operator types, not a node surface.
 //
 // Every refusal below is a property of the local machine, not of the chain, so a node
 // that hits one has been misconfigured and must not start. That is why they are told
@@ -24,6 +26,7 @@
 #include <variant>
 
 #include "consensus-pq-signer.h"
+#include "seed-file.h"
 
 namespace tos::pq {
 
@@ -47,6 +50,11 @@ enum class ConsensusKeyFileError {
 // What went wrong, in the words an operator needs to fix it.
 const char* describe(ConsensusKeyFileError error) noexcept;
 
+// A refusal of the shared seed-file rules, as this key's refusal. Anything that reads a
+// consensus seed with `detail::read_protected_seed` reports through this, so an operator
+// reads the same words whichever command refused the file.
+ConsensusKeyFileError consensus_key_refusal(detail::SeedFileRefusal refusal) noexcept;
+
 // Load the seed at `path` and derive the signer it stands for.
 //
 // The file must be a regular file this process owns, with no group or world bits, in a
@@ -68,8 +76,8 @@ std::variant<ConsensusPQKey, ConsensusKeyFileError> create_consensus_key(std::st
 // the public key it derives. Refuses anything that is not 32 bytes, and refuses to
 // replace a key that is already there.
 //
-// There is no operation the other way. The seed can be put in; it cannot be read back
-// out, by this or by any other path in the node.
+// The node has no operation the other way. Reading a seed back out is the operator
+// tool's `export`, which exists only for the offline binding ceremony.
 std::variant<ConsensusPQKey, ConsensusKeyFileError> import_consensus_key(std::string_view path,
                                                                          std::string_view seed) noexcept;
 
