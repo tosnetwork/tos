@@ -78,10 +78,24 @@ impl InitialContext {
         &self.genesis
     }
     pub(super) async fn fee(&self) -> anyhow::Result<ProvenFeeVault> {
+        Ok(self.fee_snapshot().await?.1)
+    }
+    pub(super) async fn fee_snapshot(
+        &self,
+    ) -> anyhow::Result<(ProvenAccountState, ProvenFeeVault)> {
         let address =
             format!("0:{}", self.genesis.vault_init().repr_hash().to_hex_string()).parse()?;
         let account = self.provider.read_account(&address, &ReadPolicy::Live).await?;
-        ProvenFeeVault::bind(&account, &self.genesis, now()?, self.max_age_seconds)
+        let view = ProvenFeeVault::bind(&account, &self.genesis, now()?, self.max_age_seconds)?;
+        Ok((account, view))
+    }
+    pub(super) async fn fee_at(
+        &self,
+        checkpoint: contracts::MasterchainCheckpoint,
+    ) -> anyhow::Result<ProvenAccountState> {
+        let address =
+            format!("0:{}", self.genesis.vault_init().repr_hash().to_hex_string()).parse()?;
+        self.provider.read_account(&address, &ReadPolicy::Historical(checkpoint)).await
     }
     pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
         let genesis = &self.genesis;

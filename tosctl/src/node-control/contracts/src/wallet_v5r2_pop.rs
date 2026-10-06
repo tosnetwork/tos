@@ -40,6 +40,48 @@ pub struct PopRequest {
 }
 
 impl PopRequest {
+    /// Reconstruct a retained initial challenge for a verified execution time.
+    /// Parsing is not proof of possession or challenge freshness. Receipt checks
+    /// must still bind its exact bytes to authenticated funded execution.
+    pub fn from_initial_cell(
+        cell: Cell,
+        enrollment: &crate::wallet_v5r2_genesis::WalletGenesis,
+        execution_time: u32,
+    ) -> anyhow::Result<Self> {
+        use chain_block::{CellType, SliceData};
+        anyhow::ensure!(
+            cell.cell_type() == CellType::Ordinary && cell.level() == 0,
+            "ordinary POP request required"
+        );
+        let mut wire = SliceData::load_cell(cell.clone())?;
+        anyhow::ensure!(
+            wire.remaining_bits() == 616 && wire.remaining_references() == 2,
+            "retained POP request shape mismatch"
+        );
+        anyhow::ensure!(wire.get_next_u32()? == 0x504f5033, "retained POP opcode mismatch");
+        wire.move_by(32 + 256)?;
+        let role = match wire.get_next_byte()? {
+            1 => AuthRole::Primary,
+            2 => AuthRole::Rescue,
+            _ => anyhow::bail!("retained POP role invalid"),
+        };
+        let challenge = *wire.get_next_hash()?.as_array();
+        let deadline = wire.get_next_u32()?;
+        let (request, _, _) = Self::from_enrolled(
+            enrollment.module_init(),
+            *enrollment.wallet_init().repr_hash().as_array(),
+            role,
+            challenge,
+            deadline,
+            execution_time,
+        )?;
+        anyhow::ensure!(
+            request.cell.repr_hash() == cell.repr_hash(),
+            "retained POP enrollment or canonical encoding mismatch"
+        );
+        Ok(request)
+    }
+
     /// `primary_key_hash` is the hash of the canonical 1,312-byte public-key
     /// cell chain, not a hash of raw bytes. All bindings must match verified
     /// module state; `proven_time` is from a fresh proof-checked chain view.
@@ -452,6 +494,49 @@ mod tests {
     fn request(b: PopBinding, role: AuthRole, policy: RescuePolicy) -> anyhow::Result<PopRequest> {
         PopRequest::new(b, role, policy, hash(111), hash(222), 1_780_000_000)
     }
+    #[test]
+    fn retained_initial_pop_reconstructs_only_exact_enrollment() {
+        use crate::wallet_v5r2_genesis::{
+            WalletGenesis,
+            tests::{bundle, parameters},
+        };
+        let enrollment = WalletGenesis::new(bundle(), parameters()).expect("enrollment");
+        let now = 1_780_000_000;
+        for role in [AuthRole::Primary, AuthRole::Rescue] {
+            let (request, _, _) = PopRequest::from_enrolled(
+                enrollment.module_init(),
+                *enrollment.wallet_init().repr_hash().as_array(),
+                role,
+                [7; 32],
+                now + 600,
+                now,
+            )
+            .expect("request");
+            let restored = PopRequest::from_initial_cell(request.cell().clone(), &enrollment, now)
+                .expect("retained request");
+            assert_eq!(restored.digest(), request.digest());
+            assert_eq!(restored.role(), role);
+            assert!(
+                PopRequest::from_initial_cell(request.cell().clone(), &enrollment, now + 600)
+                    .is_err()
+            );
+            let (other, _, _) = PopRequest::from_enrolled(
+                enrollment.module_init(),
+                [9; 32],
+                role,
+                [7; 32],
+                now + 600,
+                now,
+            )
+            .expect("different wallet");
+            assert!(
+                PopRequest::from_initial_cell(other.cell().clone(), &enrollment, now).is_err(),
+                "retained POP accepted another wallet"
+            );
+        }
+        assert!(PopRequest::from_initial_cell(Cell::default(), &enrollment, now).is_err());
+    }
+
     #[test]
     fn independent_pop_vectors() {
         let vectors: serde_json::Value =

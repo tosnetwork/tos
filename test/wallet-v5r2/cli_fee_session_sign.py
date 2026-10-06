@@ -148,7 +148,7 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
         if args.fee_session_pop:
             from cli_fee_session_pop import check_pop_flow
 
-            check_pop_flow(args, root, request, journal, payload, codes, data, addresses)
+            check_pop_flow(args, root, request, journal, payload, codes, data, addresses, common)
             stop()
             return
         signed_dir = root / "signed"

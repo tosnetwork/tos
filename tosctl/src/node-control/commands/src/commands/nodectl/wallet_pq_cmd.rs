@@ -510,3 +510,7 @@ pub use lock::PqLockPrimaryInitialCmd;
 #[path = "wallet_pq_fee_session.rs"]
 mod fee_session;
 pub use fee_session::PqFeeSessionInitialCmd;
+
+#[path = "wallet_pq_pop_receipt_cmd.rs"]
+mod pop_receipt;
+pub use pop_receipt::PqVerifyPopInitialCmd;

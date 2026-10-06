@@ -10,7 +10,7 @@ import cli_sign_primary as shared
 native, Cell, from_boc = shared.native, shared.Cell, shared.from_boc
 
 
-def check_pop_flow(args, root, request, journal, payload, codes, data, addresses):
+def check_pop_flow(args, root, request, journal, payload, codes, data, addresses, common):
     native.NOW = int(time.time())
     original = native.config
 
@@ -29,10 +29,23 @@ def check_pop_flow(args, root, request, journal, payload, codes, data, addresses
         emu = native.Emulator(global_version=17)
     with patch.object(native, "config", lambda *a, **k: config_with_credit(10000)):
         limited = native.Emulator(global_version=17)
-    vault_before = native.active_account(addresses["vault"], codes["vault"], data["vault"])
-    module_before = native.active_account(addresses["module"], codes["module"], data["module"])
+    scenario = json.loads((root / "scenario.json").read_text())
+
+    def observed_state(name):
+        record = scenario["accounts"][f"0:{addresses[name][1]:064x}"]
+        account = from_boc(base64.b64decode(record["state_boc"]))
+        return (
+            Cell()
+            .uint(int(record["last_trans_hash"], 16), 256)
+            .uint(record["last_trans_lt"], 64)
+            .ref(account)
+        )
+
+    vault_before = observed_state("vault")
+    module_before = observed_state("module")
     challenges = set()
     outcomes = []
+    receipts = []
     try:
         for offset, role in enumerate(["primary", "rescue", "primary"]):
             output = root / f"pop-{offset}"
@@ -79,6 +92,10 @@ def check_pop_flow(args, root, request, journal, payload, codes, data, addresses
             assert message.hash.hex() == result["message_hash"] == retried["message_hash"]
             rejected = limited.send(vault_before, message)
             assert not rejected["success"] and rejected.get("vm_exit_code") == -14, rejected
+            observed_fee = from_boc((output / "fee-observed-account.boc").read_bytes())
+            observed_module = from_boc((output / "module-observed-account.boc").read_bytes())
+            assert observed_fee.hash == vault_before.refs[0].hash
+            assert observed_module.hash == module_before.refs[0].hash
             paid = emu.send(vault_before, message)
             forwarded = shared.check_execution(paid, vault_before, message, "fee vault")
             assert len(forwarded) == 1
@@ -90,6 +107,7 @@ def check_pop_flow(args, root, request, journal, payload, codes, data, addresses
             assert module_after.hash == data["module"].hash, (
                 "POP changed module authorization state"
             )
+            receipts.append(dict(output=output, paid=paid, proved=proved, role=role))
             vault_before = from_boc(paid["shard_account"])
             module_before = from_boc(proved["shard_account"])
             fee_data, balance = native.account_data(vault_before)
@@ -97,13 +115,19 @@ def check_pop_flow(args, root, request, journal, payload, codes, data, addresses
             assert counter.uint(8) == 3 and counter.uint(32) == 5 + offset
             # Mock proof source advances to the account actually produced by the VM.
             scenario = json.loads((root / "scenario.json").read_text())
-            account = scenario["accounts"][f"0:{addresses['vault'][1]:064x}"]
-            account.update(
-                state_boc=base64.b64encode(vault_before.refs[0].boc()).decode(),
-                state_hash=vault_before.refs[0].hash.hex(),
-                data_hash=fee_data.hash.hex(),
-                balance=str(balance),
-            )
+            for name, state in [("vault", vault_before), ("module", module_before)]:
+                account = scenario["accounts"][f"0:{addresses[name][1]:064x}"]
+                state_data, state_balance = native.account_data(state)
+                history = state.slice()
+                last_hash, last_lt = history.uint(256), history.uint(64)
+                account.update(
+                    state_boc=base64.b64encode(state.refs[0].boc()).decode(),
+                    state_hash=state.refs[0].hash.hex(),
+                    data_hash=state_data.hash.hex(),
+                    balance=str(state_balance),
+                    last_trans_lt=last_lt,
+                    last_trans_hash=f"{last_hash:064x}",
+                )
             (root / "scenario.json").write_text(json.dumps(scenario))
             consumed = request(
                 dict(
@@ -130,6 +154,10 @@ def check_pop_flow(args, root, request, journal, payload, codes, data, addresses
                     no_authority_emitted=True,
                 )
             )
+        if args.fee_pop_receipts:
+            from cli_pop_receipt import check_receipts
+
+            check_receipts(args, root, common, receipts, addresses, codes, data)
         locked_dir = root / "after-pop-lock"
         signed = request(
             dict(

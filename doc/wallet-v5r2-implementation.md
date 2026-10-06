@@ -3293,3 +3293,52 @@ shared signing-path refactor. PRIMARY signing/payment (seven cases), inspection
 regressions pass.
 
 Evidence: [fee-funded CLI POP and recovery controls](../test/wallet-v5r2/cli-fee-pop-20261006.json).
+
+## Initial funded POP receipt CLI
+
+`tosctl wallet pq-verify-pop-initial` is a read-only receipt command. It takes the
+common independently pinned initial enrollment/proof arguments, `--pop-request`,
+`--external-message`, `--fee-before-account`, `--module-before-account`, and an
+untrusted `--transaction-rpc-url`. No signing custody is opened and no message is
+broadcast. The initial wallet/module proof and fee account are read at the same
+masterchain checkpoint. The two histories are searched for the exact external
+input and the original internal message cell emitted to the enrolled module.
+
+Each returned transaction BOC must authenticate against the proven account head
+or the preceding transaction's hash/LT/state links. RPC hash, LT and timestamp
+summary fields are not evidence. `--history-limit` defaults to 64, bounded to
+1–1024 transactions per account; `--timeout-seconds` defaults to 30, bounded to
+1–300 seconds per account. A bounded miss or timeout is an error, never proof that
+a request was not delivered.
+
+The retained POP decoder rebuilds the exact request from the locally enrolled
+module/wallet and authenticated module execution time, rejects noncanonical or
+substituted enrollment bytes, and then requires the SDK's funded receipt checks.
+Both transactions must complete, the fee vault must actually emit the module's
+input, both supplied pre-account roots must match transaction state updates, and
+the enrolled module must execute the exact retained challenge under its enrolled
+code/key data. The output status is `initial_funded_pop_proven_at_checkpoint`,
+with the role, request/message/transaction hashes and checkpoint. This is
+historical possession evidence, not current recovery readiness or migration.
+
+POP signing now saves `fee-observed-account.boc` and
+`module-observed-account.boc` beside the request. These are observed snapshots,
+not assumed transaction pre-states. If intervening transactions change either
+account, receipt validation rejects them and needs the actual pre-state preimage.
+The client does not silently substitute current state or weaken the hash check.
+
+A local integration runner exercises three retained POPs after all three fee and
+module transactions have occurred. It queries a loopback JSON-RPC server carrying
+real native transaction BOCs, deliberately false RPC metadata and a mocked local
+account-proof verifier. It checks backwards traversal for older messages, both
+roles, incorrect challenges/enrollment/pre-states, insufficient history budget,
+unrelated messages and substituted transaction BOCs. The VM now consumes the
+exact same pre-account cells supplied by the proof fixture, including storage
+history; it does not recreate accounts merely with matching code/data. The nine receipt cases and four POP codec tests pass. Deleting challenge,
+retained-enrollment or pre-state hash binding makes the actual CLI accept the
+corresponding invalid case and fails its named assertion. Restored code passes
+both receipt checks and the native POP/lock flow. The harness preserves the exact
+request and raw pre-account BOCs alongside native transactions and RPC transcripts
+for review. This still uses a mocked proof verifier, not deployed proof acquisition.
+
+Evidence: [initial POP receipt CLI and binding controls](../test/wallet-v5r2/cli-pop-receipt-20261006.json).

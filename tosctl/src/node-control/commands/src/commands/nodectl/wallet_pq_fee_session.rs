@@ -281,7 +281,12 @@ impl PqFeeSessionInitialCmd {
             drop(vault);
             // Possession does not authorize spending, even for a PRIMARY key.
             // Revalidate the initial enrollment after asynchronous secret loading.
-            context.read(&[]).await?;
+            let observed = context.read(&[]).await?;
+            put(
+                &output_dir,
+                "module-observed-account.boc",
+                &chain_block::write_boc(observed.module.root())?,
+            )?;
             (FeeClass::Pop, submission)
         } else {
             proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;
@@ -296,7 +301,14 @@ impl PqFeeSessionInitialCmd {
             drop(rescue);
             (FeeClass::RescueAuth, submission)
         };
-        let view = context.fee().await?;
+        let (observed_fee, view) = context.fee_snapshot().await?;
+        if pop_role.is_some() {
+            put(
+                &output_dir,
+                "fee-observed-account.boc",
+                &chain_block::write_boc(observed_fee.root())?,
+            )?;
+        }
         let plan = journal.preview_proven(&view, now()?)?;
         if pop_role.is_none() {
             proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;

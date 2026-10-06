@@ -63,7 +63,10 @@ def main():
     parser.add_argument("--rescue-lock", action="store_true")
     parser.add_argument("--fee-session-tree", type=Path)
     parser.add_argument("--fee-session-pop", action="store_true")
+    parser.add_argument("--fee-pop-receipts", action="store_true")
     args = parser.parse_args()
+    if args.fee_pop_receipts:
+        args.fee_session_pop = True
     if args.fee_session_pop:
         assert args.fee_session_tree, "POP test needs the native fee tree"
     if args.fee_session_tree:

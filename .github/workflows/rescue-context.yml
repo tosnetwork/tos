@@ -284,6 +284,14 @@ jobs:
             --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-pop-controls
+      - name: POP receipt CLI authenticated history and binding controls
+        run: |
+          python test/wallet-v5r2/cli_pop_receipt_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
+            --output artifacts/context/cli-pop-receipt-controls
       - name: Compiled-code manifest reconstruction controls
         run: |
           python test/wallet-v5r2/manifest_integration_controls.py \

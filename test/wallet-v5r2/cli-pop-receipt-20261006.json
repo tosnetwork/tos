@@ -1,0 +1,133 @@
+{
+  "base_commit": "91a8f31d0bcf1d934d0d6c726bf4d301b8915660",
+  "scope": "Actual read-only POP receipt CLI, live-account proof orchestration and HTTP transaction-history adapter with native transaction BOCs. Account-proof verifier is mocked; not deployed cryptographic proof acquisition, production admission or complete migration.",
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_pop_receipt_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --fee-session-tree /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-pop-receipt-controls",
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_pop_receipt.py --fee-pop-receipts --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --fee-session-tree /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-pop-receipt-final"
+  ],
+  "exit": 0,
+  "cases": {
+    "valid-0": {
+      "exit": 0,
+      "rpc_reads": 6
+    },
+    "valid-1": {
+      "exit": 0,
+      "rpc_reads": 4
+    },
+    "valid-2": {
+      "exit": 0,
+      "rpc_reads": 2
+    },
+    "wrong_challenge": {
+      "exit": 1,
+      "rpc_reads": 6
+    },
+    "wrong_enrollment": {
+      "exit": 1,
+      "rpc_reads": 6
+    },
+    "wrong_prestate": {
+      "exit": 1,
+      "rpc_reads": 6
+    },
+    "history_budget": {
+      "exit": 1,
+      "rpc_reads": 1
+    },
+    "unrelated_message": {
+      "exit": 1,
+      "rpc_reads": 4
+    },
+    "wrong_transaction": {
+      "exit": 1,
+      "rpc_reads": 1
+    }
+  },
+  "semantic_controls": {
+    "challenge_binding_deleted": "receipt CLI accepted wrong_challenge",
+    "retained_enrollment_binding_deleted": "receipt CLI accepted wrong_enrollment",
+    "prestate_hash_binding_deleted": "receipt CLI accepted wrong_prestate"
+  },
+  "restored_flow": true,
+  "codec_tests": 4,
+  "regressions": {
+    "primary_cli_and_recipient": 7,
+    "inspection_cli": 8,
+    "consecutive_native_pop_then_lock": true
+  },
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-pop-receipt.tar.gz",
+    "sha256": "e4c96840d4de82429b13b44b5ff9d97c4b5ca5775cd1a4a8fb80048bcaf4f020",
+    "bytes": 892543
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "12520b87cf37674147f6ac99317c68450862ed08e6679d6781933d02acb1cf7c",
+      "bytes": 27384
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_pop.py",
+      "sha256": "c4cc647717c9690e98f3c86d0e438d3ddf81624cab99e19fe8d8fbe33d9c8e99",
+      "bytes": 9994
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_sign.py",
+      "sha256": "09030e6dda6118a89c256dd9af655ac891f46d6cedf47354f1974e557ef39aa9",
+      "bytes": 13290
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_sign_primary.py",
+      "sha256": "5782b28c3f16d64fbd8a3588d3d0f7da69c8622e2e2f11a29fc4af6ef51ebfcc",
+      "bytes": 23685
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_cmd.rs",
+      "sha256": "6af305b80c965d018b27c16284c90580f27c9c3120b60ec93f3696922898ce27",
+      "bytes": 73314
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_cmd.rs",
+      "sha256": "528bd0b71e7168594d4891b6101f0bcec13b5169b1f2d24e334cfa61005909df",
+      "bytes": 19364
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs",
+      "sha256": "805e92341f2d62e70b31f2b2f27324bfffc052efd3d54fca3ef075342fef9f7f",
+      "bytes": 14898
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "sha256": "1cb917d9c69f5407ff82cad54f8ab6970c50bbe8d6a66e8166d44469db924286",
+      "bytes": 6493
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs",
+      "sha256": "f1e31961e2e5637b97d22365e5ca614285afc35367555be43f6c36420ec0565e",
+      "bytes": 23112
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_pop_receipt.py",
+      "sha256": "b5e9001c7f0c9f341230db32ab7df03c620a46a65e9549778116d242da6619a9",
+      "bytes": 7349
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_pop_receipt_controls.py",
+      "sha256": "64f45148dc3492fa45e876b242ba33b212015eb2f9c93a8699c3a1681867ca7d",
+      "bytes": 3758
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_pop_receipt_cmd.rs",
+      "sha256": "68ccb42d8ef60e681d3a4ac7418812c2b28c49ae0bcd6eac65893469c37995e7",
+      "bytes": 5127
+    }
+  ],
+  "validation": [
+    "cargo fmt --all --check",
+    "Ruff changed Python runners",
+    "git diff --check"
+  ],
+  "ci": "Previous head 91a8f31d0 run 37434143396 remains in progress on ARM and x86; this increment is local pending final-head validation."
+}
