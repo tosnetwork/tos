@@ -5,8 +5,8 @@ One validator, booted on a chain whose genesis set lists its key A. Seven runs:
 
   rotation           A and B held (B valid for stakes from a later election). The group
                      for the set listing A produces blocks; the stake for B's election is
-                     signed with B, an earlier one with A; a named key overrides the
-                     schedule only inside its window. The console refuses to drop A while
+                     signed with B, an earlier one with A; naming any key but the
+                     scheduled one is refused. The console refuses to drop A while
                      the running set lists it, drops B, adds B back while the node runs,
                      refuses ambiguous, duplicate and relative-path keys, and reports a
                      change whose directory flush failed as not confirmed durable.
@@ -17,7 +17,8 @@ One validator, booted on a chain whose genesis set lists its key A. Seven runs:
                      was scheduled for is refused, never signed with A.
   concurrent         Two deletes at once that would together leave no key, and two adds
                      at once that would together exceed the capacity: exactly one of
-                     each succeeds.
+                     each succeeds; and a key removal that would leave only a key that
+                     expired meanwhile is refused.
   hard_deadline      A, listed and signing, expires while its group runs: no block or
                      signature after the deadline, logged as an expired key, and no other
                      key signs in its place.
@@ -248,17 +249,24 @@ async def rotation(
             )
         if for_a.signature == for_b.signature:
             raise Failure("two keys produced one signature")
-        named = await stake(node, SUCCESSOR_FROM, k["a_id"])
-        if named.key_id != k["a_id"]:
-            raise Failure("a stake naming A was not signed with A")
+        # There is no override: naming a key only asserts which key the schedule assigns,
+        # and a disagreement is refused, naming the scheduled key.
+        named = await stake(node, SUCCESSOR_FROM, k["b_id"])
+        if named.key_id != k["b_id"]:
+            raise Failure("a stake naming the scheduled B was not signed with B")
+        await refused(
+            stake(node, SUCCESSOR_FROM, k["a_id"]),
+            f"to consensus key {k['b_id'].hex()}, not to {k['a_id'].hex()}",
+            "naming A for B's election",
+        )
         await refused(
             stake(node, SUCCESSOR_FROM - 1, k["b_id"]),
-            "valid only from",
+            f"to consensus key {k['a_id'].hex()}, not to {k['b_id'].hex()}",
             "naming B before its window",
         )
         await refused(
             stake(node, SUCCESSOR_FROM, k["c_id"]),
-            "not held",
+            "the schedule assigns election date",
             "naming a key the node does not hold",
         )
 
@@ -283,7 +291,11 @@ async def rotation(
             "last consensus key",
             "dropping the last key",
         )
-        await refused(stake(node, SUCCESSOR_FROM, k["b_id"]), "not held", "naming a dropped key")
+        await refused(
+            stake(node, SUCCESSOR_FROM, k["b_id"]),
+            f"to consensus key {k['a_id'].hex()}, not to {k['b_id'].hex()}",
+            "naming a dropped key",
+        )
 
         # B comes back while the node runs, and signs B's election again.
         add = tos_api.Engine_validator_addPqConsensusKeyRequest
@@ -496,6 +508,26 @@ async def concurrent(install: Install, directory: Path, base_port: int, timeout:
                 )
         held = (await list_keys(node))[0]
         held_index = k["ids"].index(held.key_id)
+
+        # A removal must leave an unexpired key at the moment it takes effect. Hold one
+        # more key that expires shortly, let it expire, and remove the other: refused,
+        # first by the engine's own check and, past it, by the validator manager, which
+        # decides at removal time with its own clock reading.
+        short_lived = len(seeds) - 1
+        expires = int(time.time()) + 12
+        await node.engine_console.request(
+            add(consensus_key_file=str(k["files"][short_lived]), valid_from=500, expire_at=expires)
+        )
+        while time.time() < expires + 1:
+            await asyncio.sleep(0.5)
+        await refused(
+            node.engine_console.request(delete(key_id=held.key_id)),
+            "every configured consensus key has expired",
+            "removing the only unexpired key once the other expired",
+        )
+        await node.engine_console.request(delete(key_id=k["ids"][short_lived]))
+        if [key.key_id for key in await list_keys(node)] != [held.key_id]:
+            raise Failure("the expired key was not removed, or the unexpired one was")
 
         # Fill to one below capacity one by one, then add two at once: only one fits.
         next_index = 2

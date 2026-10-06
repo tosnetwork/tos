@@ -292,8 +292,9 @@ the key per signature:
 - a validator group, and a vote cast as a member of a set, use the key that
   set's descriptor records for this validator, and no other held key;
 - a stake for an election uses the held key whose `valid_from` is the greatest
-  not after the election date (`create-stake-authorization-with-key` names a
-  key explicitly, still only inside its window);
+  not after the election date, with no override:
+  `create-stake-authorization-with-key` only asserts which key that is, and is
+  refused, naming the scheduled key, if the schedule assigns another;
 - an expired key is used for nothing, and an older key is never substituted
   for it.
 
@@ -303,7 +304,11 @@ node at start-up, by the console, and by the offline tool. So is a removal that
 would leave only expired keys.
 
 `expire_at` is a hard deadline: from that second on the key signs nothing,
-including in a validator group that is already running with it. Set it after
+including in a validator group that is already running with it. A signature
+whose computation crosses the deadline is discarded, and once the node has seen
+the key expired it never signs with it again in that process, even if the clock
+is stepped back. The deadline is read from the host's wall clock, so clock skew
+shifts it by the skew: run NTP. Set it after
 the `utime_until` of every set that lists the key, or leave it at 0 and remove
 the key instead (step 7).
 

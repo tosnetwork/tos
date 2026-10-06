@@ -4403,33 +4403,30 @@ void ValidatorManagerImpl::get_archive_slice(td::uint64 archive_id, td::uint64 o
 
 void ValidatorManagerImpl::del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
                                                 td::Promise<td::Unit> promise) {
-  const auto held = pq_custody_.held_keys(validator_id);
-  auto entry = held.find(key_id);
-  if (entry == held.end()) {
-    promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no such post-quantum consensus key is custodied"));
-    return;
-  }
-  if (!tos::pq::consensus_key_expired(entry->second.expire_at, pq_custody_now())) {
-    if (last_masterchain_state_.is_null()) {
+  // One clock reading for every part of the decision, taken here, where the key is
+  // removed: the engine's own checks ran before the hop to this actor, and a deadline may
+  // have passed since.
+  const auto now = pq_custody_now();
+  std::vector<std::vector<tos::ValidatorDescr>> sets;
+  if (last_masterchain_state_.is_null()) {
+    const auto held = pq_custody_.held_keys(validator_id);
+    auto entry = held.find(key_id);
+    if (entry != held.end() && !tos::pq::consensus_key_expired(entry->second.expire_at, now)) {
       promise.set_error(td::Status::Error(tos::ErrorCode::notready,
                                           "no masterchain state yet; which sets list this key cannot be told"));
       return;
     }
+  } else {
     for (int offset = -1; offset <= 1; ++offset) {
       auto set = last_masterchain_state_->get_total_validator_set(offset);
-      if (set.is_null()) {
-        continue;
-      }
-      for (const auto &descr : set->export_vector()) {
-        if (descr.is_pq() && descr.validator_id == validator_id && descr.key_id == key_id) {
-          promise.set_error(
-              td::Status::Error(tos::ErrorCode::error,
-                                "consensus key is listed for this validator by a current, previous or next validator "
-                                "set"));
-          return;
-        }
+      if (set.not_null()) {
+        sets.push_back(set->export_vector());
       }
     }
+  }
+  if (auto refused = pq_custody_.removal_refusal(validator_id, key_id, now, sets)) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::error, *refused));
+    return;
   }
   pq_custody_.remove_key(validator_id, key_id);
   promise.set_value(td::Unit());

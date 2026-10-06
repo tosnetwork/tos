@@ -232,9 +232,10 @@ class PqConsensusCustody {
     return entry->second.store;
   }
 
-  // The store a stake for the election at `election_date` is signed with: chosen by the
-  // schedule (`tos::pq::select_stake_key`), or explicitly by `requested`. No validator
-  // set is consulted: a stake is how a validator enters one.
+  // The store a stake for the election at `election_date` is signed with: always the key
+  // the schedule assigns (`tos::pq::select_stake_key`); `requested`, when given, must be
+  // that key or the stake is refused. No validator set is consulted: a stake is how a
+  // validator enters one.
   td::Result<std::shared_ptr<const tos::pq::ValidatorPQKeyStore>> select_stake_store(
       const tos::ValidatorId& validator_id, td::uint32 election_date, td::uint32 now,
       const std::optional<tos::ConsensusKeyId>& requested) const {
@@ -270,6 +271,38 @@ class PqConsensusCustody {
                                " has expired");
     }
     return stores[index];
+  }
+
+  // Why removing `key_id` at `now` must be refused, or nothing. One clock reading decides
+  // everything: the key itself is not refused once expired, and is refused while unexpired
+  // if any of `sets` lists it for this validator; and the keys that would remain must
+  // include one unexpired at that same `now`, so a removal admitted a moment before a
+  // remaining key's deadline is refused if it takes effect after it. The validator manager
+  // asks this at the moment it removes the key, after any check the caller made earlier.
+  std::optional<std::string> removal_refusal(const tos::ValidatorId& validator_id, const tos::ConsensusKeyId& key_id,
+                                             td::uint32 now,
+                                             const std::vector<std::vector<tos::ValidatorDescr>>& sets) const {
+    auto it = stores_.find(validator_id);
+    if (it == stores_.end() || it->second.count(key_id) == 0) {
+      return std::string("no such post-quantum consensus key is custodied");
+    }
+    if (!tos::pq::consensus_key_expired(it->second.at(key_id).expire_at, now)) {
+      for (const auto& members : sets) {
+        for (const auto& descr : members) {
+          if (descr.is_pq() && descr.validator_id == validator_id && descr.key_id == key_id) {
+            return std::string(
+                "consensus key is listed for this validator by a current, previous or next validator set");
+          }
+        }
+      }
+    }
+    for (const auto& [held_id, held] : it->second) {
+      if (held_id != key_id && held.store && !tos::pq::consensus_key_expired(held.expire_at, now)) {
+        return std::nullopt;
+      }
+    }
+    return std::string(
+        "removing it would leave only expired consensus keys; every configured consensus key has expired");
   }
 
   // The identity a store derives, as the set records key identities.

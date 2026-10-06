@@ -29,6 +29,7 @@
 //     that lists A gets A as its group and vote signer while the stake for the next
 //     election is signed with B, and that signature verifies under B and not under A; a
 //     set listing a key the node does not hold, or holds expired, gets no signer at all.
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -164,10 +165,17 @@ void schedule_checks() {
   const auto a = id_bytes(0xa);
   const auto b = id_bytes(0xb);
   const auto unknown = id_bytes(0xc);
-  check("a_named_key_overrides_the_schedule", index_of(pq::select_stake_key(ab, 9000, 5, &a)) == 0);
-  check("a_named_key_must_cover_the_election",
-        refused_with(pq::select_stake_key(ab, 999, 5, &b), "valid only from election date 1000"));
-  check("a_named_key_must_be_held", refused_with(pq::select_stake_key(ab, 9000, 5, &unknown), "not held"));
+  // There is no override: naming a key only asserts which key the schedule assigns.
+  check("naming_the_scheduled_key_signs_with_it",
+        index_of(pq::select_stake_key(ab, 9000, 5, &b)) == 1 && index_of(pq::select_stake_key(ab, 999, 5, &a)) == 0);
+  check("naming_another_held_key_is_refused_with_the_scheduled_key",
+        refused_with(
+            pq::select_stake_key(ab, 9000, 5, &a),
+            ("the schedule assigns election date 9000 to consensus key " + pq::consensus_key_id_hex(b)).c_str()));
+  check("naming_a_key_before_its_window_is_refused",
+        refused_with(pq::select_stake_key(ab, 999, 5, &b), "the schedule assigns election date 999"));
+  check("naming_an_unheld_key_is_refused",
+        refused_with(pq::select_stake_key(ab, 9000, 5, &unknown), "the schedule assigns election date 9000"));
   check("no_key_covers_an_election_before_every_window",
         refused_with(pq::select_stake_key(std::vector<ConsensusKeyWindow>{{id_bytes(1), 500, 0}}, 499, 5, nullptr),
                      "no consensus key is valid"));
@@ -244,9 +252,13 @@ void custody_checks() {
                                key_a->consensus_key().public_key) == pq::VerifyResult::invalid);
     }
   }
-  // Before the controller is rebound, an operator may still name A for that election.
+  // A cannot be named for that election: the schedule assigns it to B, and says so.
   auto named_a = custody.select_stake_store(validator_id, election, now, id_a);
-  check("a_named_key_signs_the_stake", named_a.is_ok() && named_a.ok() == key_a);
+  check("naming_a_for_bs_election_is_refused",
+        named_a.is_error() && named_a.error().message().str().find(
+                                  pq::consensus_key_id_hex(key_b->consensus_key().key_id)) != std::string::npos);
+  auto named_b = custody.select_stake_store(validator_id, election, now, id_b);
+  check("naming_b_for_its_election_signs_with_b", named_b.is_ok() && named_b.ok() == key_b);
   // And a stake for the current election, before B's window, stays with A.
   auto current = custody.select_stake_store(validator_id, now, now, std::nullopt);
   check("the_stake_before_bs_window_is_signed_with_a", current.is_ok() && current.ok() == key_a);
@@ -308,12 +320,54 @@ void custody_checks() {
   check("restart_refuses_a_zero_key_id_request",
         restarted.select_stake_store(validator_id, 2'000'000'000U, now, ConsensusKeyId{}).is_error());
 
+  // Removal judged at the moment it takes effect: A never expires and no set lists it; B,
+  // the only other key, expires at 100. Admitted at 99 (B still usable), refused at 100
+  // (only an expired B would remain) -- the same state, one clock tick apart, as when the
+  // engine checks before its hop to the validator manager and the manager acts after it.
+  {
+    validator::PqConsensusCustody crossing;
+    const auto expiring_b = key_from('\x0b', 100);
+    check("crossing_holds_a", crossing.install(validator_id, key_a, 0, 0).is_ok());
+    check("crossing_holds_b_until_100", crossing.install(validator_id, expiring_b, 50, 100).is_ok());
+    const std::vector<std::vector<ValidatorDescr>> no_sets;
+    check("removal_of_a_admitted_while_b_is_usable",
+          !crossing.removal_refusal(validator_id, id_a, 99, no_sets).has_value());
+    auto at_deadline = crossing.removal_refusal(validator_id, id_a, 100, no_sets);
+    check("removal_of_a_refused_once_b_expired",
+          at_deadline.has_value() &&
+              at_deadline->find("every configured consensus key has expired") != std::string::npos);
+    check("removal_of_expired_b_is_admitted", !crossing.removal_refusal(validator_id, id_b, 100, no_sets).has_value());
+    const std::vector<std::vector<ValidatorDescr>> listing_a{set_with_a};
+    check("removal_of_a_listed_key_is_refused",
+          crossing.removal_refusal(validator_id, id_a, 99, listing_a).has_value());
+    check("removal_of_an_absent_key_is_refused",
+          crossing.removal_refusal(validator_id, validator::PqConsensusCustody::key_id_of(*key_c), 99, no_sets)
+              .has_value());
+  }
+
   // Removal is per key.
   check("removing_a_key_keeps_the_other", custody.remove_key(validator_id, id_a) &&
                                               !custody.holds(validator_id, id_a, now) &&
                                               custody.holds(validator_id, id_b, now));
   check("removing_an_absent_key_reports_it", !custody.remove_key(validator_id, id_a));
   check("removing_the_last_key_empties_custody", custody.remove_key(validator_id, id_b) && custody.empty());
+}
+
+// A scripted wall clock: each reading takes the next value, and the last one repeats.
+std::vector<std::int64_t> test_clock_values;
+std::size_t test_clock_next = 0;
+std::int64_t test_clock() noexcept {
+  if (test_clock_values.empty()) {
+    return 0;
+  }
+  const auto index = std::min(test_clock_next, test_clock_values.size() - 1);
+  test_clock_next++;
+  return test_clock_values[index];
+}
+void set_test_clock(std::vector<std::int64_t> values) {
+  test_clock_values = std::move(values);
+  test_clock_next = 0;
+  pq::ValidatorPQKeyStore::set_clock_for_test(&test_clock);
 }
 
 void deadline_checks() {
@@ -350,6 +404,33 @@ void deadline_checks() {
 
   auto unbounded = pq::ValidatorPQKeyStore::from_seed(std::string(32, '\x0e'));
   check("no_deadline_signs", unbounded && !unbounded->expired_now() && unbounded->sign_consensus("x").has_value());
+
+  // The deadline inside a signing call, and a clock stepped back, under a test clock.
+  // Signing starts at 104 and finishes at 106, with the deadline at 105: the signature is
+  // made but never returned.
+  auto crossing = pq::ValidatorPQKeyStore::from_seed(std::string(32, '\x0f'));
+  if (!crossing) {
+    check("deadline_crossing_key_derivation", false);
+    return;
+  }
+  crossing->set_expire_at(105);
+  set_test_clock({104, 106});
+  check("a_signature_finishing_after_the_deadline_is_discarded", !crossing->sign_consensus("start 104").has_value());
+  check("a_discarded_signature_retires_the_key", crossing->retired());
+  set_test_clock({104});
+  check("a_clock_stepped_back_does_not_revive_the_key", !crossing->sign_consensus("back at 104").has_value() &&
+                                                            !crossing->sign_election("back at 104").has_value() &&
+                                                            crossing->expired_now());
+  auto stepped = pq::ValidatorPQKeyStore::from_seed(std::string(32, '\x10'));
+  stepped->set_expire_at(105);
+  set_test_clock({106});
+  check("refused_at_106", !stepped->sign_consensus("at 106").has_value());
+  set_test_clock({104});
+  check("still_refused_after_the_clock_goes_back_to_104", !stepped->sign_consensus("at 104").has_value());
+  auto fresh = pq::ValidatorPQKeyStore::from_seed(std::string(32, '\x11'));
+  fresh->set_expire_at(105);
+  check("a_key_never_seen_expired_signs_at_104", fresh->sign_consensus("at 104").has_value() && !fresh->retired());
+  pq::ValidatorPQKeyStore::set_clock_for_test(nullptr);
 }
 
 bool json_refused(const char* text, const char* phrase) {

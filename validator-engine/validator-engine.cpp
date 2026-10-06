@@ -1043,8 +1043,9 @@ std::string pq_identity_hex(const td::Bits256 &value) {
 //
 // A node rotating its consensus key holds more than one. The key that signs is the one
 // the key schedule assigns to this election (the key the controller is bound to for it,
-// when the operator configured the rotation as documented), or the key the request names;
-// never simply whichever key was loaded first.
+// when the operator configured the rotation as documented), always; a request that names
+// a key only asserts which key that is, and is refused if the schedule disagrees. Never
+// simply whichever key was loaded first.
 class PqStakeAuthorizationCreator : public td::actor::Actor {
  public:
   PqStakeAuthorizationCreator(td::uint32 election_date, td::uint32 max_factor, td::Bits256 adnl_addr,

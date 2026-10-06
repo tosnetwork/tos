@@ -966,8 +966,8 @@ class CreatePqStakeAuthorizationQuery : public Query {
   std::string fname_;
 };
 
-/// The same permission, signed with a named held consensus key instead of the one the
-/// node's key schedule assigns to the election (see consensus-key-schedule.h).
+/// The same permission, asserting which consensus key signs it: refused unless that is the
+/// key the node's schedule assigns to the election (see consensus-key-schedule.h).
 class CreatePqStakeAuthorizationWithKeyQuery : public Query {
  public:
   CreatePqStakeAuthorizationWithKeyQuery(td::actor::ActorId<ValidatorEngineConsole> console, Tokenizer tokenizer)
@@ -981,7 +981,8 @@ class CreatePqStakeAuthorizationWithKeyQuery : public Query {
   }
   static std::string get_help() {
     return "create-stake-authorization-with-key <election-date> <max-factor> <adnl-addr> <stake-owner> <key-id> "
-           "<fname>	as create-stake-authorization, signed with the named held consensus key";
+           "<fname>\tas create-stake-authorization, refused unless <key-id> is the key the schedule assigns to the "
+           "election";
   }
   std::string name() const override {
     return get_name();
@@ -1009,7 +1010,7 @@ class GetPqConsensusKeysQuery : public Query {
     return "get-pq-consensus-keys";
   }
   static std::string get_help() {
-    return "get-pq-consensus-keys	list the post-quantum consensus keys this node holds";
+    return "get-pq-consensus-keys\tlist the post-quantum consensus keys this node holds";
   }
   std::string name() const override {
     return get_name();
@@ -1029,7 +1030,7 @@ class AddPqConsensusKeyQuery : public Query {
     return "add-pq-consensus-key";
   }
   static std::string get_help() {
-    return "add-pq-consensus-key <key-file> <valid-from> <expire-at>	hold another post-quantum consensus key: "
+    return "add-pq-consensus-key <key-file> <valid-from> <expire-at>\thold another post-quantum consensus key: "
            "it signs stakes for elections from <valid-from> (unix time) and stops being used at <expire-at> "
            "(0: never)";
   }
@@ -1057,7 +1058,7 @@ class DelPqConsensusKeyQuery : public Query {
     return "del-pq-consensus-key";
   }
   static std::string get_help() {
-    return "del-pq-consensus-key <key-id>	stop holding a post-quantum consensus key no validator set needs";
+    return "del-pq-consensus-key <key-id>\tstop holding a post-quantum consensus key no validator set needs";
   }
   std::string name() const override {
     return get_name();

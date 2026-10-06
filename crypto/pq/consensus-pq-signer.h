@@ -57,6 +57,12 @@ class ValidatorPQKeyStore {
   // authorization), so an expired consensus key stops signing at the instant it expires
   // rather than when the next lookup happens to notice, and nothing substitutes another
   // key for it. Set once, before the store is shared.
+  //
+  // The deadline is read from the host's wall clock, checked before a signature is made
+  // and again before it is returned (one whose computation crossed the deadline is
+  // discarded), and latched: once the key has been seen expired it is retired for the life
+  // of the process, so a clock stepped back does not revive it. Clock skew still shifts
+  // the deadline itself by the skew; operators run NTP.
   void set_expire_at(std::uint32_t expire_at) noexcept {
     expire_at_ = expire_at;
   }
@@ -68,6 +74,15 @@ class ValidatorPQKeyStore {
   }
   // Whether the deadline has passed by the system clock, which is what signing consults.
   bool expired_now() const noexcept;
+  // Whether the deadline has been seen passed; it then stays so.
+  bool retired() const noexcept {
+    return retired_.load(std::memory_order_relaxed);
+  }
+  // The wall clock the deadline is read from, as unix seconds. Tests replace it to put the
+  // deadline inside a signing call or to step the clock back; nullptr restores the system
+  // clock. Process-wide.
+  using UnixClock = std::int64_t (*)() noexcept;
+  static void set_clock_for_test(UnixClock clock) noexcept;
   // How many signatures the deadline has refused.
   std::uint64_t signatures_refused_after_expiry() const noexcept {
     return signatures_refused_after_expiry_.load(std::memory_order_relaxed);
@@ -81,7 +96,10 @@ class ValidatorPQKeyStore {
   mutable std::atomic<std::uint64_t> consensus_signatures_produced_{0};
   std::uint32_t expire_at_ = 0;
   mutable std::atomic<std::uint64_t> signatures_refused_after_expiry_{0};
+  mutable std::atomic<bool> retired_{false};
   bool refuse_if_expired() const noexcept;
+  std::optional<ConsensusPQSignature> sign_within_deadline(std::string_view context,
+                                                           std::string_view message) const noexcept;
 };
 
 }  // namespace tos::pq

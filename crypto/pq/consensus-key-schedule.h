@@ -14,8 +14,8 @@
 //     identity the set's descriptor for this validator records. Nothing here chooses it;
 //     the set does, and a set that lists a key this node does not hold gets no signer.
 //   - a stake for the election starting at `election_date` signs with the key the
-//     schedule assigns to that election: the key with the greatest `valid_from` that is
-//     not after the election date. Keys are thereby assigned half-open election ranges
+//     schedule assigns to that election, and only that key: the key with the greatest
+//     `valid_from` that is not after the election date. Keys are thereby assigned half-open election ranges
 //     [valid_from, next key's valid_from). Two keys with the same `valid_from` would make
 //     that assignment ambiguous, so a schedule holding them is refused outright.
 //   - a key whose `expire_at` has passed is not used for anything, and is not silently
@@ -159,12 +159,13 @@ inline std::variant<std::vector<std::size_t>, std::string> plan_consensus_key_lo
 // `keys`, or why there is none. `keys` is a schedule `check_consensus_key_schedule`
 // accepted.
 //
-// With `requested`, that exact key, provided it is held, unexpired, and its window admits
-// the election: an operator may pick the key deliberately (for instance before the
-// controller has been rebound), but not one the schedule says cannot sign for this
-// election. Without it, the key the schedule assigns to the election. A scheduled key that
-// has expired is a refusal, never a fall back to an older key: the controller accepts the
-// key it is bound to and no other, and an older key is the one a rotation moved away from.
+// Always the key the schedule assigns to the election -- the greatest `valid_from` not
+// after it -- and no other: there is no override. `requested`, when given, is the
+// caller's statement of which key it expects; if the schedule assigns a different key
+// the stake is refused, naming the key the schedule does assign, so an operator's
+// expectation and the node's schedule cannot disagree silently. A scheduled key that has
+// expired is a refusal, never a fall back to an older key: the controller accepts the key
+// it is bound to and no other, and an older key is the one a rotation moved away from.
 inline std::variant<std::size_t, std::string> select_stake_key(const std::vector<ConsensusKeyWindow>& keys,
                                                                std::uint32_t election_date, std::uint32_t now,
                                                                const ConsensusKeyIdBytes* requested) {
@@ -184,18 +185,6 @@ inline std::variant<std::size_t, std::string> select_stake_key(const std::vector
     return std::nullopt;
   };
 
-  if (requested != nullptr) {
-    for (std::size_t i = 0; i < keys.size(); i++) {
-      if (keys[i].loaded && keys[i].key_id == *requested) {
-        if (auto why = unusable(keys[i])) {
-          return *why;
-        }
-        return i;
-      }
-    }
-    return "consensus key " + consensus_key_id_hex(*requested) + " is not held by this node";
-  }
-
   std::optional<std::size_t> scheduled;
   for (std::size_t i = 0; i < keys.size(); i++) {
     if (keys[i].valid_from <= election_date && (!scheduled || keys[i].valid_from > keys[*scheduled].valid_from)) {
@@ -205,7 +194,13 @@ inline std::variant<std::size_t, std::string> select_stake_key(const std::vector
   if (!scheduled) {
     return "no consensus key is valid for election date " + std::to_string(election_date);
   }
-  if (auto why = unusable(keys[*scheduled])) {
+  const auto& chosen = keys[*scheduled];
+  if (requested != nullptr && !(chosen.loaded && chosen.key_id == *requested)) {
+    const auto name = chosen.loaded ? consensus_key_id_hex(chosen.key_id) : std::string("(expired and not loaded)");
+    return "the schedule assigns election date " + std::to_string(election_date) + " to consensus key " + name +
+           ", not to " + consensus_key_id_hex(*requested);
+  }
+  if (auto why = unusable(chosen)) {
     return *why + "; it is the key scheduled for election date " + std::to_string(election_date);
   }
   return *scheduled;

@@ -26,7 +26,8 @@ ValidatorPQKeyStore::ValidatorPQKeyStore(ValidatorPQKeyStore&& other) noexcept
     , secret_(std::move(other.secret_))
     , consensus_signatures_produced_(other.consensus_signatures_produced_.load(std::memory_order_relaxed))
     , expire_at_(other.expire_at_)
-    , signatures_refused_after_expiry_(other.signatures_refused_after_expiry_.load(std::memory_order_relaxed)) {
+    , signatures_refused_after_expiry_(other.signatures_refused_after_expiry_.load(std::memory_order_relaxed))
+    , retired_(other.retired_.load(std::memory_order_relaxed)) {
 }
 
 ValidatorPQKeyStore& ValidatorPQKeyStore::operator=(ValidatorPQKeyStore&& other) noexcept {
@@ -38,6 +39,7 @@ ValidatorPQKeyStore& ValidatorPQKeyStore::operator=(ValidatorPQKeyStore&& other)
     expire_at_ = other.expire_at_;
     signatures_refused_after_expiry_.store(other.signatures_refused_after_expiry_.load(std::memory_order_relaxed),
                                            std::memory_order_relaxed);
+    retired_.store(other.retired_.load(std::memory_order_relaxed), std::memory_order_relaxed);
   }
   return *this;
 }
@@ -64,14 +66,36 @@ std::optional<ValidatorPQKeyStore> ValidatorPQKeyStore::generate() noexcept {
   return out;
 }
 
+namespace {
+
+std::int64_t system_unix_time() noexcept {
+  return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+std::atomic<ValidatorPQKeyStore::UnixClock> deadline_clock{&system_unix_time};
+
+}  // namespace
+
+void ValidatorPQKeyStore::set_clock_for_test(UnixClock clock) noexcept {
+  deadline_clock.store(clock != nullptr ? clock : &system_unix_time, std::memory_order_relaxed);
+}
+
 bool ValidatorPQKeyStore::expired_now() const noexcept {
   if (expire_at_ == 0) {
     return false;
   }
-  const auto now =
-      std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+  if (retired_.load(std::memory_order_relaxed)) {
+    return true;
+  }
+  const auto now = deadline_clock.load(std::memory_order_relaxed)();
   // A clock before the epoch is not a time this key is valid at.
-  return now < 0 || expired_at(static_cast<std::uint64_t>(now));
+  if (now < 0 || expired_at(static_cast<std::uint64_t>(now))) {
+    // Latched: once seen expired, the key stays retired for the life of this process,
+    // whatever the wall clock does afterwards -- a clock stepped back must not revive it.
+    retired_.store(true, std::memory_order_relaxed);
+    return true;
+  }
+  return false;
 }
 
 bool ValidatorPQKeyStore::refuse_if_expired() const noexcept {
@@ -82,12 +106,23 @@ bool ValidatorPQKeyStore::refuse_if_expired() const noexcept {
   return true;
 }
 
-std::optional<ConsensusPQSignature> ValidatorPQKeyStore::sign_consensus(std::string_view message) const noexcept {
+// The deadline is checked before signing and again before the signature is handed out: a
+// signature whose computation crossed the deadline is discarded, not released.
+std::optional<ConsensusPQSignature> ValidatorPQKeyStore::sign_within_deadline(std::string_view context,
+                                                                              std::string_view message) const noexcept {
   if (refuse_if_expired()) {
     return std::nullopt;
   }
+  auto signature = detail::sign_under(key_, secret_ ? secret_->sk.data() : nullptr, context, message);
+  if (signature.has_value() && refuse_if_expired()) {
+    return std::nullopt;
+  }
+  return signature;
+}
+
+std::optional<ConsensusPQSignature> ValidatorPQKeyStore::sign_consensus(std::string_view message) const noexcept {
   tos::health::OperationTimer timer(tos::health::pq_sign);
-  auto signature = detail::sign_under(key_, secret_ ? secret_->sk.data() : nullptr, simplex_sign_context, message);
+  auto signature = sign_within_deadline(simplex_sign_context, message);
   timer.finish(signature.has_value());
   if (signature.has_value()) {
     consensus_signatures_produced_.fetch_add(1, std::memory_order_relaxed);
@@ -96,17 +131,11 @@ std::optional<ConsensusPQSignature> ValidatorPQKeyStore::sign_consensus(std::str
 }
 
 std::optional<ConsensusPQSignature> ValidatorPQKeyStore::sign_config_vote(std::string_view message) const noexcept {
-  if (refuse_if_expired()) {
-    return std::nullopt;
-  }
-  return detail::sign_under(key_, secret_ ? secret_->sk.data() : nullptr, validator_config_vote_context, message);
+  return sign_within_deadline(validator_config_vote_context, message);
 }
 
 std::optional<ConsensusPQSignature> ValidatorPQKeyStore::sign_election(std::string_view message) const noexcept {
-  if (refuse_if_expired()) {
-    return std::nullopt;
-  }
-  return detail::sign_under(key_, secret_ ? secret_->sk.data() : nullptr, validator_election_context, message);
+  return sign_within_deadline(validator_election_context, message);
 }
 
 }  // namespace tos::pq
