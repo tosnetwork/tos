@@ -34,10 +34,41 @@
     "raw_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-native/ios-auth-controls"
   },
   "android": {
-    "status": "local-source-bound baseline passed; guard-deletion controls pending",
+    "status": "three baseline tests and three semantic controls passed; restored baseline passed",
     "tests": 3,
     "source_sha256": "ac3edbb641632499f7bdd96824905827b0d45f2bf9a1826d07b3638f5f986b91",
     "xml_sha256": "efca2434c4a9bd40256d43d18c1a93b8465c81b229072ddcc58876c28ef01e6b",
-    "scope": "AUTH encoding and strict action framing, not funded mobile lifecycle"
+    "scope": "AUTH encoding and strict action framing, not funded mobile lifecycle",
+    "head": "f394baf",
+    "controls": {
+      "source_sha256": "ac3edbb641632499f7bdd96824905827b0d45f2bf9a1826d07b3638f5f986b91",
+      "controls": [
+        {
+          "name": "primary",
+          "method": "primaryControlsAndClassicalSignatureRejected",
+          "exit": 1,
+          "semantic_failure": true,
+          "failure_message": "java.lang.AssertionError: expected:<PRIMARY may only execute> but was:<null>",
+          "xml_sha256": "08cbd3c64e0780e811f58ed0530324a9fb4e053299000155bc42ccf2f6269fe0"
+        },
+        {
+          "name": "mode",
+          "method": "allModeBytesOldestActionAndCountBoundaries",
+          "exit": 1,
+          "semantic_failure": true,
+          "failure_message": "java.lang.AssertionError: mode 0 expected:<false> but was:<true>",
+          "xml_sha256": "79eefed93df7e2311f5527775db05c341f85282008fae40882377cbe88040219"
+        },
+        {
+          "name": "signature",
+          "method": "primaryControlsAndClassicalSignatureRejected",
+          "exit": 1,
+          "semantic_failure": true,
+          "failure_message": "java.lang.AssertionError: expected:<Wrong PQ signature length> but was:<null>",
+          "xml_sha256": "9eb6b12489eaf570cda4df6a595466a84f12626827988aec4c89058efbb99b62"
+        }
+      ],
+      "restored_exit": 0
+    }
   }
 }

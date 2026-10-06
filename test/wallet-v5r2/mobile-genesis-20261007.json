@@ -1,0 +1,37 @@
+{
+  "status": "local source-bound component evidence",
+  "scope": "PQ-only StateInit construction and pairing, synthetic code/public-key encoding fixtures; not live deployment, successor POP, key freshness or mobile recovery acceptance",
+  "android": {
+    "initial_independent_vector_cases": 4,
+    "baseline_tests": 3,
+    "controls": {
+      "source_sha256": "4e2d9d8a3917c1e20f625cb5686881c5affd48fbe3be5d3b03065346c88d267a",
+      "controls": [
+        {
+          "name": "pins",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<V5R2 code pin mismatch> but was:<null>"
+        },
+        {
+          "name": "hss",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<Fixed HSS L1 H20/W4 required> but was:<null>"
+        },
+        {
+          "name": "basechain",
+          "semantic_failure": true,
+          "target": "TosV5R2GenesisTest.kt:50",
+          "test_exit": 1
+        }
+      ],
+      "restored_exit": 0,
+      "receipt_note": "Initial basechain receipt validator expected an assertEquals message; actual assertTrue failure was correctly targeted. Rerun verifies the named stack frame and restored baseline."
+    },
+    "raw_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-genesis/android-controls"
+  },
+  "ios": {
+    "baseline_tests": 3,
+    "initial_independent_vector_cases": 4,
+    "controls": "running, session 16156"
+  }
+}
