@@ -61,6 +61,7 @@ def _run(
     retime_prepare=None,
     retime_pop=None,
     primary_pop=None,
+    migration_signer=None,
 ):
     out.mkdir(parents=True, exist_ok=True)
     results = {}
@@ -154,8 +155,8 @@ def _run(
         )
         return vault_state, module_state, messages
 
-    # Only SLH and LMS are used throughout this chain. No synthetic wallet
-    # state transitions or balance top-ups are inserted between transactions.
+    # Authority remains SLH-only; PRIMARY signs only possession proofs. No
+    # synthetic wallet transitions or balance top-ups are inserted between transactions.
     v0, m0, w = old.vault, old.module, wallet.initial
     v0, m0, messages = old_hop("lock", v0, m0, 12 if cache_driver else 8, auth(old.root, 1, 3))
     lock_relay = messages[0]
@@ -271,9 +272,14 @@ def _run(
     migration = (
         Cell().uint(0x4D494752, 32).ref(new.witness).ref(new.metadata).ref(new.vault_witness)
     )
-    v0, m0, messages = old_hop(
-        "migrate", v0, m0, 16 if cache_driver else 10, auth(old.root, 2, 4, migration)
-    )
+    migration_body = auth(old.root, 2, 4, migration)
+    if migration_signer:
+        gated = migration_signer()
+        assert (
+            gated.bits == migration_body.bits and gated.refs[0].hash == migration_body.refs[0].hash
+        ), "gated migration differs from expected request"
+        migration_body = gated
+    v0, m0, messages = old_hop("migrate", v0, m0, 16 if cache_driver else 10, migration_body)
     migration_relay = messages[0]
     w, _ = send("migrate-wallet", w, migration_relay)
     expected = state(
@@ -330,5 +336,6 @@ def _run(
         "primary_auth_signing_used": False,
         "primary_pop_signing_used": True,
         "funded_pop_roles": [1, 2],
+        "proven_wallet_migration_gate": migration_signer is not None,
         "production_admission_passed": False,
     }

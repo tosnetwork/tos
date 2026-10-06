@@ -67,10 +67,16 @@ def main():
         help="Preparation fee budget sensitivity control",
     )
     p.add_argument("--recovery-delete-transition", choices=("lock", "migrate"))
+    p.add_argument(
+        "--migration-gate",
+        action="store_true",
+        help="Test-only Rust gate over recorded native receipts",
+    )
     options = p.parse_args()
     assert not options.gas_trace or options.credit_probe, "--gas-trace requires --credit-probe"
     assert not options.recovery_delete_transition or options.recovery
     assert not options.recovery or options.prepare
+    assert not options.migration_gate or (options.recovery and options.genesis_driver)
     assert not options.delete_preparation_guard or options.prepare
     assert (
         sum(
@@ -871,6 +877,21 @@ def main():
                             .ref(pop_signed(next_signer, challenge, 1))
                         )
 
+                    def migration_signer():
+                        target = out / "recovery/sdk-migration.boc"
+                        subprocess.run(
+                            [
+                                sys.executable,
+                                str(ROOT / "test/wallet-v5r2/recorded_migration_gate.py"),
+                                "--fixtures",
+                                str(out),
+                                "--output",
+                                str(target),
+                            ],
+                            check=True,
+                        )
+                        return from_boc(target.read_bytes())
+
                     recovery = run_recovery(
                         e,
                         out / "recovery",
@@ -913,6 +934,7 @@ def main():
                         prepare=submit,
                         pop_external=next_external,
                         primary_pop=primary_pop,
+                        migration_signer=migration_signer if options.migration_gate else None,
                         sign_old=signer.slh,
                         sign_new=lambda d: signer.slh(d, sk=signer.other_slh_sk),
                         fee_intent=make_intent,

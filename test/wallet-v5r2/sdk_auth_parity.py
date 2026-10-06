@@ -92,6 +92,8 @@ def main():
     ]
     if args.genesis_driver:
         argv += ["--genesis-driver", str(args.genesis_driver)]
+        if not args.pop_role:
+            argv += ["--migration-gate"]
     if args.fee_driver:
         argv += ["--fee-driver", str(args.fee_driver)]
     if args.preparation_driver:
@@ -113,6 +115,21 @@ def main():
         stack.enter_context(patch.object(test_receiver_auth, "request", request))
         stack.enter_context(patch.object(sys, "argv", argv))
         runpy.run_path(str(Path(__file__).with_name("fee_tx_parity.py")), run_name="__main__")
+    if args.genesis_driver and not args.pop_role:
+        recovery = json.loads((out / "native/recovery-summary.json").read_text())
+        assert recovery["proven_wallet_migration_gate"] is True
+        subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("recorded_migration_gate.py")),
+                "--fixtures",
+                str(out / "native"),
+                "--output",
+                str(out / "native/recovery/sdk-migration.boc"),
+                "--verify-execution",
+            ],
+            check=True,
+        )
     assert [call["input"]["kind"] for call in calls] == ([0] if args.pop_role else [0, 3, 4, 0])
     if args.pop_driver:
         assert [call["input"]["role"] for call in pop_encoder.calls] == (

@@ -60,6 +60,7 @@ def main():
     parser.add_argument("--cache-driver", type=Path)
     parser.add_argument("--driver", type=Path, required=True)
     parser.add_argument("--recovery", action="store_true")
+    parser.add_argument("--migration-gate", action="store_true")
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--pop-role", type=int, choices=(1, 2))
     options = parser.parse_args()
@@ -109,6 +110,9 @@ def main():
     if options.recovery:
         assert options.prepare
         args += ["--recovery"]
+    if options.migration_gate:
+        assert options.recovery and options.genesis_driver
+        args += ["--migration-gate"]
     if options.prepare:
         args += ["--prepare"]
     if options.pop_role:

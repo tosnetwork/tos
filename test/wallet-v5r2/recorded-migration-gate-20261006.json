@@ -1,0 +1,132 @@
+{
+  "base_commit": "21c12072aca4239794e5ebaeb512031c80acdd31",
+  "scope": "Actual recorded dual POPs feed the native migration gate; its signature is submitted through the fee vault, executed by module/wallet, and checked against resulting successor installation",
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 67,
+    "observed_transactions": 67,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 6,
+    "final_chain_time": 1780007190,
+    "transactions": 22,
+    "recipient_received": true,
+    "primary_auth_signing_used": false,
+    "primary_pop_signing_used": true,
+    "funded_pop_roles": [
+      1,
+      2
+    ],
+    "proven_wallet_migration_gate": true,
+    "production_admission_passed": false
+  },
+  "gate": {
+    "scope": "Real native execution cells and synthetic proof metadata; fixed PUBLIC test rescue seed only",
+    "passed": true,
+    "test": "recorded_dual_pop_migration_gate",
+    "exit": 0
+  },
+  "execution": {
+    "scope": "Real native execution cells and synthetic proof metadata; fixed PUBLIC test rescue seed only",
+    "passed": true,
+    "test": "recorded_migration_submission_executed",
+    "exit": 0
+  },
+  "control": {
+    "different_signature_rejected": true,
+    "deleted_binding_admits_it": true,
+    "restored_positive_and_negative": true
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "5a181733c1a92cbf8500a7c1f83c25c62819b15efabdcf434949f727ad49f46f",
+      "bytes": 125930
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_migration_tests.rs",
+      "sha256": "6cf8ff9bc1766dad4425aff13cb04a03397cc0acda4a0144e542a8a9e8342040",
+      "bytes": 11794
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/recorded_migration_gate.py",
+      "sha256": "c84f6caa80176c18f288c44bd4673966ffc50d999a9fee3dc9792b0f1de649bb",
+      "bytes": 2296
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/recorded_migration_control.py",
+      "sha256": "f214fa4070fed763eea5082b3ed845b934c81f43d5e63e99a1811590215bb9bd",
+      "bytes": 3544
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/sdk_auth_parity.py",
+      "sha256": "82ac1a50bd6fcaf01155b66c005b722df866eacd43a7ef02e98ea826eff2c02c",
+      "bytes": 5935
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_tx_parity.py",
+      "sha256": "9b73645e385a338172fcdf5ce1a3be483c5f8f3630986fefdc1577e95ebe817d",
+      "bytes": 6635
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_fee_delivery.py",
+      "sha256": "5d3659acac44334879547b38e69105c393b8e47196d3e534585bc4278c5da647",
+      "bytes": 51087
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/funded_recovery.py",
+      "sha256": "02498c90338c05536ec69018c384fbb3d667c89f3d57f641d271952cb8fa8084",
+      "bytes": 13216
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "ec170385755774f451eb22500cd4115c0123631d530f46573711e67e87bf0143",
+      "bytes": 14508
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-gated-migration-recovery-final/MANIFEST.json",
+      "sha256": "c166e47be655b1115e2eb66f2232fc5617d92512377240ebb5497c343c0caeed",
+      "bytes": 40867
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-recorded-migration-control/MANIFEST.json",
+      "sha256": "1cea35e6e3d2a3310787f5f326269fe0bf838a2da83a6bb47735401ab3508a75",
+      "bytes": 1563
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-gated-migration-recovery-final/parity.json",
+      "sha256": "8f6df9392a8aac5762e2762931d67866877be23692284a297710f0f453f8c532",
+      "bytes": 280
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-gated-migration-recovery-final/native/recovery/sdk-migration.boc",
+      "sha256": "3d32565166f8453f35d8a488a71a814b0ce491edb6b242f7a5d9f6dea614a1b3",
+      "bytes": 12997
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-recorded-migration-control/results.json",
+      "sha256": "0bdd0215e476ab739ca558898c92e2f4309e63a9997181d60bd0076c15af1291",
+      "bytes": 122
+    }
+  ],
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python test/wallet-v5r2/sdk_auth_parity.py --native-signer tosctl/src/target/debug/examples/public_fixture --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --fee-driver tosctl/src/target/debug/examples/v5r2_fee_encode --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output <fresh-directory>",
+    "python test/wallet-v5r2/recorded_migration_control.py --fixtures <parity>/native --submission <parity>/native/recovery/sdk-migration.boc --output <fresh-control-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limitations": [
+    "All proof checkpoint/anchor metadata in the private test adapter is explicitly synthetic. This is not public-network finality evidence.",
+    "Actual account cells and transaction hash/state chains are checked; adapters and fixed public test seeds exist only under cfg(test).",
+    "Tests use diagnostic credit 20000. Default 10000-credit admission, production custody, reserve readiness and live-proof integration remain release gates."
+  ],
+  "retention": "Retain raw logs, transaction cells and manifests outside Git through review and release acceptance, at least through 2027-01-06."
+}

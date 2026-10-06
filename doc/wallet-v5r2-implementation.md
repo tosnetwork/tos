@@ -1590,8 +1590,8 @@ This closes the native client signing bypass, not the full release gate. Callers
 still generate and retain fresh requests, collect trustworthy proofs, approve the
 migration, coordinate signing/fee reservations and funding, verify successful
 on-chain installation and a subsequent payment, and handle retries/restores.
-Current reserve sufficiency, LMS custody continuity, full dual-POP-to-migration VM
-integration and default-credit admission still require validation. Evidence:
+Current reserve sufficiency, LMS custody continuity, live-proof integration and
+default-credit admission still require validation. Evidence:
 `test/wallet-v5r2/migration-signing-20261006.json`.
 
 
@@ -1615,8 +1615,40 @@ envelope is signed: the vault executes successfully, the module rejects with
 1808, and migration is not attempted. Both architecture CI jobs run this control.
 
 This harness exercises real transactions using public test keys and diagnostic
-20,000 gas credit. It still invokes SDK wire encoding rather than the new
-proof-bound migration signing API. Connecting these real transaction receipts to
-that API is a remaining integration step; neither this result nor the synthetic
-gate tests establish live-network finality or default-credit admission. Evidence:
+20,000 gas credit. That run used SDK wire encoding; the integration below additionally routes the
+recorded transactions through the proof-bound migration signing API. Neither
+result establishes live-network finality or default-credit admission. Evidence:
 `test/wallet-v5r2/dual-pop-recovery-20261006.json`.
+
+
+## Recorded transactions through the native migration gate
+
+The full SDK recovery harness now invokes a test-only Rust adapter after both
+successor POPs and before migration. It reconstructs typed initial/successor
+enrollment from the compiled fixture pins, authenticates the primary POP at each
+recorded account head, and walks backwards to the rescue POP using actual previous
+transaction hashes and account state updates. Both exact funded POPs and current
+account states feed `sign_migration_submission`, which produces the SLH body
+actually signed into the subsequent LMS fee envelope.
+
+The harness compares the gated request against independently encoded expected
+AUTH bytes. After native/Rust replay, a second explicit Rust test checks that the
+module's actual inbound body equals the generated signed body, proves fee-to-module
+and module-to-wallet delivery, and binds the resulting wallet to the installed
+successor. A sensitivity control substitutes a different signature over the same
+request: verification fails; deleting the body binding admits it; restoration
+recovers rejection. Both architecture CI jobs run this control.
+
+These adapters live only under `cfg(test)` and `native-wallet-signer`. Their
+ignored-by-default tests are explicitly invoked by the harness, which requires a
+named successful test and exactly one passing result. Required artifacts and output
+paths must be supplied; missing fixtures or reused output paths fail. The adapter
+uses only the fixed PUBLIC test rescue seed. Its account proof metadata, trust
+anchor and checkpoint are deliberately synthetic; the actual transaction cells,
+state preimages, signatures and execution results are real local VM artifacts.
+No production unverified-proof constructor or live custody path is introduced.
+
+The 67-transaction dual-VM flow still uses diagnostic 20,000 credit. Public-chain
+proof/finality, production custody, reserve readiness and default-credit admission
+remain open. Evidence is indexed in
+`test/wallet-v5r2/recorded-migration-gate-20261006.json`.

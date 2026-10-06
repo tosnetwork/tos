@@ -2965,3 +2965,7 @@ pub(crate) mod transaction_receipt_tests {
         }
     }
 }
+
+#[cfg(all(test, feature = "native-wallet-signer"))]
+#[path = "wallet_v5r2_recorded_migration_tests.rs"]
+mod recorded_migration_tests;
