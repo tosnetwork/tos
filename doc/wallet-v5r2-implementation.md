@@ -2172,3 +2172,19 @@ recovery-manifest authenticity, separate-device custody or LMS scheduling journa
 Closed-snapshot rollback, fee-state loss barriers, actual chain readiness and
 production deployment gates remain separate. Evidence:
 `test/wallet-v5r2/vault-derived-restore-20261006.json`.
+
+
+### Fee-scheduler mutation runner repair
+
+ARM job 112091164565 in run 37408434711 at `8e9cd91dd` stopped before its
+scheduler mutations because the runner still matched the old inline
+`first.max(chain_next_leaf).max(local_next)` expression. Production scheduling
+had moved local-custody merging into `plan` and calendar selection into
+`select_leaf`. The runner now targets those two exact checks, validates all
+replacement counts before compiling candidates, uses a fresh output directory,
+and requires all six positive tests to execute. The local reservation, restore
+wait and calendar-burn mutations each fail the expected semantic assertion;
+production and restored candidates pass. Production scheduler code is unchanged.
+This resolves the reproduced harness defect locally; it is not a claim that the
+remaining Linux CI or deployment gates pass. Evidence:
+`test/wallet-v5r2/fee-schedule-ci-repair-20261006.json`.

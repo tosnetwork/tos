@@ -1,0 +1,68 @@
+{
+  "base_commit": "4a2b0f0f09a0339124174ed34b28da43e2e54c94",
+  "scope": "Repair stale fee-scheduler mutation anchors after production helper extraction; no production scheduler changes.",
+  "failed_ci": {
+    "head": "8e9cd91dd3313df5f7561f6dbe4d2f7e62e9a23d",
+    "run": 37408434711,
+    "job": 112091164565,
+    "url": "https://github.com/tosnetwork/tos/actions/runs/37408434711/job/112091164565",
+    "cause": "candidate.count(before) failed before local_reservation mutation because old expression is absent"
+  },
+  "tests": {
+    "production_passed": 6,
+    "restored_passed": 6,
+    "results": {
+      "production": {
+        "exit": 0,
+        "semantic_witness": null
+      },
+      "local_reservation": {
+        "exit": 101,
+        "semantic_witness": "exported_but_unbroadcast_and_reorged_leaves_stay_burned"
+      },
+      "restore_wait": {
+        "exit": 101,
+        "semantic_witness": "restore_waits_even_at_exact_boundary_and_ignores_old_counter"
+      },
+      "calendar_burn": {
+        "exit": 101,
+        "semantic_witness": "exported_but_unbroadcast_and_reorged_leaves_stay_burned"
+      },
+      "restored": {
+        "exit": 0,
+        "semantic_witness": null
+      }
+    },
+    "ruff": "passed"
+  },
+  "command": "python3 test/wallet-v5r2/fee_schedule_controls.py --output <fresh-directory>",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_schedule_controls.py",
+      "bytes": 2842,
+      "sha256": "3b693433b69cdc6bebfc3c1d59053048c7cf56a5d67ba3715544afe87cd4d50d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_schedule.rs",
+      "bytes": 11336,
+      "sha256": "ce4b222b7d5d54da5b0819a06f62be9960c60259cc71fcd60b86426bb6437874"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 140593,
+      "sha256": "0d9b783e5a2078c64ccf6e73516acb6a826afe1ee2df9166f3d161331ae5b599"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-schedule-ci-final/MANIFEST.json",
+      "bytes": 5068,
+      "sha256": "e93786c41c4f6add66283932f24c62eaef5a6e333bb03cf76b2fd216726fbd84"
+    }
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Local native Rust standalone scheduler evidence; final-head Linux CI still required.",
+    "Original x86 job still in progress when this repair was recorded; not cancelled or represented as passed."
+  ]
+}

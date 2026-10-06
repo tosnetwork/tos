@@ -13,14 +13,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
+    args.output.mkdir(parents=True, exist_ok=False)
     source = SOURCE.read_text()
     variants = [
         ("production", None, None, None),
         (
             "local_reservation",
-            "first.max(chain_next_leaf).max(local_next)",
-            "first.max(chain_next_leaf)",
+            "select_leaf(route, proven_time, chain_next_leaf.max(local_next))?",
+            "select_leaf(route, proven_time, chain_next_leaf)?",
             "exported_but_unbroadcast_and_reorged_leaves_stay_burned",
         ),
         (
@@ -31,17 +31,20 @@ def main():
         ),
         (
             "calendar_burn",
-            "first.max(chain_next_leaf).max(local_next)",
-            "chain_next_leaf.max(local_next)",
+            "let leaf = first.max(next);",
+            "let leaf = next;",
             "exported_but_unbroadcast_and_reorged_leaves_stay_burned",
         ),
         ("restored", None, None, None),
     ]
+    for name, before, _, _ in variants:
+        if before is not None:
+            assert source.count(before) == 1, (name, source.count(before))
+
     results = {}
     for name, before, after, witness in variants:
         candidate = source
         if before is not None:
-            assert candidate.count(before) == 1
             candidate = candidate.replace(before, after)
         path, binary = args.output / f"{name}.rs", args.output / name
         path.write_text(candidate)
@@ -56,7 +59,7 @@ def main():
         log = run.stdout + run.stderr
         (args.output / f"{name}.log").write_text(log)
         if witness is None:
-            assert run.returncode == 0, log
+            assert run.returncode == 0 and "6 passed; 0 failed" in log, log
         else:
             assert run.returncode != 0
             assert f"tests::{witness} ... FAILED" in log
