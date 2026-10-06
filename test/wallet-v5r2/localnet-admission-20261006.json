@@ -1,0 +1,78 @@
+{
+  "base_commit": "06257718ad30567fab000b6e562d5413151d2658",
+  "source_state": "uncommitted changes on base commit",
+  "platform": "macOS AArch64 native create-state",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "test/tostester/src/tostester/zerostate.py": "0a199a320b9d02809ba34ecebd9148c4da46d66b24e9ff55e386e9d8ac5b3afa",
+    "test/tostester/tests/tostester/test_zerostate_supply.py": "f41ad565b0b92d2b72009d2acd3af7fb8a1dc1f6ae16aef1160a86e08f799fcd",
+    "crypto/smartcont/gen-zerostate.fif": "e837c6a29ffdf605ebd723f65db1eaa29982061480982122dce4f3814d828d4e",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "05213f9620cdadad49fd6ebc8cd246707aa5a8e8266d4676ec55ec043164607b"
+  },
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-localnet-candidate-final",
+  "test_log": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-localnet-candidate-final.log",
+    "sha256": "f903cae786d6fbbddcb7e9a660c28fe0a9734f8b1d169772384899d75471bcec",
+    "bytes": 114
+  },
+  "returncode": 0,
+  "tests_passed": 26,
+  "generated_configs": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-localnet-candidate-final/test_admission_candidate_local0/canonical/zerostate.boc",
+      "sha256": "ecb2a97de646a61b4c8c4db60215a6a594aaa99af4c6f88810d08c7e8ff9392d",
+      "bytes": 21721,
+      "version": 18,
+      "masterchain_credit": 10000,
+      "basechain_credit": 20000,
+      "config20_hash": "3806f08bd71c647291217e9d043a018e8a9826e1943975bc1e9c97b1c2333267",
+      "config21_hash": "a5edd5d517b24d24cd9ca05f33a0eef41a15b98f8de9692d4744fd46c2587621"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-localnet-candidate-final/test_admission_candidate_local0/local/zerostate.boc",
+      "sha256": "f49a68e2a413b90d66049ae56dcfdce42cbc7c0cb06239aaac91febf70459c32",
+      "bytes": 16206,
+      "version": 18,
+      "masterchain_credit": 10000,
+      "basechain_credit": 20000,
+      "config20_hash": "3806f08bd71c647291217e9d043a018e8a9826e1943975bc1e9c97b1c2333267",
+      "config21_hash": "a5edd5d517b24d24cd9ca05f33a0eef41a15b98f8de9692d4744fd46c2587621"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-localnet-candidate-final/test_admission_candidate_local0/mutated-credit/zerostate.boc",
+      "sha256": "52bbf0649d73ca28585d4d6891ac0572b9eff1dbfd903128a874402148cbd587",
+      "bytes": 16206,
+      "version": 18,
+      "masterchain_credit": 10000,
+      "basechain_credit": 10000,
+      "config20_hash": "3806f08bd71c647291217e9d043a018e8a9826e1943975bc1e9c97b1c2333267",
+      "config21_hash": "c07c7d2b2a58470dda36cdad822a8580b9b68a9141c4b0275cc9aeaf80225407"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-localnet-candidate-final/test_admission_candidate_local0/restored/zerostate.boc",
+      "sha256": "7583b0ae9696db222510b125f2cee886d8bfd72e6a8143cbbc28183a571bdd29",
+      "bytes": 16206,
+      "version": 18,
+      "masterchain_credit": 10000,
+      "basechain_credit": 20000,
+      "config20_hash": "3806f08bd71c647291217e9d043a018e8a9826e1943975bc1e9c97b1c2333267",
+      "config21_hash": "a5edd5d517b24d24cd9ca05f33a0eef41a15b98f8de9692d4744fd46c2587621"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-localnet-candidate-final/test_admission_candidate_local6/mutated/zerostate.boc",
+      "sha256": "fdd2754cea97b69cdab79af0786854df17f00aaaf87e38be46e2286b2fbe7d81",
+      "bytes": 16206,
+      "version": 17,
+      "masterchain_credit": 10000,
+      "basechain_credit": 10000,
+      "config20_hash": "3806f08bd71c647291217e9d043a018e8a9826e1943975bc1e9c97b1c2333267",
+      "config21_hash": "c07c7d2b2a58470dda36cdad822a8580b9b68a9141c4b0275cc9aeaf80225407"
+    }
+  ],
+  "scope": "Explicit localnet version18 admission candidate uses deployment gas fees. Generated ConfigParam20/21 cell hashes equal the canonical candidate. Other versions, development fees, missing namespace and nonboolean flags fail before wallet custody. Wrong local credit produces a BOC rejected by candidate assertions; bypassing profile validation allows invalid version17 generation and is detected. Baseline and restored paths pass.",
+  "limitations": [
+    "No change to default localnet or Rust fallback gas configuration.",
+    "No opcode-version parity, complete release transaction corpus, node rate calibration or public-chain activation claim."
+  ],
+  "command": "PYTHONPATH=test/tostester/src TOS_ROOT=/Users/tomisetsu/tos-v5r2-rescue /Users/tomisetsu/tos/.venv/bin/python -m pytest -q test/tostester/tests/tostester/test_zerostate_auth_policy.py test/tostester/tests/tostester/test_zerostate_supply.py test/tostester/tests/tostester/test_zerostate_fee_schedule.py -k \"auth_policy or initial_retirement or missing_policy or version16_retains or bad_namespace or admission_candidate or deployment_schedule or test_schedule\" --basetemp=/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-localnet-candidate-final"
+}

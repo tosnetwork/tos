@@ -4,9 +4,11 @@ import hashlib
 import json
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import tostester.zerostate as zerostate_module
 from pytosiq_core import ShardStateUnsplit
 from pytosiq_core.boc.deserialize import Boc
 from pytosiq_core.tlb.config import (
@@ -1090,3 +1092,69 @@ def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path)
     with pytest.raises(AssertionError, match="early namespace guard"):
         assert b"V5R2 admission candidate requires an explicit AUTH network tag" in result.stderr, "early namespace guard"
     assert (tmp_path / "main-wallet.pk").exists(), "unguarded candidate reached custody generation"
+
+
+def test_admission_candidate_localnet_matches_generated_canonical_gas_fields(tmp_path, monkeypatch):
+    canonical = _generate_admission_candidate(tmp_path / "canonical",
+        (REPO / "crypto/smartcont/gen-zerostate.fif").read_text())
+    config = NetworkConfig(global_version=18, auth_network_tag=bytes(range(32)),
+                      v5r2_admission_candidate=True, deployment_fee_schedule=True,
+                      genesis_time=EXPECTED_MAINNET_GENESIS_UTIME, genesis_wallet_seed=b"\x53" * 32)
+
+    def generate_and_compare(local_dir):
+        local_dir.mkdir()
+        local = create_zerostate(Install(BUILD_DIR, REPO), local_dir, config, [Key()])
+        cfg = _load_masterchain_state(local.masterchain.file).custom.config.config
+        _assert_admission_candidate(cfg)
+        for param in (20, 21):
+            assert cfg[param].to_cell().hash == canonical[param].to_cell().hash, f"ConfigParam {param} differs"
+
+    generate_and_compare(tmp_path / "local")
+    original = zerostate_module.fee_schedule_for
+
+    def wrong_credit(cfg):
+        schedule = original(cfg)
+        assert " 20000 " in schedule["gas_prices"]
+        schedule["gas_prices"] = schedule["gas_prices"].replace(" 20000 ", " 10000 ")
+        return schedule
+
+    with monkeypatch.context() as context:
+        context.setattr(zerostate_module, "fee_schedule_for", wrong_credit)
+        with pytest.raises(AssertionError, match="candidate credit"):
+            generate_and_compare(tmp_path / "mutated-credit")
+    generate_and_compare(tmp_path / "restored")
+
+
+@pytest.mark.parametrize("change", [{"global_version": 17}, {"global_version": 19},
+    {"deployment_fee_schedule": False}, {"auth_network_tag": None}, {"v5r2_admission_candidate": "yes"}])
+def test_admission_candidate_localnet_rejects_incompatible_profile(tmp_path, change):
+    config = NetworkConfig(global_version=18, auth_network_tag=bytes(range(32)),
+        v5r2_admission_candidate=True, deployment_fee_schedule=True)
+    with pytest.raises(ValueError, match="V5R2 admission candidate"):
+        create_zerostate(Install(BUILD_DIR, REPO), tmp_path, replace(config, **change), [Key()])
+    assert not (tmp_path / "main-wallet.pk").exists()
+
+
+def test_admission_candidate_localnet_validation_deletion_is_detected(tmp_path, monkeypatch):
+    config = NetworkConfig(global_version=17, auth_network_tag=bytes(range(32)),
+        v5r2_admission_candidate=True, deployment_fee_schedule=True,
+        genesis_time=EXPECTED_MAINNET_GENESIS_UTIME, genesis_wallet_seed=b"\x53" * 32)
+
+    def require_rejection(directory):
+        directory.mkdir()
+        try:
+            create_zerostate(Install(BUILD_DIR, REPO), directory, config, [Key()])
+        except ValueError as error:
+            assert "V5R2 admission candidate" in str(error)
+            assert not (directory / "main-wallet.pk").exists()
+            return
+        raise AssertionError("incompatible candidate reached genesis generation")
+
+    require_rejection(tmp_path / "baseline")
+    original = zerostate_module.fee_schedule_for
+    with monkeypatch.context() as context:
+        context.setattr(zerostate_module, "fee_schedule_for",
+            lambda cfg: original(replace(cfg, v5r2_admission_candidate=False)))
+        with pytest.raises(AssertionError, match="incompatible candidate reached genesis generation"):
+            require_rejection(tmp_path / "mutated")
+    require_rejection(tmp_path / "restored")

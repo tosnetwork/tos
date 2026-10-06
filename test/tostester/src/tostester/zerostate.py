@@ -70,6 +70,8 @@ class NetworkConfig:
     # Mandatory public namespace for the experimental V5R2 activation profile.
     # Deliberately no default: it must not depend on a generated genesis hash.
     auth_network_tag: bytes | None = None
+    # Explicit version-18 admission candidate; requires the deployment fee table.
+    v5r2_admission_candidate: bool = False
     shard_validators: int = 1  # DEV-SPECIFIC: single-validator bootstrap rehearsal
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
@@ -516,9 +518,17 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     is not made to the other fails rather than quietly producing a localnet
     whose fees are nobody's.
     """
+    if type(config.v5r2_admission_candidate) is not bool:
+        raise ValueError("V5R2 admission candidate flag must be boolean")
+    if config.v5r2_admission_candidate and (
+        config.global_version != 18 or not config.deployment_fee_schedule
+        or not isinstance(config.auth_network_tag, bytes) or len(config.auth_network_tag) != 32
+    ):
+        raise ValueError("V5R2 admission candidate requires version 18, deployment fees and a 32-byte AUTH network tag")
     if config.deployment_fee_schedule:
+        credit = 20000 if config.v5r2_admission_candidate else 10000
         return {
-            "gas_prices": "436907 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
+            "gas_prices": f"436907 30 *M 30 *M {credit} 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
             "mc_gas_prices": "655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000"
             " config.mc_gas_prices!",
             "fwd_prices": "66667 4369067 436906667 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
@@ -542,6 +552,7 @@ def create_zerostate(
     validator_keys: list[Key],
     pq_validators: list[PqInitialValidator] | None = None,
 ) -> Zerostate:
+    fee_schedule = fee_schedule_for(config)
     if config.global_version >= 17:
         if not isinstance(config.auth_network_tag, bytes) or len(config.auth_network_tag) != 32:
             raise ValueError("version 17 Genesis requires an explicit 32-byte AUTH network tag")
@@ -770,8 +781,6 @@ def create_zerostate(
 
     if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
         raise ValueError("global_id must fit a signed int32")
-
-    fee_schedule = fee_schedule_for(config)
 
     if wallet_seed is not None:
         # Refuse existing custody files rather than replacing an old run's key.

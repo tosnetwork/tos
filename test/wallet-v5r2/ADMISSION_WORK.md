@@ -101,7 +101,13 @@ requires the namespace before any wallet key generation.
 
 The [genesis evidence](admission-genesis-20261006.json) reads actual generated
 BOCs and includes version/credit mutations and an early-namespace-guard deletion.
+The separate localnet generator requires `v5r2_admission_candidate=True`, version
+18, the deployment fee schedule and an explicit AUTH namespace. Its generated
+ConfigParam 20/21 cells match the canonical candidate byte-for-byte; incompatible
+profiles fail before key generation. The localnet credit and validation bypass
+controls are recorded in [localnet evidence](localnet-admission-20261006.json).
+
 This is a configuration candidate for further acceptance work. Rust defaults,
-the separate localnet generator, opcode version boundaries, full default-credit
+opcode version boundaries, full default-credit
 transaction parity, calibrated node rates and public-network activation remain
 pending; generating a BOC does not establish these gates.
