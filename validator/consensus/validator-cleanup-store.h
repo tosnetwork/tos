@@ -119,22 +119,23 @@ inline ValidatorCleanupPage load_validator_cleanup_page(td::KeyValueReader& kv, 
   return page;
 }
 
-// The current durable record for one session (a point read), or nothing if there is
-// none or it does not decode. Cleanup re-reads a record this way just before
-// reserving its delete, so a page copy that a later retirement or erase made stale
-// is never acted on.
-inline std::optional<PendingValidatorConsensusDbCleanup> load_validator_cleanup_record(
+// The current durable record for one session (a point read): the record, nothing if
+// there is none or it does not decode (as a page read skips such a value), or an error
+// if the read itself failed -- which is not absence. Cleanup re-reads a record this
+// way just before reserving its delete, so a page copy that a later retirement or
+// erase made stale is never acted on.
+inline td::Result<std::optional<PendingValidatorConsensusDbCleanup>> load_validator_cleanup_record(
     td::KeyValueReader& kv, const ValidatorSessionId& session_id) {
   std::string value;
-  auto status = kv.get(td::Slice{validator_cleanup_key(session_id)}, value);
-  if (status.is_error() || status.ok() != td::KeyValueReader::GetStatus::Ok) {
-    return std::nullopt;
+  TRY_RESULT(status, kv.get(td::Slice{validator_cleanup_key(session_id)}, value));
+  if (status != td::KeyValueReader::GetStatus::Ok) {
+    return std::optional<PendingValidatorConsensusDbCleanup>{};
   }
   auto decoded = decode_validator_cleanup_record(value);
   if (!decoded || !(decoded.value().session_id == session_id)) {
-    return std::nullopt;
+    return std::optional<PendingValidatorConsensusDbCleanup>{};
   }
-  return std::move(decoded.value());
+  return std::optional<PendingValidatorConsensusDbCleanup>{std::move(decoded.value())};
 }
 
 // Load every record, page by page. For offline tools and tests only: the node scans

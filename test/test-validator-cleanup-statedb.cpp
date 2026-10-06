@@ -491,16 +491,27 @@ ValidatorCleanupOracles oracles_at(tos::BlockSeqno gc_seqno, const std::set<tos:
   return o;
 }
 
-// Drives the production scan over a real RocksDb exactly as the manager does: page
-// read, examination, one point read per candidate, reservation, delete, durable erase.
-// Hooks run while the page is in flight (after the read, before examination) and
-// between examination and the point reads.
+// Drives the production driver over a real RocksDb exactly as the glue does, but
+// synchronously and deterministically: one scheduled callback at a time (a timer fires
+// when the test says so, whatever its delay), page read, examination, one point read
+// per candidate, reservation, end of pass, then the delete completions (each followed
+// by a kick, as the glue does). Hooks run while the page is in flight and between
+// examination and the point reads; failures can be injected per page, point read and
+// delete.
 struct RocksScan {
   td::RocksDb& kv;
   ValidatorCleanupManager& m;
   ValidatorCleanupOracles oracles;
   std::function<void()> while_page_in_flight;
   std::function<void()> before_point_reads;
+  std::function<bool()> fail_page;
+  std::function<bool(const PendingValidatorConsensusDbCleanup&)> fail_point;
+  std::function<bool(const PendingValidatorConsensusDbCleanup&)> fail_delete;
+  bool hold_deletes = false;
+  std::vector<ReservedValidatorDelete> held;
+  std::optional<ValidatorCleanupScheduleAction> pending;  // the one scheduled callback
+  std::vector<double> timer_delays;
+  size_t duplicate_schedules = 0;  // a second callback scheduled while one was pending
   size_t passes = 0;
   size_t erased_total = 0;
   size_t max_memory = 0;  // in-flight + open retirements + live incarnations
@@ -508,13 +519,43 @@ struct RocksScan {
   size_t memory() const {
     return m.in_flight_count() + m.open_retirement_count() + m.live_session_count();
   }
-  // One pass with deletes completed at once; nothing if the driver declined.
-  std::optional<std::vector<ReservedValidatorDelete>> pass() {
-    auto request = m.begin_pass(oracles.gc);
-    if (!request) {
+  void take(const ValidatorCleanupScheduleAction& action) {
+    if (action.kind == ValidatorCleanupScheduleAction::Kind::None) {
+      return;
+    }
+    if (pending) {
+      ++duplicate_schedules;
+    }
+    pending = action;
+    if (action.kind == ValidatorCleanupScheduleAction::Kind::Timer) {
+      timer_delays.push_back(action.delay_seconds);
+    }
+  }
+  void kick() {
+    take(m.kick(oracles.gc));
+  }
+  bool timer_pending() const {
+    return pending && pending->kind == ValidatorCleanupScheduleAction::Kind::Timer;
+  }
+  // Fire the pending callback, if any; return the reservations of the pass it ran, or
+  // nothing if nothing was pending. A stale callback runs no pass.
+  std::optional<std::vector<ReservedValidatorDelete>> fire() {
+    if (!pending) {
       return std::nullopt;
     }
+    auto action = *pending;
+    pending.reset();
+    std::vector<ReservedValidatorDelete> reserved;
+    if (!m.accept_scheduled(action.generation)) {
+      return reserved;
+    }
     ++passes;
+    auto request = m.begin_pass(oracles.gc);
+    ASSERT_TRUE(request.has_value());
+    if (fail_page && fail_page()) {
+      take(m.schedule_after_pass(m.abort_pass(), oracles.gc));
+      return reserved;
+    }
     auto page = load_validator_cleanup_page(kv, request->after_key, request->max_keys);
     if (while_page_in_flight) {
       while_page_in_flight();
@@ -523,34 +564,60 @@ struct RocksScan {
     if (before_point_reads) {
       before_point_reads();
     }
-    std::vector<ReservedValidatorDelete> reserved;
     for (const auto& c : candidates) {
-      if (auto r = m.on_point_read(c, load_validator_cleanup_record(kv, c.session_id), oracles.is_live)) {
+      td::Result<std::optional<PendingValidatorConsensusDbCleanup>> current =
+          (fail_point && fail_point(c)) ? td::Result<std::optional<PendingValidatorConsensusDbCleanup>>(
+                                              td::Status::Error("injected point read failure"))
+                                        : load_validator_cleanup_record(kv, c.session_id);
+      if (auto r = m.on_point_read_result(request->token, c, current, oracles.is_live)) {
         reserved.push_back(*r);
       }
     }
-    m.end_pass();
+    ASSERT_TRUE(m.pass_verified());
+    take(m.schedule_after_pass(m.end_pass(), oracles.gc));
     max_memory = std::max(max_memory, memory());
     for (const auto& r : reserved) {
-      std::vector<std::tuple<tos::ValidatorSessionId, uint64_t, uint64_t>> acks;
-      m.on_delete_completed(r.record.session_id, r.generation, r.attempt_id, /*confirmed_gone=*/true,
-                            [&](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) {
-                              erase_validator_cleanup_record(kv, s);
-                              acks.emplace_back(s, g, a);
-                            });
-      for (const auto& [s, g, a] : acks) {
-        m.on_erase_acknowledged(s, g, a);
-        ++erased_total;
+      if (hold_deletes) {
+        held.push_back(r);
+      } else {
+        complete(r, !(fail_delete && fail_delete(r.record)));
       }
     }
     return reserved;
   }
-  // Passes until the driver declines (paused) or `limit` passes ran.
+  // One pass: kick first if nothing is scheduled. Nothing if the driver declined.
+  std::optional<std::vector<ReservedValidatorDelete>> pass() {
+    if (!pending) {
+      kick();
+    }
+    return fire();
+  }
+  // Complete a delete attempt (and its durable erase), then kick as the glue does.
+  void complete(const ReservedValidatorDelete& r, bool gone) {
+    std::vector<std::tuple<tos::ValidatorSessionId, uint64_t, uint64_t>> acks;
+    m.on_delete_completed(r.record.session_id, r.generation, r.attempt_id, gone,
+                          [&](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) {
+                            erase_validator_cleanup_record(kv, s);
+                            acks.emplace_back(s, g, a);
+                          });
+    for (const auto& [s, g, a] : acks) {
+      m.on_erase_acknowledged(s, g, a);
+      ++erased_total;
+    }
+    kick();
+  }
+  // Passes until the driver declines or `limit` passes ran.
   void run(size_t limit) {
     for (size_t i = 0; i < limit; i++) {
       if (!pass()) {
         return;
       }
+    }
+  }
+  // Fire scheduled callbacks only -- no external trigger -- until none is pending.
+  void run_without_triggers(size_t limit) {
+    for (size_t i = 0; i < limit && pending; i++) {
+      fire();
     }
   }
 };
@@ -643,7 +710,7 @@ TEST(ValidatorCleanupStateDb, unrelated_retirements_during_every_read_do_not_sta
     }
     ASSERT_TRUE(reclaimed_at.has_value());
     ASSERT_EQ(reclaimed_at.value(), static_cast<size_t>(1));
-    ASSERT_TRUE(!load_validator_cleanup_record(kv, eligible.session_id).has_value());
+    ASSERT_TRUE(!load_validator_cleanup_record(kv, eligible.session_id).move_as_ok().has_value());
     ASSERT_TRUE(scan.max_memory <= ValidatorCleanupManager::kMaxInFlight);  // churn leaves nothing resident
   }
   td::rmrf(path).ignore();
@@ -677,7 +744,7 @@ TEST(ValidatorCleanupStateDb, eligible_record_among_ineligible_ones_is_reclaimed
       ASSERT_TRUE(scan.pass().has_value());  // never paused while work remains
     }
     ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
-    ASSERT_TRUE(!load_validator_cleanup_record(kv, eligible.session_id).has_value());
+    ASSERT_TRUE(!load_validator_cleanup_record(kv, eligible.session_id).move_as_ok().has_value());
     ASSERT_EQ(load_validator_cleanup_records(kv).size(), 600 + churned);  // every ineligible record kept
   }
   td::rmrf(path).ignore();
@@ -742,11 +809,12 @@ TEST(ValidatorCleanupStateDb, scan_pauses_and_resumes_on_gc_move_or_lifecycle_ev
     ASSERT_TRUE(m.paused());
     ASSERT_TRUE(!scan.pass().has_value());  // paused at GC 500
 
-    // A close arrives: scanning resumes at the same GC block, then pauses again.
+    // A close arrives: scanning resumes at the same GC block; the sweep that starts
+    // after it is clean, so the scanner pauses again.
     auto rec = indexed_record(0x31, 0, 900);
     retire_and_close(kv, m, rec);
     ASSERT_TRUE(scan.pass().has_value());
-    ASSERT_TRUE(scan.pass().has_value());  // the scan that saw the event cannot pause
+    ASSERT_TRUE(m.paused());
     ASSERT_TRUE(!scan.pass().has_value());
 
     // The GC block moves past the retirements: the scan resumes and reclaims them.
@@ -781,6 +849,304 @@ TEST(ValidatorCleanupStateDb, full_scan_takes_ceil_n_over_page_passes) {
     }
     ASSERT_EQ(passes_to_wrap, (kRecords + ValidatorCleanupManager::kPageSize - 1) / ValidatorCleanupManager::kPageSize);
     ASSERT_EQ(scan.erased_total, static_cast<size_t>(10));
+  }
+  td::rmrf(path).ignore();
+}
+
+// ---- scheduler: continuation, events, failures and backoff ---------------------------
+
+// A point-read failure on the first page, followed by several healthy pages, does not
+// strand the record: the sweep runs to its end on its own, backs off once, and the
+// rescan reclaims the record -- with no external trigger after the first.
+TEST(ValidatorCleanupStateDb, early_point_read_failure_is_rescanned_without_a_trigger) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto eligible = indexed_record(0x01, 0, 100);  // first in key order
+    store_validator_cleanup_record(kv, eligible);
+    for (size_t i = 0; i < 700; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(0x10 + i % 0xE0), i, 900));
+    }
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    bool failed_once = false;
+    scan.fail_point = [&](const PendingValidatorConsensusDbCleanup&) { return !failed_once && (failed_once = true); };
+    scan.kick();  // the only trigger
+    scan.run_without_triggers(100);
+    ASSERT_TRUE(failed_once);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+    ASSERT_TRUE(!load_validator_cleanup_record(kv, eligible.session_id).move_as_ok().has_value());
+    ASSERT_TRUE(scan.timer_delays == std::vector<double>{1});
+    ASSERT_TRUE(m.paused());  // the rescan was clean
+  }
+  td::rmrf(path).ignore();
+}
+
+// A close behind the cursor makes an already-skipped record eligible mid-sweep; the
+// sweep that saw it is followed by another, which reclaims it -- no external trigger.
+TEST(ValidatorCleanupStateDb, close_behind_the_cursor_is_rescanned_without_a_trigger) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto rec = indexed_record(0x01, 0, 100);
+    for (size_t i = 0; i < 600; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(0x10 + i % 0xE0), i, 900));
+    }
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    store_validator_cleanup_record(kv, rec);
+    m.on_group_created(rec.session_id);
+    auto gen = m.on_group_retired(rec);  // retired, its close not yet confirmed: held
+    scan.kick();
+    ASSERT_TRUE(scan.fire().value().empty());  // first page: the record is skipped
+    ASSERT_TRUE(!m.cursor().empty());
+    m.on_close_confirmed(rec.session_id, gen);  // the close lands behind the cursor
+    scan.kick();                                // the glue kicks on a close; a pass is queued
+    scan.run_without_triggers(100);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+    ASSERT_TRUE(scan.timer_delays.empty());
+    ASSERT_TRUE(m.paused());
+  }
+  td::rmrf(path).ignore();
+}
+
+// Once backing off, other triggers -- kicks on GC advances, erase acks -- neither run a
+// pass early nor schedule a second callback.
+TEST(ValidatorCleanupStateDb, triggers_during_backoff_do_not_shorten_it) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto rec = indexed_record(0x40, 0, 100);
+    store_validator_cleanup_record(kv, rec);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    bool fail = true;
+    scan.fail_point = [&](const PendingValidatorConsensusDbCleanup&) { return fail; };
+    ASSERT_TRUE(scan.pass().value().empty());  // point read failed; the sweep wrapped
+    ASSERT_TRUE(scan.timer_pending());
+    auto timer = *scan.pending;
+    for (int i = 0; i < 5; i++) {
+      scan.kick();
+      ASSERT_EQ(m.kick(make_checkpoint(500 + i)).kind, ValidatorCleanupScheduleAction::Kind::None);  // GC moves too
+    }
+    ASSERT_EQ(scan.duplicate_schedules, static_cast<size_t>(0));
+    ASSERT_EQ(scan.pending->generation, timer.generation);
+    ASSERT_EQ(m.schedule_state(), ValidatorCleanupManager::SchedState::Backoff);
+    fail = false;
+    scan.run_without_triggers(10);  // the timer fires; the rescan reclaims it
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+  }
+  td::rmrf(path).ignore();
+}
+
+// 64 reservations held until the scanner stops at capacity; all fail. The capacity
+// they free resumes the unfinished sweep, which reclaims the healthy records beyond
+// them; the failed records are retried only after a backoff.
+TEST(ValidatorCleanupStateDb, capacity_freed_by_failed_deletes_resumes_the_sweep) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 64; i++) {
+      store_validator_cleanup_record(kv, indexed_record(0x10, i, 100));  // the first 64 in key order
+    }
+    for (size_t i = 0; i < 16; i++) {
+      store_validator_cleanup_record(kv, indexed_record(0x90, i, 100));  // healthy, further on
+    }
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    scan.hold_deletes = true;
+    scan.kick();
+    scan.run_without_triggers(100);
+    ASSERT_EQ(scan.held.size(), ValidatorCleanupManager::kMaxInFlight);
+    ASSERT_TRUE(!scan.pending);  // stopped at capacity, no trigger left
+    ASSERT_EQ(m.schedule_state(), ValidatorCleanupManager::SchedState::Idle);
+    scan.hold_deletes = false;
+    auto held = std::move(scan.held);
+    for (const auto& r : held) {
+      scan.complete(r, /*gone=*/false);  // every held attempt fails
+    }
+    ASSERT_TRUE(scan.pending.has_value());
+    ASSERT_EQ(scan.pending->kind, ValidatorCleanupScheduleAction::Kind::Queue);  // resume, not a retry
+    scan.fire();  // the unfinished sweep resumes and reaches the healthy records
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(16));
+    ASSERT_TRUE(scan.timer_pending());  // the failed records wait for a backoff
+    ASSERT_EQ(load_validator_cleanup_records(kv).size(), static_cast<size_t>(64));
+    scan.run_without_triggers(10);  // after the backoff the rescan reclaims them
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(80));
+  }
+  td::rmrf(path).ignore();
+}
+
+// A failed delete arriving after the scanner paused backs off; it does not start the
+// ordinary immediate sweep an event would.
+TEST(ValidatorCleanupStateDb, delete_failure_after_a_pause_backs_off) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    store_validator_cleanup_record(kv, indexed_record(0x40, 0, 100));
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    scan.hold_deletes = true;
+    ASSERT_EQ(scan.pass().value().size(), static_cast<size_t>(1));
+    ASSERT_TRUE(m.paused());  // the delete is still in flight: that alone does not rescan
+    scan.hold_deletes = false;
+    auto held = std::move(scan.held);
+    scan.complete(held.at(0), /*gone=*/false);
+    ASSERT_TRUE(scan.timer_pending());
+    ASSERT_TRUE(scan.timer_delays == std::vector<double>{1});
+  }
+  td::rmrf(path).ignore();
+}
+
+// Point reads of one pass may return in any order, failed or not. The pass ends exactly
+// once, after the last of them; the failed candidate is not reserved; nothing is
+// scheduled while callbacks are outstanding; a callback carrying another pass's token
+// changes nothing.
+TEST(ValidatorCleanupStateDb, point_reads_in_any_order_end_the_pass_once) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 3; i++) {
+      store_validator_cleanup_record(kv, indexed_record(0x40, i, 100));
+    }
+    ValidatorCleanupManager m;
+    auto o = oracles_at(500, nullptr);
+    auto action = m.kick(o.gc);
+    ASSERT_TRUE(m.accept_scheduled(action.generation));
+    auto request = m.begin_pass(o.gc).value();
+    auto candidates = m.on_page(request, load_validator_cleanup_page(kv, request.after_key, request.max_keys), o);
+    ASSERT_EQ(candidates.size(), static_cast<size_t>(3));
+    auto ok = [&](size_t k) { return load_validator_cleanup_record(kv, candidates[k].session_id); };
+    td::Result<std::optional<PendingValidatorConsensusDbCleanup>> err = td::Status::Error("injected");
+    // A stale token, then the real results out of order: 2 ok, 0 failed, 1 ok.
+    ASSERT_TRUE(!m.on_point_read_result(request.token + 1, candidates[1], ok(1), o.is_live).has_value());
+    ASSERT_TRUE(m.on_point_read_result(request.token, candidates[2], ok(2), o.is_live).has_value());
+    ASSERT_TRUE(!m.pass_verified());
+    ASSERT_TRUE(!m.on_point_read_result(request.token, candidates[0], err, o.is_live).has_value());
+    ASSERT_TRUE(!m.pass_verified());
+    ASSERT_EQ(m.schedule_state(), ValidatorCleanupManager::SchedState::Running);
+    ASSERT_TRUE(m.on_point_read_result(request.token, candidates[1], ok(1), o.is_live).has_value());
+    ASSERT_TRUE(m.pass_verified());
+    // A duplicate callback after the last one changes nothing.
+    ASSERT_TRUE(!m.on_point_read_result(request.token, candidates[0], ok(0), o.is_live).has_value());
+    ASSERT_EQ(m.in_flight_count(), static_cast<size_t>(2));
+    ASSERT_TRUE(!m.is_delete_in_flight(candidates[0].session_id));
+    auto summary = m.end_pass();
+    ASSERT_TRUE(summary.point_failed && summary.wrapped);
+    ASSERT_EQ(m.schedule_after_pass(summary, o.gc).kind, ValidatorCleanupScheduleAction::Kind::Timer);
+    ASSERT_EQ(m.schedule_after_pass(summary, o.gc).kind, ValidatorCleanupScheduleAction::Kind::None);  // once
+  }
+  td::rmrf(path).ignore();
+}
+
+// A persistent failure early in the store, with healthy pages after it: every sweep
+// fails, so the backoff escalates 1, 2, 4 ... 64 and stays there; once the failure
+// clears, an error-free sweep resets it and the next failure starts again at 1.
+TEST(ValidatorCleanupStateDb, persistent_failure_escalates_the_backoff_until_a_clean_sweep) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto bad = indexed_record(0x01, 0, 100);
+    store_validator_cleanup_record(kv, bad);
+    for (size_t i = 0; i < 600; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(0x10 + i % 0xE0), i, 900));
+    }
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    bool fail = true;
+    scan.fail_point = [&](const PendingValidatorConsensusDbCleanup& c) { return fail && c == bad; };
+    scan.kick();
+    while (scan.timer_delays.size() < 9) {
+      ASSERT_TRUE(scan.pending.has_value());
+      scan.fire();
+    }
+    ASSERT_TRUE((scan.timer_delays == std::vector<double>{1, 2, 4, 8, 16, 32, 64, 64, 64}));
+    fail = false;
+    scan.run_without_triggers(100);  // the rescan succeeds and the sweep is clean
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+    ASSERT_TRUE(m.paused());
+    // A new failure starts the backoff from 1 again.
+    auto bad2 = indexed_record(0x02, 0, 100);
+    store_validator_cleanup_record(kv, bad2);
+    fail = true;
+    scan.fail_point = [&](const PendingValidatorConsensusDbCleanup& c) { return fail && c == bad2; };
+    scan.oracles = oracles_at(501, nullptr);  // a GC advance resumes the paused scanner
+    scan.kick();
+    scan.run_without_triggers(5);
+    ASSERT_EQ(scan.timer_delays.back(), 1.0);
+  }
+  td::rmrf(path).ignore();
+}
+
+// Repeated failures of the SECOND page read back off each time, with the cursor left
+// where the first page put it, and the sweep completes on its own once reads recover.
+TEST(ValidatorCleanupStateDb, repeated_page_read_failures_keep_the_cursor_and_back_off) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 600; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(i % 0xF0), i, 900));
+    }
+    auto eligible = indexed_record(0xF8, 0, 100);  // on the last page
+    store_validator_cleanup_record(kv, eligible);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    size_t page_reads = 0;
+    scan.fail_page = [&] {
+      ++page_reads;
+      return page_reads >= 2 && page_reads <= 4;  // the second page fails three times
+    };
+    scan.kick();
+    scan.fire();  // first page
+    auto cursor = m.cursor();
+    ASSERT_TRUE(!cursor.empty());
+    for (int i = 0; i < 3; i++) {
+      ASSERT_TRUE(scan.pending.has_value());
+      scan.fire();  // fails
+      ASSERT_TRUE(m.cursor() == cursor);
+      ASSERT_TRUE(scan.timer_pending());  // a backoff, never an immediate retry
+    }
+    ASSERT_TRUE((scan.timer_delays == std::vector<double>{1, 2, 4}));
+    scan.run_without_triggers(20);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+  }
+  td::rmrf(path).ignore();
+}
+
+// Scheduled callbacks carry the scheduler generation. After disabling and re-enabling,
+// an OLD timer or continuation that fires changes nothing: no second pass overlaps the
+// current one and the state is unchanged.
+TEST(ValidatorCleanupStateDb, stale_scheduled_callbacks_change_nothing) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 600; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(i % 0xF0), i, 900));
+    }
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    size_t page_reads = 0;
+    scan.fail_page = [&] { return ++page_reads == 2; };
+    scan.kick();
+    scan.fire();  // first page; a continuation is queued
+    auto old_continuation = *scan.pending;
+    ASSERT_EQ(old_continuation.kind, ValidatorCleanupScheduleAction::Kind::Queue);
+    scan.fire();  // the second page fails: a backoff timer
+    auto old_timer = *scan.pending;
+    ASSERT_EQ(old_timer.kind, ValidatorCleanupScheduleAction::Kind::Timer);
+    scan.pending.reset();
+
+    m.disable();                           // cleanup disabled ...
+    auto fresh = m.kick(scan.oracles.gc);  // ... and enabled again: the unfinished sweep continues
+    ASSERT_EQ(fresh.kind, ValidatorCleanupScheduleAction::Kind::Queue);
+    ASSERT_TRUE(m.accept_scheduled(fresh.generation));
+    auto request = m.begin_pass(scan.oracles.gc);
+    ASSERT_TRUE(request.has_value());
+    // The old timer and the old continuation fire while that pass runs.
+    ASSERT_TRUE(!m.accept_scheduled(old_timer.generation));
+    ASSERT_TRUE(!m.accept_scheduled(old_continuation.generation));
+    ASSERT_EQ(m.schedule_state(), ValidatorCleanupManager::SchedState::Running);
+    ASSERT_TRUE(!m.begin_pass(scan.oracles.gc).has_value());  // no overlapping pass
   }
   td::rmrf(path).ignore();
 }

@@ -691,7 +691,9 @@ struct ScanFixture {
     auto candidates = m.on_page(*request, read(request->after_key, request->max_keys), oracles, on_examined);
     std::vector<ReservedValidatorDelete> reserved;
     for (const auto& c : candidates) {
-      if (auto r = m.on_point_read(c, get(c.session_id), oracles.is_live)) {
+      if (auto r = m.on_point_read_result(
+              request->token, c, td::Result<std::optional<PendingValidatorConsensusDbCleanup>>(get(c.session_id)),
+              oracles.is_live)) {
         reserved.push_back(*r);
       }
     }

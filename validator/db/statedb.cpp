@@ -245,7 +245,7 @@ void StateDb::get_pending_validator_consensus_db_cleanup_page(std::string after_
 
 void StateDb::get_pending_validator_consensus_db_cleanup_record(
     ValidatorSessionId session_id, td::Promise<std::optional<consensus::PendingValidatorConsensusDbCleanup>> promise) {
-  promise.set_value(consensus::load_validator_cleanup_record(*kv_, session_id));
+  promise.set_result(consensus::load_validator_cleanup_record(*kv_, session_id));
 }
 
 void StateDb::update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) {

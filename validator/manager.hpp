@@ -322,10 +322,6 @@ class ValidatorManagerImpl : public ValidatorManager {
   // manager actor thread (created lazily on the first cleanup dispatch).
   td::actor::ActorOwn<consensus::ValidatorConsensusCleanupWorker> validator_cleanup_worker_;
 
-  // A cleanup trigger (GC advance, close, erase ack) arrived while a pass was running;
-  // run another pass when it finishes.
-  bool validator_cleanup_rerun_ = false;
-
  private:
   // MASTERCHAIN LAST BLOCK
   BlockSeqno last_masterchain_seqno_ = 0;
@@ -676,8 +672,11 @@ class ValidatorManagerImpl : public ValidatorManager {
   // read, each candidate's point read, a reservation, and the end of the pass.
   void validator_cleanup_page_loaded(consensus::ValidatorCleanupPageRequest request,
                                      td::Result<consensus::ValidatorCleanupPage> R);
-  void validator_cleanup_point_read(consensus::PendingValidatorConsensusDbCleanup candidate,
+  void validator_cleanup_point_read(td::uint64 pass_token, consensus::PendingValidatorConsensusDbCleanup candidate,
                                     td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> R);
+  // A continuation message or retry timer scheduled by the cleanup driver fired.
+  void validator_cleanup_scheduled(td::uint64 generation);
+  bool validator_cleanup_enabled();
   bool validator_cleanup_reserved(const consensus::ReservedValidatorDelete &reserved);
   void validator_cleanup_pass_finished(consensus::ValidatorCleanupPassSummary summary, td::Status status);
   // The deletion-gate inputs bound to the current durable GC snapshot, or nothing when
@@ -691,9 +690,9 @@ class ValidatorManagerImpl : public ValidatorManager {
   // Reclaims the observer per-group databases still queued for cleanup; see the
   // definition. Validator directories are never reclaimed here.
   void sweep_destroyed_consensus_dbs();
-  // Starts one validator-group cleanup pass through validator_cleanup_manager_: reads
-  // the next page of durable records, and deletes and erases the eligible ones. A
-  // no-op when validator consensus cleanup is disabled.
+  // A validator-group cleanup trigger: lets validator_cleanup_manager_ decide whether
+  // to schedule a pass (see validator-cleanup-dispatch.h). With cleanup disabled it
+  // supersedes anything scheduled and runs nothing.
   void try_validator_consensus_db_cleanup();
   // The async delete worker reported a completed delete ATTEMPT (session,
   // generation, attempt_id) with its confirmed-gone result: feed it to the adapter.

@@ -168,22 +168,32 @@ class CleanupHarness : public td::actor::Actor {
 
   // --- the Self surface consumed by the shared dispatch glue -------------------
   void try_validator_consensus_db_cleanup() {
-    if (!enabled_) {
-      return;
-    }
-    if (start_validator_cleanup_pass(actor_id(this), adapter_, db_, gc_checkpoint_)) {
-      ++pass_count_;
-    } else {
-      rerun_ = true;
-    }
+    kick_validator_cleanup(this, actor_id(this), adapter_);
+  }
+  void validator_cleanup_scheduled(td::uint64 generation) {
+    run_scheduled_validator_cleanup(this, actor_id(this), adapter_, db_, generation);
+  }
+  bool validator_cleanup_enabled() {
+    return enabled_;
+  }
+  std::optional<ValidatorCleanupOracles> validator_cleanup_oracles() {
+    return oracles();
   }
   void validator_cleanup_page_loaded(ValidatorCleanupPageRequest request, td::Result<ValidatorCleanupPage> R) {
+    if (fail_page_reads_ > 0) {
+      --fail_page_reads_;
+      R = td::Status::Error("injected transient page read failure");
+    }
     handle_validator_cleanup_page(this, actor_id(this), adapter_, db_, request, std::move(R), oracles(), {});
   }
-  void validator_cleanup_point_read(PendingValidatorConsensusDbCleanup candidate,
+  void validator_cleanup_point_read(td::uint64 token, PendingValidatorConsensusDbCleanup candidate,
                                     td::Result<std::optional<PendingValidatorConsensusDbCleanup>> R) {
-    handle_validator_cleanup_point_read(this, actor_id(this), adapter_, worker_, db_root_, candidate, std::move(R),
-                                        is_live());
+    if (fail_point_reads_ > 0) {
+      --fail_point_reads_;
+      R = td::Status::Error("injected transient point read failure");
+    }
+    handle_validator_cleanup_point_read(this, actor_id(this), adapter_, worker_, db_root_, token, candidate,
+                                        std::move(R), oracles());
   }
   bool validator_cleanup_reserved(const ReservedValidatorDelete& reserved) {
     ++attempt_count_[reserved.record.session_id];
@@ -191,19 +201,16 @@ class CleanupHarness : public td::actor::Actor {
     return !hold_dispatch_;
   }
   void validator_cleanup_pass_finished(ValidatorCleanupPassSummary, td::Status) {
-    if (rerun_) {
-      rerun_ = false;
-      try_validator_consensus_db_cleanup();
-    }
+    ++pass_count_;
   }
   void validator_cleanup_delete_done(tos::ValidatorSessionId session, td::uint64 generation, td::uint64 attempt_id,
                                      bool confirmed_gone) {
     ++completed_delete_count_;  // a worker delete attempt actually finished (gone or not)
-    complete_validator_delete(actor_id(this), adapter_, db_, session, generation, attempt_id, confirmed_gone);
+    complete_validator_delete(this, actor_id(this), adapter_, db_, session, generation, attempt_id, confirmed_gone);
   }
   void validator_cleanup_erase_acked(tos::ValidatorSessionId session, td::uint64 generation, td::uint64 attempt_id) {
     ++erase_ack_count_;
-    acknowledge_validator_erase(this, adapter_, session, generation, attempt_id);
+    acknowledge_validator_erase(this, actor_id(this), adapter_, session, generation, attempt_id);
   }
 
   // --- control surface (driven from the test thread via ask/send) --------------
@@ -215,6 +222,12 @@ class CleanupHarness : public td::actor::Actor {
   // completion is injected.
   void set_hold_dispatch(bool hold) {
     hold_dispatch_ = hold;
+  }
+  // Make the next `pages` page reads and `points` point reads fail, as a transient
+  // storage error would.
+  void fail_reads(int pages, int points) {
+    fail_page_reads_ = pages;
+    fail_point_reads_ = points;
   }
   void last_reserved(td::Promise<std::optional<ReservedValidatorDelete>> promise) {
     promise.set_value(std::optional<ReservedValidatorDelete>(last_reserved_));
@@ -277,7 +290,8 @@ class CleanupHarness : public td::actor::Actor {
   std::set<tos::ValidatorSessionId> live_;
   bool enabled_ = true;
   bool hold_dispatch_ = false;
-  bool rerun_ = false;
+  int fail_page_reads_ = 0;
+  int fail_point_reads_ = 0;
   std::optional<ReservedValidatorDelete> last_reserved_;
   td::uint64 pass_count_ = 0;
   td::uint64 erase_ack_count_ = 0;
@@ -346,6 +360,9 @@ class HarnessSession {
   }
   void set_hold_dispatch(bool hold) {
     run_in_ctx([&] { td::actor::send_closure(harness_.get(), &CleanupHarness::set_hold_dispatch, hold); });
+  }
+  void fail_reads(int pages, int points) {
+    run_in_ctx([&] { td::actor::send_closure(harness_.get(), &CleanupHarness::fail_reads, pages, points); });
   }
   std::optional<ReservedValidatorDelete> last_reserved() {
     return ask<std::optional<ReservedValidatorDelete>>([&](auto promise) {
@@ -570,10 +587,11 @@ void scenario_stale_completion_rejected() {
 #if !defined(_WIN32)
 // ---------------------------------------------------------------------------------
 // Scenario 3a: a single PERMANENTLY failing delete must NOT spin. With no successes
-// and no external trigger, the completion path must not re-dispatch itself: the
-// scheduler reaches idle and the directory was attempted exactly once.
-// Falsifying mutation: make complete_validator_delete re-trigger unconditionally ->
-// the failing dir is re-dispatched forever, the scheduler never idles, drive times out.
+// and no external trigger it is retried only by sweeps after a backoff of 1, 2, 4 ...
+// seconds, so over a ~4.5 s window it is attempted two or three times (at about 0, 1
+// and 3 s), and every attempt completes.
+// Falsifying mutations: retry a failed record without a backoff (an immediate rescan)
+// -> attempts pile up far beyond three; drop the retry entirely -> exactly one.
 void scenario_persistent_failure_no_hot_loop() {
   LOG(INFO) << "=== scenario_persistent_failure_no_hot_loop ===";
   if (::geteuid() == 0) {
@@ -596,7 +614,7 @@ void scenario_persistent_failure_no_hot_loop() {
     s.fire_cleanup_pass();
     bool completed = s.wait_until([&] { return s.completed_delete_count() >= 1; }, 30.0);
     LOG_CHECK(completed) << "the failing delete never completed";
-    s.run_for(1.5);
+    s.run_for(4.5);
     bool settled = s.wait_until([&] { return !s.is_delete_in_flight(r.session_id); }, 10.0);
     auto attempts = s.attempt_count(r.session_id);
     auto completions = s.completed_delete_count();
@@ -604,8 +622,9 @@ void scenario_persistent_failure_no_hot_loop() {
     ::chmod(blocked.c_str(), 0755);  // restore for teardown AFTER all observations are taken
     LOG_CHECK(settled) << "the failing entry was still in flight after settling (re-dispatch loop)";
     LOG_CHECK(consensus_dir_exists(root, r.dir_name)) << "the blocked dir was unexpectedly deleted";
-    LOG_CHECK(attempts == 1) << "a failing delete was retried without an external trigger: " << attempts;
-    LOG_CHECK(completions == 1) << "a failing delete completed more than once (re-dispatched): " << completions;
+    LOG_CHECK(attempts >= 2 && attempts <= 3)
+        << "a failing delete was not retried on the backoff schedule: " << attempts;
+    LOG_CHECK(completions == attempts) << "attempts and completions differ: " << attempts << " vs " << completions;
     LOG_CHECK(acks == 0) << "a failing delete erased a record";
     s.stop();
   }
@@ -729,6 +748,73 @@ void scenario_inflight_single_dimension_token_rejection() {
   LOG_CHECK(done) << "the correctly-tokened completion did not erase the record";
   LOG_CHECK(!s.is_delete_in_flight(r.session_id)) << "entry still in flight after a correct completion + erase";
   LOG_CHECK(s.load_pending().empty()) << "record not erased after the correct completion";
+  s.stop();
+  td::rmrf(root).ignore();
+}
+
+// A record for session index `n`, placed in key order by `first`, whose directory's
+// catchain seqno is `cc` (kRecordCc is obsolete at the harness GC block, higher is not).
+PendingValidatorConsensusDbCleanup indexed_record(uint8_t first, size_t n, tos::CatchainSeqno cc) {
+  auto sid = make_session_id(0x33);
+  sid.as_slice()[0] = static_cast<char>(first);
+  sid.as_slice()[1] = static_cast<char>(n & 0xff);
+  sid.as_slice()[2] = static_cast<char>((n >> 8) & 0xff);
+  PendingValidatorConsensusDbCleanup r;
+  r.session_id = sid;
+  r.retirement_checkpoint = make_checkpoint(100);
+  r.dir_name = consensus_db_dir_name(kShard, cc, sid, td::Slice(""));
+  return r;
+}
+
+// ---------------------------------------------------------------------------------
+// Scenario 6: one trigger finishes the scan. An eligible record sits behind `ineligible`
+// records -- beyond the first page -- and only ONE pass is triggered; no erase ack or
+// other event can help until the eligible record is reached. The passes after the
+// first must follow on their own.
+// Falsifying mutation: drop the wants_next_pass continuation in
+// end_validator_cleanup_pass -> the scan stops after the first page and the record is
+// never reclaimed.
+void scenario_single_trigger_finishes_the_scan(size_t ineligible) {
+  LOG(INFO) << "=== scenario_single_trigger_finishes_the_scan ineligible=" << ineligible << " ===";
+  auto root = temp_root("continuation");
+  std::vector<PendingValidatorConsensusDbCleanup> records;
+  for (size_t i = 0; i < ineligible; i++) {
+    records.push_back(indexed_record(static_cast<uint8_t>(i % 0xF0), i, kRecordCc + 5));
+  }
+  auto eligible = indexed_record(0xF8, 0, kRecordCc);  // last in key order
+  records.push_back(eligible);
+
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
+  s.persist_retirement(records);
+  s.fire_cleanup_pass();
+  bool done = s.wait_until([&] { return s.erase_ack_count() >= 1; }, 30.0);
+  LOG_CHECK(done) << "a single trigger did not reach the eligible record behind " << ineligible
+                  << " ineligible ones (passes " << s.pass_count() << ")";
+  LOG_CHECK(s.load_pending().size() == ineligible) << "an ineligible record was erased";
+  s.stop();
+  td::rmrf(root).ignore();
+}
+
+// ---------------------------------------------------------------------------------
+// Scenario 7: transient read failures are retried, not taken as absence. The first page
+// read fails, then the first point read fails; with no further trigger the record is
+// still reclaimed at the same GC block once the reads recover.
+// Falsifying mutations: treat a failed point read as "record gone" (the scan then
+// completes clean and pauses at this GC block for good); or drop the retry after a
+// failed read in end_validator_cleanup_pass (nothing runs again without a trigger).
+void scenario_transient_read_failures_are_retried() {
+  LOG(INFO) << "=== scenario_transient_read_failures_are_retried ===";
+  auto root = temp_root("read-failure");
+  auto r = indexed_record(0x40, 0, kRecordCc);
+
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{});
+  s.persist_retirement({r});
+  s.fail_reads(/*pages=*/1, /*points=*/1);
+  s.fire_cleanup_pass();
+  bool done = s.wait_until([&] { return s.erase_ack_count() >= 1; }, 30.0);
+  LOG_CHECK(done) << "the record was not reclaimed after transient read failures (passes " << s.pass_count() << ")";
+  LOG_CHECK(s.pass_count() >= 3) << "expected the failed page and point reads to be retried";
+  LOG_CHECK(s.load_pending().empty()) << "record not erased after the retries";
   s.stop();
   td::rmrf(root).ignore();
 }
@@ -997,28 +1083,33 @@ int main(int argc, char** argv) {
   scenario_reopen_reloads_and_drains();
   scenario_reopen_no_resurrection();
   scenario_reopen_reconciles_dangling_record();
+  scenario_single_trigger_finishes_the_scan(256);
+  scenario_single_trigger_finishes_the_scan(999);
+  scenario_transient_read_failures_are_retried();
 
   // POSIX-only scenarios and their run identity, reported explicitly so a green exit on
   // root/Windows is never mistaken for full coverage when this log is kept as evidence.
   //   * crash-recovery: needs fork/execv (POSIX); runs on any POSIX euid.
   //   * persistent/mixed failure: need an UNPRIVILEGED user (root bypasses dir perms).
-  std::string ran = "happy_drain + stale_completion_rejected + inflight_token_rejection + 3 orderly-reopen";
+  std::string ran =
+      "happy_drain + stale_completion_rejected + inflight_token_rejection + 3 orderly-reopen + continuation x2 + "
+      "read-failure retry";
 #if !defined(_WIN32)
   scenario_crash_recovery_via_subprocess();
   ran += " + crash_recovery";
   if (::geteuid() == 0) {
     LOG(WARNING) << "running as root (euid 0): SKIPPED persistent-failure and mixed-failure (dir perms bypassed)";
     LOG(INFO) << "test-validator-cleanup-integration: executed " << ran
-              << "; persistent/mixed-failure SKIPPED as root (7/9 scenarios)";
+              << "; persistent/mixed-failure SKIPPED as root (10/12 scenarios)";
   } else {
     scenario_persistent_failure_no_hot_loop();
     scenario_mixed_failure_bounded_retries();
     LOG(INFO) << "test-validator-cleanup-integration: executed " << ran
-              << " + persistent-failure + mixed-failure (9/9 scenarios)";
+              << " + persistent-failure + mixed-failure (12/12 scenarios)";
   }
 #else
   LOG(WARNING) << "Windows build: crash-recovery + persistent/mixed-failure scenarios are not compiled";
-  LOG(INFO) << "test-validator-cleanup-integration: executed " << ran << " (6/9 scenarios; 3 POSIX-only skipped)";
+  LOG(INFO) << "test-validator-cleanup-integration: executed " << ran << " (9/12 scenarios; 3 POSIX-only skipped)";
 #endif
   return 0;
 }

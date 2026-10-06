@@ -2888,17 +2888,15 @@ void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
   // --disable-validator-consensus-cleanup; then nothing is scanned or loaded, durable
   // records keep accumulating, and after cleanup is enabled again the scan reclaims
   // them over many bounded passes, each record only once it passes the eligibility gate.
-  if (!opts_->get_validator_consensus_cleanup_enabled()) {
-    return;
-  }
-  auto oracles = validator_cleanup_oracles();
-  if (!oracles) {
-    return;  // no consistent durable GC floor yet -> nothing is provably obsolete
-  }
-  if (!consensus::start_validator_cleanup_pass(actor_id(this), validator_cleanup_manager_, db_.get(), oracles->gc)) {
-    // A pass is running (run again when it ends) or scanning is paused at this GC block.
-    validator_cleanup_rerun_ = true;
-  }
+  consensus::kick_validator_cleanup(this, actor_id(this), validator_cleanup_manager_);
+}
+
+bool ValidatorManagerImpl::validator_cleanup_enabled() {
+  return opts_->get_validator_consensus_cleanup_enabled();
+}
+
+void ValidatorManagerImpl::validator_cleanup_scheduled(td::uint64 generation) {
+  consensus::run_scheduled_validator_cleanup(this, actor_id(this), validator_cleanup_manager_, db_.get(), generation);
 }
 
 std::optional<consensus::ValidatorCleanupOracles> ValidatorManagerImpl::validator_cleanup_oracles() {
@@ -2950,13 +2948,11 @@ void ValidatorManagerImpl::validator_cleanup_page_loaded(consensus::ValidatorCle
 }
 
 void ValidatorManagerImpl::validator_cleanup_point_read(
-    consensus::PendingValidatorConsensusDbCleanup candidate,
+    td::uint64 pass_token, consensus::PendingValidatorConsensusDbCleanup candidate,
     td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> R) {
-  auto is_live = [this](const ValidatorSessionId &session) {
-    return validator_groups_.contains(session) || next_validator_groups_.contains(session);
-  };
   consensus::handle_validator_cleanup_point_read(this, actor_id(this), validator_cleanup_manager_,
-                                                 validator_cleanup_worker_, db_root_, candidate, std::move(R), is_live);
+                                                 validator_cleanup_worker_, db_root_, pass_token, candidate,
+                                                 std::move(R), validator_cleanup_oracles());
 }
 
 bool ValidatorManagerImpl::validator_cleanup_reserved(const consensus::ReservedValidatorDelete &item) {
@@ -2983,10 +2979,6 @@ void ValidatorManagerImpl::validator_cleanup_pass_finished(consensus::ValidatorC
     LOG(INFO) << "VALCLEANUP pass gc_seqno=" << gc_seqno << " examined=" << summary.examined
               << " reserved=" << summary.reserved << " wrapped=" << (summary.wrapped ? 1 : 0)
               << " in_flight=" << validator_cleanup_manager_.in_flight_count();
-  }
-  if (validator_cleanup_rerun_) {
-    validator_cleanup_rerun_ = false;
-    try_validator_consensus_db_cleanup();
   }
 }
 
@@ -3017,8 +3009,8 @@ void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId sess
   // dispatches the durable record erase and releases the reservation only on the
   // erase-ack. Deliberately does NOT re-trigger a pass (that would spin a backoff-free
   // retry loop on a persistently failing delete). See validator-cleanup-dispatch.h.
-  consensus::complete_validator_delete(actor_id(this), validator_cleanup_manager_, db_.get(), session_id, generation,
-                                       attempt_id, confirmed_gone);
+  consensus::complete_validator_delete(this, actor_id(this), validator_cleanup_manager_, db_.get(), session_id,
+                                       generation, attempt_id, confirmed_gone);
 }
 
 void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation,
@@ -3028,7 +3020,8 @@ void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId sess
   // A record was actually removed: release the reservation and re-trigger draining.
   // This is the only completion-path re-trigger, and it is loop-safe because each
   // re-trigger is paid for by a completed removal. See validator-cleanup-dispatch.h.
-  consensus::acknowledge_validator_erase(this, validator_cleanup_manager_, session_id, generation, attempt_id);
+  consensus::acknowledge_validator_erase(this, actor_id(this), validator_cleanup_manager_, session_id, generation,
+                                         attempt_id);
 }
 
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {

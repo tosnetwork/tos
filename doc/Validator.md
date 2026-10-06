@@ -153,9 +153,12 @@ bound; records accumulate meanwhile. After a restart without the flag nothing
 is loaded at start-up: the engine scans the stored records 256 at a time,
 deletes at most 16 per pass (64 in flight), and reclaims each record only once
 it passes the conditions above, so a large backlog drains gradually and memory
-does not grow with it. A scan that finds nothing to do pauses until the GC block
-moves or a session retires or closes. Each record is re-read just before its
-deletion, so a copy that changed or disappeared since the scan is skipped.
+does not grow with it. A scan continues page after page on its own until it
+reaches the end of the store; one that finds nothing to do pauses until the GC
+block moves or a session retires or closes. Each record is re-read just before
+its deletion, so a copy that changed or disappeared since the scan is skipped. A
+failed read or delete is retried after a backoff of 1, 2, 4 ... 64 seconds,
+which resets after an entirely successful scan.
 
 Each deletion is logged as `VALCLEANUP reserve`, `VALCLEANUP delete_done ...
 confirmed_gone=1` and `VALCLEANUP erase_ack`. These lines are logged at INFO,
