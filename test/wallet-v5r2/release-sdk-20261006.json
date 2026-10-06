@@ -1,0 +1,134 @@
+{
+  "base_commit": "de78d1eef72a1f08062a80237e6e86550af759d8",
+  "source_state": "Candidate fixture/runner/CI changes on base commit; identity mutations restored; unrelated installed-enrollment CLI work excluded",
+  "platform": "macOS AArch64; native Release emulator, Rust debug executor and native LMS SDK fixture driver",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "tosctl/src/node-control/contracts/examples/lms_fee_cache_fixture.rs": "3a06c892dc4f3cbc8bb0fba815cc530ee0ed3cf335a0b1a3f2fd281615b91a98",
+    "test/wallet-v5r2/sdk_genesis_fixture.py": "9f186da6916d58672f952f386a67c1eae85391251c642ff6a3ebcde56a87624c",
+    "test/wallet-v5r2/cached_fee_fixture.py": "a13b07d65518b21dd2b0ad037b7bb2875570572c59c0fb72600d8d80f05593aa",
+    "test/wallet-v5r2/cached_fee_session.py": "9570e060f3cbf0a6b1d42230e3366d702029b8f713e80597cedbd30ac57ce418",
+    "test/wallet-v5r2/funded_recovery.py": "e7e9ba5c6c8aa60975bab77914d21f1a480d112eb24c06b1981c312fb039242f",
+    "test/wallet-v5r2/test_fee_delivery.py": "291f50fcb7b0ac8b2507bd549b14c677cbe938cf3d5612b355ef8d4e5727352d",
+    "test/wallet-v5r2/release_sdk_recovery.py": "0e6da646a0987f61e62451f27237f4b123d208bd19beaf9f894bda23d3750223",
+    "test/wallet-v5r2/sdk_route_controls.py": "b446a37ff32472fb1c7f1db9e2ced1fdd5be076ccd158b606ecc64c9e02ba799",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "91451f2c74a2e5399be084fc5c0512bd528d111e12a43279a763000d1f587d47",
+    ".github/workflows/rescue-context.yml": "0929291d90ea61cd5cadeba0b33f29c71b3efd8de7ea1589e8c880d481cf8987"
+  },
+  "commands": [
+    "CARGO_INCREMENTAL=0 cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --example lms_fee_cache_fixture --example v5r2_genesis_encode --example v5r2_fee_encode --example v5r2_prepare_encode -j1",
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/release_sdk_recovery.py --config /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc --examples tosctl/src/target/debug/examples --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-sdk-final",
+    "python3 test/wallet-v5r2/sdk_route_controls.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-sdk-final/transactions/native --examples tosctl/src/target/debug/examples --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-sdk-route-controls-final"
+  ],
+  "results": {
+    "passed": true,
+    "command": [
+      "/Users/tomisetsu/tos/.venv/bin/python",
+      "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_tx_parity.py",
+      "--chain-config",
+      "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc",
+      "--driver",
+      "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/pq-tx-parity",
+      "--genesis-driver",
+      "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/v5r2_genesis_encode",
+      "--fee-driver",
+      "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/v5r2_fee_encode",
+      "--preparation-driver",
+      "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/v5r2_prepare_encode",
+      "--cache-driver",
+      "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/lms_fee_cache_fixture",
+      "--prepare",
+      "--recovery",
+      "--output",
+      "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-sdk-final/transactions"
+    ],
+    "exit": 0,
+    "config_sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+    "parity": {
+      "scope": "Full wallet fee delivery with unchanged generated candidate configuration",
+      "pop_role": null,
+      "prepare": true,
+      "recovery": true,
+      "sdk_cache": true,
+      "expected_transactions": 67,
+      "observed_transactions": 67,
+      "differences": [],
+      "success": true
+    },
+    "recovery": {
+      "sdk_cached_signatures": 6,
+      "final_chain_time": 1789444790,
+      "transactions": 22,
+      "recipient_received": true,
+      "primary_auth_signing_used": false,
+      "primary_pop_signing_used": true,
+      "funded_pop_roles": [
+        1,
+        2
+      ],
+      "proven_wallet_migration_gate": false,
+      "migration_custody_observed": false,
+      "production_admission_passed": false
+    },
+    "cache": {
+      "real_lms_signature": true,
+      "backend_kind": "native-lms",
+      "independent_rust_vm_verification": true,
+      "signer_calls": 1,
+      "restart_retry_signer_calls": 0,
+      "retry_bytes_identical": true,
+      "wrong_intent_rejected": true,
+      "wrong_public_key_rejected": true,
+      "restart_signing_blocked": true,
+      "corrupted_backend_rejected_and_leaf_burned": true,
+      "scope": "Public deterministic test key, fixture chain time; not production custody"
+    },
+    "identity": {
+      "global_id": 1,
+      "network": "4242424242424242424242424242424242424242424242424242424242424242",
+      "wallet_id": 42
+    },
+    "scope": "Deploy SDK enrollment and recover with native journal-backed fee signatures.\n\nUses unchanged generated ConfigParams for both transaction executors. Trusted\nlocal fixture times/keys are public test data, not production custody evidence.\n"
+  },
+  "identity_controls": {
+    "passed": true,
+    "runs": {
+      "baseline": {
+        "outcome": "passed"
+      },
+      "drop-global-id": {
+        "outcome": "assertion_failed",
+        "assertion": "cached signer route mismatch"
+      },
+      "drop-global-id-restored": {
+        "outcome": "passed"
+      },
+      "drop-namespace": {
+        "outcome": "assertion_failed",
+        "assertion": "cached signer route mismatch"
+      },
+      "drop-namespace-restored": {
+        "outcome": "passed"
+      }
+    },
+    "restored_green": true,
+    "identity": {
+      "global_id": 1,
+      "network": "4242424242424242424242424242424242424242424242424242424242424242",
+      "vm_version": 18
+    }
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-sdk-evidence.tar.gz",
+    "bytes": 1752307,
+    "sha256": "521e964dbb874f1f5d53d46dece016c73f0d9fcca8cf9fdcff112da7b8162438"
+  },
+  "limits": [
+    "Initial funding messages are fixture-constructed; not real-network funding/finality",
+    "Public deterministic keys and controlled local times; not backup-derived production custody",
+    "Proven-chain migration gate and installed-enrollment CLI promotion remain untested on this generated configuration",
+    "Selected 67 transactions; not complete worst-case admission or hardware-rate calibration",
+    "Rust defaults and public activation remain separate gates; remote CI has not run this candidate"
+  ]
+}

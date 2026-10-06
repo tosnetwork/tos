@@ -6,12 +6,29 @@ import subprocess
 
 
 class CachedFeeSession:
-    def __init__(self, driver, out, *, tree, key, vault, epoch0, opened_time, successor=False):
+    def __init__(
+        self,
+        driver,
+        out,
+        *,
+        tree,
+        key,
+        vault,
+        epoch0,
+        opened_time,
+        successor=False,
+        global_id=42,
+        network=123,
+        vm_version=17,
+    ):
         out.mkdir(parents=True, exist_ok=True)
         journal = out / "journal"
         journal.mkdir(mode=0o700)
         self.out = out
         self.request = dict(
+            global_id=global_id,
+            network=f"{network:064x}",
+            vm_version=vm_version,
             directory=str(journal.resolve()),
             tree=str(tree.resolve()),
             backend=(
@@ -75,10 +92,16 @@ class CachedFeeSession:
         assert plan == {"leaf": leaf, "backend_calls": 0}, plan
         args = dict(digest=intent.hash.hex(), leaf=leaf)
         signed = self.call("sign", now, **args)
+        expected_route = {
+            name: self.request[name] for name in ("global_id", "network", "vault", "epoch0")
+        }
+        expected_route["tree_id"] = f"{457 if self.request['successor'] else 456:064x}"
+        assert signed["route"] == expected_route, "cached signer route mismatch"
         assert signed.get("verified") and signed["backend_calls"] == 1, signed
         if os.environ.get("TOS_TEST_REQUIRE_NATIVE_FEE") == "1":
             assert signed.get("backend_kind") == "native-lms", signed
         cached = self.call("retry", now, backend="/NO-PUBLIC-TEST-SIGNER", **args)
+        assert cached["route"] == expected_route, "cached signer route mismatch"
         assert cached.get("verified") and cached["backend_calls"] == 0, cached
         assert cached["signature"] == signed["signature"]
         return bytes.fromhex(cached["signature"])

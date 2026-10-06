@@ -64,6 +64,7 @@ def _run(
     migration_signer=None,
     network=123,
     global_id=42,
+    vm_version=17,
     auth_fee_amount=5_000_000_000,
     pop_fee_amount=5_000_000_000,
     prepare_fee_amount=50_000_000_000,
@@ -104,6 +105,9 @@ def _run(
                 vault=old.vault_address,
                 epoch0=epoch0,
                 opened_time=now,
+                global_id=global_id,
+                network=network,
+                vm_version=vm_version,
             )
         )
         old_session.wait_required(now)
@@ -202,6 +206,9 @@ def _run(
                 vault=new.vault_address,
                 epoch0=epoch0,
                 opened_time=now,
+                global_id=global_id,
+                network=network,
+                vm_version=vm_version,
                 successor=True,
             )
         )

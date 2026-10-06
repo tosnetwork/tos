@@ -27,6 +27,12 @@ fn backend_kind() -> &'static str {
 #[derive(Deserialize)]
 struct Input {
     mode: String,
+    #[serde(default = "fixture_global_id")]
+    global_id: i32,
+    #[serde(default = "fixture_network")]
+    network: String,
+    #[serde(default = "fixture_vm_version")]
+    vm_version: u32,
     directory: PathBuf,
     tree: PathBuf,
     #[cfg_attr(feature = "native-wallet-signer", allow(dead_code))]
@@ -40,6 +46,16 @@ struct Input {
     leaf: u32,
     #[serde(default)]
     successor: bool,
+}
+
+fn fixture_global_id() -> i32 {
+    42
+}
+fn fixture_network() -> String {
+    format!("{:064x}", 123)
+}
+fn fixture_vm_version() -> u32 {
+    17
 }
 
 fn chain(bytes: &[u8]) -> anyhow::Result<Cell> {
@@ -58,7 +74,14 @@ fn chain(bytes: &[u8]) -> anyhow::Result<Cell> {
     tail.ok_or_else(|| anyhow::anyhow!("empty PQ byte chain"))
 }
 
-fn verify(leaf: u32, digest: &[u8; 32], signature: &[u8], key: &[u8]) -> anyhow::Result<bool> {
+fn verify(
+    leaf: u32,
+    digest: &[u8; 32],
+    signature: &[u8],
+    key: &[u8],
+    version: u32,
+) -> anyhow::Result<bool> {
+    anyhow::ensure!(version >= 17, "fee verification profile is not activated");
     let mut stack = Stack::new();
     stack.push(StackItem::int(IntegerData::from_unsigned_bytes_be(digest)));
     stack.push(StackItem::int(IntegerData::from_i64(i64::from(leaf))));
@@ -73,7 +96,7 @@ fn verify(leaf: u32, digest: &[u8; 32], signature: &[u8], key: &[u8]) -> anyhow:
         Gas::test_with_limit(100_000),
         vec![],
     )?;
-    vm.set_block_version(17);
+    vm.set_block_version(version);
     anyhow::ensure!(vm.execute()? == 0 && vm.stack().depth() == 1, "verification VM failed");
     Ok(vm.stack().get(0)?.as_integer_value(-1..=0)? == -1)
 }
@@ -87,11 +110,12 @@ fn execute(
     let vault: [u8; 32] =
         hex::decode(&input.vault)?.try_into().map_err(|_| anyhow::anyhow!("vault width"))?;
     let public_key = hex::decode(&input.public_key)?;
-    let mut network = [0; 32];
-    network[31] = 123;
+    let network: [u8; 32] =
+        hex::decode(&input.network)?.try_into().map_err(|_| anyhow::anyhow!("network width"))?;
     let mut tree_id = [0; 32];
     tree_id[30..].copy_from_slice(&(if input.successor { 457u16 } else { 456u16 }).to_be_bytes());
-    let route = FeeRoute { global_id: 42, network, vault, tree_id, epoch0: input.epoch0 };
+    let route =
+        FeeRoute { global_id: input.global_id, network, vault, tree_id, epoch0: input.epoch0 };
     if session.is_none() {
         *session = Some((
             route,
@@ -162,7 +186,7 @@ fn execute(
                 }
                 Ok(bytes)
             },
-            |leaf, hash, signature| verify(leaf, hash, signature, &public_key),
+            |leaf, hash, signature| verify(leaf, hash, signature, &public_key, input.vm_version),
         ),
         "retry" => journal.cached_signature(input.leaf, digest),
         _ => anyhow::bail!("unknown test operation"),
@@ -182,10 +206,12 @@ fn execute(
     } else {
         let signature = result?;
         anyhow::ensure!(
-            verify(input.leaf, &digest, &signature, &public_key)?,
+            verify(input.leaf, &digest, &signature, &public_key, input.vm_version)?,
             "cached signature failed real verification"
         );
-        serde_json::json!({"signature": hex::encode(signature), "backend_calls": calls.get(), "verified": true, "backend_kind": backend_kind()})
+        serde_json::json!({"signature": hex::encode(signature), "backend_calls": calls.get(), "verified": true, "backend_kind": backend_kind(),
+            "route": {"global_id": bound_route.global_id, "network": hex::encode(bound_route.network),
+                "vault": hex::encode(bound_route.vault), "tree_id": hex::encode(bound_route.tree_id), "epoch0": bound_route.epoch0}})
     };
     Ok(report)
 }

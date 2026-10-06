@@ -21,6 +21,8 @@ def encode(
     policy=1,
     tree_id=456,
     existing_wallet=None,
+    global_id=42,
+    network=123,
 ):
     payload = dict(
         wallet_code=wallet.boc().hex(),
@@ -29,8 +31,8 @@ def encode(
         wallet_pin=wallet.hash.hex(),
         module_pin=module.hash.hex(),
         vault_pin=vault.hash.hex(),
-        global_id=42,
-        network=f"{123:064x}",
+        global_id=global_id,
+        network=f"{network:064x}",
         wallet_id=42,
         primary_key=primary.hex(),
         rescue_key=rescue.hex(),

@@ -8,11 +8,16 @@ import tempfile
 from pathlib import Path
 
 
-def signature(driver, out, *, tree, key, vault, digest, now, epoch0):
+def signature(
+    driver, out, *, tree, key, vault, digest, now, epoch0, global_id=42, network=123, vm_version=17
+):
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sdk-cache-", dir=out) as tmp:
         journal = Path(tmp).resolve()
         request = {
+            "global_id": global_id,
+            "network": f"{network:064x}",
+            "vm_version": vm_version,
             "directory": str(journal),
             "tree": str(tree.resolve()),
             "backend": (
@@ -44,6 +49,14 @@ def signature(driver, out, *, tree, key, vault, digest, now, epoch0):
             return json.loads(dst.read_text())
 
         signed = run("sign", {"mode": "sign"})
+        expected_route = dict(
+            global_id=global_id,
+            network=f"{network:064x}",
+            vault=f"{vault:064x}",
+            tree_id=f"{456:064x}",
+            epoch0=epoch0,
+        )
+        assert signed["route"] == expected_route, "cached signer route mismatch"
         assert signed["backend_calls"] == 1 and signed["verified"]
         if os.environ.get("TOS_TEST_REQUIRE_NATIVE_FEE") == "1":
             assert signed.get("backend_kind") == "native-lms", signed
@@ -51,6 +64,7 @@ def signature(driver, out, *, tree, key, vault, digest, now, epoch0):
         # backend proves that the retry cannot quietly generate another signature.
         retry = {"mode": "retry", "opened_time": now, "backend": str(journal / "NO-SIGNER")}
         cached = run("retry", retry)
+        assert cached["route"] == expected_route, "cached signer route mismatch"
         assert cached["backend_calls"] == 0 and cached["verified"]
         assert cached["signature"] == signed["signature"]
         run(

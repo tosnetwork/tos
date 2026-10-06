@@ -195,6 +195,31 @@ private contract copies. The durable runner is
 Initial funded account states are synthetic; successor deployments and all
 following action phases execute as real emulator transactions. This is a
 selected local corpus, not full worst-case admission clearance, actual-network
-acceptance or installed-enrollment CLI custody acceptance. The generated-config
-path does not yet exercise SDK cache/encoding/proof-provider drivers. Those and
-aligned initial deployment remain open gates.
+acceptance or installed-enrollment CLI custody acceptance. SDK deployment and cached-signature coverage is recorded separately below.
+Proof-provider and installed-enrollment CLI custody acceptance remain open.
+
+
+## SDK enrollment, deployment and cached recovery
+
+[SDK evidence](release-sdk-20261006.json) passes the generated global ID,
+AUTH namespace and version through the enrollment encoder and public fixture
+fee signer. The actual journal route is checked on signing and retry responses.
+Dropping either configured identity in the Rust fixture driver must fail the
+cache helper's route assertion; restored driver builds pass again.
+
+The SDK builds matching initial StateInit cells and deploys wallet, module and
+vault in emulator transactions. Complete preparation and fee envelopes are
+compared against independently constructed cells. Recovery uses six persistent
+native LMS signatures across old/new journals; retries return identical bytes
+without another signer invocation. Wrong intents/keys, restart signing during
+the wait barrier and corrupted backend output are rejected. Both successor POP
+roles, wallet migration and payment through the new route complete; 67 whole
+transactions match between the native and Rust executors with the unchanged
+candidate configuration.
+
+This is local SDK and transaction evidence using public deterministic test
+keys and controlled fixture time. Initial funding messages are constructed by
+the harness. Proven-chain migration custody, installed-enrollment CLI promotion,
+real backup-derived keys, live funding/finality and production acceptance remain
+open gates. The old diagnostic fixture defaults are retained for historical
+regression; generated-config tests pass explicit identity and version values.

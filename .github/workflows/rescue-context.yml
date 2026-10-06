@@ -100,6 +100,20 @@ jobs:
             --config artifacts/context/r2-generated-config/restored-config.boc \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-release-wallet "${candidate_controls[@]}"
+      - name: SDK deployment and native cached recovery on generated configuration
+        run: |
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
+            --features native-wallet-signer --example lms_fee_cache_fixture \
+            --example v5r2_genesis_encode --example v5r2_fee_encode --example v5r2_prepare_encode
+          python test/wallet-v5r2/release_sdk_recovery.py \
+            --config artifacts/context/r2-generated-config/restored-config.boc \
+            --examples "$CARGO_TARGET_DIR/debug/examples" --output artifacts/context/r2-release-sdk
+      - name: Configured SDK fee-route identity controls
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/wallet-v5r2/sdk_route_controls.py \
+            --fixtures artifacts/context/r2-release-sdk/transactions/native \
+            --examples "$CARGO_TARGET_DIR/debug/examples" --output artifacts/context/r2-release-sdk-controls
       - name: PQ-only native wallet signer and fault controls
         run: |
           python test/wallet-v5r2/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer

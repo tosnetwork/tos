@@ -109,14 +109,6 @@ def main():
     now = native.NOW
     if options.chain_config:
         assert not options.credit_probe and options.fault is None
-        assert not any(
-            (
-                options.genesis_driver,
-                options.fee_driver,
-                options.preparation_driver,
-                options.cache_driver,
-            )
-        )
         chain_bytes = options.chain_config.read_bytes()
         configuration = from_boc(chain_bytes)
         assert len(configuration.bits) == 256 and len(configuration.refs) == 1
@@ -255,7 +247,7 @@ def main():
                 options.prepare
                 and options.recovery
                 and options.cache_driver
-                and options.credit_probe
+                and (options.credit_probe or chain_config is not None)
                 and options.fault is None
             )
             from sdk_genesis_fixture import encode as encode_genesis
@@ -269,6 +261,8 @@ def main():
                 primary=signer.ml_pk.read_bytes(),
                 rescue=signer.slh_pk,
                 fee_key=pub,
+                global_id=global_id,
+                network=network,
                 expected=dict(
                     module_data=md,
                     module_init=mi,
@@ -368,6 +362,8 @@ def main():
                     primary=successor_pk.read_bytes(),
                     rescue=new_slh_pk,
                     fee_key=successor_key,
+                    global_id=global_id,
+                    network=network,
                     policy=2,
                     tree_id=457,
                     existing_wallet=wa[1],
@@ -500,6 +496,9 @@ def main():
                 digest=intent.hash,
                 now=now,
                 epoch0=now - 2 * 3600 - 10,
+                global_id=global_id,
+                network=network,
+                vm_version=18 if chain_config is not None else 17,
             )
             sig.write_bytes(cached_signature)
             body = (
@@ -1000,6 +999,7 @@ def main():
                         out / "recovery",
                         network=network,
                         global_id=global_id,
+                        vm_version=18 if chain_config is not None else 17,
                         auth_fee_amount=auth_fee_amount,
                         pop_fee_amount=pop_fee_amount,
                         prepare_fee_amount=amount,
