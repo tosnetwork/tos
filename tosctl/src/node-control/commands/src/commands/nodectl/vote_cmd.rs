@@ -92,7 +92,11 @@ pub struct VoteOfferCastCmd {
         replaces (--bind-current or --if-hash-equal), or the contract refuses it.\n\n\
         Without --wallet the message body and the value to send are printed for an \
         external masterchain wallet: the contract ignores a proposal from any other \
-        workchain and keeps its value."
+        workchain and keeps its value.\n\n\
+        With --wallet the wallet must hold the value plus its own fees, read at one block. \
+        The report's status is registered only when the configuration contract is then \
+        observed holding the proposal, new or with a later expiry; that is observed state \
+        and does not prove this transaction caused it."
 )]
 pub struct VoteOfferCreateCmd {
     /// Configuration parameter index
@@ -405,7 +409,11 @@ impl VoteOfferCreateCmd {
             if json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&summary.report(ProposalOutcome::Prepared, None))?
+                    serde_json::to_string_pretty(&summary.report(
+                        ProposalOutcome::Prepared,
+                        None,
+                        None
+                    ))?
                 );
             } else {
                 println!(
@@ -433,12 +441,9 @@ impl VoteOfferCreateCmd {
              masterchain senders and would keep the value",
             wallet_address.workchain_id()
         );
-        let reserve = sender_fee_reserve(
-            &chain.get_config_param(20).await?,
-            &chain.get_config_param(24).await?,
-            &prepared.body,
-        )?;
-        sender_can_pay(wallet_name, info.balance, value, reserve)?;
+        let (reserve, balance) =
+            pinned_wallet_reserve(&chain, &rpc_client, &wallet_address, &prepared.body).await?;
+        sender_can_pay(wallet_name, balance, value, reserve)?;
         if !self.yes {
             // The prompt goes to stderr so that stdout carries only the report.
             eprint!("Send {value} nanoTOS from '{wallet_name}' to register this proposal? [y/N] ");
@@ -449,9 +454,11 @@ impl VoteOfferCreateCmd {
                 if json {
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(
-                            &summary.report(ProposalOutcome::Cancelled, None)
-                        )?
+                        serde_json::to_string_pretty(&summary.report(
+                            ProposalOutcome::Cancelled,
+                            None,
+                            None
+                        ))?
                     );
                 } else {
                     println!("{}", "Cancelled".yellow());
@@ -473,62 +480,94 @@ impl VoteOfferCreateCmd {
             )
             .await?;
         rpc_client.send_boc(&write_boc(&message)?).await?;
-        // A seqno change shows only that the wallet accepted the external message: the
-        // wallet sends in a mode that ignores action errors, so the proposal itself is
-        // confirmed by reading it back from the configuration contract.
-        wait_for_seqno_change(
+        // From here on the message may be on its way: every failure is reported in the
+        // final report rather than returned bare. A seqno change shows only that the
+        // wallet accepted the external message; the wallet sends in a mode that ignores
+        // action errors, so the proposal is looked for in the configuration contract.
+        let accepted = wait_for_seqno_change(
             rpc_client.clone(),
             &wallet_address,
             info.seqno,
             &common::task_cancellation::CancellationCtx::default(),
             SEND_TIMEOUT,
         )
-        .await?;
-        let mut registered = None;
-        for _ in 0..REGISTRATION_POLLS {
-            let current = proposal_expiry(&chain, &config_address, &prepared.proposal_hash).await?;
-            if registration_confirmed(prior, current) {
-                registered = current;
-                break;
+        .await
+        .map_err(|e| format!("{e:#}"));
+        let mut observed: Result<Option<u32>, String> = Ok(None);
+        if accepted.is_ok() {
+            for _ in 0..REGISTRATION_POLLS {
+                observed = proposal_expiry(&chain, &config_address, &prepared.proposal_hash)
+                    .await
+                    .map_err(|e| format!("reading the proposal back failed: {e:#}"));
+                match &observed {
+                    Ok(current) if registration_confirmed(prior, *current) => break,
+                    Ok(_) => tokio::time::sleep(REGISTRATION_POLL_INTERVAL).await,
+                    Err(_) => break,
+                }
             }
-            tokio::time::sleep(REGISTRATION_POLL_INTERVAL).await;
         }
-        let outcome = if registered.is_some() {
-            ProposalOutcome::Registered
-        } else {
-            ProposalOutcome::WalletAcceptedUnconfirmed
-        };
+        let (outcome, registered, error) = outcome_after_broadcast(prior, accepted, observed);
         if json {
-            println!("{}", serde_json::to_string_pretty(&summary.report(outcome, registered))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary.report(
+                    outcome,
+                    registered,
+                    error.as_deref()
+                ))?
+            );
         } else if let Some(expires) = registered {
             println!(
-                "{} Proposal registered (expires {expires}); hash {}",
+                "{} The configuration contract holds this proposal (expires {expires}); hash {}. \
+                 This is observed contract state: another sender may have registered or \
+                 extended the same proposal.",
                 "OK".green().bold(),
                 hex::encode(prepared.proposal_hash)
             );
         } else {
             println!(
-                "{} The wallet accepted the message, but the configuration contract does not show \
-                 the proposal yet; check `tosctl vote offer diff --hash {}`",
+                "{} {}; check `tosctl vote offer diff --hash {}`",
                 "UNCONFIRMED".yellow().bold(),
+                error.as_deref().unwrap_or(
+                    "the wallet accepted the message, but the configuration contract does not \
+                     show the proposal yet"
+                ),
                 hex::encode(prepared.proposal_hash)
             );
         }
         anyhow::ensure!(
             outcome == ProposalOutcome::Registered,
-            "the proposal was not seen registered within the wait"
+            "the proposal was not seen registered: {}",
+            outcome.as_str()
         );
         Ok(())
     }
 }
 
+/// What can be said once the message was handed to the network: the wallet's
+/// acceptance (its seqno advanced) and what the configuration contract then showed.
+pub(crate) fn outcome_after_broadcast(
+    prior: Option<u32>,
+    accepted: Result<(), String>,
+    observed: Result<Option<u32>, String>,
+) -> (ProposalOutcome, Option<u32>, Option<String>) {
+    if let Err(error) = accepted {
+        return (ProposalOutcome::BroadcastUnconfirmed, None, Some(error));
+    }
+    match observed {
+        Ok(current) if registration_confirmed(prior, current) => {
+            (ProposalOutcome::Registered, current, None)
+        }
+        Ok(_) => (ProposalOutcome::WalletAcceptedUnconfirmed, None, None),
+        Err(error) => (ProposalOutcome::WalletAcceptedUnconfirmed, None, Some(error)),
+    }
+}
+
 const REGISTRATION_POLLS: usize = 15;
 const REGISTRATION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
-/// An upper bound for a wallet's own computation when it sends one message.
-const WALLET_SEND_GAS_BOUND: u64 = 20_000;
-/// Bits of envelope around a body: the external message (signature and wallet
-/// header) and the outbound internal message header, generously.
-const ENVELOPE_BITS: u64 = 1_600;
+/// How far ahead the storage the wallet owes is counted: a signed message is valid
+/// for a short while after it is built.
+const SEND_HORIZON_SECS: u64 = 600;
 
 /// What `vote offer create` did, as reported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -537,10 +576,14 @@ pub(crate) enum ProposalOutcome {
     Prepared,
     /// The operator declined to send.
     Cancelled,
-    /// The configuration contract holds the proposal.
+    /// The configuration contract was observed holding the proposal, new or with a
+    /// later expiry than before. Observed state only: a concurrent sender of the same
+    /// proposal produces the same observation.
     Registered,
     /// The wallet's seqno advanced, but the proposal was not seen in the contract.
     WalletAcceptedUnconfirmed,
+    /// The message was handed to the network, but the wallet's acceptance was not seen.
+    BroadcastUnconfirmed,
 }
 
 impl ProposalOutcome {
@@ -550,6 +593,7 @@ impl ProposalOutcome {
             Self::Cancelled => "cancelled",
             Self::Registered => "registered",
             Self::WalletAcceptedUnconfirmed => "wallet_accepted_unconfirmed",
+            Self::BroadcastUnconfirmed => "broadcast_unconfirmed",
         }
     }
 }
@@ -568,14 +612,22 @@ impl ProposalSummary<'_> {
         &self,
         outcome: ProposalOutcome,
         registered_expires: Option<u32>,
+        error: Option<&str>,
     ) -> serde_json::Value {
         serde_json::json!({
             "status": outcome.as_str(),
             "broadcast": matches!(
                 outcome,
-                ProposalOutcome::Registered | ProposalOutcome::WalletAcceptedUnconfirmed
+                ProposalOutcome::Registered
+                    | ProposalOutcome::WalletAcceptedUnconfirmed
+                    | ProposalOutcome::BroadcastUnconfirmed
             ),
+            "error": error,
             "registered_expires": registered_expires,
+            "registration_evidence": "observed configuration contract state: the proposal is \
+                present, new or with a later expiry than before the send; this does not prove \
+                that this transaction caused it, since another sender may register or extend \
+                the same proposal",
             "config_contract": self.config_contract,
             "param_id": self.param_id,
             "critical": self.prepared.critical,
@@ -590,30 +642,59 @@ impl ProposalSummary<'_> {
     }
 }
 
-/// What the sending wallet spends besides the value: its own computation and the
-/// forwarding of the external and the outbound message, at live masterchain prices.
-pub(crate) fn sender_fee_reserve(
-    param20: &chain_block::ConfigParamEnum,
-    param24: &chain_block::ConfigParamEnum,
+/// The wallet's own charge for sending `body`, as an upper bound, with the balance it
+/// holds: both read at one masterchain block. The storage it owes is counted from its
+/// last transaction (when it last paid) to shortly after now.
+async fn pinned_wallet_reserve(
+    chain: &contracts::DefaultChainProvider,
+    rpc_client: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
+    wallet: &chain_block::MsgAddressInt,
     body: &chain_block::Cell,
-) -> anyhow::Result<u128> {
-    use chain_block::ConfigParamEnum;
-    use contracts::validator_controller::{forward_fee, gas_fee};
-    let ConfigParamEnum::ConfigParam20(gas) = param20 else {
-        anyhow::bail!("live ConfigParam 20 has unexpected representation");
+) -> anyhow::Result<(u128, u64)> {
+    use base64::Engine;
+    use chain_block::{ConfigParamEnum, read_single_root_boc};
+    use contracts::ChainProvider;
+    use contracts::wallet::send_fees::{SendFeeInputs, WalletStorage, wallet_send_reserve};
+    let checkpoint = contracts::validator_controller::latest_checkpoint(chain).await?;
+    let account = chain.get_address_info_at_unverified(wallet, &checkpoint).await?;
+    let code = read_single_root_boc(
+        account.code.as_deref().ok_or_else(|| anyhow::anyhow!("the wallet has no code"))?,
+    )?;
+    let data = read_single_root_boc(
+        account.data.as_deref().ok_or_else(|| anyhow::anyhow!("the wallet has no data"))?,
+    )?;
+    let last = &account.last_transaction_id;
+    let hash = base64::engine::general_purpose::STANDARD.encode(&last.hash);
+    let transactions = rpc_client.get_transactions(wallet, last.lt, &hash, 1).await?;
+    let last_paid = transactions
+        .transactions
+        .first()
+        .filter(|transaction| transaction.lt == last.lt)
+        .map(|transaction| transaction.utime)
+        .ok_or_else(|| anyhow::anyhow!("the wallet's last transaction was not found"))?;
+    let storage = WalletStorage::from_state(&code, &data, last_paid)?;
+    let gas = match chain.get_config_param_at_unverified(20, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam20(value) => value,
+        other => anyhow::bail!("live ConfigParam 20 has unexpected representation: {other:?}"),
     };
-    let ConfigParamEnum::ConfigParam24(forward) = param24 else {
-        anyhow::bail!("live ConfigParam 24 has unexpected representation");
+    let forward = match chain.get_config_param_at_unverified(24, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam24(value) => value,
+        other => anyhow::bail!("live ConfigParam 24 has unexpected representation: {other:?}"),
     };
-    let (cells, bits, _) = contracts::config_contract::messages::proposal::value_size(Some(body))?;
-    let message_bits =
-        bits.checked_add(ENVELOPE_BITS).ok_or_else(|| anyhow::anyhow!("size overflows"))?;
-    let message_cells = cells.checked_add(2).ok_or_else(|| anyhow::anyhow!("size overflows"))?;
-    let one_message = forward_fee(forward, message_bits, message_cells)?;
-    gas_fee(gas, WALLET_SEND_GAS_BOUND)?
-        .checked_add(one_message)
-        .and_then(|sum| sum.checked_add(one_message))
-        .ok_or_else(|| anyhow::anyhow!("fee reserve overflows"))
+    let storage_prices = match chain.get_config_param_at_unverified(18, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam18(value) => value.prices()?,
+        other => anyhow::bail!("live ConfigParam 18 has unexpected representation: {other:?}"),
+    };
+    let now = u32::try_from(common::time_format::now().saturating_add(SEND_HORIZON_SECS))?;
+    let reserve = wallet_send_reserve(&SendFeeInputs {
+        gas: &gas,
+        forward: &forward,
+        storage_prices: &storage_prices,
+        storage: &storage,
+        now,
+        body,
+    })?;
+    Ok((reserve, account.balance))
 }
 
 /// The wallet must hold the value and its own fees.
@@ -1631,43 +1712,58 @@ mod offer_create_tests {
             value: 9,
             body_b64: "AA==".into(),
         };
-        let only_prepared = summary.report(ProposalOutcome::Prepared, None);
+        let only_prepared = summary.report(ProposalOutcome::Prepared, None, None);
         assert_eq!(only_prepared["status"], "prepared");
         assert_eq!(only_prepared["broadcast"], false);
         assert!(only_prepared.get("sent").is_none());
-        assert_eq!(summary.report(ProposalOutcome::Cancelled, None)["broadcast"], false);
-        let unconfirmed = summary.report(ProposalOutcome::WalletAcceptedUnconfirmed, None);
+        assert_eq!(summary.report(ProposalOutcome::Cancelled, None, None)["broadcast"], false);
+        let unconfirmed = summary.report(ProposalOutcome::WalletAcceptedUnconfirmed, None, None);
         assert_eq!(unconfirmed["status"], "wallet_accepted_unconfirmed");
         assert_eq!(unconfirmed["broadcast"], true);
-        let registered = summary.report(ProposalOutcome::Registered, Some(77));
+        let registered = summary.report(ProposalOutcome::Registered, Some(77), None);
         assert_eq!(registered["status"], "registered");
         assert_eq!(registered["registered_expires"], 77);
+        assert!(
+            registered["registration_evidence"]
+                .as_str()
+                .is_some_and(|note| note.contains("does not prove that this transaction caused it")),
+            "the report must say registration is observed state"
+        );
+        let failed = summary.report(
+            ProposalOutcome::WalletAcceptedUnconfirmed,
+            None,
+            Some("reading the proposal back failed: timeout"),
+        );
+        assert_eq!(failed["error"], "reading the proposal back failed: timeout");
+    }
+
+    /// After the broadcast, a failed read-back or a missing wallet acceptance is a
+    /// reported outcome, not an error that skips the report.
+    #[test]
+    fn post_broadcast_failures_become_reported_outcomes() {
+        let read_failed = outcome_after_broadcast(None, Ok(()), Err("read back: timeout".into()));
+        assert_eq!(
+            read_failed,
+            (ProposalOutcome::WalletAcceptedUnconfirmed, None, Some("read back: timeout".into()))
+        );
+        let not_accepted =
+            outcome_after_broadcast(None, Err("Transaction timeout expired".into()), Ok(None));
+        assert_eq!(not_accepted.0, ProposalOutcome::BroadcastUnconfirmed);
+        assert_eq!(not_accepted.2.as_deref(), Some("Transaction timeout expired"));
+        assert_eq!(
+            outcome_after_broadcast(Some(5), Ok(()), Ok(Some(9))),
+            (ProposalOutcome::Registered, Some(9), None)
+        );
+        assert_eq!(
+            outcome_after_broadcast(Some(9), Ok(()), Ok(Some(9))).0,
+            ProposalOutcome::WalletAcceptedUnconfirmed,
+            "an unchanged proposal is not this request's registration"
+        );
     }
 
     #[test]
     fn a_wallet_must_hold_the_value_and_its_own_fees() {
-        let gas = chain_block::GasLimitsPrices {
-            gas_price: 10_000 * 65_536,
-            flat_gas_limit: 100,
-            flat_gas_price: 1_000_000,
-            ..Default::default()
-        };
-        let forward = chain_block::MsgForwardPrices {
-            lump_price: 10_000_000,
-            bit_price: 655_360_000,
-            cell_price: 65_536_000_000,
-            ihr_price_factor: 98_304,
-            first_frac: 21_845,
-            next_frac: 21_845,
-        };
-        let reserve = sender_fee_reserve(
-            &chain_block::ConfigParamEnum::ConfigParam20(gas),
-            &chain_block::ConfigParamEnum::ConfigParam24(forward),
-            &prepared().body,
-        )
-        .unwrap();
-        // 20 000 gas alone costs 0.199 TOS at these prices.
-        assert!(reserve > 199_000_000, "{reserve}");
+        let reserve = 700_000_000u128;
         let value = 5_000_000_000u64;
         let refused = sender_can_pay("w", value + 1, value, reserve);
         assert!(refused.err().is_some_and(|e| e.to_string().contains("own fees")));
