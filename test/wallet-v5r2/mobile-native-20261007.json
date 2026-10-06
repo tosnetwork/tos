@@ -16,7 +16,39 @@
       "failures": 0,
       "scope": "native custody primitives only, not wallet lifecycle",
       "log": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-native/ios/tests-WalletCore-raw.log",
-      "sha256": "76ad1b0b59da0fd16f27c8fcd7234c5bb677cac488dd367527d5317c3ea2fb26"
+      "sha256": "76ad1b0b59da0fd16f27c8fcd7234c5bb677cac488dd367527d5317c3ea2fb26",
+      "log_availability": "Original generic raw log was overwritten by the AUTH run; retained xcresult is the authoritative original result.",
+      "xcresult": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-native/ios/TestResults/WalletCore-20261007T072857-54074.xcresult",
+      "summary": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-native/ios-native-summary.json",
+      "summary_sha256": "f7bc9d5f97cf29e0c1134892a8d9cbb356a1315e0ad9e179de3ab3636e813884"
+    },
+    "android_module_build": {
+      "status": "assembleDebug passed",
+      "scope": "four ABI native/JNI and Kotlin module build only; no emulator execution",
+      "head": "aca9082",
+      "aar_sha256": "2687e30f3286abbd23290379dc482759ef5f3423b538301afc005c94e8fabe7c",
+      "libraries": [
+        {
+          "path": "jni/arm64-v8a/libtos_mobile_pq.so",
+          "sha256": "637bd874d20cc9e682338b40420f9fcca1ebd7262e3a470c4d5b1625383cb82e",
+          "bytes": 576104
+        },
+        {
+          "path": "jni/armeabi-v7a/libtos_mobile_pq.so",
+          "sha256": "5c11a92c7047faf8040f4e41a45842f7fe5a19c30e3ffba45538ab7cb472daa2",
+          "bytes": 362156
+        },
+        {
+          "path": "jni/x86/libtos_mobile_pq.so",
+          "sha256": "dc2e048a334218a028bb3339e5789e3e1d42246c2d1ffbdc664b879b3f0efa3b",
+          "bytes": 591144
+        },
+        {
+          "path": "jni/x86_64/libtos_mobile_pq.so",
+          "sha256": "42ad5ecf547388c850c8b51ff0249a94747c7af92e1b4f73c64c8863d35f207e",
+          "bytes": 569560
+        }
+      ]
     }
   },
   "controls": {
