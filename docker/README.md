@@ -57,7 +57,7 @@ Below is the list of supported arguments and their default values:
 | CONSOLE_PORT      | This TCP port is used to access validator's console. Not necessarily to be opened for external access.                                                                                    |     no     |                          30002                          |
 | LITE_PORT         | Lite-server's TCP port. Used by lite-client.                                                                                                                                              |     no     |                          30003                          |
 | LITESERVER        | Any non-empty value starts a lite-server; leave it unset for none. Refused together with the validator role.                                                                              |     no     |                         unset                           |
-| VALIDATOR_ID      | Validator role: the controller account's 256-bit id, 64 hex digits. Requires PQ_CONSENSUS_KEY_FILE. See [Run a validator](#run-a-validator).                                             |     no     |                                                         |
+| VALIDATOR_ID      | Validator role: the controller account's 256-bit id, 64 hex digits or `-1:<64 hex digits>`. Requires PQ_CONSENSUS_KEY_FILE. See [Run a validator](#run-a-validator).                    |     no     |                                                         |
 | PQ_CONSENSUS_KEY_FILE | Validator role: absolute path, inside the container, of the mounted 32-byte consensus seed. Requires VALIDATOR_ID.                                                                   |     no     |                                                         |
 | STATE_TTL         | Node's state will be gc'd after this time (in seconds).                                                                                                                                   |     no     |                          86400                          |
 | ARCHIVE_TTL       | Node's archived blocks will be deleted after this time (in seconds).                                                                                                                      |     no     |                          86400                          |
@@ -144,10 +144,16 @@ one fails:
 
 On the first start it then records the binding as
 `extraconfig.pq_consensus {validator_id, consensus_key_file}` in
-`/var/tos-work/db/config.json`. The binding is never rewritten from the
-environment afterwards: if `config.json` already names another validator or
-key file, the container refuses to start, and changing the identity a node
-signs for is a deliberate edit of that file.
+`/var/tos-work/db/config.json` with `tos-pq-consensus-key bind-node`, the same
+command an operator uses outside the container. It holds the node's
+configuration lock while it edits, writes through the node's own configuration
+schema, refuses content that schema would drop or an interrupted node write
+(`config.json.tmp`), and flushes the file to disk. The binding is never
+rewritten from the environment afterwards: if `config.json` already names
+another validator or key file, the container refuses to start; changing the
+identity a node signs for is a deliberate
+`tos-pq-consensus-key bind-node --replace` by the operator, with the node
+stopped.
 
 A validator serves no public queries. The role is refused together with
 `LITESERVER`, with lite servers already configured in `config.json` (a node

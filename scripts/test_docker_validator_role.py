@@ -6,6 +6,12 @@ refusal test checks the specific reason and that config.json was left alone.
 The entrypoint itself (docker/init.sh) is run against a temporary directory
 with stand-ins for the node binaries. When a built validator-engine is
 available, one test also has the real engine read the binding back.
+
+The binding itself is written by `tos-pq-consensus-key bind-node`. Tests that
+need a real binding written run only when such a binary is found
+(TOS_PQ_BIND_NODE_TOOL, or the build tree's tos-pq-consensus-key when its usage
+lists bind-node) and are skipped otherwise; the calls the script makes are
+checked against a recording stand-in in every run.
 """
 
 from __future__ import annotations
@@ -134,6 +140,36 @@ printf '{"@type":"config.global"}' >"$out"
 """
 
 
+def find_bind_node_tool() -> Path | None:
+    configured = os.environ.get("TOS_PQ_BIND_NODE_TOOL")
+    candidates = [Path(configured)] if configured else []
+    candidates.append(REPO / "build" / "crypto" / "pq" / "tos-pq-consensus-key")
+    for candidate in candidates:
+        if not (candidate.is_file() and os.access(candidate, os.X_OK)):
+            continue
+        probe = subprocess.run(
+            [str(candidate)], capture_output=True, text=True, timeout=60, check=False
+        )
+        if "bind-node" in probe.stderr:
+            return candidate
+    return None
+
+
+BIND_NODE_TOOL = find_bind_node_tool()
+requires_bind_node = unittest.skipIf(
+    BIND_NODE_TOOL is None,
+    "needs a tos-pq-consensus-key with bind-node; set TOS_PQ_BIND_NODE_TOOL to run it",
+)
+TOOL_ENV = {"TOS_PQ_CONSENSUS_KEY_TOOL": str(BIND_NODE_TOOL or "/nonexistent/tos-pq-consensus-key")}
+
+# Records each call and answers with STUB_STATUS, printing STUB_OUTPUT.
+BIND_NODE_STUB = """#!/usr/bin/env bash
+printf '%s\\n' "$@" >"$STUB_CALL"
+printf '%s' "${STUB_OUTPUT:-}" >&2
+exit "${STUB_STATUS:-0}"
+"""
+
+
 def write_executable(path: Path, text: str) -> None:
     path.write_text(text)
     path.chmod(0o755)
@@ -156,7 +192,7 @@ class RoleTest(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def env(self, **overrides: str | None) -> dict[str, str]:
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **TOOL_ENV}
         values: dict[str, str | None] = {
             "VALIDATOR_ID": VALIDATOR_ID,
             "PQ_CONSENSUS_KEY_FILE": str(self.seed),
@@ -216,20 +252,20 @@ class RoleTest(unittest.TestCase):
 
     # ---- happy path
 
+    @requires_bind_node
     def test_binding_is_written_in_the_engine_format(self) -> None:
         result = self.apply()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_seed_not_printed(result)
+        extra = self.binding()
+        self.assertEqual(extra["@type"], "engine.validator.extraConfig")
+        self.assertIs(extra["state_serializer_enabled"], True)
         self.assertEqual(
-            self.binding(),
+            extra["pq_consensus"],
             {
-                "@type": "engine.validator.extraConfig",
-                "state_serializer_enabled": True,
-                "pq_consensus": {
-                    "@type": "engine.validator.pqConsensus",
-                    "validator_id": VALIDATOR_ID_B64,
-                    "consensus_key_file": str(self.seed),
-                },
+                "@type": "engine.validator.pqConsensus",
+                "validator_id": VALIDATOR_ID_B64,
+                "consensus_key_file": str(self.seed),
             },
         )
         written = json.loads(self.config.read_text())
@@ -238,6 +274,27 @@ class RoleTest(unittest.TestCase):
         self.assertEqual(written, original, "every other field is kept")
         self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o644)
 
+    @requires_bind_node
+    def test_masterchain_address_form_is_the_same_validator(self) -> None:
+        result = self.apply(VALIDATOR_ID="-1:" + VALIDATOR_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pq = self.binding()["pq_consensus"]
+        assert isinstance(pq, dict)
+        self.assertEqual(pq["validator_id"], VALIDATOR_ID_B64)
+
+    @requires_bind_node
+    def test_content_the_engine_would_drop_is_refused(self) -> None:
+        config = json.loads(ENGINE_CONFIG)
+        config["operator_note"] = "kept nowhere by the engine"
+        self.config.write_text(json.dumps(config))
+        self.assert_refused("schema does not keep")
+
+    @requires_bind_node
+    def test_interrupted_engine_write_is_refused(self) -> None:
+        (self.tmp / "config.json.tmp").write_text(ENGINE_CONFIG)
+        self.assert_refused("an interrupted engine write")
+
+    @requires_bind_node
     def test_upper_case_id_is_the_same_validator(self) -> None:
         result = self.apply(VALIDATOR_ID=VALIDATOR_ID.upper())
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -245,6 +302,7 @@ class RoleTest(unittest.TestCase):
         assert isinstance(pq, dict)
         self.assertEqual(pq["validator_id"], VALIDATOR_ID_B64)
 
+    @requires_bind_node
     def test_existing_extraconfig_keeps_its_fields(self) -> None:
         config = json.loads(ENGINE_CONFIG)
         config["extraconfig"] = {
@@ -261,12 +319,13 @@ class RoleTest(unittest.TestCase):
         self.assertEqual(extra["fast_sync_overlay_clients"], [])
         self.assertIn("pq_consensus", extra)
 
+    @requires_bind_node
     def test_second_apply_with_the_same_binding_changes_nothing(self) -> None:
         self.assertEqual(self.apply().returncode, 0)
         before = self.config.read_bytes()
         result = self.apply()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("already present", result.stdout)
+        self.assertIn("unchanged", result.stdout)
         self.assertEqual(self.config.read_bytes(), before)
 
     def test_loopback_json_rpc_is_allowed(self) -> None:
@@ -281,16 +340,17 @@ class RoleTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_persisted_binding_alone_keeps_the_role(self) -> None:
-        self.assertEqual(self.apply().returncode, 0)
+        self.write_bound_config()
         result = self.role("check", str(self.config), VALIDATOR_ID=None, PQ_CONSENSUS_KEY_FILE=None)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("already binds a validator", result.stdout)
 
     # ---- refusals
 
+    @requires_bind_node
     def test_a_different_existing_binding_is_not_rewritten(self) -> None:
-        self.assertEqual(self.apply().returncode, 0)
-        self.assert_refused("is not rewritten from the environment", VALIDATOR_ID="ab" * 32)
+        self.write_bound_config()
+        self.assert_refused("pass --replace to change it deliberately", VALIDATOR_ID="ab" * 32)
 
     def test_id_without_key_file_is_refused(self) -> None:
         self.assert_refused("PQ_CONSENSUS_KEY_FILE is not set", PQ_CONSENSUS_KEY_FILE=None)
@@ -303,7 +363,9 @@ class RoleTest(unittest.TestCase):
             VALIDATOR_ID[:-1],
             VALIDATOR_ID + "0",
             "g" + VALIDATOR_ID[1:],
-            "-1:" + VALIDATOR_ID,
+            "0:" + VALIDATOR_ID,
+            "-1:" + VALIDATOR_ID[:-1],
+            "-1:-1:" + VALIDATOR_ID,
         ):
             with self.subTest(value=value):
                 self.assert_refused("exactly 64 hexadecimal digits", VALIDATOR_ID=value)
@@ -571,6 +633,95 @@ class RoleTest(unittest.TestCase):
         self.assertIn("initialize the node first", result.stderr)
 
 
+class BindNodeCallTest(unittest.TestCase):
+    """What the script hands bind-node, and how it reads each answer."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="validator-bind-call-"))
+        self.tmp.chmod(0o700)
+        self.keys = self.tmp / "keys"
+        self.keys.mkdir(mode=0o700)
+        self.seed = self.keys / "pq-consensus.seed"
+        self.seed.write_bytes(SEED)
+        self.seed.chmod(0o600)
+        self.db = self.tmp / "db"
+        self.db.mkdir()
+        self.config = self.db / "config.json"
+        self.config.write_text(ENGINE_CONFIG)
+        self.stub = self.tmp / "bind-node-stub"
+        write_executable(self.stub, BIND_NODE_STUB)
+        self.call = self.tmp / "call"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def apply(self, config: Path | None = None, **extra: str) -> subprocess.CompletedProcess[str]:
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "TOS_PQ_CONSENSUS_KEY_TOOL": str(self.stub),
+            "STUB_CALL": str(self.call),
+            "VALIDATOR_ID": VALIDATOR_ID,
+            "PQ_CONSENSUS_KEY_FILE": str(self.seed),
+            **extra,
+        }
+        return subprocess.run(
+            ["bash", str(ROLE), "apply", str(config or self.config)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    def test_binding_is_left_to_bind_node_without_replace(self) -> None:
+        for given in (VALIDATOR_ID.upper(), "-1:" + VALIDATOR_ID):
+            with self.subTest(given=given):
+                result = self.apply(VALIDATOR_ID=given)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    self.call.read_text().splitlines(),
+                    ["bind-node", str(self.db), str(self.seed), VALIDATOR_ID],
+                )
+                self.assertEqual(self.config.read_text(), ENGINE_CONFIG, "the script never writes")
+
+    def test_refusal_is_reported_and_stops_the_container(self) -> None:
+        result = self.apply(STUB_STATUS="1", STUB_OUTPUT="config.json: already bound elsewhere")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bind-node refused, nothing was written", result.stderr)
+        self.assertIn("already bound elsewhere", result.stderr)
+
+    def test_a_key_tool_without_bind_node_is_refused(self) -> None:
+        result = self.apply(
+            STUB_STATUS="2", STUB_OUTPUT="usage: tos-pq-consensus-key generate KEYFILE"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("has no usable bind-node command", result.stderr)
+
+    def test_unconfirmed_durability_is_flushed_and_continues(self) -> None:
+        result = self.apply(STUB_STATUS="3", STUB_OUTPUT="db: the directory could not be flushed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("flushed with sync", result.stdout)
+
+    def test_missing_tool_is_refused(self) -> None:
+        result = self.apply(TOS_PQ_CONSENSUS_KEY_TOOL=str(self.tmp / "absent"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("is not installed", result.stderr)
+        self.assertFalse(self.call.exists())
+
+    def test_config_must_be_the_database_config(self) -> None:
+        other = self.db / "node.json"
+        other.write_text(ENGINE_CONFIG)
+        result = self.apply(other)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("takes the node's DB_ROOT/config.json", result.stderr)
+        self.assertFalse(self.call.exists())
+
+    def test_script_never_writes_config_itself(self) -> None:
+        text = ROLE.read_text()
+        for writer in ("mktemp", "mv --", '> "$config', '>"$config', "--replace"):
+            self.assertNotIn(writer, text)
+
+
 class EntrypointTest(unittest.TestCase):
     """docker/init.sh with its paths moved into a temporary directory."""
 
@@ -612,6 +763,7 @@ class EntrypointTest(unittest.TestCase):
             "PUBLIC_IP": "203.0.113.10",
             "STUB_LOG": str(self.log),
             "STUB_ENGINE_CONFIG": str(self.engine_config),
+            **TOOL_ENV,
             **extra,
         }
         return subprocess.run(
@@ -631,6 +783,7 @@ class EntrypointTest(unittest.TestCase):
         calls = self.log / "engine-calls"
         return calls.read_text().splitlines() if calls.exists() else []
 
+    @requires_bind_node
     def test_validator_role_is_configured_before_the_engine_starts(self) -> None:
         result = self.run_init(**self.validator_env())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -646,6 +799,7 @@ class EntrypointTest(unittest.TestCase):
         self.assertEqual(len(self.engine_calls()), 2, "initialize, then start")
         self.assertTrue((self.log / "engine-started").exists())
 
+    @requires_bind_node
     def test_restart_keeps_the_binding(self) -> None:
         self.assertEqual(self.run_init(**self.validator_env()).returncode, 0)
         before = (self.db / "config.json").read_bytes()
@@ -674,8 +828,24 @@ class EntrypointTest(unittest.TestCase):
         self.assertIn("configures 1 lite server(s)", result.stderr)
         self.assertEqual(len(self.engine_calls()), 2, "only the first, full-node run started it")
 
+    def bind_fixture(self) -> None:
+        # A full-node first start, then the block bind-node would have added.
+        self.assertEqual(self.run_init().returncode, 0)
+        path = self.db / "config.json"
+        config = json.loads(path.read_text())
+        config["extraconfig"] = {
+            "@type": "engine.validator.extraConfig",
+            "state_serializer_enabled": True,
+            "pq_consensus": {
+                "@type": "engine.validator.pqConsensus",
+                "validator_id": VALIDATOR_ID_B64,
+                "consensus_key_file": str(self.seed),
+            },
+        }
+        path.write_text(json.dumps(config))
+
     def test_bound_node_restarted_with_a_lite_server_is_refused(self) -> None:
-        self.assertEqual(self.run_init(**self.validator_env()).returncode, 0)
+        self.bind_fixture()
         result = self.run_init(LITESERVER="true")
         self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
         self.assertIn("a validator runs no lite server", result.stderr)
@@ -690,7 +860,7 @@ class EntrypointTest(unittest.TestCase):
         self.assertEqual(self.engine_calls(), [])
 
     def test_bound_recovery_config_stops_a_lite_server_start(self) -> None:
-        self.assertEqual(self.run_init(**self.validator_env()).returncode, 0)
+        self.bind_fixture()
         (self.db / "config.json").rename(self.db / "config.json.tmp")
         calls = len(self.engine_calls())
         result = self.run_init(LITESERVER="true")
@@ -790,6 +960,7 @@ class RealEngineTest(unittest.TestCase):
                     )
                     self.assertEqual(helper.returncode != 0, moved, helper.stderr)
 
+    @requires_bind_node
     def test_engine_loads_the_bound_validator_and_key(self) -> None:
         engine = find_built("validator-engine/validator-engine", "TOS_VALIDATOR_ENGINE")
         key_tool = find_built("crypto/pq/tos-pq-consensus-key", "TOS_PQ_CONSENSUS_KEY")
@@ -835,6 +1006,7 @@ class RealEngineTest(unittest.TestCase):
             )
             env = {
                 "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                **TOOL_ENV,
                 "VALIDATOR_ID": VALIDATOR_ID,
                 "PQ_CONSENSUS_KEY_FILE": str(seed),
             }

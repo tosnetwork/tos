@@ -3,7 +3,8 @@
 #
 # The container runs a full node unless both of these are set:
 #
-#   VALIDATOR_ID            the controller account's 256-bit id, 64 hex digits
+#   VALIDATOR_ID            the controller account's 256-bit id: 64 hex digits,
+#                           or its masterchain address -1:<64 hex digits>
 #   PQ_CONSENSUS_KEY_FILE   absolute path, inside the container, of the mounted
 #                           32-byte post-quantum consensus seed
 #
@@ -13,7 +14,14 @@
 #
 #   validator-role.sh check CONFIG   validate the environment and CONFIG (which
 #                                    may not exist yet); changes nothing
-#   validator-role.sh apply CONFIG   check, then write the binding into CONFIG
+#   validator-role.sh apply CONFIG   check, then bind; CONFIG is DB_ROOT/config.json
+#
+# The binding is written by `tos-pq-consensus-key bind-node`, the one writer of
+# that block: it holds DB_ROOT/config.json.lock (which a running node holds
+# too), writes through the engine's own schema and refuses content that schema
+# would drop, flushes the file and its directory, and checks the key again
+# under the rules the node loads it by. This script never edits config.json
+# itself; it only reads it. TOS_PQ_CONSENSUS_KEY_TOOL names another binary.
 #
 # The role is in effect when the variables are set or when CONFIG already
 # binds a validator: a node bound on an earlier start stays a validator after
@@ -55,23 +63,16 @@ role_requested() {
 
 normalized_validator_id() {
   local id="${VALIDATOR_ID:-}"
+  # The controller lives on the masterchain; its address form names it too.
+  id="${id#-1:}"
   if [[ ! "$id" =~ ^[0-9A-Fa-f]{64}$ ]]; then
-    refuse "VALIDATOR_ID must be exactly 64 hexadecimal digits (the controller account id)"
+    refuse "VALIDATOR_ID must be exactly 64 hexadecimal digits, or -1: followed by them (the controller account id)"
   fi
   id="${id,,}"
   if [[ "$id" =~ ^0{64}$ ]]; then
     refuse "VALIDATOR_ID is zero; it must name the controller account"
   fi
   printf '%s' "$id"
-}
-
-# The engine reads int256 config fields as base64 of the 32 bytes.
-hex_to_base64() {
-  local hex="$1" escaped="" i
-  for ((i = 0; i < ${#hex}; i += 2)); do
-    escaped+="\\x${hex:i:2}"
-  done
-  printf '%b' "$escaped" | base64 -w0
 }
 
 check_key_file() {
@@ -255,42 +256,39 @@ apply() {
   local config="$1"
   check "$config"
   role_requested || return 0
+  [ "$(basename -- "$config")" = config.json ] ||
+    refuse "apply takes the node's DB_ROOT/config.json, not $config"
   [ -f "$config" ] || refuse "node config $config does not exist; initialize the node first"
-  command -v jq >/dev/null || refuse "jq is required to edit $config"
-  local id_b64 key_file existing
-  id_b64="$(hex_to_base64 "$(normalized_validator_id)")"
-  key_file="$PQ_CONSENSUS_KEY_FILE"
-  existing="$(jq -c '.extraconfig.pq_consensus // empty' "$config")" ||
-    refuse "cannot parse $config"
-  if [ -n "$existing" ]; then
-    local have_id have_file
-    have_id="$(jq -r '.validator_id // ""' <<<"$existing")"
-    have_file="$(jq -r '.consensus_key_file // ""' <<<"$existing")"
-    if [ "$have_id" = "$id_b64" ] && [ "$have_file" = "$key_file" ]; then
-      echo "[=] Validator binding already present in $config"
-      return 0
-    fi
-    refuse "$config already binds validator $have_id with key $have_file; it is not rewritten from the environment. Edit it deliberately if the identity really changed"
-  fi
-  local tmp
-  tmp="$(mktemp "$config.validator.XXXXXX")"
-  # A missing state_serializer_enabled would be read as false and stop
-  # persistent states (and with them garbage collection), so a new
-  # extraconfig states the engine's default explicitly; an existing one
-  # keeps its own fields.
-  if ! jq --arg id "$id_b64" --arg file "$key_file" '
-      .extraconfig = (
-        (if (.extraconfig | type) == "object" then .extraconfig
-         else {"@type": "engine.validator.extraConfig", "state_serializer_enabled": true} end)
-        + {"pq_consensus": {"@type": "engine.validator.pqConsensus",
-                            "validator_id": $id, "consensus_key_file": $file}})
-    ' "$config" >"$tmp"; then
-    rm -f -- "$tmp"
-    refuse "cannot write the validator binding into $config"
-  fi
-  chmod --reference="$config" -- "$tmp"
-  mv -- "$tmp" "$config"
-  echo "[+] Wrote validator binding into $config"
+  local tool="${TOS_PQ_CONSENSUS_KEY_TOOL:-tos-pq-consensus-key}"
+  command -v "$tool" >/dev/null || refuse "$tool is not installed; it is what writes the binding"
+  local output status
+  # Never with bind-node's replace flag: a different existing binding stops
+  # the container, so the identity a node signs for changes only by a
+  # deliberate operator command.
+  set +e
+  output="$("$tool" bind-node "$(dirname -- "$config")" "$PQ_CONSENSUS_KEY_FILE" \
+    "$(normalized_validator_id)" 2>&1)"
+  status=$?
+  set -e
+  case "$status" in
+    0)
+      printf '%s\n' "$output"
+      echo "[+] Validator binding in $config"
+      ;;
+    3)
+      # In place, but the directory flush failed. Flush everything before the
+      # node starts on it rather than start on a binding a crash could lose.
+      printf '%s\n' "$output" >&2
+      sync || refuse "the binding in $config is in place but could not be flushed"
+      echo "[+] Validator binding in $config (flushed with sync after bind-node reported it not durable)"
+      ;;
+    2)
+      refuse "$tool has no usable bind-node command (exit 2); install a key tool that can bind a node"
+      ;;
+    *)
+      refuse "bind-node refused, nothing was written: $output"
+      ;;
+  esac
 }
 
 case "${1:-}" in
