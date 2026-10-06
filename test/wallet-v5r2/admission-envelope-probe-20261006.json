@@ -1,0 +1,63 @@
+{
+  "base_commit": "9b21e8fb5cc2087784aeb52f0ddee0c09f8c21b5",
+  "scope": "Cell-count and serialized-byte boundary rejection with independent Rust expectations, native C API replay, and a private compiler-copy guard deletion.",
+  "scenarios_per_credit": 15,
+  "native_verified_executions": 1008,
+  "control_scenarios": 9,
+  "deleted_cell_guard_witness": "unexpected boundary outcome: class-1-cells-1025: class-1-cells-1025\t2007\t0\t-\t-; expected 2015",
+  "max_scenario_medians_ns": {
+    "10000": {
+      "cells-1024": 293292.0,
+      "cells-1025": 247604.0,
+      "bytes-65535": 313479.5
+    },
+    "20000": {
+      "cells-1024": 404542.0,
+      "cells-1025": 249604.0,
+      "bytes-65535": 433146.0
+    }
+  },
+  "source_sha256": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/smartcont/wallet-v5r2-fee-vault.fc",
+    "sha256": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a",
+    "bytes": 7015
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/admission_envelope_probe.py",
+      "bytes": 9578,
+      "sha256": "34a9a5148c10b73d29b24cdba02ba684db46b62bd8eec01aefa06bf0de26c7ca"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 15140,
+      "sha256": "cbdc8c98ad92fcfeb649f607647f84e1a6d326379380e68d03431ca9247e78de"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 112457,
+      "sha256": "2d4333bc902f441e2705e3749c882ad3b6b89ecd8808b0d6e0e2b8dda3cce295"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-envelope-probe-final/MANIFEST.json",
+      "bytes": 5855,
+      "sha256": "95e489f391e310e55057d67162dc024c26f19bd9b9fe1e152ab208aea964cd98"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-envelope-probe/MANIFEST.json",
+      "bytes": 5016,
+      "sha256": "85a6dbeece2ed41ede865dbdb072bc381d66b4437ef9c0eeb28f5cb5edd529e0"
+    }
+  ],
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh && /Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/admission_envelope_probe.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-custody-migration-recovery --driver tosctl/src/target/debug/examples/pq-tx-parity --output <fresh-directory> --iterations 30",
+  "prior_attempt": "The first run completed original probes but stopped because the Rust driver requires at least four scenarios and the initial deletion control supplied only three. Its output is retained but not counted as a completed control. The final run pairs in-bound and forbidden cases (nine controls) and completes both VMs.",
+  "limitations": [
+    "Ordinary balanced padding changes the intent, so the outer signature is invalid; these are rejection-cost probes, not authorized payments with large inner signatures.",
+    "The size-guard deletion admits a forbidden envelope to cryptographic rejection, not to an accepted transaction.",
+    "Local Release native C API, sequential warm-cache samples, no validator network ingress, concurrency, maximum depth, cold-cache or approved reference-hardware measurement.",
+    "Default 10000 credit admission remains failed; no credit or tariff is changed."
+  ],
+  "retention": "Retain raw artifacts and original source fixtures through release review, at least through 2027-01-06."
+}

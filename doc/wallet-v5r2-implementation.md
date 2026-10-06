@@ -610,6 +610,31 @@ work; they do not prove that maximum hash-chain work was reached. No tariff or
 credit setting changes. Both architecture CI jobs include a smaller smoke run.
 Evidence: `test/wallet-v5r2/admission-forgery-timing-20261006.json`.
 
+`admission_envelope_probe.py` additionally replaces the inner PQ signature with
+a balanced ordinary-cell tree while preserving the fee request's class/identity
+fields. The resulting outer LMS signature is invalid because the intent changed.
+For each of AUTH, POP and preparation, it probes 1,023/1,024/1,025 distinct cells
+and a 1,024-cell envelope serialized to exactly 65,535 bytes, plus the original
+valid positive control. Every input is at or below 65,535 bytes. The contract's
+incoming-storage count includes the root cell; the builder counts distinct hashes.
+
+At both credit settings, 1,025 cells fail the pre-signature 2015 size guard.
+At 20,000 credit, in-bound forged envelopes reach LMS rejection 2007; at 10,000
+they exhaust gas with -14. A private compiler copy deletes only the cell guard,
+substitutes the resulting code into synthetic account prestates, and causes all
+three 1,025-cell classes to reach 2007 instead. The ordinary boundary validator
+rejects those results. Rust expectations and native replay agree for the control
+and the original fixtures; production source is never edited.
+
+The completed local run checked 1,008 native executions. Across the three classes,
+the largest 65,535-byte scenario median was 313,479.5 ns at 10,000 credit and
+433,146 ns at 20,000. Even a rejected message incurs BOC decoding and storage
+traversal outside the signature instruction. These C API probes do not execute
+the validator's network admission path or establish concurrent-load limits,
+maximum-depth behavior, cold-cache behavior or reference-hardware pricing.
+Both architecture CI jobs run a smaller sample. Evidence:
+`test/wallet-v5r2/admission-envelope-probe-20261006.json`.
+
 
 ## Client fee-leaf scheduling boundary
 

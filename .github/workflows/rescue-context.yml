@@ -177,6 +177,10 @@ jobs:
             --fixtures artifacts/context/r2-fee-prepare \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-admission-forgery-timing --variants 8 --iterations 10
+          python test/wallet-v5r2/admission_envelope_probe.py \
+            --fixtures artifacts/context/r2-fee-prepare \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-admission-envelope-probe --iterations 10
       - name: Native LMS chain buffer sensitivity
         if: matrix.runner == 'ubuntu-24.04'
         run: |
