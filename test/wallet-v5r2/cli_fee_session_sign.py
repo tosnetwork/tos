@@ -15,6 +15,13 @@ native, Cell, from_boc = shared.native, shared.Cell, shared.from_boc
 
 
 def check_signing_session(args, root, common, accounts, config, payload, codes, data, addresses):
+    if getattr(args, "fee_session_rotation", False):
+        from cli_rotation_session import FixtureClock
+
+        args.rotation_clock = FixtureClock(root)
+        # The CLI receives the library. Its environment-isolated mock verifier
+        # reads the fixture offset explicitly; monotonic deadlines stay real.
+        args.rotation_clock.install()
     vector = json.loads(
         (
             shared.ROOT / "tosctl/src/wallet-pq-signer/tests/fixtures/native-fee-recovery.json"
@@ -101,13 +108,35 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
     process = None
     selector = None
     errors = []
+    session_cwd = None
+    if getattr(args, "fee_session_rotation", False):
+        from cli_rotation_session import relative_arguments
+
+        history = root / "initial-fee-history.json"
+        history.write_text(
+            json.dumps(
+                dict(
+                    schema="TOS-WALLET-V5R2-FEE-HISTORY-v1",
+                    wallet=payload["expected_wallet"],
+                    used_fee_public_key_hashes=[
+                        Cell().uint(int(vector["public_key_hex"], 16), 480).hash.hex()
+                    ],
+                )
+            )
+        )
+        args.rotation_fee_history_file = history
+        command += ["--fee-history", str(history)]
+        session_cwd = root / "relative-input-cwd"
+        session_cwd.mkdir()
+        command = relative_arguments(command, session_cwd)
+        args.rotation_session_cwd = session_cwd
 
     def start(label):
         nonlocal process, selector
         err = (args.output / (label + ".stderr")).open("w")
         errors.append(err)
         process = subprocess.Popen(
-            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err
+            command, cwd=session_cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err
         )
         selector = selectors.DefaultSelector()
         selector.register(process.stdout, selectors.EVENT_READ)
@@ -134,6 +163,20 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
         selector.close()
         process = None
 
+    def restart(arguments, label, cwd=None):
+        nonlocal session_cwd
+        if process is not None:
+            stop()
+        if cwd is not None:
+            session_cwd = cwd
+            args.rotation_session_cwd = cwd
+        command[:] = [str(args.cli.resolve()), "wallet", "pq-fee-session-initial", *arguments]
+        start(label)
+
+    args.rotation_restart = restart
+    args.rotation_previous_command = list(command)
+    args.rotation_previous_cwd = session_cwd
+
     try:
         start("initial")
         boundary = payload["epoch0"] + 3600
@@ -141,12 +184,19 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
         initial = request(dict(command="status"))
         assert initial["status"] == "request_refused" and "WaitUntil" in initial["reason"]
         before = (journal / "fee-reservations").read_bytes()
+        if getattr(args, "fee_session_rotation", False):
+            args.rotation_clock.advance(60)
         while int(time.time()) <= boundary:
             time.sleep(min(1, max(0.01, boundary + 1 - time.time())))
         available = request(dict(command="status"))
         assert available["status"] == "leaf_available" and available["leaf"] == 4, available
         if args.fee_session_prepare:
             from cli_fee_session_prepare import check_preparation
+
+            if getattr(args, "fee_session_rotation", False):
+                from cli_rotation_session import check_initial_lock
+
+                check_initial_lock(args, root, request, accounts, codes, data, addresses)
 
             check_preparation(args, root, request, journal, payload, codes, data, addresses, common)
             stop()
@@ -327,6 +377,8 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
             selector.close()
         for err in errors:
             err.close()
+        if getattr(args, "fee_session_rotation", False):
+            args.rotation_clock.restore()
     print(
         "Cross-slot fee CLI signing, lost-output restart retry, native funded lock and consumed retry refusal passed"
     )

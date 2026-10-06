@@ -19,6 +19,9 @@ pub struct MigrationEvidence<'a> {
     pub vault: &'a ProvenAccountState,
     /// Supplied by the trusted local custody session, never inferred from chain state.
     pub fee_continuity: crate::lms_fee_schedule::Continuity,
+    /// Proven policy source, also the live checkpoint anchor when `vault` was
+    /// fetched historically at that wallet checkpoint. Required in that case
+    /// even when the successor policy does not enable PRIMARY.
     pub policy: Option<&'a ProvenAccountState>,
 }
 
@@ -415,12 +418,24 @@ impl ProvenWalletState {
                 && evidence.vault.anchor_id() == &self.anchor_id,
             "migration vault checkpoint mismatch"
         );
-        let fee = crate::wallet_v5r2_state::ProvenFeeVault::bind_successor(
-            evidence.vault,
-            successor,
-            now,
-            self.max_age,
-        )?;
+        let fee = if evidence.vault.evidence().live {
+            crate::wallet_v5r2_state::ProvenFeeVault::bind_successor(
+                evidence.vault,
+                successor,
+                now,
+                self.max_age,
+            )?
+        } else {
+            crate::wallet_v5r2_state::ProvenFeeVault::bind_successor_at_live_checkpoint(
+                evidence.vault,
+                evidence.policy.ok_or_else(|| {
+                    anyhow::anyhow!("historical migration vault needs its live checkpoint source")
+                })?,
+                successor,
+                now,
+                self.max_age,
+            )?
+        };
         fee.plan(now, evidence.fee_continuity)?;
         evidence.primary_request.require_successor_funded_receipt(
             evidence.primary_receipts,

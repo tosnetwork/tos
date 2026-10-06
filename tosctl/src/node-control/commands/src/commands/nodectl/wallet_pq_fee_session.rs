@@ -19,9 +19,14 @@ use std::io::{BufRead, Read, Write};
 mod migration;
 use migration::{HeldSuccessor, MigrationInput, SuccessorCustody};
 
+fn require_rotation_capacity(retired_count: usize) -> anyhow::Result<()> {
+    anyhow::ensure!(retired_count < 32, "session rotation limit; preserve journals and restart");
+    Ok(())
+}
+
 #[derive(clap::Args, Clone)]
 #[command(
-    about = "Hold an initial rescue-fee journal session; JSON-line status/lock/pop/prepare/attach_successor/successor/migrate/retry/quit, no broadcast"
+    about = "Hold a rescue-fee journal session; JSON-line status/execute/lock/pop/prepare/attach_successor/successor/migrate/promote/retry/quit, no broadcast"
 )]
 pub struct PqFeeSessionInitialCmd {
     #[command(flatten)]
@@ -31,7 +36,7 @@ pub struct PqFeeSessionInitialCmd {
     successor_manifest: Option<PathBuf>,
     #[arg(long, requires = "successor_manifest")]
     expected_template_wallet: Option<String>,
-    /// Existing absolute, owner-only mode-0700 journal directory.
+    /// Existing owner-only mode-0700 journal directory.
     #[arg(long)]
     journal_dir: PathBuf,
     #[arg(long)]
@@ -72,6 +77,16 @@ enum Request {
     },
     Migrate {
         evidence: MigrationInput,
+    },
+    /// Select the attached route only after proving it is installed in the wallet.
+    Promote {
+        output_dir: PathBuf,
+    },
+    Execute {
+        actions: PathBuf,
+        valid_for_seconds: u32,
+        value_nanotos: String,
+        output_dir: PathBuf,
     },
     Lock {
         valid_for_seconds: u32,
@@ -171,6 +186,7 @@ impl PqFeeSessionInitialCmd {
             !self.fee_record_id.trim().is_empty() && !self.rescue_record_id.trim().is_empty(),
             "record IDs must not be empty"
         );
+        let mut command = self.clone();
         let context = self.proof.context()?;
         let context = match (&self.successor_manifest, &self.expected_template_wallet) {
             (Some(manifest), Some(pin)) => {
@@ -179,8 +195,14 @@ impl PqFeeSessionInitialCmd {
             (None, None) => context,
             _ => anyhow::bail!("successor route requires manifest and independent template pin"),
         };
-        let (tree, mut journal) = self.open_fee_route(&context).await?;
+        let mut context = context;
+        command.proof.retain_fee_history(&context)?;
+        let (mut tree, mut journal) = self.open_fee_route(&context).await?;
         let mut successor = None;
+        // Previous journals stay exclusively owned for the whole session. Their
+        // trees may be dropped, but another local process cannot reacquire their
+        // reservations while the successor is servicing this wallet.
+        let mut retired_journals = Vec::new();
         println!(
             "{}",
             serde_json::json!({"status":"fee_session_open", "scope":"new signatures remain subject to next-slot recovery and fresh proofs"})
@@ -227,7 +249,10 @@ impl PqFeeSessionInitialCmd {
             let result = tokio::select! {
                 biased;
                 _ = cancelled.changed() => break,
-                result = self.dispatch(request, &context, &mut journal, &tree, &mut successor) => result,
+                result = command.dispatch(
+                    request, &mut context, &mut journal, &mut tree,
+                    &mut successor, &mut retired_journals,
+                ) => result,
             };
             let report = match result {
                 Ok(value) => value,
@@ -258,17 +283,19 @@ impl PqFeeSessionInitialCmd {
         })
         .await??;
         let view = context.fee().await?;
-        let journal = FeeJournal::open_proven(&self.journal_dir, &view, now()?)?;
+        let directory = std::path::absolute(&self.journal_dir)?;
+        let journal = FeeJournal::open_proven(&directory, &view, now()?)?;
         Ok((tree, journal))
     }
 
     async fn dispatch(
-        &self,
+        &mut self,
         request: Request,
-        context: &InitialContext,
+        context: &mut InitialContext,
         journal: &mut FeeJournal,
-        tree: &wallet_pq_signer::fee::FeeTree,
+        tree: &mut wallet_pq_signer::fee::FeeTree,
         successor: &mut Option<HeldSuccessor>,
+        retired_journals: &mut Vec<FeeJournal>,
     ) -> anyhow::Result<serde_json::Value> {
         match request {
             Request::AttachSuccessor { successor_manifest, expected_template_wallet, custody } => {
@@ -277,6 +304,7 @@ impl PqFeeSessionInitialCmd {
                     "attach requires the current fee route"
                 );
                 anyhow::ensure!(successor.is_none(), "successor session already attached");
+                require_rotation_capacity(retired_journals.len())?;
                 *successor = Some(
                     HeldSuccessor::open(
                         self,
@@ -306,6 +334,9 @@ impl PqFeeSessionInitialCmd {
                     .ok_or_else(|| anyhow::anyhow!("successor session not attached"))?;
                 self.migrate(context, journal, tree, held, evidence).await
             }
+            Request::Promote { output_dir } => {
+                self.promote(context, journal, tree, successor, retired_journals, output_dir).await
+            }
             request => self.process(request, context, journal, tree).await,
         }
     }
@@ -325,8 +356,13 @@ impl PqFeeSessionInitialCmd {
                 ),
             "successor fee session permits possession proofs only"
         );
+        // A fee vault remains deployed after rotation. Its state alone cannot
+        // establish that the wallet still accepts the corresponding module.
+        // Check the installed tuple even for status and cached retries.
+        context.read(&[]).await?;
         let view = context.fee().await?;
         let mut preparation = None;
+        let mut execute_actions = None;
         let (pop_role, valid_for_seconds, value_nanotos, output_dir) = match request {
             Request::Status => {
                 let plan = journal.preview_proven(&view, now()?)?;
@@ -348,6 +384,15 @@ impl PqFeeSessionInitialCmd {
                 return export(&output_dir, &signed);
             }
             Request::Lock { valid_for_seconds, value_nanotos, output_dir } => {
+                (None, valid_for_seconds, value_nanotos, output_dir)
+            }
+            Request::Execute { actions, valid_for_seconds, value_nanotos, output_dir } => {
+                let actions = chain_block::read_single_root_boc(bounded_public_file(
+                    &actions,
+                    4 * 1024 * 1024,
+                )?)?;
+                contracts::wallet_v5r2::validate_actions(&actions)?;
+                execute_actions = Some(actions);
                 (None, valid_for_seconds, value_nanotos, output_dir)
             }
             Request::Pop { role, valid_for_seconds, value_nanotos, output_dir } => {
@@ -373,7 +418,8 @@ impl PqFeeSessionInitialCmd {
             }
             Request::AttachSuccessor { .. }
             | Request::Successor { .. }
-            | Request::Migrate { .. } => {
+            | Request::Migrate { .. }
+            | Request::Promote { .. } => {
                 anyhow::bail!("nested session control is not permitted")
             }
             Request::Quit => anyhow::bail!("session already closing"),
@@ -488,14 +534,17 @@ impl PqFeeSessionInitialCmd {
             )?;
             (FeeClass::Pop, submission)
         } else {
-            proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;
+            let action = execute_actions.as_ref().map_or(AuthAction::LockPrimary, |actions| {
+                AuthAction::Execute { actions: actions.clone() }
+            });
+            proof.view.rescue_request(now()?, deadline, action.clone())?;
             std::fs::create_dir(&output_dir)?;
             let rescue =
                 open_vault_file(&self.rescue_vault_file, Some(&self.rescue_vault_key_file), None)
                     .await?;
             let id = SecretId::new(&self.rescue_record_id);
             let submission = VaultKey { vault: &rescue, id: &id }
-                .sign_rescue(&proof.view, now, deadline, AuthAction::LockPrimary)
+                .sign_rescue(&proof.view, now, deadline, action)
                 .await?;
             drop(rescue);
             (FeeClass::RescueAuth, submission)
@@ -518,7 +567,10 @@ impl PqFeeSessionInitialCmd {
                 Some(&proof.wallet),
             )?;
         } else if pop_role.is_none() {
-            proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;
+            let action = execute_actions.as_ref().map_or(AuthAction::LockPrimary, |actions| {
+                AuthAction::Execute { actions: actions.clone() }
+            });
+            proof.view.rescue_request(now()?, deadline, action)?;
         }
         let intent = FeeIntent::new(
             FeeBinding {
@@ -556,5 +608,17 @@ impl PqFeeSessionInitialCmd {
         );
         let signed = journal.retry_proven_fee(&view, now()?, &intent)?;
         export(&output_dir, &signed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_rotation_capacity;
+
+    #[test]
+    fn journal_rotation_capacity_boundary() {
+        require_rotation_capacity(31).expect("one remaining journal slot");
+        assert!(require_rotation_capacity(32).is_err(), "session accepted a 33rd retired journal");
+        assert!(require_rotation_capacity(usize::MAX).is_err(), "oversized journal count accepted");
     }
 }

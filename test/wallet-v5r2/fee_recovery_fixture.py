@@ -16,13 +16,17 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--vector-index", type=int, default=1)
     parser.add_argument("--tree-id", default="a5" * 32)
+    parser.add_argument("--key-generation", type=int)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     source = ROOT / "tosctl/src/tos-native-mnemonic/tests/fixtures/native-pq.json"
     data = json.loads(source.read_text())
     assert 0 <= args.vector_index < len(data["vectors"]), "unknown public mnemonic vector"
     vector = data["vectors"][args.vector_index]
-    context = data["context"]
+    context = dict(data["context"])
+    if args.key_generation is not None:
+        assert 0 <= args.key_generation <= 0xFFFFFFFF, "key generation out of range"
+        context["key_generation"] = args.key_generation
     tree_id = bytes.fromhex(args.tree_id)
     assert len(tree_id) == 32, "tree ID must be 32 bytes"
     label = b"TOS-FEE-LMS-SHA256-M32-v1"

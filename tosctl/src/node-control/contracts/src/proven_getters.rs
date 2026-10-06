@@ -167,6 +167,18 @@ impl ProvenAccountState {
         &self.anchor_id
     }
 
+    /// Require two independently authenticated accounts at the same trusted
+    /// masterchain checkpoint. Equal endpoint labels alone are insufficient.
+    pub fn require_same_checkpoint(&self, other: &Self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.anchor_id == other.anchor_id
+                && self.evidence.checkpoint == other.evidence.checkpoint
+                && self.evidence.block_gen_utime == other.evidence.block_gen_utime,
+            "authenticated account checkpoint mismatch"
+        );
+        Ok(())
+    }
+
     /// Only explicitly requested parameters proven at this account checkpoint.
     pub fn config_param(&self, index: u32) -> Option<&Cell> {
         self.config_params.get(&index)
@@ -962,6 +974,77 @@ mod fee_state_tests {
     fn fixture() -> (WalletGenesis, ProvenAccountState) {
         fixture_with_policy(RescuePolicy::Required)
     }
+    #[test]
+    fn account_checkpoint_binding_includes_anchor_time_and_block() {
+        let (_, first) = fixture_with_policy(RescuePolicy::Required);
+        let (_, mut second) = fixture_with_policy(RescuePolicy::Required);
+        first.require_same_checkpoint(&second).expect("same authenticated checkpoint");
+        second.anchor_id = [1; 32];
+        assert!(first.require_same_checkpoint(&second).is_err(), "different anchor accepted");
+        second.anchor_id = first.anchor_id;
+        second.evidence.block_gen_utime += 1;
+        assert!(first.require_same_checkpoint(&second).is_err(), "different block time accepted");
+        second.evidence.block_gen_utime = first.evidence.block_gen_utime;
+        second.evidence.checkpoint.seqno += 1;
+        assert!(first.require_same_checkpoint(&second).is_err(), "different block accepted");
+    }
+
+    #[test]
+    fn historical_fee_requires_matching_fresh_live_checkpoint() {
+        let (genesis, mut historical) = fixture_with_policy(RescuePolicy::Required);
+        let (_, mut live) = fixture_with_policy(RescuePolicy::Required);
+        historical.evidence.live = false;
+        assert!(
+            crate::wallet_v5r2_state::ProvenFeeVault::bind(&historical, &genesis, 4610, 30)
+                .is_err()
+        );
+        crate::wallet_v5r2_state::ProvenFeeVault::bind_at_live_checkpoint(
+            &historical,
+            &live,
+            &genesis,
+            4610,
+            30,
+        )
+        .expect("same historical checkpoint anchored by fresh live read");
+        live.evidence.live = false;
+        assert!(
+            crate::wallet_v5r2_state::ProvenFeeVault::bind_at_live_checkpoint(
+                &historical,
+                &live,
+                &genesis,
+                4610,
+                30,
+            )
+            .is_err(),
+            "historical source authorized fee signing"
+        );
+        live.evidence.live = true;
+        live.anchor_id = [1; 32];
+        assert!(
+            crate::wallet_v5r2_state::ProvenFeeVault::bind_at_live_checkpoint(
+                &historical,
+                &live,
+                &genesis,
+                4610,
+                30,
+            )
+            .is_err(),
+            "unrelated live anchor authorized fee signing"
+        );
+        live.anchor_id = historical.anchor_id;
+        assert!(
+            crate::wallet_v5r2_state::ProvenFeeVault::bind_at_live_checkpoint(
+                &historical,
+                &live,
+                &genesis,
+                4641,
+                30,
+            )
+            .is_err(),
+            "stale live checkpoint authorized fee signing"
+        );
+    }
+
     fn fixture_with_policy(policy: RescuePolicy) -> (WalletGenesis, ProvenAccountState) {
         fixture_with_keys(policy, [2; 1312], [3; 32])
     }
@@ -1771,6 +1854,31 @@ mod fee_state_tests {
             let e = MigrationEvidence { fee_continuity: continuity, ..evidence };
             assert!(view.migration_request(4620, 4700, &successor, &e).is_err(), "{reason}");
         }
+        let (_, proof) = fixture();
+        let mut historical_vault = account_proof(proof, successor.vault_init());
+        historical_vault.evidence.live = false;
+        let missing_source = MigrationEvidence { vault: &historical_vault, ..evidence };
+        let error = view
+            .migration_request(4620, 4700, &successor, &missing_source)
+            .err()
+            .expect("historical migration accepted no live checkpoint source");
+        assert!(
+            error
+                .to_string()
+                .contains("historical migration vault needs its live checkpoint source"),
+            "{error}"
+        );
+        let at_live_wallet =
+            MigrationEvidence { vault: &historical_vault, policy: Some(&wallet), ..evidence };
+        let historical_request = view
+            .migration_request(4620, 4700, &successor, &at_live_wallet)
+            .expect("same-checkpoint historical fee was not anchored by its live wallet");
+        assert_eq!(historical_request.cell().repr_hash(), expected.cell().repr_hash());
+
+        // A historical fee proof needs an independently live checkpoint source.
+        // Keep all tuple, age and anchor fields valid so removing that live
+        // source gate reaches the actual migration refusal assertion.
+        wallet.evidence.live = false;
         for stale_checkpoint in [false, true] {
             let (_, proof) = fixture();
             let mut bad_vault = account_proof(proof, successor.vault_init());
@@ -1779,7 +1887,7 @@ mod fee_state_tests {
             } else {
                 bad_vault.evidence.live = false;
             }
-            let e = MigrationEvidence { vault: &bad_vault, ..evidence };
+            let e = MigrationEvidence { vault: &bad_vault, policy: Some(&wallet), ..evidence };
             let error = view
                 .migration_request(4620, 4700, &successor, &e)
                 .err()

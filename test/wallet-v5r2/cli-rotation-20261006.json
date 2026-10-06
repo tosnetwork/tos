@@ -1,0 +1,1310 @@
+{
+  "schema": "TOS-WALLET-V5R2-CLI-ROTATION-EVIDENCE-v1",
+  "completed_utc": "2026-10-06T15:15:49.273594+00:00",
+  "source_base": "8251ca8679f5212bf7325d3ee0ae46a9994584c8",
+  "source_scope": "Local working-tree source identities; final-head hosted CI remains separate",
+  "source_sha256": {
+    "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs": "c4b7742fe94d450a772f1ccb46da5a8e91d1b90ee7dafaddd8b35e0285d9ec30",
+    "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs": "d31b94bce304e17265c8f39d738313143a2f9f41380d026000917ea636ec08ad",
+    "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_migration_session.rs": "aab0660ef96ebcc0594acce46b989b789afbd53eef251b1186919db8c6ce5f20",
+    "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_pop_receipt_cmd.rs": "3352604abf9bdf5e3a5d7733543e01747ff7d11b354294b81f46511398a74309",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "263da7057c9927bcb2d9cfe3b53f4e84c8cbb4a3f41c33cb7cf5a518ae65792c",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs": "74c7a078e682aeb9d3435ac5575080ddd6dec1f6159da390942b29ef4fb6071a",
+    "tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs": "a9e551e14db397087bf66dcd5e828f23d0bc6016e8530d131f3baad543e5415f",
+    "test/wallet-v5r2/cli_fee_session_prepare.py": "fffbdb07fc99f3f5539420422c8bba63ca29bc175e442802c5ddbe8716749bba",
+    "test/wallet-v5r2/cli_fee_session_sign.py": "91101f0d1d42320f154f9ec949d52e05f823c8ffd9b7987d5655487a9bbad792",
+    "test/wallet-v5r2/cli_migration_session.py": "77188aae2bab585ac3dd51ad319d15a82f122c3cb77a9081df9356cd689979a3",
+    "test/wallet-v5r2/cli_sign_primary.py": "0593b987bd3111770ecfd6f60f66210e3197d39b1366a51418d14e2266c746c9",
+    "test/wallet-v5r2/cli_successor_pop.py": "2de0300561e8628ed106e419f2612865fdb8d48c52e3f11ead9c579fa18be14f",
+    "test/wallet-v5r2/fee_recovery_fixture.py": "7193e6c2d703ce956a30a2ce089df1a3efe819aad703612668d693ab31a9339e",
+    "test/wallet-v5r2/migration_signing_controls.py": "b043be029e1cb877b7250e00d75ac7977d2d9be464725a763ce2492d45dbf1a5",
+    "test/wallet-v5r2/cli_rotation_controls.py": "0abc5ff8a147ba81661b63058266c7afd5342751625f779de34bc3f19b6a29d0",
+    "test/wallet-v5r2/cli_rotation_session.py": "691c93efbb7de8056ae40db1006bb7eca345c805b1f57c3623930f46becca0d3",
+    "test/wallet-v5r2/rotation_clock.c": "16b1da369ae9a61acfe6f5a6a063fed65aaa2f991b441507fab4701615b0ac84",
+    "test/wallet-v5r2/CLI_ROTATION.md": "02f7d92118c824cd6b08038974fb08d90bd7ab31d19405fd399bfea9ea4ffdc7"
+  },
+  "control_source_sha256_overrides": {
+    "test/wallet-v5r2/cli_fee_session_prepare.py": "6c8e5caafa3b8028e6bf513974336c03c6387bf0622057cfde185037f362acfb",
+    "test/wallet-v5r2/cli_fee_session_sign.py": "44bddcab3aaf631bf711eefb012d99115b663c8b43d27dbe6dc845587e51f38f",
+    "test/wallet-v5r2/cli_migration_session.py": "1bb3d836af2246b8dbad9c62ad6e1073e55fcb53ec83856dc1b2e26cf4028c74",
+    "test/wallet-v5r2/cli_rotation_controls.py": "f50348b82a763e28ad0960ba26a861cc5abe6a7c17a95f8206add748fa24d427",
+    "test/wallet-v5r2/cli_rotation_session.py": "6c8b30dbcda6cf89d85722e11dc6a622b3215b86b94c1f12731697799f4cce2c",
+    "test/wallet-v5r2/cli_sign_primary.py": "92448bd57b71fe2817532f48241fcdf68ae7312e1cf4c0bbcf2296b0060d2c32",
+    "test/wallet-v5r2/cli_successor_pop.py": "91c6b498c8c3c1d3f8154af650491a1a7d22d1c70b29e0c3388bbaf11fba8549"
+  },
+  "python_format_bridge": {
+    "scope": "For the 14 guard groups, use source_sha256 with control_source_sha256_overrides applied. A later mandatory Python formatter gate changed 7 source byte strings; archived before/after AST dumps are byte-for-byte identical. source_sha256 describes final files, and the final formatted smoke executes those final hashes.",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "ruff_version": "ruff 0.16.10",
+    "format_exit": 0,
+    "check_exit": 0,
+    "all_ast_equal": true,
+    "archive_root": "/workspace/scratch/58828491a8ce/artifacts/client-python-format-20261006",
+    "files": {
+      "test/wallet-v5r2/cli_fee_session_prepare.py": {
+        "before_sha256": "6c8e5caafa3b8028e6bf513974336c03c6387bf0622057cfde185037f362acfb",
+        "after_sha256": "fffbdb07fc99f3f5539420422c8bba63ca29bc175e442802c5ddbe8716749bba",
+        "shared_ast_sha256": "8d8b70985d19abc6f99c7f0b12b4601f62a7822a1a303c32ecc77b219e33a48c",
+        "before_bytes": 13180,
+        "after_bytes": 13338,
+        "archived_before": "before/cli_fee_session_prepare.py"
+      },
+      "test/wallet-v5r2/cli_fee_session_sign.py": {
+        "before_sha256": "44bddcab3aaf631bf711eefb012d99115b663c8b43d27dbe6dc845587e51f38f",
+        "after_sha256": "91101f0d1d42320f154f9ec949d52e05f823c8ffd9b7987d5655487a9bbad792",
+        "shared_ast_sha256": "ed4371bc5a4ec8021f07aeadab2daae999adff19a272a973ca770b256a28e1fb",
+        "before_bytes": 15520,
+        "after_bytes": 15665,
+        "archived_before": "before/cli_fee_session_sign.py"
+      },
+      "test/wallet-v5r2/cli_migration_session.py": {
+        "before_sha256": "1bb3d836af2246b8dbad9c62ad6e1073e55fcb53ec83856dc1b2e26cf4028c74",
+        "after_sha256": "77188aae2bab585ac3dd51ad319d15a82f122c3cb77a9081df9356cd689979a3",
+        "shared_ast_sha256": "4a1994809a9061f52c14683fb0a6d7d696f2f3e1208858202e9a5feaa58b8736",
+        "before_bytes": 11059,
+        "after_bytes": 11545,
+        "archived_before": "before/cli_migration_session.py"
+      },
+      "test/wallet-v5r2/cli_rotation_controls.py": {
+        "before_sha256": "f50348b82a763e28ad0960ba26a861cc5abe6a7c17a95f8206add748fa24d427",
+        "after_sha256": "0abc5ff8a147ba81661b63058266c7afd5342751625f779de34bc3f19b6a29d0",
+        "shared_ast_sha256": "b333213b8301b06528de05cc2d6443569479d5ceea5a3b959cc0e8584f76a249",
+        "before_bytes": 15398,
+        "after_bytes": 16743,
+        "archived_before": "before/cli_rotation_controls.py"
+      },
+      "test/wallet-v5r2/cli_rotation_session.py": {
+        "before_sha256": "6c8b30dbcda6cf89d85722e11dc6a622b3215b86b94c1f12731697799f4cce2c",
+        "after_sha256": "691c93efbb7de8056ae40db1006bb7eca345c805b1f57c3623930f46becca0d3",
+        "shared_ast_sha256": "7f8a8bc28babf21e9e703fe29d79a24bbbd40e956bc44982fa050677e2d2ea24",
+        "before_bytes": 28098,
+        "after_bytes": 30090,
+        "archived_before": "before/cli_rotation_session.py"
+      },
+      "test/wallet-v5r2/cli_sign_primary.py": {
+        "before_sha256": "92448bd57b71fe2817532f48241fcdf68ae7312e1cf4c0bbcf2296b0060d2c32",
+        "after_sha256": "0593b987bd3111770ecfd6f60f66210e3197d39b1366a51418d14e2266c746c9",
+        "shared_ast_sha256": "57c4e3af8f240e90de7b30f5c81bb12733ea2997ef226bd85c40aebd322e92a7",
+        "before_bytes": 25005,
+        "after_bytes": 25012,
+        "archived_before": "before/cli_sign_primary.py"
+      },
+      "test/wallet-v5r2/cli_successor_pop.py": {
+        "before_sha256": "91c6b498c8c3c1d3f8154af650491a1a7d22d1c70b29e0c3388bbaf11fba8549",
+        "after_sha256": "2de0300561e8628ed106e419f2612865fdb8d48c52e3f11ead9c579fa18be14f",
+        "shared_ast_sha256": "8e5a7cc0760a3a55e71bd90d2a7f65bd198f1192b9c957f4db888c732dd0c997",
+        "before_bytes": 17507,
+        "after_bytes": 18231,
+        "archived_before": "before/cli_successor_pop.py"
+      }
+    },
+    "raw": {
+      "path": "/workspace/scratch/58828491a8ce/artifacts/client-python-format-20261006/results.json",
+      "sha256": "d1f3a56da6e940f8a6ac9a9daabff5998848322a21acbcdae7bc0a75f9239d24",
+      "bytes": 7543
+    }
+  },
+  "binaries": {
+    "tosctl": {
+      "path": "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/tosctl",
+      "sha256": "124047682d7c5609b1093c631f0a90862fd58884f12c8d1a2225755e21ba8b6d",
+      "bytes": 431534632
+    },
+    "genesis_driver": {
+      "path": "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/examples/v5r2_genesis_encode",
+      "sha256": "34f032e757f03d0fc27254a402471c88d6ac05df2d90ec29dbbeaa88f14c8587",
+      "bytes": 221660696
+    },
+    "EMULATOR_PATH": {
+      "path": "/workspace/scratch/58828491a8ce/tos/build/emulator/libemulator.so",
+      "sha256": "49a78896ca75de48d068f01881f87bfb3e464fe1d6382e549363f65ad48199ed",
+      "bytes": 7166848
+    },
+    "FUNC_PATH": {
+      "path": "/workspace/scratch/58828491a8ce/tos/build/crypto/func",
+      "sha256": "b027fbc14f834d8958556a73209213b120db59d88019e5b661a15a76d15180e1",
+      "bytes": 2645192
+    },
+    "FIFT_PATH": {
+      "path": "/workspace/scratch/58828491a8ce/tos/build/crypto/fift",
+      "sha256": "c98186b8034be5ee06fc4ce5c1f60486dd7b351d69352c5df13adc6bd7cdf870",
+      "bytes": 6951664
+    },
+    "LMS_TOOL": {
+      "path": "/workspace/scratch/58828491a8ce/tos/build-signers/lms_tool",
+      "sha256": "e7d346618d2d91111eba30da0cb973183d6dffb5bbae836ea284babc764672f1",
+      "bytes": 21280
+    },
+    "MLDSA_TOOL": {
+      "path": "/workspace/scratch/58828491a8ce/tos/build-signers/mldsa_tool",
+      "sha256": "450b086c9b39431ffa8d86f545c1992d511c490f95d0e511f5f9352130694012",
+      "bytes": 50472
+    },
+    "SLH_TOOL": {
+      "path": "/workspace/scratch/58828491a8ce/tos/build-signers/slh_tool",
+      "sha256": "43636fe518d90d5c01a5ad3f75ada4a49c21f7395063c22f50f710bc092dd71b",
+      "bytes": 47984
+    }
+  },
+  "fixture": {
+    "path": "/workspace/scratch/58828491a8ce/artifacts/static-client-template/sdk-genesis.json",
+    "sha256": "e1b4446e9d29e55e051c3843f0e01ef9d38f0c8f89d1e0709248ea2be9ff82a8",
+    "bytes": 58840
+  },
+  "public_tree_inputs": [
+    {
+      "name": "old",
+      "tree": {
+        "path": "/workspace/scratch/58828491a8ce/client-fixtures/old/PUBLIC-TEST-ONLY-tree",
+        "sha256": "51192902af58e65ecf9603d4354a575bb7d0b4ac68b0b6e3da3df55e5cd785d8",
+        "bytes": 67108864
+      },
+      "derivation": {
+        "path": "/workspace/scratch/58828491a8ce/client-fixtures/old/native-fee-recovery.json",
+        "sha256": "0832b942ba7a4be8a0d3446b7fc3b07cfd3f96b50e7540169053a00bd3b5ff19",
+        "bytes": 2425
+      }
+    },
+    {
+      "name": "new",
+      "tree": {
+        "path": "/workspace/scratch/58828491a8ce/client-fixtures/new/PUBLIC-TEST-ONLY-tree",
+        "sha256": "0310259858f0f50c48c5a75a8f7311ce7b182a0e653df2f3bad424ea34da6bb0",
+        "bytes": 67108864
+      },
+      "derivation": {
+        "path": "/workspace/scratch/58828491a8ce/client-fixtures/new/native-fee-recovery.json",
+        "sha256": "3e41c4be8e7f7f8dfbed8c5f10e61b0ce560c5efd72bf3f27f77da94eb604b90",
+        "bytes": 2307
+      }
+    },
+    {
+      "name": "third",
+      "tree": {
+        "path": "/workspace/scratch/58828491a8ce/client-fixtures/third/PUBLIC-TEST-ONLY-tree",
+        "sha256": "7769442f0e66d2b6e61cc52b2c0405d7bacdc512be70e7a75a977f064f069fad",
+        "bytes": 67108864
+      },
+      "derivation": {
+        "path": "/workspace/scratch/58828491a8ce/client-fixtures/third/native-fee-recovery.json",
+        "sha256": "2739226e505c02f2361b6f881637201c541e5b6994e65c8b98673e9df8139c08",
+        "bytes": 2307
+      }
+    }
+  ],
+  "command_working_directory": "/workspace/scratch/58828491a8ce/tos",
+  "environment_setup": "source /workspace/scratch/58828491a8ce/env.sh",
+  "commands": [
+    [
+      "python",
+      "test/wallet-v5r2/cli_rotation_controls.py",
+      "--cli",
+      "build-cargo/debug/tosctl",
+      "--genesis-driver",
+      "build-cargo/debug/examples/v5r2_genesis_encode",
+      "--fee-session-tree",
+      "../client-fixtures/old/PUBLIC-TEST-ONLY-tree",
+      "--successor-fee-fixture",
+      "../client-fixtures/new",
+      "--second-successor-fee-fixture",
+      "../client-fixtures/third",
+      "--fixture",
+      "../artifacts/static-client-template/sdk-genesis.json",
+      "--output",
+      "../artifacts/client-rotation-controls-final"
+    ],
+    [
+      "python",
+      "test/wallet-v5r2/migration_signing_controls.py",
+      "--case",
+      "vault_live",
+      "--output",
+      "../artifacts/client-migration-live-source-control"
+    ]
+  ],
+  "command_exit_codes": [
+    0,
+    0
+  ],
+  "scope": {
+    "native_global_version": 17,
+    "diagnostic_basechain_gas_credit": 20000,
+    "fixed_slot_seconds": 3600,
+    "account_and_history_proofs": "Explicit mocked verification adapter; authenticated capability API paths are exercised, live proof acquisition is not",
+    "clock": "Linux fixture-only wall-clock preload; monotonic time and production code/slot remain unchanged",
+    "keys": "Three public mnemonic-derived H20 trees; no live private keys or production custody",
+    "custody": "Encrypted custody copied, graceful process restart with the same real durable journal, regenerable outputs lost; no active-journal copying or new power-loss claim",
+    "history": "Local known keys retained at session start and promotion/export; no authenticated global history, unknown-key or backup rollback protection",
+    "admission": "Diagnostic native transaction execution only; no live admission, broadcast, finality, current funding/readiness, remote device revocation or release certification"
+  },
+  "summary": {
+    "passed": true,
+    "independent_guard_groups": 14,
+    "semantic_negative_test_invocations": 15,
+    "updated_existing_vault_live_runner_controls": 1,
+    "checkpoint_units": 3,
+    "journal_capacity_units": 1,
+    "native_migration_and_same_module_rollover_units": 2,
+    "installed_promotions": 2,
+    "encrypted_custody_restarts": 2,
+    "exact_restart_retries": 2,
+    "native_recipient_deliveries": 2,
+    "funded_successor_pops": 4,
+    "distinct_fee_trees": 3,
+    "successful_native_transaction_receipts": 34,
+    "default_credit_refusal_receipts": 2,
+    "full_history_preflight_refusals": 6,
+    "production_history_limit": 64,
+    "production_retired_journal_limit": 32
+  },
+  "count_scope": "The transaction/rotation/history counts below describe the final post-format normal smoke only, not a sum across controls or repeated baselines.",
+  "final_formatted_smoke": {
+    "schema": "TOS-WALLET-V5R2-FORMATTED-CLI-SMOKE-v1",
+    "exit": 0,
+    "elapsed_seconds": 86.789,
+    "source_sha256": {
+      "test/wallet-v5r2/cli_fee_session_prepare.py": "fffbdb07fc99f3f5539420422c8bba63ca29bc175e442802c5ddbe8716749bba",
+      "test/wallet-v5r2/cli_fee_session_sign.py": "91101f0d1d42320f154f9ec949d52e05f823c8ffd9b7987d5655487a9bbad792",
+      "test/wallet-v5r2/cli_migration_session.py": "77188aae2bab585ac3dd51ad319d15a82f122c3cb77a9081df9356cd689979a3",
+      "test/wallet-v5r2/cli_rotation_controls.py": "0abc5ff8a147ba81661b63058266c7afd5342751625f779de34bc3f19b6a29d0",
+      "test/wallet-v5r2/cli_rotation_session.py": "691c93efbb7de8056ae40db1006bb7eca345c805b1f57c3623930f46becca0d3",
+      "test/wallet-v5r2/cli_sign_primary.py": "0593b987bd3111770ecfd6f60f66210e3197d39b1366a51418d14e2266c746c9",
+      "test/wallet-v5r2/cli_successor_pop.py": "2de0300561e8628ed106e419f2612865fdb8d48c52e3f11ead9c579fa18be14f"
+    },
+    "log": "/workspace/scratch/58828491a8ce/client-rotation-formatted-smoke.log",
+    "log_sha256": "cb4887ad49ec88cfa7c82b8690aeaf8c3d325da488397fb1af29eaa7ab1acc46",
+    "log_bytes": 769,
+    "sources_unchanged_during_run": true,
+    "command_ref": "command_1",
+    "command_parameters": {
+      "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke"
+    }
+  },
+  "rotations": [
+    {
+      "round": 1,
+      "epoch": 3,
+      "retired": 2,
+      "wallet": "0:7d0635b98a806481f3fef238ad0ed08decf43d1a4e4b9720bd10951530d69e4a",
+      "module": "0:77adf72fe74d874ee8f376c8d5fdf9e4ef841dd057b175c4a0413c6aaf711d80",
+      "vault": "0:9d22fdc4c8e02193064c0234a6fcdfb151da42c0f2699e3efbf95c0db77d825d",
+      "fee_leaf": 6,
+      "message_hash": "0cf744e2b546efcff9392dbb22472003fb2a65e4cf10c06ccd8f555d2ab048c7",
+      "history_keys": 2,
+      "encrypted_custody_files": 2,
+      "restore_refusal": {
+        "status": "request_refused",
+        "reason": "restore wait: WaitUntil(1791303107)",
+        "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+      },
+      "relative_inputs_restored_from_different_cwd": true,
+      "recipient_delivered": true,
+      "retry_preserved_exact_message_and_journal": true,
+      "raw": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke/rotation-results.json",
+        "sha256": "9581315149f683c5113642ae6be12e342878921108cdc5a5f5ffd72449063b34",
+        "bytes": 3401
+      }
+    },
+    {
+      "round": 2,
+      "epoch": 4,
+      "retired": 2,
+      "wallet": "0:7d0635b98a806481f3fef238ad0ed08decf43d1a4e4b9720bd10951530d69e4a",
+      "module": "0:29896e131c64bbc6ab80950c5ab7667547c03e15b09bbb81444a58ad11429ded",
+      "vault": "0:739994697a617a5df4436d06022584813d56a1d42716b97d844693267c6725b1",
+      "fee_leaf": 6,
+      "message_hash": "73529e32cf46c113c9a3d4197200a4515760cdf5856d5986ab44a2433677b35c",
+      "history_keys": 3,
+      "encrypted_custody_files": 2,
+      "restore_refusal": {
+        "status": "request_refused",
+        "reason": "restore wait: WaitUntil(1791306803)",
+        "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+      },
+      "relative_inputs_restored_from_different_cwd": true,
+      "recipient_delivered": true,
+      "retry_preserved_exact_message_and_journal": true,
+      "raw": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke/second-rotation/rotation-results.json",
+        "sha256": "3777c0d5f63b37740d3d21cf937f943ea07700b74143b8ba14b5b9d4da3023b4",
+        "bytes": 4410
+      }
+    }
+  ],
+  "full_history_preflights": [
+    {
+      "file": "history-capacity-attach.json",
+      "result": {
+        "refused": {
+          "status": "request_refused",
+          "reason": "fee history has no capacity for another route",
+          "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+        },
+        "history_keys": 64,
+        "synthesized_public_hashes": 63,
+        "journal_unchanged": true,
+        "scope": "Test-only public history saturation before any migration signature"
+      },
+      "raw": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke/history-capacity-attach.json",
+        "sha256": "df9b8e3531ec0c7258733f86db26044e4eaaa7a750550bec74e0058b7f8d5bd6",
+        "bytes": 381
+      }
+    },
+    {
+      "file": "history-capacity-migration.json",
+      "result": {
+        "refused": {
+          "status": "request_refused",
+          "reason": "fee history has no capacity for another route",
+          "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+        },
+        "history_keys": 64,
+        "synthesized_public_hashes": 63,
+        "journal_unchanged": true,
+        "scope": "Test-only public history saturation before any migration signature"
+      },
+      "raw": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke/history-capacity-migration.json",
+        "sha256": "df9b8e3531ec0c7258733f86db26044e4eaaa7a750550bec74e0058b7f8d5bd6",
+        "bytes": 381
+      }
+    },
+    {
+      "file": "history-capacity-prepare.json",
+      "result": {
+        "refused": {
+          "status": "request_refused",
+          "reason": "fee history has no capacity for another route",
+          "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+        },
+        "history_keys": 64,
+        "synthesized_public_hashes": 63,
+        "journal_unchanged": true,
+        "scope": "Test-only public history saturation before any migration signature"
+      },
+      "raw": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke/history-capacity-prepare.json",
+        "sha256": "df9b8e3531ec0c7258733f86db26044e4eaaa7a750550bec74e0058b7f8d5bd6",
+        "bytes": 381
+      }
+    },
+    {
+      "file": "second-rotation/history-capacity-attach.json",
+      "result": {
+        "refused": {
+          "status": "request_refused",
+          "reason": "fee history has no capacity for another route",
+          "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+        },
+        "history_keys": 64,
+        "synthesized_public_hashes": 62,
+        "journal_unchanged": true,
+        "scope": "Test-only public history saturation before any migration signature"
+      },
+      "raw": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke/second-rotation/history-capacity-attach.json",
+        "sha256": "89c849583597d1c2521342946a3082b23c986bf4bbcd3fc59abeee3ae9b315ff",
+        "bytes": 381
+      }
+    },
+    {
+      "file": "second-rotation/history-capacity-migration.json",
+      "result": {
+        "refused": {
+          "status": "request_refused",
+          "reason": "fee history has no capacity for another route",
+          "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+        },
+        "history_keys": 64,
+        "synthesized_public_hashes": 62,
+        "journal_unchanged": true,
+        "scope": "Test-only public history saturation before any migration signature"
+      },
+      "raw": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke/second-rotation/history-capacity-migration.json",
+        "sha256": "89c849583597d1c2521342946a3082b23c986bf4bbcd3fc59abeee3ae9b315ff",
+        "bytes": 381
+      }
+    },
+    {
+      "file": "second-rotation/history-capacity-prepare.json",
+      "result": {
+        "refused": {
+          "status": "request_refused",
+          "reason": "fee history has no capacity for another route",
+          "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+        },
+        "history_keys": 64,
+        "synthesized_public_hashes": 62,
+        "journal_unchanged": true,
+        "scope": "Test-only public history saturation before any migration signature"
+      },
+      "raw": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke/second-rotation/history-capacity-prepare.json",
+        "sha256": "89c849583597d1c2521342946a3082b23c986bf4bbcd3fc59abeee3ae9b315ff",
+        "bytes": 381
+      }
+    }
+  ],
+  "semantic_controls": [
+    {
+      "label": "installed_tuple",
+      "exit": 1,
+      "elapsed_seconds": 40.852,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/installed_tuple.log",
+      "log_sha256": "0649708fbc384ec192a09f3c5644df1a7eb346fced794e265b68c1d314b79386",
+      "log_bytes": 1628,
+      "semantic_witness": "promotion accepted a proposed tuple before wallet installation",
+      "source": "tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "original_sha256": "a9e551e14db397087bf66dcd5e828f23d0bc6016e8530d131f3baad543e5415f",
+      "mutated_sha256": "d2a63a9ca51dcb9b65f09e8490f7066d61b232f763757c96ea48b7acf1ea9f8d",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: promotion accepted a proposed tuple before wallet installation",
+      "cli_sha256": "efe428d01863adfc7c3da1d75b2cb24080e28aee13003a39d9ed0c912c2cb3f8",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/installed_tuple"
+      }
+    },
+    {
+      "label": "epoch",
+      "exit": 1,
+      "elapsed_seconds": 43.722,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/epoch.log",
+      "log_sha256": "afc046015a599ffe238e6dc13cf11c3527f794783bc3cef17e4243493f7d29ed",
+      "log_bytes": 2475,
+      "semantic_witness": "promotion accepted regressed epoch",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_migration_session.rs",
+      "original_sha256": "aab0660ef96ebcc0594acce46b989b789afbd53eef251b1186919db8c6ce5f20",
+      "mutated_sha256": "b0f7e2c93379d5d208daa91d90a242c71cc914b3615bf924c4236f886ded98fb",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: promotion accepted regressed epoch: {'status': 'installed_route_promoted', 'wallet': '0:fcb957b61fc5a87dcac629ede600b9101cc1cfbf69bb7b710ab417da3e226735', 'module': '0:77adf72fe74d874ee8f376c8d5fdf9e4ef841dd057b175c4a0413c6aaf711d80', 'vault': '0:c764308f5ce44c1c3abeff61a6bc0d9988107548d733c7ac62d01da06865748b', 'epoch': 2, 'retired': 2, 'checkpoint': {'seqno': 7, 'root_hash': '1111111111111111111111111111111111111111111111111111111111111111', 'file_hash': '2222222222222222222222222222222222222222222222222222222222222222'}, 'fee_capacity': {'leaf': 6}, 'scope': 'authenticated installed tuple and retained local journal ownership; no broadcast, current funding/readiness, [bounded excerpt]",
+      "cli_sha256": "d56b22f010ccfa5a70ff53b6953c78ff884107df97cda3a3b159b1dd1b891dd1",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/epoch"
+      }
+    },
+    {
+      "label": "retirement",
+      "exit": 1,
+      "elapsed_seconds": 44.351,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/retirement.log",
+      "log_sha256": "b13640f097f3d0e14e70618418b40ba4ec0fac48dc58a155cc23b2c66fe53f80",
+      "log_bytes": 2480,
+      "semantic_witness": "promotion accepted regressed retirement",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_migration_session.rs",
+      "original_sha256": "aab0660ef96ebcc0594acce46b989b789afbd53eef251b1186919db8c6ce5f20",
+      "mutated_sha256": "32237b1ff156be02b69eaf49ea7c0169359c1ddc0523fa8c43feaf132553f770",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: promotion accepted regressed retirement: {'status': 'installed_route_promoted', 'wallet': '0:279329c831e491890bb30787eec5c853cb3c29c233307f3f8530767a15d87f6d', 'module': '0:77adf72fe74d874ee8f376c8d5fdf9e4ef841dd057b175c4a0413c6aaf711d80', 'vault': '0:4bd5731aa6f0a030fb8ae64fc7b4cd69885a5bf3072918143cb8883c67580ee4', 'epoch': 3, 'retired': 0, 'checkpoint': {'seqno': 7, 'root_hash': '1111111111111111111111111111111111111111111111111111111111111111', 'file_hash': '2222222222222222222222222222222222222222222222222222222222222222'}, 'fee_capacity': {'leaf': 6}, 'scope': 'authenticated installed tuple and retained local journal ownership; no broadcast, current funding/readi [bounded excerpt]",
+      "cli_sha256": "a189f86c14800c48ea3de297c6b9a38539f599b654afa866b49c83887ff505f9",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/retirement"
+      }
+    },
+    {
+      "label": "retired_journal_lock",
+      "exit": 1,
+      "elapsed_seconds": 49.372,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/retired_journal_lock.log",
+      "log_sha256": "fa1fbcb39f8b897790f1d59c4f3cca30f73ee7cc276a2d2bbd9122a66669780c",
+      "log_bytes": 1762,
+      "semantic_witness": "promotion released the old journal lock",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_migration_session.rs",
+      "original_sha256": "aab0660ef96ebcc0594acce46b989b789afbd53eef251b1186919db8c6ce5f20",
+      "mutated_sha256": "9f4d4b887ac7bfb239d61931664aa86901d12eec765b9782e5ed37c33c8bee2d",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: promotion released the old journal lock",
+      "cli_sha256": "00904beb84134335f6bcbcbba7bdab0d92b625a9ed27152dcac8a1f05e0d6216",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/retired_journal_lock"
+      }
+    },
+    {
+      "label": "historical_fee_selector",
+      "exit": 1,
+      "elapsed_seconds": 44.638,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/historical_fee_selector.log",
+      "log_sha256": "e9ad9359004257564fb7e2c0405ccd42b1f9d8b05d8c94d8269603cf94139340",
+      "log_bytes": 1946,
+      "semantic_witness": "promotion did not bind fee to live wallet checkpoint",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "original_sha256": "d31b94bce304e17265c8f39d738313143a2f9f41380d026000917ea636ec08ad",
+      "mutated_sha256": "4195947917d2d85ee5c1db8ee41bd1674045ffe5cb47d1658394a01b1194b3cb",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: promotion did not bind fee to live wallet checkpoint: {'status': 'request_refused', 'reason': 'authenticated account checkpoint mismatch', 'scope': 'preserve journal and any partial output; refusal is not proof of failed delivery'}",
+      "cli_sha256": "b0a4541dfcde93265215e7973bbc4a4a3a883cb914745a051b9d32f7698f5c75",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/historical_fee_selector"
+      }
+    },
+    {
+      "label": "retired_fee_history",
+      "exit": 1,
+      "elapsed_seconds": 84.645,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/retired_fee_history.log",
+      "log_sha256": "6b11c9b03d8ccc91dc38ed937ed2e38a55a11037c6876085d71e4001708487ab",
+      "log_bytes": 3584,
+      "semantic_witness": "rotation accepted retired intermediate tree after promotion",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "original_sha256": "d31b94bce304e17265c8f39d738313143a2f9f41380d026000917ea636ec08ad",
+      "mutated_sha256": "7e6dd9a124214cd2cc2e5cd6f009de9f43d9e182adfd5794f5edb7076689b10f",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: rotation accepted retired intermediate tree after promotion: {'status': 'fee_message_cached', 'vault': '0:70d554db79f6fa87d5a30cf65b456b2b30ca4038214941e56c34da0f60494a36', 'leaf': 6, 'intent_hash': '45be25af8c43050b060dde36a41bf327863494d473aa6b79b01e501accd5bc28', 'body_hash': '0455b59e29722ea2ca7cb73651759451d9c1176ee4f48fdbf4b9901cc126d300', 'message_hash': 'a719e42985c3df1b7c4d88c6474e1e7adc6a22d75fd51643decda722e7f97d16', 'scope': 'cached signature and exact external message only; admission, affordability, broadcast and delivery are unconfirmed'}",
+      "cli_sha256": "b24443ae5b058c58660de9b4a1f8e6dad4ea6f0c844a9b171fc8da07259b5395",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/retired_fee_history"
+      }
+    },
+    {
+      "label": "restore_history_memory",
+      "exit": 1,
+      "elapsed_seconds": 90.891,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/restore_history_memory.log",
+      "log_sha256": "a32f2dca2e4b4d6f174dde0e53be752db9a93062880ef1ed8557055a0fc3f75f",
+      "log_bytes": 3456,
+      "semantic_witness": "rotation accepted retired intermediate tree after history-file-rewrite-restore",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs",
+      "original_sha256": "c4b7742fe94d450a772f1ccb46da5a8e91d1b90ee7dafaddd8b35e0285d9ec30",
+      "mutated_sha256": "a22e3068e5f52f5f722ee96d68b7ea76bc33eb09d0b92f91ea9732afb9d661ee",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: rotation accepted retired intermediate tree after history-file-rewrite-restore: {'status': 'request_refused', 'reason': 'restore wait: WaitUntil(1791305747)', 'scope': 'preserve journal and any partial output; refusal is not proof of failed delivery'}",
+      "cli_sha256": "ce290529932fb0ed206f99eecd7a910a85f32b4c8f71c7a8fd060f316f9757be",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/restore_history_memory"
+      }
+    },
+    {
+      "label": "absolute_export_paths",
+      "exit": 1,
+      "elapsed_seconds": 44.616,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/absolute_export_paths.log",
+      "log_sha256": "b45c2f1d32cff91f83e16a646732ff149f3290c399b70c7679aca9a01fc4ef15",
+      "log_bytes": 1708,
+      "semantic_witness": "installed export retained a relative path",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "original_sha256": "d31b94bce304e17265c8f39d738313143a2f9f41380d026000917ea636ec08ad",
+      "mutated_sha256": "79f1e56cea609fed3a386fad88921a092a029b423f297b19a537f0c2a638a9c4",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: installed export retained a relative path",
+      "cli_sha256": "eb95e3d646a5b20dd3086b8788506215d510c0d865798b89accca0f3771dda0e",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/absolute_export_paths"
+      }
+    },
+    {
+      "label": "successor_history_capacity",
+      "exit": 1,
+      "elapsed_seconds": 20.197,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/successor_history_capacity.log",
+      "log_sha256": "e840967e76f7e1b6f59808978a7790745772d7f728921fb048158a5fd41ce0b5",
+      "log_bytes": 1595,
+      "semantic_witness": "prepare accepted full fee history",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "original_sha256": "d31b94bce304e17265c8f39d738313143a2f9f41380d026000917ea636ec08ad",
+      "mutated_sha256": "7174f796e4a73287f93cb0dc32d88f42b09643ed2d4c0c8af7a9b35177942825",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: prepare accepted full fee history: {'status': 'fee_message_cached', 'vault': '0:f4b85264525b912c1448080df4becacd4e45d3c6f22be920696e98c72e462979', 'leaf': 5, 'intent_hash': '69a3efe7693dc7ba462973192b173a8af59be521e74c4778d003c67a10c64204', 'body_hash': '03e6d440e763ef34fadc92ee41d65a35726dfc0393ad6d6892581bb6f55a5794', 'message_hash': 'fd7c8d9b6c759bbc20a6553f1f681de20a19ba35d6c31788fd306ed9ca92b156', 'scope': 'cached signature and exact external message only; admission, affordability, broadcast and delivery are unconfirmed'}",
+      "cli_sha256": "0e37a0ae9f05589362f73d93743b9a8064e8d8628f33f2f32ae22d0b98068d20",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/successor_history_capacity"
+      }
+    },
+    {
+      "label": "migration_history_capacity",
+      "exit": 1,
+      "elapsed_seconds": 45.072,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/migration_history_capacity.log",
+      "log_sha256": "c5471d480e83054d9b604dac21ec25088766bdee19cb4035a5e06121542f32a8",
+      "log_bytes": 2254,
+      "semantic_witness": "migration accepted full fee history",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_migration_session.rs",
+      "original_sha256": "aab0660ef96ebcc0594acce46b989b789afbd53eef251b1186919db8c6ce5f20",
+      "mutated_sha256": "fd70db13dcb7902e9b230bf4a5da6f2a7e0b970675547179ef7a1c00fb3198d9",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: migration accepted full fee history: {'status': 'fee_message_cached', 'vault': '0:ba2f09f8c6c05a47f35fd503ad5e573eeaba8570cccd26a59c02b3e67262f276', 'leaf': 6, 'intent_hash': '7e95ed3aeb7123d6bafe896ad21149fd0051df0a49396e1180e497828a4df749', 'body_hash': '992c4e98e2253ea5c0365c482f79895e63836b7f3e4f18935cbdf3e362e9cb9e', 'message_hash': 'a5cc60b76696fdb55978061dbde497b354a6b2db7194940be0c6b34942f04acd', 'scope': 'cached signature and exact external message only; admission, affordability, broadcast and delivery are unconfirmed'}",
+      "cli_sha256": "775bfd7a42ced915afb4c20892d1f816a47d8f7ff3492753f1d6eae5288d269c",
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/migration_history_capacity"
+      }
+    },
+    {
+      "label": "journal_rotation_capacity-capacity-unit",
+      "exit": 101,
+      "elapsed_seconds": 19.916,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/journal_rotation_capacity-capacity-unit.log",
+      "log_sha256": "d19740b79f6123a24e19228b6b66c9031e4cd3ab2fb4a15b533d702e23e2f0cc",
+      "log_bytes": 8005,
+      "semantic_witness": "session accepted a 33rd retired journal",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs",
+      "original_sha256": "c4b7742fe94d450a772f1ccb46da5a8e91d1b90ee7dafaddd8b35e0285d9ec30",
+      "mutated_sha256": "ef9ca2bbd5cb27430023bac5ba7f04ed2a0a5bb0836e219221e90c84f6e9f110",
+      "failure_excerpt": "thread 'commands::nodectl::wallet_pq_cmd::fee_session::tests::journal_rotation_capacity_boundary' (6438) panicked at node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs:621:9:\nsession accepted a 33rd retired journal\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p commands --lib`",
+      "command_ref": "command_2"
+    },
+    {
+      "label": "journal_attachment_preflight",
+      "exit": 1,
+      "elapsed_seconds": 36.051,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/journal_attachment_preflight.log",
+      "log_sha256": "0dbb39e1a5f5d427fb6d4f2d0def457cc6d083c03a69894d313765dfd5eb4812",
+      "log_bytes": 1337,
+      "semantic_witness": "attachment accepted full journal capacity",
+      "private_fixture_source_sha256": "c1888b1d41831aec08d52da479f9a2a1a1967a589ab8c3193eb73274479b89fe",
+      "private_test_limit": 0,
+      "production_limit": 32,
+      "fixture_scope": "Real Attach entry point with zero retired journals; no 33 native rotations",
+      "source": "tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs",
+      "original_sha256": "c4b7742fe94d450a772f1ccb46da5a8e91d1b90ee7dafaddd8b35e0285d9ec30",
+      "mutated_sha256": "b2c45c36ab8a6509b0836dc8b795750d9ba206b98b7b5ca5a4e54f3c0bdcbf1f",
+      "failure_excerpt": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: attachment accepted full journal capacity: {\"status\": \"successor_session_attached\", \"scope\": \"journal held; restore barrier and fresh proofs still apply\"}",
+      "cli_sha256": "6a8d8e387384fd649eecab9d9233d372b9917e61001ae6bfc2c2c7f96fc9c6c9",
+      "command_ref": "command_3",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/journal_attachment_preflight"
+      }
+    },
+    {
+      "label": "historical_live_source-units",
+      "exit": 101,
+      "elapsed_seconds": 9.737,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/historical_live_source-units.log",
+      "log_sha256": "234b6bd765b8ac60c05ee354ed3ebf51e00050601773d78dfc05cbe76fe3bf59",
+      "log_bytes": 6332,
+      "semantic_witness": "historical source authorized fee signing",
+      "source": "tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs",
+      "original_sha256": "74c7a078e682aeb9d3435ac5575080ddd6dec1f6159da390942b29ef4fb6071a",
+      "mutated_sha256": "101f5d28ae69e6dba7d171e4de7f9dee32d79a0fdbbb88b10de88aeb99e9729e",
+      "failure_excerpt": "thread 'proven_getters::fee_state_tests::historical_fee_requires_matching_fresh_live_checkpoint' (6921) panicked at node-control/contracts/src/proven_getters.rs:1010:9:\nhistorical source authorized fee signing\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `-p contracts --lib`",
+      "command_ref": "command_4"
+    },
+    {
+      "label": "authenticated_checkpoint-units",
+      "exit": 101,
+      "elapsed_seconds": 8.796,
+      "log": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/authenticated_checkpoint-units.log",
+      "log_sha256": "9706f97f0951203024fea7f9dec4379e7e7e9ec8cc7a238444ec55f7bebf43c2",
+      "log_bytes": 7149,
+      "semantic_witness": "different anchor accepted",
+      "source": "tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "original_sha256": "263da7057c9927bcb2d9cfe3b53f4e84c8cbb4a3f41c33cb7cf5a518ae65792c",
+      "mutated_sha256": "943ca38d9bedfb39b5d7fcbadc6640d92aa7f61007c67b6bf9d26c9a1d0f13ce",
+      "failure_excerpt": "thread 'proven_getters::fee_state_tests::account_checkpoint_binding_includes_anchor_time_and_block' (7001) panicked at node-control/contracts/src/proven_getters.rs:981:9:\ndifferent anchor accepted\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+      "command_ref": "command_4"
+    }
+  ],
+  "private_attach_capacity_green": {
+    "run": {
+      "label": "journal_attachment_preflight-limit-zero",
+      "exit": 0,
+      "elapsed_seconds": 34.226,
+      "log": "journal_attachment_preflight-limit-zero.log",
+      "log_sha256": "03d24a269049a1f8b4bc3c0fea7190c079154620b3cf2bd8575dede28b8d25e7",
+      "log_bytes": 158,
+      "attachment_preflight_passed": true,
+      "command_ref": "command_3",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/journal_attachment_preflight-limit-zero"
+      }
+    },
+    "result": {
+      "refused": {
+        "status": "request_refused",
+        "reason": "session rotation limit; preserve journals and restart",
+        "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+      },
+      "actual_retired_journals": 0,
+      "private_test_limit": 0,
+      "production_limit": 32,
+      "current_journal_unchanged": true,
+      "successor_journal_opened": false,
+      "scope": "Private limit-zero build tests the real Attach entry point; no 33-rotation claim"
+    },
+    "raw": {
+      "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/journal_attachment_preflight-limit-zero/journal-attachment-capacity.json",
+      "sha256": "9bc52092f9d76408f528a910c1ee47e713c7e8b8619ca7b6d25c916ed39c693f",
+      "bytes": 477
+    }
+  },
+  "live_source_migration_family_red": {
+    "label": "historical_live_source-migration-units",
+    "exit": 101,
+    "elapsed_seconds": 6.389,
+    "log": "historical_live_source-migration-units.log",
+    "log_sha256": "c64fa42da18918e5ad3e776243782077b1811f2088a8b64ee0f0cd43c9d696c3",
+    "log_bytes": 6391,
+    "semantic_witness": "accepted unproven successor vault",
+    "failure_excerpt": "thread 'proven_getters::fee_state_tests::native_same_module_rollover_requires_both_funded_pops' (6942) panicked at node-control/contracts/src/proven_getters.rs:1894:18:\naccepted unproven successor vault\nerror: test failed, to rerun pass `-p contracts --lib`",
+    "command_ref": "command_5"
+  },
+  "updated_existing_control": {
+    "result": {
+      "vault_live": {
+        "exit": 101,
+        "semantic_failure": "accepted unproven successor vault"
+      }
+    },
+    "restored_source_sha256": {
+      "tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs": "a9e551e14db397087bf66dcd5e828f23d0bc6016e8530d131f3baad543e5415f",
+      "tosctl/src/node-control/contracts/src/proven_transactions.rs": "2b4a0fc8b7703d3e14c1645b51234d40f8427c055a71d4e6b13f94db51f7ecaa",
+      "tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs": "74c7a078e682aeb9d3435ac5575080ddd6dec1f6159da390942b29ef4fb6071a",
+      "tosctl/src/node-control/contracts/src/lms_fee_schedule.rs": "ce4b222b7d5d54da5b0819a06f62be9960c60259cc71fcd60b86426bb6437874"
+    },
+    "failure_excerpt": "thread 'proven_getters::fee_state_tests::native_migration_requires_both_funded_pops' (299) panicked at node-control/contracts/src/proven_getters.rs:1894:18:\naccepted unproven successor vault\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+    "logs": {
+      "baseline": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-migration-live-source-control/baseline.log",
+        "sha256": "dfd58042493485c71a1ad5bab369e634c6dd3a7b5b4962e470024b70326622dd",
+        "bytes": 6071
+      },
+      "vault_live": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-migration-live-source-control/vault_live.log",
+        "sha256": "0283a0808e619ffd5633a8b268292fff466ffb0fc1fa3425f1068452747e2786",
+        "bytes": 6188
+      },
+      "restored": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/client-migration-live-source-control/restored.log",
+        "sha256": "f699b318a4cc7f4a405833ce9d16edc97055a6b3b4fe0d46866397065cc079cd",
+        "bytes": 5658
+      }
+    }
+  },
+  "post_mutation_restored_runs": [
+    {
+      "label": "restored-build",
+      "exit": 0,
+      "elapsed_seconds": 36.924,
+      "log": "restored-build.log",
+      "log_sha256": "e38b96bd5186a2f17365d7a2a39b6a91ea5fa33332f34d18724c06a69b2146ec",
+      "log_bytes": 7514,
+      "cli_sha256": "124047682d7c5609b1093c631f0a90862fd58884f12c8d1a2225755e21ba8b6d",
+      "command_ref": "command_6"
+    },
+    {
+      "label": "restored-units",
+      "exit": 0,
+      "elapsed_seconds": 9.99,
+      "log": "restored-units.log",
+      "log_sha256": "052dbabb17d58e59f36c8dc24609eba1d2c9a1d176abdfcabadfd30d7ba2ef49",
+      "log_bytes": 5866,
+      "command_ref": "command_4"
+    },
+    {
+      "label": "restored-capacity-unit",
+      "exit": 0,
+      "elapsed_seconds": 17.763,
+      "log": "restored-capacity-unit.log",
+      "log_sha256": "fa2168e19be398398df1d0dcda317d92c426ecc5053dc4b94dbc3796abe256e9",
+      "log_bytes": 7184,
+      "command_ref": "command_2"
+    },
+    {
+      "label": "restored-migration-units",
+      "exit": 0,
+      "elapsed_seconds": 7.143,
+      "log": "restored-migration-units.log",
+      "log_sha256": "d52ea60839dd43a4211923d93c8c2b36cd725e0cab7e7fc90bcbc4be2a92789c",
+      "log_bytes": 6172,
+      "command_ref": "command_5"
+    },
+    {
+      "label": "restored",
+      "exit": 0,
+      "elapsed_seconds": 88.108,
+      "log": "restored.log",
+      "log_sha256": "cb4887ad49ec88cfa7c82b8690aeaf8c3d325da488397fb1af29eaa7ab1acc46",
+      "log_bytes": 769,
+      "two_rotations_passed": true,
+      "command_ref": "command_1",
+      "command_parameters": {
+        "output": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/restored"
+      }
+    }
+  ],
+  "final_native_receipts": [
+    {
+      "file": "initial-retirement-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "af0155dfd21f5c6bce14aa83a52705ec8e3376ee1230e8d0074d56a169b94805",
+      "bytes": 33038,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "initial-retirement-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "2132fecacac2dcee7f4e45754b59f68efb2d7c964bf8c52c85a430a8263c1af2",
+      "bytes": 33265,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "initial-retirement-wallet.json",
+      "success": true,
+      "details": {
+        "exit": 0,
+        "gas": 273772,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "vm_exit_code": null,
+      "sha256": "36d66af6e60cee321c20092bbfbc9190b66e3284f1dcf750cbc6ddbea40a771a",
+      "bytes": 236737
+    },
+    {
+      "file": "migration-fee.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "3a229330bfe29da5a201e3cf893794d1a33281cb1b1cd1cd4ef83b32b5da1848",
+      "bytes": 46061,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "migration-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "a5dcd1db7aabe31c02134f0e673c24e0240b733bdcfe17e57f25ff270719e2f2",
+      "bytes": 163132,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "migration-wallet.json",
+      "success": true,
+      "details": {
+        "exit": 0,
+        "gas": 414772,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "vm_exit_code": null,
+      "sha256": "fbf79632de66fa98d899f21f26130d95bbc688291d508274afc7fde42b4de65e",
+      "bytes": 360993
+    },
+    {
+      "file": "prepare-default-credit.json",
+      "success": false,
+      "details": null,
+      "vm_exit_code": -14,
+      "sha256": "081bd973d5b54c78aa2cbaad300f98a2e097e39e6692700749e904a5b964e0ed",
+      "bytes": 5496
+    },
+    {
+      "file": "prepare-deployed-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "5c905d7bd09a7786492d59369d7d0d35229ca65e41e96ea73a5bbaa0ad508ad3",
+      "bytes": 13662,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "prepare-deployed-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "3dae86d1a9c0a73a241dc2e2dcdcce229568afa6bb22198f24c3021316d4db1f",
+      "bytes": 3727,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "prepare-fee.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "14150d48015c6d823e2c1c181efd1d729779e88a297fdba79b3a12acc176bdf3",
+      "bytes": 46875,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "prepare-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "5cc0994d82641ae905b51bb0114439006d20ecf1fbe2686fb6d161d58c52fcbf",
+      "bytes": 162882,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "rotation-funding.json",
+      "success": true,
+      "details": {
+        "exit": 0,
+        "gas": 309,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "vm_exit_code": null,
+      "sha256": "4082c702c9a602022538408811db9fb7ed6e1645dfc6b2e10396be4749e4d0df",
+      "bytes": 2447
+    },
+    {
+      "file": "rotation-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "bf6b7130f9fa0809ebf945c347592f1bac1b8803703115c9bf644336dd72bf39",
+      "bytes": 33143,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "rotation-recipient.json",
+      "success": true,
+      "details": {
+        "exit": 0,
+        "gas": 1053,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "vm_exit_code": null,
+      "sha256": "988cc07012ea5dcf26921fdf0e3131d0db5f6186e15c6527b725f07c4900c57b",
+      "bytes": 1397
+    },
+    {
+      "file": "rotation-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "778cc42e7d59d5ecbc7d76864d57b7f37b93a961a645b42679235f339309ed78",
+      "bytes": 33797,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "rotation-wallet.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "22490880bd795340b34c749e9b565b63da2892d4de7ef8e0b221249d6b0d1d8d",
+      "bytes": 239457,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/migration-fee.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "639c9abb18cfb43fe794cf2bc57bd3c8367d249f8211527620acc6207c619b05",
+      "bytes": 46061,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/migration-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "998aa39c3e74cb9a50874b42102dee5ae185ea72224cc1a5d5361c060cb4f0a9",
+      "bytes": 163184,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/migration-wallet.json",
+      "success": true,
+      "details": {
+        "exit": 0,
+        "gas": 414772,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "vm_exit_code": null,
+      "sha256": "46f5fd1d8021f3f90330046ea1065bffdc55e9a782f30a2b66868d5ae07282c4",
+      "bytes": 360993
+    },
+    {
+      "file": "second-rotation/prepare-default-credit.json",
+      "success": false,
+      "details": null,
+      "vm_exit_code": -14,
+      "sha256": "54d69b59df527127d0f5dd4d2b9a4a3abc4aab350757fa7a80d1cfcce3ce3ae8",
+      "bytes": 5496
+    },
+    {
+      "file": "second-rotation/prepare-deployed-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "d061a4829faa196abab32200ff394bb8f21e400e1a6cfd317a63f7d0a0a64f0a",
+      "bytes": 13662,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/prepare-deployed-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "37927c89c5f1c153bc995472e46e138d44f1c66ad6b37d98429361f7e3146933",
+      "bytes": 3727,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/prepare-fee.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "0171ac215c781ceebe8037d351e2832c9c3a5fc43473f8655f46b856fbfc8e85",
+      "bytes": 46875,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/prepare-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "8212fb3af87899b6812cd8351c6134d9ce46f1a3c1b4e6f85bfe2dd5f0a4395d",
+      "bytes": 162930,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/rotation-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "cbc68164ad75129abf20f68742789a140dab8f36c21ccc963c5d2a8ba36494fc",
+      "bytes": 32879,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/rotation-recipient.json",
+      "success": true,
+      "details": {
+        "exit": 0,
+        "gas": 1053,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "vm_exit_code": null,
+      "sha256": "46f5bb97e20d566a4d178689b3eec5c066ebc8e15868d31d97634bb97aadd36c",
+      "bytes": 1397
+    },
+    {
+      "file": "second-rotation/rotation-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "4716930f05795e59d0c235f9cdcb92a87484a8ddbffa5bbc50390f8870abe315",
+      "bytes": 33529,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/rotation-wallet.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "c6c3fbbc48304678db111861912c180952b67c2fd502270c84aaf5e2d01f7536",
+      "bytes": 238128,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/successor-pop-0-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "f91f0c798979819d419ecadc131a66c78ae20405fc4a6e50a755e42677e26dff",
+      "bytes": 24246,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/successor-pop-0-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "6bd2afd870caa173b9aca0a9f09e72d47d351526753f62fc3c21d7b4d2f9bf12",
+      "bytes": 19229,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/successor-pop-1-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "e0a9a21e95166471a1890af83dfa9d4b6356f27ec084b6cd163d85c4dcb288d9",
+      "bytes": 31772,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "second-rotation/successor-pop-1-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "7c1dc0250b000b34b168af66c6fda90b9038e669651528e0c0d1bc700fb1641b",
+      "bytes": 34061,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "successor-pop-0-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "972682ae45458a98e055e0dc0b149c25653994121346d17621f80341805167ae",
+      "bytes": 24246,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "successor-pop-0-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "25eda2b4b9fa0abc3bce67815cd84d928b4eb0b1408116bf8f23be336eb0e139",
+      "bytes": 19229,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "successor-pop-1-module.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "c8071c94c1cd5dc9368aeb6d25ac2e3f468ebf4d54255369dce158f71e722a21",
+      "bytes": 31772,
+      "compute_and_action_checked": true
+    },
+    {
+      "file": "successor-pop-1-vault.json",
+      "success": true,
+      "vm_exit_code": null,
+      "sha256": "d2a0314b96fbe5583d69e9288b3f5e48051a31605b47f28b4aeef9944c57657d",
+      "bytes": 34061,
+      "compute_and_action_checked": true
+    }
+  ],
+  "raw_index": {
+    "path": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final/results.json",
+    "sha256": "8ae63766b6f03513554bf85030f76f6cdf803f64d9902a7c71622a7f56155f6e",
+    "bytes": 75594
+  },
+  "raw_retention": {
+    "location": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-controls-final",
+    "status": "Local transient run artifacts; no durable hosted artifact receipt is asserted",
+    "policy": "Bulky logs, native receipts, trees, custody and journals are not committed. Essential named failure excerpts and compact transaction details are retained here. Reproduce with the committed runner; hashes alone are not independent raw proof.",
+    "ci": "Workflow is configured for bounded artifacts; this index does not assert any future hosted run or retention."
+  },
+  "process_notes": [
+    "There are 14 independent guard groups and 15 negative test invocations. The live-source group also runs both native migration and same-module rollover. The separate existing vault_live runner exercises that same live-source guard again; it is not a fifteenth independent guard.",
+    "An earlier incomplete control run hit an unrelated undefined-hidden-symbol linker failure; its partial three red receipts are excluded from the completed set here.",
+    "The initial control baseline preceded import ordering and clock C formatting. All negative controls and that runner's restored baseline used the archived pre-Python-format script hashes. Rust production sources are unchanged. A later mandatory ruff format gate changed 7 scripts with identical ASTs, followed by a final complete normal two-rotation smoke; no earlier control receipt is relabeled as having executed the later bytes.",
+    "The Attach entry-point control uses a private limit-zero binary in both its green and red phases; only the Attach call is removed for red and Promote remains guarded. The production 31/32 unit is separate. No 33 or 64 native rotations are claimed."
+  ],
+  "command_templates": {
+    "command_1": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+      "/workspace/scratch/58828491a8ce/tos/test/wallet-v5r2/cli_sign_primary.py",
+      "--fee-session-rotation",
+      "--cli",
+      "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/tosctl",
+      "--genesis-driver",
+      "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/examples/v5r2_genesis_encode",
+      "--fee-session-tree",
+      "/workspace/scratch/58828491a8ce/client-fixtures/old/PUBLIC-TEST-ONLY-tree",
+      "--successor-fee-fixture",
+      "/workspace/scratch/58828491a8ce/client-fixtures/new",
+      "--second-successor-fee-fixture",
+      "/workspace/scratch/58828491a8ce/client-fixtures/third",
+      "--fixture",
+      "/workspace/scratch/58828491a8ce/artifacts/static-client-template/sdk-genesis.json",
+      "--output",
+      "{{output}}"
+    ],
+    "command_2": [
+      "cargo",
+      "test",
+      "--locked",
+      "--manifest-path",
+      "/workspace/scratch/58828491a8ce/tos/tosctl/src/Cargo.toml",
+      "-p",
+      "commands",
+      "--features",
+      "pq-wallet",
+      "--lib",
+      "journal_rotation_capacity_boundary",
+      "--",
+      "--nocapture"
+    ],
+    "command_3": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+      "/workspace/scratch/58828491a8ce/tos/test/wallet-v5r2/cli_sign_primary.py",
+      "--fee-session-rotation",
+      "--cli",
+      "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/tosctl",
+      "--genesis-driver",
+      "/workspace/scratch/58828491a8ce/tos/build-cargo/debug/examples/v5r2_genesis_encode",
+      "--fee-session-tree",
+      "/workspace/scratch/58828491a8ce/client-fixtures/old/PUBLIC-TEST-ONLY-tree",
+      "--successor-fee-fixture",
+      "/workspace/scratch/58828491a8ce/client-fixtures/new",
+      "--second-successor-fee-fixture",
+      "/workspace/scratch/58828491a8ce/client-fixtures/third",
+      "--fixture",
+      "/workspace/scratch/58828491a8ce/artifacts/static-client-template/sdk-genesis.json",
+      "--output",
+      "{{output}}",
+      "--expect-rotation-capacity-refusal"
+    ],
+    "command_4": [
+      "cargo",
+      "test",
+      "--locked",
+      "--manifest-path",
+      "/workspace/scratch/58828491a8ce/tos/tosctl/src/Cargo.toml",
+      "-p",
+      "contracts",
+      "--features",
+      "native-wallet-vault",
+      "--lib",
+      "checkpoint",
+      "--",
+      "--nocapture"
+    ],
+    "command_5": [
+      "cargo",
+      "test",
+      "--locked",
+      "--manifest-path",
+      "/workspace/scratch/58828491a8ce/tos/tosctl/src/Cargo.toml",
+      "-p",
+      "contracts",
+      "--features",
+      "native-wallet-vault",
+      "--lib",
+      "requires_both_funded_pops",
+      "--",
+      "--nocapture"
+    ],
+    "command_6": [
+      "cargo",
+      "build",
+      "--locked",
+      "--manifest-path",
+      "/workspace/scratch/58828491a8ce/tos/tosctl/src/Cargo.toml",
+      "-p",
+      "tosctl",
+      "--features",
+      "pq-wallet"
+    ]
+  },
+  "command_encoding": "command_ref selects an exact argument array; replace the single {{output}} token with command_parameters.output. Top-level runner commands are stored verbatim.",
+  "final_native_receipts_root": "/workspace/scratch/58828491a8ce/artifacts/client-rotation-formatted-smoke",
+  "repo_pinned_python_gate": {
+    "scope": "Final 17-file read-only check and format --check using repository-pinned Ruff 0.15.2; Ruff 0.16.10 above was the formatting tool, not the CI pin.",
+    "tool_version": "ruff 0.15.2",
+    "tool_sha256": "6539336838c2153baefaafb29278ff6bc950d59d97c17f043a03db7d35905c0e",
+    "uv_lock_sha256": "7bc74130d63a31277e9f777fd4a92fd7b6699c10cd519ca3ca2a9acc6c5e423a",
+    "file_count": 17,
+    "check_exit": 0,
+    "format_check_exit": 0,
+    "stdout": [
+      "All checks passed!",
+      "17 files already formatted"
+    ],
+    "raw": {
+      "path": "/workspace/scratch/58828491a8ce/artifacts/final-static-lint-20261006.json",
+      "sha256": "3838cf0a76b3e69f0abf08c808ccb5f005e298b5ba97b3bd61b007d137a1f2e2",
+      "bytes": 4647
+    },
+    "command_scope": "The raw receipt contains both exact argument arrays and all 17 source hashes."
+  }
+}

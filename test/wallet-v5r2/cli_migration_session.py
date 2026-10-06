@@ -21,6 +21,7 @@ def check_migration(
     original_addresses,
     successor,
     successor_journal,
+    rotation_context=None,
 ):
     def files(item):
         folder = item["output"]
@@ -47,6 +48,21 @@ def check_migration(
     new_journal = successor_journal / "fee-reservations"
     old_before, new_before = old_journal.read_bytes(), new_journal.read_bytes()
     refused = {}
+    if rotation_context is not None:
+        from cli_rotation_session import check_full_history_refusal
+
+        destination = root / "full-history-migrate"
+        check_full_history_refusal(
+            args,
+            source_request,
+            dict(command="migrate", evidence=dict(evidence, output_dir=str(destination))),
+            old_journal,
+            destination,
+            "migration",
+        )
+        assert new_journal.read_bytes() == new_before, (
+            "full-history migration changed successor journal"
+        )
     for name, change, expected in [
         ("duplicate_role", dict(primary_pop=files(receipts[1])), "one POP for each key"),
         (
@@ -72,8 +88,56 @@ def check_migration(
         assert not destination.exists(), f"migration touched output before {name} refusal"
         assert old_journal.read_bytes() == old_before and new_journal.read_bytes() == new_before
         refused[name] = report
+    if rotation_context is not None:
+        # A different authorized operation can advance the old tuple's epoch.
+        # Give the refusal fixture that shape so epoch monotonicity alone cannot
+        # make the installed-tuple sensitivity check pass for the wrong reason.
+        wallet_address = f"0:{original_addresses['wallet'][1]:064x}"
+        original_record = dict(scenario["accounts"][wallet_address])
+        old_state = (
+            Cell().uint(0, 320).ref(from_boc(base64.b64decode(original_record["state_boc"])))
+        )
+        old_data = native.account_data(old_state)[0]
+        old_auth = old_data.refs[0]
+        advanced_auth = Cell(
+            old_auth.bits[:26] + f"{int(old_auth.bits[26:90], 2) + 1:064b}" + old_auth.bits[90:],
+            old_auth.refs,
+        )
+        advanced_data = Cell(old_data.bits, [advanced_auth])
+        code = from_boc(bytes.fromhex(rotation_context["template"]["wallet_code"]))
+        advanced = native.active_account(
+            original_addresses["wallet"],
+            code,
+            advanced_data,
+            balance=int(original_record["balance"]),
+        ).refs[0]
+        scenario["accounts"][wallet_address] = dict(
+            original_record,
+            state_boc=base64.b64encode(advanced.boc()).decode(),
+            state_hash=advanced.hash.hex(),
+            data_hash=advanced_data.hash.hex(),
+            last_trans_hash="00" * 32,
+            last_trans_lt=0,
+        )
+        scenario_path.write_text(json.dumps(scenario))
+        premature_dir = root / "premature-promotion"
+        premature = source_request(dict(command="promote", output_dir=str(premature_dir)))
+        assert (
+            premature["status"] == "request_refused"
+            and "installed module/fee tuple mismatch" in premature["reason"]
+        ), "promotion accepted a proposed tuple before wallet installation"
+        assert not premature_dir.exists(), "uninstalled promotion wrote enrollment output"
+        assert old_journal.read_bytes() == old_before and new_journal.read_bytes() == new_before
+        refused["uninstalled_promotion"] = premature
+        scenario["accounts"][wallet_address] = original_record
+        scenario_path.write_text(json.dumps(scenario))
+    expected_leaf = (
+        source_request(dict(command="status"))["leaf"]
+        if getattr(args, "fee_session_rotation", False)
+        else 5
+    )
     signed = source_request(dict(command="migrate", evidence=evidence))
-    assert signed["status"] == "fee_message_cached" and signed["leaf"] == 5, signed
+    assert signed["status"] == "fee_message_cached" and signed["leaf"] == expected_leaf, signed
     assert signed["vault"] == f"0:{original_addresses['vault'][1]:064x}", (
         "migration used successor fee route"
     )
@@ -92,27 +156,17 @@ def check_migration(
 
     # Burn the remaining successor slot leaf without broadcasting it. On-chain
     # capacity remains unchanged, but another migration must respect local state.
-    burned = successor_request(
-        dict(
-            command="pop",
-            role="primary",
-            valid_for_seconds=600,
-            value_nanotos="5000000000",
-            output_dir=str(root / "unbroadcast-successor-pop"),
+    if rotation_context is None:
+        check_exhaustion(
+            source_request,
+            successor_request,
+            evidence,
+            root,
+            old_journal,
+            new_journal,
+            old_after,
+            refused,
         )
-    )
-    assert burned["status"] == "fee_message_cached" and burned["leaf"] == 7, burned
-    burned_state = new_journal.read_bytes()
-    refused_output = root / "migration-local-exhaustion"
-    exhausted = source_request(
-        dict(command="migrate", evidence=dict(evidence, output_dir=str(refused_output)))
-    )
-    assert exhausted["status"] == "request_refused" and "WaitUntil" in exhausted["reason"], (
-        "migration ignored local successor reservations"
-    )
-    assert not refused_output.exists() and old_journal.read_bytes() == old_after
-    assert new_journal.read_bytes() == burned_state
-    refused["local_exhaustion"] = exhausted
 
     def observed(name):
         value = scenario["accounts"][f"0:{original_addresses[name][1]:064x}"]
@@ -180,6 +234,47 @@ def check_migration(
     (args.output / "migration-reports.json").write_text(
         json.dumps(dict(signed=signed, refusals=refused), indent=2)
     )
+    if rotation_context is not None:
+        from cli_rotation_session import check_rotation
+
+        check_rotation(
+            args,
+            root,
+            source_request,
+            scenario_path,
+            original_addresses,
+            successor,
+            successor_journal,
+            old_after,
+            rotation_context,
+            emu,
+        )
     print(
         "Joint sessions, dual funded POPs, exact migration retry and native wallet installation passed"
     )
+
+
+def check_exhaustion(
+    source_request, successor_request, evidence, root, old_journal, new_journal, old_after, refused
+):
+    burned = successor_request(
+        dict(
+            command="pop",
+            role="primary",
+            valid_for_seconds=600,
+            value_nanotos="5000000000",
+            output_dir=str(root / "unbroadcast-successor-pop"),
+        )
+    )
+    assert burned["status"] == "fee_message_cached" and burned["leaf"] == 7, burned
+    burned_state = new_journal.read_bytes()
+    refused_output = root / "migration-local-exhaustion"
+    exhausted = source_request(
+        dict(command="migrate", evidence=dict(evidence, output_dir=str(refused_output)))
+    )
+    assert exhausted["status"] == "request_refused" and "WaitUntil" in exhausted["reason"], (
+        "migration ignored local successor reservations"
+    )
+    assert not refused_output.exists() and old_journal.read_bytes() == old_after
+    assert new_journal.read_bytes() == burned_state
+    refused["local_exhaustion"] = exhausted

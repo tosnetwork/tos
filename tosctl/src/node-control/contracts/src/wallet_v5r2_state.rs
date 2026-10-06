@@ -56,6 +56,7 @@ impl ProvenFeeVault {
             },
             now,
             max_age,
+            None,
         )
     }
 
@@ -79,6 +80,54 @@ impl ProvenFeeVault {
             },
             now,
             max_age,
+            None,
+        )
+    }
+
+    /// Bind a fee account read at the checkpoint of a fresh live wallet read.
+    /// Historical proof alone cannot authorize a new signature: the live source
+    /// must authenticate this exact checkpoint under the same trust anchor.
+    pub fn bind_at_live_checkpoint(
+        state: &ProvenAccountState,
+        live_source: &ProvenAccountState,
+        genesis: &WalletGenesis,
+        now: u32,
+        max_age: u32,
+    ) -> anyhow::Result<Self> {
+        Self::bind_enrollment(
+            state,
+            Enrollment {
+                module_data: genesis.module_data(),
+                metadata: genesis.metadata(),
+                vault_data: genesis.vault_data(),
+                vault_init: genesis.vault_init(),
+                config_hash: genesis.config_hash(),
+            },
+            now,
+            max_age,
+            Some(live_source),
+        )
+    }
+
+    pub fn bind_successor_at_live_checkpoint(
+        state: &ProvenAccountState,
+        live_source: &ProvenAccountState,
+        successor: &SuccessorDeployment,
+        now: u32,
+        max_age: u32,
+    ) -> anyhow::Result<Self> {
+        Self::bind_enrollment(
+            state,
+            Enrollment {
+                module_data: successor.module_data(),
+                metadata: successor.metadata(),
+                vault_data: successor.vault_data(),
+                vault_init: successor.vault_init(),
+                config_hash: successor.config_hash(),
+            },
+            now,
+            max_age,
+            Some(live_source),
         )
     }
 
@@ -87,9 +136,19 @@ impl ProvenFeeVault {
         genesis: Enrollment<'_>,
         now: u32,
         max_age: u32,
+        live_checkpoint: Option<&ProvenAccountState>,
     ) -> anyhow::Result<Self> {
         let evidence = state.evidence();
-        anyhow::ensure!(evidence.live, "fee signing requires a live proof");
+        match live_checkpoint {
+            Some(source) => {
+                anyhow::ensure!(
+                    source.evidence().live,
+                    "fee checkpoint source requires a live proof"
+                );
+                state.require_same_checkpoint(source)?;
+            }
+            None => anyhow::ensure!(evidence.live, "fee signing requires a live proof"),
+        }
         let vault = *genesis.vault_init.repr_hash().as_array();
         anyhow::ensure!(
             evidence.account.address == format!("0:{}", hex::encode(vault)),

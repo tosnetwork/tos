@@ -1,6 +1,7 @@
 """Persistent fee session prepares both successor accounts in the native VM."""
 
 import base64
+import hmac
 import json
 import os
 import subprocess
@@ -30,11 +31,30 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
         fee_vector = json.loads(
             (args.successor_fee_fixture / "native-fee-recovery.json").read_text()
         )
+        context = fee_vector["context"]
+        derivation = dict(
+            derivation,
+            account_index=context["account_index"],
+            key_generation=context["key_generation"],
+        )
+
+        def derived(label, size):
+            label = label.encode()
+            info = bytes([1, len(label)]) + label + bytes.fromhex(template["network"])
+            info += context["global_id"].to_bytes(4, "big", signed=True)
+            info += context["account_index"].to_bytes(4, "big")
+            info += context["key_generation"].to_bytes(4, "big")
+            prk = hmac.digest(
+                b"TOS-WALLET-DUALROOT-KDF-v1", bytes.fromhex(vector["master_hex"]), "sha256"
+            )
+            first = hmac.digest(prk, info + b"\x01", "sha256")
+            return (first + hmac.digest(prk, first + info + b"\x02", "sha256"))[:size].hex()
+
         subprocess.run(
             [
                 os.environ["MLDSA_TOOL"],
                 "keygen",
-                vector["derived"]["ML-DSA-44"],
+                derived("ML-DSA-44", 32),
                 str(root / "successor.pub"),
                 str(root / "PUBLIC-TEST-ONLY-successor.secret"),
             ],
@@ -42,7 +62,7 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
         )
         template["primary_key"] = (root / "successor.pub").read_bytes().hex()
         template["rescue_key"] = subprocess.check_output(
-            [os.environ["SLH_TOOL"], "keygen", vector["derived"]["SLH-DSA-SHA2-128s"]], text=True
+            [os.environ["SLH_TOOL"], "keygen", derived("SLH-DSA-SHA2-128s", 48)], text=True
         ).split()[0]
         template["fee_public_key"] = fee_vector["public_key_hex"]
         template["fee_tree_id"] = fee_vector["tree_id_hex"]
@@ -154,8 +174,25 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
         assert result["status"] == "request_refused", f"preparation accepted {label}"
         assert not target.exists() and (journal / "fee-reservations").read_bytes() == before
         failures[label] = result
+    if getattr(args, "fee_session_rotation", False):
+        from cli_rotation_session import check_full_history_refusal
+
+        destination = root / "full-history-prepare"
+        check_full_history_refusal(
+            args,
+            request,
+            dict(operation, output_dir=str(destination)),
+            journal / "fee-reservations",
+            destination,
+            "prepare",
+        )
+    expected_leaf = (
+        request(dict(command="status"))["leaf"]
+        if getattr(args, "fee_session_rotation", False)
+        else 4
+    )
     signed = request(operation)
-    assert signed["status"] == "fee_message_cached" and signed["leaf"] == 4, (
+    assert signed["status"] == "fee_message_cached" and signed["leaf"] == expected_leaf, (
         f"REQUIRED preparation depended on PRIMARY policy: {signed}"
     )
     after = (journal / "fee-reservations").read_bytes()

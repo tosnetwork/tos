@@ -67,8 +67,20 @@ def main():
     parser.add_argument("--fee-session-prepare", action="store_true")
     parser.add_argument("--successor-fee-fixture", type=Path)
     parser.add_argument("--fee-session-migration", action="store_true")
+    parser.add_argument("--fee-session-rotation", action="store_true")
+    parser.add_argument("--second-successor-fee-fixture", type=Path)
+    parser.add_argument(
+        "--expect-rotation-capacity-refusal",
+        action="store_true",
+        help="Private zero-journal-limit test build only: stop at Attach preflight.",
+    )
     parser.add_argument("--expect-fee-reuse-refusal", action="store_true")
     args = parser.parse_args()
+    if args.expect_rotation_capacity_refusal:
+        assert args.fee_session_rotation, "journal capacity fixture needs the rotation setup"
+    if args.fee_session_rotation:
+        assert args.second_successor_fee_fixture, "repeated rotation needs a fresh third fee tree"
+        args.fee_session_migration = True
     if args.expect_fee_reuse_refusal:
         args.fee_session_prepare = True
     if args.fee_session_migration:

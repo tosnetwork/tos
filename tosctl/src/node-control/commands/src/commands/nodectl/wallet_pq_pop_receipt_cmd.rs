@@ -196,7 +196,11 @@ impl PqVerifyPopInitialCmd {
         println!(
             "{}",
             serde_json::json!({
-                "status": if context.successor().is_some() { "successor_funded_pop_proven_at_checkpoint" } else { "initial_funded_pop_proven_at_checkpoint" }, "role": role,
+                "status": if context.successor().is_some() {
+                    "successor_funded_pop_proven_at_checkpoint"
+                } else if context.installed().is_some() {
+                    "installed_funded_pop_proven_at_checkpoint"
+                } else { "initial_funded_pop_proven_at_checkpoint" }, "role": role,
                 "wallet": proof.wallet.evidence().account.address,
                 "module": pop_module.evidence().account.address,
                 "vault": fee_account.evidence().account.address,

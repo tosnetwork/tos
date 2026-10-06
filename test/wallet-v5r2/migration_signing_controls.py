@@ -12,6 +12,7 @@ SOURCES = ROOT / "tosctl/src/node-control/contracts/src"
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--case", action="append", default=[])
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     state = SOURCES / "wallet_v5r2_wallet_state.rs"
@@ -58,8 +59,8 @@ def main():
         (
             "vault_live",
             vault,
-            'evidence.live, "fee signing requires a live proof"',
-            'true, "fee signing requires a live proof"',
+            "source.evidence().live,",
+            "true,",
             "accepted unproven successor vault",
         ),
         (
@@ -109,6 +110,9 @@ def main():
     for role in ("primary", "rescue"):
         statement = f"evidence.{role}_request.require_successor_funded_receipt(\n            evidence.{role}_receipts,\n            evidence.{role}_external,\n            successor,\n        )?;"
         cases.append((f"{role}_funding", state, statement, "", f"{role} funded POP bypassed"))
+    assert set(args.case) <= {case[0] for case in cases}, "unknown migration control"
+    if args.case:
+        cases = [case for case in cases if case[0] in args.case]
 
     def run(label):
         result = subprocess.run(

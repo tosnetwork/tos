@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import selectors
 import shutil
 import subprocess
@@ -104,9 +105,9 @@ def check_successor_pops(
             "--global-id",
             str(template["global_id"]),
             "--account-index",
-            "5",
+            str(vector["context"]["account_index"]),
             "--key-generation",
-            "7",
+            str(vector["context"]["key_generation"]),
             "--mnemonic-file",
             words,
             "--password-file",
@@ -116,7 +117,13 @@ def check_successor_pops(
         assert result.returncode == 0, result.stderr
     restore_args = []
     for i in range(0, len(common), 2):
-        if common[i] != "--proof-config":
+        if common[i] not in [
+            "--proof-config",
+            "--max-age-seconds",
+            "--installed-successor-manifest",
+            "--expected-installed-template-wallet",
+            "--fee-history",
+        ]:
             restore_args += common[i : i + 2]
     restore_args[restore_args.index("--recovery-manifest") + 1] = str(manifest)
     restore_args[restore_args.index("--expected-wallet") + 1] = pin
@@ -180,10 +187,56 @@ def check_successor_pops(
         custody = {}
         for i in range(command.index("--journal-dir"), len(command), 2):
             custody[command[i][2:].replace("-", "_")] = command[i + 1]
+        attached_manifest = str(manifest)
+        if getattr(args, "fee_session_rotation", False):
+            from cli_rotation_session import PATH_ARGUMENTS
+
+            for field in custody:
+                if "--" + field.replace("_", "-") in PATH_ARGUMENTS:
+                    custody[field] = os.path.relpath(custody[field], args.rotation_session_cwd)
+            attached_manifest = os.path.relpath(manifest, args.rotation_session_cwd)
+            if getattr(args, "expect_rotation_capacity_refusal", False):
+                from cli_rotation_session import check_full_journal_attachment_refusal
+
+                try:
+                    check_full_journal_attachment_refusal(
+                        args,
+                        source_request,
+                        dict(
+                            command="attach_successor",
+                            successor_manifest=attached_manifest,
+                            expected_template_wallet=pin,
+                            custody=custody,
+                        ),
+                        root / "journal" / "fee-reservations",
+                        journal / "fee-reservations",
+                    )
+                finally:
+                    selector.close()
+                    err.close()
+                return
+            from cli_rotation_session import check_full_history_refusal
+
+            check_full_history_refusal(
+                args,
+                source_request,
+                dict(
+                    command="attach_successor",
+                    successor_manifest=attached_manifest,
+                    expected_template_wallet=pin,
+                    custody=custody,
+                ),
+                root / "journal" / "fee-reservations",
+                None,
+                "attach",
+            )
+            assert not (journal / "fee-reservations").exists(), (
+                "full-history attachment opened successor journal"
+            )
         attached = source_request(
             dict(
                 command="attach_successor",
-                successor_manifest=str(manifest),
+                successor_manifest=attached_manifest,
                 expected_template_wallet=pin,
                 custody=custody,
             )
@@ -192,7 +245,7 @@ def check_successor_pops(
         duplicate = source_request(
             dict(
                 command="attach_successor",
-                successor_manifest=str(manifest),
+                successor_manifest=attached_manifest,
                 expected_template_wallet=pin,
                 custody=custody,
             )
@@ -254,6 +307,10 @@ def check_successor_pops(
         assert int(time.time()) < boundary, "successor setup missed real recovery boundary"
         waiting = request(dict(command="status"))
         assert waiting["status"] == "request_refused" and "WaitUntil" in waiting["reason"]
+        if getattr(args, "fee_session_rotation", False):
+            args.rotation_clock.advance(60)
+            scenario.pop("checkpoint_time", None)
+            scenario_path.write_text(json.dumps(scenario))
         while int(time.time()) <= boundary:
             time.sleep(min(1, max(0.01, boundary + 1 - time.time())))
         assert request(dict(command="status"))["leaf"] == 4
@@ -294,7 +351,12 @@ def check_successor_pops(
         with patch.object(native, "config", diagnostic):
             emu = native.Emulator(global_version=17)
         receipts, challenges = [], set()
-        for index, role in enumerate(["primary", "rescue", "primary"]):
+        roles = (
+            ["primary", "rescue"]
+            if getattr(args, "fee_session_rotation", False)
+            else ["primary", "rescue", "primary"]
+        )
+        for index, role in enumerate(roles):
             output = root / f"successor-pop-{index}"
             signed = request(
                 dict(
@@ -364,6 +426,20 @@ def check_successor_pops(
                     original_addresses,
                     successor,
                     journal,
+                    rotation_context=dict(
+                        common=common,
+                        template=template,
+                        manifest=manifest,
+                        pin=pin,
+                        states=states,
+                        addresses=addresses,
+                        codes=codes,
+                        data=data,
+                        command=command,
+                        custody=custody,
+                    )
+                    if getattr(args, "fee_session_rotation", False)
+                    else None,
                 )
 
         check_receipts(
@@ -380,7 +456,7 @@ def check_successor_pops(
         (args.output / "successor-template.json").write_bytes(manifest.read_bytes())
         (args.output / "successor-session-reports.json").write_text(json.dumps(reports, indent=2))
         print(
-            "Prepared successor, independent custody, 3 funded POPs and authenticated receipts passed"
+            f"Prepared successor, independent custody, {len(roles)} funded POPs and authenticated receipts passed"
         )
     finally:
         if emu is not None:

@@ -23,10 +23,15 @@ pub(super) struct InitialProofArgs {
     #[arg(long)]
     recovery_manifest: PathBuf,
     /// Enrolled successor template that must match the actually installed tuple.
-    #[arg(long, requires = "expected_installed_template_wallet")]
+    #[arg(long, requires_all = ["expected_installed_template_wallet", "fee_history"])]
     installed_successor_manifest: Option<PathBuf>,
     #[arg(long, requires = "installed_successor_manifest")]
     expected_installed_template_wallet: Option<String>,
+    /// Retained public history of this wallet's used fee keys; never an LMS journal.
+    #[arg(long)]
+    fee_history: Option<PathBuf>,
+    #[arg(skip)]
+    captured_fee_history: Vec<[u8; 32]>,
     /// Independently authenticated basechain wallet account ID, in hex.
     #[arg(long)]
     expected_wallet: String,
@@ -38,6 +43,28 @@ pub(super) struct InitialProofArgs {
     /// Local bound on masterchain and both account observation ages, in seconds.
     #[arg(long, default_value = "60", value_parser = clap::value_parser!(u32).range(1..3600))]
     max_age_seconds: u32,
+}
+
+const MAX_FEE_HISTORY: usize = 64;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FeeHistory {
+    schema: String,
+    wallet: String,
+    used_fee_public_key_hashes: Vec<String>,
+}
+
+fn fee_key_hash(metadata: &chain_block::Cell) -> anyhow::Result<[u8; 32]> {
+    let key = chain_block::SliceData::load_cell(metadata.clone())?.checked_drain_reference()?;
+    Ok(*key.repr_hash().as_array())
+}
+
+pub(super) fn absolute_path_argument(path: &std::path::Path) -> anyhow::Result<String> {
+    // Resolve the original command's working directory without requiring the
+    // referenced file to exist or changing symlink semantics via canonicalize.
+    let absolute = std::path::absolute(path)?;
+    Ok(absolute.to_str().ok_or_else(|| anyhow::anyhow!("export path is not UTF-8"))?.into())
 }
 
 pub(super) fn now() -> anyhow::Result<u32> {
@@ -57,6 +84,7 @@ pub(super) struct InitialContext {
     successor: Option<SuccessorDeployment>,
     provider: ProvenGetterProvider,
     max_age_seconds: u32,
+    known_fee_keys: Vec<[u8; 32]>,
 }
 
 impl InitialProofArgs {
@@ -76,7 +104,15 @@ impl InitialProofArgs {
             template,
             public_hash(&self.expected_wallet)?,
         )?;
-        successor.require_fresh_fee_key(self.context()?.current_metadata())?;
+        let context = self.context()?;
+        context.require_fee_history_capacity()?;
+        successor.require_fresh_fee_key(context.current_metadata())?;
+        let current_key = fee_key_hash(context.current_metadata())?;
+        let proposed_key = fee_key_hash(successor.metadata())?;
+        anyhow::ensure!(
+            !context.known_fee_keys.iter().any(|key| *key != current_key && *key == proposed_key),
+            "successor reuses a retained LMS public key"
+        );
         Ok(successor)
     }
 
@@ -101,6 +137,37 @@ impl InitialProofArgs {
                     "installed enrollment requires manifest and independent template pin"
                 ),
             };
+        let mut known_fee_keys = self.captured_fee_history.clone();
+        if let Some(path) = &self.fee_history {
+            let history: FeeHistory =
+                serde_json::from_slice(&bounded_public_file(path, 16 * 1024)?)?;
+            anyhow::ensure!(
+                history.schema == "TOS-WALLET-V5R2-FEE-HISTORY-v1"
+                    && public_hash(&history.wallet)? == public_hash(&self.expected_wallet)?
+                    && !history.used_fee_public_key_hashes.is_empty()
+                    && history.used_fee_public_key_hashes.len() <= MAX_FEE_HISTORY,
+                "fee history identity or size mismatch"
+            );
+            for value in history.used_fee_public_key_hashes {
+                let key = public_hash(&value)?;
+                anyhow::ensure!(hex::encode(key) == value, "fee history hash must be canonical");
+                known_fee_keys.push(key);
+            }
+        }
+        anyhow::ensure!(
+            installed.is_none() || !known_fee_keys.is_empty(),
+            "installed enrollment requires retained fee history"
+        );
+        known_fee_keys.push(fee_key_hash(genesis.metadata())?);
+        if let Some(installed) = &installed {
+            known_fee_keys.push(fee_key_hash(installed.metadata())?);
+        }
+        known_fee_keys.sort_unstable();
+        known_fee_keys.dedup();
+        anyhow::ensure!(
+            known_fee_keys.len() <= MAX_FEE_HISTORY,
+            "fee history limit reached; retain history for recovery review"
+        );
         let config: ProofVerifierConfig =
             serde_json::from_slice(&bounded_public_file(&self.proof_config, 64 * 1024)?)?;
         anyhow::ensure!(
@@ -114,26 +181,171 @@ impl InitialProofArgs {
             successor: None,
             provider,
             max_age_seconds: self.max_age_seconds,
+            known_fee_keys,
         })
     }
     pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
         self.context()?.read(config_params).await
     }
-    pub(super) fn with_installed(&self, manifest: PathBuf, pin: String) -> Self {
+    pub(super) fn require_fee_history_capacity(&self) -> anyhow::Result<()> {
+        self.context()?.require_fee_history_capacity()
+    }
+    pub(super) fn retain_fee_history(&mut self, context: &InitialContext) -> anyhow::Result<()> {
+        self.captured_fee_history.extend_from_slice(&context.known_fee_keys);
+        self.captured_fee_history.sort_unstable();
+        self.captured_fee_history.dedup();
+        anyhow::ensure!(
+            self.captured_fee_history.len() <= MAX_FEE_HISTORY,
+            "fee history limit reached; retain history for recovery review"
+        );
+        Ok(())
+    }
+    pub(super) fn with_installed(&self, manifest: PathBuf, pin: String) -> anyhow::Result<Self> {
         let mut next = self.clone();
+        next.retain_fee_history(&self.context()?)?;
         next.installed_successor_manifest = Some(manifest);
         next.expected_installed_template_wallet = Some(pin);
-        next
+        Ok(next)
+    }
+
+    /// Freeze the public birth and installed enrollment before changing the
+    /// active signer. Neither the manifest nor the exported proof arguments
+    /// assert current authority; every restored command still reads live proof.
+    pub(super) fn installed_export(
+        &self,
+        context: &InitialContext,
+        directory: &std::path::Path,
+    ) -> anyhow::Result<(Self, Vec<(&'static str, Vec<u8>)>)> {
+        let (birth, birth_genesis) = InitialRecoveryManifest::parse_and_reconstruct(
+            &bounded_public_file(&self.recovery_manifest, MAX_MANIFEST_BYTES)?,
+            self.code.load()?,
+            public_hash(&self.expected_wallet)?,
+        )?;
+        let manifest = self
+            .installed_successor_manifest
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("installed enrollment is missing"))?;
+        let pin = self
+            .expected_installed_template_wallet
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("installed template pin is missing"))?;
+        let (installed, template) = InitialRecoveryManifest::parse_and_reconstruct(
+            &bounded_public_file(manifest, MAX_MANIFEST_BYTES)?,
+            self.code.load()?,
+            public_hash(pin)?,
+        )?;
+        let successor = SuccessorDeployment::new(template, public_hash(&self.expected_wallet)?)?;
+        let expected = context
+            .installed
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("cannot export a proposed route as installed"))?;
+        anyhow::ensure!(
+            birth_genesis.wallet_init().repr_hash() == context.genesis.wallet_init().repr_hash()
+                && successor.module_init().repr_hash() == expected.module_init().repr_hash()
+                && successor.metadata().repr_hash() == expected.metadata().repr_hash()
+                && successor.vault_init().repr_hash() == expected.vault_init().repr_hash(),
+            "enrollment changed during installed export"
+        );
+        let mut next = self.clone();
+        next.recovery_manifest = directory.join("recovery-manifest.json");
+        next.installed_successor_manifest =
+            Some(directory.join("installed-successor-manifest.json"));
+        next.code.wallet_code = directory.join("wallet-code.boc");
+        next.code.module_code = directory.join("module-code.boc");
+        next.code.vault_code = directory.join("vault-code.boc");
+        next.fee_history = Some(directory.join("fee-history.json"));
+        // The public file can be re-read, but cannot shrink this process's
+        // already observed history after another local actor edits it.
+        next.retain_fee_history(context)?;
+        // Reading the exact StateInit references retains the already pinned
+        // release code; an exported hash is never substituted for an input pin.
+        let mut files = vec![
+            ("recovery-manifest.json", birth.to_json()?),
+            ("installed-successor-manifest.json", installed.to_json()?),
+            (
+                "fee-history.json",
+                serde_json::to_vec_pretty(&FeeHistory {
+                    schema: "TOS-WALLET-V5R2-FEE-HISTORY-v1".into(),
+                    wallet: hex::encode(public_hash(&self.expected_wallet)?),
+                    used_fee_public_key_hashes: context
+                        .known_fee_keys
+                        .iter()
+                        .map(hex::encode)
+                        .collect(),
+                })?,
+            ),
+        ];
+        for (name, init) in [
+            ("wallet-code.boc", birth_genesis.wallet_init()),
+            ("module-code.boc", successor.module_init()),
+            ("vault-code.boc", successor.vault_init()),
+        ] {
+            let cell =
+                chain_block::SliceData::load_cell(init.clone())?.checked_drain_reference()?;
+            files.push((name, chain_block::write_boc(&cell)?));
+        }
+        Ok((next, files))
+    }
+
+    pub(super) fn proof_arguments(&self) -> anyhow::Result<Vec<String>> {
+        let mut args = vec![
+            "--recovery-manifest".into(),
+            absolute_path_argument(&self.recovery_manifest)?,
+            "--expected-wallet".into(),
+            self.expected_wallet.clone(),
+            "--wallet-code".into(),
+            absolute_path_argument(&self.code.wallet_code)?,
+            "--module-code".into(),
+            absolute_path_argument(&self.code.module_code)?,
+            "--vault-code".into(),
+            absolute_path_argument(&self.code.vault_code)?,
+            "--wallet-code-hash".into(),
+            self.code.wallet_code_hash.clone(),
+            "--module-code-hash".into(),
+            self.code.module_code_hash.clone(),
+            "--vault-code-hash".into(),
+            self.code.vault_code_hash.clone(),
+            "--proof-config".into(),
+            absolute_path_argument(&self.proof_config)?,
+            "--max-age-seconds".into(),
+            self.max_age_seconds.to_string(),
+        ];
+        match (&self.installed_successor_manifest, &self.expected_installed_template_wallet) {
+            (Some(manifest), Some(pin)) => args.extend([
+                "--installed-successor-manifest".into(),
+                absolute_path_argument(manifest)?,
+                "--expected-installed-template-wallet".into(),
+                pin.clone(),
+            ]),
+            (None, None) => (),
+            _ => {
+                anyhow::bail!("installed enrollment requires manifest and independent template pin")
+            }
+        }
+        if let Some(history) = &self.fee_history {
+            args.extend(["--fee-history".into(), absolute_path_argument(history)?]);
+        }
+        Ok(args)
     }
 }
 
 impl InitialContext {
+    fn require_fee_history_capacity(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.known_fee_keys.len() < MAX_FEE_HISTORY,
+            "fee history has no capacity for another route"
+        );
+        Ok(())
+    }
     pub(super) fn with_successor(mut self, successor: SuccessorDeployment) -> Self {
         self.successor = Some(successor);
         self
     }
     pub(super) fn successor(&self) -> Option<&SuccessorDeployment> {
         self.successor.as_ref()
+    }
+    pub(super) fn installed(&self) -> Option<&SuccessorDeployment> {
+        self.installed.as_ref()
     }
     pub(super) fn pop_enrollment(&self) -> Option<&SuccessorDeployment> {
         self.successor.as_ref().or(self.installed.as_ref())
@@ -203,6 +415,29 @@ impl InitialContext {
         let address = format!("0:{}", self.fee_init().repr_hash().to_hex_string()).parse()?;
         self.provider.read_account(&address, &ReadPolicy::Historical(checkpoint)).await
     }
+    pub(super) async fn fee_at_live_wallet(
+        &self,
+        wallet: &ProvenAccountState,
+    ) -> anyhow::Result<(ProvenAccountState, ProvenFeeVault)> {
+        let account = self.fee_at(wallet.evidence().checkpoint.clone()).await?;
+        let view = match self.pop_enrollment() {
+            Some(successor) => ProvenFeeVault::bind_successor_at_live_checkpoint(
+                &account,
+                wallet,
+                successor,
+                now()?,
+                self.max_age_seconds,
+            )?,
+            None => ProvenFeeVault::bind_at_live_checkpoint(
+                &account,
+                wallet,
+                &self.genesis,
+                now()?,
+                self.max_age_seconds,
+            )?,
+        };
+        Ok((account, view))
+    }
     pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
         let genesis = &self.genesis;
         let provider = &self.provider;
@@ -244,14 +479,17 @@ impl InitialContext {
 
 impl PqInspectInitialCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
-        let InitialProof { wallet, module, view, observed_at } = self.proof.read(&[]).await?;
+        let context = self.proof.context()?;
+        let InitialProof { wallet, module, view, observed_at } = context.read(&[]).await?;
         let wallet_address = &wallet.evidence().account.address;
         let module_address = &module.evidence().account.address;
         let checkpoint = &wallet.evidence().checkpoint;
         println!(
             "{}",
             serde_json::json!({
-                "status": "initial_wallet_pair_proven",
+                "status": if context.installed().is_some() {
+                    "installed_wallet_pair_proven"
+                } else { "initial_wallet_pair_proven" },
                 "observed_at": observed_at,
                 "checkpoint": {"seqno": checkpoint.seqno,
                     "root_hash": checkpoint.root_hash, "file_hash": checkpoint.file_hash},
