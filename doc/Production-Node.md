@@ -209,14 +209,25 @@ The GC floor advances only while **all** of the following hold:
 - it is behind the shard client;
 - the state at the floor is older than `--state-ttl`.
 
-A persistent state is written only at the first key block after each 2^17 s
-(about 36.4 h) boundary. The serializer then waits a random 0–6 h before
-writing it, and the floor cannot pass it meanwhile.
+The serializer walks every masterchain block and normally keeps up. It pauses
+only when a key block starts a new 2^17 s (about 36.4 h) period. Then it waits a
+random 0–6 h before writing that persistent state, and the floor cannot pass
+it meanwhile. On the local network, with a key block every ten minutes, the
+floor ran about `state-ttl` behind the head, and usage levelled off within
+hours.
 
 On production elections (`elected_for` 65,536 s), key blocks come from set
-rotations about every 18 h, plus configuration changes. **Expect states and
-archives to be retained for up to roughly 2 days beyond the TTLs**, and plan
-disk for that lag, not for the TTL alone.
+rotations about every 18 h, plus configuration changes. The floor can
+therefore stop for up to about 18 h behind the last key block, plus up to 6 h
+at a persistent-state boundary. **Plan disk for the TTLs plus about one day**,
+not for the TTLs alone.
+
+**Short retention also removes old key blocks.** A lite client that proves its
+way forward from the zero state needs every key block since Genesis. Once those
+blocks are collected, a newly started client fails with
+`LITE_SERVER_NOTREADY: block handle not in db`; this was observed on the local
+network. Every client therefore needs a recent trusted `init_block`. Section 8
+covers how the global config provides it.
 
 ### 6.2 Recommended retention per role
 
@@ -365,6 +376,12 @@ Notes on each choice:
    - the zero-state root hash;
    - the file hash;
    - the global ID (1).
+
+   The release must also carry a recent key block as `init_block`, refreshed
+   at least as often as the shortest archive retention on the network's
+   liteservers. Without it, new clients and new nodes cannot prove their way
+   forward once the early key blocks are collected (section 6.1). Publishing
+   that refresh is part of gap G7.
 
    The Docker default `https://tos.network/global-config.json` is
    not authenticated by anything in the repository (gap G7).
