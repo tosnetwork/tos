@@ -113,9 +113,10 @@ be deleted.
 Every validator-set session a validator takes part in opens its own RocksDB
 directory under `<db>/consensus/`. A new session starts roughly every 250
 seconds per validated shard and on every key block, so these directories add
-up to gigabytes per day. When a session retires, the engine closes its
-database and writes a durable cleanup record; the directory is deleted later,
-once all of the following hold against the durable GC masterchain block:
+up to gigabytes per day. When a session retires, the engine first writes a
+durable cleanup record (in the same synced write as the retirement itself) and
+only then stops the group and closes its database. The directory is deleted
+later, once all of the following hold against the durable GC masterchain block:
 
 - the block at which the session retired is an ancestor of the GC block;
 - the GC state shows the session's shard on a strictly newer catchain, so the
@@ -136,10 +137,17 @@ erased.
 Cleanup is on by default; the engine logs `validator consensus cleanup:
 enabled` at start-up, and refuses to start if both flags are given. Running a
 validator with `--disable-validator-consensus-cleanup` grows its disk without
-bound; records accumulate meanwhile and are reclaimed once the node is
-restarted without the flag. Each deletion is logged as `VALCLEANUP reserve`,
-`VALCLEANUP delete_done ... confirmed_gone=1` and `VALCLEANUP erase_ack`; a
-`confirmed_gone=0` warning means a delete failed and will be retried.
+bound; records accumulate meanwhile. After a restart without the flag the
+engine reads them back a bounded page at a time (at most 4096 resident at once)
+and reclaims them over many bounded passes, each only once it passes the
+conditions above, so a large backlog drains gradually rather than at start-up.
+
+Each deletion is logged as `VALCLEANUP reserve`, `VALCLEANUP delete_done ...
+confirmed_gone=1` and `VALCLEANUP erase_ack`. These lines are logged at INFO,
+which the default verbosity includes; at a lower verbosity (`-v 2` or less)
+they are not written, so their absence proves nothing about whether cleanup
+runs. A failed delete is logged as a `VALCLEANUP delete_done ...
+confirmed_gone=0` warning at any verbosity and is retried.
 `--test-consensus-cleanup-crash-before-erase` is a test-only fault injection
 that makes the engine exit on purpose; never set it on a real node.
 

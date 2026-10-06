@@ -2798,31 +2798,49 @@ void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::str
     }
   }
   sweep_destroyed_consensus_dbs();
-  // Load the validator-group cleanup records BEFORE finishing startup, so they are
-  // in the adapter before update_shards can create any group. This is the startup
-  // barrier: on_group_created must never precede on_loaded_at_startup, or a load
-  // could overwrite a live group's state.
-  td::actor::send_closure(
-      db_, &Db::get_pending_validator_consensus_db_cleanup,
-      [SelfId = actor_id(this)](td::Result<std::vector<consensus::PendingValidatorConsensusDbCleanup>> R) {
-        R.ensure();
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup,
-                                R.move_as_ok());
-      });
+  // Load the first page of validator-group cleanup records BEFORE finishing
+  // startup, so they are in the adapter before update_shards can create any group.
+  // Later pages are admitted under the same insert-if-absent rule, which also
+  // refuses a live session, so they need no barrier.
+  request_validator_cleanup_page(/*at_startup=*/true);
 }
 
-void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup(
-    std::vector<consensus::PendingValidatorConsensusDbCleanup> records) {
-  // Fresh process, and this runs before any group is created (startup barrier), so
-  // nothing owns these directories -- closure is established by exclusive ownership,
-  // not an invented ack. Load each record into the cleanup adapter, attempt a
-  // cleanup pass (a no-op when cleanup is disabled), and only THEN finish
-  // startup (which triggers group creation via update_shards).
-  for (auto &record : records) {
-    validator_cleanup_manager_.on_loaded_at_startup(std::move(record));
+void ValidatorManagerImpl::request_validator_cleanup_page(bool at_startup) {
+  auto request = validator_cleanup_manager_.next_page_request();
+  if (!request) {
+    if (at_startup) {
+      try_validator_consensus_db_cleanup();
+      finish_start_up().start().detach_ensure();
+    }
+    return;
   }
+  auto after_key = request->after_key;
+  auto max_keys = request->max_keys;
+  td::actor::send_closure(db_, &Db::get_pending_validator_consensus_db_cleanup_page, std::move(after_key), max_keys,
+                          [SelfId = actor_id(this), request = std::move(*request),
+                           at_startup](td::Result<consensus::ValidatorCleanupPage> R) mutable {
+                            td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_validator_cleanup_page,
+                                                    std::move(request), std::move(R), at_startup);
+                          });
+}
+
+void ValidatorManagerImpl::got_validator_cleanup_page(consensus::ValidatorCleanupPageRequest request,
+                                                      td::Result<consensus::ValidatorCleanupPage> R, bool at_startup) {
+  if (R.is_error()) {
+    // The records stay on disk; a later pass asks for the page again.
+    LOG(ERROR) << "cannot read validator consensus cleanup records: " << R.move_as_error();
+    validator_cleanup_manager_.on_page_failed(request);
+  } else {
+    // At startup no group exists yet, so nothing owns these directories -- closure is
+    // established by exclusive ownership, not an invented ack.
+    validator_cleanup_manager_.on_page_loaded(request, R.move_as_ok());
+  }
+  // A cleanup pass (a no-op when cleanup is disabled) also asks for the next page
+  // when the window has room and the sweep is not finished.
   try_validator_consensus_db_cleanup();
-  finish_start_up().start().detach_ensure();
+  if (at_startup) {
+    finish_start_up().start().detach_ensure();
+  }
 }
 
 void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
@@ -2904,11 +2922,15 @@ void ValidatorManagerImpl::consensus_db_closed(ValidatorSessionId session_id, td
 void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
   // On by default: without it every retired session's directory stays on disk forever.
   // An operator can keep them (e.g. for forensics) with
-  // --disable-validator-consensus-cleanup; durable records keep accumulating and are
-  // reclaimed by the first pass after cleanup is enabled again.
+  // --disable-validator-consensus-cleanup; durable records keep accumulating, and after
+  // cleanup is enabled again they are paged in and reclaimed over many bounded passes,
+  // each record only once it passes the eligibility gate.
   if (!opts_->get_validator_consensus_cleanup_enabled()) {
     return;
   }
+  // Keep the bounded resident window fed from the durable backlog (a no-op unless the
+  // window has room or is stalled, and records may remain on disk).
+  request_validator_cleanup_page(/*at_startup=*/false);
   if (!gc_masterchain_handle_ || gc_masterchain_state_.is_null()) {
     return;  // no durable GC floor yet -> nothing is provably obsolete
   }

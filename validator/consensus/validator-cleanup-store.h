@@ -72,29 +72,69 @@ inline void erase_validator_cleanup_record(td::KeyValue& kv, const ValidatorSess
   kv.commit_write_batch().ensure();
 }
 
-// Load every record via a bracketed prefix range scan. A value that fails the
-// strict decode is dropped (a lost record can at worst leak an orphan directory,
-// never authorize deleting the wrong one); one bad record does not abort the scan.
+// Read at most `max_keys` record keys strictly after `after_key` (from the start
+// of the range when it is empty), via a bracketed prefix range scan. A value that
+// fails the strict decode is dropped (a lost record can at worst leak an orphan
+// directory, never authorize deleting the wrong one); one bad record does not abort
+// the scan, but it does count toward `max_keys`, so a page is bounded by the keys
+// it examines and not only by the records it returns.
+inline ValidatorCleanupPage load_validator_cleanup_page(td::KeyValueReader& kv, const std::string& after_key,
+                                                        size_t max_keys) {
+  ValidatorCleanupPage page;
+  if (max_keys == 0) {
+    return page;
+  }
+  auto end = validator_cleanup_key_range_end();
+  // The smallest key strictly greater than after_key.
+  std::string begin = after_key.empty() ? validator_cleanup_key_prefix().str() : after_key + '\0';
+  size_t examined = 0;
+  bool stopped = false;
+  auto status =
+      kv.for_each_in_range(td::Slice{begin}, td::Slice{end}, [&](td::Slice key, td::Slice value) -> td::Status {
+        if (examined == max_keys) {
+          stopped = true;
+          return td::Status::Error("page full");  // stops the scan; not a failure
+        }
+        ++examined;
+        page.last_key = key.str();
+        auto decoded = decode_validator_cleanup_record(value);
+        if (!decoded) {
+          return td::Status::OK();
+        }
+        // The value's session id is checked against its directory name by decode,
+        // but the record must ALSO sit under its own key. A record found under a
+        // different session's key is inconsistent persistence: drop it, so an
+        // erase-by-session (which targets validator_cleanup_key(session_id)) can
+        // never leave a mismatched record behind to reappear on the next load.
+        if (key != td::Slice{validator_cleanup_key(decoded.value().session_id)}) {
+          return td::Status::OK();
+        }
+        page.records.push_back(std::move(decoded.value()));
+        return td::Status::OK();
+      });
+  if (!stopped) {
+    status.ensure();
+    page.reached_end = true;
+  }
+  return page;
+}
+
+// Load every record, page by page. For offline tools and tests only: the node
+// pages the backlog through ValidatorCleanupManager so its resident set stays
+// bounded however many records a long period with cleanup disabled left behind.
 inline std::vector<PendingValidatorConsensusDbCleanup> load_validator_cleanup_records(td::KeyValueReader& kv) {
   std::vector<PendingValidatorConsensusDbCleanup> records;
-  auto end = validator_cleanup_key_range_end();
-  kv.for_each_in_range(validator_cleanup_key_prefix(), td::Slice{end}, [&records](td::Slice key, td::Slice value) {
-      auto decoded = decode_validator_cleanup_record(value);
-      if (!decoded) {
-        return td::Status::OK();
-      }
-      // The value's session id is checked against its directory name by decode,
-      // but the record must ALSO sit under its own key. A record found under a
-      // different session's key is inconsistent persistence: drop it, so an
-      // erase-by-session (which targets validator_cleanup_key(session_id)) can
-      // never leave a mismatched record behind to reappear on the next load.
-      if (key != td::Slice{validator_cleanup_key(decoded.value().session_id)}) {
-        return td::Status::OK();
-      }
-      records.push_back(std::move(decoded.value()));
-      return td::Status::OK();
-    }).ensure();
-  return records;
+  std::string cursor;
+  while (true) {
+    auto page = load_validator_cleanup_page(kv, cursor, 1024);
+    for (auto& record : page.records) {
+      records.push_back(std::move(record));
+    }
+    if (page.reached_end) {
+      return records;
+    }
+    cursor = std::move(page.last_key);
+  }
 }
 
 // True only when a stat of `full` confirms it is absent (POSIX ENOENT / Windows

@@ -24,6 +24,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "td/utils/Slice.h"
 #include "tos/tos-types.h"
@@ -225,6 +226,15 @@ inline std::string validator_cleanup_key_range_end() {
   end.back() = static_cast<char>(static_cast<unsigned char>(end.back()) + 1);
   return end;
 }
+
+// One bounded slice of the durable records, in key order. `last_key` is the last
+// key the read examined (valid or not), so the next page resumes strictly after
+// it; `reached_end` is true when the read ran off the end of the record range.
+struct ValidatorCleanupPage {
+  std::vector<PendingValidatorConsensusDbCleanup> records;
+  std::string last_key;
+  bool reached_end = false;
+};
 
 // Deterministic, architecture-independent (little-endian) encoding of one record.
 // The format is versioned so a future reader can reject or migrate old records

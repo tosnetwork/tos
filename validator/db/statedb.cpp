@@ -238,9 +238,9 @@ void StateDb::erase_pending_validator_consensus_db_cleanup(ValidatorSessionId se
   promise.set_value(td::Unit());
 }
 
-void StateDb::get_pending_validator_consensus_db_cleanup(
-    td::Promise<std::vector<consensus::PendingValidatorConsensusDbCleanup>> promise) {
-  promise.set_value(consensus::load_validator_cleanup_records(*kv_));
+void StateDb::get_pending_validator_consensus_db_cleanup_page(std::string after_key, size_t max_keys,
+                                                              td::Promise<consensus::ValidatorCleanupPage> promise) {
+  promise.set_value(consensus::load_validator_cleanup_page(*kv_, after_key, max_keys));
 }
 
 void StateDb::update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) {

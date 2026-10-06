@@ -21,18 +21,20 @@
 // store.h). Disabling the production set/erase/scan fails these tests. Pins the
 // scan bounds with valid, decodable records placed just outside them, and the
 // decode-skip of malformed values.
-#include "validator/consensus/validator-cleanup-store.h"
+#include <algorithm>
+#include <set>
+#include <tuple>
+#include <vector>
 
 #include "td/db/RocksDb.h"
 #include "td/utils/Random.h"
 #include "td/utils/Slice.h"
 #include "td/utils/filesystem.h"
-#include "td/utils/port/path.h"
 #include "td/utils/port/Stat.h"
+#include "td/utils/port/path.h"
 #include "td/utils/tests.h"
-
-#include <set>
-#include <vector>
+#include "validator/consensus/validator-cleanup-manager.h"
+#include "validator/consensus/validator-cleanup-store.h"
 
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -450,6 +452,180 @@ TEST(ValidatorCleanupStateDb, store_and_erase_survive_reopen) {
   {
     auto kv = td::RocksDb::open(path).move_as_ok();
     ASSERT_TRUE(load_validator_cleanup_records(kv).empty());
+  }
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+// Drives the production adapter over a real RocksDb exactly as the manager does:
+// page in when asked, run a bounded pass, delete and durably erase what it reserved.
+// Records the largest resident set seen. Stops when a round neither pages nor
+// reserves anything.
+struct BacklogDrive {
+  td::RocksDb& kv;
+  ValidatorCleanupManager& m;
+  CleanupAncestorOfGcFn ancestor;
+  size_t max_resident = 0;
+  size_t pages = 0;
+
+  void run() {
+    auto gc = make_checkpoint(500);
+    auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+      return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+    };
+    auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+    for (int round = 0; round < 10000; round++) {
+      bool progressed = false;
+      if (auto request = m.next_page_request()) {
+        m.on_page_loaded(*request, load_validator_cleanup_page(kv, request->after_key, request->max_keys));
+        ++pages;
+        progressed = true;
+      }
+      max_resident = std::max(max_resident, m.pending_count());
+      auto reserved = m.begin_eligible_deletes(gc, ancestor, cc_past, not_live, 16, 256, 64);
+      max_resident = std::max(max_resident, m.pending_count());
+      std::vector<std::tuple<tos::ValidatorSessionId, uint64_t, uint64_t>> erased;
+      for (const auto& item : reserved) {
+        m.on_delete_completed(item.record.session_id, item.generation, item.attempt_id, /*confirmed_gone=*/true,
+                              [&](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) {
+                                erase_validator_cleanup_record(kv, s);
+                                erased.emplace_back(s, g, a);
+                              });
+        progressed = true;
+      }
+      for (const auto& [s, g, a] : erased) {
+        m.on_erase_acknowledged(s, g, a);
+      }
+      if (!progressed) {
+        return;
+      }
+    }
+    LOG(FATAL) << "backlog drive did not settle";
+  }
+};
+
+}  // namespace
+
+// A durable backlog far larger than the resident window (what a long run with cleanup
+// disabled leaves behind) is fully reclaimed across passes, and the resident set never
+// exceeds the window. Once everything is gone the adapter stops asking for pages.
+TEST(ValidatorCleanupStateDb, paged_backlog_is_reclaimed_within_the_resident_bound) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    const int kRecords = 200;
+    for (int i = 0; i < kRecords; i++) {
+      store_validator_cleanup_record(kv, make_record(static_cast<unsigned char>(i), 100));
+    }
+    ValidatorCleanupManager m(16);
+    BacklogDrive drive{kv, m, [](const tos::BlockIdExt&) { return true; }};
+    drive.run();
+    ASSERT_TRUE(load_validator_cleanup_records(kv).empty());
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
+    ASSERT_TRUE(drive.max_resident <= m.resident_limit());
+    ASSERT_TRUE(drive.pages > 1);  // more than one page was needed
+    ASSERT_TRUE(!m.next_page_request().has_value());
+  }
+  td::rmrf(path).ignore();
+}
+
+// A window filled with records that are not yet eligible must not hide eligible
+// records further along the store: a stalled window rotates. Every eligible record is
+// reclaimed, every ineligible one keeps its durable record, and the bound holds.
+TEST(ValidatorCleanupStateDb, stalled_window_rotates_to_reach_eligible_records) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    // Seeds 0..59 retire after the GC block (ineligible); seeds 60..99 before it.
+    // Session ids grow with the seed, so the ineligible records come first in key order
+    // and alone fill the first windows.
+    for (int i = 0; i < 100; i++) {
+      store_validator_cleanup_record(kv, make_record(static_cast<unsigned char>(i), i < 60 ? 900 : 100));
+    }
+    ValidatorCleanupManager m(16);
+    BacklogDrive drive{kv, m, [](const tos::BlockIdExt& r) { return r.seqno() <= 500; }};
+    drive.run();
+    auto left = load_validator_cleanup_records(kv);
+    ASSERT_EQ(left.size(), static_cast<size_t>(60));
+    for (const auto& r : left) {
+      ASSERT_EQ(r.retirement_checkpoint.seqno(), static_cast<tos::BlockSeqno>(900));
+    }
+    ASSERT_TRUE(drive.max_resident <= m.resident_limit());
+  }
+  td::rmrf(path).ignore();
+}
+
+// Runtime retirements keep the window bounded too: once a retirement's close is
+// confirmed it may be evicted (its record is durable), so with cleanup never run the
+// resident set stays within the limit plus the one retirement still awaiting its close.
+TEST(ValidatorCleanupStateDb, runtime_retirements_stay_within_the_resident_bound) {
+  ValidatorCleanupManager m(8);
+  size_t max_resident = 0;
+  for (int i = 0; i < 100; i++) {
+    auto rec = make_record(static_cast<unsigned char>(i), 100);
+    m.on_group_created(rec.session_id);
+    auto gen = m.on_group_retired(rec);
+    max_resident = std::max(max_resident, m.pending_count());
+    m.on_close_confirmed(rec.session_id, gen);
+  }
+  ASSERT_TRUE(max_resident <= m.resident_limit() + 1);
+  ASSERT_TRUE(m.pending_count() <= m.resident_limit());
+}
+
+// A page read before a retirement may carry the record that retirement superseded; it
+// is discarded and read again from the same cursor rather than admitted.
+TEST(ValidatorCleanupStateDb, page_racing_a_retirement_is_discarded) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    store_validator_cleanup_record(kv, make_record(1, 100));
+    ValidatorCleanupManager m(16);
+    auto request = m.next_page_request();
+    ASSERT_TRUE(request.has_value());
+    auto page = load_validator_cleanup_page(kv, request->after_key, request->max_keys);
+    auto other = make_record(2, 100);
+    m.on_group_created(other.session_id);
+    m.on_group_retired(other);  // a retirement lands while the page is in flight
+    ASSERT_EQ(m.on_page_loaded(*request, std::move(page)), static_cast<size_t>(0));
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));  // only the runtime retirement
+    auto again = m.next_page_request();
+    ASSERT_TRUE(again.has_value());
+    ASSERT_TRUE(again->after_key == request->after_key);
+    ASSERT_EQ(m.on_page_loaded(*again, load_validator_cleanup_page(kv, again->after_key, again->max_keys)),
+              static_cast<size_t>(1));
+  }
+  td::rmrf(path).ignore();
+}
+
+// The page read itself: bounded by keys examined (malformed values included), resumes
+// strictly after the last key, and reports the end of the range.
+TEST(ValidatorCleanupStateDb, page_read_is_bounded_and_resumable) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (int i = 0; i < 5; i++) {
+      store_validator_cleanup_record(kv, make_record(static_cast<unsigned char>(i), 100));
+    }
+    put_raw(kv, td::Slice{validator_cleanup_key(make_session_id(3)) + "x"}, td::Slice{"not-a-record"});
+    std::set<std::string> seen;
+    std::string cursor;
+    size_t pages = 0;
+    while (true) {
+      auto page = load_validator_cleanup_page(kv, cursor, 2);
+      ++pages;
+      ASSERT_TRUE(page.records.size() <= 2);
+      for (const auto& r : page.records) {
+        ASSERT_TRUE(seen.insert(r.session_id.to_hex()).second);  // never returned twice
+      }
+      if (page.reached_end) {
+        break;
+      }
+      cursor = page.last_key;
+    }
+    ASSERT_EQ(seen.size(), static_cast<size_t>(5));
+    ASSERT_TRUE(pages >= 3);  // six keys, two per page
+    ASSERT_TRUE(load_validator_cleanup_page(kv, cursor, 0).records.empty());
   }
   td::rmrf(path).ignore();
 }

@@ -403,10 +403,12 @@ class ValidatorElectionRehearsal:
         self.pool_code: Cell | None = None
         self.controllers: list[ControllerFixture] = []
         self.pools: list[PoolFixture] = []
-        # ACCEPTANCE-ONLY opt-in: arm the gated validator consensus-DB cleanup on every
-        # validator engine and shrink state/archive TTLs so the GC floor can advance
-        # once the election produces a post-genesis key block. Default off leaves the
-        # rehearsal's behaviour byte-for-byte unchanged.
+        # Validator consensus-DB cleanup is on in every engine by default; this harness
+        # never passes --disable-validator-consensus-cleanup. The opt-in only passes
+        # --enable-validator-consensus-cleanup explicitly and shrinks the state/archive
+        # TTLs so the GC floor -- and with it deletion -- advances within the run once
+        # an election produces a post-genesis key block. Default off keeps the engines'
+        # default TTLs, under which the floor does not move within a rehearsal.
         self.enable_consensus_cleanup = enable_consensus_cleanup
         self.consensus_cleanup_state_ttl = consensus_cleanup_state_ttl
         self.consensus_cleanup_archive_ttl = consensus_cleanup_archive_ttl
@@ -2492,8 +2494,12 @@ class ValidatorElectionRehearsal:
             predicate=lambda seqno: seqno >= downtime_target,
         )
 
-        # Restart with cleanup armed (validator_start_options carries the flag when enabled).
-        await self.nodes[node_index].run(self.validator_start_options(node_index))
+        # Restart with the same engine options; cleanup is in effect unless they disable it.
+        start_options = self.validator_start_options(node_index)
+        consensus_cleanup_in_effect = (
+            "--disable-validator-consensus-cleanup" not in start_options.args
+        )
+        await self.nodes[node_index].run(start_options)
         self.record_f01_process(node_index)
 
         # SYNC PROOF: the target's own view must reach the tip its peers reached while it was
@@ -2555,7 +2561,7 @@ class ValidatorElectionRehearsal:
         block_ids_agree = agree_fresh and agree_early
 
         # The recovered node's post-restart log (truncated to this run) must carry no fault;
-        # record whether the armed cleanup worker ran a pass on it as supporting evidence.
+        # record whether the cleanup worker ran a pass on it as supporting evidence.
         log_text = self.nodes[node_index].log_path.read_text(errors="replace")
         cleanup_passes = len(re.findall(r"VALCLEANUP pass ", log_text))
         fatals = [ln[:400] for ln in log_text.splitlines() if _FATAL_RE.search(ln)]
@@ -2573,7 +2579,10 @@ class ValidatorElectionRehearsal:
             "does_not_prove": "re-participation in consensus block signing (needs signature/quorum evidence)",
             "post_cleanup_recovery": post_cleanup_recovery,
             "node": node_index + 1,
-            "cleanup_armed": self.enable_consensus_cleanup,
+            # What the restarted engine actually ran with: cleanup is the engine default,
+            # and the harness flag only shortens the GC TTLs.
+            "consensus_cleanup_in_effect": consensus_cleanup_in_effect,
+            "short_gc_ttls": self.enable_consensus_cleanup,
             "pre_restart_erase_acks": pre_restart_erase_acks,
             "network_tip_at_stop": tip_at_stop,
             "target_tip_at_stop": target_before,

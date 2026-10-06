@@ -314,10 +314,24 @@ class HarnessSession {
                               records, promise.wrap([](td::Unit) { return td::Unit{}; }));
     });
   }
+  // Every durable record, read through the production paged Db call with a small
+  // page so a multi-page read is exercised.
   std::vector<PendingValidatorConsensusDbCleanup> load_pending() {
-    return ask<std::vector<PendingValidatorConsensusDbCleanup>>([&](auto promise) {
-      td::actor::send_closure(db_.get(), &Db::get_pending_validator_consensus_db_cleanup, std::move(promise));
-    });
+    std::vector<PendingValidatorConsensusDbCleanup> all;
+    std::string cursor;
+    while (true) {
+      auto page = ask<ValidatorCleanupPage>([&](auto promise) {
+        td::actor::send_closure(db_.get(), &Db::get_pending_validator_consensus_db_cleanup_page, cursor,
+                                static_cast<size_t>(2), std::move(promise));
+      });
+      for (auto& record : page.records) {
+        all.push_back(std::move(record));
+      }
+      if (page.reached_end) {
+        return all;
+      }
+      cursor = page.last_key;
+    }
   }
   void load_startup_record(PendingValidatorConsensusDbCleanup record) {
     run_in_ctx([&] { td::actor::send_closure(harness_.get(), &CleanupHarness::load_startup_record, record); });

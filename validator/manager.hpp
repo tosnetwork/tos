@@ -309,7 +309,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   // plus multiple observers).
   std::set<std::string> pending_consensus_db_cleanup_;
 
-  // Validator-group consensus-DB cleanup adapter. Owns the durable cleanup records,
+  // Validator-group consensus-DB cleanup adapter. Holds a bounded resident window of
+  // the durable cleanup records (paged in by request_validator_cleanup_page),
   // per-incarnation generations, closure tracking, and the in-flight-delete
   // reservation. Fed by the group lifecycle events below and driven by
   // try_validator_consensus_db_cleanup(), which deletes only when the runtime option
@@ -681,7 +682,12 @@ class ValidatorManagerImpl : public ValidatorManager {
   void started(ValidatorManagerInitResult result);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
-  void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);
+  // Pages the durable validator cleanup records into validator_cleanup_manager_'s
+  // bounded resident window. At startup the first page is admitted before group
+  // creation, then startup finishes; later pages are read when the adapter asks.
+  void request_validator_cleanup_page(bool at_startup);
+  void got_validator_cleanup_page(consensus::ValidatorCleanupPageRequest request,
+                                  td::Result<consensus::ValidatorCleanupPage> R, bool at_startup);
   // Called by a validator group once it has confirmed its own consensus
   // directory is deleted, so the cleanup queue is pruned during normal uptime
   // (not only at the next startup sweep).

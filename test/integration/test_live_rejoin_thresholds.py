@@ -83,10 +83,13 @@ class Fixture:
     """A `self` for the real methods: real verify_live_rejoin / _node_mc_seqno bound
     below, everything they reach is a double."""
 
-    def __init__(self, name, ref_tips, target_tips, *, armed=True, log="", restart=True, fork=False, fork_after=None):
+    def __init__(
+        self, name, ref_tips, target_tips, *, armed=True, disabled=False, log="", restart=True, fork=False, fork_after=None
+    ):
         self.run_dir = Path(tempfile.mkdtemp(prefix=f"rejoin_{name}_"))
         self.experiment = SimpleNamespace(rpc_addresses=[f"127.0.0.1:{8111 + i}" for i in range(4)])
         self.enable_consensus_cleanup = armed
+        self.disable_consensus_cleanup = disabled
         # Live rejoin is measured in experiment mode, which never runs the full PQ
         # launch gate; the real methods branch on this.
         self.pq_full = False
@@ -136,7 +139,10 @@ class Fixture:
         return self._reference.next()
 
     def validator_start_options(self, index):
-        return {"index": index, "cleanup": self.enable_consensus_cleanup}
+        args = ("--enable-validator-consensus-cleanup",) if self.enable_consensus_cleanup else ()
+        if self.disable_consensus_cleanup:
+            args += ("--disable-validator-consensus-cleanup",)
+        return SimpleNamespace(index=index, args=args)
 
     def event(self, name, **fields):
         self.events.append({"name": name, **fields})
@@ -163,8 +169,12 @@ Fixture._node_mc_block_id = REAL._node_mc_block_id
 Fixture.record_f01_process = REAL.record_f01_process
 
 
-async def _run(name, ref_tips, target_tips, *, armed=True, log="", restart=True, fork=False, fork_after=None):
-    fixture = Fixture(name, ref_tips, target_tips, armed=armed, log=log, restart=restart, fork=fork, fork_after=fork_after)
+async def _run(
+    name, ref_tips, target_tips, *, armed=True, disabled=False, log="", restart=True, fork=False, fork_after=None
+):
+    fixture = Fixture(
+        name, ref_tips, target_tips, armed=armed, disabled=disabled, log=log, restart=restart, fork=fork, fork_after=fork_after
+    )
     VESTAGE.json_rpc_call = fixture.rpc
     try:
         result = await fixture.verify_live_rejoin()
@@ -213,14 +223,25 @@ async def main() -> int:
         f"{outcome}: {res.get('error', res)}",
     )
 
-    # 4/5. Cleanup off / armed-but-idle: generic sync PASSES but post-cleanup NOT_EXERCISED.
-    for name, armed in (("cleanup_disabled_and_never_runs", False), ("cleanup_armed_but_never_runs", True)):
-        outcome, res = await _run(name, [27, 33, 49], [27, 35, 55], armed=armed, log="")
+    # 4/5/6. Cleanup idle under default TTLs, under short TTLs, or disabled outright: generic
+    # sync PASSES but post-cleanup NOT_EXERCISED, and the report states what the restarted
+    # engine actually ran with -- cleanup is the engine default unless it was disabled.
+    for name, armed, disabled in (
+        ("default_ttls_and_never_runs", False, False),
+        ("short_ttls_but_never_runs", True, False),
+        ("cleanup_disabled_and_never_runs", False, True),
+    ):
+        outcome, res = await _run(name, [27, 33, 49], [27, 35, 55], armed=armed, disabled=disabled, log="")
         check(f"{name} sync passes", outcome == "passed", outcome)
         check(
             f"{name} post_cleanup NOT_EXERCISED",
             res.get("post_cleanup_recovery") == "NOT_EXERCISED",
             res.get("post_cleanup_recovery"),
+        )
+        check(
+            f"{name} reports cleanup in effect = {not disabled}",
+            res.get("consensus_cleanup_in_effect") is (not disabled) and res.get("short_gc_ttls") is armed,
+            (res.get("consensus_cleanup_in_effect"), res.get("short_gc_ttls")),
         )
 
     # 6. Post-cleanup recovery IS asserted when a real durable erase preceded the restart.

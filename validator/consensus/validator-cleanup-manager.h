@@ -18,10 +18,12 @@
 */
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <map>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "validator/consensus/validator-cleanup.h"
@@ -34,6 +36,16 @@
 // ValidatorManager forwards group lifecycle events here and supplies the GC
 // oracles, a live-query, an (async) deleter, and a durable erase. Must be confined
 // to the manager's actor thread.
+//
+// Resident set. The durable store can hold any number of records (a node that ran
+// with cleanup disabled keeps one per retired session). Only a bounded window of
+// them is resident here: the caller pages the store in key order on request
+// (next_page_request / on_page_loaded) and the adapter keeps at most
+// resident_limit() entries, evicting only closed, not-in-flight entries -- whose
+// records are durable, so nothing that authorizes a deletion is ever lost. A
+// runtime retirement is always admitted (its closure must be tracked), so the only
+// excess over the limit is retirements still awaiting their close and reservations
+// still in flight.
 namespace tos::validator::consensus {
 
 // A record reserved for deletion. The caller threads BOTH tokens back through
@@ -47,8 +59,22 @@ struct ReservedValidatorDelete {
   uint64_t attempt_id = 0;
 };
 
+// A request for the next page of durable records: read at most `max_keys` keys
+// strictly after `after_key` and hand the result back with the same `token`.
+struct ValidatorCleanupPageRequest {
+  std::string after_key;
+  size_t max_keys = 0;
+  uint64_t token = 0;
+};
+
 class ValidatorCleanupManager {
  public:
+  static constexpr size_t kDefaultResidentLimit = 4096;
+
+  ValidatorCleanupManager() = default;
+  explicit ValidatorCleanupManager(size_t resident_limit) : resident_limit_(std::max<size_t>(resident_limit, 1)) {
+  }
+
   // Records loaded from durable storage at a fresh startup. Before any group is
   // created in this process nothing owns the directory, so the retiring actor is
   // effectively closed -- closure is established by the fresh process + exclusive
@@ -64,12 +90,118 @@ class ValidatorCleanupManager {
   // incarnation and replaced or cleaned when that incarnation next retires). This
   // makes correctness independent of whether the load races ahead of group
   // creation, rather than relying on an ordering barrier alone.
-  void on_loaded_at_startup(PendingValidatorConsensusDbCleanup record) {
+  //
+  // The same holds for a record paged in later in this process: it is resident
+  // again only if it is not live, not already resident (a runtime retirement
+  // wins), and its earlier resident copy was evicted -- which happens only after
+  // its close was confirmed. Returns false when the record was not admitted; a
+  // record refused for lack of room stays on disk and is reached by a later page.
+  bool on_loaded_at_startup(PendingValidatorConsensusDbCleanup record) {
     auto session = record.session_id;
     if (live_generation_.count(session) > 0 || pending_.count(session) > 0) {
-      return;
+      return false;
+    }
+    if (pending_.size() >= resident_limit_) {
+      disk_backlog_ = true;
+      return false;
     }
     pending_[session] = Entry{std::move(record), /*retired_generation=*/0, /*closed=*/true, EntryState::Pending};
+    return true;
+  }
+
+  // Next page of the durable backlog to read, or nothing. A page is requested
+  // only while records may exist on disk that are not resident, no other page is
+  // in flight, and either at least a quarter of the window is free or the window
+  // is stalled: every resident record was examined since the last reservation and
+  // none was eligible. A stalled window evicts up to a quarter of its closed,
+  // ineligible entries (their records stay on disk and come back on a later
+  // sweep) so records it has not seen yet get examined. Once a whole sweep has
+  // reserved nothing, rotation waits for the GC block to move: until then no
+  // decision can change, and rotating again would only reread the store.
+  std::optional<ValidatorCleanupPageRequest> next_page_request() {
+    if (page_in_flight_ || !disk_backlog_) {
+      return std::nullopt;
+    }
+    size_t room = pending_.size() < resident_limit_ ? resident_limit_ - pending_.size() : 0;
+    if (room * 4 < resident_limit_) {
+      if (pending_.empty() || examined_since_reservation_ < pending_.size() ||
+          (rotation_idle_gc_ && last_gc_ == rotation_idle_gc_)) {
+        return std::nullopt;
+      }
+      examined_since_reservation_ = 0;
+      size_t quota = std::max<size_t>(resident_limit_ / 4, 1);
+      for (auto it = pending_.begin(); it != pending_.end() && quota > 0;) {
+        if (it->second.state == EntryState::Pending && it->second.closed && it->second.examined_ineligible) {
+          it = pending_.erase(it);
+          evicted_in_sweep_ = true;
+          --quota;
+        } else {
+          ++it;
+        }
+      }
+      room = pending_.size() < resident_limit_ ? resident_limit_ - pending_.size() : 0;
+      if (room == 0) {
+        return std::nullopt;
+      }
+    }
+    page_in_flight_ = true;
+    page_epoch_ = retire_epoch_;
+    return ValidatorCleanupPageRequest{sweep_cursor_, room, ++page_token_};
+  }
+
+  // The page read for `request`. Admits its records while there is room and
+  // advances the sweep. A page whose read may predate a retirement made since the
+  // request is discarded and read again from the same cursor: it could carry the
+  // superseded record of a session retired (and then closed and evicted) since.
+  // When a sweep of the whole range finishes without any eviction or refusal, every
+  // durable record is resident (or belongs to a live session) and paging stops until
+  // the next eviction. Returns the number of records admitted.
+  size_t on_page_loaded(const ValidatorCleanupPageRequest& request, ValidatorCleanupPage page) {
+    if (!page_in_flight_ || request.token != page_token_) {
+      return 0;
+    }
+    page_in_flight_ = false;
+    if (page_epoch_ != retire_epoch_) {
+      return 0;
+    }
+    size_t admitted = 0;
+    std::string resume = request.after_key;
+    for (auto& record : page.records) {
+      if (pending_.size() >= resident_limit_) {
+        // No room left (runtime retirements arrived meanwhile): resume at this record.
+        sweep_cursor_ = resume;
+        disk_backlog_ = true;
+        return admitted;
+      }
+      resume = validator_cleanup_key(record.session_id);
+      if (on_loaded_at_startup(std::move(record))) {
+        ++admitted;
+      }
+    }
+    sweep_cursor_ = page.last_key.empty() ? resume : page.last_key;
+    if (page.reached_end) {
+      if (!evicted_in_sweep_) {
+        disk_backlog_ = false;
+      }
+      if (!reserved_in_sweep_) {
+        rotation_idle_gc_ = last_gc_;
+      }
+      sweep_cursor_.clear();
+      evicted_in_sweep_ = false;
+      reserved_in_sweep_ = false;
+    }
+    return admitted;
+  }
+
+  // The caller could not read a requested page; it may ask again later.
+  void on_page_failed(const ValidatorCleanupPageRequest& request) {
+    if (page_in_flight_ && request.token == page_token_) {
+      page_in_flight_ = false;
+    }
+  }
+
+  size_t resident_limit() const {
+    return resident_limit_;
   }
 
   // A group (initial creation or reopen) for `session` is about to be created. The
@@ -122,6 +254,19 @@ class ValidatorCleanupManager {
       gen = ++next_generation_;
     }
     pending_[session] = Entry{std::move(record), gen, /*closed=*/false, EntryState::Pending};
+    // A page read before this retirement may carry the record it supersedes.
+    ++retire_epoch_;
+    // Keep the window bounded: make room by evicting closed, not-in-flight entries
+    // (their records are durable). This entry is not closed yet, so it stays.
+    for (auto evict = pending_.begin(); pending_.size() > resident_limit_ && evict != pending_.end();) {
+      if (evict->second.state == EntryState::Pending && evict->second.closed) {
+        evict = pending_.erase(evict);
+        disk_backlog_ = true;
+        evicted_in_sweep_ = true;
+      } else {
+        ++evict;
+      }
+    }
     return gen;
   }
 
@@ -172,6 +317,7 @@ class ValidatorCleanupManager {
       size_t dispatch_budget, size_t scan_budget = std::numeric_limits<size_t>::max(),
       size_t max_outstanding = std::numeric_limits<size_t>::max(), const CleanupExaminedFn& on_examined = {}) {
     std::vector<ReservedValidatorDelete> reserved;
+    last_gc_ = gc_checkpoint;
     if (pending_.empty() || dispatch_budget == 0) {
       return reserved;
     }
@@ -192,6 +338,8 @@ class ValidatorCleanupManager {
         auto is_closed = [&entry](const ValidatorSessionId&) { return entry.closed; };
         bool eligible = validator_cleanup_eligible(entry.record, gc_checkpoint, ancestor_or_equal_of_gc,
                                                    gc_shard_catchain_seqno, is_live, is_closed);
+        entry.examined_ineligible = !eligible;
+        ++examined_since_reservation_;
         if (on_examined && entry.last_reported_eligible != eligible) {
           entry.last_reported_eligible = eligible;
           on_examined(it->first, eligible);
@@ -207,6 +355,10 @@ class ValidatorCleanupManager {
     }
     // Resume the next pass after the last entry examined.
     retry_cursor_ = (it == pending_.end()) ? ValidatorSessionId{} : it->first;
+    if (!reserved.empty()) {
+      examined_since_reservation_ = 0;
+      reserved_in_sweep_ = true;
+    }
     return reserved;
   }
 
@@ -287,6 +439,9 @@ class ValidatorCleanupManager {
     // Last eligibility decision passed to on_examined, so repeated passes over an
     // unchanged record do not report it again.
     std::optional<bool> last_reported_eligible;
+    // Examined and found ineligible on its latest examination: a stalled window
+    // evicts these first.
+    bool examined_ineligible = false;
   };
   std::map<ValidatorSessionId, Entry> pending_;
   // Incarnation token of each currently-live session (created, not yet retired).
@@ -303,6 +458,31 @@ class ValidatorCleanupManager {
   // Count of entries currently Deleting or Erasing (reserved). Caps concurrent
   // in-flight cleanup work via max_outstanding.
   size_t outstanding_ = 0;
+
+  // Resident window over the durable backlog (see the class comment).
+  size_t resident_limit_ = kDefaultResidentLimit;
+  // True while records may exist on disk that are not resident. Starts true: a
+  // fresh process has not read the store yet.
+  bool disk_backlog_ = true;
+  // Key after which the next page is read; empty means the start of the range.
+  std::string sweep_cursor_;
+  // An entry was evicted since the current sweep began, so a finished sweep does
+  // not prove that everything on disk is resident.
+  bool evicted_in_sweep_ = false;
+  bool page_in_flight_ = false;
+  uint64_t page_token_ = 0;
+  // Bumped on every runtime retirement; a page requested under an older value is
+  // discarded on arrival.
+  uint64_t retire_epoch_ = 0;
+  uint64_t page_epoch_ = 0;
+  // Pending records examined since the last pass that reserved anything.
+  size_t examined_since_reservation_ = 0;
+  // Something was reserved since the current sweep began.
+  bool reserved_in_sweep_ = false;
+  // GC block of the latest pass, and the GC block at which a whole sweep reserved
+  // nothing (rotation is paused while the two are equal).
+  std::optional<BlockIdExt> last_gc_;
+  std::optional<BlockIdExt> rotation_idle_gc_;
 };
 
 }  // namespace tos::validator::consensus
