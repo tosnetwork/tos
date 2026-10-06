@@ -124,7 +124,8 @@ jobs:
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule
-          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_
+          # Keep fork/exec handoff separate from immediate journal reopen probes.
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_ -- --test-threads=1
       - name: PQ-only wallet SDK wire vectors
         run: |
           python -m pip install cryptography==46.0.4

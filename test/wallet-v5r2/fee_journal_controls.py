@@ -115,6 +115,10 @@ def main():
                 "lms_fee_",
                 "--",
                 "--nocapture",
+                # The process-handoff test can inherit sibling tests' flock
+                # descriptors until exec. Keep immediate close/reopen probes
+                # separate; the handoff test still checks competing processes.
+                "--test-threads=1",
             ],
             capture_output=True,
             text=True,
