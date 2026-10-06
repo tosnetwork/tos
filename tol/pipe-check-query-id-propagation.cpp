@@ -18,6 +18,7 @@
 #include "ast-visitor.h"
 #include "compilation-errors.h"
 #include "compiler-state.h"
+#include "lexer.h"
 #include "type-system.h"
 
 #include <vector>
@@ -333,8 +334,10 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
   //            -> ast_function_call (callee: <Struct>.fromSlice, arg: in.body)
   void visit(V<ast_assign> v) override {
     // Replacing the slice ends the prefix observation; the following 64-bit
-    // read no longer belongs to the slice whose opcode was read.
-    if (!scope_stack.empty() && is_reference_to_local(v->get_lhs(), cur_scope().inbound_body_slice_local)) {
+    // read no longer belongs to the slice whose opcode was read. Destructured
+    // assignments can replace the tracked local just like a direct assignment.
+    if (!scope_stack.empty() && cur_scope().inbound_body_slice_local &&
+        ReferencesLocalVisitor(cur_scope().inbound_body_slice_local).contains(v->get_lhs())) {
       cur_scope().manual_prefix_available = false;
       cur_scope().manual_opcode_loaded = false;
       cur_scope().manual_query_id_load = nullptr;
@@ -462,10 +465,6 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     ScopeRecord& s = cur_scope();
 
     FunctionPtr fun_ref = v->fun_maybe;
-    if (!fun_ref) {
-      return;
-    }
-
     // Only the first two adjacent, supported reads of this exact slice can
     // identify a possible correlation field. Any other use before the second
     // read (skips, aliases, helper parsers, size queries) ends inference.
@@ -484,8 +483,13 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
       }
     }
 
-    if (!fun_ref->is_builtin()) {
+    if (!fun_ref || !fun_ref->is_builtin()) {
       s.saw_unresolved_helper = true;
+    }
+    if (!fun_ref) {
+      // Calls through function values may send or consume a slice as well.
+      // Preserve uncertainty even though there is no statically resolved callee.
+      return;
     }
 
     // disclaim_query_id() is a top-level builtin: name matches directly.
@@ -610,6 +614,22 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     invalidate();
   }
 
+  void visit(V<ast_ternary_operator> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_null_coalesce_operator> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_match_expression> v) override {
+    visit_manual_control(v);
+  }
+  void visit(V<ast_binary_operator> v) override {
+    if (v->tok == tok_logical_and || v->tok == tok_logical_or) {
+      visit_manual_control(v);
+    } else {
+      parent::visit(v);
+    }
+  }
   void visit(V<ast_if_statement> v) override {
     visit_manual_control(v);
   }

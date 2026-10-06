@@ -1,0 +1,19 @@
+// Conditional reads and replacement slices do not identify a correlation field.
+import "@stdlib/common"
+struct (0x40005001) Ack { queryId: uint64; amount: uint64; }
+fun onInternalMessage(in: InMessage) {
+    var body = in.body;
+    body.loadUint(32);
+    var other = in.body;
+    var tag = 0;
+    (body, tag) = (other, 1);
+    val amount = body.loadUint(64);
+    createMessage({bounce: false, dest: in.senderAddress, value: 0,
+        body: Ack { queryId: 0, amount: amount as uint64 }}).send(SEND_MODE_REGULAR);
+}
+@method_id(101)
+fun dummy(): int { return 0; }
+/**
+@testcase | 101 | | 0
+@stderr_avoid queryId
+ */

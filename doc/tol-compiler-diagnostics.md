@@ -23,12 +23,15 @@ Typed envelopes with a `queryId` field are explicit correlation evidence. For
 manual parsing, only the first `loadUint(32)` followed by `loadUint(64)` on the
 same inbound body slice is recognized. The opcode load may be discarded. This
 adjacency is a heuristic: a 64-bit field could have another protocol meaning.
-Intervening consumption, aliases, unknown parser operations or control-flow
-boundaries end manual inference; later amounts are not relabelled query IDs.
+Intervening consumption, aliases, slice replacement (including destructuring),
+unknown parser operations or control-flow boundaries end manual inference; later
+amounts are not relabelled query IDs. Conditional expressions (`?:`, `??`, `&&`,
+`||` and `match`) are boundaries just like branch and loop statements.
 
 A typed reply literal with a constant replacement ID is diagnosed as missing
 propagation. Raw sends, computed initializers and helper calls receive uncertainty
-wording: the pass does not trace their propagation. Each receiver has its own
+wording: the pass does not trace their propagation, including calls through
+function values. Each receiver has its own
 source and disclaimer scope. Use `disclaim_query_id()` only for an intentional
 protocol decision, not to conceal an incorrectly inferred field.
 
