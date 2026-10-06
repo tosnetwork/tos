@@ -16,19 +16,20 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "json-rpc-server-internal.h"
-#include "json-rpc-server-storage.h"
+#include <limits>
 
 #include "auto/tl/lite_api.hpp"
-#include "tl/tl_object_parse.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/check-proof.h"
+#include "td/utils/crypto.h"
+#include "tl/tl_object_parse.h"
 #include "vm/cells/CellString.h"
 #include "vm/cp0.h"
 #include "vm/vm.h"
-#include "td/utils/crypto.h"
-#include <limits>
+
+#include "json-rpc-server-internal.h"
+#include "json-rpc-server-storage.h"
 
 namespace tos {
 
@@ -149,22 +150,18 @@ std::string ParsedAccountState::to_address_info_json() const {
   // be undone by the caller's outer growable wrapper.
   td::StringBuilder sb;
   sb << "{\"@type\":\"raw.fullAccountState\""
-      << ",\"balance\":" << td::JsonString(td::Slice(balance_dec))
-      << ",\"code\":" << td::JsonString(td::Slice(code_b64))
-      << ",\"data\":" << td::JsonString(td::Slice(data_b64))
-      << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
-      << ",\"lt\":\"" << last_trans_lt << "\""
-      << ",\"hash\":" << td::JsonString(td::Slice(last_trans_hash_b64)) << "}"
-      << ",\"block_id\":{\"@type\":\"tos.blockIdExt\""
-      << ",\"workchain\":" << blk_workchain
-      << ",\"shard\":\"" << blk_shard << "\""
-      << ",\"seqno\":" << blk_seqno
-      << ",\"root_hash\":\"" << blk_root_hash_b64 << "\""
-      << ",\"file_hash\":\"" << blk_file_hash_b64 << "\"}"
-      << ",\"sync_utime\":" << sync_utime
-      << ",\"extra_currencies\":[]"
-      << ",\"state\":" << td::JsonString(td::Slice(state_str))
-      << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash));
+     << ",\"balance\":" << td::JsonString(td::Slice(balance_dec)) << ",\"code\":" << td::JsonString(td::Slice(code_b64))
+     << ",\"data\":" << td::JsonString(td::Slice(data_b64))
+     << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
+     << ",\"lt\":\"" << last_trans_lt << "\""
+     << ",\"hash\":" << td::JsonString(td::Slice(last_trans_hash_b64)) << "}"
+     << ",\"block_id\":{\"@type\":\"tos.blockIdExt\""
+     << ",\"workchain\":" << blk_workchain << ",\"shard\":\"" << blk_shard << "\""
+     << ",\"seqno\":" << blk_seqno << ",\"root_hash\":\"" << blk_root_hash_b64 << "\""
+     << ",\"file_hash\":\"" << blk_file_hash_b64 << "\"}"
+     << ",\"sync_utime\":" << sync_utime << ",\"extra_currencies\":[]"
+     << ",\"state\":" << td::JsonString(td::Slice(state_str))
+     << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash));
   if (storage_stat) {
     sb << ",\"storage_stat\":" << account_storage_stat_json(storage_stat.value());
   }
@@ -177,29 +174,24 @@ std::string ParsedAccountState::to_extended_info_json(const std::string& addr_st
   // state carries code and data that can outgrow the fixed buffer.
   td::StringBuilder sb;
   sb << "{\"@type\":\"fullAccountState\""
-      << ",\"address\":{\"@type\":\"accountAddress\",\"account_address\":"
-      << td::JsonString(td::Slice(addr_str)) << "}"
-      // Unquoted, so the wire type stays a JSON number, but written from
-      // the exact decimal: a JSON number carries the full literal, whereas
-      // the 64-bit rendering would report a saturated value for a balance
-      // wider than that type.
-      << ",\"balance\":" << balance_dec
-      << ",\"extra_currencies\":[]"
-      << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
-      << ",\"lt\":\"" << last_trans_lt << "\""
-      << ",\"hash\":" << td::JsonString(td::Slice(last_trans_hash_b64)) << "}"
-      << ",\"block_id\":{\"@type\":\"tos.blockIdExt\""
-      << ",\"workchain\":" << blk_workchain
-      << ",\"shard\":\"" << blk_shard << "\""
-      << ",\"seqno\":" << blk_seqno
-      << ",\"root_hash\":\"" << blk_root_hash_b64 << "\""
-      << ",\"file_hash\":\"" << blk_file_hash_b64 << "\"}"
-      << ",\"sync_utime\":" << sync_utime
-      << ",\"account_state\":{\"@type\":\"raw.accountState\""
-      << ",\"code\":" << td::JsonString(td::Slice(code_b64))
-      << ",\"data\":" << td::JsonString(td::Slice(data_b64))
-      << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash)) << "}"
-      << ",\"revision\":0";
+     << ",\"address\":{\"@type\":\"accountAddress\",\"account_address\":" << td::JsonString(td::Slice(addr_str))
+     << "}"
+     // Unquoted, so the wire type stays a JSON number, but written from
+     // the exact decimal: a JSON number carries the full literal, whereas
+     // the 64-bit rendering would report a saturated value for a balance
+     // wider than that type.
+     << ",\"balance\":" << balance_dec << ",\"extra_currencies\":[]"
+     << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
+     << ",\"lt\":\"" << last_trans_lt << "\""
+     << ",\"hash\":" << td::JsonString(td::Slice(last_trans_hash_b64)) << "}"
+     << ",\"block_id\":{\"@type\":\"tos.blockIdExt\""
+     << ",\"workchain\":" << blk_workchain << ",\"shard\":\"" << blk_shard << "\""
+     << ",\"seqno\":" << blk_seqno << ",\"root_hash\":\"" << blk_root_hash_b64 << "\""
+     << ",\"file_hash\":\"" << blk_file_hash_b64 << "\"}"
+     << ",\"sync_utime\":" << sync_utime << ",\"account_state\":{\"@type\":\"raw.accountState\""
+     << ",\"code\":" << td::JsonString(td::Slice(code_b64)) << ",\"data\":" << td::JsonString(td::Slice(data_b64))
+     << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash)) << "}"
+     << ",\"revision\":0";
   if (storage_stat) {
     sb << ",\"storage_stat\":" << account_storage_stat_json(storage_stat.value());
   }
