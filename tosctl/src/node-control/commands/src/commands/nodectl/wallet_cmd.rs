@@ -326,6 +326,12 @@ pub struct WalletSendCmd {
     #[arg(long, help = "Optional StateInit cell BOC as standard base64")]
     state_init_boc: Option<String>,
 
+    #[arg(
+        long,
+        help = "Send a bounceable message, so a refused request returns its value to this wallet"
+    )]
+    bounce: bool,
+
     #[arg(long, help = "Confirm the transfer non-interactively")]
     yes: bool,
 
@@ -1546,7 +1552,7 @@ impl WalletSendCmd {
         }
 
         let msg = wallet
-            .build_message(dest_addr, amount_nanotos, body, false, None, None, state_init)
+            .build_message(dest_addr, amount_nanotos, body, self.bounce, None, None, state_init)
             .await?;
 
         let msg_boc = write_boc(&msg)?;

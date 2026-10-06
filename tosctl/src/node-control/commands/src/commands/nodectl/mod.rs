@@ -20,6 +20,7 @@ pub(crate) mod config_log_cmd;
 pub(crate) mod config_node_cmd;
 pub(crate) mod config_pool_cmd;
 pub(crate) mod config_wallet_cmd;
+pub(crate) mod controller_cmd;
 pub(crate) mod deploy_cmd;
 pub(crate) mod dispute_cmd;
 pub(crate) mod domain_cmd;

@@ -138,6 +138,10 @@ mock! {
         async fn export_public_key(&mut self, key_id: &[u8]) -> anyhow::Result<Vec<u8>>;
         async fn get_current_vset(&mut self) -> anyhow::Result<ValidatorSet>;
         async fn get_next_vset(&mut self) -> anyhow::Result<Option<ValidatorSet>>;
+        async fn controller_operations(
+            &mut self,
+            controller: &MsgAddressInt,
+        ) -> anyhow::Result<Option<contracts::validator_controller::ControllerOperations>>;
     }
 }
 
@@ -386,6 +390,7 @@ impl TestHarness {
                 policy_overrides: HashMap::new(),
                 max_factor: 3.0,
                 tick_interval: 10,
+                operating_authorization: Default::default(),
             },
             bindings: HashMap::new(),
         }
@@ -1287,6 +1292,7 @@ async fn test_multiple_nodes_one_excluded() {
         policy_overrides: HashMap::new(),
         max_factor: 3.0,
         tick_interval: 10,
+        operating_authorization: Default::default(),
     };
 
     let mut bindings = HashMap::new();
@@ -1729,6 +1735,7 @@ async fn test_node_without_wallet_skipped() {
         policy_overrides: HashMap::new(),
         max_factor: 3.0,
         tick_interval: 10,
+        operating_authorization: Default::default(),
     };
 
     let mut bindings = HashMap::new();
@@ -2143,4 +2150,127 @@ async fn test_participation_status_lifecycle() {
     node.stake_submissions.clear();
     runner.snapshot_cache.last_elections_status = ElectionsStatus::Closed;
     assert_eq!(get_status(&runner), ParticipationStatus::Idle);
+}
+
+// ---- Operating authorization (kind 4) ----
+
+fn controller_operations(expires: u32) -> contracts::validator_controller::ControllerOperations {
+    use contracts::validator_controller::{
+        ControllerAuthority, ControllerOperations, OperatingState, RelayFees,
+    };
+    ControllerOperations {
+        authority: ControllerAuthority { epoch: 0, nonce: 4, algorithm: 1, key_id: [9; 32] },
+        state: OperatingState {
+            funds: 600_000_000_000,
+            allowance: 600_000_000_000,
+            limit: 20_000_000_000,
+            floor: 10_000_000_000,
+            expires,
+            payer: wallet_address(),
+        },
+        relay_pending: false,
+        retry_fees_held: false,
+        balance: 1_000_000_000_000,
+        fees: RelayFees {
+            control_value: 1_000_000_000,
+            callback_value: 2_000_000_000,
+            grant: 6_000_000_000,
+            funding_processing: 3_000_000_000,
+        },
+        elections_interval_secs: 3600,
+    }
+}
+
+fn pool_with_controller(harness: &mut TestHarness) {
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    let pool = harness.pool_mock.as_mut().expect("pool");
+    pool.expect_address().returning(pool_address);
+    pool.expect_get_roles().returning(|| {
+        Ok(NominatorRoles {
+            owner_address: wallet_address(),
+            validator_address: wallet_address(),
+            controller_address: MsgAddressInt::standard(-1, controller_addr()),
+        })
+    });
+}
+
+#[tokio::test]
+async fn an_expired_operating_authorization_is_published_as_blocking() {
+    let mut harness = TestHarness::new().with_pool();
+    pool_with_controller(&mut harness);
+    let expired = (time_format::now() - 1) as u32;
+    harness
+        .provider_mock
+        .expect_controller_operations()
+        .withf(|controller| *controller == MsgAddressInt::standard(-1, controller_addr()))
+        .times(1)
+        .returning(move |_| Ok(Some(controller_operations(expired))));
+    let mut runner = harness.build("node-1");
+
+    runner.refresh_operating_authorizations().await;
+    let snapshot = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(snapshot.blocks_next_stake);
+    assert!(snapshot.error.is_none());
+    assert_eq!(snapshot.funds, "600000000000");
+    assert_eq!(snapshot.stakes_remaining, "100");
+    assert!(snapshot.warnings.iter().any(|w| w.contains("expired")), "{:?}", snapshot.warnings);
+
+    // A fresh reading is not repeated within the check interval (times(1) above).
+    runner.refresh_operating_authorizations().await;
+    let published = runner.build_validators_snapshot().await;
+    assert_eq!(published.controlled_nodes[0].operating_authorization, Some(snapshot));
+}
+
+#[tokio::test]
+async fn a_healthy_operating_authorization_raises_nothing() {
+    let mut harness = TestHarness::new().with_pool();
+    pool_with_controller(&mut harness);
+    let later = (time_format::now() + 60 * 86_400) as u32;
+    harness.provider_mock.expect_controller_operations().returning(move |_| {
+        // 100 stakes at one per 18.2 h is about 76 days, above 25% of 30 days.
+        let mut operations = controller_operations(later);
+        operations.elections_interval_secs = 65_536;
+        Ok(Some(operations))
+    });
+    let mut runner = harness.build("node-1");
+    runner.refresh_operating_authorizations().await;
+    let snapshot = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(!snapshot.blocks_next_stake);
+    assert!(snapshot.warnings.is_empty(), "{:?}", snapshot.warnings);
+}
+
+#[tokio::test]
+async fn an_unreadable_operating_authorization_is_reported_and_retried() {
+    let mut harness = TestHarness::new().with_pool();
+    pool_with_controller(&mut harness);
+    harness
+        .provider_mock
+        .expect_controller_operations()
+        .times(2)
+        .returning(|_| Err(anyhow::anyhow!("get-method operating_state error: exit_code=11")));
+    let mut runner = harness.build("node-1");
+    runner.refresh_operating_authorizations().await;
+    let snapshot = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(snapshot.error.as_deref().is_some_and(|e| e.contains("operating_state")));
+    // A failed reading is not cached.
+    runner.refresh_operating_authorizations().await;
+}
+
+#[test]
+fn a_provider_without_chain_access_publishes_nothing() {
+    let controller = MsgAddressInt::standard(-1, controller_addr());
+    let thresholds = contracts::validator_controller::OperatingThresholds::default();
+    assert_eq!(operating_snapshot(&controller, Ok(None), 1, &thresholds), None);
+}
+
+#[test]
+fn operating_thresholds_come_from_the_elections_config() {
+    let mut config = ElectionsConfig::default();
+    config.operating_authorization.target_days = 10;
+    config.operating_authorization.warn_percent = 50;
+    config.operating_authorization.expiry_warn_days = 2;
+    let thresholds = operating_thresholds(&config);
+    assert_eq!(thresholds.target_runway_secs, 10 * 86_400);
+    assert_eq!(thresholds.runway_warn_percent, 50);
+    assert_eq!(thresholds.expiry_warn_secs, 2 * 86_400);
 }
