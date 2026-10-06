@@ -1374,3 +1374,26 @@ This rejects known-invalid requests before signature generation. It does not
 approve recipients or amounts, parse application payload semantics, establish
 available funds, prove delivery, or replace the on-chain action checks. Other
 request constructors still require proven state and appropriate key custody.
+
+## Native signer client ABI
+
+`crypto/pq/wallet-pq-signer-c.h` exposes owned opaque signer handles for generation,
+seed import, public-key retrieval, bound signing and destruction. The C interface
+requires the expected role/public key and one of the protocol-defined purposes;
+it checks exact digest/output lengths and exports only signatures reverified by
+the existing native backend. Exceptions from generation/import/signing become
+failure results. Valid output buffers are untouched on failure. Callers own and
+must wipe imported seeds; pointers must reference live buffers/handles, and handle
+destruction must not race operations. No private bytes are serialized or exported.
+
+Tests compile the header as C and exercise both algorithms and all five allowed
+role/purpose pairs, wrong bindings, malformed sizes and unchanged failure outputs.
+Injected RNG failure and invalid/backend-error verifier verdicts are also tested
+through this ABI. Three interface deletion controls detect wrong-key, unknown-purpose
+and wrong-output-size acceptance, alongside the five native-backend controls.
+Both architecture CI jobs run the combined four-executable suite and controls.
+
+This is an in-process integration boundary, not a completed Rust wrapper or key
+store. Authenticated enrollment, request approval, seed persistence/backup,
+device isolation and client transport remain required. Supplying a matching
+expected key is not itself proof of chain state or user consent.

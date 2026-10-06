@@ -13,12 +13,14 @@ SOURCE = ROOT / "crypto/pq/wallet-pq-signer.cpp"
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--build", type=Path, required=True)
+    p.add_argument("--c-api", action="store_true")
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     args.build = args.build.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
-    source = SOURCE.read_text()
+    source_path = SOURCE.with_name("wallet-pq-signer-c.cpp") if args.c_api else SOURCE
+    source = source_path.read_text()
     cases = [
         (
             "generate_rng",
@@ -46,9 +48,34 @@ def main():
     ]
     targets = [
         "test-wallet-pq-signer",
+        "test-wallet-pq-signer-c",
         "test-wallet-pq-signer-rng",
         "test-wallet-pq-signer-rejection",
     ]
+    if args.c_api:
+        cases = [
+            (
+                "bound_key",
+                " || signer->signer.public_key() != view(expected_key, key_size)",
+                "",
+                "test-wallet-pq-signer-c",
+                "wrong key accepted",
+            ),
+            (
+                "purpose",
+                "purpose(requested_purpose)",
+                "purpose(TOS_WALLET_PQ_AUTH)",
+                "test-wallet-pq-signer-c",
+                "unknown purpose accepted",
+            ),
+            (
+                "output_size",
+                "signature_size != required_size || ",
+                "",
+                "test-wallet-pq-signer-c",
+                "output width accepted",
+            ),
+        ]
 
     def run(label, command):
         result = subprocess.run(command, capture_output=True, text=True, timeout=300)
@@ -73,17 +100,19 @@ def main():
         positive("baseline")
         for label, old, new, target, failure in cases:
             assert source.count(old) == 1
-            SOURCE.write_text(source.replace(old, new))
+            source_path.write_text(source.replace(old, new))
             build(label + "-build")
             code, log = run(label, [str(args.build / "crypto/pq" / target)])
             assert code != 0 and failure in log, log[-3000:]
             results[label] = {"exit": code, "semantic_failure": failure}
     finally:
-        SOURCE.write_text(source)
+        source_path.write_text(source)
         build("restored-build")
         positive("restored")
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("5 native wallet signer controls detected; restored three executables pass")
+    print(
+        f"{len(cases)} native wallet signer controls detected; restored {len(targets)} executables pass"
+    )
 
 
 if __name__ == "__main__":

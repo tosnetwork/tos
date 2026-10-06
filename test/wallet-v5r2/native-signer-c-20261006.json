@@ -1,0 +1,154 @@
+{
+  "base_commit": "4b2eabc26b034c0fb0ed6f3998dc89213246b6b9",
+  "scope": "In-process C ABI over native in-memory PQ signer; no seed export, persistence, approval UI or Rust binding yet",
+  "validation": {
+    "ctest": "4/4 wallet-pq-signer tests pass",
+    "pure_c_header": "Compiled and linked as C translation unit",
+    "role_purposes": 5,
+    "c_interface_controls": {
+      "bound_key": {
+        "exit": 1,
+        "semantic_failure": "wrong key accepted"
+      },
+      "purpose": {
+        "exit": 1,
+        "semantic_failure": "unknown purpose accepted"
+      },
+      "output_size": {
+        "exit": 1,
+        "semantic_failure": "output width accepted"
+      }
+    },
+    "backend_controls": {
+      "generate_rng": {
+        "exit": 1,
+        "semantic_failure": "generated wallet key after random source failure"
+      },
+      "sign_rng": {
+        "exit": 3,
+        "semantic_failure": "exported wallet signature after random source failure"
+      },
+      "verify": {
+        "exit": 1,
+        "semantic_failure": "accepted rejected wallet signature"
+      },
+      "digest": {
+        "exit": -6,
+        "semantic_failure": "!key->sign"
+      },
+      "domain": {
+        "exit": -6,
+        "semantic_failure": "!key->sign"
+      }
+    },
+    "failure_output": "untouched under wrong inputs, RNG failure and invalid/backend-error signature verification"
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/wallet-pq-signer-c.h",
+      "sha256": "ae118544a5d14f10ebc733aec5b78494a01104f84018b2e074de42c23187b9e3",
+      "bytes": 1893
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/wallet-pq-signer-c.cpp",
+      "sha256": "d6da196fea50b21ac5c52ac8e31ec6236819438fcac9e0f54e7325131812fd31",
+      "bytes": 3171
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/CMakeLists.txt",
+      "sha256": "d1e3405be64069767acd0848d7286ec2e6a649de4e004e989aae60bee2b5f9b8",
+      "bytes": 33065
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/pq-signer-c-test.cpp",
+      "sha256": "77d2b6d9321b4f69e64318ae84f54145428dc3da9433affa037107fea9c72b24",
+      "bytes": 4226
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/pq-signer-c-header.c",
+      "sha256": "1d1b530616203175f49beed13a5b702612f4d0b92e727b56c234e3df792e1987",
+      "bytes": 434
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/pq-signer-rejection-test.cpp",
+      "sha256": "be2448b4d5ef4c1cc87b962b597918421e54a19ed99768e6c55188d286bc55e7",
+      "bytes": 2261
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/pq-signer-rng-test.cpp",
+      "sha256": "57c0abe370aa2305448cc5842b0d5b532ed86f9cf903f64911f6b30538ddcd99",
+      "bytes": 2163
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/pq_signer_controls.py",
+      "sha256": "ce1b0d5731308e8b3dbe04327533f223d2d503a2b1fea59dc9501a939f264aea",
+      "bytes": 4198
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-c-controls/MANIFEST.json",
+      "sha256": "0b87326cbfc89d862c02e45d12dc081fd389c62965e27dcab0e08f41c6eabbb9",
+      "bytes": 3857
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-c-controls/results.json",
+      "sha256": "daafdb6465b205df880c2f4cf873c81e8a032a54b2a0a5d9372772d4b3ac3fad",
+      "bytes": 258
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-c-controls/restored-test-wallet-pq-signer-c.log",
+      "sha256": "4dc46728ccf94c21c1b778b442310971a342509744693c1475f17d667194c17b",
+      "bytes": 42
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-c-controls/restored-test-wallet-pq-signer-rejection.log",
+      "sha256": "32b3b4c076fd87d00195215702f3891ebb01a8186ceabf6372debe4f021931db",
+      "bytes": 70
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-c-controls/restored-test-wallet-pq-signer-rng.log",
+      "sha256": "794c092ff044b21dad3945e5d6d9b230ed58182cc19d45e26c1ff018a661bbe4",
+      "bytes": 74
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-backend-c-controls/MANIFEST.json",
+      "sha256": "ee6c3f995dc273c6a1f3dc4a03d4b34a94cfed7d4183cad168a9c12ad545f71e",
+      "bytes": 4878
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-backend-c-controls/results.json",
+      "sha256": "053268e0b696ec178ee4b2c3ad1b44b7ea310ea616ee97beba16d9504eb327d0",
+      "bytes": 473
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-backend-c-controls/restored-test-wallet-pq-signer-c.log",
+      "sha256": "4dc46728ccf94c21c1b778b442310971a342509744693c1475f17d667194c17b",
+      "bytes": 42
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-backend-c-controls/restored-test-wallet-pq-signer-rejection.log",
+      "sha256": "32b3b4c076fd87d00195215702f3891ebb01a8186ceabf6372debe4f021931db",
+      "bytes": 70
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-signer-backend-c-controls/restored-test-wallet-pq-signer-rng.log",
+      "sha256": "794c092ff044b21dad3945e5d6d9b230ed58182cc19d45e26c1ff018a661bbe4",
+      "bytes": 74
+    }
+  ],
+  "commands": [
+    "cmake --build build --target test-wallet-pq-signer-c test-wallet-pq-signer-rejection test-wallet-pq-signer-rng -j4",
+    "ctest --test-dir build -R ^wallet-pq-signer --output-on-failure",
+    "python test/wallet-v5r2/pq_signer_controls.py --c-api --build build --output <fresh-directory>",
+    "python test/wallet-v5r2/pq_signer_controls.py --build build --output <fresh-directory>"
+  ],
+  "retention": "Retain raw controls through 2027-01-06 or later release review.",
+  "remaining": [
+    "Rust wrapper and authenticated enrollment binding",
+    "Production seed storage/backup and device isolation",
+    "Owner action approval and transport",
+    "Default-credit admission",
+    "Final-head CI and independent review"
+  ]
+}
