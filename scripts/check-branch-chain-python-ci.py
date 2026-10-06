@@ -30,6 +30,11 @@ REQUIRED_NATIVE_TARGETS = {
     "test-custom-overlay-relay-dedup",
     "test-pq-consensus-key-rotation",
     "test-fsync-dir-failure-shim",
+    # Executables that link the consensus custody through validator-disk and
+    # validator-hardfork; the full-tree build runs only for pull requests into main.
+    "create-hardfork",
+    "test-tos-collator",
+    "test-apply-block-readback-latency",
 }
 
 RESTART_ORIGIN_TESTS = (

@@ -65,6 +65,7 @@ jobs:
             gen_fif create-state toslibjson \
             generate-random-id tos-pq-consensus-key tos-pq-controller \
             dht-server validator-engine-console validator-engine \
+            create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim \
             test-n5-manager-db-fixture test-consensus \

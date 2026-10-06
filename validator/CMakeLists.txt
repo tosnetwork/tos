@@ -275,8 +275,14 @@ target_link_libraries(validator PUBLIC tos_pq_consensus_signer tos_pq_consensus 
 target_link_libraries(validator PUBLIC validator-measurement)
 
 target_link_libraries(validator-disk PRIVATE validator-common validator-db)
+# Its manager holds post-quantum consensus custody, which consults the signer's registry of
+# retired keys; consumers inherit the dependency from here.
+target_link_libraries(validator-disk PUBLIC tos_pq_consensus_signer tos_pq_consensus)
 
 target_link_libraries(validator-hardfork PRIVATE validator-common validator-db)
+# Its manager holds post-quantum consensus custody, which consults the signer's registry of
+# retired keys; consumers inherit the dependency from here.
+target_link_libraries(validator-hardfork PUBLIC tos_pq_consensus_signer tos_pq_consensus)
 
 target_link_libraries(full-node PUBLIC validator-state-download-budget)
 target_link_libraries(full-node PUBLIC validator-measurement)
