@@ -1,0 +1,159 @@
+{
+  "base_commit": "255181a3afaf04210314d93b94cc8d2ee04d0beb",
+  "scope": "Real CLI encrypted PRIMARY signing and local native module/wallet/recipient execution with mocked proof acquisition and supplied relayer internal message. Not network finality or a funded relayer wallet transaction.",
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_delivery_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-delivery-controls",
+  "exit": 0,
+  "baseline": {
+    "valid": {
+      "exit": 0,
+      "module_signature_execution": {
+        "exit": 0,
+        "gas": 79405,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "wallet_execution": {
+        "exit": 0,
+        "gas": 277179,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "recipient_delivery": {
+        "exit": 0,
+        "gas": 1053,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "payment_hash": "f13a178d3d693b243c6c1ec3726fac25764fa5477a4c2b3b51dff0ef6b2f69dc",
+      "recipient_refusal_exit": 1777,
+      "unrelated_receipt_rejected": true,
+      "rescue_fee_payer_rejected": 1818,
+      "corrupt_signature_exit": 1808
+    },
+    "retired": {
+      "exit": 1
+    },
+    "missing_policy": {
+      "exit": 1
+    },
+    "expired": {
+      "exit": 1
+    },
+    "unsafe_actions": {
+      "exit": 1
+    },
+    "wrong_record": {
+      "exit": 1
+    },
+    "duplicate": {
+      "exit": 1
+    }
+  },
+  "restored": {
+    "valid": {
+      "exit": 0,
+      "module_signature_execution": {
+        "exit": 0,
+        "gas": 79405,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "wallet_execution": {
+        "exit": 0,
+        "gas": 277179,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "recipient_delivery": {
+        "exit": 0,
+        "gas": 1053,
+        "gas_limit": 1000000,
+        "compute_success": true,
+        "aborted": false,
+        "action": {
+          "success": true,
+          "code": 0
+        }
+      },
+      "payment_hash": "b7d18e2b94fcd3faa858f015b3b1e44ad48c58bf08971bb60687935603b3562c",
+      "recipient_refusal_exit": 1777,
+      "unrelated_receipt_rejected": true,
+      "rescue_fee_payer_rejected": 1818,
+      "corrupt_signature_exit": 1808
+    },
+    "retired": {
+      "exit": 1
+    },
+    "missing_policy": {
+      "exit": 1
+    },
+    "expired": {
+      "exit": 1
+    },
+    "unsafe_actions": {
+      "exit": 1
+    },
+    "wrong_record": {
+      "exit": 1
+    },
+    "duplicate": {
+      "exit": 1
+    }
+  },
+  "semantic_controls": [
+    "Remove inbound-message binding: unrelated receipt incorrectly accepted",
+    "Remove execution-success check: actual recipient refusal incorrectly accepted"
+  ],
+  "fixture_corrections": [
+    "Compile wallet for native mnemonic vector network; previous module-only fixture wallet used network 123 and rejected with 1815",
+    "PRIMARY funding uses ordinary relayer; rescue vault payer separately rejected with 1818"
+  ],
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-primary-delivery.tar.gz",
+    "sha256": "639d87aa94eef039ee7a6bc8b4a88ea330977c5fc755647124c59ae40ffe8e4f",
+    "bytes": 223902
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_sign_primary.py",
+      "sha256": "f6b494ae263b553423c55c5d377053585020d5e4c70f658622ca18a9bdd8330e",
+      "bytes": 20377
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_delivery_controls.py",
+      "sha256": "f6618e60665485897cfe81b33ca65b6b8fe44f064c60b06eb52c44a3100eac7c",
+      "bytes": 2665
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/smartcont/wallet-v5r2-code.fc",
+      "sha256": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f",
+      "bytes": 4499
+    }
+  ]
+}

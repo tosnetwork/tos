@@ -1,4 +1,4 @@
-"""Real encrypted CLI PRIMARY signing; mocked proofs and native module signature execution."""
+"""Real encrypted CLI PRIMARY signing and native recipient delivery; mocked proofs."""
 
 import argparse
 import base64
@@ -18,6 +18,40 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 import native  # noqa: E402
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
+
+
+def check_execution(result, before, message, label="wallet"):
+    assert result["success"], "native transaction did not execute"
+    details = result["details"]
+    assert (
+        details.get("compute_success")
+        and not details.get("aborted")
+        and (details.get("action") is None or details["action"]["success"])
+    ), f"{label} transaction did not complete"
+    transaction = from_boc(result["transaction"])
+    incoming = transaction.refs[0].slice().maybe()
+    assert incoming is not None and incoming.hash == message.hash, (
+        "transaction input differs from emitted message"
+    )
+    update = transaction.refs[1].slice()
+    assert update.uint(8) == 0x72
+    assert update.uint(256) == int.from_bytes(before.refs[0].hash, "big"), (
+        "transaction old account mismatch"
+    )
+    after = from_boc(result["shard_account"])
+    assert update.uint(256) == int.from_bytes(after.refs[0].hash, "big"), (
+        "transaction new account mismatch"
+    )
+    update.end()
+    return native.outgoing(transaction)
+
+
+def check_recipient(result, before, message):
+    check_execution(result, before, message, "recipient")
+    state, balance = native.account_data(from_boc(result["shard_account"]))
+    assert state.hash == Cell().uint(1, 32).hash and balance > 1_000_000_000, (
+        "recipient state did not record payment"
+    )
 
 
 def main():
@@ -70,6 +104,24 @@ def main():
             assert r.returncode == 0, r.stderr
             return json.loads(r.stdout)
 
+        # The mnemonic vector uses a different network than the recorded fixture.
+        # Compile the wallet's immutable network/module/vault bindings for it.
+        wallet_source = root / "network-wallet.fc"
+        wallet_source.write_text(
+            f'#include "{os.path.relpath(ROOT / "crypto/smartcont/wallet-v5r2-code.fc", root.resolve())}";\n'
+            + f'cell compiled_vault() asm "B{{{payload["vault_code"]}}} B>boc PUSHREF";\n'
+            + f"int r2wallet_network() inline {{ return 0x{payload['network']}; }}\n"
+            + f"int r2wallet_module_hash() inline {{ return 0x{payload['module_pin']}; }}\n"
+            + "cell r2wallet_vault_code() inline { return compiled_vault(); }\n"
+        )
+        try:
+            wallet_code = native.compile_contract(
+                str(wallet_source), args.output / "network-wallet.boc"
+            )
+        except subprocess.CalledProcessError as error:
+            raise AssertionError(error.stderr.decode()) from error
+        payload["wallet_code"] = wallet_code.boc().hex()
+        payload["wallet_pin"] = wallet_code.hash.hex()
         initial = genesis(payload)
         payload["expected_wallet"] = from_boc(bytes.fromhex(initial["wallet_init"])).hash.hex()
         payload["recovery_derivation"] = dict(
@@ -192,7 +244,23 @@ def main():
                 )
             )
 
-        message = native.internal(addresses["wallet"], (0, 789), Cell(), value=1_000_000_000)
+        recipient_source = root / "recipient.fc"
+        recipient_source.write_text(
+            "() recv_internal(slice body) impure { "
+            "throw_unless(1777, get_data().begin_parse().preload_uint(32) == 0); "
+            "set_data(begin_cell().store_uint(1, 32).end_cell()); }\n"
+        )
+        recipient_code = native.compile_contract(
+            str(recipient_source), args.output / "recipient.boc"
+        )
+        recipient_data = Cell().uint(0, 32)
+        recipient_address = (
+            0,
+            int.from_bytes(native.state_init(recipient_code, recipient_data).hash, "big"),
+        )
+        message = native.internal(
+            addresses["wallet"], recipient_address, Cell(), value=1_000_000_000
+        )
         actions = Cell().uint(0x0EC3C86D, 32).uint(3, 8).ref(Cell()).ref(message)
         actionfile = file("actions.boc", actions.boc())
         for mode in (
@@ -274,7 +342,7 @@ def main():
                     tx = emu.send(
                         shard,
                         native.internal(
-                            addresses["vault"],
+                            (0, 987),
                             addresses["module"],
                             submission,
                             value=10_000_000_000,
@@ -289,13 +357,87 @@ def main():
                     assert len(emitted) == 1, "signed module did not forward authorization"
                     (args.output / "module-transaction.json").write_text(json.dumps(tx, indent=2))
                     results[mode]["module_signature_execution"] = tx["details"]
+                    wallet_before = native.active_account(
+                        addresses["wallet"], codes["wallet"], data["wallet"]
+                    )
+                    executed = emu.send(wallet_before, emitted[0])
+                    (args.output / "wallet-transaction.json").write_text(
+                        json.dumps(executed, indent=2)
+                    )
+                    payment = check_execution(executed, wallet_before, emitted[0])
+                    assert len(payment) == 1, "wallet did not emit the approved payment"
+                    header = payment[0].slice()
+                    header.uint(4)
+                    assert header.addr() == addresses["wallet"]
+                    assert header.addr() == recipient_address
+                    assert header.coins() == 1_000_000_000
+                    recipient_before = native.active_account(
+                        recipient_address, recipient_code, recipient_data, balance=1_000_000_000
+                    )
+                    delivered = emu.send(recipient_before, payment[0])
+                    check_recipient(delivered, recipient_before, payment[0])
+                    (args.output / "wallet-transaction.json").write_text(
+                        json.dumps(executed, indent=2)
+                    )
+                    (args.output / "recipient-transaction.json").write_text(
+                        json.dumps(delivered, indent=2)
+                    )
+                    results[mode]["wallet_execution"] = executed["details"]
+                    results[mode]["recipient_delivery"] = delivered["details"]
+                    results[mode]["payment_hash"] = payment[0].hash.hex()
+                    # Successful wallet actions do not prove recipient execution.
+                    refusing_before = native.active_account(
+                        recipient_address, recipient_code, Cell().uint(1, 32), balance=1_000_000_000
+                    )
+                    refused = emu.send(refusing_before, payment[0])
+                    assert refused["success"] and refused["details"]["exit"] == 1777
+                    try:
+                        check_recipient(refused, refusing_before, payment[0])
+                        raise AssertionError("recipient failure was classified as delivery")
+                    except AssertionError as error:
+                        assert str(error) == "recipient transaction did not complete", error
+                    # Reusing a valid receipt for another payment must also fail.
+                    try:
+                        check_recipient(delivered, recipient_before, message)
+                        raise AssertionError("unrelated input was classified as delivery")
+                    except AssertionError as error:
+                        assert str(error) == "transaction input differs from emitted message", error
+                    results[mode]["recipient_refusal_exit"] = refused["details"]["exit"]
+                    results[mode]["unrelated_receipt_rejected"] = True
+                    fee_forward = emu.send(
+                        shard,
+                        native.internal(
+                            addresses["vault"],
+                            addresses["module"],
+                            submission,
+                            value=10_000_000_000,
+                        ),
+                    )
+                    assert fee_forward["success"] and fee_forward["details"]["compute_success"]
+                    fee_messages = native.outgoing(from_boc(fee_forward["transaction"]))
+                    assert len(fee_messages) == 1
+                    fee_rejected = emu.send(wallet_before, fee_messages[0])
+                    assert fee_rejected["success"] and fee_rejected["details"]["exit"] == 1818, (
+                        "PRIMARY charged rescue fee vault"
+                    )
+                    assert (
+                        native.account_data(from_boc(fee_rejected["shard_account"]))[0].hash
+                        == data["wallet"].hash
+                    )
+                    results[mode]["rescue_fee_payer_rejected"] = fee_rejected["details"]["exit"]
+                    (args.output / "primary-fee-payer-refusal.json").write_text(
+                        json.dumps(fee_rejected, indent=2)
+                    )
+                    (args.output / "recipient-refusal.json").write_text(
+                        json.dumps(refused, indent=2)
+                    )
                     sig = submission.refs[1]
                     corrupt = Cell(sig.bits[:-1] + str(1 - int(sig.bits[-1])), sig.refs)
                     broken = Cell(submission.bits, [request, corrupt])
                     negative = emu.send(
                         shard,
                         native.internal(
-                            addresses["vault"], addresses["module"], broken, value=10_000_000_000
+                            (0, 987), addresses["module"], broken, value=10_000_000_000
                         ),
                     )
                     assert negative["success"] and not negative["details"]["compute_success"], (
@@ -314,7 +456,7 @@ def main():
                     assert before == {p.name: p.read_bytes() for p in destination.iterdir()}
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     print(
-        f"{len(results)} primary signing CLI outcomes passed; native module accepts signature and rejects corruption"
+        f"{len(results)} primary signing CLI outcomes passed; native recipient delivery and refusal controls passed"
     )
 
 

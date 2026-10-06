@@ -3109,3 +3109,35 @@ global retirement guard must make the CLI sign under the retired policy and fail
 the refusal assertion; restoration must recover all seven outcomes.
 
 Evidence: [PRIMARY CLI signing controls](../test/wallet-v5r2/cli-primary-signing-20261006.json).
+
+
+## PRIMARY CLI native recipient delivery
+
+The PRIMARY CLI harness now follows its signed SUB3 body through the complete
+native module, wallet action phase and a recipient contract. Funding is an ordinary
+relayer's internal message to the module. It is not an LMS fee-vault authorization:
+the test separately forwards the same valid primary signature with the paired
+rescue vault as payer and verifies wallet rejection `1818` without changing wallet
+authority state. PRIMARY cannot spend the rescue fee route.
+
+The harness compiles the wallet with the mnemonic vector's actual network and the
+fixture's module/vault bindings. The older module-only fixture reused a wallet
+compiled for network 123 while substituting a mnemonic-vector network. Its prior
+module-signature evidence remains valid, but it did not establish wallet execution.
+The expanded test first exposed that mismatch with exit `1815`; correcting the
+fixture leaves all protocol checks intact. Release code pins must identify a bundle
+compiled for the intended network and companion programs; hashes alone do not
+prove these semantic bindings.
+
+For successful delivery, the harness checks compute/action success, the exact
+emitted message against the next transaction's inbound hash, both account hashes
+in `HASH_UPDATE`, the intended recipient and amount, and the recipient's updated
+state and increased balance. An actual recipient execution refusal (`1777`) and a
+valid receipt paired with another message are rejected as completion evidence.
+Deleting the execution-success or inbound-message binding check must respectively
+cause those controls to fail; restoring them must pass. These are local native
+emulator transactions with mock proof acquisition. They do not prove an RPC
+broadcast, finality on a live network, a funded relayer wallet transaction or a
+complete application pending-transaction manager.
+
+Evidence: [PRIMARY CLI recipient delivery](../test/wallet-v5r2/cli-primary-delivery-20261006.json).
