@@ -1,6 +1,7 @@
 # Deploy single-nominator-pool
 
-A pool has three roles, all fixed in its storage and therefore in its address:
+A pool has three roles. Their initial values are its storage at deployment and therefore
+determine its address:
 
 - the **owner** holds the funds and can take them home;
 - the **validator** is the masterchain wallet that may spend them on a stake and on
@@ -10,8 +11,10 @@ A pool has three roles, all fixed in its storage and therefore in its address:
   validator's machine. The elector takes a stake from such an account and from nowhere
   else.
 
-Deploy the controller first: its address is part of the pool's address, and a pool cannot
-change it afterwards. The controller deployment, its operating authorization and the rest
+The owner can later replace the validator address (`CHANGE_VALIDATOR_ADDRESS`, for
+example after the validator wallet is compromised); the pool's address does not change
+when it does. The controller cannot be changed. Deploy the controller first: its address
+is part of the pool's address. The controller deployment, its operating authorization and the rest
 of the validator path are described in
 [doc/validator-operator-guide.md](../../../doc/validator-operator-guide.md).
 
@@ -54,7 +57,9 @@ because the pool does not exist yet. The script saves the signed message to
 
 - Record the pool in tosctl with `tosctl config pool add --name POOL --address
   POOL_ADDRESS --owner OWNER_ADDRESS --controller CONTROLLER_ADDRESS` and bind it to the
-  node with `tosctl config bind add --node NODE --wallet WALLET --pool POOL`.
+  node with `tosctl config bind add --node NODE --wallet WALLET --pool POOL`. Give a raw
+  masterchain address as `--controller=-1:<hex>` (likewise `--owner=`, `--address=`);
+  as a separate word, `-1:<hex>` is read as an option.
 - Import the controller's birth with `tosctl config bind import-birth`.
 - Make sure the controller holds a current operating authorization
   (`tosctl controller operations status --controller CONTROLLER_ADDRESS`); without one the

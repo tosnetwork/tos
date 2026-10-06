@@ -131,7 +131,7 @@ The root seed never goes to the validator host.
    (no `--bounce`) and an empty body:
 
    ```bash
-   tosctl wallet send --from WALLET --to -1:CONTROLLER_HEX --amount TOS \
+   tosctl wallet send --from WALLET --to=-1:CONTROLLER_HEX --amount TOS \
      --state-init-boc STATE_INIT_BOC_B64
    ```
 
@@ -185,7 +185,9 @@ controller, so deploy the controller first. Configure `tosctl`
 ([tosctl README](../tosctl/src/node-control/README.md)): the node's control
 connection (`config node add`), the validator wallet (`config wallet add`), the
 pool (`config pool add --controller`, or `deploy pool --controller` to deploy
-it), and the binding (`config bind add --pool`). Then import the controller's
+it), and the binding (`config bind add --pool`). Pass a raw masterchain address
+to `--to`, `--owner`, `--controller` or `--address` of these commands in the
+`--flag=-1:<hex>` form; as a separate word, `-1:<hex>` is read as an option. Then import the controller's
 birth from the transaction kept in step 5:
 
 ```bash
@@ -258,11 +260,13 @@ the payload and two commands:
 2. the send from the payer wallet, with exactly the printed value:
 
    ```bash
-   tosctl wallet send --from PAYER_WALLET --to -1:CONTROLLER_HEX \
+   tosctl wallet send --from PAYER_WALLET --to=-1:CONTROLLER_HEX \
      --amount-nanotos VALUE --body-boc SIGNED_BODY_B64 --bounce
    ```
 
-   `--bounce` makes a refused request return its value.
+   `--bounce` makes a refused request return its value. Write a masterchain
+   destination as `--to=-1:...`: `--to` does not accept a value that starts
+   with a hyphen as a separate word.
 
 Run `status` again and check that the nonce advanced and the recorded values
 are the planned ones.
@@ -299,7 +303,13 @@ otherwise it costs downtime.
    logs key B.
 6. Confirm the next election accepts the stake signed with B and that the
    validator appears in ConfigParam 34 with B after the set switches.
-7. Destroy every copy of the seed except the encrypted offline backup.
+7. Keep the new seed B where the node reads it on every start
+   (`KEYDIR/pq-consensus-next.seed`) and in its encrypted offline backup.
+   Delete the temporary copies made to move it: the plaintext `NEXT.seed` on
+   the offline machine and the encrypted transfer `MEDIUM`.
+8. Retire the old key A separately, once step 6 has confirmed B: delete
+   `KEYDIR/pq-consensus.seed` from the host, and destroy A's backup when you no
+   longer need to be able to sign with A.
 
 ## 11. Refresh the global config's init block
 
@@ -318,7 +328,9 @@ python3 scripts/refresh-global-config-init-block.py \
 
 It reads the trusted node's `getMasterchainInfo`, `getBlockHeader` and
 `lookupBlock` and writes a new file (it never overwrites one) whose init block
-is the latest key block. It refuses, writing nothing, when the node's zero
+is the latest key block. The one exception is a chain that has no key block
+after the zero state yet: then the init block is the zero state itself, checked
+against the config's. It refuses, writing nothing, when the node's zero
 state differs from the config's, when the key block's identities disagree, when
 a header is not a key block or carries another global id, or when the new init
 block is older than, or at the same height as but different from, the existing
@@ -367,8 +379,10 @@ Protocol changes are activated by configuration votes.
   50,000 gas, so send that plus enough for the message's own processing.
   `tosctl vote offer cast` does not send PQ votes: it explains why and stops.
 
-A proposal passes after enough rounds in which validators holding three
-quarters of the total weight voted for it; the number of rounds and the
+A proposal passes after enough rounds in which validators holding strictly
+more than three quarters of the total weight voted for it (exactly three
+quarters does not win a round: the contract starts the round at
+floor(3W/4) remaining weight and requires it to go below zero); the number of rounds and the
 proposal lifetime come from ConfigParam 11 (separately for critical
 parameters).
 
