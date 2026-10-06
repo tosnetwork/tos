@@ -185,6 +185,20 @@ class ExtMessagePoolTestHarness final : public ExtMessagePool {
       EXPECT_EQ(count, 0u);
     }
   }
+  void cancel_waiter() {
+    ASSERT_TRUE(admission_waiters_.size() == 1);
+    EXPECT(admission_budget_->used() > 0);
+    auto waiter = std::move(admission_waiters_.front());
+    admission_waiters_.pop_front();
+    // Drop only synthetic occupancy; no real checker was dispatched.
+    inflight_checks_ = 0;
+    waiter.set_error(td::Status::Error(ErrorCode::cancelled, "queued admission cancelled"));
+  }
+  void stop_while_queued() {
+    ASSERT_TRUE(admission_waiters_.size() == 1);
+    EXPECT(admission_budget_->used() > 0);
+    stop();
+  }
 };
 
 TEST(ExtMessagePool, QueuedRequestUsesFreshLimitsWithoutCountingDispatch) {
@@ -436,5 +450,43 @@ TEST(ExtMessagePool, QueuedProfileRebindRejectsPreviouslySupportedConfig) {
 }
 TEST(ExtMessagePool, QueuedProfileRebindAdmitsNewlySupportedConfig) {
   exercise_queued_profile_rebind(false);
+}
+
+TEST(ExtMessagePool, QueuedCancellationReleasesBytesWithoutDispatchOrCharge) {
+  auto parsed = ExtMessageWorkProfile::parse(std::string(64, 'a') + ",2,1,9223372036854775807,1,65535,512");
+  ASSERT_TRUE(parsed.is_ok());
+  auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  ASSERT_TRUE(options.write().set_ext_message_work_profile(parsed.move_as_ok()).is_ok());
+  auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<td::Unit> {
+    auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("cancel-queued", options, bytes);
+    co_await td::actor::ask(pool.get(), &ExtMessagePool::update_last_masterchain_state,
+                           td::Ref<MasterchainState>{td::make_ref<AdmissionLimitsState>(65535)});
+    auto pending = td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
+        td::BufferSlice{"queued input"}, 0, false, td::optional<PublicKeyHash>{});
+    co_await td::actor::ask(pool.get(), &ExtMessagePoolTestHarness::cancel_waiter);
+    auto result = co_await std::move(pending).wrap();
+    ASSERT_TRUE(result.is_error());
+    EXPECT_EQ(result.error().code(), ErrorCode::cancelled);
+    EXPECT_EQ(result.error().message(), "queued admission cancelled");
+    co_await td::actor::ask(pool.get(), &ExtMessagePoolTestHarness::verify_work_released, false);
+    co_return td::Unit{};
+  });
+}
+
+TEST(ExtMessagePool, StoppingPoolReleasesQueuedInput) {
+  auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<td::Unit> {
+    auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("stop-queued", bytes);
+    auto pending = td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
+        td::BufferSlice{"queued input"}, 0, false, td::optional<PublicKeyHash>{});
+    td::actor::send_closure(pool.get(), &ExtMessagePoolTestHarness::stop_while_queued);
+    auto result = co_await std::move(pending).wrap();
+    ASSERT_TRUE(result.is_error());
+    co_return td::Unit{};
+  });
+  EXPECT_EQ(bytes->used(), 0u);
 }
 }  // namespace tos::validator

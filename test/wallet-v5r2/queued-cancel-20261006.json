@@ -1,0 +1,153 @@
+{
+  "base_commit": "26b88af96d726e16f0edb830897a64a9f961fb38",
+  "source_state": "uncommitted changes on base commit; final compiled snapshot matches source hashes",
+  "platform": "Linux AArch64 Release clang",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "validator/impl/ext-message-pool.cpp": "e5acfb7bef80120b105c846b64272ce86cad7287b36d2b636b8995d47cb6afd1",
+    "validator/impl/ext-message-pool.hpp": "171c438c94fa6701dae4b372a2d40ce9175a5190af193a18b4499a57fc20e648",
+    "test/test-ext-message-pool.cpp": "abeb8e208cf144fd971f396c8c12aed2a01d31e9bfbf95145a46a8cc4cb8562f",
+    "scripts/check-ext-message-pool-controls.py": "882e757bfd9a6f29af9933332f4e8ee8d7e1764e64ed83e8efd3dd9fb52063d1",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "0017b9e7108c4655ab8c4f8917770f5d4919e8cfeee76aea5e6bacaf207abc9d"
+  },
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-queued-cancel-controls-final",
+  "command": "python3 scripts/check-ext-message-pool-controls.py --container v5r2-admission-linux --build-dir /build-shadow --output-dir /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-queued-cancel-controls-final",
+  "results": {
+    "source_sha256": "e5acfb7bef80120b105c846b64272ce86cad7287b36d2b636b8995d47cb6afd1",
+    "returncodes": {
+      "baseline-build": 0,
+      "baseline": 0,
+      "stale-limits-build": 0,
+      "stale-limits": 1,
+      "false-completion-build": 0,
+      "false-completion": 1,
+      "reset-work-on-update-build": 0,
+      "reset-work-on-update": 1,
+      "disable-on-options-update-build": 0,
+      "disable-on-options-update": 1,
+      "skip-work-charge-build": 0,
+      "skip-work-charge": 1,
+      "skip-profile-check-build": 0,
+      "skip-profile-check": 1,
+      "stale-profile-on-rebind-build": 0,
+      "stale-profile-on-rebind": 1,
+      "ignore-queued-cancellation-build": 0,
+      "ignore-queued-cancellation": 1,
+      "skip-shutdown-drain-build": 0,
+      "skip-shutdown-drain": 1,
+      "restored-build": 0,
+      "restored": 0
+    },
+    "logs": {
+      "baseline-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "baseline.log": {
+        "sha256": "d2bd9b23e64f27cbfbb9f5ce03eee2bf344b5e583b6dacebdbbfc3351d049946",
+        "bytes": 5852
+      },
+      "disable-on-options-update-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "disable-on-options-update.log": {
+        "sha256": "2c15e5fc1124949f8cae43678cbfe67eb2deb31f170a5d041e5cb26d9a2a788a",
+        "bytes": 1840
+      },
+      "false-completion-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "false-completion.log": {
+        "sha256": "4486054cedf6fcf0e4eed09388eb52beeefddd7426dcdf890d0c7d77e9147c9a",
+        "bytes": 361
+      },
+      "ignore-queued-cancellation-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "ignore-queued-cancellation.log": {
+        "sha256": "ac5bb5e8bd64a968772e4298a6887a82d316e35d667702d4f795f95a9d4a1d5b",
+        "bytes": 633
+      },
+      "reset-work-on-update-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "reset-work-on-update.log": {
+        "sha256": "b77f5b9206fd0cafdcdd693d1a52dd22beedeb84d18560246f47ac3363ef39d0",
+        "bytes": 1727
+      },
+      "restored-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "restored.log": {
+        "sha256": "d3c00c6a0a36e61acf6cd30b30a51f75e178f99eed5f95034294a6e1c484dac0",
+        "bytes": 5848
+      },
+      "skip-profile-check-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "skip-profile-check.log": {
+        "sha256": "0acdee898cbd3a851f7dd081adfd9e59b8fc08fb359c2a7e783a53033b484948",
+        "bytes": 3203
+      },
+      "skip-shutdown-drain-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "skip-shutdown-drain.log": {
+        "sha256": "52c53512171ec92dd03e36e2b3eaee3025961edb3b8873d4ce75b4158f63d404",
+        "bytes": 2519
+      },
+      "skip-work-charge-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "skip-work-charge.log": {
+        "sha256": "51b06c80b7807815b14de062518553b457160b47e361084c134d82aa7a218b49",
+        "bytes": 1998
+      },
+      "stale-limits-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "stale-limits.log": {
+        "sha256": "08c8e8d92ab444b39c0d82d8fbec074dcfd78412f89f46366fb5e6941e3d8973",
+        "bytes": 818
+      },
+      "stale-profile-on-rebind-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "stale-profile-on-rebind.log": {
+        "sha256": "8dab3749b44167267ac4391d177940b392e566e55adda5687d58764655f777bd",
+        "bytes": 2028
+      }
+    },
+    "scope": "actual pool coroutine, shared work charge, exact config pin, and failure VM-count regression"
+  },
+  "additional_logs": {
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-queued-cancel-test.log": {
+      "sha256": "827f83d1b5c76e7dd7a75ee794959ac4551a45dd5c4837b81feb852562bd8910",
+      "bytes": 8264,
+      "returncode": 1
+    },
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-queued-cancel-engine-build.log": {
+      "sha256": "f1830b20cdb0644687cb9b0ef513b513ae12b47ad33198075b867bee0a3db118",
+      "bytes": 387,
+      "returncode": 0
+    }
+  },
+  "finding": "Stopping a pool with a queued coroutine deadlocked: the coroutine retained the actor while its awaited promise remained in the actor. The pre-fix test failed with TestScheduler deadlock detection. tear_down now fails and removes queued promises before destruction.",
+  "validation": "12 baseline and restored tests pass. Nine filtered mutations fail at their intended boundaries, including swallowed cancellation and removal of shutdown drain. Full validator-engine rebuild passes.",
+  "excluded_attempt": "20261006-queued-cancel-controls: a full-suite cancellation mutant hung in the later shutdown test and required termination; it is not acceptance evidence. The final runner isolates each mutant target and retains complete baseline/restored runs.",
+  "limitations": [
+    "Injected queue cancellation and local actor shutdown; no claim of RPC disconnect cancellation or interruption of a running VM.",
+    "New remote CI has not run at this source revision.",
+    "Network stress, live configuration transitions and release gas calibration remain pending."
+  ]
+}

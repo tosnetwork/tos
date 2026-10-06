@@ -25,6 +25,12 @@ completion and cancellation do not refund work; byte/inflight occupancy still
 releases. The checker executes a rejected contract once, without a diagnostic
 replay. Consensus block validation does not consult this local budget.
 
+Stopping the pool explicitly fails all queued admission promises during actor
+teardown. Waiting coroutines retain the actor, so deferring promise cleanup until
+destruction would create a reference cycle and retain their input bytes. Queue
+errors propagate before dispatch and consume no work tokens. Dropping an external
+`StartedTask` handle detaches its work; it is not a request to cancel execution.
+
 The exact configuration pin deliberately refuses unrecognized configurations.
 It also changes on unrelated configuration updates such as validator rotations.
 The internal options API can explicitly rebind a reviewed configuration without
@@ -46,7 +52,7 @@ Linux x86-64 and AArch64. Its checks map to these boundaries:
 | Boundary | Check |
 | --- | --- |
 | Token accounting, refill, overflow and initial gas quote | `test-ext-message-admission-budget` |
-| Pool dispatch, configuration matching, rejected VM call count and live options | `test-ext-message-pool` |
+| Pool dispatch, configuration matching, rejected VM call count, live options and queued shutdown | `test-ext-message-pool` |
 | Profile parsing and options validation | `test-validator-options` |
 | Engine option registration and duplicate-option rejection | `scripts/check-ext-message-work-cli.py` |
 | Test sensitivity to setter, parsed-profile and hash-format guards | `scripts/check-ext-message-options-controls.py` |

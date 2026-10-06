@@ -62,6 +62,7 @@ class ExtMessagePool : public td::actor::Actor {
   std::vector<std::pair<std::string, std::string>> prepare_stats();
 
   void alarm() override;
+  void tear_down() override;
   void start_up() override {
     if (opts_.not_null()) {
       auto profile = opts_->get_ext_message_work_profile();

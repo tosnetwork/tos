@@ -60,6 +60,12 @@ def main():
          b'  // Controlled deletion of supported-profile refresh after rebind.',
          'external admission configuration is outside the work profile',
          'QueuedProfileRebindRejectsPreviouslySupportedConfig'),
+        ('ignore-queued-cancellation', b'    co_await std::move(task);',
+         b'    (void)co_await std::move(task).wrap();', 'queued admission cancelled',
+         'QueuedCancellationReleasesBytesWithoutDispatchOrCharge'),
+        ('skip-shutdown-drain', b'void ExtMessagePool::tear_down() {',
+         b'void ExtMessagePool::tear_down() {\n  return; // Controlled deletion of shutdown drain.',
+         'Deadlock detected', 'StoppingPoolReleasesQueuedInput'),
     ]
     for name, anchor, _, _, _ in mutations:
         if original.count(anchor) != 1:
@@ -73,7 +79,7 @@ def main():
         results[name] = result.returncode
         return result.returncode
 
-    def build_and_test(name):
+    def build_and_test(name, test_name=None):
         if args.container:
             subprocess.run(['docker', 'cp', str(source), args.container + ':' +
                             args.container_source_dir + '/validator/impl/ext-message-pool.cpp'], check=True)
@@ -84,14 +90,17 @@ def main():
         if run(name + '-build', ['cmake', '--build', args.build_dir, '--target',
                                 'test-ext-message-pool', '-j', '2']):
             raise RuntimeError(name + ' build failed')
-        return run(name, [str(Path(args.build_dir) / 'test-ext-message-pool')])
+        command = [str(Path(args.build_dir) / 'test-ext-message-pool')]
+        if test_name:
+            command += ['--filter', test_name]
+        return run(name, command)
 
     if build_and_test('baseline'):
         raise RuntimeError('baseline failed; no mutations applied')
     try:
         for name, anchor, replacement, assertion, test_name in mutations:
             source.write_bytes(original.replace(anchor, replacement))
-            if build_and_test(name) == 0:
+            if build_and_test(name, test_name) == 0:
                 raise RuntimeError(name + ' unexpectedly passed')
             failure = (output / (name + '.log')).read_text(errors='replace')
             if test_name not in failure or assertion not in failure:

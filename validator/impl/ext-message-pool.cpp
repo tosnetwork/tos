@@ -26,6 +26,16 @@
 
 namespace tos::validator {
 
+void ExtMessagePool::tear_down() {
+  // Suspended admission coroutines retain this actor. End their waits before
+  // destruction, otherwise their promises and actor references form a cycle.
+  while (!admission_waiters_.empty()) {
+    auto waiter = std::move(admission_waiters_.front());
+    admission_waiters_.pop_front();
+    waiter.set_error(td::Status::Error(ErrorCode::cancelled, "external admission pool stopped"));
+  }
+}
+
 td::Result<td::Unit> ExtMessagePool::configure_work_profile(ExtMessageWorkProfile profile) {
   if (work_admission_) {
     TRY_STATUS(work_admission_->update_profile(std::move(profile)));
