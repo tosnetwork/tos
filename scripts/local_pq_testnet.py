@@ -257,6 +257,37 @@ def rpc(port, method, **params):
     return result["result"]
 
 
+MASTERCHAIN_SHARD = "-9223372036854775808"
+
+
+def lite_config(path, rpc_port=8011):
+    """Load a lite-client config whose proof chain starts at the latest key block.
+
+    A client that starts from the zero state proves its way forward through
+    every key block since Genesis. With short archive retention those blocks
+    are garbage collected within hours, and every newly started client then
+    fails with LITE_SERVER_NOTREADY "block handle not in db". The init block
+    is read from a local node's JSON-RPC, which these development drivers
+    already trust; a production client takes it from its global config.
+    """
+    from tosapi import tos_api
+
+    config = json.loads(Path(path).read_text())
+    head = int(rpc(rpc_port, "getMasterchainInfo")["last"]["seqno"])
+    header = rpc(rpc_port, "getBlockHeader", workchain=-1, shard=MASTERCHAIN_SHARD, seqno=head)
+    key = int(header["seqno"] if header.get("is_key_block") else header["prev_key_block_seqno"])
+    if key > 0:
+        block = rpc(rpc_port, "lookupBlock", workchain=-1, shard=MASTERCHAIN_SHARD, seqno=key)
+        config["validator"]["init_block"] = {
+            "workchain": int(block["workchain"]),
+            "shard": int(block["shard"]),
+            "seqno": int(block["seqno"]),
+            "root_hash": block["root_hash"],
+            "file_hash": block["file_hash"],
+        }
+    return tos_api.Liteclient_config_global.from_dict(config)
+
+
 def block_id(value):
     # Retain the full block identity; equality of heights alone is insufficient.
     return tuple(value[key] for key in ("workchain", "shard", "seqno", "root_hash", "file_hash"))
@@ -611,7 +642,6 @@ async def deploy(args):
     import nacl.signing
     from contract import WalletV1, tos
     from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, StateInit, WalletMessage
-    from tosapi import tos_api
     from toslib.toslib_cdll import ToslibCDLL
 
     from toslib import ToslibClient
@@ -626,9 +656,7 @@ async def deploy(args):
     if address.to_str(is_user_friendly=False).lower() != pool["address"].lower():
         raise RuntimeError("pool address does not match the compiled code and data")
     network = json.loads((args.data / "network.json").read_text())
-    config = tos_api.Liteclient_config_global.from_dict(
-        json.loads((args.data / "testnet/node1/lite-client.json").read_text())
-    )
+    config = lite_config(args.data / "testnet/node1/lite-client.json")
     cdll = ToslibCDLL(args.build / "toslib/libtoslibjson.so")
     cdll.client_set_verbosity_level(0)
     async with ToslibClient(config, cdll) as client:

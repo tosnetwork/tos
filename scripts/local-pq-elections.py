@@ -208,9 +208,7 @@ async def main():
         raise ValueError("rotation plan differs")
     cdll = ToslibCDLL(REPO / "build/toslib/libtoslibjson.so")
     cdll.client_set_verbosity_level(0)
-    config = tos_api.Liteclient_config_global.from_dict(
-        json.loads((DATA / "configs/node-1-lite.json").read_text())
-    )
+    config = local.lite_config(DATA / "configs/node-1-lite.json")
     network = json.loads((DATA / "network.json").read_text())
     pool_code = Cell.one_from_boc(
         bytes.fromhex(

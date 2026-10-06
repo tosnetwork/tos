@@ -166,9 +166,7 @@ async def run(args):
         async with AsyncExitStack() as stack:
             clients = []
             for i in range(1, args.nodes + 1):
-                cfg = tos_api.Liteclient_config_global.from_dict(
-                    json.loads((args.data / f"configs/node-{i}-lite.json").read_text())
-                )
+                cfg = local.lite_config(args.data / f"configs/node-{i}-lite.json", 8010 + i)
                 clients.append(await stack.enter_async_context(ToslibClient(cfg, cdll)))
             if args.bootstrap:
                 # Separate wallet keys; the existing regular-transfer config is untouched.
