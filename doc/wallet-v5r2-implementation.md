@@ -2132,8 +2132,43 @@ run these controls.
 
 This is the deterministic derivation layer, not a completed mnemonic restore or
 wallet creation flow. Native mnemonic validation, recovery manifest authentication,
-Vault persistence of derived roles, separate-device custody and the LMS restore
-barrier must still be integrated by clients. Fee derivation neither proves that a
+Vault persistence of derived roles (implemented below), separate-device custody
+and the LMS restore barrier must still be integrated by clients. Fee derivation neither proves that a
 tree identity is fresh nor licenses reuse of previously signed leaves. Independent
 masters use the same public generation; legacy derivations remain unchanged.
 Evidence: `test/wallet-v5r2/kdf-20261006.json`.
+
+
+### Bound derived-key restoration into encrypted Vault records
+
+`vault::restore_derived_and_wipe` restores exactly one PQ role from the fixed KDF
+context into a new Vault record. It requires an independently authenticated public
+key, checks its width, derives in protected seed storage, and compares the actual
+native public key before any persistent write. Wrong masters, namespaces, roles
+or enrollment keys cannot silently create a replacement record. The full public
+context and its authenticated wallet association remain recovery-manifest duties;
+Vault tags alone are not trusted enrollment evidence.
+
+Creation and restoration now share `persist_new`: no overwriting, successful
+store and flush, then exact public-key-bound readback before returning a signer.
+A reported write/flush/readback failure may leave a durable record; it is preserved
+for explicit reconciliation, never erased or overwritten automatically. The
+restoration function constructs its borrowed-master wipe guard before returning
+its future, so even cancellation without one poll clears that buffer. Once
+derivation completes the master is cleared before persistence awaits. The
+successful secret record contains the derived role seed, not the master.
+
+Tests restore both roles into actual encrypted files, close/reopen and sign POP,
+refuse duplicate IDs, check mismatched inputs leave no record, and verify unpolled
+cancellation cleanup. Injected store/flush failures after a real write and a
+substituted readback return no signer; reopening still finds the original derived
+key. Six controls remove pre-store enrollment binding, unpolled cleanup, duplicate
+protection, store/flush error handling or readback binding. Each fails a relevant
+assertion and restored tests pass; the existing creation controls are also rerun
+against the extracted persistence path.
+
+This restores a seed record, not a wallet's chain state, complete mnemonic/UI flow,
+recovery-manifest authenticity, separate-device custody or LMS scheduling journal.
+Closed-snapshot rollback, fee-state loss barriers, actual chain readiness and
+production deployment gates remain separate. Evidence:
+`test/wallet-v5r2/vault-derived-restore-20261006.json`.

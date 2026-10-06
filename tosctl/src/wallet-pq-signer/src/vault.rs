@@ -65,6 +65,16 @@ async fn create_with_rng(
         let mut locked = copy.lock_mut().await.map_err(|_| Rejected)?;
         Signer::import_and_wipe(role, &mut locked)?.public_key().to_vec()
     };
+    persist_new(vault, id, role, seed, &expected_key).await
+}
+
+async fn persist_new(
+    vault: &SecretVault,
+    id: &SecretId,
+    role: Role,
+    seed: ProtectedMemory,
+    expected_key: &[u8],
+) -> Result<Signer, Rejected> {
     let metadata = Metadata::new(Some(id), Algorithm::None, true)
         .with_tag(PROFILE_TAG, PROFILE_V1)
         .with_tag(ROLE_TAG, role_tag(role));
@@ -78,7 +88,50 @@ async fn create_with_rng(
     vault.put(&secret, StoreMode::NewOnly).await.map_err(|_| Rejected)?;
     vault.flush().await.map_err(|_| Rejected)?;
     drop(secret);
-    load_bound(vault, id, role, &expected_key).await
+    load_bound(vault, id, role, expected_key).await
+}
+
+/// Restore one deterministically derived PQ role into a new encrypted record.
+/// The expected public key must come from independently authenticated enrollment,
+/// not the recovery input being checked. Keep the full public KDF context in the
+/// recovery manifest. This does not restore LMS state or establish chain readiness.
+///
+/// The wipe guard is constructed before returning the future: even dropping an
+/// unpolled operation clears the borrowed master. Storage uncertainty follows
+/// `create_new`: never automatically erase or overwrite a possibly written record.
+pub fn restore_derived_and_wipe<'a>(
+    vault: &'a SecretVault,
+    id: &'a SecretId,
+    role: Role,
+    master: &'a mut [u8],
+    context: crate::kdf::DerivationContext,
+    expected_key: &'a [u8],
+) -> impl std::future::Future<Output = Result<Signer, Rejected>> + 'a {
+    let master = crate::WipeSeed(master);
+    async move {
+        if expected_key.len() != role.public_key_bytes() {
+            return Err(Rejected);
+        }
+        let material = match role {
+            Role::Primary => crate::kdf::Material::Primary,
+            Role::Rescue => crate::kdf::Material::Rescue,
+        };
+        let mut seed = ProtectedMemory::new(material.seed_bytes()).map_err(|_| Rejected)?;
+        {
+            let mut locked = seed.lock_mut().await.map_err(|_| Rejected)?;
+            crate::kdf::derive_seed_and_wipe(master.0, context, material, &mut locked)?;
+        }
+        drop(master);
+        let derived_key = {
+            let mut copy = seed.clone().await.map_err(|_| Rejected)?;
+            let mut locked = copy.lock_mut().await.map_err(|_| Rejected)?;
+            Signer::import_and_wipe(role, &mut locked)?.public_key().to_vec()
+        };
+        if derived_key != expected_key {
+            return Err(Rejected);
+        }
+        persist_new(vault, id, role, seed, expected_key).await
+    }
 }
 
 /// Open a seed record and bind the derived key to independently authenticated
@@ -252,7 +305,7 @@ mod creation_tests {
     use std::{path::Path, sync::Arc};
 
     #[derive(Clone, Copy)]
-    enum Failure {
+    pub(super) enum Failure {
         None,
         Store,
         Flush,
@@ -315,7 +368,7 @@ mod creation_tests {
         }
     }
 
-    async fn open(path: &Path, failure: Failure) -> SecretVault {
+    pub(super) async fn open(path: &Path, failure: Failure) -> SecretVault {
         let key = ProtectedMemory::from_slice(&[0x77; 32]).await.expect("public master fixture");
         let master = MasterKey::from_key_material(
             KeyMaterial::new_symmetric_key(key).await.expect("material"),
@@ -394,6 +447,115 @@ mod creation_tests {
             load_bound(&reopened, &id, Role::Primary, expected.public_key())
                 .await
                 .expect("uncertain record preserved");
+        }
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::creation_tests::{Failure, open};
+    use super::*;
+    use crate::kdf::{DerivationContext, derive_signer_and_wipe};
+
+    fn context() -> DerivationContext {
+        DerivationContext { network: [1; 32], global_id: -239, account_index: 5, key_generation: 7 }
+    }
+    fn expected(role: Role) -> Vec<u8> {
+        derive_signer_and_wipe(&mut [0x55; 32], context(), role).unwrap().public_key().to_vec()
+    }
+
+    #[tokio::test]
+    async fn derived_restore_reopens_without_overwriting() {
+        for role in [Role::Primary, Role::Rescue] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("vault.json");
+            let vault = open(&path, Failure::None).await;
+            let id = SecretId::new("pq.restored");
+            let key = expected(role);
+            let mut master = [0x55; 32];
+            let signer = restore_derived_and_wipe(&vault, &id, role, &mut master, context(), &key)
+                .await
+                .unwrap();
+            assert_eq!(signer.public_key(), key);
+            assert_eq!(master, [0; 32], "restore master not wiped");
+            let mut master = [0x55; 32];
+            assert!(
+                restore_derived_and_wipe(&vault, &id, role, &mut master, context(), &key)
+                    .await
+                    .is_err(),
+                "restore overwrote existing key"
+            );
+            assert_eq!(master, [0; 32]);
+            drop(signer);
+            drop(vault);
+            let reopened = open(&path, Failure::None).await;
+            let mut signer = load_bound(&reopened, &id, role, &key).await.unwrap();
+            assert_eq!(
+                signer.sign_bound(role, &key, crate::Purpose::Pop, &[9; 32]).unwrap().len(),
+                role.signature_bytes()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mismatch_never_persists_and_unpolled_restore_wipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = open(&dir.path().join("vault.json"), Failure::None).await;
+        let id = SecretId::new("pq.mismatch");
+        for role in [Role::Primary, Role::Rescue] {
+            let key = expected(role);
+            let mut master = [0x55; 32];
+            let future = restore_derived_and_wipe(&vault, &id, role, &mut master, context(), &key);
+            drop(future);
+            assert_eq!(master, [0; 32], "unpolled restore retained master");
+            for change in 0..4 {
+                let mut master = [0x55; 32];
+                let mut context = context();
+                let mut key = key.clone();
+                match change {
+                    0 => master[0] ^= 1,
+                    1 => context.key_generation += 1,
+                    2 => key[0] ^= 1,
+                    _ => {
+                        key.pop();
+                    }
+                }
+                assert!(
+                    restore_derived_and_wipe(&vault, &id, role, &mut master, context, &key)
+                        .await
+                        .is_err(),
+                    "restore accepted mismatched enrollment"
+                );
+                assert_eq!(master, [0; 32], "rejected restore retained master");
+                assert!(!vault.exists(&id).await.unwrap(), "stored mismatched derived key");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_persistence_faults_preserve_uncertain_record() {
+        for failure in [Failure::Store, Failure::Flush, Failure::Read] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("vault.json");
+            let vault = open(&path, failure).await;
+            let id = SecretId::new("pq.uncertain-restore");
+            let key = expected(Role::Primary);
+            let mut master = [0x55; 32];
+            let result =
+                restore_derived_and_wipe(&vault, &id, Role::Primary, &mut master, context(), &key)
+                    .await;
+            let reason = match failure {
+                Failure::Store => "store",
+                Failure::Flush => "flush",
+                _ => "readback",
+            };
+            assert!(result.is_err(), "restore returned signer after {reason} failure");
+            assert_eq!(master, [0; 32]);
+            drop(vault);
+            let reopened = open(&path, Failure::None).await;
+            load_bound(&reopened, &id, Role::Primary, &key)
+                .await
+                .expect("uncertain restored record preserved");
         }
     }
 }

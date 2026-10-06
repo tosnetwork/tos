@@ -1,0 +1,116 @@
+{
+  "base_commit": "e91b85d4a4b764590b28291340ef8f88fb0835ce",
+  "scope": "Independently public-key-bound deterministic PQ seed restoration into encrypted Vault with no overwrite, durable readback and master cleanup.",
+  "tests": {
+    "vault_unit_tests": 8,
+    "full_signer_unit_tests": 14,
+    "compile_fail_doctests": 2,
+    "restore_controls": {
+      "enrollment_before_store": {
+        "exit": 101,
+        "semantic_witness": "stored mismatched derived key"
+      },
+      "unpolled_master_wipe": {
+        "exit": 101,
+        "semantic_witness": "unpolled restore retained master"
+      },
+      "overwrite": {
+        "exit": 101,
+        "semantic_witness": "restore overwrote existing key"
+      },
+      "store_error": {
+        "exit": 101,
+        "semantic_witness": "restore returned signer after store failure"
+      },
+      "flush_error": {
+        "exit": 101,
+        "semantic_witness": "restore returned signer after flush failure"
+      },
+      "readback_key": {
+        "exit": 101,
+        "semantic_witness": "restore returned signer after readback failure"
+      }
+    },
+    "creation_controls": {
+      "rng_status": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid seed randomness"
+      },
+      "rng_zero": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid seed randomness"
+      },
+      "overwrite": {
+        "exit": 101,
+        "semantic_witness": "overwrote existing PQ key"
+      },
+      "store_error": {
+        "exit": 101,
+        "semantic_witness": "returned signer after store failure"
+      },
+      "flush_error": {
+        "exit": 101,
+        "semantic_witness": "returned signer after flush failure"
+      },
+      "readback_key": {
+        "exit": 101,
+        "semantic_witness": "returned signer after readback failure"
+      }
+    },
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --features vault",
+    "python3 test/wallet-v5r2/vault_restore_controls.py --output <fresh-directory>",
+    "python3 test/wallet-v5r2/vault_creation_controls.py --output <another-fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/vault.rs",
+      "bytes": 22111,
+      "sha256": "160eeb274d4e4b026bac96a0e3e8ecc283f66398ffe4654370e9c74e5dc3e80f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/vault_restore_controls.py",
+      "bytes": 3284,
+      "sha256": "ac35e5e55440ab6737d18b5cf123b475df1e442ece271b80f334ee755980e9a8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/vault_creation_controls.py",
+      "bytes": 3289,
+      "sha256": "55ee31f7d58f7ca664738e9523239bf3a037ae2eea5b4d4e5f0fa017489e9100"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 17504,
+      "sha256": "4a0121db5630d6d44622379222c5c61151d9700db37a35fb2f3c74e961e389ab"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 139673,
+      "sha256": "d023505f300f83b58c3be1f0c1bdcaf21083b6953a39b81871675bec9437d2d6"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-derived-restore-controls/MANIFEST.json",
+      "bytes": 2905,
+      "sha256": "3cd8346b72d69058b576401dbbfd08a2d40291a233b51aab093c2372aa3281fe"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-restore-creation-controls/MANIFEST.json",
+      "bytes": 2201,
+      "sha256": "a82bcead5d6013bff7f418e81fb1999386d110ea551a45ca886948b5425e38cb"
+    }
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Expected key and public KDF context require independent authenticated enrollment/manifest; no mnemonic validation or chain proof fetching here.",
+    "Unpolled cancellation and explicit persistence faults tested; not an exhaustive process/power-loss campaign.",
+    "Uncertain persistence is preserved and must be reconciled, not automatically overwritten.",
+    "Caller-owned secret copies, separate-device custody, LMS state-loss barrier and full CLI/mobile flows remain separate.",
+    "Default gas-credit admission and final-head CI/deployment acceptance remain open."
+  ]
+}
