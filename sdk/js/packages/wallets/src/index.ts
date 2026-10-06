@@ -34,6 +34,9 @@ import { WalletV5R1 } from "./WalletV5R1.js";
 
 export { WalletV3R2, WalletV4R2, WalletV5R1 };
 
+export { V5R2AuthRequest, validateV5R2Actions } from "./V5R2Auth.js";
+export type { V5R2Role, V5R2Action, V5R2Binding } from "./V5R2Auth.js";
+
 // Signer
 export { KeyPairSigner } from "./KeyPairSigner.js";
 
