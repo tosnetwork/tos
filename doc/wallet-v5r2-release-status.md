@@ -74,3 +74,14 @@ The implementation record's previous “current” hash referred to the earlier
 shared-engine baseline and was stale after the main security merge. No V5R1 code
 or frozen embedding was changed by this documentation correction. Evidence:
 [current compatibility audit](../test/wallet-v5r2/current-compatibility-20261006.json).
+
+## CI manifest-runner correction
+
+ARM job `112145520306` of run `37425950481` at `9e77f4705` failed the
+manifest Vault runner's stale exact-count assertion. Its retained Cargo output
+shows six passing tests and one explicitly ignored H20 rebuild, including all five
+original required tests. The runner now requires those five named successes and
+exit zero while retaining the complete module filter. All four semantic guard
+mutations fail their intended assertions and the restored suite passes locally.
+This repairs test orchestration; it does not certify the remaining remote steps.
+See [failure and repair evidence](../test/wallet-v5r2/manifest-vault-count-fix-20261006.json).

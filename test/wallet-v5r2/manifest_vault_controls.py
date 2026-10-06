@@ -74,7 +74,20 @@ def main():
 
     def positive(label):
         code, log = run(label)
-        assert code == 0 and "5 passed; 0 failed" in log and f"::{TEST} ... ok" in log, log[-4000:]
+        # Fee-recovery tests share this module filter when Vault support is enabled.
+        # Require each original witness, allowing additional successful tests.
+        required = (
+            TEST,
+            "manifest_roundtrip_reconstructs_genesis_without_trusting_observations",
+            "manifest_rejects_profile_code_identity_and_trusted_wallet_changes",
+            "manifest_rejects_unknown_duplicate_oversized_and_noncanonical_inputs",
+            "recovered_master_matches_initial_enrollment_and_is_wiped",
+        )
+        assert (
+            code == 0
+            and "test result: ok." in log
+            and all(f"::{name} ... ok" in log for name in required)
+        ), f"exit={code}\n{log[:3000]}\n{log[-1500:]}"
 
     results = {}
     try:
