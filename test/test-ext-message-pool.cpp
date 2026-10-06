@@ -18,6 +18,7 @@
 #include "td/utils/tests.h"
 #include "validator/impl/ext-message-checker.hpp"
 #include "validator/impl/ext-message-pool.hpp"
+#include "validator/impl/shard.hpp"
 #include "vm/boc.h"
 
 namespace tos::validator {
@@ -116,4 +117,60 @@ TEST(ExtMessageChecker, ParsesValidMessageBeforeStateLookup) {
 }
 
 }  // namespace
+}  // namespace tos::validator
+
+namespace tos::validator {
+class AdmissionLimitsState final : public MasterchainStateQ {
+ public:
+  explicit AdmissionLimitsState(unsigned max_size)
+      : MasterchainStateQ(BlockIdExt{}, td::BufferSlice{}), max_size_(max_size) {}
+  block::SizeLimitsConfig::ExtMsgLimits get_ext_msg_limits() const override {
+    block::SizeLimitsConfig::ExtMsgLimits limits;
+    limits.max_size = max_size_;
+    return limits;
+  }
+ private:
+  unsigned max_size_;
+};
+
+class ExtMessagePoolTestHarness final : public ExtMessagePool {
+ public:
+  explicit ExtMessagePoolTestHarness(std::shared_ptr<adnl::AdnlExtByteBudget> bytes)
+      : ExtMessagePool({}, {}, std::move(bytes)) {
+    last_masterchain_state_ = td::make_ref<AdmissionLimitsState>(65535);
+    inflight_checks_ = MAX_INFLIGHT_CHECKS;
+  }
+  void shrink_limits_and_release() {
+    ASSERT_TRUE(admission_waiters_.size() == 1);
+    last_masterchain_state_ = td::make_ref<AdmissionLimitsState>(1);
+    // Release the synthetic occupancy. The queued request must now re-read
+    // limits and reject without dispatching or inflating completion throughput.
+    inflight_checks_ = 1;
+    release_check_slot(false);
+  }
+  void verify_released_without_dispatch() {
+    EXPECT_EQ(inflight_checks_, 0u);
+    EXPECT_EQ(completions_in_rate_window_, 0u);
+    EXPECT_EQ(admission_window_.checked, 0u);
+    EXPECT_EQ(admission_budget_->used(), 0u);
+    EXPECT(admission_waiters_.empty());
+  }
+};
+
+TEST(ExtMessagePool, QueuedRequestUsesFreshLimitsWithoutCountingDispatch) {
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<td::Unit> {
+    auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
+    auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("queued-config", bytes);
+    auto pending = td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
+                                  td::BufferSlice{"queued input"}, 0, false,
+                                  td::optional<PublicKeyHash>{});
+    co_await td::actor::ask(pool.get(), &ExtMessagePoolTestHarness::shrink_limits_and_release);
+    auto result = co_await std::move(pending).wrap();
+    ASSERT_TRUE(result.is_error());
+    EXPECT_EQ(result.error().message(), "external message too large, rejecting");
+    co_await td::actor::ask(pool.get(), &ExtMessagePoolTestHarness::verify_released_without_dispatch);
+    co_return td::Unit{};
+  });
+}
 }  // namespace tos::validator

@@ -1,0 +1,72 @@
+{
+  "source_sha256": "52b62bd41069caba0264123a495a0315f3603a39940ffce36dcacbf62cbb6eab",
+  "returncodes": {
+    "baseline-build": 0,
+    "baseline": 0,
+    "stale-limits-build": 0,
+    "stale-limits": 1,
+    "false-completion-build": 0,
+    "false-completion": 1,
+    "restored-build": 0,
+    "restored": 0
+  },
+  "logs": {
+    "baseline-build.log": {
+      "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+      "bytes": 302
+    },
+    "baseline.log": {
+      "sha256": "2e1aa8896847c73518a637f978e27c6802684080a1a85f12ad76508ba2431679",
+      "bytes": 493
+    },
+    "false-completion-build.log": {
+      "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+      "bytes": 302
+    },
+    "false-completion.log": {
+      "sha256": "31211a560b4b8e42ae44529976d06a7e8ccc41174d9c94329cae9438b4ba1faf",
+      "bytes": 734
+    },
+    "restored-build.log": {
+      "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+      "bytes": 302
+    },
+    "restored.log": {
+      "sha256": "05764641ee40a3ede0dc2c318626f087d20f014035263aee1c4dc4f6b51e4b63",
+      "bytes": 495
+    },
+    "stale-limits-build.log": {
+      "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+      "bytes": 302
+    },
+    "stale-limits.log": {
+      "sha256": "61a5270047c8ae383a492b858eea0ce5332aa4d0a21767c52b1ec98bb022663c",
+      "bytes": 1191
+    }
+  },
+  "scope": "actual pool coroutine with controlled state limits and occupied slots; no VM fixture",
+  "base_commit": "4f900004776a09bb4af590e4a0082c810e52d6e3",
+  "source_state": "uncommitted changes on base commit",
+  "sources": {
+    "CMakeLists.txt": "432a99006d6423c866b6d1dff039ed677d18a6f86e28e72c2bf480097a9dda5d",
+    "validator/impl/ext-message-pool.cpp": "52b62bd41069caba0264123a495a0315f3603a39940ffce36dcacbf62cbb6eab",
+    "validator/impl/ext-message-pool.hpp": "eda77acce4f4176788aa5514406ec3b319cfc66cc95cddd25b62ff385ab9eb84",
+    "test/test-ext-message-pool.cpp": "0c76e73719590ac961ca6036b052a5059a642febff9e30fc088c087b98ecd312",
+    "scripts/check-ext-message-pool-controls.py": "551a583dd9e6563f18e06ff04ffe0890b49c4ca52310f8684956c98ff3567506"
+  },
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-linux-pool-controls-final",
+  "retain_until": "2027-01-06",
+  "platform": "Linux arm64 container, Release clang build",
+  "command": "python3 scripts/check-ext-message-pool-controls.py --container v5r2-admission-linux --build-dir /build-shadow --output-dir <retained-output>",
+  "result": "5 baseline and restored tests pass; stale limits and false completion independently fail named assertions",
+  "discarded_attempt": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-linux-pool-controls",
+    "reason": "docker cp timestamp precision left stale mutation binary; restored tests failed; not acceptance evidence"
+  },
+  "remaining": [
+    "Actual VM execution count on valid/invalid signature fixtures",
+    "All-source work-budget dispatch integration",
+    "Supported-profile CPU calibration and fairness load tests"
+  ],
+  "environment": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-linux-admission-environment.json"
+}

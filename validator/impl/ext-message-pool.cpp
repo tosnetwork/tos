@@ -69,15 +69,30 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
     co_await std::move(task);
   }
   ++inflight_checks_;
+  bool dispatched = false;
   SCOPE_EXIT {
-    release_check_slot();
+    release_check_slot(dispatched);
   };
+
+  // Waiting may have advanced the chain configuration. Pin one fresh snapshot
+  // for limits and execution, with no suspension before checker dispatch.
+  auto admission_state = last_masterchain_state_;
+  if (admission_state.is_null()) {
+    ++admission_window_.rejected;
+    co_return td::Status::Error(ErrorCode::notready, "not ready");
+  }
+  ext_msg_limits = admission_state->get_ext_msg_limits();
+  if (data.size() > ext_msg_limits.max_size) {
+    ++admission_window_.rejected;
+    co_return td::Status::Error("external message too large, rejecting");
+  }
 
   size_t worker = next_checker_++ % checkers_.size();
   ++checker_inflight_[worker];
   td::Timer check_timer;
+  dispatched = true;
   auto checked_result = co_await td::actor::ask(checkers_[worker].get(), &ExtMessageChecker::check, std::move(data),
-                                                ext_msg_limits, last_masterchain_state_)
+                                                ext_msg_limits, std::move(admission_state))
                             .wrap();
   --checker_inflight_[worker];
   admission_window_.check_time += check_timer.elapsed();
@@ -156,8 +171,10 @@ size_t ExtMessagePool::max_admission_waiters() {
   return static_cast<size_t>(td::clamp(cap, 512.0, static_cast<double>(MAX_ADMISSION_WAITERS)));
 }
 
-void ExtMessagePool::release_check_slot() {
-  ++completions_in_rate_window_;
+void ExtMessagePool::release_check_slot(bool dispatched) {
+  if (dispatched) {
+    ++completions_in_rate_window_;
+  }
   --inflight_checks_;
   if (!admission_waiters_.empty()) {
     auto waiter = std::move(admission_waiters_.front());

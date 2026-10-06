@@ -765,7 +765,7 @@ target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
   validator-disk tos_validator validator-disk )
 
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
-target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tdactor tdutils)
+target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto common tdactor tdutils)
 
 add_executable(test-ext-message-ingress test/test-td-main.cpp test/test-ext-message-ingress.cpp)
 target_link_libraries(test-ext-message-ingress PRIVATE tos_external_message_parser)

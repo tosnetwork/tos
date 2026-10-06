@@ -67,6 +67,8 @@ class ExtMessagePool : public td::actor::Actor {
   }
 
  private:
+  friend class ExtMessagePoolTestHarness;
+
   struct MessageId {
     AccountIdPrefixFull dst;
     ExtMessage::Hash hash;
@@ -171,7 +173,7 @@ class ExtMessagePool : public td::actor::Actor {
   size_t inflight_checks_{0};
   std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget_;
   std::deque<td::actor::StartedTask<>::ExternalPromise> admission_waiters_;
-  void release_check_slot();
+  void release_check_slot(bool dispatched);
 
   double check_completion_rate_{2000.0};
   td::uint64 completions_in_rate_window_{0};
