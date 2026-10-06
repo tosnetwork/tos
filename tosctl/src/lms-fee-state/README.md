@@ -27,3 +27,18 @@ integrity, exact retries, failure poisoning and file/path constraints. Device
 builds, platform FFI and complete mobile recovery remain separate acceptance
 work. The ignored child probe is invoked explicitly by the process-handoff
 test; it is not a skipped ownership scenario.
+
+## Native state interface
+
+`sdk/native/v5r2/tos_fee_state.h` exposes process-local integer session handles,
+capacity previews, durable reservations and close. Sessions and pending tokens
+are bounded at 256 and 1,024 respectively. Contention returns BUSY; a poisoned
+registry returns INTERNAL and must not be treated as a retryable capacity hint.
+Close invalidates handles/tokens while leaving reservations burned on disk.
+
+The current C interface does not yet expose signing, cache verification or
+broadcast. A reservation receipt is not crypto approval. Caller-provided time
+and chain counters must come from the platform's authenticated proof layer.
+Rust tests and `fee-state-ffi-test.c` cover ownership, stale previews, failure
+outputs and restart barriers. iOS/Android target builds are build evidence,
+not on-device lifecycle acceptance.

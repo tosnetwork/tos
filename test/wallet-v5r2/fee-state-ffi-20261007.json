@@ -1,0 +1,55 @@
+{
+  "status": "local source-bound state interface evidence",
+  "scope": "opaque state handles, capacity and durable reservations only; no mobile application linking, signed cache export, live proofs or complete recovery acceptance",
+  "tests": {
+    "passed": 23,
+    "ignored_child_probe": "invoked by the real process test",
+    "c_host_smoke": "passed"
+  },
+  "controls": {
+    "source_sha256": "498cb35e6d25129f84c835be0367749e8772f81d789df5e695edbeb812caafc8",
+    "controls": [
+      {
+        "name": "close-invalidates",
+        "test": "ffi::tests::ffi_lifecycle_keeps_reservations_and_restore_barrier",
+        "exit": 101,
+        "semantic_failure": true,
+        "log_sha256": "59e4b42f94dcc54d5729111047042d2ac00ea4c8c89b86d321d1cab35cf1eaf0"
+      },
+      {
+        "name": "failure-output",
+        "test": "ffi::tests::ffi_lifecycle_keeps_reservations_and_restore_barrier",
+        "exit": 101,
+        "semantic_failure": true,
+        "log_sha256": "f374883375ab4f25000a922cb09007c54c695acd14481260e36fbbc3f3f00d1b"
+      },
+      {
+        "name": "poison-status",
+        "test": "ffi::tests::contention_and_poisoning_have_distinct_failure_codes",
+        "exit": 101,
+        "semantic_failure": true,
+        "log_sha256": "607ff3f5bcbb9310f9acea5dddac3a2ef68a76ab3d829c2414ea170a8eb876ca"
+      }
+    ],
+    "restored_exit": 0
+  },
+  "artifacts": {
+    "release/liblms_fee_state.a": {
+      "sha256": "b310b887b8bed08a037787786de9bd6ced75360378bfa2d08cfa57dc26e00839",
+      "bytes": 17940800
+    },
+    "aarch64-apple-ios-sim/release/liblms_fee_state.a": {
+      "sha256": "9873aec729098dd54a123edc30832367cec6e7a1b99df2b0b941f11924b06dd4",
+      "bytes": 17653320
+    },
+    "aarch64-linux-android/release/liblms_fee_state.a": {
+      "sha256": "18a8e00fd1dd1b0473bacbec3c820802635aec232c92f55f92010cdbc8245beb",
+      "bytes": 23300316
+    }
+  },
+  "sources": {
+    "tosctl/src/lms-fee-state/src/ffi.rs": "498cb35e6d25129f84c835be0367749e8772f81d789df5e695edbeb812caafc8",
+    "sdk/native/v5r2/tos_fee_state.h": "2621eed82070448d67449041fe6631c8224218dd8977ad5a56896663f0c47438",
+    "test/wallet-v5r2/fee-state-ffi-test.c": "a2380c8eeaceec3f013d8a50a2b6a9ff4587122f5f7e2e26e00ce2f9b69949ed"
+  }
+}

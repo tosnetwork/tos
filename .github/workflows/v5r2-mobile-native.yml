@@ -10,6 +10,8 @@ on:
       - 'tosctl/src/Cargo.toml'
       - 'tosctl/src/Cargo.lock'
       - 'test/wallet-v5r2/mobile-native-test.c'
+      - 'test/wallet-v5r2/fee-state-ffi-test.c'
+      - 'sdk/native/v5r2/tos_fee_state.h'
       - 'third-party/mldsa-native/**'
       - 'third-party/slhdsa-c/**'
       - '.github/workflows/v5r2-mobile-native.yml'
@@ -40,3 +42,20 @@ jobs:
       - name: Shared durable fee state and real process handoff
         working-directory: tosctl/src
         run: cargo test -p lms-fee-state --locked --target-dir "$RUNNER_TEMP/v5r2-fee-state"
+      - name: Link and execute the C state API
+        run: |
+          cargo build --manifest-path tosctl/src/Cargo.toml -p lms-fee-state --release --locked --target-dir "$RUNNER_TEMP/v5r2-fee-state"
+          python3 - <<'PY'
+          import os, platform, subprocess, tempfile
+          target = os.environ["RUNNER_TEMP"] + "/v5r2-fee-state"
+          binary = target + "/c-state-test"
+          libraries = ["-lpthread", "-lm"]
+          if platform.system() == "Linux":
+              libraries += ["-ldl", "-lrt", "-lutil"]
+          subprocess.run(["cc", "-std=c99", "-O2", "-I", "sdk/native/v5r2",
+                          "test/wallet-v5r2/fee-state-ffi-test.c", target + "/release/liblms_fee_state.a",
+                          *libraries, "-o", binary], check=True)
+          with tempfile.TemporaryDirectory() as directory:
+              os.chmod(directory, 0o700)
+              subprocess.run([binary, directory], check=True)
+          PY

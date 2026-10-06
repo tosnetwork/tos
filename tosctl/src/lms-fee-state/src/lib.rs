@@ -9,3 +9,5 @@
 pub mod lms_fee_journal;
 #[path = "../../node-control/contracts/src/lms_fee_schedule.rs"]
 pub mod lms_fee_schedule;
+
+pub mod ffi;
