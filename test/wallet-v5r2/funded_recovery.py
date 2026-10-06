@@ -1,4 +1,4 @@
-"""Continuous funded recovery with real account receipts; no primary signing operation."""
+"""Continuous funded recovery with dual-key POP and no primary AUTH signing."""
 
 import json
 import os
@@ -60,6 +60,7 @@ def _run(
     fee_encoder=None,
     retime_prepare=None,
     retime_pop=None,
+    primary_pop=None,
 ):
     out.mkdir(parents=True, exist_ok=True)
     results = {}
@@ -218,6 +219,55 @@ def _run(
         before, after, transactions["successor-pop-module"]
     )
 
+    def new_external(intent, leaf):
+        if new_session:
+            signature = new_session.signature(intent, now, leaf)
+            external = native.external(new.vault_address, fee_body(intent, signature))
+        else:
+            msg, sig = work / "recovery-fee-message", work / "recovery-fee-signature"
+            msg.write_bytes(intent.hash)
+            subprocess.run(
+                [
+                    os.environ["LMS_TOOL"],
+                    "sign",
+                    "77" * 32,
+                    "88" * 16,
+                    "20",
+                    str(new.tree),
+                    str(leaf),
+                    str(msg),
+                    "66" * 32,
+                    str(sig),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            external = native.external(
+                new.vault_address, Cell().ref(intent).ref(chain(sig.read_bytes()))
+            )
+        return external
+
+    # The primary key proves possession only; REQUIRED policy and the wallet's
+    # retired primary bit continue to forbid primary AUTH spending.
+    assert primary_pop is not None, "primary POP constructor missing"
+    primary_leaf = 17 if cache_driver else 9
+    primary_intent = fee_intent(
+        kind=2,
+        target=new.vault_address,
+        config_hash=new.header,
+        leaf=primary_leaf,
+        deadline=now + 600,
+        value=5_000_000_000,
+        payload=primary_pop(now),
+    )
+    primary_external = new_external(primary_intent, primary_leaf)
+    v1, messages = send("successor-primary-pop-fee", v1, primary_external, outputs=1)
+    before = native.account_data(m1)
+    m1, _ = send("successor-primary-pop-module", m1, messages[0])
+    results["successor-primary-pop-module"]["storage_fees_collected"] = preserve_module_funds(
+        before, native.account_data(m1), transactions["successor-primary-pop-module"]
+    )
+
     migration = (
         Cell().uint(0x4D494752, 32).ref(new.witness).ref(new.metadata).ref(new.vault_witness)
     )
@@ -241,36 +291,12 @@ def _run(
         kind=1,
         target=new.vault_address,
         config_hash=new.header,
-        leaf=17 if cache_driver else 9,
+        leaf=18 if cache_driver else 10,
         deadline=now + 600,
         value=5_000_000_000,
         payload=payload,
     )
-    if new_session:
-        signature = new_session.signature(intent, now, 17)
-        external = native.external(new.vault_address, fee_body(intent, signature))
-    else:
-        msg, sig = work / "recovery-fee-message", work / "recovery-fee-signature"
-        msg.write_bytes(intent.hash)
-        subprocess.run(
-            [
-                os.environ["LMS_TOOL"],
-                "sign",
-                "77" * 32,
-                "88" * 16,
-                "20",
-                str(new.tree),
-                "9",
-                str(msg),
-                "66" * 32,
-                str(sig),
-            ],
-            check=True,
-            capture_output=True,
-        )
-        external = native.external(
-            new.vault_address, Cell().ref(intent).ref(chain(sig.read_bytes()))
-        )
+    external = new_external(intent, 18 if cache_driver else 10)
     v1, messages = send("payment-fee", v1, external, outputs=1)
     before = native.account_data(m1)
     m1, messages = send("payment-module", m1, messages[0], outputs=1)
@@ -292,15 +318,17 @@ def _run(
     replay = e.send(v1, external)
     (out / "fee-replay.json").write_text(json.dumps(replay, indent=2) + "\n")
     assert not replay["success"] and replay.get("vm_exit_code") == 2004
-    for account, leaf in ((v0, 17 if cache_driver else 11), (v1, 18 if cache_driver else 10)):
+    for account, leaf in ((v0, 17 if cache_driver else 11), (v1, 19 if cache_driver else 11)):
         data = native.account_data(account)[0].slice()
         assert data.uint(8) == 3 and data.uint(32) == leaf
     (out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     return {
-        "sdk_cached_signatures": 5 if cache_driver else 0,
+        "sdk_cached_signatures": 6 if cache_driver else 0,
         "final_chain_time": now,
         "transactions": len(results) + 1,
         "recipient_received": True,
-        "primary_signing_used": False,
+        "primary_auth_signing_used": False,
+        "primary_pop_signing_used": True,
+        "funded_pop_roles": [1, 2],
         "production_admission_passed": False,
     }

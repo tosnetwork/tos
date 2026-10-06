@@ -115,7 +115,9 @@ def main():
         runpy.run_path(str(Path(__file__).with_name("fee_tx_parity.py")), run_name="__main__")
     assert [call["input"]["kind"] for call in calls] == ([0] if args.pop_role else [0, 3, 4, 0])
     if args.pop_driver:
-        assert len(pop_encoder.calls) == (1 if args.pop_role else 2)
+        assert [call["input"]["role"] for call in pop_encoder.calls] == (
+            [args.pop_role] if args.pop_role else [2, 2, 1]
+        )
         (out / "sdk-pop.json").write_text(json.dumps(pop_encoder.calls, indent=2) + "\n")
     (out / "sdk-auth.json").write_text(json.dumps(calls, indent=2) + "\n")
     if args.native_signer:

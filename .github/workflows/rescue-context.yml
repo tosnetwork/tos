@@ -150,6 +150,12 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-fee-prepare
+      - name: Reject corrupt primary POP before migration
+        run: |
+          python test/wallet-v5r2/dual_pop_control.py \
+            --baseline artifacts/context/r2-fee-prepare \
+            --native-signer "$CARGO_TARGET_DIR/debug/examples/public_fixture" \
+            --output artifacts/context/r2-dual-pop-rejection
       - name: Receipt-checked native transaction timing smoke
         run: |
           python test/wallet-v5r2/test_benchmark_transactions.py

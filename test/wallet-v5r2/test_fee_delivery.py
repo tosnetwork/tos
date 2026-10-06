@@ -764,7 +764,8 @@ def main():
                     preparation_deployments[name] = deployed["details"]
                     prepared_states[name] = from_boc(deployed["shard_account"])
                 # Prove the actual fresh fee route using its deployed balances and
-                # both new keys, before any wallet migration is attempted.
+                # the rescue key. The continuous recovery below proves both keys
+                # before any wallet migration is attempted.
                 next_signer = SimpleNamespace(
                     dir=work, slh_sk=signer.other_slh_sk, ml_sk=successor_sk
                 )
@@ -852,6 +853,24 @@ def main():
                         )
                         return Cell(bits=envelope.bits).ref(fresh).ref(sign(fresh))
 
+                    def primary_pop(now):
+                        challenge = pop_challenge(
+                            successor_root,
+                            int.from_bytes(chain(successor_pk.read_bytes()).hash, "big"),
+                            int.from_bytes(new_slh_pk, "big"),
+                            role=1,
+                            account=wa,
+                            policy=2,
+                            nonce=100,
+                            deadline=now + 600,
+                        )
+                        return (
+                            Cell()
+                            .uint(0x50505333, 32)
+                            .ref(challenge)
+                            .ref(pop_signed(next_signer, challenge, 1))
+                        )
+
                     recovery = run_recovery(
                         e,
                         out / "recovery",
@@ -893,6 +912,7 @@ def main():
                         ),
                         prepare=submit,
                         pop_external=next_external,
+                        primary_pop=primary_pop,
                         sign_old=signer.slh,
                         sign_new=lambda d: signer.slh(d, sk=signer.other_slh_sk),
                         fee_intent=make_intent,

@@ -1,0 +1,100 @@
+{
+  "base_commit": "283c97ab8aa64c183b27bdac84a1447eb7f68a3f",
+  "scope": "Actual continuous dual-key fee-funded successor POP, SLH migration and recipient delivery with public test keys at diagnostic credit 20000",
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 67,
+    "observed_transactions": 67,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 6,
+    "final_chain_time": 1780007190,
+    "transactions": 22,
+    "recipient_received": true,
+    "primary_auth_signing_used": false,
+    "primary_pop_signing_used": true,
+    "funded_pop_roles": [
+      1,
+      2
+    ],
+    "production_admission_passed": false
+  },
+  "control": {
+    "fee_exit": 0,
+    "module_exit": 1808,
+    "migration_attempted": false,
+    "scope": "Actual native rejection of a corrupt primary POP under a valid funded envelope; diagnostic credit only"
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/funded_recovery.py",
+      "sha256": "6d9258aa6e26726b3432335c303e2f2e20361c277981d8f92b78ec2e2daad315",
+      "bytes": 12819
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_fee_delivery.py",
+      "sha256": "b007776d51309c14ee648e2d7a4b22c979abf325cbea467acaa5b8289a0aadaa",
+      "bytes": 50099
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/sdk_auth_parity.py",
+      "sha256": "18b9cc9c5ace48b1edeee931ae7b72b0a1a11af17065497e86e0e842291796ca",
+      "bytes": 5275
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/dual_pop_control.py",
+      "sha256": "5f10bb16b30935b1ec57d1c52f12241b6a90a8f9e3382f359ffa859652d7bf3e",
+      "bytes": 3425
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "992e61eac0762283757b493031bb511169cd250903bb2efbaa5c097fa53b0336",
+      "bytes": 14133
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-dual-pop-recovery-final/MANIFEST.json",
+      "sha256": "8882602c519d4583fb970ac49fb43dc4159e2a469d1f1d78411a90082aeadbff",
+      "bytes": 38432
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-dual-pop-rejection/MANIFEST.json",
+      "sha256": "80256fb75bdb0d1e43b54f78ccf36a49fde876bf0fc28cd9b3171871445f2449",
+      "bytes": 14553
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-dual-pop-recovery-final/parity.json",
+      "sha256": "8f6df9392a8aac5762e2762931d67866877be23692284a297710f0f453f8c532",
+      "bytes": 280
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-dual-pop-recovery-final/sdk-pop.json",
+      "sha256": "831771e719c5a7453d87d6bbde2c71e86c914238693867f7ae603a25253aeb6b",
+      "bytes": 42555
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-dual-pop-rejection/control.json",
+      "sha256": "0dd174eb9c82c6265b26b11ab4526e68ef233104e6688218b8fcbd0685ee6385",
+      "bytes": 192
+    }
+  ],
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python test/wallet-v5r2/sdk_auth_parity.py --native-signer tosctl/src/target/debug/examples/public_fixture --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --fee-driver tosctl/src/target/debug/examples/v5r2_fee_encode --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output <fresh-directory>",
+    "python test/wallet-v5r2/dual_pop_control.py --baseline <parity-directory> --output <fresh-control-directory> --native-signer tosctl/src/target/debug/examples/public_fixture"
+  ],
+  "limitations": [
+    "The full recovery uses SDK wire encoders and public-key fixture signer, not the new proven-wallet migration gate.",
+    "Connecting the actual receipts to the Rust migration gate, live proof/finality, production custody and client lifecycle remain required.",
+    "Default credit 10000 remains unpassed; 20000 is diagnostic only."
+  ],
+  "initial_attempt": "First dual-VM run matched all 67 transactions but stopped at the obsolete two-POP SDK call assertion. The final fresh-directory rerun checks roles [2,2,1] and exits successfully.",
+  "retention": "Retain raw evidence outside Git through review and release acceptance, at least through 2027-01-06."
+}

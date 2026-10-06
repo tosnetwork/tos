@@ -1593,3 +1593,30 @@ on-chain installation and a subsequent payment, and handle retries/restores.
 Current reserve sufficiency, LMS custody continuity, full dual-POP-to-migration VM
 integration and default-credit admission still require validation. Evidence:
 `test/wallet-v5r2/migration-signing-20261006.json`.
+
+
+## Continuous dual-key funded POP recovery
+
+The continuous recovery harness now executes both successor POP roles through the
+actually deployed successor vault before migration: SLH at leaf 16, ML-DSA at leaf
+17, then post-migration SLH payment at leaf 18 in the cached SDK flow. The separate
+non-cache control uses leaves 8, 9 and 10. Module storage/data preservation,
+actual emitted-message delivery, migration state, recipient update and both wallet
+and fee replay rejection remain checked. No intervening balance top-up or wallet
+state substitution is introduced. PRIMARY signs only POP, never AUTH; REQUIRED
+policy and the retired-primary wallet state remain intact.
+
+The Rust SDK wire/signing run now has 67 transactions with identical native/Rust
+transcripts, including a 22-transaction continuous recovery and six journal-backed
+fee signatures. SDK POP calls are explicitly checked as roles `[2, 2, 1]` (the
+preparatory probe, retimed rescue POP, and successor primary POP). An additional
+native control corrupts the successor primary signature before the valid fee
+envelope is signed: the vault executes successfully, the module rejects with
+1808, and migration is not attempted. Both architecture CI jobs run this control.
+
+This harness exercises real transactions using public test keys and diagnostic
+20,000 gas credit. It still invokes SDK wire encoding rather than the new
+proof-bound migration signing API. Connecting these real transaction receipts to
+that API is a remaining integration step; neither this result nor the synthetic
+gate tests establish live-network finality or default-credit admission. Evidence:
+`test/wallet-v5r2/dual-pop-recovery-20261006.json`.
