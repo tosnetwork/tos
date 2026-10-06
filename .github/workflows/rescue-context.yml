@@ -20,6 +20,9 @@ on:
       - 'test/auth-extensions/**'
       - 'test/rescue-fee-gate/**'
       - 'test/wallet-v5r2/**'
+      - 'test/test-ext-message-ingress.cpp'
+      - 'validator/impl/external-message*'
+      - 'validator/impl/CMakeLists.txt'
 
 permissions:
   contents: read
@@ -181,6 +184,12 @@ jobs:
             --fixtures artifacts/context/r2-fee-prepare \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-admission-envelope-probe --iterations 10
+      - name: Native ingress parser boundary controls
+        run: |
+          cmake --build build --target test-ext-message-pool -j2
+          build/test-ext-message-pool
+          python test/wallet-v5r2/ingress_boundary_controls.py --build build \
+            --output artifacts/context/r2-ingress-boundary-controls
       - name: Native LMS chain buffer sensitivity
         if: matrix.runner == 'ubuntu-24.04'
         run: |

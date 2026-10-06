@@ -767,6 +767,9 @@ target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
 target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tdactor tdutils)
 
+add_executable(test-ext-message-ingress test/test-td-main.cpp test/test-ext-message-ingress.cpp)
+target_link_libraries(test-ext-message-ingress PRIVATE tos_external_message_parser)
+
 add_executable(test-msg-envelope test/test-td-main.cpp test/test-msg-envelope.cpp)
 target_link_libraries(test-msg-envelope PRIVATE tos_crypto)
 
@@ -1788,6 +1791,7 @@ tos_test(test-adnl-ext-input-budget)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
+tos_test(test-ext-message-ingress)
 tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
 tos_test(test-full-node-shard-admission)

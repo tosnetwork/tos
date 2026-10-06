@@ -1,0 +1,85 @@
+{
+  "base_commit": "b199ca285d2018eefde53463c884502a9e26f6e9",
+  "scope": "Shared production structural external-message parser; serialized-size and depth boundary tests, not network or masterchain-backed admission.",
+  "tests": {
+    "native_boundaries": 2,
+    "semantic_controls": {
+      "size": {
+        "exit": 1,
+        "witness": "forbidden message parsed successfully",
+        "test": "SerializedSizeBoundary"
+      },
+      "depth": {
+        "exit": 1,
+        "witness": "forbidden message parsed successfully",
+        "test": "DepthBoundary"
+      }
+    },
+    "extracted_definitions": "identical after formatting normalization",
+    "remaining_execution_translation_unit": "compiled successfully",
+    "clang_format": "passed",
+    "ruff": "passed"
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/validator/impl/external-message-parser.cpp",
+      "bytes": 7259,
+      "sha256": "9c32f205994d008c74c04795ebd952bff8cfa72e19c70a68468655e1b06c6a54"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/validator/impl/external-message.cpp",
+      "bytes": 14560,
+      "sha256": "9bfd5d53f8fb72d3cf0b4b97edd0e94ef40edebb0ab9bbdddc1f487839fc39fe"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/validator/impl/CMakeLists.txt",
+      "bytes": 1741,
+      "sha256": "3557c366460f16dd12eb22efbf537b9444f0fa560176b43e69fd856f9e0fbb94"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/CMakeLists.txt",
+      "bytes": 102917,
+      "sha256": "ad449eb8d2d5efe50b61bf41354b909beabc42144416965483d5b5889a8fd939"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/test-ext-message-ingress.cpp",
+      "bytes": 2448,
+      "sha256": "960099d2aa6bbbbf8e165a54e578a3a839dbbbd447b2f81c38edef05c01de484"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/ingress_boundary_controls.py",
+      "bytes": 2776,
+      "sha256": "a0be48a4daa1616efac46f7b7775d441424f06fc7de85377d518f35be851611b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 15586,
+      "sha256": "4fd039929065e5a1ab522f4b2ac39ea8aac9391752fd409b40e89cdbf36b0e9e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 114147,
+      "sha256": "3b25cfbcb282a22e804362a9d17e706e9a8d9c0c9abf182e35bd95eeb550e292"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-ingress-boundary-controls/MANIFEST.json",
+      "bytes": 2402,
+      "sha256": "112f2eb0d77e5ce8d2883c824e40895296feb47782060c53de3775e14f40d4e1"
+    }
+  ],
+  "commands": [
+    "cmake --build build --target test-ext-message-ingress -j 4",
+    "build/test-ext-message-ingress --filter ExtMessageIngress",
+    "python3 test/wallet-v5r2/ingress_boundary_controls.py --build build --output <fresh-directory>",
+    "ninja -C build validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o"
+  ],
+  "limitations": [
+    "Full test-ext-message-pool local build failed on Linux-only diagnostic IPC APIs in metrics/diagnostic-ipc.h; the failure log is retained. The new isolated parser target passed locally; full consumer linkage awaits Linux CI.",
+    "Size tests set the byte limit to the exact generated message size. They do not replay the previously generated 65535-byte fee fixtures through the node parser.",
+    "Depth 511/512/513 exercise actual structural parser boundaries, not end-to-end validator admission or execution with current masterchain state.",
+    "No parser comparison, protocol limit, gas credit or gas tariff was changed. Default-credit wallet admission remains failed."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}

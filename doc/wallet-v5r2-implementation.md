@@ -635,6 +635,34 @@ maximum-depth behavior, cold-cache behavior or reference-hardware pricing.
 Both architecture CI jobs run a smaller sample. Evidence:
 `test/wallet-v5r2/admission-envelope-probe-20261006.json`.
 
+### Structural node ingress boundaries
+
+The actual `ExtMessageQ::create_ext_message` structural parser is now compiled
+in `tos_external_message_parser`, shared by the node and an isolated native test
+target. Its constructor, normalization and parser definitions were moved without
+behavior changes; formatted definitions were compared against the previous source.
+The remaining execution-side translation unit also compiles locally.
+
+`test-ext-message-ingress` exercises an exact serialized-size limit (one byte
+below the message size rejects; equal and one above permit parsing) and the
+default depth boundary (511 permits parsing; 512 and 513 reject). The native
+transaction executor currently uses `>` for its depth check, whereas structural
+node ingress uses `>=`; executor-only acceptance must not be reported as network
+admission. No limit or comparison was changed to hide this distinction.
+
+`ingress_boundary_controls.py` deletes the size guard or relaxes the depth guard
+in the production parser, rebuilds, and requires each forbidden input to trigger
+its named test's failed rejection assertion. Restoring the source restores both
+positive tests. Linux CI also builds and runs the full message-pool/checker test
+target to cover the node's consumer linkage.
+
+The full node test target is locally blocked by unrelated Linux-only diagnostic
+IPC constants/types in `metrics/diagnostic-ipc.h` on macOS. The isolated parser
+tests and deletion controls passed locally; Linux consumer linkage remains a CI
+gate. This does not establish a masterchain-backed admission check, network load
+budget or successful wallet execution. Evidence:
+`test/wallet-v5r2/ingress-boundary-20261006.json`.
+
 
 ## Client fee-leaf scheduling boundary
 
