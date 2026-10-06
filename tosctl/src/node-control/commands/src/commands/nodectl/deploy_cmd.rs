@@ -60,7 +60,7 @@ struct DeployWalletsCmd {
 }
 
 #[derive(clap::Args, Clone)]
-struct DeployPoolCmd {
+pub(crate) struct DeployPoolCmd {
     #[arg(
         short = 'c',
         long = "config",
@@ -73,9 +73,10 @@ struct DeployPoolCmd {
 
     #[arg(long = "verbose", help = "Print progress", required = false)]
     verbose: bool,
-    #[arg(long = "owner", help = "Address of the pool owner")]
+    #[arg(allow_hyphen_values = true, long = "owner", help = "Address of the pool owner")]
     owner: MsgAddressInt,
     #[arg(
+        allow_hyphen_values = true,
         long = "controller",
         help = "Validator controller address the pool relays its stake through"
     )]
@@ -88,7 +89,7 @@ struct DeployPoolCmd {
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Deploy an arbitrary smart contract from a BOC file")]
-struct DeployContractCmd {
+pub(crate) struct DeployContractCmd {
     #[arg(
         short = 'c',
         long = "config",
@@ -108,7 +109,7 @@ struct DeployContractCmd {
     wait: bool,
 
     /// Contract address to monitor (required with --wait)
-    #[arg(long, help = "Address to watch (required with --wait)")]
+    #[arg(allow_hyphen_values = true, long, help = "Address to watch (required with --wait)")]
     address: Option<String>,
 
     /// Output format

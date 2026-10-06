@@ -79,7 +79,7 @@ impl ServiceActorCmd {
 pub struct ServiceActorDeployCmd {
     #[arg(long, help = "Local service record name; defaults to service-<address prefix>")]
     name: Option<String>,
-    #[arg(long, help = "Owner address; must match the funding wallet")]
+    #[arg(allow_hyphen_values = true, long, help = "Owner address; must match the funding wallet")]
     owner: String,
     #[arg(
         long,
@@ -146,7 +146,7 @@ pub struct ServiceActorDeployCmd {
 pub struct ServiceActorLsCmd {
     #[arg(long, help = "Read current policy/accounting state from each service")]
     on_chain: bool,
-    #[arg(long, help = "Filter by owner address")]
+    #[arg(allow_hyphen_values = true, long, help = "Filter by owner address")]
     owner: Option<String>,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -155,7 +155,12 @@ pub struct ServiceActorLsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show Service Actor policy/accounting state by address or local record name")]
 pub struct ServiceActorShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    #[arg(
+        allow_hyphen_values = true,
+        long,
+        conflicts_with = "name",
+        help = "Service Actor address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local service record name from `agent service ls`")]
     name: Option<String>,
@@ -166,7 +171,12 @@ pub struct ServiceActorShowCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show a single request by ID")]
 pub struct ServiceActorRequestShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    #[arg(
+        allow_hyphen_values = true,
+        long,
+        conflicts_with = "name",
+        help = "Service Actor address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local service record name from `agent service ls`")]
     name: Option<String>,
@@ -179,7 +189,12 @@ pub struct ServiceActorRequestShowCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show a single unclaimed refund by request ID")]
 pub struct ServiceActorRefundShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    #[arg(
+        allow_hyphen_values = true,
+        long,
+        conflicts_with = "name",
+        help = "Service Actor address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local service record name from `agent service ls`")]
     name: Option<String>,
@@ -207,7 +222,12 @@ enum ServiceActorOperation {
 pub struct ServiceActorSendCmd {
     #[arg(long, value_enum)]
     operation: ServiceActorOperation,
-    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    #[arg(
+        allow_hyphen_values = true,
+        long,
+        conflicts_with = "name",
+        help = "Service Actor address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local service record name from `agent service ls`")]
     name: Option<String>,
@@ -240,7 +260,7 @@ pub struct ServiceActorSendCmd {
                 first, since the domain binds them)"
     )]
     signer_vault_key: Option<String>,
-    #[arg(long, help = "Refund destination address for claim-refund")]
+    #[arg(allow_hyphen_values = true, long, help = "Refund destination address for claim-refund")]
     destination: Option<String>,
     #[arg(long, help = "New price per call, in TOS, for update-policy")]
     price_per_call: Option<f64>,
@@ -294,7 +314,7 @@ pub struct ServiceActorSendCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Build deterministic Service Actor StateInit")]
 pub struct ServiceActorBuildStateCmd {
-    #[arg(long, help = "Owner address")]
+    #[arg(allow_hyphen_values = true, long, help = "Owner address")]
     owner: String,
     #[arg(long, conflicts_with = "open_access")]
     authorized_caller: Option<String>,

@@ -298,7 +298,7 @@ pub struct WalletSendCmd {
     #[arg(long, help = "Source wallet name from config")]
     from: String,
 
-    #[arg(long, help = "Destination address")]
+    #[arg(allow_hyphen_values = true, long, help = "Destination address")]
     to: String,
 
     #[arg(

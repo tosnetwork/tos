@@ -164,7 +164,7 @@ pub struct AgentTaskCapabilitiesCmd {
 pub struct AgentTaskSendCmd {
     #[arg(long, value_enum)]
     operation: AgentTaskOperation,
-    #[arg(long, conflicts_with = "name", help = "Task Escrow address")]
+    #[arg(allow_hyphen_values = true, long, conflicts_with = "name", help = "Task Escrow address")]
     address: Option<String>,
     #[arg(long, help = "Local task record name from `agent task ls`")]
     name: Option<String>,
@@ -255,7 +255,7 @@ pub struct AgentTaskSendCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show Task Escrow state by address or local record name")]
 pub struct AgentTaskShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Task Escrow address")]
+    #[arg(allow_hyphen_values = true, long, conflicts_with = "name", help = "Task Escrow address")]
     address: Option<String>,
     #[arg(long, help = "Local task record name from `agent task ls`")]
     name: Option<String>,
@@ -779,7 +779,7 @@ pub struct AgentAccountRotateControllerCmd {
 pub struct AgentAccountTaskSendCmd {
     #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
     wallet: String,
-    #[arg(long, help = "Destination address")]
+    #[arg(allow_hyphen_values = true, long, help = "Destination address")]
     target: String,
     #[arg(long, help = "Transfer amount in TOS")]
     value: f64,
@@ -828,7 +828,7 @@ pub struct AgentAccountTaskSendResolveCmd {
 pub struct AgentAccountNativePrepareCmd {
     #[arg(short = 'n', long = "wallet")]
     wallet: String,
-    #[arg(long)]
+    #[arg(allow_hyphen_values = true, long)]
     target: String,
     #[arg(long, help = "Exact native TOS amount in nanoTOS")]
     amount_nanotos: u64,
@@ -887,7 +887,7 @@ pub struct AgentAccountNativeResolveCmd {
 pub struct AgentAccountEconomicPaymentPrepareCmd {
     #[arg(short = 'n', long = "wallet")]
     wallet: String,
-    #[arg(long)]
+    #[arg(allow_hyphen_values = true, long)]
     target: String,
     #[arg(long, help = "Exact native TOS amount in nanoTOS")]
     amount_nanotos: u64,
@@ -920,7 +920,7 @@ pub struct AgentAccountEconomicPaymentBroadcastCmd {
 pub struct AgentAccountEconomicEffectPrepareCmd {
     #[arg(short = 'n', long = "wallet")]
     wallet: String,
-    #[arg(long)]
+    #[arg(allow_hyphen_values = true, long)]
     target: String,
     #[arg(long, help = "Native TOS attached to the contract call, in nanoTOS")]
     amount_nanotos: u64,
@@ -1163,7 +1163,7 @@ pub enum AgentWalletAction {
 pub struct AgentWalletSendCmd {
     #[arg(short = 'n', long = "name", help = "Agent Wallet profile name")]
     name: String,
-    #[arg(long, help = "Destination address")]
+    #[arg(allow_hyphen_values = true, long, help = "Destination address")]
     to: String,
     #[arg(long, help = "Amount in TOS (e.g. 1.5)")]
     amount: f64,

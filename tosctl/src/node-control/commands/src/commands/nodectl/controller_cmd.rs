@@ -891,4 +891,47 @@ mod tests {
         assert!(rendered.text.contains("0. The new floor is not covered"));
         assert!(rendered.text.contains("[BLOCKING] after renewal"));
     }
+
+    /// The send command the plan prints must parse as printed, with the controller's
+    /// raw `-1:<hex>` address as its own token.
+    #[test]
+    fn the_printed_send_command_parses() {
+        use super::super::wallet_cmd::WalletSendCmd;
+        let ops = operations(funded(30 * NANO));
+        let request = plan_cmd(&[]).request(&controller(), &ops, NOW).unwrap();
+        let plan =
+            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
+                .unwrap();
+        let rendered = render_plan(&PlanOutput {
+            controller: &controller(),
+            operations: &ops,
+            plan: &plan,
+            projected: &no_warnings(),
+            global_id: 3,
+            valid_until: (NOW + 60) as u32,
+            root_seed: "ROOTSEED",
+        })
+        .unwrap();
+        let printed = rendered.json["send_command"]
+            .as_str()
+            .unwrap()
+            .replace("<PAYER_WALLET>", "payer")
+            .replace("<SIGNED_BODY_B64>", "AA==");
+        let words: Vec<&str> = printed.split_whitespace().collect();
+        assert_eq!(&words[..3], ["tosctl", "wallet", "send"]);
+        let mut argv = vec!["send"];
+        argv.extend_from_slice(&words[3..]);
+        let matches =
+            WalletSendCmd::augment_args(Command::new("send")).try_get_matches_from(argv).unwrap();
+        assert_eq!(
+            matches.get_one::<String>("to").map(String::as_str),
+            Some(controller().to_string().as_str())
+        );
+        assert!(controller().to_string().starts_with("-1:"));
+        assert_eq!(
+            matches.get_one::<u64>("amount_nanotos").copied().map(u128::from),
+            Some(plan.message_value)
+        );
+        assert!(matches.get_flag("bounce"));
+    }
 }
