@@ -68,6 +68,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/local-pq-evidence"
           git archive --format=tar.gz --output="$RUNNER_TEMP/local-pq-evidence/sources.tar.gz" HEAD scripts test/tostester crypto/smartcont tools/shielded-pool-circuit tl .github/workflows pyproject.toml uv.lock tosctl/src/node-control/contracts doc/Local-PQ-Network.md doc/local-pq-network-defects-20261006.md
+          uv run --frozen ruff --version > "$RUNNER_TEMP/local-pq-evidence/formatter-version.txt"
+          cp .venv/bin/ruff "$RUNNER_TEMP/local-pq-evidence/ruff"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
