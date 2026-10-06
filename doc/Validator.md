@@ -28,10 +28,12 @@ Validators are the verification backbone for AI actor workflows. Agent runners, 
 A deployed PQ controller needs explicit root-authorized operating funding before
 it can relay a pool stake. Account balance alone is not spending authorization.
 Keep operator capital for the storage floor and fees separate from the recorded
-operating funds and pool principal. See [controller initialization and election
-checks](Local-PQ-Network.md#controller-funding-before-election-rehearsal) for the
-SDK/signing steps, state checks and rejection diagnostics. The monetary examples
-there are local development values, not production recommendations.
+operating funds and pool principal. The controller root key signs an
+operating authorization (action kind 4, `tos-pq-controller fund-operations`)
+offline; the payload encoder is `controller_operating_payload` in
+`tosctl/src/node-control/contracts`. A deposit is added to the recorded funds
+and every other field is replaced, so renew by deficit and read
+`operating_state` back after each change.
 
 ## Production Hardware Requirements
 
