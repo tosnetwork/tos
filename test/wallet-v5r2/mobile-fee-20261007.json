@@ -1,0 +1,30 @@
+{
+  "status": "local source-bound component evidence",
+  "scope": "LMS fee framing only; not a signer, reservation, live proof check, funded mobile transaction or recovery readiness",
+  "android": {
+    "independent_vectors": 4,
+    "baseline_tests": 3,
+    "controls": {
+      "source_sha256": "64de60e25c435f8c3d0c76b873439adf91a82f66789a66e130b631d4b85492bd",
+      "controls": [
+        {
+          "name": "primary",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<Fee vault cannot fund PRIMARY AUTH> but was:<null>"
+        },
+        {
+          "name": "slot",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<New fee signature requires current slot> but was:<null>"
+        },
+        {
+          "name": "hss",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<Fee signature profile or leaf mismatch> but was:<null>"
+        }
+      ],
+      "restored_exit": 0
+    }
+  },
+  "ios": "not yet implemented"
+}

@@ -31,6 +31,31 @@
     "pop_vectors": 4,
     "preparation_vectors": 3,
     "baseline_tests": 3,
-    "controls": "running, session 73374"
+    "controls": {
+      "source_sha256": "ceb77ed42ba6394436adee48dfddcccb311c48b7051cf5a0359b94f029ccece5",
+      "controls": [
+        {
+          "name": "challenge",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "6df5500cb2a27da3f4e8d47f516cb4553aaba1bfeccdbc8da11725eba4c90d79"
+        },
+        {
+          "name": "positive-amount",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "ad71b2404252eea08dd794da47d410d5bbf9105a81f76943b71296216c741148"
+        },
+        {
+          "name": "slh-signature",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "3e85da6e2e379c040ea1cb02195d018b940c96fd6110266f653f2059b40e1cf6"
+        }
+      ],
+      "restored_exit": 0
+    },
+    "status": "three tests and three semantic controls passed; restored baseline passed",
+    "harness_note": "First failed XCTest finished before Xcode waited collecting an optional sysdiagnose. The confirmed diagnostic collector was stopped; later V5R2 calls use collect-test-diagnostics=never. Assertions and xcresult receipts remain enabled."
   }
 }
