@@ -10,27 +10,20 @@ from pathlib import Path
 
 import local_pq_testnet as local
 import nacl.signing
-from contract import WalletV1
-from local_pq_election_evidence import election_result
-from local_pq_funding import ensure_operations, verify_local_network
-from local_pq_transactions import (
-    Faucet,
-    atomic_json,
-    cursor,
-    faucet_lock,
-    history_since,
-    read_json,
-    require_success,
-)
+from contract import WalletV1, tos
 from pytosiq_core import (
     Address,
     Cell,
+    InternalMsgInfo,
+    MessageAny,
     StateInit,
+    WalletMessage,
 )
 from tosapi import tos_api
-from toslib import EngineConsoleClient, ToslibCDLL, ToslibClient, ToslibEventLoop
-from tostester.pq_election_fixture import build_pool_stake_order, make_pool_fixture
+from tostester.pq_election_fixture import build_pool_stake_order, elector_reply, make_pool_fixture
 from x02_config34_proof import decode_validator_set
+
+from toslib import EngineConsoleClient, ToslibCDLL, ToslibClient, ToslibEventLoop
 
 DATA = Path("/data")
 OUT = DATA / "elections"
@@ -52,15 +45,13 @@ def require_first_hops(sender, actual, current):
 
 
 def write(name, obj):
-    atomic_json(OUT / name, obj)
+    local.write_json(OUT / name, obj)
 
 
 def event(kind, **fields):
     row = {"at": time.time(), "kind": kind, **fields}
     local.append_text(OUT / "events.jsonl", json.dumps(row) + "\n")
     print(json.dumps(row), flush=True)
-    if kind == "failed":
-        write("status.json", {**row, "healthy": False})
 
 
 async def wait(predicate, timeout=60):
@@ -96,6 +87,35 @@ async def lite_int(method, *args, address=ELECTOR):
     if proc.returncode or not match:
         raise ValueError(f"Elector {method} did not answer: {text[-1000:]}")
     return int(match[1], 0)
+
+
+async def send(wallet, dest, amount, body=None, init=None):
+    seq = (await wallet.current).seqno
+    message = WalletMessage(
+        send_mode=3,
+        message=MessageAny(
+            info=InternalMsgInfo(
+                ihr_disabled=True,
+                bounce=False,
+                bounced=False,
+                src=wallet.address,
+                dest=dest,
+                value=tos(amount),
+                ihr_fee=0,
+                fwd_fee=0,
+                created_lt=0,
+                created_at=0,
+            ),
+            init=init,
+            body=body if body is not None else Cell.empty(),
+        ),
+    )
+    await wallet.send(message, seqno=seq)
+
+    async def included():
+        return (await wallet.current).seqno >= seq + 1
+
+    await wait(included)
 
 
 def trace_once(offsets):
@@ -177,123 +197,7 @@ async def snapshot(previous):
     return decoded["utime_since"]
 
 
-async def reconcile_candidate(client, sender, intent, candidate, pool):
-    """Resolve one persisted order without inventing a second business request."""
-
-    async def observed():
-        return election_result(
-            await history_since(client, pool.address, intent["pool_baseline"]),
-            await history_since(
-                client, Address(candidate["controller"]), intent["controller_baseline"]
-            ),
-            owner=sender.wallet.address,
-            pool=pool.address,
-            controller=Address(candidate["controller"]),
-            query=intent["query"],
-            body_hash=Cell.one_from_boc(base64.b64decode(intent["body"])).hash.hex(),
-        )
-
-    result = await wait(observed, 60)
-    intent.update(state="done", result=result)
-    write(f"candidate-intent-{intent['node']}.json", intent)
-    return result
-
-
-async def submit_candidate(client, sender, console, candidate, pool, election, index, network):
-    name = f"candidate-intent-{index}.json"
-    intent = read_json(OUT / name) if (OUT / name).exists() else None
-    if intent:
-        if (
-            intent["network"] != network["zerostate_root"]
-            or intent["node"] != index
-            or intent["pool"] != pool.address.to_str(is_user_friendly=False)
-            or intent["controller"] != candidate["controller"]
-        ):
-            raise ValueError("saved election intent belongs to a different chain/candidate")
-        if intent["election"] != election:
-            old_label = f"stake-{intent['election']}-{index}"
-            if intent["state"] != "done" and sender.record(old_label):
-                # A prior round may have changed while this process was down.
-                # Finish observing its sent order before touching this controller.
-                await reconcile_candidate(client, sender, intent, candidate, pool)
-            write(f"intent-history-{intent['election']}-{index}.json", intent)
-            intent = None  # An unsent expired intent is superseded, never broadcast.
-        elif intent["state"] == "done":
-            return intent["result"]
-    if intent is None:
-        await ensure_operations(
-            client, sender, candidate, index, OUT, network["global_id"], emit=event
-        )
-        query = await lite_int("next_relay_query", address=Address(candidate["controller"]))
-        if not (1 << 63) < query < (1 << 64):
-            raise ValueError("controller returned an invalid relay query")
-        request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
-            election_date=election,
-            max_factor=1 << 16,
-            adnl_addr=bytes.fromhex(candidate["adnl_id"]),
-            stake_owner=pool.address.hash_part,
-        )
-        response, _, authorization = await console.request_with_raw(request)
-        auth = request.parse_result(response)
-        if (
-            auth.validator_id != Address(candidate["controller"]).hash_part
-            or auth.key_id.hex() != candidate["key_id"]
-            or auth.public_key.hex() != candidate["public_key"]
-            or auth.algorithm_id != 1
-        ):
-            raise ValueError("node stake authorization differs from candidate")
-        local.write_bytes(OUT / f"authorization-{election}-{index}.json", authorization, 0o600)
-        body = build_pool_stake_order(
-            query_id=query,
-            stake_amount=11000 * NANO,
-            stake_at=election,
-            max_factor=1 << 16,
-            adnl_addr=bytes.fromhex(candidate["adnl_id"]),
-            algorithm_id=1,
-            public_key=auth.public_key,
-            signature=auth.signature,
-            witness=Cell.one_from_boc(base64.b64decode(candidate["witness_b64"])),
-        )
-        pool_account = await client.raw_get_account_state(pool.address)
-        controller_account = await client.raw_get_account_state(Address(candidate["controller"]))
-        intent = dict(
-            network=network["zerostate_root"],
-            election=election,
-            node=index,
-            pool=pool.address.to_str(is_user_friendly=False),
-            controller=candidate["controller"],
-            query=query,
-            body=base64.b64encode(body.to_boc()).decode(),
-            pool_baseline=cursor(pool_account.last_transaction_id),
-            controller_baseline=cursor(controller_account.last_transaction_id),
-            capital=max(0, 11020 * NANO - int(pool_account.balance)),
-            state="prepared",
-        )
-        write(name, intent)  # Before capital or order is broadcast.
-    if intent["capital"]:
-        require_success(
-            await sender.transfer(
-                f"pool-capital-{election}-{index}", pool.address, intent["capital"]
-            )
-        )
-    body = Cell.one_from_boc(base64.b64decode(intent["body"], validate=True))
-    receipt = await sender.transfer(f"stake-{election}-{index}", pool.address, 20 * NANO, body)
-    if not receipt["ok"]:
-        result = {k: receipt[k] for k in ("exit_code", "action_code")}
-        result["kind"] = "pool_refused"
-        intent.update(state="done", result=result)
-        write(name, intent)
-        return result
-    return await reconcile_candidate(client, sender, intent, candidate, pool)
-
-
 async def main():
-    local.require_installed_executable(local.INSTALLED_LITE_CLIENT)
-    with faucet_lock(DATA):
-        await run_driver()
-
-
-async def run_driver():
     # Runs from a snapshot with no build tree: the lite-client is the
     # installed one, checked before anything else is touched.
     local.require_installed_executable(local.INSTALLED_LITE_CLIENT)
@@ -325,9 +229,6 @@ async def run_driver():
                 Address(network["genesis_wallet_address"]),
                 nacl.signing.SigningKey((DATA / "testnet/state/main-wallet.pk").read_bytes()),
             )
-            await verify_local_network(client, network, plan)
-            sender = Faucet(client, wallet, OUT / "faucet-journal", network["zerostate_root"])
-            await sender.recover()
             config15 = await client.get_config_param(15)
             fields = config15.begin_parse()
             values = [fields.load_uint(32) for _ in range(4)]
@@ -350,25 +251,13 @@ async def run_driver():
                     (pools[i].address, pools[i].state_init, pool_code),
                 ):
                     if not (await client.raw_get_account_state(addr)).code:
-                        require_success(
-                            await sender.transfer(
-                                f"deploy-{addr.to_str(is_user_friendly=False)}",
-                                addr,
-                                10 * NANO,
-                                init=state,
-                            )
-                        )
+                        await send(wallet, addr, 10, init=state)
 
                     async def deployed(addr=addr, code=code):
                         raw = await client.raw_get_account_state(addr)
                         return bool(raw.code) and Cell.one_from_boc(raw.code).hash == code.hash
 
                     await wait(deployed)
-                saved = OUT / f"candidate-intent-{i}.json"
-                if not saved.exists() or read_json(saved)["state"] == "done":
-                    await ensure_operations(
-                        client, sender, c, i, OUT, network["global_id"], emit=event
-                    )
                 event(
                     "candidate_ready",
                     node=i,
@@ -399,62 +288,95 @@ async def run_driver():
                             round_index = len(submitted)
                             selected = roster(round_index)
                             event("election_submitting", election=election, roster=selected)
-                            accepted_nodes = []
                             for i in selected:
-                                write(
-                                    "status.json",
-                                    dict(
-                                        at=time.time(),
-                                        kind="submitting",
-                                        healthy=True,
-                                        election=election,
-                                        node=i,
-                                        activation_since=previous,
-                                    ),
+                                c = candidates[i]
+                                pool = pools[i]
+                                query = await lite_int(
+                                    "next_relay_query", address=Address(c["controller"])
                                 )
-                                result = await submit_candidate(
-                                    client,
-                                    sender,
-                                    consoles[i],
-                                    candidates[i],
-                                    pools[i],
-                                    election,
-                                    i,
-                                    network,
-                                )
-                                if result["kind"] == "accepted":
-                                    accepted_nodes.append(i)
-                                    event(
-                                        "stake_accepted",
-                                        election=election,
-                                        node=i,
-                                        reply=result["reply"],
+                                if not (1 << 63) < query < (1 << 64):
+                                    raise ValueError("controller returned an invalid relay query")
+                                # Local test capital; no external funds or production keys.
+                                await send(wallet, pool.address, 11020)
+                                request = (
+                                    tos_api.Engine_validator_createPqStakeAuthorizationRequest(
+                                        election_date=election,
+                                        max_factor=1 << 16,
+                                        adnl_addr=bytes.fromhex(c["adnl_id"]),
+                                        stake_owner=pool.address.hash_part,
                                     )
-                                elif result.get("reply") == [0xEE6F454C, 0]:
+                                )
+                                response, req_bytes, raw = await consoles[i].request_with_raw(
+                                    request
+                                )
+                                auth = request.parse_result(response)
+                                if (
+                                    auth.validator_id.hex()
+                                    != Address(c["controller"]).hash_part.hex()
+                                    or auth.key_id.hex() != c["key_id"]
+                                    or auth.public_key.hex() != c["public_key"]
+                                    or auth.algorithm_id != 1
+                                ):
+                                    raise ValueError(
+                                        "node stake authorization differs from candidate"
+                                    )
+                                local.write_bytes(
+                                    OUT / f"authorization-{election}-{i}.json", raw, 0o600
+                                )
+                                body = build_pool_stake_order(
+                                    query_id=query,
+                                    stake_amount=11000 * NANO,
+                                    stake_at=election,
+                                    max_factor=1 << 16,
+                                    adnl_addr=bytes.fromhex(c["adnl_id"]),
+                                    algorithm_id=1,
+                                    public_key=auth.public_key,
+                                    signature=auth.signature,
+                                    witness=Cell.one_from_boc(base64.b64decode(c["witness_b64"])),
+                                )
+                                await send(wallet, pool.address, 20, body)
+
+                                async def accepted():
+                                    account = await client.raw_get_account_state(pool.address)
+                                    transactions = await client.raw_get_transactions(
+                                        pool.address, account.last_transaction_id
+                                    )
+                                    answer = elector_reply(
+                                        transactions.transactions,
+                                        query,
+                                        controller=Address(c["controller"]),
+                                    )
+                                    # Reason 0 means the election is already finished (or none
+                                    # is active): a stake sent at the window's close, or after a
+                                    # restart that re-read a closing election. That is not a
+                                    # fault to die on; the election is recorded as skipped and
+                                    # the loop waits for the next one.
+                                    if answer and answer[0] == 0xEE6F454C and answer[1] == 0:
+                                        return answer
+                                    if answer and answer[0] != 0xF374484C:
+                                        raise ValueError(f"Elector refused node {i}: {answer}")
+                                    return answer
+
+                                answer = await wait(accepted, 60)
+                                if answer and answer[0] == 0xEE6F454C:
                                     event(
                                         "election_closed_skipped",
                                         election=election,
                                         node=i,
-                                        result=result,
+                                        query=query,
+                                        reply=answer,
                                     )
+                                    selected = []
                                     break
-                                else:
-                                    # The persisted refusal cannot be paid again after a restart.
-                                    event("stake_refused", election=election, node=i, result=result)
-                                    raise ValueError(f"node {i} stake refused: {result}")
-                            selected = accepted_nodes
+                                event(
+                                    "stake_accepted",
+                                    election=election,
+                                    node=i,
+                                    query=query,
+                                    reply=answer,
+                                )
                             submitted[str(election)] = list(selected)
                             write("submitted.json", submitted)
-                        write(
-                            "status.json",
-                            dict(
-                                at=time.time(),
-                                kind="running",
-                                healthy=True,
-                                election=election,
-                                activation_since=previous,
-                            ),
-                        )
                         await asyncio.sleep(5)
                 finally:
                     for console in consoles.values():

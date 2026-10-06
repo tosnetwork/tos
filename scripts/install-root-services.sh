@@ -80,9 +80,6 @@ if [[ $EUID -eq 0 ]]; then
     chown -R root:root "$DEST"
 fi
 "${CHECK[@]}" snapshot "$DEST"
-# Execute the staged generator, not current, with both original roots hidden.
-# Failure leaves the old current link and its snapshot untouched.
-/usr/bin/python3 -I -S "$REPO/scripts/check-local-pq-resources.py" "$DEST" "$REPO" "$BUILD"
 ln -sfn "$STAMP" "$BASE/current.new"
 mv -T "$BASE/current.new" "$BASE/current"
 for old in "$BASE"/*; do

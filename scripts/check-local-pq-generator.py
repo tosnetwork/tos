@@ -6,14 +6,46 @@ on-chain acceptance. It prints no notes, keys, proofs or private request bodies.
 """
 
 import argparse
-import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+
+CONTRACT = "crypto/smartcont/tos-shielded-pool-v1.fc"
+FIXTURE = "tools/shielded-pool-circuit/fixtures/groth16-development.json"
+
+
+def validate(output, contract, fixture):
+    response = json.loads(output)
+    if (
+        not isinstance(response, dict)
+        or response.get("ok") is not True
+        or not isinstance(response.get("result"), dict)
+    ):
+        raise ValueError("generator resource request failed (exit zero is not success)")
+    result = response["result"]
+    if (
+        result.get("schema") != "tos.local-pq-runtime-resources.v1"
+        or result.get("pool_source") != contract
+        or result.get("development_fixture") != fixture
+    ):
+        raise ValueError("generator was not built from these contract/fixture bytes; rebuild")
+    expected_vk = json.loads(fixture)["verifying_key"]["hex"]
+    if result.get("verifying_key_hex") != expected_vk or len(bytes.fromhex(expected_vk)) != 1248:
+        raise ValueError("generator development verifying key differs")
+    for name in ("deposit_gas_ceiling", "transact_gas_ceiling"):
+        matches = re.findall(rf'int {name}\(\) asm "(\d+) PUSHINT', contract)
+        if (
+            len(matches) != 1
+            or type(result.get(name)) is not int
+            or result[name] != int(matches[0])
+        ):
+            raise ValueError(f"generator {name} differs from the contract")
+    return result
 
 
 def main():
@@ -29,13 +61,8 @@ def main():
         raise SystemExit(
             "checkout isolation is restricted to this disposable GitHub Actions workspace"
         )
-    spec = importlib.util.spec_from_file_location(
-        "resource_check", repo / "scripts/check-local-pq-resources.py"
-    )
-    resource_check = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(resource_check)
-    contract = (repo / resource_check.CONTRACT).read_text()
-    fixture = (repo / resource_check.FIXTURE).read_text()
+    contract = (repo / CONTRACT).read_text()
+    fixture = (repo / FIXTURE).read_text()
     hidden = repo.with_name(repo.name + ".pq-isolation-" + str(os.getpid()))
     if hidden.exists():
         raise SystemExit("isolation destination already exists")
@@ -69,7 +96,7 @@ def main():
                 return result["result"], line
 
             resources, line = request(dict(operation="resources"))
-            resource_check.validate(line, contract, fixture)
+            validate(line, contract, fixture)
             value, _ = request(dict(operation="init"))
             state = value["state"]
             count = 0

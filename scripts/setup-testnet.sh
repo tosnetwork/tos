@@ -49,14 +49,14 @@ CHECK
         -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH=x86-64 \
         -DTOS_USE_JEMALLOC=ON -DTOS_PRODUCTION_BUILD=ON
     sudo -u "$CALLER" cmake --build build --parallel 32 --target gen_fif create-state \
-        fift func toslibjson generate-random-id tos-pq-consensus-key tos-pq-controller dht-server \
+        fift func toslibjson generate-random-id tos-pq-consensus-key dht-server \
         validator-engine-console validator-engine lite-client
     (cd tools/shielded-pool-circuit/crosscheck && sudo -u "$CALLER" "$CARGO" build \
         --release --locked -j2 --bin local_pool --bin local_pool_traffic)
 fi
 for binary in validator-engine/validator-engine dht-server/dht-server \
     validator-engine-console/validator-engine-console lite-client/lite-client \
-    utils/generate-random-id crypto/pq/tos-pq-consensus-key crypto/tos-pq-controller crypto/create-state \
+    utils/generate-random-id crypto/pq/tos-pq-consensus-key crypto/create-state \
     crypto/fift crypto/func toslib/libtoslibjson.so; do
     [[ -f "$BUILD/$binary" ]] || { echo "Missing $BUILD/$binary; run --build"; exit 1; }
 done
@@ -107,7 +107,6 @@ mkdir -p /usr/local/share/tos/fift/lib /usr/local/share/tos/smartcont
 for pair in 'validator-engine/validator-engine:validator-engine' 'dht-server/dht-server:dht-server' \
     'validator-engine-console/validator-engine-console:validator-console' 'lite-client/lite-client:lite-client' \
     'utils/generate-random-id:genkey' 'crypto/pq/tos-pq-consensus-key:pq-consensus-key' \
-    'crypto/tos-pq-controller:pq-controller' \
     'crypto/create-state:create-state' 'crypto/fift:fift' 'crypto/func:func'; do
     install -m755 "$BUILD/${pair%%:*}" "/usr/local/bin/tos-${pair##*:}"
 done
@@ -130,7 +129,6 @@ install -m644 "$REPO/scripts/tos-pq-dht.service" /etc/systemd/system/tos-pq-dht.
 install -m644 "$REPO/scripts/tos-pq-validator@.service" /etc/systemd/system/tos-pq-validator@.service
 install -m644 "$REPO/scripts/tos-pq-observer@.service" /etc/systemd/system/tos-pq-observer@.service
 install -m644 "$REPO/scripts/tos-pq-lite-client.service" /etc/systemd/system/tos-pq-lite-client.service
-install -m644 "$REPO/scripts/tos-local-session-logs.logrotate" /etc/logrotate.d/tos-local-session-logs
 install -d /usr/local/libexec/tos
 install -m755 "$REPO/scripts/run-local-lite-client.py" /usr/local/libexec/tos/run-local-lite-client.py
 # The traffic and election services run as root. They run a root-owned snapshot
@@ -241,12 +239,6 @@ UNIT
 fi
 "$UV" run python scripts/local_pq_testnet.py deploy
 systemctl enable --now tos-pq-lite-client
-if [[ $ROTATE == 1 ]]; then
-    # A controller relays a stake only within an explicit root-signed operating
-    # authorization. Deploy and authorize every candidate controller before the
-    # election service, which then owns the Genesis wallet, is started.
-    "$UV" run python scripts/local-pq-fund-controllers.py
-    systemctl enable --now tos-pq-elections
-fi
+[[ $ROTATE == 0 ]] || systemctl enable --now tos-pq-elections
 printf '\nFour PQ validators, two observers, lite-client and the local development pool are running.\n'
 "$REPO/scripts/testnet-ctl.sh" status

@@ -31,7 +31,8 @@ fn contract_gas_ceiling(name: &str) -> Result<i64> {
 }
 fn development_vk_bytes() -> Result<Vec<u8>> {
     let fixture: Value = serde_json::from_str(DEVELOPMENT_FIXTURE)?;
-    let value = fixture["verifying_key"]["hex"].as_str().ok_or("missing development verifying key")?;
+    let value =
+        fixture["verifying_key"]["hex"].as_str().ok_or("missing development verifying key")?;
     need(value.len() == 2 * 1248, "development verifying key length")?;
     unhex(value)
 }
