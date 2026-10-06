@@ -19,8 +19,30 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     journal = ROOT / "tosctl/src/node-control/contracts/src/lms_fee_journal.rs"
     vault = ROOT / "tosctl/src/node-control/contracts/src/lms_fee_vault.rs"
-    originals = {p: p.read_text() for p in (journal, vault)}
+    retry = ROOT / "tosctl/src/node-control/contracts/src/lms_fee_retry.rs"
+    originals = {p: p.read_text() for p in (journal, vault, retry)}
     cases = [
+        (
+            "retry_freshness",
+            retry,
+            "view.validate_freshness(now)?;",
+            "",
+            "proof-bound retry accepted stale proof",
+        ),
+        (
+            "retry_expiry",
+            retry,
+            "(1..=SLOT_SECONDS).contains(&ttl)",
+            "true",
+            "proof-bound retry accepted expired intent",
+        ),
+        (
+            "retry_consumed",
+            retry,
+            "binding.leaf >= view.next_leaf()",
+            "true",
+            "proof-bound retry accepted consumed leaf",
+        ),
         (
             "tree_enrollment",
             vault,

@@ -184,7 +184,7 @@ def main():
             ("length", "signature.len() == 2832", "true", "trailing_signature_bytes_refused"),
             (
                 "leaf_binding",
-                "signature[4..8] == self.leaf.to_be_bytes()",
+                "signature[4..8] == self.binding.leaf.to_be_bytes()",
                 "true",
                 "leaf_deadline_value_and_framing_boundaries",
             ),

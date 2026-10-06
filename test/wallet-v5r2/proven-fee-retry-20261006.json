@@ -1,0 +1,180 @@
+{
+  "base_commit": "9e77f47056baf6b412cac2763d08bee75f06602f",
+  "scope": "Proof-bound immutable fee retries without secret loading or new reservation. Six recorded message comparisons, freshness/expiry/consumption rejection, previous-slot retry during restart barrier, uncached intent rejection and unchanged journal. Public fixture keys and synthetic proof metadata; no live proof/admission claim.",
+  "controls": {
+    "baseline": {
+      "exit": 0,
+      "semantic_witness": null
+    },
+    "retry_freshness": {
+      "exit": 101,
+      "semantic_witness": "proof-bound retry accepted stale proof"
+    },
+    "retry_expiry": {
+      "exit": 101,
+      "semantic_witness": "proof-bound retry accepted expired intent"
+    },
+    "retry_consumed": {
+      "exit": 101,
+      "semantic_witness": "proof-bound retry accepted consumed leaf"
+    },
+    "tree_enrollment": {
+      "exit": 101,
+      "semantic_witness": "wrong fee tree reached key loading path"
+    },
+    "config_binding": {
+      "exit": 101,
+      "semantic_witness": "protected custody changed executed fee body"
+    },
+    "clock_resample": {
+      "exit": 101,
+      "semantic_witness": "recorded custody accepted stale clock after key loading"
+    },
+    "restored": {
+      "exit": 0,
+      "semantic_witness": null
+    }
+  },
+  "restored": {
+    "scope": "Encrypted public test seeds, actual executed bodies, synthetic proof metadata; diagnostic credit 20000",
+    "messages": [
+      {
+        "route": 0,
+        "leaf": 12,
+        "body_hash": "0a526c80f2155336a05926105f26af43dad2b52f11d52e39394d16f85b7fc4fe"
+      },
+      {
+        "route": 0,
+        "leaf": 13,
+        "body_hash": "62b126e1cae70aec9c66f9bb9bb491a7fb5b6c79dfb9348bdff9e90e5c6a4d98"
+      },
+      {
+        "route": 1,
+        "leaf": 16,
+        "body_hash": "b900533f241795201ae6dcddb4edbb9bf05bbd27065ac8dd10cf414dd35f063a"
+      },
+      {
+        "route": 1,
+        "leaf": 17,
+        "body_hash": "902f680b3e9b86f71563ef44529a29340367638abb177f98c7aab21af48e7870"
+      },
+      {
+        "route": 0,
+        "leaf": 16,
+        "body_hash": "59c8e4583424418305b835c351f4f0fce347707c28b6576c7f312fdb88ea4316"
+      },
+      {
+        "route": 1,
+        "leaf": 18,
+        "body_hash": "70025a6b03f4f5cb82df7fe86efc397d711f956dd17a122da2b7333a2c0f2fc3"
+      }
+    ],
+    "stale_clock_rejected_without_reservation": true,
+    "reopened_encrypted_vault": true,
+    "exact_cached_retry_after_vault_drop": true,
+    "previous_slot_retry_during_restart_barrier": true
+  },
+  "wire_controls": {
+    "primary": {
+      "exit": 101,
+      "semantic_witness": "primary_auth_and_class_mismatch_refused"
+    },
+    "class": {
+      "exit": 101,
+      "semantic_witness": "structural_mismatches_refused"
+    },
+    "shape": {
+      "exit": 101,
+      "semantic_witness": "structural_mismatches_refused"
+    },
+    "request_shape": {
+      "exit": 101,
+      "semantic_witness": "structural_mismatches_refused"
+    },
+    "ttl": {
+      "exit": 101,
+      "semantic_witness": "leaf_deadline_value_and_framing_boundaries"
+    },
+    "range": {
+      "exit": 101,
+      "semantic_witness": "exhausted_tree_even_at_matching_slot"
+    },
+    "slot": {
+      "exit": 101,
+      "semantic_witness": "leaf_deadline_value_and_framing_boundaries"
+    },
+    "value": {
+      "exit": 101,
+      "semantic_witness": "leaf_deadline_value_and_framing_boundaries"
+    },
+    "length": {
+      "exit": 101,
+      "semantic_witness": "trailing_signature_bytes_refused"
+    },
+    "leaf_binding": {
+      "exit": 101,
+      "semantic_witness": "leaf_deadline_value_and_framing_boundaries"
+    },
+    "domain": {
+      "exit": 101,
+      "semantic_witness": "independent_fee_vectors"
+    }
+  },
+  "wire_unit_tests_passed": 6,
+  "rust_format_exit": 0,
+  "ruff_exit": 0,
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/recorded_fee_custody.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-fee-retry-complete --controls",
+    "python3 test/wallet-v5r2/sdk_auth_controls.py --fee --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-fee-wire-controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2_fee::",
+    "make -C tosctl/src fmt-check"
+  ],
+  "fixture_indices": [
+    "test/wallet-v5r2/native-fee-integration-20261006.json",
+    "test/wallet-v5r2/recorded-fee-custody-20261006.json"
+  ],
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-fee-retry.tar.gz",
+    "sha256": "4b7c1c9b892dc7ccefd3171b03742536339c3665b7bcc99a601b0ef4b28cba57",
+    "bytes": 8104
+  },
+  "retention_through": "2027-01-06",
+  "source_files": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "sha256": "73e757942d254565a59eee2d83ad8d0dccce0f09f52d1afcac83cafb19102eeb",
+      "bytes": 191099
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/recorded_fee_custody.py",
+      "sha256": "e54078eb169a079b2dc6da3bc3d08371aeead2132db316efad4c622c1da34c5f",
+      "bytes": 4423
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/sdk_auth_controls.py",
+      "sha256": "69eaea0f3e80bbd0dcd69956fcff37f722698398d1fbf46a425288e8b3897b32",
+      "bytes": 10434
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_journal.rs",
+      "sha256": "0ff5300e92fa3c5db21a1947ff42b9e97f3f98f2e47d33c7c54e47c0bb887456",
+      "bytes": 20245
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_fee.rs",
+      "sha256": "94bc98c7d0dc805bc2ac01944bd2ad936117ac032570d4d97b836003888ed91b",
+      "bytes": 14891
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_fee_tests.rs",
+      "sha256": "4737c0326e495b9a5d7b20d5c60940c67ed9ac9f32d894d994fa3d4bb25120b7",
+      "bytes": 12620
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_retry.rs",
+      "sha256": "925ad2264c9a8ca0cc4504ee91c883029e4bd6c49193062714742425e89bd372",
+      "bytes": 2552
+    }
+  ]
+}

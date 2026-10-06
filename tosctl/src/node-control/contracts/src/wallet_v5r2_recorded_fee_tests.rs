@@ -165,6 +165,38 @@ async fn recorded_fee_custody_matches_executed_messages() {
             "custody body differs from actual executed transaction input"
         );
         drop(vault);
+        assert!(
+            journal.retry_proven_fee(&view, now + 31, signed.intent()).is_err(),
+            "proof-bound retry accepted stale proof"
+        );
+        let retry = journal.retry_proven_fee(&view, now, signed.intent()).unwrap();
+        assert_eq!(
+            write_boc(retry.body()).unwrap(),
+            write_boc(signed.body()).unwrap(),
+            "proof-bound retry changed executed body"
+        );
+        let consumed = account(&receipt, now);
+        let consumed = if route == 0 {
+            ProvenFeeVault::bind(&consumed, &initial, now, 30)
+        } else {
+            ProvenFeeVault::bind_successor(&consumed, &successor, now, 30)
+        }
+        .unwrap();
+        assert!(
+            journal.retry_proven_fee(&consumed, now, signed.intent()).is_err(),
+            "proof-bound retry accepted consumed leaf"
+        );
+        let expired = account(&json(&root.join(before)), deadline);
+        let expired = if route == 0 {
+            ProvenFeeVault::bind(&expired, &initial, deadline, 30)
+        } else {
+            ProvenFeeVault::bind_successor(&expired, &successor, deadline, 30)
+        }
+        .unwrap();
+        assert!(
+            journal.retry_proven_fee(&expired, deadline, signed.intent()).is_err(),
+            "proof-bound retry accepted expired intent"
+        );
         let cached = journal
             .cached_signature_verified(view.fee_public_key(), leaf, *signed.intent().digest())
             .unwrap();
@@ -172,9 +204,85 @@ async fn recorded_fee_custody_matches_executed_messages() {
         checked.push(serde_json::json!({"route":route,"leaf":leaf,"body_hash":signed.body().repr_hash().to_hex_string()}));
     }
     assert_eq!(checked.len(), 6);
+    // Isolated fee retry probe: only fee admission is checked, not validity of
+    // the recorded inner payload at this later synthetic time.
+    let epoch0: u32 = json(&root.join("sdk-genesis.json"))["input"]["epoch0"]
+        .as_u64()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let sign_time = epoch0 + 3 * 3600 + 3500;
+    let retry_time = sign_time + 150;
+    let before = json(&root.join("genesis-deployment/vault.json"));
+    let view = ProvenFeeVault::bind(&account(&before, sign_time), &initial, sign_time, 30).unwrap();
+    let directory = dir.path().join("restart-retry");
+    std::fs::create_dir(&directory).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut journal = FeeJournal::open(&directory, view.route(), sign_time - 3600).unwrap();
+    let vault = open(&storage_path).await;
+    let recorded = json(&root.join("sdk-fee/04.json"));
+    let payload =
+        FeePayload::from_submission(FeeClass::RescueAuth, hex_cell(&recorded["input"]["payload"]))
+            .unwrap();
+    let signed = journal
+        .sign_proven_fee_from_vault_tree(
+            &vault,
+            &SecretId::new("old-fee"),
+            &view,
+            || sign_time,
+            sign_time + 600,
+            5_000_000_000,
+            payload,
+            trees[0].as_ref().unwrap(),
+        )
+        .await
+        .unwrap();
+    drop(vault);
+    drop(journal);
+    let mut journal = FeeJournal::open(&directory, view.route(), retry_time).unwrap();
+    let current =
+        ProvenFeeVault::bind(&account(&before, retry_time), &initial, retry_time, 30).unwrap();
+    assert!(
+        journal.preview_proven(&current, retry_time).is_err(),
+        "restart lost new-signature barrier"
+    );
+    let before_retry = std::fs::read(directory.join("fee-reservations")).unwrap();
+    let retry = journal.retry_proven_fee(&current, retry_time, signed.intent()).unwrap();
+    assert_eq!(
+        write_boc(retry.body()).unwrap(),
+        write_boc(signed.body()).unwrap(),
+        "previous-slot restart retry changed signature"
+    );
+    let different = crate::wallet_v5r2_fee::FeeIntent::new(
+        crate::wallet_v5r2_fee::FeeBinding {
+            vault: view.route().vault,
+            config_hash: *view.config_hash(),
+            epoch0,
+            leaf: signed.intent().leaf(),
+            valid_until: sign_time + 600,
+            value: 5_000_000_001,
+        },
+        FeePayload::from_submission(FeeClass::RescueAuth, hex_cell(&recorded["input"]["payload"]))
+            .unwrap(),
+        sign_time,
+    )
+    .unwrap();
+    assert!(
+        journal.retry_proven_fee(&current, retry_time, &different).is_err(),
+        "proof-bound retry accepted uncached intent"
+    );
+    assert_eq!(
+        std::fs::read(directory.join("fee-reservations")).unwrap(),
+        before_retry,
+        "proof-bound retry changed reservation journal"
+    );
     std::fs::write(output, serde_json::to_vec_pretty(&serde_json::json!({
         "scope":"Encrypted public test seeds, actual executed bodies, synthetic proof metadata; diagnostic credit 20000",
         "messages":checked,"stale_clock_rejected_without_reservation":true,
-        "reopened_encrypted_vault":true,"exact_cached_retry_after_vault_drop":true
+        "reopened_encrypted_vault":true,"exact_cached_retry_after_vault_drop":true,"previous_slot_retry_during_restart_barrier":true
     })).unwrap()).unwrap();
 }

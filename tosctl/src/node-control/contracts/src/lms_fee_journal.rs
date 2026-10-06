@@ -26,6 +26,9 @@ mod cache;
 #[cfg(feature = "native-wallet-signer")]
 #[path = "lms_fee_native.rs"]
 mod native;
+#[cfg(feature = "native-wallet-signer")]
+#[path = "lms_fee_retry.rs"]
+mod retry;
 
 const MAGIC: &[u8; 8] = b"TOSLMS01";
 const HEADER_SIZE: u64 = 112;

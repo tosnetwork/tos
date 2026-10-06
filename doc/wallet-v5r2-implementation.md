@@ -2963,3 +2963,30 @@ fee-recovery mutations were rerun locally and reached their named semantic
 assertions; restored code passed. This fixes the test selector, not a password
 behavior change. Final-head cross-architecture CI remains required. Evidence:
 `test/wallet-v5r2/fee-recovery-anchor-20261006.json`.
+
+### Proof-bound cached fee retry
+
+`FeeJournal::retry_proven_fee` re-exports an existing fee body without loading a
+secret, reserving a leaf or invoking a signing backend. `FeeIntent` retains the
+immutable enrollment/deadline fields used to construct its canonical cell. The
+retry checks a fresh current proof, matching journal route and intent enrollment,
+nonregressing proof time, unexpired deadline, the current/previous delivery-slot
+window, and a leaf not yet consumed in the proven chain state. It then verifies
+the immutable cached signature and reconstructs the exact external body.
+
+A restart's next-slot barrier continues to block new signatures. It does not
+block an unexpired previous-slot cached message. Rejection because a leaf is
+already consumed is not evidence of failed delivery: the application must inspect
+authenticated receipts. The caller still checks current funding/admission and
+inner wallet/module authorization before broadcasting. This fee-only method does
+not waive any of those checks or add an Ed25519 path.
+
+Recorded custody tests compare all six fee retry bodies against the actual
+executed messages, reject stale proofs and consumed/expired inputs, and separately exercise an
+unexpired previous-slot retry during a restart barrier with custody closed.
+An uncached intent is rejected and both successful/failed retries leave the
+reservation journal byte-identical. Freshness, expiry and consumed-leaf deletions
+must each trigger a named assertion before restored-code success.
+The latter is an isolated fee-cache probe at synthetic time, not a claim that
+its reused inner fixture payload remains authorized at that time. Evidence:
+`test/wallet-v5r2/proven-fee-retry-20261006.json`.

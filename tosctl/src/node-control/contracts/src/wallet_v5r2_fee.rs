@@ -57,6 +57,7 @@ impl FeePayload {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct FeeBinding {
     pub vault: [u8; 32],
     pub config_hash: [u8; 32],
@@ -66,10 +67,11 @@ pub struct FeeBinding {
     pub value: u128,
 }
 
+#[derive(Clone)]
 pub struct FeeIntent {
     cell: Cell,
     digest: [u8; 32],
-    leaf: u32,
+    binding: FeeBinding,
 }
 impl FeeIntent {
     /// Construct a new signing intent using only a current-slot leaf. The
@@ -107,7 +109,10 @@ impl FeeIntent {
         b.checked_append_reference(payload.cell)?;
         let cell = b.into_cell()?;
         let digest = *cell.repr_hash().as_array();
-        Ok(Self { cell, digest, leaf: binding.leaf })
+        Ok(Self { cell, digest, binding })
+    }
+    pub(crate) fn binding(&self) -> &FeeBinding {
+        &self.binding
     }
     pub fn cell(&self) -> &Cell {
         &self.cell
@@ -116,7 +121,7 @@ impl FeeIntent {
         &self.digest
     }
     pub fn leaf(&self) -> u32 {
-        self.leaf
+        self.binding.leaf
     }
     /// Encode the external body from verified cached signature bytes. This only
     /// checks fixed HSS L1/H20/W4 framing and the reserved leaf, not validity.
@@ -125,7 +130,7 @@ impl FeeIntent {
         anyhow::ensure!(signature.len() == 2832, "fee signature length");
         anyhow::ensure!(
             signature[..4] == 0u32.to_be_bytes()
-                && signature[4..8] == self.leaf.to_be_bytes()
+                && signature[4..8] == self.binding.leaf.to_be_bytes()
                 && signature[8..12] == 3u32.to_be_bytes()
                 && signature[2188..2192] == 8u32.to_be_bytes(),
             "fee signature profile/leaf mismatch"
