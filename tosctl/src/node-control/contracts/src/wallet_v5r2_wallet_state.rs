@@ -410,10 +410,7 @@ impl ProvenWalletState {
             now,
             self.max_age,
         )?;
-        anyhow::ensure!(
-            fee.next_leaf() < crate::lms_fee_schedule::LEAF_COUNT,
-            "successor fee tree exhausted"
-        );
+        fee.chain_leaf_candidate(now)?;
         evidence.primary_request.require_successor_funded_receipt(
             evidence.primary_receipts,
             evidence.primary_external,

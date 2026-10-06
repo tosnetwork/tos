@@ -1572,7 +1572,11 @@ be authenticated at the wallet's checkpoint and trust anchor. Transaction histor
 now preserves its originating proof checkpoint when walking backwards. Each POP
 transaction must also be recent under the wallet snapshot's maximum-age policy.
 The current successor vault must be live and match that checkpoint, masterchain
-time, trust anchor and exact enrollment, and its fee tree must not be exhausted.
+time, trust anchor and exact enrollment. It must have an available leaf in the
+current proven slot; an unexhausted tree alone is insufficient when that slot's
+four leaves have already been consumed. This chain-only capacity observation is
+not permission to sign: local unbroadcast reservations and restore barriers can
+still prohibit using a leaf that the chain has not consumed.
 READY successors still need current global primary authorization; REQUIRED
 successors do not. Migration uses the installed rescue key and existing epoch
 rules, preserving recovery after execute counters are exhausted.
@@ -1580,10 +1584,10 @@ rules, preserving recovery after execute counters are exhausted.
 The new gate test uses synthetic successful transaction metadata and placeholder
 POP signatures to isolate client validation. It is not a successful VM execution
 of those POPs. It exercises a real native SLH migration signature; earlier funded
-POP receipt tests separately use actual recorded native transaction pairs. Nine
+POP receipt tests separately use actual recorded native transaction pairs. Ten
 semantic deletion controls cover generic signing bypass, duplicate roles, stale
 POPs, receipt/vault checkpoint substitution, non-live vault acceptance, exhausted
-fee trees, and removal of either funded-POP verification. Both architecture CI
+fee trees, exhausted current slots, and removal of either funded-POP verification. Both architecture CI
 jobs run the new control suite.
 
 This closes the native client signing bypass, not the full release gate. Callers
@@ -1593,6 +1597,8 @@ on-chain installation and a subsequent payment, and handle retries/restores.
 Current reserve sufficiency, LMS custody continuity, live-proof integration and
 default-credit admission still require validation. Evidence:
 `test/wallet-v5r2/migration-signing-20261006.json`.
+The current-slot capacity extension is recorded separately in
+`test/wallet-v5r2/migration-capacity-20261006.json`.
 
 
 ## Continuous dual-key funded POP recovery

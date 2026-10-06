@@ -149,6 +149,14 @@ impl ProvenFeeVault {
         check_time(self.master_time, self.proven_time, now, self.max_age, self.route.epoch0)
     }
 
+    /// Require at least one chain-admissible leaf in the observed current slot.
+    /// This does not account for local reservations or authorize any signing.
+    pub fn chain_leaf_candidate(&self, now: u32) -> anyhow::Result<u32> {
+        self.validate_freshness(now)?;
+        crate::lms_fee_schedule::chain_leaf_candidate(self.route, self.proven_time, self.next_leaf)
+            .map_err(|error| anyhow::anyhow!("chain fee capacity: {error:?}"))
+    }
+
     /// Read-only proposal. The custody journal must still durably reserve the
     /// leaf before invoking a signing backend, including after failed sends.
     pub fn plan(&self, now: u32, continuity: Continuity) -> anyhow::Result<ReservationPlan> {

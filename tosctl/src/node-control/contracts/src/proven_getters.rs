@@ -1344,24 +1344,26 @@ mod fee_state_tests {
                 .expect("accepted stale or unrelated POP");
             assert!(error.to_string().contains(reason), "{error}");
         }
-        let (_, proof) = fixture();
-        let mut exhausted = account_proof(proof, successor.vault_init());
-        let mut data = SliceData::load_cell(exhausted.account.get_data().unwrap()).unwrap();
-        let mut b = BuilderData::new();
-        b.append_u8(data.get_next_byte().unwrap()).unwrap();
-        data.move_by(32).unwrap();
-        b.append_u32(crate::lms_fee_schedule::LEAF_COUNT).unwrap();
-        b.append_raw(&data.get_bytestring(0), data.remaining_bits()).unwrap();
-        while data.remaining_references() > 0 {
-            b.checked_append_reference(data.checked_drain_reference().unwrap()).unwrap();
+        for (counter, reason) in [
+            (crate::lms_fee_schedule::LEAF_COUNT, "accepted exhausted successor fee tree"),
+            (8, "accepted exhausted successor slot"),
+        ] {
+            let (_, proof) = fixture();
+            let mut exhausted = account_proof(proof, successor.vault_init());
+            let mut data = SliceData::load_cell(exhausted.account.get_data().unwrap()).unwrap();
+            let mut b = BuilderData::new();
+            b.append_u8(data.get_next_byte().unwrap()).unwrap();
+            data.move_by(32).unwrap();
+            b.append_u32(counter).unwrap();
+            b.append_raw(&data.get_bytestring(0), data.remaining_bits()).unwrap();
+            while data.remaining_references() > 0 {
+                b.checked_append_reference(data.checked_drain_reference().unwrap()).unwrap();
+            }
+            assert!(exhausted.account.set_data(b.into_cell().unwrap()));
+            refresh_proof_data(&mut exhausted);
+            let e = MigrationEvidence { vault: &exhausted, ..evidence };
+            assert!(view.migration_request(4620, 4700, &successor, &e).is_err(), "{reason}");
         }
-        assert!(exhausted.account.set_data(b.into_cell().unwrap()));
-        refresh_proof_data(&mut exhausted);
-        let e = MigrationEvidence { vault: &exhausted, ..evidence };
-        assert!(
-            view.migration_request(4620, 4700, &successor, &e).is_err(),
-            "accepted exhausted successor fee tree"
-        );
         for stale_checkpoint in [false, true] {
             let (_, proof) = fixture();
             let mut bad_vault = account_proof(proof, successor.vault_init());

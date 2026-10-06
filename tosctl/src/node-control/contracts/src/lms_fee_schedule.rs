@@ -133,10 +133,32 @@ pub fn plan_reservation(
             0
         }
     };
+    let leaf = select_leaf(route, proven_time, chain_next_leaf.max(local_next))?;
+    let next_unreserved = leaf.checked_add(1).ok_or(ScheduleError::Exhausted)?;
+    Ok(ReservationPlan {
+        leaf,
+        next_state: IntactState { route, next_unreserved, last_proven_time: proven_time },
+    })
+}
+
+/// Chain-only capacity observation. This is NOT permission to sign: unbroadcast
+/// local reservations, restore barriers and exclusive custody must also be checked.
+pub fn chain_leaf_candidate(
+    route: FeeRoute,
+    proven_time: u32,
+    chain_next_leaf: u32,
+) -> Result<u32, ScheduleError> {
+    if chain_next_leaf > LEAF_COUNT {
+        return Err(ScheduleError::InvalidCounter);
+    }
+    select_leaf(route, proven_time, chain_next_leaf)
+}
+
+fn select_leaf(route: FeeRoute, proven_time: u32, next: u32) -> Result<u32, ScheduleError> {
     let current = slot(&route, proven_time)?;
     let first = first_leaf(current)?;
     let end = first.checked_add(LEAVES_PER_SLOT).ok_or(ScheduleError::Exhausted)?;
-    let leaf = first.max(chain_next_leaf).max(local_next);
+    let leaf = first.max(next);
     if leaf >= LEAF_COUNT {
         return Err(ScheduleError::Exhausted);
     }
@@ -150,11 +172,7 @@ pub fn plan_reservation(
             route.epoch0.checked_add(offset).ok_or(ScheduleError::TimeOverflow)?,
         ));
     }
-    let next_unreserved = leaf.checked_add(1).ok_or(ScheduleError::Exhausted)?;
-    Ok(ReservationPlan {
-        leaf,
-        next_state: IntactState { route, next_unreserved, last_proven_time: proven_time },
-    })
+    Ok(leaf)
 }
 
 #[cfg(test)]
@@ -167,6 +185,35 @@ mod tests {
 
     fn intact(next_unreserved: u32, time: u32) -> Continuity {
         Continuity::Intact(IntactState { route: route(), next_unreserved, last_proven_time: time })
+    }
+
+    #[test]
+    fn chain_capacity_obeys_slot_and_tree_boundaries() {
+        assert_eq!(chain_leaf_candidate(route(), 7300, 0), Ok(8));
+        assert_eq!(chain_leaf_candidate(route(), 10899, 11), Ok(11));
+        assert_eq!(chain_leaf_candidate(route(), 10899, 12), Err(ScheduleError::WaitUntil(10900)));
+        assert_eq!(chain_leaf_candidate(route(), 10900, 12), Ok(12));
+        assert_eq!(chain_leaf_candidate(route(), 99, 0), Err(ScheduleError::BeforeEpoch));
+        assert_eq!(chain_leaf_candidate(route(), 7300, LEAF_COUNT), Err(ScheduleError::Exhausted));
+        assert_eq!(
+            chain_leaf_candidate(route(), 7300, LEAF_COUNT + 1),
+            Err(ScheduleError::InvalidCounter)
+        );
+    }
+
+    #[test]
+    fn chain_capacity_does_not_establish_local_signing_continuity() -> Result<(), ScheduleError> {
+        assert_eq!(chain_leaf_candidate(route(), 7300, 0), Ok(8));
+        assert_eq!(
+            plan_reservation(route(), 7300, 0, intact(12, 7300)),
+            Err(ScheduleError::WaitUntil(10900))
+        );
+        let restored = Continuity::Restored(RestoreBarrier::new(route(), 7300)?);
+        assert_eq!(
+            plan_reservation(route(), 7300, 0, restored),
+            Err(ScheduleError::WaitUntil(10900))
+        );
+        Ok(())
     }
 
     #[test]

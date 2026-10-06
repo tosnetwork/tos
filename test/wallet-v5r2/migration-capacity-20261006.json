@@ -1,0 +1,106 @@
+{
+  "base_commit": "920efae7182f114ba2bd75064f16c3b654bb172b",
+  "scope": "Reject native migration signing when successor vault has no current-slot chain capacity. This is not local custody continuity or a reservation.",
+  "tests": {
+    "schedule_and_journal": 20,
+    "fee_state": 14,
+    "recorded_migration_gate": 1,
+    "format": "passed",
+    "ruff": "passed",
+    "child_probe": "Invoked through process restart test; intentionally ignored as a standalone test."
+  },
+  "controls": {
+    "generic_bypass": {
+      "exit": 101,
+      "semantic_failure": "ungated migration signed"
+    },
+    "both_roles": {
+      "exit": 101,
+      "semantic_failure": "accepted duplicate rescue POPs"
+    },
+    "fresh_pop": {
+      "exit": 101,
+      "semantic_failure": "accepted stale or unrelated POP"
+    },
+    "receipt_checkpoint": {
+      "exit": 101,
+      "semantic_failure": "accepted stale or unrelated POP"
+    },
+    "vault_checkpoint": {
+      "exit": 101,
+      "semantic_failure": "accepted unproven successor vault"
+    },
+    "vault_live": {
+      "exit": 101,
+      "semantic_failure": "accepted unproven successor vault"
+    },
+    "vault_exhaustion": {
+      "exit": 101,
+      "semantic_failure": "accepted exhausted successor fee tree"
+    },
+    "vault_slot_capacity": {
+      "exit": 101,
+      "semantic_failure": "accepted exhausted successor slot"
+    },
+    "primary_funding": {
+      "exit": 101,
+      "semantic_failure": "primary funded POP bypassed"
+    },
+    "rescue_funding": {
+      "exit": 101,
+      "semantic_failure": "rescue funded POP bypassed"
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "sha256": "5d6294760b69049a67341e3f34c85a62e4d88ef90a95992daf1a59e065d6aa63",
+      "bytes": 106388
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/migration_signing_controls.py",
+      "sha256": "dc401fa7bd2db5aa7fc9a6683c92864c847bb711fb9542a968d31ccf1b4aa917",
+      "bytes": 4785
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_schedule.rs",
+      "sha256": "ce4b222b7d5d54da5b0819a06f62be9960c60259cc71fcd60b86426bb6437874",
+      "bytes": 11336
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "7e783bd60c171753ce26d2956a009dfa3348bbe73c4fe91e8b4ec22a73a7c88e",
+      "bytes": 126102
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_state.rs",
+      "sha256": "2088242e1fc51c87b6a65908735e60d823e23b882101c3d507ca6fa348a35ae4",
+      "bytes": 8964
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "sha256": "c9aefb30fa033f8dee24e31ef5390f69f8acfbbf0272516ad8b4a0e9ca4a95ae",
+      "bytes": 22720
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-migration-capacity-controls/MANIFEST.json",
+      "sha256": "588ea60d69764e9c506f7ce33b34e2602578aa4a9ae027d7be4cbbf6fb735a2a",
+      "bytes": 3980
+    }
+  ],
+  "commands": [
+    "python3 test/wallet-v5r2/migration_signing_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib lms_fee",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "python3 test/wallet-v5r2/recorded_migration_gate.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-gated-migration-recovery-final/native --output <fresh-directory>/migration.boc",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limitations": [
+    "Recorded migration gate reuses actual prior transaction cells with synthetic proof metadata. The newly generated signature has not been submitted in this run.",
+    "Chain capacity does not account for unbroadcast local reservations, exclusive custody, reserve affordability, or changes after the observed state.",
+    "Default-credit admission and other production release gates remain open."
+  ],
+  "retention": "Retain raw artifacts outside Git through review and release acceptance, at least through 2027-01-06."
+}

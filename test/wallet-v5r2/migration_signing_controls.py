@@ -17,7 +17,8 @@ def main():
     state = SOURCES / "wallet_v5r2_wallet_state.rs"
     tx = SOURCES / "proven_transactions.rs"
     vault = SOURCES / "wallet_v5r2_state.rs"
-    originals = {path: path.read_text() for path in (state, tx, vault)}
+    schedule = SOURCES / "lms_fee_schedule.rs"
+    originals = {path: path.read_text() for path in (state, tx, vault, schedule)}
     cases = [
         (
             "generic_bypass",
@@ -64,11 +65,20 @@ def main():
         (
             "vault_exhaustion",
             state,
-            "fee.next_leaf() < crate::lms_fee_schedule::LEAF_COUNT",
-            "true",
+            "fee.chain_leaf_candidate(now)?;",
+            "",
             "accepted exhausted successor fee tree",
         ),
     ]
+    cases.append(
+        (
+            "vault_slot_capacity",
+            schedule,
+            "if leaf >= end {",
+            "if false {",
+            "accepted exhausted successor slot",
+        )
+    )
     for role in ("primary", "rescue"):
         statement = f"evidence.{role}_request.require_successor_funded_receipt(\n            evidence.{role}_receipts,\n            evidence.{role}_external,\n            successor,\n        )?;"
         cases.append((f"{role}_funding", state, statement, "", f"{role} funded POP bypassed"))
