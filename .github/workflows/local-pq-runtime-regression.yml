@@ -1,0 +1,60 @@
+name: Shielded pool generator resources
+
+# The local traffic generator embeds the pool contract source and the
+# development verifying key. These checks prove it reads neither from the
+# checkout at runtime and that the embedded copies track their sources.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'tools/shielded-pool-circuit/**'
+      - 'crypto/smartcont/tos-shielded-pool-v1.fc'
+      - 'scripts/check-local-pq-generator.py'
+      - 'scripts/check-local-pq-resource-mutations.py'
+      - '.github/workflows/local-pq-runtime-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-pq-generator-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RAYON_NUM_THREADS: 2
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - run: scripts/install-rust-toolchain.sh
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: local-pq-generator
+          cache-bin: false
+          workspaces: tools/shielded-pool-circuit/crosscheck -> target
+      - name: Compiled resource-reader mutations
+        run: python3 scripts/check-local-pq-resource-mutations.py
+      - name: Build and test the generator
+        run: |
+          cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --bin local_pool_traffic
+          cargo build --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --bin local_pool_traffic
+      - name: Deposit, private transfer and withdrawal generation without the checkout
+        run: |
+          set -o pipefail
+          timeout 900 python3 scripts/check-local-pq-generator.py --checkout "$GITHUB_WORKSPACE" --generator tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic | tee "$RUNNER_TEMP/generator-isolation.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: local-pq-generator-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/generator-isolation.log
+            tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic
+          retention-days: 3
