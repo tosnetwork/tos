@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: v5r2-mobile-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   native:
     strategy:

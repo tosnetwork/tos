@@ -1,0 +1,43 @@
+{
+  "status": "local-source-bound component evidence",
+  "scope": "mobile AUTH encoding only; not wallet creation, proof acquisition, durable fee signing, funded recovery or finality",
+  "ios": {
+    "head": "73ae1f8",
+    "tests": 3,
+    "controls": {
+      "source_sha256": "fe1e6f30da3565c36b06bd81e0bba6fb122987b5306e9f17e4b3c78f5f0e1f2d",
+      "controls": [
+        {
+          "name": "primary",
+          "test": "testPrimaryControlsAndClassicalSignatureRefused",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "8bbe805eb8153f68b7abc0466c01beb5f9f94b977d560932a9e72556beaa5b17"
+        },
+        {
+          "name": "mode",
+          "test": "testAllSendModesAndCompleteListBoundaries",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "7f5f67f51ce62b84c09adf3d5f6bf52f8c8498e9fea4874a567e2036f0fcdd30"
+        },
+        {
+          "name": "signature",
+          "test": "testPrimaryControlsAndClassicalSignatureRefused",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "b3441995e4d77affdea11292021bc31d0265194e96e144f41c095f6abc2c8605"
+        }
+      ],
+      "restored_exit": 0
+    },
+    "raw_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-native/ios-auth-controls"
+  },
+  "android": {
+    "status": "local-source-bound baseline passed; guard-deletion controls pending",
+    "tests": 3,
+    "source_sha256": "ac3edbb641632499f7bdd96824905827b0d45f2bf9a1826d07b3638f5f986b91",
+    "xml_sha256": "efca2434c4a9bd40256d43d18c1a93b8465c81b229072ddcc58876c28ef01e6b",
+    "scope": "AUTH encoding and strict action framing, not funded mobile lifecycle"
+  }
+}
