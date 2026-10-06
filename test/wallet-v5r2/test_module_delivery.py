@@ -5,6 +5,7 @@ import json
 import shutil
 import sys
 import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,7 +25,26 @@ from test_state import fee, state  # noqa: E402
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
-    out = p.parse_args().output
+    p.add_argument("--native-signer", type=Path)
+    args = p.parse_args()
+    with ExitStack() as stack:
+        if args.native_signer:
+            from native_signer_fixture import NativeSignerFixture
+
+            signer = NativeSignerFixture(args.native_signer)
+            signer.install(stack)
+        run(args.output)
+        if args.native_signer:
+            assert {(call["key"], call["purpose"]) for call in signer.calls} >= {
+                ("primary", "auth"),
+                ("rescue", "auth"),
+            }
+            (args.output / "native-wallet-signatures.json").write_text(
+                json.dumps(signer.calls, indent=2) + "\n"
+            )
+
+
+def run(out):
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)

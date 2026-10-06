@@ -1,0 +1,93 @@
+{
+  "source_base": "f1f1daab2724e975360d24c11f9cbfe5a3b160e8",
+  "source_sha256": {
+    "crypto/pq/CMakeLists.txt": "d98b07bececed4a6653d324047be26deb2b337acc6ac9b07190e3f3bb9e8336a",
+    "test/wallet-v5r2/pq-signer-fixture.cpp": "c2f8f67402e75c342276c70f4853de3a7e61be575389806ed3f50a34ac31e046",
+    "test/wallet-v5r2/native_signer_fixture.py": "b368ce434f679e993bd17242f445c532ccfefdfcb0e4941960c4a2566156baee",
+    "test/wallet-v5r2/sdk_auth_parity.py": "4e31d388f8489e11f484f21898bac9ebc9c47aed4bd22551a8bacd5595bc1f6a",
+    "test/wallet-v5r2/test_module_delivery.py": "5d69ce84cb91be56d832ef07740fd3660c5878c2c7c60270b5c875c670ed9c85",
+    ".github/workflows/rescue-context.yml": "f8a149f9dce0ac1ac9e706130037f34d7615f06c80710f60528ed80795075c08"
+  },
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-signer-integration-final",
+      "manifest": {
+        "sha256": "bb1d6f297d23823e41f53fdcd525f8b8ab1e044accd1c48765a3199c1abf0b45",
+        "bytes": 34966
+      }
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-signer-module",
+      "manifest": {
+        "sha256": "023316029a09c36efed423b54745699ffd4d51f1318808beaca52e1903729c9f",
+        "bytes": 2328
+      }
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-signer-recovery",
+      "manifest": {
+        "sha256": "832e163e5837c75adc9fc0c93156a4dcfce292d0a79e44b0a2b86339e05876ab",
+        "bytes": 22578
+      }
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-signer-primary-pop",
+      "manifest": {
+        "sha256": "60cb7ac00d9b1662202cc504ad7a88a58d3625425330076c2be5cec36c9481f3",
+        "bytes": 1450
+      }
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-signer-primary-pop-final",
+      "manifest": {
+        "sha256": "81ad8df681728fd175a865ed54263ff4fe8e84336a493b4204f0bcfadf7d235e",
+        "bytes": 9523
+      }
+    }
+  ],
+  "retain_until": "2027-01-06",
+  "results": {
+    "recovery_native_rust_matching_transactions": 65,
+    "primary_pop_native_rust_matching_transactions": 24,
+    "native_module_cases": 9,
+    "module_signature_deletion_control": 1,
+    "allowed_role_purpose_coverage": [
+      "primary/auth",
+      "primary/pop",
+      "rescue/auth",
+      "rescue/pop",
+      "rescue/preparation"
+    ],
+    "native_signer_calls": {
+      "recovery": {
+        "next-rescue/auth": 1,
+        "next-rescue/pop": 2,
+        "rescue/auth": 2,
+        "rescue/preparation": 11
+      },
+      "primary_pop": {
+        "primary/pop": 1
+      },
+      "module": {
+        "primary/auth": 3,
+        "rescue/auth": 3
+      }
+    },
+    "final_build_test_format_exit": 0
+  },
+  "commands_file": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-signer-integration-final/commands.json",
+  "additional_commands": [
+    "cmake --build build --target test-wallet-pq-signer-fixture -j4",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example v5r2_auth_encode --example v5r2_pop_encode --example v5r2_prepare_encode --example v5r2_fee_encode --example v5r2_genesis_encode --example lms_fee_cache_fixture",
+    "python3 test/wallet-v5r2/test_module_delivery.py --native-signer build/crypto/pq/test-wallet-pq-signer-fixture --output <new-output-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limits": [
+    "Only fixed public fixture keys are accepted by the signer executable. It is not production custody or approval integration.",
+    "Recovery/POP parity uses diagnostic 20000 credit; unchanged 10000 admission remains failed.",
+    "Native primary AUTH/module suite has a compiled fee-vault stub; it is not the complete funded fee path.",
+    "Initial primary POP invocation used unsupported genesis option and failed setup; corrected fresh-directory run passed. Earlier pre-rebuild runs retained separately from final SDK rebuild runs.",
+    "Prior-head rust-format failed on module ordering in lib.rs; order corrected and full fmt-check passed locally.",
+    "Cross-architecture final-head CI, independent review, production custody and live-network acceptance remain open."
+  ]
+}

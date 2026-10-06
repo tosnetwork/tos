@@ -20,6 +20,7 @@ from test_rescue_e2e import digest  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--native-signer", type=Path)
     parser.add_argument("--genesis-driver", type=Path)
     parser.add_argument("--fee-driver", type=Path)
     parser.add_argument("--preparation-driver", type=Path)
@@ -98,6 +99,11 @@ def main():
         argv += ["--preparation-driver", str(args.preparation_driver)]
     argv += ["--pop-role", str(args.pop_role)] if args.pop_role else ["--prepare", "--recovery"]
     with ExitStack() as stack:
+        if args.native_signer:
+            from native_signer_fixture import NativeSignerFixture
+
+            native_signer = NativeSignerFixture(args.native_signer)
+            native_signer.install(stack)
         if args.pop_driver:
             import test_pop
             from sdk_pop_fixture import PopEncoder
@@ -112,6 +118,11 @@ def main():
         assert len(pop_encoder.calls) == (1 if args.pop_role else 2)
         (out / "sdk-pop.json").write_text(json.dumps(pop_encoder.calls, indent=2) + "\n")
     (out / "sdk-auth.json").write_text(json.dumps(calls, indent=2) + "\n")
+    if args.native_signer:
+        assert native_signer.calls, "native signer was not exercised"
+        (out / "native-wallet-signatures.json").write_text(
+            json.dumps(native_signer.calls, indent=2) + "\n"
+        )
     print("SDK wire bytes match Python and execute in both VMs")
 
 

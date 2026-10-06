@@ -1260,3 +1260,29 @@ persistence, backup/revocation, process/device isolation, locked-memory/core-dum
 policy, independent secret-handling review and SDK approval/state integration
 remain required. It does not approve the actions behind a digest, prove current
 wallet policy, or solve LMS stateful custody/default-credit admission.
+
+### Native signer / SDK / executor integration
+
+The explicitly public-key-only `test-wallet-pq-signer-fixture` invokes the new
+wallet signing library for fixed fixture identities. It accepts no private key
+or arbitrary seed and is not installed as a custody tool. The Python fixture
+adapter compares its public key against the existing independently invoked key
+fixture, records exact request digests/signatures, and supplies signatures to
+the Rust SDK submission encoders and actual contract transactions.
+
+With this backend, the complete SDK-funded successor recovery suite has 65
+matching native/Rust transactions; the ML-DSA primary POP fee suite has 24.
+Both retain the default-credit failure and use 20,000 only for downstream
+diagnostics. Nine separate native module-to-wallet cases cover primary AUTH,
+rescue, lock, migration, retirement, bad signature and legacy/classical refusal;
+that module suite uses a compiled fee-vault stub, not the full fee route. Its
+signature-guard deletion still converts corrupted-primary rejection into an
+incorrect successful relay. Across these runs all five allowed role/purpose
+combinations execute through the native signer. CI uses the same adapter on
+both architecture jobs.
+
+This is interoperability evidence with public fixture keys and controlled time,
+not production SDK custody integration or real-network finality. The first
+primary-POP invocation supplied a genesis option reserved for the recovery
+harness and failed setup; the corrected fresh-directory run passed. Raw runs,
+source hashes and that limitation are indexed in `native-signer-integration-20261006.json`.

@@ -403,3 +403,6 @@ add_test(NAME wallet-pq-signer-rejection COMMAND test-wallet-pq-signer-rejection
 add_executable(test-wallet-pq-signer-rng "${CMAKE_CURRENT_SOURCE_DIR}/../../test/wallet-v5r2/pq-signer-rng-test.cpp")
 target_link_libraries(test-wallet-pq-signer-rng PRIVATE tos_wallet_pq_signer)
 add_test(NAME wallet-pq-signer-rng COMMAND test-wallet-pq-signer-rng)
+# Public fixed-seed fixture only; deliberately not installed as a custody tool.
+add_executable(test-wallet-pq-signer-fixture "${CMAKE_CURRENT_SOURCE_DIR}/../../test/wallet-v5r2/pq-signer-fixture.cpp")
+target_link_libraries(test-wallet-pq-signer-fixture PRIVATE tos_wallet_pq_signer)
