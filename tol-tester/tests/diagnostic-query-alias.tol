@@ -1,0 +1,18 @@
+import "@stdlib/common"
+struct (0x40005001) Ack { queryId: uint64; amount: uint64; }
+fun helper(dest: address, amount: int) {
+    createMessage({bounce: false, dest: dest, value: 0,
+        body: Ack { queryId: 0, amount: amount as uint64 }}).send(SEND_MODE_REGULAR);
+}
+fun onInternalMessage(in: InMessage) {
+    var body = in.body;
+    val op = body.loadUint(32);
+    var alias = body; val amount = alias.loadUint(64);
+    createMessage({bounce: false, dest: in.senderAddress, value: 0, body: Ack { queryId: 0, amount: amount as uint64 }}).send(SEND_MODE_REGULAR);
+}
+@method_id(101)
+fun dummy(): int { return 0; }
+/**
+@testcase | 101 | | 0
+@stderr_avoid queryId
+ */

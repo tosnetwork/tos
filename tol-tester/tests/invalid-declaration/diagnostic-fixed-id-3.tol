@@ -1,10 +1,12 @@
-@method_id(123)
-get fun hello(x: int, y: int): (int, int) {
-    return (x, y);
+@method_id(100001)
+get fun get_state(): uint64 {
+    return 7;
 }
+
+fun onInternalMessage(in: InMessage) {}
 
 /**
 @compilation_should_fail
 @stderr top-level `get fun` derives its method ID
 @stderr keep `@method_id` and remove only `get`
-*/
+ */
