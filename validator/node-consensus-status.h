@@ -86,6 +86,12 @@ class PqConsensusCustody {
     if (!store) {
       return td::Status::Error("no post-quantum consensus key store to custody for this validator");
     }
+    // The window's end and the store's own signing deadline are one fact stated twice; a
+    // store that would go on signing past its window is refused, so the hard deadline
+    // holds at every signing point and not only at these lookups.
+    if (store->expire_at() != expire_at) {
+      return td::Status::Error("the consensus key store's signing deadline differs from its window");
+    }
     const auto key_id = key_id_of(*store);
     std::vector<tos::pq::ConsensusKeyWindow> schedule;
     auto it = stores_.find(validator_id);
@@ -100,12 +106,37 @@ class PqConsensusCustody {
     if (auto refused = tos::pq::check_consensus_key_schedule(schedule)) {
       return td::Status::Error("post-quantum consensus key " + key_id.value.to_hex() + " refused: " + *refused);
     }
+    if (auto refused = tos::pq::check_consensus_key_windows(with_unloaded(validator_id, schedule))) {
+      return td::Status::Error("post-quantum consensus key " + key_id.value.to_hex() + " refused: " + *refused);
+    }
     stores_[validator_id][key_id] = HeldKey{std::move(store), valid_from, expire_at};
+    return td::Status::OK();
+  }
+  // A configured key that was not loaded because it had expired. It signs nothing, but
+  // its window still belongs to the schedule: without it, a stake for an election the
+  // expired key was scheduled for would fall to the older key the rotation moved away
+  // from. Refused when it would make the schedule invalid, as `install` is.
+  [[nodiscard]] td::Status record_unloaded(const tos::ValidatorId& validator_id, td::uint32 valid_from,
+                                           td::uint32 expire_at) {
+    std::vector<tos::pq::ConsensusKeyWindow> schedule;
+    auto it = stores_.find(validator_id);
+    if (it != stores_.end()) {
+      for (const auto& [held_id, held] : it->second) {
+        schedule.push_back(window_of(held_id, held));
+      }
+    }
+    schedule = with_unloaded(validator_id, schedule);
+    schedule.push_back(tos::pq::ConsensusKeyWindow{{}, valid_from, expire_at});
+    if (auto refused = tos::pq::check_consensus_key_windows(schedule)) {
+      return td::Status::Error("an unloaded consensus key's window refused: " + *refused);
+    }
+    unloaded_[validator_id].push_back({valid_from, expire_at});
     return td::Status::OK();
   }
   // Every key held for this validator.
   void remove(const tos::ValidatorId& validator_id) {
     stores_.erase(validator_id);
+    unloaded_.erase(validator_id);
   }
   // One key; whether it was held.
   bool remove_key(const tos::ValidatorId& validator_id, const tos::ConsensusKeyId& key_id) {
@@ -217,6 +248,10 @@ class PqConsensusCustody {
       schedule.push_back(window_of(key_id, held));
       stores.push_back(held.store);
     }
+    // Unloaded (expired) keys take part in the choice and, chosen, refuse: they have no
+    // store, and their place in the schedule is never handed to another key.
+    schedule = with_unloaded(validator_id, schedule);
+    stores.resize(schedule.size());
     std::optional<tos::pq::ConsensusKeyIdBytes> wanted;
     if (requested) {
       wanted = bytes_of(*requested);
@@ -227,7 +262,12 @@ class PqConsensusCustody {
     }
     const auto index = std::get<std::size_t>(chosen);
     if (index >= stores.size() || !stores[index]) {
-      return td::Status::Error("the selected post-quantum consensus key has no store");
+      return td::Status::Error("the consensus key scheduled for election date " + std::to_string(election_date) +
+                               " expired and is not loaded");
+    }
+    if (stores[index]->expired_at(now)) {
+      return td::Status::Error("the consensus key scheduled for election date " + std::to_string(election_date) +
+                               " has expired");
     }
     return stores[index];
   }
@@ -251,7 +291,19 @@ class PqConsensusCustody {
     return tos::pq::ConsensusKeyWindow{bytes_of(key_id), held.valid_from, held.expire_at};
   }
 
+  std::vector<tos::pq::ConsensusKeyWindow> with_unloaded(const tos::ValidatorId& validator_id,
+                                                         std::vector<tos::pq::ConsensusKeyWindow> schedule) const {
+    auto it = unloaded_.find(validator_id);
+    if (it != unloaded_.end()) {
+      for (const auto& [valid_from, expire_at] : it->second) {
+        schedule.push_back(tos::pq::ConsensusKeyWindow{{}, valid_from, expire_at, false});
+      }
+    }
+    return schedule;
+  }
+
   std::map<tos::ValidatorId, std::map<tos::ConsensusKeyId, HeldKey>> stores_;
+  std::map<tos::ValidatorId, std::vector<std::pair<td::uint32, td::uint32>>> unloaded_;
 };
 
 // Where `validator_id` stands in a set's members, and the held key that signs for it there:

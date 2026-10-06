@@ -106,9 +106,11 @@ NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& additi
 struct NodeConsensusKeyRemoval {
   std::string db_root;
   std::string key;  // the absolute key file path it is configured at, or its 64-hex key id
+  std::uint32_t now = 0;  // the time the remaining keys are judged expired at
 };
 
-// Remove one key from a bound node's configuration. Refuses the node's last key. This
+// Remove one key from a bound node's configuration. Refuses the node's last key, and a
+// removal that would leave only expired keys or an otherwise invalid schedule. This
 // sees no validator set: removing a key a running set still lists for this validator
 // takes the validator out of that set's consensus until the set ends. The operator checks
 // that first (or uses the console's del-pq-consensus-key on the running node, which does).

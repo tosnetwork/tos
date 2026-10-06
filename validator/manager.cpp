@@ -4401,6 +4401,40 @@ void ValidatorManagerImpl::get_archive_slice(td::uint64 archive_id, td::uint64 o
   td::actor::send_closure(db_, &Db::get_archive_slice, archive_id, offset, limit, std::move(promise));
 }
 
+void ValidatorManagerImpl::del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
+                                                td::Promise<td::Unit> promise) {
+  const auto held = pq_custody_.held_keys(validator_id);
+  auto entry = held.find(key_id);
+  if (entry == held.end()) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no such post-quantum consensus key is custodied"));
+    return;
+  }
+  if (!tos::pq::consensus_key_expired(entry->second.expire_at, pq_custody_now())) {
+    if (last_masterchain_state_.is_null()) {
+      promise.set_error(td::Status::Error(tos::ErrorCode::notready,
+                                          "no masterchain state yet; which sets list this key cannot be told"));
+      return;
+    }
+    for (int offset = -1; offset <= 1; ++offset) {
+      auto set = last_masterchain_state_->get_total_validator_set(offset);
+      if (set.is_null()) {
+        continue;
+      }
+      for (const auto &descr : set->export_vector()) {
+        if (descr.is_pq() && descr.validator_id == validator_id && descr.key_id == key_id) {
+          promise.set_error(
+              td::Status::Error(tos::ErrorCode::error,
+                                "consensus key is listed for this validator by a current, previous or next validator "
+                                "set"));
+          return;
+        }
+      }
+    }
+  }
+  pq_custody_.remove_key(validator_id, key_id);
+  promise.set_value(td::Unit());
+}
+
 bool ValidatorManagerImpl::has_local_validator_keys() {
   return temp_keys_.size() > 0 || permanent_keys_.size() > 0 || !pq_custody_.empty();
 }

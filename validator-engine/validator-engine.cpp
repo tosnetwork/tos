@@ -81,6 +81,7 @@
 #include "wallet-index.h"
 
 #if TD_DARWIN || TD_LINUX
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 #include <algorithm>
@@ -95,6 +96,7 @@
 #include "block/precompiled-smc/PrecompiledSmartContract.h"
 #include "common/delay.h"
 #include "interfaces/validator-manager.h"
+#include "pq/consensus-config-json.h"
 #include "pq/consensus-key-file.h"
 #include "pq/consensus-key-schedule.h"
 #include "pq/consensus-node-config.h"
@@ -296,14 +298,14 @@ Config::Config(const tos::tos_api::engine_validator_config &config) {
       const auto &pq = *config.extraconfig_->pq_consensus_;
       PqConsensus parsed{tos::ValidatorId{pq.validator_id_}, {}};
       if (!pq.consensus_key_file_.empty()) {
-        parsed.keys.push_back(PqConsensusKey{pq.consensus_key_file_, 0, 0, true});
+        parsed.keys.push_back(PqConsensusKey{pq.consensus_key_file_, 0, 0});
       }
       for (const auto &key : pq.keys_) {
         if (!key) {
           continue;
         }
         parsed.keys.push_back(PqConsensusKey{key->consensus_key_file_, static_cast<td::uint32>(key->valid_from_),
-                                             static_cast<td::uint32>(key->expire_at_), false});
+                                             static_cast<td::uint32>(key->expire_at_)});
       }
       pq_consensus = std::move(parsed);
     }
@@ -430,14 +432,18 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_config> Config::tl() const {
                                                                                       client.slot));
     }
     if (pq_consensus) {
-      // Written back in the form it was read in: a single-key node keeps the single
-      // `consensus_key_file` it was configured with, and nothing else.
+      // One key valid for every election and never expiring is written as the single
+      // `consensus_key_file`, exactly as a node that never rotates has always had it.
+      // Anything else is written in `keys` alone with the single file empty, so a reader
+      // that predates `keys` finds no key file and refuses to start rather than taking
+      // one of several keys for the whole configuration (see consensus-config-json.h).
       std::string primary_file;
       std::vector<tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKey>> keys;
-      for (const auto &key : pq_consensus->keys) {
-        if (key.primary && primary_file.empty()) {
-          primary_file = key.consensus_key_file;
-        } else {
+      const auto &held = pq_consensus->keys;
+      if (held.size() == 1 && held.front().valid_from == 0 && held.front().expire_at == 0) {
+        primary_file = held.front().consensus_key_file;
+      } else {
+        for (const auto &key : held) {
           keys.push_back(tos::create_tl_object<tos::tos_api::engine_validator_pqConsensusKey>(
               key.consensus_key_file, static_cast<td::int32>(key.valid_from), static_cast<td::int32>(key.expire_at)));
         }
@@ -2327,6 +2333,13 @@ void ValidatorEngine::load_config(td::Promise<> promise) {
   }
   auto conf_json = conf_json_R.move_as_ok();
 
+  // The consensus keys are checked as written, before the permissive decoder can default
+  // a misspelt or missing window field and the rewrite below makes that permanent.
+  if (auto refused = tos::pq::check_consensus_key_json(conf_json)) {
+    promise.set_error(td::Status::Error(PSLICE() << "post-quantum consensus configuration refused: " << *refused));
+    return;
+  }
+
   tos::tos_api::engine_validator_config conf;
   auto S = tos::tos_api::from_json(conf, conf_json.get_object());
   if (S.is_error()) {
@@ -2370,6 +2383,38 @@ void ValidatorEngine::write_config(td::Promise<> promise) {
   }
   TRY_STATUS_PROMISE(promise, td::rename(temp_config_file(), config_file_));
   promise.set_value({});
+}
+
+td::Status ValidatorEngine::write_config_durably() {
+  // As write_config, and then the directory entry the rename created is flushed too: a
+  // consensus key change is reported as made only once it would survive a crash. A failed
+  // directory flush leaves the new configuration in place but is reported, like the
+  // operator tool's exit status 3.
+  auto s = td::json_encode<std::string>(td::ToJson(*config_.tl().get()), true);
+  td::WriteFileOptions options;
+  options.need_sync = true;
+  options.need_lock = true;
+  auto S = td::write_file(temp_config_file(), s, options);
+  if (S.is_error()) {
+    td::unlink(temp_config_file()).ignore();
+    return S.move_as_error_prefix("the configuration could not be written: ");
+  }
+  auto R = td::rename(temp_config_file(), config_file_);
+  if (R.is_error()) {
+    return R.move_as_error_prefix("the configuration could not be replaced: ");
+  }
+  const int dir = ::open(db_root_.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+  const bool flushed = dir >= 0 && ::fsync(dir) == 0;
+  const int flush_errno = errno;
+  if (dir >= 0) {
+    ::close(dir);
+  }
+  if (!flushed) {
+    return td::Status::PosixError(flush_errno,
+                                  "the configuration is in place but not confirmed durable (the "
+                                  "directory flush failed); run sync before relying on it");
+  }
+  return td::Status::OK();
 }
 
 void ValidatorEngine::schedule_fast_sync_member_certificates_write() {
@@ -2697,6 +2742,9 @@ void ValidatorEngine::start_validator() {
         LOG(FATAL) << "post-quantum consensus key " << key.key_file << ": "
                    << tos::pq::describe(std::get<tos::pq::ConsensusKeyFileError>(loaded));
       }
+      // The window's end is the store's own signing deadline: from then on it signs
+      // nothing, wherever it is held.
+      std::get<tos::pq::ValidatorPQKeyStore>(loaded).set_expire_at(key.expire_at);
       auto store = std::make_shared<const tos::pq::ValidatorPQKeyStore>(
           std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
       schedule.push_back(tos::pq::ConsensusKeyWindow{store->consensus_key().key_id, key.valid_from, key.expire_at});
@@ -2719,6 +2767,17 @@ void ValidatorEngine::start_validator() {
       auto status = pq_custody_.install(config_.pq_consensus->validator_id, key.store, key.valid_from, key.expire_at);
       if (status.is_error()) {
         LOG(FATAL) << "post-quantum consensus custody refused: " << status;
+      }
+    }
+    // An expired key is not loaded, but its window stays in the schedule: a stake for an
+    // election it was scheduled for is refused, never signed with an older key.
+    for (std::size_t i = 0; i < configured.size(); i++) {
+      if (std::find(load.begin(), load.end(), i) == load.end()) {
+        auto status = pq_custody_.record_unloaded(config_.pq_consensus->validator_id, configured[i].valid_from,
+                                                  configured[i].expire_at);
+        if (status.is_error()) {
+          LOG(FATAL) << "post-quantum consensus custody refused: " << status;
+        }
       }
     }
 
@@ -4982,6 +5041,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addPqCons
     refuse("this node is not bound to a validator; bind it first (tos-pq-consensus-key bind-node)");
     return;
   }
+  // One key change at a time, from its checks to its durable configuration: two changes
+  // checked against the same starting state could each pass and together break a limit.
+  if (pq_key_mutation_in_flight_) {
+    refuse("another consensus key change is in progress; retry once it has completed");
+    return;
+  }
   const std::string file = query.consensus_key_file_;
   // The node runs with / as its working directory under a service manager, so a relative
   // path would name a different file at the next start than it does now.
@@ -4990,8 +5055,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addPqCons
     return;
   }
   const auto now = pq_custody_now();
+  if (query.valid_from_ < 0 || query.expire_at_ < 0) {
+    refuse("a window bound is a unix time between 0 and 2147483647");
+    return;
+  }
   const Config::PqConsensusKey key{file, static_cast<td::uint32>(query.valid_from_),
-                                   static_cast<td::uint32>(query.expire_at_), false};
+                                   static_cast<td::uint32>(query.expire_at_)};
   if (tos::pq::consensus_key_expired(key.expire_at, now)) {
     refuse("the key would already have expired at " + std::to_string(key.expire_at));
     return;
@@ -5013,6 +5082,7 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addPqCons
     refuse(file + ": " + tos::pq::describe(std::get<tos::pq::ConsensusKeyFileError>(loaded)));
     return;
   }
+  std::get<tos::pq::ValidatorPQKeyStore>(loaded).set_expire_at(key.expire_at);
   auto store =
       std::make_shared<const tos::pq::ValidatorPQKeyStore>(std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
   const auto key_id = tos::validator::PqConsensusCustody::key_id_of(*store);
@@ -5028,6 +5098,7 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addPqCons
     refuse(installed.message().str());
     return;
   }
+  pq_key_mutation_in_flight_ = true;
   td::actor::send_closure(
       validator_manager_, &tos::validator::ValidatorManagerInterface::add_pq_consensus_key, validator_id, store,
       key.valid_from, key.expire_at,
@@ -5040,6 +5111,7 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addPqCons
 void ValidatorEngine::finish_add_pq_consensus_key(Config::PqConsensusKey key, tos::ConsensusKeyId key_id,
                                                   td::Result<td::Unit> installed,
                                                   td::Promise<td::BufferSlice> promise) {
+  pq_key_mutation_in_flight_ = false;
   if (!config_.pq_consensus) {
     promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "the node was unbound")));
     return;
@@ -5059,14 +5131,12 @@ void ValidatorEngine::finish_add_pq_consensus_key(Config::PqConsensusKey key, to
   config_.pq_consensus->keys.push_back(key);
   update_local_pq_validator_adnl_ids();
   auto info = pq_consensus_key_info(key, pq_custody_now());
-  write_config([promise = std::move(promise), info = std::move(info)](td::Result<td::Unit> written) mutable {
-    if (written.is_error()) {
-      promise.set_value(create_control_query_error(
-          written.move_as_error_prefix("the key is held, but the configuration could not be written: ")));
-      return;
-    }
-    promise.set_value(tos::serialize_tl_object(info, true));
-  });
+  auto written = write_config_durably();
+  if (written.is_error()) {
+    promise.set_value(create_control_query_error(written.move_as_error_prefix("the key is held, but ")));
+    return;
+  }
+  promise.set_value(tos::serialize_tl_object(info, true));
 }
 
 void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqConsensusKey &query, td::BufferSlice data,
@@ -5086,6 +5156,10 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqCons
     refuse("this node holds no post-quantum consensus key");
     return;
   }
+  if (pq_key_mutation_in_flight_) {
+    refuse("another consensus key change is in progress; retry once it has completed");
+    return;
+  }
   const auto validator_id = config_.pq_consensus->validator_id;
   const tos::ConsensusKeyId key_id{query.key_id_};
   const auto held = pq_custody_.held_keys(validator_id);
@@ -5099,6 +5173,25 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqCons
   if (config_.pq_consensus->keys.size() <= 1) {
     refuse("this is the node's last consensus key; a bound validator keeps at least one");
     return;
+  }
+  // What remains must be a configuration the node would start with: not only a key, but
+  // an unexpired one, under a valid schedule.
+  {
+    std::vector<tos::pq::ConfiguredConsensusKey> remaining;
+    for (const auto &configured : config_.pq_consensus->keys) {
+      auto known = pq_key_ids_by_file_.find(configured.consensus_key_file);
+      if (known != pq_key_ids_by_file_.end() && known->second == key_id) {
+        continue;
+      }
+      remaining.push_back(
+          tos::pq::ConfiguredConsensusKey{configured.consensus_key_file, configured.valid_from, configured.expire_at});
+    }
+    auto plan = tos::pq::plan_consensus_key_load(remaining, pq_custody_now());
+    if (std::holds_alternative<std::string>(plan)) {
+      refuse("removing consensus key " + key_id.value.to_hex() +
+             " would leave a configuration the node refuses: " + std::get<std::string>(plan));
+      return;
+    }
   }
   // A key a running, previous or next set lists for this validator is still the key this
   // node signs that set with. Removing it now would take the validator out of that set's
@@ -5118,6 +5211,7 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqCons
       }
     }
   }
+  pq_key_mutation_in_flight_ = true;
   td::actor::send_closure(
       validator_manager_, &tos::validator::ValidatorManagerInterface::del_pq_consensus_key, validator_id, key_id,
       [SelfId = actor_id(this), key_id, promise = std::move(promise)](td::Result<td::Unit> result) mutable {
@@ -5128,6 +5222,7 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqCons
 
 void ValidatorEngine::finish_del_pq_consensus_key(tos::ConsensusKeyId key_id, td::Result<td::Unit> removed,
                                                   td::Promise<td::BufferSlice> promise) {
+  pq_key_mutation_in_flight_ = false;
   if (removed.is_error()) {
     promise.set_value(create_control_query_error(removed.move_as_error_prefix("the validator manager refused: ")));
     return;
@@ -5151,14 +5246,12 @@ void ValidatorEngine::finish_del_pq_consensus_key(tos::ConsensusKeyId key_id, td
   LOG(WARNING) << "post-quantum consensus custody: validator_id " << pq_identity_hex(validator_id.value)
                << " removed key_id " << pq_identity_hex(key_id.value);
   update_local_pq_validator_adnl_ids();
-  write_config([promise = std::move(promise)](td::Result<td::Unit> written) mutable {
-    if (written.is_error()) {
-      promise.set_value(create_control_query_error(
-          written.move_as_error_prefix("the key is no longer used, but the configuration could not be written: ")));
-      return;
-    }
-    promise.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_success>());
-  });
+  auto written = write_config_durably();
+  if (written.is_error()) {
+    promise.set_value(create_control_query_error(written.move_as_error_prefix("the key is no longer used, but ")));
+    return;
+  }
+  promise.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_success>());
 }
 
 void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_checkDhtServers &query, td::BufferSlice data,

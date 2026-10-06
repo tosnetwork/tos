@@ -29,15 +29,19 @@
 //     that lists A gets A as its group and vote signer while the stake for the next
 //     election is signed with B, and that signature verifies under B and not under A; a
 //     set listing a key the node does not hold, or holds expired, gets no signer at all.
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <variant>
 #include <vector>
 
+#include "crypto/pq/consensus-config-json.h"
 #include "crypto/pq/consensus-key-schedule.h"
 #include "crypto/pq/mldsa44.h"
 #include "crypto/pq/pq-consensus.h"
@@ -71,12 +75,13 @@ pq::ConsensusKeyIdBytes id_bytes(td::uint8 b) {
   return out;
 }
 
-std::shared_ptr<const pq::ValidatorPQKeyStore> key_from(char seed_byte) {
+std::shared_ptr<const pq::ValidatorPQKeyStore> key_from(char seed_byte, std::uint32_t expire_at = 0) {
   auto store = pq::ValidatorPQKeyStore::from_seed(std::string(32, seed_byte));
   if (!store) {
     std::printf("FAIL key derivation for seed byte %d\n", seed_byte);
     std::exit(1);
   }
+  store->set_expire_at(expire_at);
   return std::make_shared<const pq::ValidatorPQKeyStore>(std::move(*store));
 }
 
@@ -268,9 +273,14 @@ void custody_checks() {
   // An expired key answers for nothing: not as a group signer, not as a member, not for a
   // vote, not for a stake, and the other held key is never substituted for it.
   validator::PqConsensusCustody expiring;
-  check("custody_of_an_expiring_a", expiring.install(validator_id, key_a, 0, now).is_ok());
+  // A store whose deadline is not its window's end is refused: the two are one fact.
+  check("custody_refuses_a_store_without_the_windows_deadline",
+        expiring.install(validator_id, key_a, 0, now).is_error() && expiring.empty());
+  const auto expiring_a = key_from('\x0a', now);
+  check("custody_of_an_expiring_a", expiring.install(validator_id, expiring_a, 0, now).is_ok());
   check("custody_of_b_beside_it", expiring.install(validator_id, key_b, 10, 0).is_ok());
-  check("an_unexpired_key_still_signs", expiring.get_matching_store(validator_id, set_with_a[0], now - 1) == key_a);
+  check("an_unexpired_key_still_signs",
+        expiring.get_matching_store(validator_id, set_with_a[0], now - 1) == expiring_a);
   check("an_expired_key_signs_no_group", expiring.get_matching_store(validator_id, set_with_a[0], now) == nullptr);
   check("an_expired_key_is_not_held_for_use",
         !expiring.holds(validator_id, id_a, now) && expiring.usable_key_ids(validator_id, now).size() == 1);
@@ -280,6 +290,24 @@ void custody_checks() {
   check("an_expired_key_signs_no_named_stake", expiring.select_stake_store(validator_id, 5, now, id_a).is_error());
   check("an_expired_key_is_still_listed_for_removal", expiring.held_keys(validator_id).count(id_a) == 1);
 
+  // A restart after the successor B expired: B is configured but not loaded, and only its
+  // window is known. The stake for an election B was scheduled for is refused; the older
+  // A, still held, is never signed with in B's place.
+  validator::PqConsensusCustody restarted;
+  check("restart_holds_a", restarted.install(validator_id, key_a, 0, 0).is_ok());
+  check("restart_records_the_expired_successor", restarted.record_unloaded(validator_id, 1, 2).is_ok());
+  auto after_b = restarted.select_stake_store(validator_id, 2'000'000'000U, now, std::nullopt);
+  check("restart_refuses_the_stake_the_expired_successor_was_scheduled_for",
+        after_b.is_error() &&
+            after_b.error().message().str().find("(expired and not loaded) expired at 2") != std::string::npos);
+  auto before_b = restarted.select_stake_store(validator_id, 0, now, std::nullopt);
+  check("restart_still_signs_an_election_before_the_successor_with_a", before_b.is_ok() && before_b.ok() == key_a);
+  check("restart_refuses_an_unloaded_window_that_repeats_a_date",
+        restarted.record_unloaded(validator_id, 1, 5).is_error() &&
+            restarted.install(validator_id, key_c, 1, 0).is_error());
+  check("restart_refuses_a_zero_key_id_request",
+        restarted.select_stake_store(validator_id, 2'000'000'000U, now, ConsensusKeyId{}).is_error());
+
   // Removal is per key.
   check("removing_a_key_keeps_the_other", custody.remove_key(validator_id, id_a) &&
                                               !custody.holds(validator_id, id_a, now) &&
@@ -288,11 +316,111 @@ void custody_checks() {
   check("removing_the_last_key_empties_custody", custody.remove_key(validator_id, id_b) && custody.empty());
 }
 
+void deadline_checks() {
+  // The hard deadline is the store's own: whatever holds it, it signs nothing from
+  // expire_at on, and the boundary is exact.
+  const auto now = static_cast<std::uint32_t>(std::time(nullptr));
+  auto store = pq::ValidatorPQKeyStore::from_seed(std::string(32, '\x0d'));
+  if (!store) {
+    check("deadline_key_derivation", false);
+    return;
+  }
+  store->set_expire_at(now + 2);
+  check("deadline_boundary_before", !store->expired_at(now + 1));
+  check("deadline_boundary_at", store->expired_at(now + 2) && store->expired_at(now + 3));
+  check("deadline_signs_before_it", store->sign_consensus("before").has_value() &&
+                                        store->sign_config_vote("before").has_value() &&
+                                        store->sign_election("before").has_value());
+  check("deadline_refused_nothing_before_it", store->signatures_refused_after_expiry() == 0);
+  while (static_cast<std::uint32_t>(std::time(nullptr)) < now + 2) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  check("deadline_is_reached", store->expired_now());
+  check("deadline_refuses_a_consensus_signature", !store->sign_consensus("after").has_value());
+  check("deadline_refuses_a_config_vote", !store->sign_config_vote("after").has_value());
+  check("deadline_refuses_an_election_signature", !store->sign_election("after").has_value());
+  check("deadline_counts_each_refusal", store->signatures_refused_after_expiry() == 3);
+  const auto adnl = filled(0x61);
+  const auto owner = filled(0x62);
+  check("deadline_refuses_a_stake",
+        !pq::sign_stake_authorization(*store, 1, 5, 0x10000, filled(0x51), adnl, owner).has_value());
+  // Moving the store keeps its deadline.
+  auto moved = std::move(*store);
+  check("deadline_survives_a_move", moved.expired_now() && !moved.sign_consensus("moved").has_value());
+
+  auto unbounded = pq::ValidatorPQKeyStore::from_seed(std::string(32, '\x0e'));
+  check("no_deadline_signs", unbounded && !unbounded->expired_now() && unbounded->sign_consensus("x").has_value());
+}
+
+bool json_refused(const char* text, const char* phrase) {
+  std::string copy = text;
+  auto json = td::json_decode(td::MutableSlice(copy));
+  if (json.is_error()) {
+    std::printf("FAIL json fixture does not parse: %s\n", text);
+    return false;
+  }
+  auto verdict = pq::check_consensus_key_json(json.ok());
+  return verdict.has_value() && verdict->find(phrase) != std::string::npos;
+}
+
+bool json_accepted(const char* text) {
+  std::string copy = text;
+  auto json = td::json_decode(td::MutableSlice(copy));
+  return json.is_ok() && !pq::check_consensus_key_json(json.ok()).has_value();
+}
+
+void json_checks() {
+  check("json_accepts_no_binding", json_accepted(R"({"extraconfig": {"state_serializer_enabled": true}})"));
+  check("json_accepts_the_single_form",
+        json_accepted(R"({"extraconfig": {"pq_consensus": {"@type": "engine.validator.pqConsensus",
+          "validator_id": "AA==", "consensus_key_file": "/k/a", "keys": []}}})"));
+  check("json_accepts_the_multi_form",
+        json_accepted(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==", "consensus_key_file": "",
+          "keys": [{"@type": "engine.validator.pqConsensusKey", "consensus_key_file": "/k/a", "valid_from": 0,
+          "expire_at": 0}, {"consensus_key_file": "/k/b", "valid_from": "2000000000", "expire_at": 0}]}}})"));
+  check("json_refuses_a_misspelt_window_field",
+        json_refused(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==", "keys": [
+          {"consensus_key_file": "/k/b", "validFrom": 2000000000, "valid_from": 0, "expire_at": 0}]}}})",
+                     "validFrom is not a field"));
+  check("json_refuses_a_missing_window_field",
+        json_refused(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==", "keys": [
+          {"consensus_key_file": "/k/b", "expire_at": 0}]}}})",
+                     "valid_from is missing"));
+  check("json_refuses_an_unknown_binding_field",
+        json_refused(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==", "consensus_key_file": "/k/a",
+          "comment": 1}}})",
+                     "comment is not a field"));
+  check("json_refuses_both_forms_at_once",
+        json_refused(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==", "consensus_key_file": "/k/a",
+          "keys": [{"consensus_key_file": "/k/b", "valid_from": 5, "expire_at": 0}]}}})",
+                     "both a single"));
+  check("json_refuses_no_key", json_refused(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==",
+          "consensus_key_file": "", "keys": []}}})",
+                                            "names no consensus key"));
+  check("json_refuses_a_negative_window",
+        json_refused(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==", "keys": [
+          {"consensus_key_file": "/k/b", "valid_from": -5, "expire_at": 0}]}}})",
+                     "not a unix time"));
+  check("json_refuses_a_window_beyond_int32",
+        json_refused(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==", "keys": [
+          {"consensus_key_file": "/k/b", "valid_from": 2147483648, "expire_at": 0}]}}})",
+                     "not a unix time"));
+  check("json_refuses_another_key_type",
+        json_refused(R"({"extraconfig": {"pq_consensus": {"validator_id": "AA==", "keys": [
+          {"@type": "engine.validator.pqConsensus", "consensus_key_file": "/k/b", "valid_from": 1, "expire_at": 0}]}}})",
+                     "is not a engine.validator.pqConsensusKey"));
+  check(
+      "json_refuses_a_missing_validator",
+      json_refused(R"({"extraconfig": {"pq_consensus": {"consensus_key_file": "/k/a"}}})", "validator_id is missing"));
+}
+
 }  // namespace
 
 int main() {
   schedule_checks();
   custody_checks();
+  deadline_checks();
+  json_checks();
   if (failures == 0) {
     std::printf("test-pq-consensus-key-rotation: all scenarios OK\n");
     return 0;

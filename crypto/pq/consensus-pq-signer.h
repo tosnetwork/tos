@@ -51,12 +51,37 @@ class ValidatorPQKeyStore {
   // under validator_election_context, which the elector shares with stake requests.
   std::optional<ConsensusPQSignature> sign_election(std::string_view message) const noexcept;
 
+  // A hard deadline: from unix time `expire_at` on (0: never), every sign_* above returns
+  // nullopt, whatever holds this store -- a running validator group, a vote, a stake.
+  // Every caller already fails closed on nullopt (no candidate, no vote, no
+  // authorization), so an expired consensus key stops signing at the instant it expires
+  // rather than when the next lookup happens to notice, and nothing substitutes another
+  // key for it. Set once, before the store is shared.
+  void set_expire_at(std::uint32_t expire_at) noexcept {
+    expire_at_ = expire_at;
+  }
+  std::uint32_t expire_at() const noexcept {
+    return expire_at_;
+  }
+  bool expired_at(std::uint64_t unix_now) const noexcept {
+    return expire_at_ != 0 && unix_now >= expire_at_;
+  }
+  // Whether the deadline has passed by the system clock, which is what signing consults.
+  bool expired_now() const noexcept;
+  // How many signatures the deadline has refused.
+  std::uint64_t signatures_refused_after_expiry() const noexcept {
+    return signatures_refused_after_expiry_.load(std::memory_order_relaxed);
+  }
+
  private:
   ValidatorPQKeyStore() = default;
   struct Secret;
   ConsensusPQKey key_{};
   std::unique_ptr<Secret> secret_;  // wiped on destruction
   mutable std::atomic<std::uint64_t> consensus_signatures_produced_{0};
+  std::uint32_t expire_at_ = 0;
+  mutable std::atomic<std::uint64_t> signatures_refused_after_expiry_{0};
+  bool refuse_if_expired() const noexcept;
 };
 
 }  // namespace tos::pq

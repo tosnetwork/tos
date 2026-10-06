@@ -804,7 +804,13 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
             raise Failure("add-node-key printed a seed")
     if bound_key_id(added.stdout) != successor_id or not added.stdout.endswith(b" updated\n"):
         raise Failure(f"add-node-key did not report the key it added: {added.stdout!r}")
-    two = {**pq_consensus(VALIDATOR_HEX, primary), "keys": [rotation_key(successor, 1000)]}
+    # Several keys are stated in `keys` alone, the single file left empty: a reader that
+    # predates `keys` finds no key file and refuses, rather than keep A and drop B.
+    two = {
+        **pq_consensus(VALIDATOR_HEX, primary),
+        "consensus_key_file": "",
+        "keys": [rotation_key(primary, 0), rotation_key(successor, 1000)],
+    }
     written = json.loads(path.read_text())
     if written["extraconfig"]["pq_consensus"] != two:
         raise Failure(f"add-node-key wrote another binding: {json.dumps(written['extraconfig'], indent=1)}")
@@ -831,7 +837,7 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
     lines = listed.stdout.decode().splitlines()
     if lines[0] != f"validator_id {VALIDATOR_HEX}":
         raise Failure(f"list-node-keys did not name the validator: {lines!r}")
-    if lines[1] != f"key {primary_id} valid_from 0 expire_at 0 primary file {primary}":
+    if lines[1] != f"key {primary_id} valid_from 0 expire_at 0 file {primary}":
         raise Failure(f"list-node-keys misreported the bound key: {lines[1]!r}")
     if lines[2] != f"key {successor_id} valid_from 1000 expire_at 0 file {successor}":
         raise Failure(f"list-node-keys misreported the added key: {lines[2]!r}")
@@ -848,7 +854,7 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
         "the bound key's own date for a new key": ([str(db), str(third), "0"], b"same election date"),
         "the same key under another file name": ([str(db), str(same_seed), "2000"], b"configured twice"),
         "a window that closes before it opens": (
-            [str(db), str(third), "4000000000", "4000000000"],
+            [str(db), str(third), "2100000000", "2100000000"],
             b"not after its window",
         ),
         "a key that has already expired": ([str(db), str(third), "3000", "3001"], b"already have expired"),
@@ -899,6 +905,116 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
     if final["keys"] != [rotation_key(third, 9000)] or final["consensus_key_file"] != "":
         raise Failure(f"the second rotation left another binding: {final!r}")
 
+    # Removing a key may not leave only expired ones: the node would refuse to start.
+    db_expired = private_dir(work, "db-expired-rest")
+    path_expired = write_config(
+        db_expired,
+        node_config(
+            {
+                "@type": "engine.validator.extraConfig",
+                "state_serializer_enabled": True,
+                "pq_consensus": {
+                    **pq_consensus(VALIDATOR_HEX, primary),
+                    "consensus_key_file": "",
+                    "keys": [rotation_key(primary, 0), rotation_key(successor, 1, 2)],
+                },
+            }
+        ),
+    )
+    before_expired = path_expired.read_bytes()
+    refuses_keys(
+        tool,
+        "remove-node-key",
+        [str(db_expired), str(primary)],
+        b"every configured consensus key has expired",
+        "removing the only unexpired key",
+    )
+    unchanged(path_expired, before_expired, "removing the only unexpired key was refused")
+    # The expired one may go, and what is left is the single form again.
+    if node_keys(tool, "remove-node-key", [str(db_expired), str(successor)]).returncode != 0:
+        raise Failure("remove-node-key refused an expired key")
+    if json.loads(path_expired.read_text())["extraconfig"]["pq_consensus"] != pq_consensus(VALIDATOR_HEX, primary):
+        raise Failure("one unbounded key left was not written back in the single form")
+
+    # One key left in the list form (a window of its own) is still one key: it can be
+    # rebound deliberately.
+    db_one = private_dir(work, "db-one-listed")
+    write_config(
+        db_one,
+        node_config(
+            {
+                "@type": "engine.validator.extraConfig",
+                "state_serializer_enabled": True,
+                "pq_consensus": {
+                    **pq_consensus(VALIDATOR_HEX, successor),
+                    "consensus_key_file": "",
+                    "keys": [rotation_key(successor, 1)],
+                },
+            }
+        ),
+    )
+    refuses(tool, [str(db_one), str(primary), VALIDATOR_HEX], b"--replace", "rebinding one listed key silently")
+    rebound = node_keys(tool, "bind-node", ["--replace", str(db_one), str(primary), VALIDATOR_HEX])
+    if rebound.returncode != 0:
+        raise Failure(f"bind-node --replace refused a node holding one listed key: {rebound.stderr!r}")
+
+    # A window field the schema does not know, or one left out, is refused by name before
+    # the decoder could default it and a rewrite make that permanent; so are both forms
+    # at once and a bound the configuration cannot state.
+    for index, (why, binding, reason) in enumerate(
+        (
+            (
+                "a misspelt window field",
+                {
+                    "consensus_key_file": "",
+                    "keys": [{**rotation_key(successor, 0), "validFrom": 2000000000}],
+                },
+                b"validFrom is not a field",
+            ),
+            (
+                "a missing window field",
+                {
+                    "consensus_key_file": "",
+                    "keys": [
+                        {
+                            "@type": "engine.validator.pqConsensusKey",
+                            "consensus_key_file": str(successor),
+                            "valid_from": 0,
+                        }
+                    ],
+                },
+                b"expire_at is missing",
+            ),
+            (
+                "both forms at once",
+                {"keys": [rotation_key(successor, 5)]},
+                b"both a single",
+            ),
+            (
+                "a bound beyond a signed 32-bit time",
+                {"consensus_key_file": "", "keys": [rotation_key(successor, 2147483648)]},
+                b"not a unix time",
+            ),
+        )
+    ):
+        db_bad_window = private_dir(work, f"db-bad-window-{index}")
+        path_bad_window = write_config(
+            db_bad_window,
+            node_config(
+                {
+                    "@type": "engine.validator.extraConfig",
+                    "state_serializer_enabled": True,
+                    "pq_consensus": {**pq_consensus(VALIDATOR_HEX, primary), **binding},
+                }
+            ),
+        )
+        before_bad_window = path_bad_window.read_bytes()
+        refuses_keys(tool, "add-node-key", [str(db_bad_window), str(third), "3000"], reason, why)
+        unchanged(path_bad_window, before_bad_window, f"{why} was refused")
+    refused = node_keys(tool, "add-node-key", [str(db), str(third), "2147483648"])
+    if refused.returncode == 0 or b"unix time" not in refused.stderr:
+        raise Failure("add-node-key accepted a bound beyond a signed 32-bit time")
+
     # A bounded number of keys: a rotation, not a key store.
     db_many = private_dir(work, "db-many")
     path_many = write_config(db_many, node_config())
@@ -915,7 +1031,7 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
         if index == 8:
             if added.returncode != 1 or b"at most 8" not in added.stderr:
                 raise Failure(f"a ninth key was not refused: {added!r}")
-    if len(json.loads(path_many.read_text())["extraconfig"]["pq_consensus"]["keys"]) != 7:
+    if len(json.loads(path_many.read_text())["extraconfig"]["pq_consensus"]["keys"]) != 8:
         raise Failure("the capacity check did not leave exactly eight keys")
 
 

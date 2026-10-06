@@ -428,14 +428,11 @@ class ValidatorManagerImpl : public ValidatorManager {
     }
     promise.set_value(td::Unit());
   }
+  // Refuses an unexpired key that a previous, current or next validator set lists for this
+  // validator, judged here, at the moment of removal, against this manager's own state:
+  // a group for such a set signs with it.
   void del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
-                            td::Promise<td::Unit> promise) override {
-    if (!pq_custody_.remove_key(validator_id, key_id)) {
-      promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no such post-quantum consensus key is custodied"));
-      return;
-    }
-    promise.set_value(td::Unit());
-  }
+                            td::Promise<td::Unit> promise) override;
 
   void validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
                                     td::Promise<td::Unit> promise) override;

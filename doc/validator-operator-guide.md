@@ -299,7 +299,20 @@ the key per signature:
 
 Two keys valid from the same election date, the same key twice, more than
 eight keys, or a configuration whose keys have all expired are refused, by the
-node at start-up, by the console, and by the offline tool.
+node at start-up, by the console, and by the offline tool. So is a removal that
+would leave only expired keys.
+
+`expire_at` is a hard deadline: from that second on the key signs nothing,
+including in a validator group that is already running with it. Set it after
+the `utime_until` of every set that lists the key, or leave it at 0 and remove
+the key instead (step 7).
+
+In `config.json` a single key valid for every election is written as
+`consensus_key_file`; any other set of keys is written in `keys` alone, with
+`consensus_key_file` empty, and the node refuses a file that states both, or
+that names a window field it does not know or leaves one out. The console
+makes one key change at a time and reports a change as made only once the new
+configuration is flushed to disk.
 
 1. Offline: `tos-pq-consensus-key generate NEXT.seed` and note its `key_id` (B).
 2. Move the key: `tos-pq-consensus-key export NEXT.seed | ENCRYPT > MEDIUM`

@@ -99,10 +99,6 @@ struct Config {
     std::string consensus_key_file;
     td::uint32 valid_from = 0;  // first election date it may sign a stake for
     td::uint32 expire_at = 0;   // unix time it stops being used; 0: never
-    // Configured as the single `consensus_key_file` (valid for every election, never
-    // expiring) rather than as an entry of `keys`; kept so the configuration is written
-    // back in the form it was read in.
-    bool primary = false;
   };
   struct PqConsensus {
     tos::ValidatorId validator_id;
@@ -260,6 +256,10 @@ class ValidatorEngine : public td::actor::Actor {
   // The identity each loaded key file derived. A key that had expired before the node
   // started is not loaded, and has no entry.
   std::map<std::string, tos::ConsensusKeyId> pq_key_ids_by_file_;
+  // Set from the moment a consensus key change has passed its checks until its
+  // configuration is durable; a second change is refused meanwhile.
+  bool pq_key_mutation_in_flight_ = false;
+  td::Status write_config_durably();
   tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKeyInfo> pq_consensus_key_info(
       const Config::PqConsensusKey &key, td::uint32 now) const;
   void finish_add_pq_consensus_key(Config::PqConsensusKey key, tos::ConsensusKeyId key_id,

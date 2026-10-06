@@ -46,6 +46,9 @@ struct ConsensusKeyWindow {
   std::uint32_t valid_from = 0;
   // The unix time from which the node no longer uses this key at all. 0: never expires.
   std::uint32_t expire_at = 0;
+  // False for a configured key whose seed was not loaded (it had expired): its identity
+  // is unknown, and it can be scheduled but never chosen.
+  bool loaded = true;
 };
 
 // A node holds the key it is rotating away from and the one it is rotating to; a few
@@ -166,7 +169,7 @@ inline std::variant<std::size_t, std::string> select_stake_key(const std::vector
                                                                std::uint32_t election_date, std::uint32_t now,
                                                                const ConsensusKeyIdBytes* requested) {
   const auto unusable = [&](const ConsensusKeyWindow& key) -> std::optional<std::string> {
-    const auto name = consensus_key_id_hex(key.key_id);
+    const auto name = key.loaded ? consensus_key_id_hex(key.key_id) : std::string("(expired and not loaded)");
     if (consensus_key_expired(key.expire_at, now)) {
       return "consensus key " + name + " expired at " + std::to_string(key.expire_at);
     }
@@ -183,7 +186,7 @@ inline std::variant<std::size_t, std::string> select_stake_key(const std::vector
 
   if (requested != nullptr) {
     for (std::size_t i = 0; i < keys.size(); i++) {
-      if (keys[i].key_id == *requested) {
+      if (keys[i].loaded && keys[i].key_id == *requested) {
         if (auto why = unusable(keys[i])) {
           return *why;
         }

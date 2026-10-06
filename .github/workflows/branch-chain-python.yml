@@ -69,7 +69,7 @@ jobs:
             tos-proof-verify test-proof-verify proof-verify-fs-shim \
             test-n5-manager-db-fixture test-consensus \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
-            test-custom-overlay-relay-dedup test-pq-consensus-key-rotation \
+            test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
             test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
             test-rate-limiter test-full-node-shard-admission test-full-node-master-admission \

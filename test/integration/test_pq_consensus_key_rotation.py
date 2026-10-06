@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
-"""A real validator engine holding two post-quantum consensus keys at once.
+"""A real validator engine holding several post-quantum consensus keys at once.
 
-One validator, booted on a chain whose genesis set lists its key A. The node also holds
-key B, valid for stakes from a later election date: the state a node is in during a
-consensus key rotation, after B was added and before A was retired. Three runs:
+One validator, booted on a chain whose genesis set lists its key A. Seven runs:
 
-  rotation  A and B held. The group for the set listing A is created and produces
-            masterchain blocks (signed with A); a stake for B's election is signed with
-            B, a stake for an earlier election with A, and a named key overrides the
-            schedule only inside its window. The console lists both keys, refuses to
-            drop A while the running set lists it, drops B, adds B back while the node
-            runs, refuses a key that would make the schedule ambiguous, and the node is
-            still producing blocks afterwards. config.json follows every change.
-  missing   Only B held, the set lists A: no group is created, no block is produced, and
-            the node does not count itself a validator of the set (as with one key).
-  expired   A held but expired, B held: A is not loaded and is not used for anything, so
-            the outcome is the same as `missing`.
+  rotation           A and B held (B valid for stakes from a later election). The group
+                     for the set listing A produces blocks; the stake for B's election is
+                     signed with B, an earlier one with A; a named key overrides the
+                     schedule only inside its window. The console refuses to drop A while
+                     the running set lists it, drops B, adds B back while the node runs,
+                     refuses ambiguous, duplicate and relative-path keys, and reports a
+                     change whose directory flush failed as not confirmed durable.
+                     config.json follows every change; blocks keep coming.
+  missing            Only B held: no group (as with one key).
+  expired            A held but expired, B held: A is not loaded; no group.
+  expired_successor  A held, B configured but expired before the restart: the stake B
+                     was scheduled for is refused, never signed with A.
+  concurrent         Two deletes at once that would together leave no key, and two adds
+                     at once that would together exceed the capacity: exactly one of
+                     each succeeds.
+  hard_deadline      A, listed and signing, expires while its group runs: no block or
+                     signature after the deadline, logged as an expired key, and no other
+                     key signs in its place.
+  misspelt           A window field the engine does not know (`validFrom`) stops the node
+                     at start instead of being defaulted and rewritten away.
 
 The same one-validator fixture as the unsafe-rotation refusal test.
 """
@@ -30,6 +37,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import tostester.network as network_module
 from nacl.signing import SigningKey
 from test_manager_session_identity import (
     FIXED_PQ_SEED,
@@ -60,6 +68,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--base-port", type=int, default=29100)
     parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument(
+        "--only", action="append", help="run only this scenario (repeatable); default: all"
+    )
+    parser.add_argument(
+        "--fsync-shim",
+        type=Path,
+        help="LD_PRELOAD library that fails directory fsync on demand "
+        "(default: BUILD_DIR/crypto/pq/libtest-fsync-dir-failure-shim.so)",
+    )
     return parser.parse_args()
 
 
@@ -134,7 +151,31 @@ def disk_keys(node) -> dict:
     return json.loads((node.directory / "config.json").read_text())["extraconfig"]["pq_consensus"]
 
 
-async def boot(install: Install, directory: Path, base_port: int, configure) -> tuple:
+def key_entry(path, valid_from: int, expire_at: int = 0):
+    return tos_api.Engine_validator_pqConsensusKey(
+        consensus_key_file=str(path), valid_from=valid_from, expire_at=expire_at
+    )
+
+
+def set_keys(node, entries) -> None:
+    """State several keys the way the engine writes them: in `keys` alone."""
+    pq = node._local_config.extraconfig.pq_consensus
+    pq.consensus_key_file = ""
+    pq.keys = entries
+
+
+def disk_entry(path, valid_from: int, expire_at: int = 0) -> dict:
+    return {
+        "@type": "engine.validator.pqConsensusKey",
+        "consensus_key_file": str(path),
+        "valid_from": valid_from,
+        "expire_at": expire_at,
+    }
+
+
+async def boot(
+    install: Install, directory: Path, base_port: int, configure, env: dict | None = None
+) -> tuple:
     directory.mkdir()
     network = Network(install, directory, base_port=base_port)
     await network.__aenter__()
@@ -147,11 +188,15 @@ async def boot(install: Install, directory: Path, base_port: int, configure) -> 
         key_file.chmod(0o600)
     keys = configure(node)
     await dht.run(StartOptions(threads=1, verbosity=3))
-    await node.run(StartOptions(threads=2, verbosity=3))
+    await node.run(StartOptions(threads=2, verbosity=3, env=env or {}))
     return network, node, keys
 
 
-async def rotation(install: Install, directory: Path, base_port: int, timeout: float) -> dict:
+async def rotation(
+    install: Install, directory: Path, base_port: int, timeout: float, shim: Path
+) -> dict:
+    trigger = directory / "fail-directory-fsync"
+
     def configure(node):
         a_file = node.directory / "pq-consensus.seed"
         a_id, a_public = place_key(install, node.directory / "pq-a-copy.seed", FIXED_PQ_SEED)
@@ -160,11 +205,7 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
         b_id, b_public = place_key(install, b_file, SUCCESSOR_SEED)
         c_file = node.directory / "pq-consensus-third.seed"
         c_id, _ = place_key(install, c_file, THIRD_SEED)
-        node._local_config.extraconfig.pq_consensus.keys = [
-            tos_api.Engine_validator_pqConsensusKey(
-                consensus_key_file=str(b_file), valid_from=SUCCESSOR_FROM, expire_at=0
-            )
-        ]
+        set_keys(node, [key_entry(a_file, 0), key_entry(b_file, SUCCESSOR_FROM)])
         return dict(
             a_file=a_file,
             a_id=a_id,
@@ -176,7 +217,10 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
             c_id=c_id,
         )
 
-    network, node, k = await boot(install, directory, base_port, configure)
+    # The directory flush of the node's configuration can be made to fail on demand:
+    # while `trigger` exists, fsync on a directory fails in this process.
+    env = {"LD_PRELOAD": str(shim), "TOS_TEST_FAIL_DIR_FSYNC_WHEN": str(trigger)}
+    network, node, k = await boot(install, directory, base_port, configure, env)
     try:
         if await wait_for_blocks(node, timeout) != "blocks":
             raise Failure("a node holding A and B produced no block for the set listing A")
@@ -246,15 +290,11 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
         if (await stake(node, SUCCESSOR_FROM)).key_id != k["b_id"]:
             raise Failure("a key added at runtime does not sign its election")
         on_disk = disk_keys(node)
-        if on_disk["keys"] != [
-            {
-                "@type": "engine.validator.pqConsensusKey",
-                "consensus_key_file": str(k["b_file"]),
-                "valid_from": SUCCESSOR_FROM,
-                "expire_at": 0,
-            }
+        if on_disk["consensus_key_file"] != "" or on_disk["keys"] != [
+            disk_entry(k["a_file"], 0),
+            disk_entry(k["b_file"], SUCCESSOR_FROM),
         ]:
-            raise Failure(f"config.json does not hold the added key: {on_disk!r}")
+            raise Failure(f"config.json does not hold both keys in the list form: {on_disk!r}")
         await refused(
             node.engine_console.request(
                 add(consensus_key_file=str(k["c_file"]), valid_from=SUCCESSOR_FROM, expire_at=0)
@@ -276,6 +316,29 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
             "absolute",
             "a relative key path",
         )
+
+        # A change whose directory flush fails is reported as not confirmed durable,
+        # though the new configuration is in place.
+        trigger.write_text("")
+        try:
+            await refused(
+                node.engine_console.request(
+                    add(
+                        consensus_key_file=str(k["c_file"]),
+                        valid_from=SUCCESSOR_FROM + 10,
+                        expire_at=0,
+                    )
+                ),
+                "not confirmed durable",
+                "a change whose directory flush failed",
+            )
+        finally:
+            trigger.unlink()
+        if [key.key_id for key in await list_keys(node)] != [k["a_id"], k["b_id"], k["c_id"]]:
+            raise Failure("a change with a failed directory flush was not applied")
+        if disk_entry(k["c_file"], SUCCESSOR_FROM + 10) not in disk_keys(node)["keys"]:
+            raise Failure("a change with a failed directory flush is not in the configuration")
+        await node.engine_console.request(delete(key_id=k["c_id"]))
 
         # And through all of it, the group for the set listing A kept producing blocks.
         stats_before = successful_stats(node)
@@ -300,15 +363,7 @@ async def without_a(
         pq = node._local_config.extraconfig.pq_consensus
         if expired_a:
             # A is configured, and its window closed long ago.
-            pq.keys = [
-                tos_api.Engine_validator_pqConsensusKey(
-                    consensus_key_file=pq.consensus_key_file, valid_from=0, expire_at=1000
-                ),
-                tos_api.Engine_validator_pqConsensusKey(
-                    consensus_key_file=str(b_file), valid_from=1, expire_at=0
-                ),
-            ]
-            pq.consensus_key_file = ""
+            set_keys(node, [key_entry(pq.consensus_key_file, 0, 1000), key_entry(b_file, 1)])
         else:
             pq.consensus_key_file = str(b_file)
             pq.keys = []
@@ -333,6 +388,207 @@ async def without_a(
         await network.__aexit__(None, None, None)
 
 
+async def expired_successor(
+    install: Install, directory: Path, base_port: int, timeout: float
+) -> dict:
+    """A restart after the successor B expired: A must not sign in B's place."""
+
+    def configure(node):
+        a_file = node.directory / "pq-consensus.seed"
+        b_file = node.directory / "pq-consensus-next.seed"
+        b_id, _ = place_key(install, b_file, SUCCESSOR_SEED)
+        a_id, _ = place_key(install, node.directory / "pq-a-copy.seed", FIXED_PQ_SEED)
+        (node.directory / "pq-a-copy.seed").unlink()
+        set_keys(node, [key_entry(a_file, 0), key_entry(b_file, 1, 2)])
+        return dict(a_id=a_id, b_id=b_id)
+
+    network, node, k = await boot(install, directory, base_port, configure)
+    try:
+        if await wait_for_blocks(node, timeout) != "blocks":
+            raise Failure("A, unexpired and listed, produced no block")
+        log = node.log_path.read_text(errors="replace")
+        if "expired at 2 and is not loaded" not in log:
+            raise Failure("the expired successor was not reported as not loaded")
+        await refused(
+            stake(node, SUCCESSOR_FROM),
+            "(expired and not loaded) expired at 2",
+            "the stake the expired successor was scheduled for",
+        )
+        if (await stake(node, 0)).key_id != k["a_id"]:
+            raise Failure("an election before the successor's window was not signed with A")
+        # A is the only unexpired key: removing it would leave a configuration the node
+        # refuses at its next start, so the console refuses it before asking any set.
+        await refused(
+            node.engine_console.request(
+                tos_api.Engine_validator_delPqConsensusKeyRequest(key_id=k["a_id"])
+            ),
+            "every configured consensus key has expired",
+            "removing the only unexpired key",
+        )
+        return {"decision": "refused_not_substituted", "log_path": str(node.log_path)}
+    finally:
+        await network.__aexit__(None, None, None)
+
+
+async def concurrent(install: Install, directory: Path, base_port: int, timeout: float) -> dict:
+    """Two key changes at once cannot together break a limit either alone respects."""
+    seeds = [bytes([0x30 + index]) * 32 for index in range(10)]
+
+    def configure(node):
+        files = [node.directory / f"pq-k{index}.seed" for index in range(len(seeds))]
+        ids = [place_key(install, path, seed)[0] for path, seed in zip(files, seeds, strict=True)]
+        # Two keys, neither listed by the running set (it lists A, which is not held).
+        set_keys(node, [key_entry(files[0], 0), key_entry(files[1], 100)])
+        return dict(files=files, ids=ids)
+
+    network, node, k = await boot(install, directory, base_port, configure)
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                await list_keys(node)
+                break
+            except Exception:  # the console is not up yet
+                await asyncio.sleep(1.0)
+        delete = tos_api.Engine_validator_delPqConsensusKeyRequest
+        add = tos_api.Engine_validator_addPqConsensusKeyRequest
+
+        # Deleting both at once: each alone leaves one key; both would leave none.
+        outcomes = await asyncio.gather(
+            node.engine_console.request(delete(key_id=k["ids"][0])),
+            node.engine_console.request(delete(key_id=k["ids"][1])),
+            return_exceptions=True,
+        )
+        if sum(1 for outcome in outcomes if not isinstance(outcome, Exception)) != 1:
+            raise Failure(f"two concurrent deletes did not leave exactly one key: {outcomes!r}")
+        if len(await list_keys(node)) != 1 or len(disk_keys(node).get("keys", [])) > 1:
+            raise Failure("concurrent deletes left another number of keys")
+        held = (await list_keys(node))[0]
+        held_index = k["ids"].index(held.key_id)
+
+        # Fill to one below capacity one by one, then add two at once: only one fits.
+        next_index = 2
+        while len(await list_keys(node)) < 7:
+            await node.engine_console.request(
+                add(
+                    consensus_key_file=str(k["files"][next_index]),
+                    valid_from=1000 + next_index,
+                    expire_at=0,
+                )
+            )
+            next_index += 1
+        candidates = [index for index in range(len(seeds)) if index >= next_index][:2]
+        outcomes = await asyncio.gather(
+            *(
+                node.engine_console.request(
+                    add(
+                        consensus_key_file=str(k["files"][index]),
+                        valid_from=2000 + index,
+                        expire_at=0,
+                    )
+                )
+                for index in candidates
+            ),
+            return_exceptions=True,
+        )
+        if sum(1 for outcome in outcomes if not isinstance(outcome, Exception)) != 1:
+            raise Failure(
+                f"two concurrent adds at capacity did not add exactly one key: {outcomes!r}"
+            )
+        on_disk = disk_keys(node)["keys"]
+        if len(await list_keys(node)) != 8 or len(on_disk) != 8:
+            raise Failure(
+                f"concurrent adds left {len(on_disk)} keys configured, not the capacity of 8"
+            )
+        return {
+            "decision": "serialized",
+            "kept_after_deletes": held_index,
+            "log_path": str(node.log_path),
+        }
+    finally:
+        await network.__aexit__(None, None, None)
+
+
+async def hard_deadline(install: Install, directory: Path, base_port: int, timeout: float) -> dict:
+    """A, listed and signing, expires while its group runs: signing stops at the deadline."""
+    expire_at = int(time.time()) + int(timeout * 0.8)
+
+    def configure(node):
+        a_file = node.directory / "pq-consensus.seed"
+        b_file = node.directory / "pq-consensus-next.seed"
+        b_id, _ = place_key(install, b_file, SUCCESSOR_SEED)
+        a_id, _ = place_key(install, node.directory / "pq-a-copy.seed", FIXED_PQ_SEED)
+        (node.directory / "pq-a-copy.seed").unlink()
+        set_keys(node, [key_entry(a_file, 0, expire_at), key_entry(b_file, SUCCESSOR_FROM)])
+        return dict(a_id=a_id, b_id=b_id)
+
+    network, node, k = await boot(install, directory, base_port, configure)
+    try:
+        if await wait_for_blocks(node, timeout) != "blocks":
+            raise Failure("A produced no block before its deadline")
+        if (await stake(node, 1)).key_id != k["a_id"]:
+            raise Failure("A did not sign before its deadline")
+        while time.time() < expire_at + 2:
+            await asyncio.sleep(0.5)
+        frozen = successful_stats(node)
+        await asyncio.sleep(10)
+        if successful_stats(node) != frozen:
+            raise Failure("blocks were still produced after the only listed key expired")
+        log = node.log_path.read_text(errors="replace")
+        if "(the consensus key has expired)" not in log:
+            raise Failure("the expired key's refused signatures were not logged as such")
+        await refused(stake(node, 1, k["a_id"]), "expired", "a stake named with expired A")
+        # B is never signed with for the set listing A, and the schedule does not hand A's
+        # elections to B either.
+        await refused(stake(node, 1), "expired", "a stake A was scheduled for")
+        return {"decision": "stopped_at_deadline", "log_path": str(node.log_path)}
+    finally:
+        await network.__aexit__(None, None, None)
+
+
+async def misspelt(install: Install, directory: Path, base_port: int, timeout: float) -> dict:
+    """A window field the engine does not know stops the node instead of being defaulted."""
+    original = network_module._write_model
+
+    def write_with_misspelt_field(file: Path, model) -> None:
+        data = json.loads(model.to_json())
+        binding = (data.get("extraconfig") or {}).get("pq_consensus")
+        if file.name != "config.json" or not binding:
+            original(file, model)
+            return
+        binding["keys"][1]["validFrom"] = SUCCESSOR_FROM
+        file.write_text(json.dumps(data))
+
+    def configure(node):
+        a_file = node.directory / "pq-consensus.seed"
+        b_file = node.directory / "pq-consensus-next.seed"
+        place_key(install, b_file, SUCCESSOR_SEED)
+        set_keys(node, [key_entry(a_file, 0), key_entry(b_file, 5)])
+        return {}
+
+    network_module._write_model = write_with_misspelt_field
+    try:
+        network, node, _ = await boot(install, directory, base_port, configure)
+    finally:
+        network_module._write_model = original
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            log = node.log_path.read_text(errors="replace") if node.log_path.exists() else ""
+            if "validFrom is not a field" in log:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            raise Failure("a misspelt window field did not stop the node")
+        if GROUP_CREATED.search(node.log_path.read_text(errors="replace")):
+            raise Failure("a node with a misspelt window field created a group")
+        if "validFrom" not in (node.directory / "config.json").read_text():
+            raise Failure("the refused configuration was rewritten")
+        return {"decision": "refused_at_start", "log_path": str(node.log_path)}
+    finally:
+        await network.__aexit__(None, None, None)
+
+
 async def main() -> int:
     args = parse_args()
     artifact_dir = args.artifact_dir.resolve()
@@ -341,25 +597,48 @@ async def main() -> int:
     artifact_dir.mkdir(parents=True)
     root = Path(__file__).resolve().parents[2]
     install = Install(args.build_dir.resolve(), root)
+    shim = (
+        args.fsync_shim or args.build_dir / "crypto/pq/libtest-fsync-dir-failure-shim.so"
+    ).resolve()
+    if not shim.is_file():
+        print(f"PQ_CONSENSUS_KEY_ROTATION_FAILED no directory-fsync shim at {shim}")
+        return 1
     results = {}
+    only = set(args.only or [])
+
+    def wanted(name: str) -> bool:
+        return not only or name in only
+
     try:
-        results["rotation"] = await rotation(
-            install, artifact_dir / "rotation", args.base_port, args.timeout
-        )
-        results["missing"] = await without_a(
-            install,
-            artifact_dir / "missing",
-            args.base_port + 100,
-            args.timeout / 3,
-            expired_a=False,
-        )
-        results["expired"] = await without_a(
-            install,
-            artifact_dir / "expired",
-            args.base_port + 200,
-            args.timeout / 3,
-            expired_a=True,
-        )
+        port = args.base_port
+        if wanted("rotation"):
+            results["rotation"] = await rotation(
+                install, artifact_dir / "rotation", port, args.timeout, shim
+            )
+        if wanted("missing"):
+            results["missing"] = await without_a(
+                install, artifact_dir / "missing", port + 100, args.timeout / 3, expired_a=False
+            )
+        if wanted("expired"):
+            results["expired"] = await without_a(
+                install, artifact_dir / "expired", port + 200, args.timeout / 3, expired_a=True
+            )
+        if wanted("expired_successor"):
+            results["expired_successor"] = await expired_successor(
+                install, artifact_dir / "expired-successor", port + 300, args.timeout
+            )
+        if wanted("concurrent"):
+            results["concurrent"] = await concurrent(
+                install, artifact_dir / "concurrent", port + 400, args.timeout
+            )
+        if wanted("hard_deadline"):
+            results["hard_deadline"] = await hard_deadline(
+                install, artifact_dir / "hard-deadline", port + 500, args.timeout
+            )
+        if wanted("misspelt"):
+            results["misspelt"] = await misspelt(
+                install, artifact_dir / "misspelt", port + 600, args.timeout
+            )
     except Failure as failure:
         print(f"PQ_CONSENSUS_KEY_ROTATION_FAILED {failure}")
         print(json.dumps(results, indent=2))

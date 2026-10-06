@@ -29,6 +29,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-state-resolver-teardown",
     "test-custom-overlay-relay-dedup",
     "test-pq-consensus-key-rotation",
+    "test-fsync-dir-failure-shim",
 }
 
 RESTART_ORIGIN_TESTS = (

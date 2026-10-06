@@ -150,9 +150,11 @@ int usage() {
       "effect without a restart. VALID_FROM is the first election date (unix time) the\n"
       "key signs stakes for: a stake for an election is signed with the held key whose\n"
       "VALID_FROM is the greatest not after the election date, so two keys may not share\n"
-      "one. EXPIRE_AT (unix time, default 0: never) is when the node stops using the key\n"
-      "at all. A key signs for a validator group only when that group's validator set\n"
-      "lists it. remove-node-key cannot see validator sets: it refuses only the last key.\n"
+      "one. EXPIRE_AT (unix time, default 0: never) is a hard deadline: from then on the\n"
+      "key signs nothing, even in a validator group already running with it. Both are at\n"
+      "most 2147483647. A key signs for a validator group only when that group's\n"
+      "validator set lists it. remove-node-key cannot see validator sets: it refuses only\n"
+      "the last key and a removal that would leave only expired keys.\n"
       "list-node-keys reads without the lock and works beside a running node.\n"
       "\n"
       "Rotating the consensus key from A to B (a kind 3 bind) without downtime. The node\n"
@@ -309,7 +311,8 @@ int bind_node(int argc, char** argv) {
   return 0;
 }
 
-// A unix time as an operator types it: decimal digits, nothing else, at most 2^32 - 1.
+// A unix time as an operator types it: decimal digits, nothing else, at most 2^31 - 1
+// (what a configuration can state; see consensus-config-json.h).
 bool parse_unix_time(std::string_view text, std::uint32_t& out) {
   if (text.empty() || text.size() > 10) {
     return false;
@@ -321,7 +324,7 @@ bool parse_unix_time(std::string_view text, std::uint32_t& out) {
     }
     value = value * 10 + static_cast<std::uint64_t>(c - '0');
   }
-  if (value > 0xffffffffULL) {
+  if (value > 0x7fffffffULL) {
     return false;
   }
   out = static_cast<std::uint32_t>(value);
@@ -374,11 +377,11 @@ int add_node_key(int argc, char** argv) {
   addition.db_root = argv[2];
   addition.key_file = argv[3];
   if (!parse_unix_time(argv[4], addition.valid_from)) {
-    std::fputs("VALID_FROM is a unix time: decimal digits, at most 4294967295\n", stderr);
+    std::fputs("VALID_FROM is a unix time: decimal digits, at most 2147483647\n", stderr);
     return 1;
   }
   if (argc == 6 && !parse_unix_time(argv[5], addition.expire_at)) {
-    std::fputs("EXPIRE_AT is a unix time: decimal digits, at most 4294967295 (0: never)\n", stderr);
+    std::fputs("EXPIRE_AT is a unix time: decimal digits, at most 2147483647 (0: never)\n", stderr);
     return 1;
   }
   addition.now = unix_now();
@@ -395,6 +398,7 @@ int remove_node_key(int argc, char** argv) {
   tos::pq::NodeConsensusKeyRemoval removal;
   removal.db_root = argv[2];
   removal.key = argv[3];
+  removal.now = unix_now();
   tos::pq::NodeConsensusBindingResult result;
   std::string why;
   const auto outcome = tos::pq::remove_node_consensus_key(removal, result, why);

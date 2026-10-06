@@ -16,6 +16,7 @@
 #include "td/utils/common.h"
 #include "tl/tl_json.h"
 
+#include "consensus-config-json.h"
 #include "consensus-key-file.h"
 #include "consensus-key-schedule.h"
 #include "consensus-node-config.h"
@@ -175,6 +176,18 @@ std::string encode(const tos::tos_api::engine_validator_config& config) {
 }
 
 bool decode(std::string text, tos::tos_api::engine_validator_config& config, std::string& why) {
+  // The consensus keys first, as written: the decoder below would default a misspelt or
+  // missing window field, and a rewrite would make that permanent.
+  {
+    std::string copy = text;
+    auto raw = td::json_decode(td::MutableSlice(copy));
+    if (raw.is_ok()) {
+      if (auto refused = check_consensus_key_json(raw.ok())) {
+        why = "the consensus key configuration is refused: " + *refused;
+        return false;
+      }
+    }
+  }
   auto json = td::json_decode(td::MutableSlice(text));
   if (json.is_error()) {
     why = "the configuration is not JSON: " + json.error().message().str();
@@ -306,7 +319,10 @@ std::vector<NodeConsensusKeyEntry> configured_keys(const tos::tos_api::engine_va
 
 bool same_binding(const tos::tos_api::engine_validator_pqConsensus& held, const td::Bits256& id,
                   const std::string& file) {
-  return held.validator_id_ == id && held.consensus_key_file_ == file && held.keys_.empty();
+  // One key, valid for every election and never expiring, at this file: in either form.
+  const auto keys = configured_keys(held);
+  return held.validator_id_ == id && keys.size() == 1 && keys.front().key_file == file &&
+         keys.front().valid_from == 0 && keys.front().expire_at == 0;
 }
 
 // Open, check and read the configuration at `path` whole. The same checks for every
@@ -519,18 +535,20 @@ bool load_key_id(const std::string& key_file, ConsensusKeyIdBytes& key_id, std::
   return true;
 }
 
-// Write `keys` back as a configuration states them: the single `consensus_key_file`, when
-// one key is marked so, and every other key with its window.
+// Write `keys` back exactly as the engine writes them: one key valid for every election and
+// never expiring as the single `consensus_key_file`; anything else in `keys` alone, with
+// the single file empty, so a reader that predates `keys` refuses it rather than taking one
+// of several keys for the whole configuration (see consensus-config-json.h).
 void store_keys(tos::tos_api::engine_validator_pqConsensus& pq, const std::vector<NodeConsensusKeyEntry>& keys) {
   pq.consensus_key_file_.clear();
   pq.keys_.clear();
+  if (keys.size() == 1 && keys.front().valid_from == 0 && keys.front().expire_at == 0) {
+    pq.consensus_key_file_ = keys.front().key_file;
+    return;
+  }
   for (const auto& key : keys) {
-    if (key.primary && pq.consensus_key_file_.empty()) {
-      pq.consensus_key_file_ = key.key_file;
-    } else {
-      pq.keys_.push_back(tos::create_tl_object<tos::tos_api::engine_validator_pqConsensusKey>(
-          key.key_file, static_cast<std::int32_t>(key.valid_from), static_cast<std::int32_t>(key.expire_at)));
-    }
+    pq.keys_.push_back(tos::create_tl_object<tos::tos_api::engine_validator_pqConsensusKey>(
+        key.key_file, static_cast<std::int32_t>(key.valid_from), static_cast<std::int32_t>(key.expire_at)));
   }
 }
 
@@ -610,7 +628,7 @@ NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, 
           // A node rotating its key holds several. Rebinding it would drop all but one in a
           // single step that neither names nor checks them; they are removed one by one,
           // with the checks remove-node-key makes, before the node is rebound.
-          if (!held.keys_.empty()) {
+          if (configured_keys(held).size() > 1) {
             reason = "the node holds " + std::to_string(configured_keys(held).size()) +
                      " consensus keys; remove all but one with remove-node-key before binding it anew";
             return EditVerdict::refuse;
@@ -641,6 +659,10 @@ NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& additi
     why = "the key file must be given as an absolute path";
     return NodeBindingOutcome::refused;
   }
+  if (addition.valid_from > max_consensus_key_time || addition.expire_at > max_consensus_key_time) {
+    why = "a window bound is a unix time between 0 and " + std::to_string(max_consensus_key_time);
+    return NodeBindingOutcome::refused;
+  }
   if (consensus_key_expired(addition.expire_at, addition.now)) {
     why = "the key would already have expired at " + std::to_string(addition.expire_at);
     return NodeBindingOutcome::refused;
@@ -660,7 +682,7 @@ NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& additi
         auto keys = configured_keys(pq);
         for (const auto& key : keys) {
           if (key.key_file == addition.key_file) {
-            if (!key.primary && key.valid_from == addition.valid_from && key.expire_at == addition.expire_at) {
+            if (key.valid_from == addition.valid_from && key.expire_at == addition.expire_at) {
               return EditVerdict::unchanged;
             }
             reason = "key file " + addition.key_file + " is already configured with another window";
@@ -753,6 +775,17 @@ NodeBindingOutcome remove_node_consensus_key(const NodeConsensusKeyRemoval& remo
           return EditVerdict::refuse;
         }
         keys.erase(keys.begin() + static_cast<std::ptrdiff_t>(*found));
+        // What remains must be a configuration the node would start with: an unexpired
+        // key under a valid schedule, not merely an entry.
+        std::vector<ConfiguredConsensusKey> remaining;
+        for (const auto& key : keys) {
+          remaining.push_back(ConfiguredConsensusKey{key.key_file, key.valid_from, key.expire_at});
+        }
+        auto plan = plan_consensus_key_load(remaining, removal.now);
+        if (std::holds_alternative<std::string>(plan)) {
+          reason = "removing it would leave a configuration the node refuses: " + std::get<std::string>(plan);
+          return EditVerdict::refuse;
+        }
         store_keys(pq, keys);
         return EditVerdict::write;
       },
