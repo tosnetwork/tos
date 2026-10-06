@@ -1,32 +1,85 @@
-# Local PQ network: two defects found on a clean redeploy (2026-10-06)
+# Local PQ network: election authorization and runtime snapshot defects
 
-Status: **proposal for review**. This document describes two defects, how they
-were found, how to reproduce them, and the fixes proposed. No fix is
-implemented yet; the implementation follows after the proposal is reviewed.
+Date: 2026-10-06.
 
-Both defects were found by redeploying the local network from `main` at
-`9960de239` with:
+Status: **reviewed and corrected implementation proposal; runtime fixes are not implemented in this PR yet**.
 
-```bash
-sudo scripts/setup-testnet.sh --build --clean --rotate
-```
+Review baseline: `tosnetwork/tos@fc1492c312051a934e006af35dafc7caf7b37c47`,
+branch `fix/local-pq-elections-privacy-snapshot`, PR #143. Its parent/base is
+`9960de239fda55dd9888cd23893bd694af130e44`; the original PR changed only this
+document. Keep the PR draft until the implementation and required evidence below
+are present. Approval of this plan is not approval of an untested implementation.
 
-followed by the documented bootstraps of `tos-pq-transfers` and
-`tos-pq-privacy`. The chain, the four genesis validators, both observers, the
-lite-client and `tos-pq-transfers` work. Validator rotation (`tos-pq-elections`)
-and private traffic (`tos-pq-privacy`) do not.
+The two reported root-cause directions are supported by the inspected code.
+However, the original fix was incomplete: in particular, it missed a second
+runtime fixture read, specified an unsafe replenishment/readback model, and did
+not close the restart/repeated-funding path.
 
----
+## 1. Review decisions and evidence boundary
 
-## Defect 1: the election driver never authorizes controller operations
+### Required corrections to the original proposal
 
-### Cause
+Priorities below are implementation/release blockers for this local-development
+workflow, not claims of an exploitable production consensus vulnerability.
 
-`af26748c6` ("Fix R3 relay debt accounting and recover bounced return
-deliveries", 2026-10-02, merged to `main` through PR #135) made a validator
-controller forward a stake only within an explicit, root-signed operating
-authorization (controller action kind 4, `fund_operations`). In
-`crypto/smartcont/validator-controller-v1.fc`, `ctl::relay_stake` now requires:
+| ID | Priority | Finding | Required correction |
+| --- | --- | --- | --- |
+| R1 | P1 | `fund_operations` adds the deposit to existing funds but replaces the allowance and other policy fields. Repeating an 80 TOS deposit is not replenishing to 80 TOS. | Use a bounded deficit deposit; distinguish renewal from funding; confirm previous funds plus deposit, not deposit alone. |
+| R2 | P1 | The driver sends 11,020 TOS before each attempt and writes `submitted.json` only after the whole roster. A crash, partial round, or ambiguous timeout can repeat funding and already accepted work. | Persist per-action/per-candidate intent before broadcast, reconcile bounded transaction histories, and make deterministic failures non-retrying. |
+| R3 | P1 | `development_vk_bytes()` also opens a checkout file and is reached by the first transfer/withdrawal. Embedding only the contract source fixes deposits, not private traffic. | Embed both required resources and check that the generator, deployment and embedded inputs belong to the same build. |
+| R4 | P1 | The generator has no fee-query operation. `init` reads neither resource. Request failures produce `{"ok":false,...}` while the process can still exit zero. | Add an explicit resource self-check and validate its output; exercise actual deposit/transfer/withdrawal paths in an isolated acceptance test. |
+| R5 | P2 | A checkout byte string anywhere in a regular file is not proof of a runtime dependency; debug/diagnostic/source metadata can contain it. Absence is not proof of independence either. | Keep structural security checks, use string scanning as a diagnostic inventory, and make isolated execution of the staged artifact the runtime admission test. |
+| R6 | P2 | A native bounce does not contain the controller's compute exit code. Matching only sender/query also permits stale or insufficiently correlated observations. | Decode the real bounced flag and full retained request prefix; obtain any exit code from the correlated controller transaction. |
+| R7 | P1 | Updating shared fixture setup can break the product first-stake script's explicit `len(history.transactions) == 1` deployment assumption. | Preserve/select the original deployment transaction before new funding transactions; make both live caller regressions mandatory. |
+
+### Decisions on the original questions
+
+1. **Automatic checking before every round: yes, for the explicit disposable
+   local-development profile only. Automatic unconditional deposits: no.**
+   Initialize/check all five candidates and re-check selected candidates before
+   sending stakes. Renew or replenish only when required and within persisted,
+   operator-approved campaign limits. Do not turn this into production online
+   custody of validator root keys.
+2. **80/60/20/10 TOS and one day are bounded development policy examples**, not
+   protocol constants or measured universal fees. Treat 80 TOS as an operating
+   funds target, 60 TOS as the allowance target, 20 TOS as the per-request cap,
+   and 10 TOS as the storage floor. Ordinary capital is topped up by the actual
+   deficit, not by blindly adding 20 TOS. Validate actual current-price budgets
+   before accepting these values; halt rather than silently increasing caps.
+3. **Embed every immutable checkout resource reachable by the installed traffic
+   generator**, including the development verifying-key fixture. Keep deliberate
+   source-consuming build/compiler utilities separate. `pool_sources()` is not
+   strictly test-only: `src/bin/local_pool.rs` calls it during deployment
+   generation. It need not be made runtime-independent as part of this repair,
+   but it must not become reachable from the installed traffic service.
+
+### What was and was not independently checked
+
+The review inspected the driver, controller and relay contract code, fixture
+message/receipt helpers, controller signer, setup/snapshot scripts, privacy
+library and both generator entry points, the product first-stake setup path,
+and the existing operational guide at the pinned revision. It also ran 12 small
+Python semantic probes covering additive/deficit funding, integer nano-TOS
+boundaries, capital deficit calculation, native-bounce prefix correlation,
+non-I/O code containing a checkout filename, and JSON failure with process
+success. Those are counterexample/policy probes, **not repository regression
+coverage or executions of the Rust generator**.
+
+No seven-node network, systemd installation, Rust/C++ build, controller VM test,
+or live-chain reproduction was run by this review. The original operator's
+observations below are retained as reported evidence, not relabeled as a new
+independent run. Introducing-commit attributions and current host service state
+remain the reporter's account unless separately verified against history/host
+telemetry. The other lifecycle caller still requires complete implementation
+and execution review; the product deployment-history conflict is already visible.
+
+## 2. Defect 1: the election driver never authorizes controller operations
+
+### 2.1 Cause supported by the current code
+
+In [validator-controller-v1.fc](../crypto/smartcont/validator-controller-v1.fc),
+`ctl::operations()` defaults to `(0, 0, 0, 0, 0, my_address())`.
+`ctl::relay_stake` requires:
 
 ```func
 int grant = sr::automatic_value();
@@ -35,274 +88,483 @@ int capital = sr::sub(pair_first(get_balance()), msg_value);
 throw_unless(sr::error, capital >= sr::add(funds, floor));
 ```
 
-A newly deployed controller has no operating record, so `ctl::operations()`
-returns `(0, 0, 0, 0, 0, my_address())`. With `expires = 0`, `now() < expires`
-is false and every relay throws `sr::error` (180).
+The [local election driver](../scripts/local-pq-elections.py) deploys candidate
+controllers and pools, then sends stakes, but never submits root action kind 4.
+Consequently the zero authorization cannot pass these guards. An ordinary
+transfer changes balance, not the authorization record. The manual procedure in
+[Local-PQ-Network.md](Local-PQ-Network.md) already explains this distinction.
+The reporter attributes the integration gap to `af26748c6` / PR #135.
 
-`scripts/local-pq-elections.py` deploys each candidate's controller and pool
-and then submits stakes. It never sends a kind 4 authorization. The manual
-procedure is documented in `doc/Local-PQ-Network.md` ("Controller funding
-before election rehearsal", `d2599c691`), and the documented workaround is a
-start hold on the election service. However, `setup-testnet.sh --rotate` still
-enables `tos-pq-elections` immediately, so a clean `--rotate` deployment
-always reaches the failure below unless the operator remembers the hold and
-the manual funding.
+The driver's `accepted()` only recognizes business receipts through
+`elector_reply()`. The helper does not classify a pool's native bounce from a
+controller. A refusal can therefore become a generic confirmation timeout.
 
-A second, smaller problem makes the failure hard to read. The driver's
-`accepted()` predicate only looks for an Elector reply on the pool. A
-controller refusal arrives at the pool as a native bounce, which the predicate
-does not recognize. The driver therefore reports a confirmation timeout
-instead of a refusal.
+**Exit 180 is a shared relay guard code, not a unique missing-authorization
+code.** Zero operating state establishes a missing prerequisite; an exit code
+or gas figure alone does not prove which guard failed in a particular trace,
+or that every earlier check passed. Do not disable controller guards, skip PQ
+verification, or change consensus/elector rules to repair this caller defect.
 
-### Symptom
+### 2.2 Original operator's reported symptoms
 
-- `tos-pq-elections` logs `election_submitting`. Sixty seconds later it logs
-  `failed: TimeoutError: election transaction confirmation timed out` and
-  exits with status 1.
-- `Restart=on-failure` restarts it after 30 seconds. It re-reads the open
-  election and submits again, and fails again. Each attempt sends another
-  11,020 TOS of faucet capital to the candidate pool before the stake order.
-- No stake is accepted, so no election completes. The chain keeps producing
-  blocks on the genesis set after that set's `utime_until`; rotation simply
-  never happens.
-
-Observed on-chain path for node 1 (pool `-1:1a7c65…`, controller
-`-1:15e26d…`), one attempt:
-
-| Step | Transaction | Result |
-| --- | --- | --- |
-| Faucet → pool | 11,020 TOS | credited |
-| Wallet → pool, stake order | 20 TOS | pool forwards 11,005.64 TOS to the controller, op `0x50517232` (relay), query `0x8000000000000001` |
-| Pool → controller | relay | compute `exit_code 180`, `gas_used 122995` (ML-DSA signature check passed), `aborted`, bounce |
-| Controller → pool | bounce, 11,004.40 TOS | principal returned; no Elector message was sent |
-
-Getter output on the live chain at the time:
-
-```
-runmethod -1:15e26d…  operating_state  ->  [ 0 0 0 0 0 CS{…own address…} ]
-runmethod -1:553af8…  operating_state  ->  [ 0 0 0 0 0 CS{…own address…} ]
-```
-
-### Reproduce
-
-1. `sudo scripts/setup-testnet.sh --build --clean --rotate` on `main`.
-2. Wait for the first election to open (about 5 minutes after Genesis):
-   `sudo journalctl -u tos-pq-elections -f`.
-3. Observe `election_submitting` followed 60 s later by the timeout failure.
-4. Confirm the cause with the lite-client:
-
-   ```bash
-   L="sudo /usr/local/bin/tos-lite-client -C /data/configs/node-1-lite.json -v 0 -c"
-   C=$(sudo jq -r .controller /data/elections/candidate-1.json)
-   $L "runmethod $C operating_state"        # all zero, expiry 0
-   $L "getaccount $C"                       # note last transaction lt/hash
-   $L "lasttransdump $C <lt> <hash> 1"      # compute_ph exit_code:180, aborted:1, bounce
-   ```
-
-### Proposed fix
-
-1. **Authorize operations in the driver.** In `local-pq-elections.py`, after a
-   candidate's controller is deployed and before any stake is submitted:
-   - Read `controller_state` (authority epoch, root nonce) and
-     `operating_state` (funds, allowance, per-request limit, floor, expiry,
-     payer).
-   - If the authorization is missing, expires within two election periods, or
-     funds or allowance fall below two per-request limits, build the kind 4
-     payload: payer address, deposit, allowance, per-request limit, storage
-     floor as coins, and expiry as `uint32`. Sign it with
-     `tos-pq-controller fund-operations` using
-     `/data/elections/keys/root-<i>.seed`, the chain's global ID, the current
-     epoch and nonce, and an authorization expiry of `now + 600`.
-   - Send the signed body from the faucet wallet. That wallet is the bound
-     payer, and the service already owns it exclusively. The message carries
-     the deposit plus the documented processing fee.
-   - Wait until the root nonce increments and `operating_state` reads back the
-     requested values. Emit an `operations_funded` event. If the nonce does
-     not move, or the readback differs, fail with a clear message. Never
-     resend blindly.
-   - Top up ordinary controller capital so that
-     `balance ≥ funds + floor + margin`. As the existing doc notes, an
-     ordinary transfer is capital only, not authorization.
-
-   Initial values are the development example already recorded in
-   `doc/Local-PQ-Network.md`: deposit 80 TOS, allowance 60 TOS, per-request
-   limit 20 TOS, floor 10 TOS, one-day sponsorship, plus a 20 TOS capital
-   top-up. These are development values, not production fee estimates. They
-   are re-checked before every round, so a long-running rehearsal replenishes
-   instead of running out.
-
-2. **Encode the payload in Python, pinned to the real encoder.** Add a small
-   encoder next to `build_pool_stake_order` in
-   `test/tostester/src/tostester/pq_election_fixture.py`. Its unit test
-   compares the BOC byte for byte against the output of the Rust encoder
-   (`contracts::validator_controller::operating_funding_payload`, example
-   `controller_operating_payload`), captured once from the real binary, not
-   computed by hand.
-
-3. **Ship the signer.** Add `tos-pq-controller` to the `setup-testnet.sh`
-   build targets and install it as `/usr/local/bin/tos-pq-controller`. The
-   election service runs from the root-owned snapshot with `ProtectHome=true`,
-   so it cannot use the copy in the checkout's `build/`. The driver resolves
-   it through the same executable-admission check it uses for the lite-client.
-
-4. **Recognize a controller refusal.** Extend `accepted()` to detect a native
-   bounce from the candidate's controller for the submitted query. Fail
-   immediately with the decoded exit code and the returned amount, instead of
-   waiting for the 60 s timeout. A refusal is not retried automatically.
-
-5. **Remove the workaround from the docs.** Replace the "current scripts do
-   not initialize…" warning and the hold instructions in
-   `doc/Local-PQ-Network.md` with a description of what the driver now does
-   and how to read `operating_state`. Keep the diagnosis table.
-
-6. **Audit the other live-chain stake scripts.**
-   `scripts/pq-config-wallet-first-stake-e2e.py` and
-   `scripts/nominator-pool-lifecycle-e2e.py` also relay stakes through a
-   controller. Both were last changed on 2026-10-02. Check whether they
-   authorize operations; fix them the same way if not, or record that they
-   are out of date.
-
-### Verification plan
-
-- Unit tests: payload encoding against the Rust golden output; the funding
-  decision for missing, expiring and depleted authorizations; the refusal
-  detection on a recorded controller bounce.
-- Negative control: with funding disabled, the driver must report a controller
-  refusal with exit 180 within seconds, not a timeout.
-- Live: a fresh `setup-testnet.sh --clean --rotate` must show:
-  - `operations_funded` for nodes 1, 2, 3, 4 and 7;
-  - four `stake_accepted` per round;
-  - Config34 switching from {1,2,3,4} to {1,2,3,7} and back over two rounds;
-  - a common full block ID on all seven nodes;
-  - a passing `scripts/check-local-pq-relays.py`.
-
----
-
-## Defect 2: the private traffic generator reads the checkout at runtime
-
-### Cause
-
-`local_pool_traffic` (`b2c500dc6`, 2026-09-29) computes each operation's fee
-from the pool contract's declared gas ceiling. It calls
-`contract_gas_ceiling()` in
-`tools/shielded-pool-circuit/crosscheck/src/pool.rs`, which reads the contract
-source at runtime:
-
-```rust
-pub fn library_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../crypto/smartcont/shielded")
-}
-let path = library_dir().join("../tos-shielded-pool-v1.fc");
-let source = std::fs::read_to_string(&path)?;
-```
-
-`env!("CARGO_MANIFEST_DIR")` is fixed at compile time, so the binary contains
-the absolute checkout path, for example
-`<checkout>/tools/shielded-pool-circuit/crosscheck/../tos-shielded-pool-v1.fc`.
-
-`5147c8f46` (2026-10-04) moved `tos-pq-privacy` to a root-owned snapshot under
-`/usr/local/lib/tos-dev-services/` and runs it with `ProtectHome=true`. The
-snapshot copies only the generator binary, not the contract source. Even if it
-did, the baked path still points into the checkout under `/home`, which the
-unit hides.
-
-The snapshot checker (`scripts/install-root-services-check.py`) verifies ELF
-`RPATH`/`RUNPATH` entries and `.pth` files. It does not look for checkout paths
-compiled into a binary as data, so it accepted this snapshot.
-
-### Symptom
-
-- `local-pq-privacy.py --bootstrap` succeeds. It runs from the checkout under
-  `sudo`, outside the unit, so `/home` is visible to it.
-- `tos-pq-privacy` starts and fails on its first operation:
-
-  ```
-  ValueError: generator refused: fixture:
-  <checkout>/tools/shielded-pool-circuit/crosscheck/../../../crypto/smartcont/shielded/../tos-shielded-pool-v1.fc:
-  No such file or directory (os error 2)
-  ```
-
-  `/data/privacy-transfers/status.json` records `kind: failed`. The unit has
-  `Restart=no`, so it stays down.
-
-### Reproduce
+Reported command, on base `9960de239`:
 
 ```bash
-B=/usr/local/lib/tos-dev-services/current/src/tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic
-sudo grep -a -o -E "$HOME/tos/tools/shielded-pool-circuit/crosscheck[^[:cntrl:]]{0,40}" "$B" | sort -u
-# shows the baked checkout path
-sudo systemd-run --wait --pipe -p ProtectHome=true \
-  test -r "$HOME/tos/crypto/smartcont/tos-shielded-pool-v1.fc"; echo $?
-# 1: the file is invisible to the unit
+sudo scripts/setup-testnet.sh --build --clean --rotate
 ```
 
-End to end: bootstrap as documented, then
-`sudo systemctl start tos-pq-privacy` and wait for the first operation (20–60
-seconds).
+**Destructive local-development reproduction: `--clean` deletes `/data`.** Do
+not run this against a retained network or real funds. Pin the revision when
+reproducing; a moving `main` is not a reproducible baseline.
 
-### Proposed fix
+The reporter observed `election_submitting`, a timeout after 60 seconds, then a
+30-second `Restart=on-failure` loop. Each attempt added another 11,020 TOS to a
+candidate pool. The original set continued producing blocks without the intended
+rotation. The precise expired-set/Config34 behavior requires its own retained
+chain evidence; successful authorization alone is not proof of consensus liveness.
 
-1. **Embed the contract source at compile time.** In `pool.rs`, read the source
-   with `include_str!` instead of `read_to_string`:
+One reported node-1 path, with abbreviated addresses:
 
-   ```rust
-   const POOL_SOURCE: &str = include_str!(concat!(
-       env!("CARGO_MANIFEST_DIR"), "/../../../crypto/smartcont/tos-shielded-pool-v1.fc"));
-   pub fn contract_gas_ceiling(name: &str) -> Result<i64> { gas_ceiling_in(POOL_SOURCE, name) }
-   ```
+| Step | Value/body | Reported result |
+| --- | --- | --- |
+| Faucet to pool `-1:1a7c65…` | 11,020 TOS | credited |
+| Wallet to pool stake order | 20 TOS | pool sends relay `0x50517232`, query `0x8000000000000001`, value 11,005.64 TOS |
+| Pool to controller `-1:15e26d…` | relay | compute exit 180, gas used 122995, aborted |
+| Controller to pool | native bounce, 11,004.40 TOS | principal returned net of costs; no reported Elector acceptance |
 
-   The ceiling is still parsed from the contract, not copied into a constant,
-   so the property the existing comment protects is unchanged. Cargo tracks
-   `include_str!` inputs, so a mutation of the `.fc` rebuilds the tests that
-   read it. `pool_sources()`, which the in-process `Pool` compiler uses, is a
-   test-only path. It is not reached by `local_pool_traffic` and stays as it
-   is.
+The reporter also captured zero `operating_state` records. Implementation
+acceptance must retain full addresses, transaction LT/hash, raw transaction
+BOCs, block identities and getter responses; abbreviated figures are diagnostic
+context, not a substitute for that evidence.
 
-2. **Make the snapshot checker catch this class of bug.** Add a check to
-   `install-root-services-check.py` that refuses a snapshot when any regular
-   file contains the source checkout's absolute path as a byte string. Add a
-   positive control: a fixture file containing the checkout path must be
-   refused, and the same file without it must pass.
+### 2.3 Exact authorization and funding semantics
 
-3. **Run the generator the way the unit runs it.** Add an installer
-   self-check that executes the snapshot's `local_pool_traffic` once under
-   `systemd-run -p ProtectHome=true` with a fee query. This catches any
-   remaining runtime dependency on the checkout before the service starts.
+The contract's kind-4 transition is:
 
-### Verification plan
+```text
+funds_after       = funds_before + deposit
+allowance_after   = requested_allowance
+limit_after       = requested_limit
+floor_after       = requested_floor
+expires_after     = requested_sponsorship_expiry
+payer_after       = requested_payer
+root_nonce_after  = root_nonce_before + 1
+```
 
-- Unit test: `contract_gas_ceiling` returns the same values as before for every
-  name the generator uses.
-- The snapshot checker's positive and negative controls as above. Also confirm
-  that the current, unfixed binary is refused by the new check.
-- Live: reinstall the snapshot. Bootstrap and run `tos-pq-privacy` until it
-  has confirmed at least one deposit, one private transfer and one withdrawal,
-  with the per-operation cross-node checks it already performs.
+The sender must equal the signed payer. The incoming message must cover:
 
----
+```text
+deposit + gas_fee(-1, sr::relay_gas) + sr::control_value()
+```
 
-## Why CI did not catch these
+A zero deposit is usable for a policy/expiry renewal but still requires the
+processing value and a valid root signature. The wallet transaction's success
+or seqno increment is not proof of controller compute/action success.
 
-- No CI job boots a chain and runs an election through the local driver. The
-  driver's unit tests (`scripts/test_local_pq_elections.py`) do not execute a
-  controller. The contract sandboxes do fund operations
-  (`elector_security_audit/relay/r3_accounting.rs`), so the contract is
-  covered; its only real-chain caller is not.
-- The root-services tests check the snapshot's dynamic-linking and Python
-  search paths. They never run the generator under the unit's
-  `ProtectHome=true`.
+The current [stake-relay.fc](../crypto/smartcont/stake-relay.fc) defines:
 
-Both fixes include a check that would have failed at the introducing commit.
+```text
+control_value = gas_fee(-1, 50000) + forward_fee(-1, 4096, 8)
+callback_value = gas_fee(-1, 200000) + forward_fee(-1, 4096, 8)
+automatic_value = 4 * control_value + callback_value
+funding_processing_minimum = gas_fee(-1, 200000) + control_value
+```
 
-## Current state of the local network
+Implement current masterchain fee calculation with the same rounding and
+configuration semantics, tested against the VM helpers. Do not infer a grant
+from `gas_used`, treat a reserved grant as actual gas spent, or hard-code the
+manual 100 TOS funding message as a universally sufficient fee. A changed fee
+configuration that exceeds approved policy must fail explicitly.
 
-- Running: DHT, validators 1–4 and 7, observers 5 and 6, lite-client and
-  `tos-pq-transfers`.
-- `tos-pq-elections` is stopped and disabled until defect 1 is fixed, to stop
-  the retry loop from spending faucet capital.
-- `tos-pq-privacy` is disabled until defect 2 is fixed.
-- The start hold `/var/lib/tos-local-maintenance/elector-redeploy.hold` was
-  renamed to `elector-redeploy.hold.retired-20261006` so the traffic services
-  could start. That hold was the documented guard for defect 1. With the
-  election service disabled, it is no longer needed. The fix for defect 1
-  removes the need for it entirely.
+### 2.4 Bounded replenishment algorithm
+
+All amounts and calculations are integer nano-TOS, with checked coin range
+`0 <= value < 2^120`. Epoch/nonce are uint64 and expiries uint32; reject
+out-of-range values before invoking the signer. Do not send fractional top-ups
+through a float conversion to TOS.
+
+1. Verify the development profile, live zero-state identity, global ID,
+   candidate/controller/pool/code bindings, current root public key and bound
+   consensus identity. Securely read `controller_state`, `operating_state`,
+   balance and pending relay/retry state. Validate full getter success and stack
+   shape, not the first integer printed by `lite_int()`.
+2. First reconcile any outstanding journal entry. As an orchestration policy,
+   do not change sponsorship while a relay/return-retry is unresolved. Either
+   complete observation/recovery or stop with evidence; do not overwrite payer
+   or budget underneath an in-flight request. Unexpected root/payer/policy
+   changes require operator reconciliation, not automatic takeover.
+3. Check whether the authorization covers the next round and its confirmation
+   margin, with an expiry renewal horizon of at least two election periods.
+   Replenish when recorded funds or allowance are below the chosen reserve
+   threshold; retain the proposed two-per-request-limit threshold only when
+   the targets can support it. Require `automatic_value <= limit`, funds and
+   allowance and validate the renewal horizon against live Config15.
+4. If healthy, send no authorization transaction. If renewal/replenishment is
+   required, use `deposit = max(0, funds_target - funds_before)` and replace the
+   allowance with its approved target. An expiry-only renewal at/above the
+   funds target has deposit zero. Never auto-withdraw surplus or increase an
+   operator's caps to force progress.
+5. Use chain time from a recent verified observation for the validity decision;
+   distinguish the root authorization TTL (for example 600 seconds, at most
+   the contract's 3600) from sponsorship expiry (for example one day). Re-read
+   before signing if observations are stale. Check both uint32 ranges.
+6. Persist the exact intent and signed/broadcastable message before submission,
+   including pre-state and caps. Sign with the installed, admitted
+   `tos-pq-controller fund-operations`; its output is a body, not a transaction
+   submission. Submit from the exact bound wallet with separately budgeted
+   processing and delivery margin.
+7. Confirm the correlated controller transaction's compute/action outcome and
+   intended body, unchanged epoch, exact next root nonce, and the full expected
+   operating tuple. In the quiescent state this means `old_funds + deposit`,
+   not simply the deposit. An unexpected nonce change does not prove our
+   particular action was applied. Any intervening state change must be
+   reconciled from transactions, never hidden by weakening equality checks.
+8. Re-read actual balance after funding/fees. Calculate ordinary capital
+   separately, verify its delivery, then check the pre-relay balance condition
+   again immediately before staking. A changed fee/balance observation must not
+   cause an unbounded top-up loop.
+
+Deficit arithmetic, **not a complete transaction implementation**:
+
+```python
+NANO = 10**9
+funds_target = 80 * NANO
+allowance_target = 60 * NANO
+per_request_limit = 20 * NANO
+storage_floor = 10 * NANO
+
+# Only after validation, quiescence, journal reconciliation and policy approval.
+deposit = max(0, funds_target - old_funds)
+expected_funds = old_funds + deposit
+expected_allowance = allowance_target
+
+# Use a fresh, confirmed post-funding balance here, not the old balance.
+# capital_margin is explicit bounded development policy, not a protocol fee.
+capital_topup = max(
+    0, expected_funds + storage_floor + capital_margin - post_funding_balance
+)
+```
+
+For example, 70 TOS of recorded funds needs a 10 TOS deposit to reach 80;
+repeating 80 would record 150. With funds 80, floor 10, a chosen capital margin
+20 and post-funding balance 88, the capital deficit is 22 TOS, not a fixed 20.
+Post-transfer costs still require readback of the actual invariant.
+
+Persist per-message, per-controller and per-campaign spend/renewal limits.
+Unresolved sends consume the outstanding budget until reconciled. Successful
+rounds do not provide an unlimited faucet or recover old stake automatically:
+this driver must remain a bounded rehearsal unless a separate, tested principal
+recovery policy is implemented. Cap exhaustion is a visible stop condition.
+
+### 2.5 Restart safety is part of the fix, not optional follow-up
+
+The existing round-level `submitted.json` is insufficient. Introduce durable
+per-candidate/per-operation records scoped by **zero-state identity, election,
+controller and pool**. Funding additionally binds authority epoch/nonce; staking
+binds query, commitment and the exact outbound message.
+
+Before any call that can broadcast, persist intent, amount, before-state,
+wallet seqno, signed message/body hash, validity window, transaction-history
+baselines and the chosen roster. Use private, ownership-checked files and
+crash-durable replacement (file fsync, atomic rename, parent directory fsync).
+A journal created only after `wallet.send()` cannot close the crash window.
+If exact retransmission is supported, the wallet adapter must separate message
+preparation from submission and retain the exact serialized external message.
+
+On start/restart:
+
+- Acquire exclusive ownership of the driver and faucet write path. Preserve the
+  existing requirement to stop elections during traffic bootstrap; make sure a
+  concurrent manual instance or restart cannot race its seqno. A code comment
+  claiming exclusive ownership is not a locking mechanism.
+- Reconcile from retained transaction LT/hash anchors with pagination and a
+  bounded complete observation window. The latest history page alone is not
+  proof of absence. Incomplete history, conflicting identity, stale reads or a
+  timeout mean **unresolved**, not failed/not sent.
+- Resume observation of an included operation; never add fresh principal or a
+  new kind-4 deposit simply because an RPC or process timed out. Only an
+  explicitly permitted, identical, still-valid wallet envelope may be
+  retransmitted after checking its deduplication boundary. A new wallet seqno
+  carrying another transfer is not that retransmission.
+- Record each accepted/refused candidate before advancing. Never resubmit an
+  already accepted candidate because another member failed. Pool capital
+  funding is the verified available-capital deficit, not another unconditional
+  11,020 TOS; reconcile returned/pending principal before calculating it.
+- Persist a deterministic controller refusal or policy violation as a halted
+  action. Map it to a dedicated non-restarting exit status (for example 78 with
+  `RestartPreventExitStatus=78`) and check the persisted halt even after a
+  manual service restart. Transient read failures may retry only through the
+  same reconciliation path. Fix the misleading setup comment that a restart
+  loses nothing.
+
+Distinguish `prepared`, `submitted`, `observed`, `confirmed`, `refused` and
+`unresolved` states. Root funding nonce, wallet seqno and relay query are three
+different counters and are not interchangeable idempotency keys. Do not advance
+rotation merely because a skipped/partial election was appended to a file:
+persist the roster and advance the completed rotation after verified Config34
+activation, with explicit treatment of election closure.
+
+### 2.6 Correct refusal detection and diagnostics
+
+For a pool receiving a native controller bounce, decode the actual transaction
+BOC/message header and require all of:
+
+```text
+internal message; bounced == true
+source == candidate controller; destination == candidate pool
+body marker == 0xffffffff
+retained 256-bit prefix == relay_op:uint32 | query:uint64 | commitment:uint160
+transaction belongs to the recorded attempt's complete history window
+```
+
+This matches the shape guarded by `sr::bounce_matches`; truncated or differently
+bound data is not a matching refusal. Correlate the preceding pool-to-controller
+message as well. Reused queries after rejected attempts make history/commitment
+binding especially important. An ordinary message whose body starts with
+`0xffffffff` is not sufficient.
+
+The bounce contains the original request prefix, **not the compute exit code**.
+Fetch/decode the corresponding controller transaction for compute exit code,
+abort flag and action result, and distinguish compute failure from action-phase
+failure. If unavailable, report `controller_bounced` with unknown exit code and
+keep the evidence incomplete; never synthesize 180. Report the returned amount
+from the actual bounce value, not from the original principal.
+
+Also observe wallet-to-pool refusal and successful receipt application. A missing
+bounce or missing recent-page receipt must not be converted into acceptance.
+Keep Elector business refusal (including closed-election reason 0) separate from
+controller refusal and observation failure.
+
+### 2.7 Encoding, signer custody and other callers
+
+Add the pure funding-payload encoder beside `build_pool_stake_order` in
+[pq_election_fixture.py](../test/tostester/src/tostester/pq_election_fixture.py).
+Pin field order and bounds to
+`contracts::validator_controller::operating_funding_payload` and the actual
+`controller_operating_payload` example. Test decoded field equality and cell
+hash; byte-for-byte BOC comparison requires the same explicit serialization
+flags. Use a Rust-generated golden and an executable cross-language test, not
+only a golden maintained by the same Python encoder. Cover zero deposit,
+workchain/payer encoding, coin bounds, TTL bounds and trailing fields.
+
+In `setup-testnet.sh`, add the real target `tos-pq-controller`, check the output
+`build/crypto/tos-pq-controller` before destructive setup, and install it as
+`/usr/local/bin/tos-pq-controller`. Admit the executable and its actual loaded
+dependencies, not just its ownership; test it in the protected service context.
+Do not fall back to a PATH entry or checkout binary. Validate signer exit status,
+base64/BOC shape and body fields before funding.
+
+The root signing tool is deliberately separate from the validator node. Its use
+by this root-run local service is a **development-fixture exception**, guarded
+by the disposable-network profile and matching genesis/candidate artifacts.
+Never put a production root seed on a validator host to implement this feature,
+weaken seed ownership/mode checks, log seeds, or replace root authorization with
+the consensus key. Read keys only from the secured fixture location and verify
+the public root against current controller state before signing.
+
+Both `scripts/nominator-pool-lifecycle-e2e.py` and
+`scripts/pq-config-wallet-first-stake-e2e.py` are mandatory companion work, not
+"fix or declare outdated" alternatives. Reuse the same bounded initialization
+and verify every controller that their support/target stakes use. Preserve the
+product caller as the actual stake sender rather than bypassing it with fixture
+submission.
+
+In the product script, `product_run()` calls lifecycle setup and then requires
+exactly one controller transaction to obtain the birth StateInit. Moving funding
+into a shared setup method can invalidate that assertion before the product
+stake starts. Either capture/validate the original deployment transaction before
+authorization, or paginate and select the unique original deployment by account,
+StateInit/code/data identity and status. Never replace it with "take the newest
+transaction" or derive the birth witness from mutated live data. Exercise both
+`config-wallet` and `daemon` modes after this change.
+
+Keep the operational hold/manual safety instructions until the implemented
+preflight and failure behavior have passed validation. Then replace only the
+missing-authorization workaround; preserve independent maintenance/start holds,
+bootstrap mutual exclusion and operator-controlled stop mechanisms.
+
+## 3. Defect 2: the private generator has two checkout dependencies
+
+### 3.1 Complete reachable cause
+
+In [crosscheck/src/pool.rs](../tools/shielded-pool-circuit/crosscheck/src/pool.rs):
+
+- `contract_gas_ceiling()` reads
+  `library_dir().join("../tos-shielded-pool-v1.fc")`, where `library_dir()` is
+  based on compile-time `CARGO_MANIFEST_DIR`. The service reaches this through
+  `fee("deposit_gas_ceiling")` and `fee("transact_gas_ceiling")`.
+- `development_vk_bytes()` independently reads
+  `CARGO_MANIFEST_DIR/../fixtures/groth16-development.json`. In
+  [local_pool_traffic.rs](../tools/shielded-pool-circuit/crosscheck/src/bin/local_pool_traffic.rs),
+  the first transfer/withdrawal initializes proving keys and compares the
+  generated canonical verifying key against this file. It is not a test-only
+  helper in this call graph.
+
+The reporter attributes the source read to `b2c500dc6` and the protected snapshot
+transition to `5147c8f46`. `install-root-services.sh` copies the traffic binary,
+not either of these resource files, and the service uses `ProtectHome=true`.
+For a checkout hidden by that setting the original absolute runtime reads fail.
+The reported first failure names `tos-shielded-pool-v1.fc`. Once that is fixed,
+the second read remains a deterministic source-level blocker for the first
+proof-generating operation in the same environment.
+
+The reported successful bootstrap does not validate either path. `plan("init")`
+returns before both resource reads. Likewise, `main()` encodes request errors
+as `ok:false` and continues, ultimately returning `Ok(())` on input EOF. Process
+exit status alone cannot certify a generated operation.
+
+### 3.2 Embed both resources without changing contract semantics
+
+Use compile-time resources shared by the existing parsing/validation functions:
+
+```rust
+const POOL_SOURCE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../crypto/smartcont/tos-shielded-pool-v1.fc"
+));
+const DEVELOPMENT_FIXTURE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../fixtures/groth16-development.json"
+));
+```
+
+`contract_gas_ceiling()` must parse `POOL_SOURCE`; `development_vk_bytes()` must
+parse `DEVELOPMENT_FIXTURE`. Retain the generated-verifying-key equality check.
+Do not copy fee numbers into unrelated constants, skip key comparison, supply an
+empty/default key on failure, or make the service open `/home` again. Parsing
+must reject missing/malformed data, invalid hex and invalid gas values rather
+than silently truncating or substituting defaults.
+
+These are compile-time dependencies: a resource change must rebuild the relevant
+artifact before a test compares it to newly compiled contract code. Add a
+mutation/rebuild test so changing the contract ceiling or verifying-key fixture
+cannot leave a passing stale binary. Tests deliberately compiling sources via
+`Pool`/`pool_sources()` may keep their explicit build-tree dependencies;
+`src/bin/local_pool.rs` is a build/deployment utility, not the installed service.
+Audit the remaining service call graph for filesystem reads instead of assuming
+all other helpers are test-only.
+
+Because setup permits use of existing binaries without `--build`, add public
+resource/build metadata to the generator self-check and deployment evidence:
+embedded contract-source digest, embedded fixture/canonical VK digest, gas
+ceilings, and the relevant build identity. Compare these against the trusted
+setup inputs and the pool deployment/code/data identity. Refuse a stale or
+mismatched artifact with a rebuild instruction; do not publish a snapshot whose
+fees/key describe a different pool. Keep this an artifact/deployment check, not
+a new on-chain version or weakened contract identity check.
+
+### 3.3 Snapshot policy: structural checks plus real execution
+
+Retain every existing ownership, symlink traversal, `.pth`, RPATH/RUNPATH,
+loader-token and dynamic-dependency check in
+[install-root-services-check.py](../scripts/install-root-services-check.py).
+
+Replace the proposed "reject any regular file containing checkout bytes" rule
+with a diagnostic inventory of suspicious references. A filename in diagnostic
+metadata or Python code objects need not cause any file access. Conversely,
+constructed paths or a different build checkout can evade a scan for today's
+source path. Debug stripping/remapping can reduce noise but is not a runtime
+independence proof. Do not introduce blanket exceptions that bypass the existing
+loader or `.pth` security gates.
+
+The decisive runtime check for the exercised paths must run the **new staged
+`DEST`**, before changing `BASE/current` and before deleting previous snapshots.
+It must not accidentally test the old `current` symlink or bootstrap from the
+checkout. A failed/unsupported admission test must leave the old published
+snapshot intact and the failed candidate unpublished; no silent live-install skip.
+
+Use a transient service with the real protected environment, working directory,
+resource bounds and `ProtectHome=true`. Explicitly hide the canonical source and
+build roots as well when they are outside home, for example via validated
+`InaccessiblePaths=` settings. Ensure those roots do not overlap the staged
+snapshot or required runtime directories. Pass properties/arguments without shell
+interpolation vulnerabilities and verify the isolation with a negative control.
+Do not rename, chmod or delete the real source tree as a test mechanism.
+
+### 3.4 Two-layer self-check with explicit success criteria
+
+**Fast install admission.** Add a defined `local_pool_traffic --self-check`
+command which reads both embedded resources through the production helpers,
+validates the two gas ceilings and canonical development VK data, and returns
+only public metadata/digests. It must not contact the chain, generate notes,
+change `/data`, or print secrets. Unknown options or failure must be nonzero.
+The installer must require a nonempty valid success record with all expected
+fields; an old binary that ignores the option and exits zero at EOF must fail
+admission. There is no existing fee-query operation to invoke.
+
+**Full isolated artifact regression.** Drive the production JSON protocol in a
+private ephemeral directory through init, two funded model deposits, a private
+transfer and a withdrawal, consuming the actual returned state at every step.
+Validate every response's `ok == true`, nonempty BOC, expected liability/root
+transitions, generated key equality and proof/signature path. Use amounts and
+inputs that actually satisfy the configured denominations and withdrawal fee.
+Give proof generation bounded CPU, memory and timeout limits; exhaustion is a
+failure, not a pass. Validate all operation responses, not only process status.
+
+The full regression need not run on every ordinary service start, but is a
+required pre-merge/pre-release gate in a capable environment. Unit-only/non-root
+installer tests may fake the executor to test sequencing; they must be labeled
+as such and must not count as the real protected execution test. Keep temporary
+note secrets out of journald/public reports and remove private fixture state.
+
+Required controls:
+
+- The original binary with hidden sources fails the deposit path.
+- A source-only embedding patch still fails at first transfer/withdrawal because
+  of the VK read; the complete fix passes the same sequence.
+- `init`-only, an empty output, malformed JSON, missing fields and `ok:false`
+  with exit zero all fail the admission wrapper where success is required.
+- A harmless embedded checkout filename is not itself classified as runtime I/O;
+  an actual/constructed runtime dependency is caught by isolated execution.
+- A stale resource digest is refused even if files exist in the administrator's
+  checkout. Existing malicious RPATH, `.pth` and symlink fixtures remain refused.
+- Snapshot self-check failure leaves `current` and previous usable snapshots
+  unchanged. No generator smoke test sends a transaction on the retained chain.
+
+## 4. Required implementation and acceptance gates
+
+| Gate | Evidence required before claiming completion |
+| --- | --- |
+| Funding wire | Rust/Python decoded payload and cell hash agreement; canonical BOC golden; actual C++ signer output accepted by controller VM; wrong payer/root/nonce/epoch/network, malformed values and expired authorization refused. |
+| Funding policy | Missing, healthy, low-funds, low-allowance, expiry-only/zero-deposit, excessive grant, inadequate floor/capital, conflicting payer/root, pending relay and spend-cap cases. Expected funds use the additive transition. |
+| Fee compatibility | Current masterchain grant/processing calculation compared with `sr` VM helpers, including rounding and changed-fee rejection. No silent cap escalation. |
+| Crash/restart | Kill before broadcast, after broadcast before observation, after wallet inclusion, after controller acceptance and after the first candidate succeeds; restart must not duplicate principal, deposits or accepted stakes. |
+| Observation | Pagination beyond the first history page; truncated/stale/wrong-source/wrong-prefix bounces; ordinary messages imitating bounce bodies; compute vs action failure; missing trace stays unresolved. |
+| Service behavior | Deterministic refusal halts durably and does not loop under systemd/manual restart; transient RPC failure reconciles safely; concurrent faucet writers are excluded. |
+| Companion callers | Full nominator lifecycle and product first-stake `config-wallet` and `daemon` paths; correct original deployment/Birth StateInit selection after new funding transactions. |
+| Resource regression | Both embedded resources validated; source/key mutation plus rebuild fails/passes as intended; stale no-build generator is refused. |
+| Snapshot safety | Existing installer security tests plus staged-artifact checks, fake-success/error controls, source/build isolation and no publication on failure. |
+| Actual elections | Fresh disposable setup; operating authorization verified for candidates 1/2/3/4/7; four successful stake paths per completed round; intended Config34 activation in both directions; common full block IDs on all seven nodes. |
+| Actual privacy | Installed protected service confirms deposit, private transfer and withdrawal on the disposable chain with its existing per-operation cross-node checks. |
+| Bounded recovery/closure | Force an authorization renewal/depletion without waiting a day, verify no repeated funding after interruption, verify campaign-cap stop, and retain exact code/build/transaction identities. |
+
+Run/extend the existing `scripts/test_local_pq_elections.py` and
+`scripts/test_install_root_services.py`, companion caller tests and the real
+controller/relay sandbox tests. Add the resource regression to the real generator
+suite. Ensure CI path filters include changed Python helpers, contract inputs,
+fixture JSON, generator sources and install scripts; optional skip paths are not
+completion evidence. The current source inspection is not a claim that every
+workflow in the repository was audited.
+
+For live election acceptance, use `scripts/testnet-ctl.sh check` and
+`scripts/check-local-pq-relays.py` after both activations and the transition grace
+period. Check the full common block ID, not just matching height or Config34
+bytes. Receipt acceptance, election selection and validator activation are
+separate milestones. A two-round rehearsal still does not prove all later
+unfreeze/withdrawal paths, production-duration liveness, or production costs.
+
+## 5. Operational state and completion language
+
+The original reporter stated that elections were stopped/disabled to prevent
+faucet depletion, privacy was disabled, and the manual
+`elector-redeploy.hold` had been renamed while traffic services were restarted.
+This review did not access that host and does not assert these are its current
+states. Keep automation halted on an affected retained deployment until an
+operator has reconciled existing principal, authorizations and pending actions.
+
+Implementation order: add/refine failure controls and observation tests; implement
+bounded initialization plus durable reconciliation; update companion callers and
+signer installation; embed both privacy resources and add isolated staging tests;
+then run the disposable-chain acceptance gates and update the operational guide.
+Do not remove independent safety holds or merge merely because the proposal was
+reviewed. Record implemented/compiled/unit-tested/VM-tested/live-tested separately.
