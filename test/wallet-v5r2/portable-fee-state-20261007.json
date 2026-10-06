@@ -1,0 +1,25 @@
+{
+  "status": "local source-bound component evidence",
+  "scope": "shared state/cache/scheduler host tests and original contracts compile; no mobile FFI, signing backend, live proof or device recovery acceptance",
+  "tests": {
+    "parallel_threads": 4,
+    "passed": 21,
+    "failed": 0,
+    "child_probe": "ignored as a top-level harness entry, invoked explicitly in the process handoff test"
+  },
+  "contracts_default_lib_check": "passed",
+  "workspace_format": "passed",
+  "regression": {
+    "before_fix": "retained duplicate fd causes deterministic Resource temporarily unavailable (os error 35) on reopening after owner drop",
+    "after_fix": "owner releases lock on drop; reopen succeeds, stored reservation and restore barrier remain intact"
+  },
+  "sources": {
+    "tosctl/src/node-control/contracts/src/lms_fee_journal.rs": "b25ff920d41b59a2efc82b66d12068441c06a14f851f4413d99076de4b0c6528",
+    "tosctl/src/lms-fee-state/build.rs": "7d725d7ad3bfb117475d59862c0bf21e3217871aec08530598225c8feb9e52db",
+    "tosctl/src/lms-fee-state/src/lib.rs": "7dad1ad36a0e59151a268fe3bc77304df184d3847f6233f07b3948fc78593f47"
+  },
+  "raw_log": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-fee-state-tests.log",
+    "sha256": "b0c82fa58441e600ea1224a1095efe33c3302d70213da6a16c1ca7fafe811e65"
+  }
+}

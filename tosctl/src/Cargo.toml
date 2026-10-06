@@ -20,6 +20,7 @@ members = [
     'toscenter-rs',
     'vm',
     'wallet-pq-signer',
+    'lms-fee-state',
     'tos-native-mnemonic',
     'sandbox',
 ]

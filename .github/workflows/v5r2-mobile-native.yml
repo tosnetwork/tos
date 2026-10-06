@@ -3,6 +3,12 @@ on:
   pull_request:
     paths:
       - 'sdk/native/v5r2/**'
+      - 'tosctl/src/lms-fee-state/**'
+      - 'tosctl/src/node-control/contracts/src/lms_fee_journal.rs'
+      - 'tosctl/src/node-control/contracts/src/lms_fee_cache.rs'
+      - 'tosctl/src/node-control/contracts/src/lms_fee_schedule.rs'
+      - 'tosctl/src/Cargo.toml'
+      - 'tosctl/src/Cargo.lock'
       - 'test/wallet-v5r2/mobile-native-test.c'
       - 'third-party/mldsa-native/**'
       - 'third-party/slhdsa-c/**'
@@ -31,3 +37,6 @@ jobs:
           cmake -S sdk/native/v5r2 -B "$RUNNER_TEMP/v5r2-native" -DCMAKE_BUILD_TYPE=Release
           cmake --build "$RUNNER_TEMP/v5r2-native" --parallel 2
           ctest --test-dir "$RUNNER_TEMP/v5r2-native" --output-on-failure
+      - name: Shared durable fee state and real process handoff
+        working-directory: tosctl/src
+        run: cargo test -p lms-fee-state --locked --target-dir "$RUNNER_TEMP/v5r2-fee-state"

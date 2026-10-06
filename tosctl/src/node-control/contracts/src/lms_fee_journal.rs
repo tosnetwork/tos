@@ -55,11 +55,13 @@ impl ReservedLeaf {
 
 /// Cached and reverified fee body. Broadcasting still requires current expiry,
 /// admission/fee checks and an authenticated transaction receipt afterward.
+#[cfg(not(tos_mobile_fee_core))]
 pub struct SignedFeeMessage {
     vault: [u8; 32],
     intent: crate::wallet_v5r2_fee::FeeIntent,
     body: chain_block::Cell,
 }
+#[cfg(not(tos_mobile_fee_core))]
 impl SignedFeeMessage {
     pub fn vault(&self) -> &[u8; 32] {
         &self.vault
@@ -82,6 +84,18 @@ pub struct FeeJournal {
     resume_error: Option<ScheduleError>,
     hash: [u8; 32],
     poisoned: bool,
+}
+
+impl Drop for FeeJournal {
+    fn drop(&mut self) {
+        // Custody ends with this owner, not with an unrelated duplicate fd
+        // inherited during a concurrent process launch. Keep CLOEXEC as well.
+        if let Err(error) = FileExt::unlock(&self.file) {
+            // The owned descriptor is still closed immediately afterward.
+            // Report only the OS error, never route or signing material.
+            eprintln!("fee journal lock release failed: {error}");
+        }
+    }
 }
 
 fn header(route: FeeRoute) -> Vec<u8> {
@@ -195,6 +209,7 @@ impl FeeJournal {
 
     /// Open using a fresh authenticated vault observation. Reopening still
     /// enforces the next-slot restore barrier; a proof does not erase it.
+    #[cfg(not(tos_mobile_fee_core))]
     pub fn open_proven(
         directory: &Path,
         vault: &crate::wallet_v5r2_state::ProvenFeeVault,
@@ -208,6 +223,7 @@ impl FeeJournal {
     /// counter, configuration and public key. Inner action authorization and
     /// network fee affordability must be verified separately. The callbacks
     /// must be trusted cryptographic implementations, never endpoint verdicts.
+    #[cfg(not(tos_mobile_fee_core))]
     pub fn sign_proven_fee<S, V>(
         &mut self,
         vault: &crate::wallet_v5r2_state::ProvenFeeVault,
@@ -256,6 +272,7 @@ impl FeeJournal {
     /// Observe capacity using both authenticated chain state and this locked
     /// journal's local reservations and restore barrier. This neither reserves
     /// a leaf nor permits signing; reserve again before invoking the backend.
+    #[cfg(not(tos_mobile_fee_core))]
     pub fn preview_proven(
         &self,
         vault: &crate::wallet_v5r2_state::ProvenFeeVault,
@@ -344,6 +361,23 @@ mod tests {
 
     fn route() -> FeeRoute {
         FeeRoute { global_id: 42, network: [1; 32], vault: [2; 32], tree_id: [3; 32], epoch0: 100 }
+    }
+
+    #[test]
+    fn owner_drop_releases_lock_even_with_an_inherited_duplicate() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))?;
+        let mut journal = FeeJournal::open(dir.path(), route(), 100)?;
+        journal.reserve(3700, 0, 4, [4; 32])?;
+        // Models the duplicate open-file description briefly inherited by a
+        // concurrent process launch before its CLOEXEC descriptors are closed.
+        let duplicate = journal.file.try_clone()?;
+        drop(journal);
+        let reopened = FeeJournal::open(dir.path(), route(), 3700)?;
+        assert_eq!(reopened.state.next_unreserved, 5);
+        assert!(reopened.preview(3700, 0).is_err());
+        drop(duplicate);
+        Ok(())
     }
 
     #[test]
