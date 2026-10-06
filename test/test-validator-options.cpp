@@ -30,5 +30,32 @@ int main() {
     std::fprintf(stderr, "archive FD explicit limit was not preserved\n");
     return 1;
   }
+  if (options->get_ext_message_work_profile()) {
+    std::fprintf(stderr, "uncalibrated admission work profile enabled by default\n");
+    return 1;
+  }
+  tos::validator::ExtMessageWorkProfile profile;
+  if (options.write().set_ext_message_work_profile(profile).is_ok() || options->get_ext_message_work_profile()) {
+    std::fprintf(stderr, "invalid admission profile was installed\n");
+    return 1;
+  }
+  profile.config_root.data()[0] = 1;
+  profile.capacity = 2;
+  profile.refill_units = 1;
+  profile.refill_interval_ns = 1000000000;
+  profile.attempt_units = 1;
+  profile.max_bytes = 65535;
+  profile.max_depth = 512;
+  if (options.write().set_ext_message_work_profile(profile).is_error() || !options->get_ext_message_work_profile()) {
+    std::fprintf(stderr, "valid explicit admission profile was not installed\n");
+    return 1;
+  }
+  auto invalid = profile;
+  invalid.attempt_units = 3;
+  if (options.write().set_ext_message_work_profile(invalid).is_ok() ||
+      options->get_ext_message_work_profile().value().attempt_units != 1) {
+    std::fprintf(stderr, "invalid update changed the installed admission profile\n");
+    return 1;
+  }
   return 0;
 }

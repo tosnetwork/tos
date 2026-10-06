@@ -27,7 +27,9 @@ def main():
     if args.container:
         for relative in ['test/test-ext-message-pool.cpp',
                          'validator/impl/ext-message-pool.hpp',
-                         'validator/impl/ext-message-work-profile.hpp']:
+                         'validator/impl/ext-message-work-profile.hpp',
+                         'validator/admission-work-profile.h',
+                         'validator/validator.h', 'validator/validator-options.hpp']:
             actual = subprocess.check_output(['docker', 'exec', args.container, 'sha256sum',
                                               args.container_source_dir + '/' + relative], text=True).split()[0]
             expected = hashlib.sha256((root / relative).read_bytes()).hexdigest()
@@ -39,6 +41,15 @@ def main():
          b'  // Controlled deletion of the post-wait limits refresh.', 'external message too large', queued_test),
         ('false-completion', b'  if (dispatched) {\n    ++completions_in_rate_window_;',
          b'  if (true) {\n    ++completions_in_rate_window_;', 'completions_in_rate_window_', queued_test),
+        ('reset-work-on-update',
+         b'    TRY_STATUS(work_admission_->update_profile(std::move(profile)));',
+         b'    TRY_STATUS(work_admission_->update_profile(profile));\n'
+         b'    TRY_RESULT(reset, ExtMessageWorkAdmission::create(std::move(profile)));\n'
+         b'    work_admission_ = std::move(reset);',
+         'external message admission work budget exhausted', 'WorkBudgetChargesFailuresAcrossPeerAndLocalSources'),
+        ('disable-on-options-update', b'  opts_ = std::move(opts);',
+         b'  opts_ = std::move(opts);\n  work_admission_.reset();',
+         'external message admission work budget exhausted', 'WorkBudgetChargesFailuresAcrossPeerAndLocalSources'),
         ('skip-work-charge', b'    if (!work_admission_->try_consume()) {',
          b'    if (false) {', 'external message admission work budget exhausted',
          'WorkBudgetChargesFailuresAcrossPeerAndLocalSources'),

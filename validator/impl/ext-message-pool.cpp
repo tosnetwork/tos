@@ -26,6 +26,32 @@
 
 namespace tos::validator {
 
+td::Result<td::Unit> ExtMessagePool::configure_work_profile(ExtMessageWorkProfile profile) {
+  if (work_admission_) {
+    TRY_STATUS(work_admission_->update_profile(std::move(profile)));
+  } else {
+    TRY_RESULT(admission, ExtMessageWorkAdmission::create(std::move(profile)));
+    work_admission_ = std::move(admission);
+  }
+  update_last_masterchain_state(last_masterchain_state_);
+  return td::Unit{};
+}
+
+void ExtMessagePool::update_options(td::Ref<ValidatorManagerOptions> opts) {
+  if (opts.not_null()) {
+    auto profile = opts->get_ext_message_work_profile();
+    if (profile) {
+      auto status = configure_work_profile(profile.value());
+      if (status.is_error()) {
+        LOG(ERROR) << "External admission work profile update refused: " << status.move_as_error();
+        return;
+      }
+    }
+  }
+  // An unrelated options update cannot silently disable existing protection.
+  opts_ = std::move(opts);
+}
+
 void ExtMessagePool::update_last_masterchain_state(td::Ref<MasterchainState> state) {
   last_masterchain_state_ = std::move(state);
   work_profile_supported_ = false;

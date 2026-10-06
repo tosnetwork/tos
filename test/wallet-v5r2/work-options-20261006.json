@@ -1,0 +1,165 @@
+{
+  "base_commit": "19c818bdac3f1d4fd719b148458f27f7a14cace7",
+  "source_state": "uncommitted changes on base commit",
+  "sources": {
+    "CMakeLists.txt": "adbb1663ed044bee1cbbe669eb923fcf700223a63265e31ded8ba8ea72410c67",
+    "validator/admission-work-profile.h": "32ee6db28c3c763b1f2cfa9e0f45512cefccb865f799b16560e51e7c1cea5a9b",
+    "validator/validator.h": "c4b925b73961325627949c3103fe81ace859c9817ffbbb5f8e99edabc859d394",
+    "validator/validator-options.hpp": "593e85f75caa136b8f1bdfe04653d7f8fd599542deaff14107455f552f36251b",
+    "validator/impl/ext-message-work-profile.hpp": "124d09aa912e8e4989fb4b68fbe7d57826d123617371a95d31427d827e7880f2",
+    "validator/impl/ext-message-pool.cpp": "f42bd694b77a2bf807c2f2fc0e3037851dbedbea4617748f63c98300f98167a7",
+    "validator/impl/ext-message-pool.hpp": "8361ea98bdd4741f4cdc00b80e8ea38ef9560796cd25d6f4c442e54f2c932510",
+    "test/test-ext-message-pool.cpp": "635d9dc93ab7b3544261b4839503040c7ed9e1f5b5e3d8e0cfb19c08fae65d1d",
+    "test/test-validator-options.cpp": "e7e1dec989dd5476c3a930403a66cecb2eb5bc437f5179b085c3e813fb507b1b",
+    "scripts/check-ext-message-pool-controls.py": "2dbaa53b5ee1feffb7d360b6f157873964211a7f20a49895a46d0ff8e423b819",
+    "scripts/check-ext-message-options-controls.py": "c008f20cbd7a1936bc398439a3bb131a502f8f9806f4f18ae4ba4ec67d260a2f"
+  },
+  "platform": "Linux arm64, Release clang",
+  "retain_until": "2027-01-06",
+  "scope": "Validated ValidatorManagerOptions API, pool startup from options, online config rebind without replenishment, rejection of rate/cost changes, unrelated options cannot disable protection",
+  "activation": "Explicit API only; no calibrated default, engine command-line/file loader or release activation yet",
+  "controls": {
+    "20261006-work-options-pool-controls-final": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-options-pool-controls-final",
+      "results": {
+        "source_sha256": "f42bd694b77a2bf807c2f2fc0e3037851dbedbea4617748f63c98300f98167a7",
+        "returncodes": {
+          "baseline-build": 0,
+          "baseline": 0,
+          "stale-limits-build": 0,
+          "stale-limits": 1,
+          "false-completion-build": 0,
+          "false-completion": 1,
+          "reset-work-on-update-build": 0,
+          "reset-work-on-update": 1,
+          "disable-on-options-update-build": 0,
+          "disable-on-options-update": 1,
+          "skip-work-charge-build": 0,
+          "skip-work-charge": 1,
+          "skip-profile-check-build": 0,
+          "skip-profile-check": 1,
+          "restored-build": 0,
+          "restored": 0
+        },
+        "logs": {
+          "baseline-build.log": {
+            "sha256": "4c21e9e82a4c3d272e520b7194ef029f430517d257ecf5f72979f905464fda05",
+            "bytes": 398
+          },
+          "baseline.log": {
+            "sha256": "27c8ec35d047157b35cd436434f7bff8cb02539203bbacecc431405b5783e8c2",
+            "bytes": 3590
+          },
+          "disable-on-options-update-build.log": {
+            "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+            "bytes": 302
+          },
+          "disable-on-options-update.log": {
+            "sha256": "4f57c26061a9f2d596ff5dee933b4b86d8375f2676df5399ff5c0042d0f68c6f",
+            "bytes": 5221
+          },
+          "false-completion-build.log": {
+            "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+            "bytes": 302
+          },
+          "false-completion.log": {
+            "sha256": "8fe686eceb38806ae24c38b3ee7da1294ac3d6ad08346666b23752f749488b52",
+            "bytes": 3829
+          },
+          "reset-work-on-update-build.log": {
+            "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+            "bytes": 302
+          },
+          "reset-work-on-update.log": {
+            "sha256": "10f160c878de7c689da41c72bc0ca77d5754962ced0ea8414543ff14b9756f4a",
+            "bytes": 4268
+          },
+          "restored-build.log": {
+            "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+            "bytes": 302
+          },
+          "restored.log": {
+            "sha256": "76c1871ef42360d179fb98a85b4fdacb3f918f619d4200f6c5de6344241b706f",
+            "bytes": 3592
+          },
+          "skip-profile-check-build.log": {
+            "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+            "bytes": 302
+          },
+          "skip-profile-check.log": {
+            "sha256": "9be38d712ac56d6cdd442e51c0b97167dd2bc23e6f3c0d0eac0081bde2a38561",
+            "bytes": 5740
+          },
+          "skip-work-charge-build.log": {
+            "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+            "bytes": 302
+          },
+          "skip-work-charge.log": {
+            "sha256": "413bab56deb1aa797418d56f8b1f5c30a1b191ef65739a21cd97647aca52cafb",
+            "bytes": 4537
+          },
+          "stale-limits-build.log": {
+            "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+            "bytes": 302
+          },
+          "stale-limits.log": {
+            "sha256": "48b40ea7421685f1d147c19feb490dc76983b1875e1d38d447a70df3a0c6c50e",
+            "bytes": 4290
+          }
+        },
+        "scope": "actual pool coroutine, shared work charge, exact config pin, and failure VM-count regression"
+      }
+    },
+    "20261006-work-options-validation-controls": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-options-validation-controls",
+      "results": {
+        "source_sha256": "593e85f75caa136b8f1bdfe04653d7f8fd599542deaff14107455f552f36251b",
+        "returncodes": {
+          "baseline-build": 0,
+          "baseline": 0,
+          "skip-validation-build": 0,
+          "skip-validation": 1,
+          "restored-build": 0,
+          "restored": 0
+        },
+        "logs": {
+          "baseline-build.log": {
+            "sha256": "c251c26429db471cca1ab79f281cb85afcec5962669e20f360388d0b0b6d29f2",
+            "bytes": 235
+          },
+          "baseline.log": {
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "restored-build.log": {
+            "sha256": "c251c26429db471cca1ab79f281cb85afcec5962669e20f360388d0b0b6d29f2",
+            "bytes": 235
+          },
+          "restored.log": {
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "skip-validation-build.log": {
+            "sha256": "c251c26429db471cca1ab79f281cb85afcec5962669e20f360388d0b0b6d29f2",
+            "bytes": 235
+          },
+          "skip-validation.log": {
+            "sha256": "cf853c96e3996ce4539e76fa05edbaec2677463fb785c36f98a28c132c52426e",
+            "bytes": 40
+          }
+        }
+      }
+    }
+  },
+  "commands": [
+    "python3 scripts/check-ext-message-pool-controls.py --container v5r2-admission-linux --build-dir /build-shadow --output-dir <retained-output>",
+    "python3 scripts/check-ext-message-options-controls.py --container v5r2-admission-linux --output-dir <retained-output>"
+  ],
+  "remaining": [
+    "Operator configuration loader and full engine build",
+    "Measured release rate/burst and accepted profile update policy",
+    "Queued snapshot/profile update and cancellation stress",
+    "All real network origins and fair recovery under mixed malicious load",
+    "Actual default genesis and full dual-VM transaction acceptance"
+  ]
+}

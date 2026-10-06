@@ -57,13 +57,21 @@ class ExtMessagePool : public td::actor::Actor {
   void erase_external_messages(std::vector<ExtMessage::Hash> to_delete);
 
   void update_last_masterchain_state(td::Ref<MasterchainState> state);
-  void update_options(td::Ref<ValidatorManagerOptions> opts) {
-    opts_ = std::move(opts);
-  }
+  void update_options(td::Ref<ValidatorManagerOptions> opts);
+  td::Result<td::Unit> configure_work_profile(ExtMessageWorkProfile profile);
   std::vector<std::pair<std::string, std::string>> prepare_stats();
 
   void alarm() override;
   void start_up() override {
+    if (opts_.not_null()) {
+      auto profile = opts_->get_ext_message_work_profile();
+      if (profile) {
+        auto status = configure_work_profile(profile.value());
+        if (status.is_error()) {
+          LOG(FATAL) << "Cannot install external admission work profile: " << status.move_as_error();
+        }
+      }
+    }
     alarm_timestamp().relax(admission_stats_at_);
   }
 

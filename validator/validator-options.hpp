@@ -53,6 +53,14 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   size_t max_mempool_num() const override {
     return max_mempool_num_;
   }
+  td::optional<ExtMessageWorkProfile> get_ext_message_work_profile() const override {
+    return ext_message_work_profile_;
+  }
+  td::Status set_ext_message_work_profile(ExtMessageWorkProfile profile) override {
+    TRY_STATUS(profile.validate());
+    ext_message_work_profile_ = std::move(profile);
+    return td::Status::OK();
+  }
   double archive_ttl() const override {
     return archive_ttl_;
   }
@@ -379,6 +387,7 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   double block_ttl_;
   double state_ttl_;
   size_t max_mempool_num_;
+  td::optional<ExtMessageWorkProfile> ext_message_work_profile_;
   double archive_ttl_;
   double key_proof_ttl_;
   bool initial_sync_disabled_;

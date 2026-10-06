@@ -293,15 +293,26 @@ void exercise_work_dispatch(bool mismatched_config) {
   profile.attempt_units = 1;
   profile.max_bytes = 65535;
   profile.max_depth = 512;
-  auto work = ExtMessageWorkAdmission::create(profile);
-  ASSERT_TRUE(work.is_ok());
+  auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  ASSERT_TRUE(options.write().set_ext_message_work_profile(profile).is_ok());
   auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
   td::actor::TestScheduler scheduler;
   scheduler.run([&]() -> td::actor::Task<td::Unit> {
-    auto pool = td::actor::create_actor<ExtMessagePool>("work-budget", td::Ref<ValidatorManagerOptions>{},
-        td::actor::ActorId<ValidatorManager>{}, bytes, work.move_as_ok());
+    auto pool = td::actor::create_actor<ExtMessagePool>("work-budget", options,
+        td::actor::ActorId<ValidatorManager>{}, bytes);
     co_await td::actor::ask(pool.get(), &ExtMessagePool::update_last_masterchain_state, state);
     for (unsigned i = 0; i < 4; ++i) {
+      if (i == 2) {
+        auto changed_rate = profile;
+        changed_rate.capacity = 3;
+        auto refused = co_await td::actor::ask(pool.get(), &ExtMessagePool::configure_work_profile, changed_rate).wrap();
+        ASSERT_TRUE(refused.is_error());
+        EXPECT_EQ(refused.error().message(), "external admission rate or cost changes require restart");
+        co_await td::actor::ask(pool.get(), &ExtMessagePool::configure_work_profile, profile);
+        co_await td::actor::ask(pool.get(), &ExtMessagePool::update_options, options);
+        auto unrelated = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+        co_await td::actor::ask(pool.get(), &ExtMessagePool::update_options, unrelated);
+      }
       td::optional<PublicKeyHash> peer;
       if (i % 2) {
         auto hash = td::Bits256::zero();

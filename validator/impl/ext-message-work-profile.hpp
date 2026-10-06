@@ -2,34 +2,33 @@
 #pragma once
 
 #include "ext-message-work-budget.hpp"
-#include "tos/tos-types.h"
+#include "validator/admission-work-profile.h"
 #include "td/utils/port/Clocks.h"
 
 namespace tos::validator {
 
-// Explicit experimental admission profile. A quote must cover a complete attempt
-// for every destination supported by this exact chain configuration, including
-// parsing, state lookup and special/native execution. No release rate is inferred.
-struct ExtMessageWorkProfile {
-  RootHash config_root{RootHash::zero()};
-  std::uint64_t capacity{0};
-  std::uint64_t refill_units{0};
-  std::uint64_t refill_interval_ns{0};
-  std::uint64_t attempt_units{0};
-  std::uint32_t max_bytes{0};
-  std::uint32_t max_depth{0};
-};
-
 class ExtMessageWorkAdmission {
  public:
   static td::Result<std::unique_ptr<ExtMessageWorkAdmission>> create(ExtMessageWorkProfile profile) {
+    TRY_STATUS(profile.validate());
     auto now = td::Clocks::monotonic_nano();
-    if (now < 0 || profile.capacity == 0 || profile.refill_units == 0 || profile.refill_interval_ns == 0 ||
-        profile.attempt_units == 0 || profile.attempt_units > profile.capacity ||
-        profile.max_bytes == 0 || profile.max_depth == 0) {
-      return td::Status::Error("invalid external admission work profile");
+    if (now < 0) {
+      return td::Status::Error("external admission monotonic clock is unavailable");
     }
     return std::unique_ptr<ExtMessageWorkAdmission>(new ExtMessageWorkAdmission(std::move(profile), now));
+  }
+
+  td::Status update_profile(ExtMessageWorkProfile profile) {
+    TRY_STATUS(profile.validate());
+    if (profile.capacity != profile_.capacity || profile.refill_units != profile_.refill_units ||
+        profile.refill_interval_ns != profile_.refill_interval_ns || profile.attempt_units != profile_.attempt_units ||
+        profile.max_bytes != profile_.max_bytes || profile.max_depth != profile_.max_depth) {
+      return td::Status::Error("external admission rate or cost changes require restart");
+    }
+    // Rebinding an explicitly reviewed configuration must not replenish tokens
+    // or change the refill clock. Budget ownership survives configuration churn.
+    profile_ = std::move(profile);
+    return td::Status::OK();
   }
 
   bool supports(const RootHash& config_root, std::uint32_t max_bytes, std::uint32_t max_depth) const {
@@ -49,7 +48,7 @@ class ExtMessageWorkAdmission {
   ExtMessageWorkAdmission(ExtMessageWorkProfile profile, std::uint64_t now)
       : profile_(std::move(profile)), budget_(profile_.capacity, profile_.refill_units,
                                            profile_.refill_interval_ns, now) {}
-  const ExtMessageWorkProfile profile_;
+  ExtMessageWorkProfile profile_;
   ExtMessageWorkBudget budget_;
 };
 
