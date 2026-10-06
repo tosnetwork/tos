@@ -2643,9 +2643,9 @@ Three semantic controls remove preflight cleanup, identifier binding and the
 local deadline guard and require named assertion failures. Both CI architectures
 run the controls. Evidence: `test/wallet-v5r2/native-fee-journal-20261006.json`.
 
-The encrypted-record adapter below adds fee-seed storage/loading. Authenticated
-tree/path generation, old-device revocation and hardware rollback resistance
-remain separate unfinished gates.
+The adapters below add encrypted fee-seed storage/loading and full public tree
+reconstruction. Live enrollment authentication, client takeover and hardware
+rollback resistance remain separate unfinished gates.
 The caller must also authorize the inner action and establish fee affordability;
 a valid fee signature alone does not establish either condition.
 
@@ -2665,8 +2665,9 @@ fee-seed custody, not a restored signer or proof of exclusive device ownership.
 The fixture is the existing independently generated public LMS enrollment and
 leaf-12 path. Removal controls require root comparison, fixed-profile checking
 and seed cleanup to fail named assertions. Evidence:
-`test/wallet-v5r2/fee-seed-binding-20261006.json`. The encrypted fee-key record lifecycle is covered below; full tree generation
-and client recovery integration remain unfinished.
+`test/wallet-v5r2/fee-seed-binding-20261006.json`. The encrypted fee-key record
+lifecycle and full tree reconstruction are covered below; client recovery
+integration remains unfinished.
 
 
 ### Encrypted fee records and journal-bound signing
@@ -2701,3 +2702,31 @@ cleanup and post-load clock sampling. Evidence:
 proof acquisition, a production deployment, independent device custody or
 hardware rollback resistance. The caller must keep the encrypted Vault and
 journal exclusively owned and revoke an old device during takeover.
+
+
+### Complete fixed-profile fee tree reconstruction
+
+`wallet_pq_signer::fee::FeeTree::generate_and_wipe` reconstructs all 1,048,576
+LMOTS public leaves and the complete LMS H20 binary tree from SEED[32] || I[16].
+The backend uses the pinned W4 public-key derivation primitive and fixed leaf and
+parent domains. It produces public nodes only, never a message signature. Rust
+uses fallible allocation for the 64 MiB node buffer and clears the borrowed seed
+on every return. The API returns the fixed-profile 60-byte public key and bounded
+640-byte authentication paths; it exposes no signing handle or journal state.
+
+Generation is synchronous and CPU-heavy. Clients must run it on a worker and
+compare the result with independently authenticated enrollment during restore.
+Rebuilding the public tree does not revoke another signer or bypass the journal's
+next-slot wait. This initial API retains public nodes in memory; a durable,
+integrity-checked public tree cache and the mnemonic-driven client flow remain
+to be integrated. No phone performance, side-channel resistance or hardware
+anti-rollback claim follows from this implementation.
+
+The explicit full-tree test reconstructs the existing independent public fixture,
+compares its entire public key and leaf-12 authentication path, then checks paths
+at both tree ends and across the middle against the seed-binding verifier.
+Ordinary tests check path bounds/order and rejected-input cleanup. The full test
+is marked ignored only to avoid accidental repetition in generic test runs;
+`fee_tree_controls.py` explicitly runs it in baseline, native domain mutation and
+restored states on both CI architectures. Evidence:
+`test/wallet-v5r2/fee-tree-20261006.json`.

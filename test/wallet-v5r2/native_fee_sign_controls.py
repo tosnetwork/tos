@@ -66,7 +66,7 @@ def main():
 
     def positive(label):
         code, log = run(label)
-        assert code == 0 and "3 passed; 0 failed" in log and f"::{TEST} ... ok" in log, log[-4000:]
+        assert code == 0 and "4 passed; 0 failed" in log and f"::{TEST} ... ok" in log, log[-4000:]
 
     results = {}
     try:

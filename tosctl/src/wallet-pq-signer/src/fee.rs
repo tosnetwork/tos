@@ -5,6 +5,9 @@ use crate::Rejected;
 #[path = "fee_binding.rs"]
 mod binding;
 pub use binding::verify_seed_and_wipe;
+#[path = "fee_tree.rs"]
+mod tree;
+pub use tree::FeeTree;
 unsafe extern "C" {
     fn tos_wallet_lms_fee_verify(
         leaf: u32,
