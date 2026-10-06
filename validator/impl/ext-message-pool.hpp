@@ -26,6 +26,7 @@
 
 #include "ext-message-admission-budget.hpp"
 #include "ext-message-checker.hpp"
+#include "ext-message-work-profile.hpp"
 
 namespace tos::validator {
 
@@ -33,8 +34,10 @@ class ExtMessagePool : public td::actor::Actor {
  public:
   ExtMessagePool(td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager,
                  std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget =
-                     std::make_shared<adnl::AdnlExtByteBudget>(ext_message_admission_bytes))
-      : opts_(opts), manager_(manager), admission_budget_(std::move(admission_budget)) {
+                     std::make_shared<adnl::AdnlExtByteBudget>(ext_message_admission_bytes),
+                 std::unique_ptr<ExtMessageWorkAdmission> work_admission = nullptr)
+      : opts_(opts), manager_(manager), admission_budget_(std::move(admission_budget)),
+        work_admission_(std::move(work_admission)) {
     CHECK(admission_budget_ != nullptr);
   }
 
@@ -53,9 +56,7 @@ class ExtMessagePool : public td::actor::Actor {
   void complete_external_messages(std::vector<ExtMessage::Hash> to_delay, std::vector<ExtMessage::Hash> to_delete);
   void erase_external_messages(std::vector<ExtMessage::Hash> to_delete);
 
-  void update_last_masterchain_state(td::Ref<MasterchainState> state) {
-    last_masterchain_state_ = std::move(state);
-  }
+  void update_last_masterchain_state(td::Ref<MasterchainState> state);
   void update_options(td::Ref<ValidatorManagerOptions> opts) {
     opts_ = std::move(opts);
   }
@@ -172,6 +173,8 @@ class ExtMessagePool : public td::actor::Actor {
 
   size_t inflight_checks_{0};
   std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget_;
+  std::unique_ptr<ExtMessageWorkAdmission> work_admission_;
+  bool work_profile_supported_{false};
   std::deque<td::actor::StartedTask<>::ExternalPromise> admission_waiters_;
   void release_check_slot(bool dispatched);
 

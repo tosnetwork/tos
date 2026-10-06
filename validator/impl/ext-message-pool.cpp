@@ -26,6 +26,25 @@
 
 namespace tos::validator {
 
+void ExtMessagePool::update_last_masterchain_state(td::Ref<MasterchainState> state) {
+  last_masterchain_state_ = std::move(state);
+  work_profile_supported_ = false;
+  if (!work_admission_ || last_masterchain_state_.is_null()) {
+    return;
+  }
+  // Compute once at state installation, not once for each attacker request.
+  auto holder = last_masterchain_state_->get_config_holder();
+  if (holder.is_error()) {
+    return;
+  }
+  auto root = holder.ok()->get_auth_policy_config_root();
+  if (root.is_error() || root.ok().is_null()) {
+    return;
+  }
+  auto limits = last_masterchain_state_->get_ext_msg_limits();
+  work_profile_supported_ = work_admission_->supports(root.ok()->get_hash().bits(), limits.max_size, limits.max_depth);
+}
+
 void ExtMessagePool::init_checkers() {
   checker_inflight_.assign(NUM_CHECKERS, 0);
   for (size_t i = 0; i < NUM_CHECKERS; ++i) {
@@ -85,6 +104,19 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
   if (data.size() > ext_msg_limits.max_size) {
     ++admission_window_.rejected;
     co_return td::Status::Error("external message too large, rejecting");
+  }
+
+  if (work_admission_) {
+    if (!work_profile_supported_) {
+      ++admission_window_.rejected;
+      co_return td::Status::Error(ErrorCode::notready, "external admission configuration is outside the work profile");
+    }
+    // Every source reaches this point. No await separates charge from dispatch,
+    // and neither errors nor completion return consumed work units.
+    if (!work_admission_->try_consume()) {
+      ++admission_window_.rejected;
+      co_return td::Status::Error(ErrorCode::notready, "external message admission work budget exhausted");
+    }
   }
 
   size_t worker = next_checker_++ % checkers_.size();
@@ -389,6 +421,10 @@ std::vector<std::pair<std::string, std::string>> ExtMessagePool::prepare_stats()
                                                               << " deleted:" << applied_ext_msgs_deleted_);
   vec.emplace_back("ext_msg_admission_bytes",
                    PSTRING() << "used:" << admission_budget_->used() << " limit:" << admission_budget_->limit());
+  if (work_admission_) {
+    vec.emplace_back("ext_msg_admission_work", PSTRING() << "available:" << work_admission_->available()
+                                                       << " supported:" << work_profile_supported_);
+  }
   return vec;
 }
 

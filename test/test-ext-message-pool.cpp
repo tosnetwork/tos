@@ -186,7 +186,10 @@ class VmExecutionCounter final : public td::LogInterface {
  public:
   unsigned starts{0}, finishes{0};
   std::string messages;
-  void append(td::CSlice message, int) override {
+  void append(td::CSlice message, int level) override {
+    if (level <= VERBOSITY_NAME(ERROR)) {
+      td::default_log_interface->append(message, level);
+    }
     const auto text = message.str();
     starts += text.find("starting VM") != std::string::npos;
     finishes += text.find("VM terminated with exit code") != std::string::npos;
@@ -245,4 +248,99 @@ TEST(ExtMessageChecker, RejectedContractExecutesVmExactlyOnce) {
   EXPECT_EQ(counter.finishes, 1u);
 }
 }  // namespace
+}  // namespace tos::validator
+
+namespace tos::validator {
+namespace {
+void exercise_work_dispatch(bool mismatched_config) {
+  ASSERT_TRUE(vm::init_vm().is_ok());
+  auto file = td::read_file((std::filesystem::path(__FILE__).parent_path() /
+                            "pq-native/data/c04-pq-genesis.boc").string());
+  ASSERT_TRUE(file.is_ok());
+  auto decoded = vm::std_boc_deserialize(file.move_as_ok());
+  ASSERT_TRUE(decoded.is_ok());
+  auto root = decoded.move_as_ok();
+  BlockIdExt id{masterchainId, shardIdAll, 0, root->get_hash().bits(), FileHash::zero()};
+  auto loaded = MasterchainStateQ::fetch(id, td::BufferSlice{}, root);
+  ASSERT_TRUE(loaded.is_ok());
+  td::Ref<MasterchainState> state = loaded.move_as_ok();
+  auto config = block::ConfigInfo::extract_config(root, id, 0xFFFF);
+  ASSERT_TRUE(config.is_ok());
+  StdSmcAddress destination;
+  ASSERT_TRUE(vm::load_cell_slice(config.ok()->get_config_param(0)).fetch_bits_to(destination));
+  auto rejected_root = vm::CellBuilder().store_long(2, 2).store_zeroes(2)
+      .store_long(2, 2).store_zeroes(1).store_long(-1, 8)
+      .store_bits(destination.cbits(), 256).store_zeroes(4 + 1 + 1).finalize();
+  auto rejected_message = vm::std_boc_serialize(rejected_root);
+  ASSERT_TRUE(rejected_message.is_ok());
+  VmExecutionCounter counter;
+  auto previous_log = td::log_interface;
+  auto previous_level = GET_VERBOSITY_LEVEL();
+  td::log_interface = &counter;
+  SET_VERBOSITY_LEVEL(VERBOSITY_NAME(DEBUG));
+  SCOPE_EXIT {
+    td::log_interface = previous_log;
+    SET_VERBOSITY_LEVEL(previous_level);
+  };
+  ExtMessageWorkProfile profile;
+  profile.config_root = config.ok()->get_root_cell()->get_hash().bits();
+  if (mismatched_config) {
+    profile.config_root.data()[0] ^= 1;
+  }
+  profile.capacity = 2;
+  profile.refill_units = 1;
+  profile.refill_interval_ns = std::numeric_limits<std::int64_t>::max();
+  profile.attempt_units = 1;
+  profile.max_bytes = 65535;
+  profile.max_depth = 512;
+  auto work = ExtMessageWorkAdmission::create(profile);
+  ASSERT_TRUE(work.is_ok());
+  auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<td::Unit> {
+    auto pool = td::actor::create_actor<ExtMessagePool>("work-budget", td::Ref<ValidatorManagerOptions>{},
+        td::actor::ActorId<ValidatorManager>{}, bytes, work.move_as_ok());
+    co_await td::actor::ask(pool.get(), &ExtMessagePool::update_last_masterchain_state, state);
+    for (unsigned i = 0; i < 4; ++i) {
+      td::optional<PublicKeyHash> peer;
+      if (i % 2) {
+        auto hash = td::Bits256::zero();
+        hash.data()[0] = static_cast<unsigned char>(i);
+        peer = PublicKeyHash{hash};
+      }
+      auto result = co_await td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
+          i == 0 ? rejected_message.ok().clone() : td::BufferSlice{"not a bag of cells"}, 0, false, peer).wrap();
+      ASSERT_TRUE(result.is_error());
+      if (mismatched_config) {
+        EXPECT_EQ(result.error().message(), "external admission configuration is outside the work profile");
+      } else if (i == 0) {
+        EXPECT(result.error().message().str().find("External message was not accepted") != std::string::npos);
+      } else if (i == 1) {
+        EXPECT(result.error().message().str().find("cannot deserialize bag-of-cells") != std::string::npos);
+      } else {
+        EXPECT_EQ(result.error().message(), "external message admission work budget exhausted");
+      }
+      EXPECT_EQ(bytes->used(), 0u);
+    }
+    auto stats = co_await td::actor::ask(pool.get(), &ExtMessagePool::prepare_stats);
+    bool observed = false;
+    for (const auto& stat : stats) {
+      if (stat.first == "ext_msg_admission_work") {
+        EXPECT_EQ(stat.second, mismatched_config ? "available:2 supported:false" : "available:0 supported:true");
+        observed = true;
+      }
+    }
+    EXPECT(observed);
+    EXPECT_EQ(counter.starts, mismatched_config ? 0u : 1u);
+    EXPECT_EQ(counter.finishes, mismatched_config ? 0u : 1u);
+    co_return td::Unit{};
+  });
+}
+}  // namespace
+TEST(ExtMessagePool, WorkBudgetChargesFailuresAcrossPeerAndLocalSources) {
+  exercise_work_dispatch(false);
+}
+TEST(ExtMessagePool, WorkBudgetRejectsUnmatchedConfigurationWithoutDispatch) {
+  exercise_work_dispatch(true);
+}
 }  // namespace tos::validator
