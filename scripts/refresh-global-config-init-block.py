@@ -20,13 +20,15 @@ copy:
 It refuses unless:
 
   * the input names a well-formed masterchain zero state, and the node's zero
-    state is exactly that one (workchain, root hash and file hash);
+    state is exactly that one (workchain, seqno 0, root hash and file hash);
   * every block id the node returns is a well-formed masterchain id, and the
     two answers for the key block (lookupBlock and getBlockHeader) agree on
     its full id;
-  * the chosen block's header says it is a key block and carries the global
-    id the operator expects;
-  * the new init block is not older than the one the input already has.
+  * the chosen block's header says it is a key block, and every header read
+    (the last block's included) carries the global id the operator expects;
+  * a key block at the height of the last block is that same block;
+  * the new init block is not older than the one the input already has, and
+    if it is at the same height it is the same block (full id, not height).
 
 The node is trusted, not checked: nothing here verifies a proof. Point it at a
 node you operate and have already compared, on the full block id, with a
@@ -145,6 +147,14 @@ def require_object(value: Any, what: str) -> dict[str, Any]:
     return value
 
 
+def check_global_id(header: dict[str, Any], seqno: int, global_id: int) -> None:
+    header_global_id = require_int(header.get("global_id"), f"global_id of block {seqno}")
+    if header_global_id != global_id:
+        raise RefreshError(
+            f"block {seqno} carries global id {header_global_id}, expected {global_id}"
+        )
+
+
 def header_of(rpc: Rpc, seqno: int) -> tuple[dict[str, Any], dict[str, Any]]:
     header = require_object(
         rpc("getBlockHeader", workchain=MASTERCHAIN, shard=str(MASTERCHAIN_SHARD), seqno=seqno),
@@ -162,13 +172,15 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
     zero_state = masterchain_id(validator.get("zero_state"), "validator.zero_state")
     if zero_state["seqno"] != 0:
         raise RefreshError(f"validator.zero_state has seqno {zero_state['seqno']}, not 0")
-    current = validator.get("init_block")
-    current_seqno = 0
-    if current is not None:
-        current_seqno = masterchain_id(current, "validator.init_block")["seqno"]
+    current = None
+    if validator.get("init_block") is not None:
+        current = masterchain_id(validator.get("init_block"), "validator.init_block")
+    current_seqno = current["seqno"] if current is not None else 0
 
     info = require_object(rpc("getMasterchainInfo"), "getMasterchainInfo")
     node_zero = masterchain_id(info.get("init"), "getMasterchainInfo.init")
+    if node_zero["seqno"] != 0:
+        raise RefreshError(f"the node's zero state has seqno {node_zero['seqno']}, not 0")
     for field in ("root_hash", "file_hash"):
         if node_zero[field] != zero_state[field]:
             raise RefreshError(
@@ -182,6 +194,9 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
         raise RefreshError(
             f"getBlockHeader({last['seqno']}) and getMasterchainInfo disagree on the last block"
         )
+    # Every header the node returns must belong to the expected network, the
+    # zero-state path included.
+    check_global_id(last_header, last["seqno"], global_id)
     if last_header.get("is_key_block") is True:
         key_seqno = last["seqno"]
     else:
@@ -213,12 +228,22 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
             )
         if key_header.get("is_key_block") is not True:
             raise RefreshError(f"block {key_seqno} is not a key block")
-        header_global_id = require_int(key_header.get("global_id"), "global_id")
-        if header_global_id != global_id:
+        check_global_id(key_header, key_seqno, global_id)
+        # The last block was already identified in full; a key block at the
+        # same height must be that very block, not another one at that height.
+        if key_seqno == last["seqno"] and looked_up != last:
             raise RefreshError(
-                f"block {key_seqno} carries global id {header_global_id}, expected {global_id}"
+                f"block {key_seqno} as looked up is not the last block getMasterchainInfo named"
             )
         init_block = looked_up
+
+    # Heights alone never decide: an existing init block at the same height must
+    # be the same block, or the node and the config are on different chains.
+    if current is not None and init_block["seqno"] == current["seqno"] and init_block != current:
+        raise RefreshError(
+            f"the config's init block {current['seqno']} and the node's block at that height "
+            f"differ in their hashes; the node is on another chain or the config is wrong"
+        )
 
     result = json.loads(json.dumps(config))
     result["validator"]["init_block"] = init_block

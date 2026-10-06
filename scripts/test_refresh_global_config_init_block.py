@@ -88,6 +88,9 @@ class FakeChain:
         # Hooks that let a test make one answer lie.
         self.lookup_override: dict[int, dict[str, Any]] = {}
         self.header_override: dict[int, dict[str, Any]] = {}
+        # Overrides consumed one per getBlockHeader call, before header_override.
+        self.header_sequence: dict[int, list[dict[str, Any]]] = {}
+        self.init_seqno = 0
 
     def prev_key(self, seqno: int) -> int:
         earlier = [k for k in self.key_blocks if k < seqno]
@@ -102,6 +105,7 @@ class FakeChain:
                 "state_root_hash": h("state"),
                 "init": {
                     **rpc_id(0),
+                    "seqno": self.init_seqno,
                     "root_hash": self.zero["root_hash"],
                     "file_hash": self.zero["file_hash"],
                 },
@@ -122,6 +126,9 @@ class FakeChain:
                 "prev_key_block_seqno": self.prev_key(seqno),
             }
             header.update(self.header_override.get(seqno, {}))
+            sequence = self.header_sequence.get(seqno)
+            if sequence:
+                header.update(sequence.pop(0))
             return header
         raise RefreshError(f"unexpected method {method}")
 
@@ -263,6 +270,45 @@ class RefreshTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("is never overwritten", err)
         self.assertEqual(self.output.read_text(), "keep")
+
+    def test_zero_state_path_checks_the_global_id(self) -> None:
+        # No key block yet: the init block is the zero state, but the node's
+        # headers must still carry the expected global id.
+        self.assert_refused(
+            FakeChain(last=12, key_blocks=set()), "carries global id 1, expected 2", global_id=2
+        )
+
+    def test_last_block_of_another_network_is_refused(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.header_override[120] = {"global_id": 7}
+        self.assert_refused(chain, "block 120 carries global id 7, expected 1")
+
+    def test_node_zero_state_with_a_nonzero_seqno_is_refused(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.init_seqno = 9
+        self.assert_refused(chain, "the node's zero state has seqno 9, not 0")
+
+    def test_same_height_init_block_with_other_hashes_is_refused(self) -> None:
+        self.config["validator"]["init_block"] = {**config_id(100), "root_hash": h("other-100")}
+        self.assert_refused(FakeChain(last=120, key_blocks={40, 100}), "differ in their hashes")
+
+    def test_same_height_zero_state_init_block_with_other_hashes_is_refused(self) -> None:
+        self.config["validator"]["init_block"] = {**ZERO, "file_hash": h("other-zf")}
+        self.assert_refused(FakeChain(last=12, key_blocks=set()), "differ in their hashes")
+
+    def test_same_init_block_is_kept(self) -> None:
+        self.config["validator"]["init_block"] = config_id(100)
+        result = self.refreshed(FakeChain(last=120, key_blocks={40, 100}))
+        self.assertEqual(result["validator"]["init_block"], config_id(100))
+
+    def test_key_block_at_the_last_height_must_be_the_last_block(self) -> None:
+        # The first header of block 100 matches getMasterchainInfo; the second
+        # answer and lookupBlock agree with each other on another block 100.
+        chain = FakeChain(last=100, key_blocks={40, 100})
+        other = {**rpc_id(100), "root_hash": h("other-100"), "file_hash": h("other-f100")}
+        chain.lookup_override[100] = other
+        chain.header_sequence[100] = [{}, {"id": other}]
+        self.assert_refused(chain, "is not the last block getMasterchainInfo named")
 
     def test_rpc_error_is_refused(self) -> None:
         def failing(method: str, **params: Any) -> Any:
