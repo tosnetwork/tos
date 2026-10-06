@@ -86,6 +86,7 @@ jobs:
           python test/wallet-v5r2/native_fee_verify_controls.py --output artifacts/context/native-fee-verify-controls
           python test/wallet-v5r2/native_fee_sign_controls.py --output artifacts/context/native-fee-sign-controls
           python test/wallet-v5r2/native_fee_journal_controls.py --output artifacts/context/native-fee-journal-controls
+          python test/wallet-v5r2/fee_seed_binding_controls.py --output artifacts/context/fee-seed-binding-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib internal_fee_signature_matches_independent_vm
           python test/wallet-v5r2/kdf_controls.py --output artifacts/context/wallet-kdf-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos-native-mnemonic

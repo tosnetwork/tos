@@ -2,6 +2,7 @@
 #include "lms-fee.h"
 #include <cstring>
 #include <openssl/crypto.h>
+#include <openssl/sha.h>
 extern "C" {
 #include "hss_derive.h"
 #include "lm_ots.h"
@@ -52,4 +53,56 @@ extern "C" int tos_wallet_lms_fee_sign_reserved(
     return 0;
   }
   return 1;
+}
+
+// Derive a public leaf and authenticate it to enrollment without producing an
+// OTS signature or reserving a leaf. This does not establish signer continuity.
+extern "C" int tos_wallet_lms_fee_bind_seed(
+    const unsigned char* seed, std::size_t seed_size, std::uint32_t leaf,
+    const unsigned char* path, std::size_t path_size,
+    const unsigned char* public_key, std::size_t key_size) noexcept {
+  if (!seed || seed_size != 48 || !path || path_size != 640 ||
+      !public_key || key_size != 60 || leaf >= (1u << 20) ||
+      !tos::pq::lms_fee_worst_compressions(
+          std::string_view(reinterpret_cast<const char*>(public_key), key_size), 32) ||
+      std::memcmp(seed + 32, public_key + 12, 16) != 0) {
+    return 0;
+  }
+  struct seed_derive derive{};
+  if (!hss_seed_derive_init(&derive, 8, 3, seed + 32, seed)) {
+    OPENSSL_cleanse(&derive, sizeof derive);
+    return 0;
+  }
+  hss_seed_derive_set_q(&derive, leaf);
+  unsigned char node[32]{};
+  const bool derived = lm_ots_generate_public_key(3, seed + 32, leaf, &derive, node, sizeof node);
+  hss_seed_derive_done(&derive);
+  OPENSSL_cleanse(&derive, sizeof derive);
+  if (!derived) {
+    OPENSSL_cleanse(node, sizeof node);
+    return 0;
+  }
+  unsigned char input[86]{};
+  std::memcpy(input, public_key + 12, 16);
+  const auto set_index = [&input](std::uint32_t index) {
+    input[16] = static_cast<unsigned char>(index >> 24);
+    input[17] = static_cast<unsigned char>(index >> 16);
+    input[18] = static_cast<unsigned char>(index >> 8);
+    input[19] = static_cast<unsigned char>(index);
+  };
+  std::uint32_t index = (1u << 20) | leaf;
+  set_index(index);
+  input[20] = input[21] = 0x82;
+  std::memcpy(input + 22, node, 32);
+  SHA256(input, 54, node);
+  input[20] = input[21] = 0x83;
+  for (unsigned level = 0; level < 20; ++level) {
+    set_index(index >> 1);
+    const auto* sibling = path + level * 32;
+    std::memcpy(input + 22, (index & 1) ? sibling : node, 32);
+    std::memcpy(input + 54, (index & 1) ? node : sibling, 32);
+    SHA256(input, sizeof input, node);
+    index >>= 1;
+  }
+  return CRYPTO_memcmp(node, public_key + 28, 32) == 0 ? 1 : 0;
 }

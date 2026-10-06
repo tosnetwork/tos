@@ -2646,3 +2646,22 @@ Encrypted fee-seed custody, authenticated tree/path generation, old-device
 revocation and hardware rollback resistance remain separate unfinished gates.
 The caller must also authorize the inner action and establish fee affordability;
 a valid fee signature alone does not establish either condition.
+
+
+### Read-only fee seed enrollment binding
+
+`wallet_pq_signer::fee::verify_seed_and_wipe` verifies a restored fee seed against
+an independently authenticated HSS L1 / LMS H20 / LMOTS W4 public key and a
+640-byte public authentication path. The native backend derives one full LMOTS
+public key, hashes its LMS leaf and walks all twenty authentication nodes to the
+enrolled root. It never produces a message signature; the leaf can already be
+used, and no reservation is needed for this read-only check. It rejects wrong
+seed, identifier, root, path, leaf, profile and lengths. Rust clears the borrowed
+seed on success and rejection. This is the pre-storage binding primitive for
+fee-seed custody, not a restored signer or proof of exclusive device ownership.
+
+The fixture is the existing independently generated public LMS enrollment and
+leaf-12 path. Removal controls require root comparison, fixed-profile checking
+and seed cleanup to fail named assertions. Evidence:
+`test/wallet-v5r2/fee-seed-binding-20261006.json`. Full tree generation and encrypted
+fee-key record lifecycle remain unfinished.

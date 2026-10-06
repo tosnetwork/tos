@@ -2,6 +2,9 @@
 //! Stateless fee signature verification, reusing the native consensus verifier.
 //! This module supplies no LMS signing key, leaf reservation or rollback defense.
 use crate::Rejected;
+#[path = "fee_binding.rs"]
+mod binding;
+pub use binding::verify_seed_and_wipe;
 unsafe extern "C" {
     fn tos_wallet_lms_fee_verify(
         leaf: u32,

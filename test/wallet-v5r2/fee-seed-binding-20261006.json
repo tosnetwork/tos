@@ -1,0 +1,179 @@
+{
+  "base_commit": "c960f1d6600503f7c3a67208e09440b86d8ee304",
+  "scope": "Read-only native fee seed enrollment binding through LMOTS public-key derivation and full H20 authentication path. No signature or leaf consumption; caller seed wiped. Public fixture only; encrypted fee custody and tree generation incomplete.",
+  "semantic_controls": {
+    "root": {
+      "exit": 101,
+      "semantic_witness": "fee binding accepted invalid input 0"
+    },
+    "profile": {
+      "exit": 101,
+      "semantic_witness": "fee binding accepted invalid input 6"
+    },
+    "wipe": {
+      "exit": 101,
+      "semantic_witness": "fee binding retained valid seed"
+    }
+  },
+  "prior_signing_controls": {
+    "verify_output": {
+      "exit": 101,
+      "semantic_witness": "fee primitive accepted bad input 0"
+    },
+    "initial_clear": {
+      "exit": 101,
+      "semantic_witness": "fee primitive leaked rejected output 1"
+    },
+    "failed_clear": {
+      "exit": 101,
+      "semantic_witness": "fee primitive leaked rejected output 0"
+    }
+  },
+  "regression": {
+    "signer": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "wallet-pq-signer",
+        "--features",
+        "vault"
+      ],
+      "exit": 0
+    },
+    "journal": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-signer",
+        "--lib",
+        "native_fee_signing_preserves_proof_reservation_and_seed_cleanup"
+      ],
+      "exit": 0
+    },
+    "fmt": {
+      "command": [
+        "make",
+        "-C",
+        "tosctl/src",
+        "fmt-check"
+      ],
+      "exit": 0
+    },
+    "ruff": {
+      "command": [
+        "/Users/tomisetsu/tos/.venv/bin/ruff",
+        "check",
+        "test/wallet-v5r2/fee_seed_binding_controls.py",
+        "test/wallet-v5r2/native_fee_sign_controls.py"
+      ],
+      "exit": 0
+    }
+  },
+  "results": {
+    "signer": [
+      "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.05s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s"
+    ],
+    "journal": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 257 filtered out; finished in 0.07s"
+    ]
+  },
+  "retention_until": "2027-01-06",
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-seed-binding-controls/baseline.log",
+      "size": 395,
+      "sha256": "b5a8236a0113346bcd4a506b2be785f15a583a8627e48b82e25840c1e12a03a5"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-seed-binding-controls/profile.log",
+      "size": 1046,
+      "sha256": "d0b7f9833a3f3f2a6836e441425d3d7b992bd5bb4302a20e8998e6736cc4a29c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-seed-binding-controls/restored.log",
+      "size": 508,
+      "sha256": "29029ae6c2e91e0735a1cd01ab61ce9cea3c875c1d33615da9e9d63cf63ee0ae"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-seed-binding-controls/results.json",
+      "size": 292,
+      "sha256": "9102f8ab3a683603dcbd16f90b32f29afb79b97f5e2e02cb985a45c7fceca42c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-seed-binding-controls/root.log",
+      "size": 1046,
+      "sha256": "a32bba4cb9787c688d492d70d019773ac651aee3fab0c225c5fbc0766599f360"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-seed-binding-controls/wipe.log",
+      "size": 1559,
+      "sha256": "a481eabfa8d57cefb8f5f2e4928c55872497c8ad114bfbb4646505a6df1727fd"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-regression/fmt.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-regression/journal.log",
+      "size": 4829,
+      "sha256": "7034d28a0cb3d4456b57aa573e54d5c64ddc93a5a279d7668acf75bf6551b6c0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-regression/results.json",
+      "size": 905,
+      "sha256": "c11a430f03ed11d3adfd1ea7b0e3d16b780b8092a43a795bb1688894cb5e3895"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-regression/ruff.log",
+      "size": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-regression/signer.log",
+      "size": 2076,
+      "sha256": "97cff71a4df96223fbf332a2caf004e55af42f1ae3528b704412940ae00e8189"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-sign-controls/baseline.log",
+      "size": 577,
+      "sha256": "8a8c4ae6f13d71e95000ae3c56c541ec6292661549f87cff484299f4fc181bee"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-sign-controls/failed_clear.log",
+      "size": 1265,
+      "sha256": "1cabb2b0b3c3c6971c840b5f531f6a8d27e14ce575d28a1123d3f770cf823c2f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-sign-controls/initial_clear.log",
+      "size": 1265,
+      "sha256": "1c91036cfff806ec6576d89dda5a36184192da8b1f680d789adaad8f2a2751b4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-sign-controls/restored.log",
+      "size": 690,
+      "sha256": "f0523e7294ca776609af9b4781eecb2d96a748b2a9e40de1af56eb1c71be1661"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-sign-controls/results.json",
+      "size": 322,
+      "sha256": "894d5069bb0f0fdc32a388b1479c2ccfad4b1dcabb61d48d2e1ecbb7b470f614"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-binding-sign-controls/verify_output.log",
+      "size": 1785,
+      "sha256": "40a445c7a1ac892c429d710a9538d07c62839d57e180eef75bc12c37bdeae8f7"
+    }
+  ]
+}
