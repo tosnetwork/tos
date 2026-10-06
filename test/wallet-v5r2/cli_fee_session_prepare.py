@@ -259,6 +259,7 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
                 paid,
                 prepared,
                 addresses,
+                source_request=request,
             )
 
     finally:

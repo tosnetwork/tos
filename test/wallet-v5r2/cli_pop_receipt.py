@@ -11,7 +11,9 @@ import cli_sign_primary as shared
 Cell, from_boc, native = shared.Cell, shared.from_boc, shared.native
 
 
-def check_receipts(args, root, common, receipts, addresses, codes, data, *, successor=False):
+def check_receipts(
+    args, root, common, receipts, addresses, codes, data, *, successor=False, continuation=None
+):
     status = (
         "successor_funded_pop_proven_at_checkpoint"
         if successor
@@ -176,6 +178,8 @@ def check_receipts(args, root, common, receipts, addresses, codes, data, *, succ
             )
             + "\n"
         )
+        if continuation is not None:
+            continuation(f"http://127.0.0.1:{server.server_port}")
     finally:
         server.shutdown()
         server.server_close()

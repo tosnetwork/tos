@@ -1,0 +1,70 @@
+{
+  "base_commit": "0e030e541ef394563229dea2db18394f0666f7c8",
+  "scope": "Joint current/successor journal sessions, proof-bound current-SLH migration signing and actual local native wallet installation. Source contracts unchanged; not a complete released wallet.",
+  "command": "source <artifacts>/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_migration_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fee-session-tree <artifacts>/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --successor-fee-fixture <artifacts>/20261006-successor-fee-recovery-fixture --fixture <artifacts>/20261006-native-fee-integration/native/sdk-genesis.json --output <fresh-directory>",
+  "runner_exit": 0,
+  "semantic_deletions": {
+    "roles": "migration accepted duplicate_role: actual fee_message_cached",
+    "intent": "migration fee signature exported without retained intent"
+  },
+  "final_regression": "After the controls, strengthen competing-process rejection to require the OS lock error and retain stderr. Full migration fixture then passed again. The executed pre-strengthening helper is retained with the controls.",
+  "final_commands": [
+    "cli_sign_primary.py --fee-session-migration with the same fixture/driver arguments",
+    "cli_sign_primary.py --fee-session-prepare with the same fixture/driver arguments"
+  ],
+  "final_exits": [
+    0,
+    0
+  ],
+  "native_results": [
+    "both successor accounts deployed",
+    "3 funded successor POPs and 9 authenticated-history receipt cases",
+    "current fee leaf 5 signs migration; successor readiness leaf not consumed",
+    "identical cached retry; neither journal changes on retry",
+    "wallet installs exact successor module/metadata",
+    "mode and retirement preserved, epoch advanced and role counters reset",
+    "unbroadcast successor leaf 7 exhausts local slot; unchanged chain state cannot override it",
+    "old initial enrollment refuses subsequent signing"
+  ],
+  "refusals": {
+    "duplicate_role": {
+      "status": "request_refused",
+      "reason": "migration requires one POP for each key",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "wrong_challenge": {
+      "status": "request_refused",
+      "reason": "POP challenge differs from request",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "history_budget": {
+      "status": "request_refused",
+      "reason": "receipt history budget exhausted without message",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "local_exhaustion": {
+      "status": "request_refused",
+      "reason": "reservation: WaitUntil(1791284455)",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "old_enrollment": {
+      "status": "request_refused",
+      "reason": "wallet installed module/fee tuple mismatch",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    }
+  },
+  "writer_exclusion": "Error: command failed: Resource temporarily unavailable (os error 35)",
+  "limits": [
+    "Mocked account proof acquisition and loopback HTTP history adapter",
+    "Diagnostic credit 20000; default 10000 still fails",
+    "Post-migration client enrollment/export/spend and real broadcast unfinished",
+    "Public test custody is not physical device independence",
+    "Historical/cross-wallet LMS reuse tracking, device takeover and mobile/release gates remain open"
+  ],
+  "artifact": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-migration.tar.gz",
+    "bytes": 1662497,
+    "sha256": "5553dc93da565e0c13f914808a35bf933d269dea317b6df073254645f71cb9f3",
+    "retain_until": "2027-01-06"
+  }
+}

@@ -30,14 +30,14 @@ if scenario["mode"] == "refusal":
     sys.exit(1)
 now = int(time.time())
 account = scenario["accounts"][request["account"]]
-account["gen_utime"] = now - (120 if scenario["mode"] == "stale_account" else 0)
+account["gen_utime"] = scenario.get("checkpoint_time", now) - (120 if scenario["mode"] == "stale_account" else 0)
 target = dict(workchain=-1, shard="8000000000000000", seqno=7,
     root_hash="11"*32, file_hash="22"*32, gen_utime=now)
 # Fix both observations to the first read's time even if a second ticks over.
 stamp = root / "stamp"
 if request["mode"] == "live":
     stamp.write_text(str(now))
-target["gen_utime"] = int(stamp.read_text())
+target["gen_utime"] = scenario.get("checkpoint_time", int(stamp.read_text()))
 if scenario["mode"] == "other_checkpoint" and request["mode"] == "historical":
     target["root_hash"] = "33"*32
 out = dict(status="verified", interface="tos-proof-verify/1", mode=request["mode"],

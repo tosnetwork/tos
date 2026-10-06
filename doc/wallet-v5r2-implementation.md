@@ -3510,3 +3510,50 @@ match both receipts and the live successor vault to that authenticated checkpoin
 and obtain continuity from the still-locked successor journal. Historical POP
 verification alone does not establish current fee custody or available leaves.
 Regression evidence is indexed in `test/wallet-v5r2/owned-pop-receipts-20261006.json`.
+
+### Joint fee sessions and client migration (2026-10-06)
+
+The initial fee-session process now accepts `attach_successor`, `successor` and
+`migrate`. Attachment takes `successor_manifest`, `expected_template_wallet` and
+an explicit `custody` object containing the successor journal/cache paths and
+fee, PRIMARY and RESCUE Vault file/record/key-file paths. It reconstructs the
+pinned successor, validates its fee tree and opens a separate exclusive journal.
+Only one successor can be attached; both journals remain held until process exit.
+Opening the new journal retains the next-slot restore barrier. The nested
+`successor.request` accepts the existing POP/status/retry operations and cannot
+sign wallet authority or attach another session.
+
+After both funded successor POPs, `migrate.evidence` contains `primary_pop` and
+`rescue_pop` retained-file objects (`pop_request`, `external_message`,
+`fee_before_account`, `module_before_account`), `history` settings
+(`transaction_rpc_url`, `history_limit`, `timeout_seconds`),
+`valid_for_seconds`, decimal `value_nanotos` and a new `output_dir`.
+The client fetches current wallet/module state and live successor fee state,
+verifies both exact POP histories, and obtains local continuity from the held
+successor journal. The SDK enforces one POP per role, matching authenticated
+checkpoints, current policy where READY requires it, active-key freshness,
+receipt age and available successor capacity. No supplied JSON counter or
+continuity assertion substitutes for that journal.
+
+Current SLH custody signs the migration through `VaultKey::sign_migration`.
+The source fee journal then pays the exact rescue submission: the complete fee
+intent is persisted before LMS reservation/signing, and ordinary source-route
+`retry` exports identical cached bytes without another reservation. Migration
+signing does not consume a successor readiness leaf. The command reports a
+cached fee message, never a completed migration or broadcast.
+
+The local native fixture covers preparation and deployment of both successor
+accounts, three funded POPs, authenticated HTTP history lookup, joint-session
+migration, exact retry and actual installation of both successor descriptors at
+the wallet. It checks mode/retirement preservation, epoch advance and counter
+reset. An additional unbroadcast successor POP consumes the last slot leaf;
+another migration then fails despite unchanged on-chain capacity. The installed
+wallet also makes the old initial enrollment refuse further signing. This last
+unbroadcast probe is an exhaustion test, not post-migration fee readiness.
+The fixture uses mocked account-proof acquisition, public test custody and
+explicit diagnostic gas credit 20,000. It does not validate real-network proofs,
+broadcast, default-credit admission, physically independent custody or a complete
+post-migration spend/backup/device workflow.
+
+The role and persisted-intent sensitivity checks and retained native executions
+are indexed in `test/wallet-v5r2/cli-migration-20261006.json`.

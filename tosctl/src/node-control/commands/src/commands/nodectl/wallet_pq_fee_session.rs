@@ -15,9 +15,13 @@ use contracts::{
 };
 use std::io::{BufRead, Read, Write};
 
+#[path = "wallet_pq_migration_session.rs"]
+mod migration;
+use migration::{HeldSuccessor, MigrationInput, SuccessorCustody};
+
 #[derive(clap::Args, Clone)]
 #[command(
-    about = "Hold an initial rescue-fee journal session; JSON-line status/lock/pop/prepare/retry/quit, no broadcast"
+    about = "Hold an initial rescue-fee journal session; JSON-line status/lock/pop/prepare/attach_successor/successor/migrate/retry/quit, no broadcast"
 )]
 pub struct PqFeeSessionInitialCmd {
     #[command(flatten)]
@@ -58,6 +62,17 @@ pub struct PqFeeSessionInitialCmd {
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
     Status,
+    AttachSuccessor {
+        successor_manifest: PathBuf,
+        expected_template_wallet: String,
+        custody: SuccessorCustody,
+    },
+    Successor {
+        request: Box<Request>,
+    },
+    Migrate {
+        evidence: MigrationInput,
+    },
     Lock {
         valid_for_seconds: u32,
         value_nanotos: String,
@@ -164,20 +179,8 @@ impl PqFeeSessionInitialCmd {
             (None, None) => context,
             _ => anyhow::bail!("successor route requires manifest and independent template pin"),
         };
-        let view = context.fee().await?;
-        let key = *view.fee_public_key();
-        let tree_file = self.fee_tree_cache.clone();
-        let tree = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let file = std::fs::File::open(tree_file)?;
-            anyhow::ensure!(
-                file.metadata()?.is_file() && file.metadata()?.len() == 64 * 1024 * 1024 + 68,
-                "fee tree cache size/type mismatch"
-            );
-            Ok(wallet_pq_signer::fee::FeeTree::read_cache(file, &key)?)
-        })
-        .await??;
-        let view = context.fee().await?;
-        let mut journal = FeeJournal::open_proven(&self.journal_dir, &view, now()?)?;
+        let (tree, mut journal) = self.open_fee_route(&context).await?;
+        let mut successor = None;
         println!(
             "{}",
             serde_json::json!({"status":"fee_session_open", "scope":"new signatures remain subject to next-slot recovery and fresh proofs"})
@@ -224,7 +227,7 @@ impl PqFeeSessionInitialCmd {
             let result = tokio::select! {
                 biased;
                 _ = cancelled.changed() => break,
-                result = self.process(request, &context, &mut journal, &tree) => result,
+                result = self.dispatch(request, &context, &mut journal, &tree, &mut successor) => result,
             };
             let report = match result {
                 Ok(value) => value,
@@ -236,6 +239,75 @@ impl PqFeeSessionInitialCmd {
             std::io::stdout().flush()?;
         }
         Ok(())
+    }
+
+    async fn open_fee_route(
+        &self,
+        context: &InitialContext,
+    ) -> anyhow::Result<(wallet_pq_signer::fee::FeeTree, FeeJournal)> {
+        let view = context.fee().await?;
+        let key = *view.fee_public_key();
+        let tree_file = self.fee_tree_cache.clone();
+        let tree = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let file = std::fs::File::open(tree_file)?;
+            anyhow::ensure!(
+                file.metadata()?.is_file() && file.metadata()?.len() == 64 * 1024 * 1024 + 68,
+                "fee tree cache size/type mismatch"
+            );
+            Ok(wallet_pq_signer::fee::FeeTree::read_cache(file, &key)?)
+        })
+        .await??;
+        let view = context.fee().await?;
+        let journal = FeeJournal::open_proven(&self.journal_dir, &view, now()?)?;
+        Ok((tree, journal))
+    }
+
+    async fn dispatch(
+        &self,
+        request: Request,
+        context: &InitialContext,
+        journal: &mut FeeJournal,
+        tree: &wallet_pq_signer::fee::FeeTree,
+        successor: &mut Option<HeldSuccessor>,
+    ) -> anyhow::Result<serde_json::Value> {
+        match request {
+            Request::AttachSuccessor { successor_manifest, expected_template_wallet, custody } => {
+                anyhow::ensure!(
+                    self.successor_manifest.is_none(),
+                    "attach requires the current fee route"
+                );
+                anyhow::ensure!(successor.is_none(), "successor session already attached");
+                *successor = Some(
+                    HeldSuccessor::open(
+                        self,
+                        successor_manifest,
+                        expected_template_wallet,
+                        custody,
+                    )
+                    .await?,
+                );
+                Ok(
+                    serde_json::json!({"status":"successor_session_attached", "scope":"journal held; restore barrier and fresh proofs still apply"}),
+                )
+            }
+            Request::Successor { request } => {
+                let held = successor
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("successor session not attached"))?;
+                held.command.process(*request, &held.context, &mut held.journal, &held.tree).await
+            }
+            Request::Migrate { evidence } => {
+                anyhow::ensure!(
+                    self.successor_manifest.is_none(),
+                    "migration requires the current fee route"
+                );
+                let held = successor
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("successor session not attached"))?;
+                self.migrate(context, journal, tree, held, evidence).await
+            }
+            request => self.process(request, context, journal, tree).await,
+        }
     }
 
     async fn process(
@@ -298,6 +370,11 @@ impl PqFeeSessionInitialCmd {
                 };
                 preparation = Some((successor, amounts));
                 (None, valid_for_seconds, value_nanotos, output_dir)
+            }
+            Request::AttachSuccessor { .. }
+            | Request::Successor { .. }
+            | Request::Migrate { .. } => {
+                anyhow::bail!("nested session control is not permitted")
             }
             Request::Quit => anyhow::bail!("session already closing"),
         };

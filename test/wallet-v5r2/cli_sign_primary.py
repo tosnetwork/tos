@@ -66,10 +66,13 @@ def main():
     parser.add_argument("--fee-pop-receipts", action="store_true")
     parser.add_argument("--fee-session-prepare", action="store_true")
     parser.add_argument("--successor-fee-fixture", type=Path)
+    parser.add_argument("--fee-session-migration", action="store_true")
     parser.add_argument("--expect-fee-reuse-refusal", action="store_true")
     args = parser.parse_args()
     if args.expect_fee_reuse_refusal:
         args.fee_session_prepare = True
+    if args.fee_session_migration:
+        assert args.successor_fee_fixture, "migration test needs successor custody"
     if args.successor_fee_fixture:
         args.fee_session_prepare = True
     if args.fee_session_prepare:

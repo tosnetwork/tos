@@ -26,6 +26,7 @@ def check_successor_pops(
     paid,
     prepared,
     original_addresses,
+    source_request=None,
 ):
     vector = json.loads((args.successor_fee_fixture / "native-fee-recovery.json").read_text())
     scenario_path = root / "scenario.json"
@@ -173,9 +174,46 @@ def check_successor_pops(
         encryption,
     ]
     err = (args.output / "successor-session.stderr").open("w")
-    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err)
+    process = None
     selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
+    if args.fee_session_migration:
+        custody = {}
+        for i in range(command.index("--journal-dir"), len(command), 2):
+            custody[command[i][2:].replace("-", "_")] = command[i + 1]
+        attached = source_request(
+            dict(
+                command="attach_successor",
+                successor_manifest=str(manifest),
+                expected_template_wallet=pin,
+                custody=custody,
+            )
+        )
+        assert attached["status"] == "successor_session_attached", attached
+        duplicate = source_request(
+            dict(
+                command="attach_successor",
+                successor_manifest=str(manifest),
+                expected_template_wallet=pin,
+                custody=custody,
+            )
+        )
+        assert (
+            duplicate["status"] == "request_refused" and "already attached" in duplicate["reason"]
+        )
+        competing = subprocess.run(
+            command, input=b'{"command":"quit"}\n', capture_output=True, timeout=30
+        )
+        (args.output / "successor-competing.stderr").write_bytes(competing.stderr)
+        assert (
+            competing.returncode != 0
+            and b"Resource temporarily unavailable" in competing.stderr
+            and b"fee_session_open" not in competing.stdout
+        ), "attached successor journal did not exclude another process"
+    else:
+        process = subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err
+        )
+        selector.register(process.stdout, selectors.EVENT_READ)
     emu = None
     reports = []
 
@@ -188,12 +226,17 @@ def check_successor_pops(
         return result
 
     def request(value):
+        if args.fee_session_migration:
+            result = source_request(dict(command="successor", request=value))
+            reports.append(result)
+            return result
         process.stdin.write(json.dumps(value).encode() + b"\n")
         process.stdin.flush()
         return read()
 
     try:
-        assert read()["status"] == "fee_session_open"
+        if process is not None:
+            assert read()["status"] == "fee_session_open"
         before = (journal / "fee-reservations").read_bytes()
         refused = request(
             dict(
@@ -304,7 +347,36 @@ def check_successor_pops(
                     json.dumps(outcome, indent=2)
                 )
             (args.output / f"successor-pop-{index}-message.boc").write_bytes(message.boc())
-        check_receipts(args, root, common + route, receipts, addresses, codes, data, successor=True)
+        continuation = None
+        if args.fee_session_migration:
+            from cli_migration_session import check_migration
+
+            def continuation(url):
+                return check_migration(
+                    args,
+                    root,
+                    source_request,
+                    request,
+                    receipts,
+                    url,
+                    emu,
+                    scenario_path,
+                    original_addresses,
+                    successor,
+                    journal,
+                )
+
+        check_receipts(
+            args,
+            root,
+            common + route,
+            receipts,
+            addresses,
+            codes,
+            data,
+            successor=True,
+            continuation=continuation,
+        )
         (args.output / "successor-template.json").write_bytes(manifest.read_bytes())
         (args.output / "successor-session-reports.json").write_text(json.dumps(reports, indent=2))
         print(
@@ -313,7 +385,7 @@ def check_successor_pops(
     finally:
         if emu is not None:
             emu.close()
-        if process.poll() is None:
+        if process is not None and process.poll() is None:
             process.stdin.write(b'{"command":"quit"}\n')
             process.stdin.flush()
             assert process.wait(timeout=10) == 0
