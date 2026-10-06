@@ -133,6 +133,13 @@ def main() -> int:
         re.search(rf"(?m)^\s*run: {re.escape(rotation_ctest)}\s*$", text) is not None,
         "multi-key PQ consensus custody and key schedule gate is absent",
     )
+    seam_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error -R '^pq-signer-no-test-clock$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(seam_ctest)}\s*$", text) is not None,
+        "production PQ signer test-clock seam gate is absent",
+    )
     require(
         "uv run python test/integration/test_pq_consensus_key_rotation.py" in text,
         "real-engine PQ consensus key rotation gate is absent",

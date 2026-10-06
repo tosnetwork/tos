@@ -93,6 +93,12 @@ class PqConsensusCustody {
       return td::Status::Error("the consensus key store's signing deadline differs from its window");
     }
     const auto key_id = key_id_of(*store);
+    // A key this process has already seen expire stays retired: removing it and adding it
+    // again, from the same seed, does not bring it back.
+    if (tos::pq::consensus_key_retired(bytes_of(key_id))) {
+      return td::Status::Error("post-quantum consensus key " + key_id.value.to_hex() +
+                               " was retired in this process when it expired; it cannot be held again");
+    }
     std::vector<tos::pq::ConsensusKeyWindow> schedule;
     auto it = stores_.find(validator_id);
     if (it != stores_.end()) {
@@ -171,8 +177,7 @@ class PqConsensusCustody {
       return false;
     }
     auto held = it->second.find(key_id);
-    return held != it->second.end() && held->second.store &&
-           !tos::pq::consensus_key_expired(held->second.expire_at, now);
+    return held != it->second.end() && held->second.store && !expired(held->first, held->second, now);
   }
   // The identities of the keys usable for this validator at `now`.
   std::vector<tos::ConsensusKeyId> usable_key_ids(const tos::ValidatorId& validator_id, td::uint32 now) const {
@@ -182,7 +187,7 @@ class PqConsensusCustody {
       return out;
     }
     for (const auto& [key_id, held] : it->second) {
-      if (held.store && !tos::pq::consensus_key_expired(held.expire_at, now)) {
+      if (held.store && !expired(key_id, held, now)) {
         out.push_back(key_id);
       }
     }
@@ -211,7 +216,7 @@ class PqConsensusCustody {
     if (entry == it->second.end() || !entry->second.store) {
       return nullptr;
     }
-    if (tos::pq::consensus_key_expired(entry->second.expire_at, now)) {
+    if (expired(entry->first, entry->second, now)) {
       return nullptr;
     }
     const auto& held = entry->second.store->consensus_key();
@@ -245,9 +250,11 @@ class PqConsensusCustody {
     }
     std::vector<tos::pq::ConsensusKeyWindow> schedule;
     std::vector<std::shared_ptr<const tos::pq::ValidatorPQKeyStore>> stores;
+    std::vector<bool> retired;
     for (const auto& [key_id, held] : it->second) {
       schedule.push_back(window_of(key_id, held));
       stores.push_back(held.store);
+      retired.push_back(expired(key_id, held, now));
     }
     // Unloaded (expired) keys take part in the choice and, chosen, refuse: they have no
     // store, and their place in the schedule is never handed to another key.
@@ -266,19 +273,32 @@ class PqConsensusCustody {
       return td::Status::Error("the consensus key scheduled for election date " + std::to_string(election_date) +
                                " expired and is not loaded");
     }
-    if (stores[index]->expired_at(now)) {
+    if (index < retired.size() && retired[index]) {
       return td::Status::Error("the consensus key scheduled for election date " + std::to_string(election_date) +
                                " has expired");
     }
     return stores[index];
   }
 
-  // Why removing `key_id` at `now` must be refused, or nothing. One clock reading decides
-  // everything: the key itself is not refused once expired, and is refused while unexpired
-  // if any of `sets` lists it for this validator; and the keys that would remain must
-  // include one unexpired at that same `now`, so a removal admitted a moment before a
-  // remaining key's deadline is refused if it takes effect after it. The validator manager
-  // asks this at the moment it removes the key, after any check the caller made earlier.
+  // Whether a held key is expired for every purpose at `now` (see `expired`): the one
+  // question every caller asks before treating a key as removable or usable, so that a
+  // key retired in this process is never judged by its timestamp alone.
+  bool key_expired(const tos::ValidatorId& validator_id, const tos::ConsensusKeyId& key_id, td::uint32 now) const {
+    auto it = stores_.find(validator_id);
+    if (it == stores_.end()) {
+      return false;
+    }
+    auto held = it->second.find(key_id);
+    return held != it->second.end() && expired(held->first, held->second, now);
+  }
+
+  // Why removing `key_id` at `now` must be refused, or nothing. One clock reading, and the
+  // process's retired keys, decide everything: the key itself is not refused once expired
+  // or retired, and is refused while usable if any of `sets` lists it for this validator;
+  // and the keys that would remain must include one usable at that same `now`, so a
+  // removal admitted a moment before a remaining key's deadline is refused if it takes
+  // effect after it. The validator manager asks this at the moment it removes the key,
+  // after any check the caller made earlier.
   std::optional<std::string> removal_refusal(const tos::ValidatorId& validator_id, const tos::ConsensusKeyId& key_id,
                                              td::uint32 now,
                                              const std::vector<std::vector<tos::ValidatorDescr>>& sets) const {
@@ -286,7 +306,7 @@ class PqConsensusCustody {
     if (it == stores_.end() || it->second.count(key_id) == 0) {
       return std::string("no such post-quantum consensus key is custodied");
     }
-    if (!tos::pq::consensus_key_expired(it->second.at(key_id).expire_at, now)) {
+    if (!expired(key_id, it->second.at(key_id), now)) {
       for (const auto& members : sets) {
         for (const auto& descr : members) {
           if (descr.is_pq() && descr.validator_id == validator_id && descr.key_id == key_id) {
@@ -297,7 +317,7 @@ class PqConsensusCustody {
       }
     }
     for (const auto& [held_id, held] : it->second) {
-      if (held_id != key_id && held.store && !tos::pq::consensus_key_expired(held.expire_at, now)) {
+      if (held_id != key_id && held.store && !expired(held_id, held, now)) {
         return std::nullopt;
       }
     }
@@ -315,6 +335,21 @@ class PqConsensusCustody {
   }
 
  private:
+  // Expired for every purpose: this process has already seen it expire
+  // (`tos::pq::consensus_key_retired`), whatever `now` says; or its window has closed at
+  // the caller's `now`, which retires it from then on -- with that same reading, never a
+  // second one -- so that a clock stepped back afterwards does not bring it back.
+  static bool expired(const tos::ConsensusKeyId& key_id, const HeldKey& held, td::uint32 now) {
+    const auto id = bytes_of(key_id);
+    if (tos::pq::consensus_key_retired(id)) {
+      return true;
+    }
+    if (tos::pq::consensus_key_expired(held.expire_at, now)) {
+      tos::pq::retire_expired_consensus_key(id);
+      return true;
+    }
+    return false;
+  }
   static tos::pq::ConsensusKeyIdBytes bytes_of(const tos::ConsensusKeyId& key_id) {
     tos::pq::ConsensusKeyIdBytes out{};
     std::memcpy(out.data(), key_id.value.data(), out.size());

@@ -307,7 +307,10 @@ would leave only expired keys.
 including in a validator group that is already running with it. A signature
 whose computation crosses the deadline is discarded, and once the node has seen
 the key expired it never signs with it again in that process, even if the clock
-is stepped back. The deadline is read from the host's wall clock, so clock skew
+is stepped back, a new copy of the seed is added from another file, or the key
+is removed and added again. That memory lasts for the life of the process only:
+a node restarted with its wall clock rolled back before a configured key's
+`expire_at` loads that key again by its window. The deadline is read from the host's wall clock, so clock skew
 shifts it by the skew: run NTP. Set it after
 the `utime_until` of every set that lists the key, or leave it at 0 and remove
 the key instead (step 7).

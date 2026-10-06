@@ -124,6 +124,9 @@ jobs:
       - name: Check several PQ consensus keys held for one validator
         run: ctest --test-dir build --output-on-failure -R '^test-pq-consensus-key-rotation$'
 
+      - name: Check the production PQ signer has no test clock seam
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^pq-signer-no-test-clock$'
+
       # C04 exercises the real Manager proof/apply path and cold RootDb
       # readback, including stale-context recovery and expiry controls.
       - name: Check real PQ predecessor and BlockProof fixture

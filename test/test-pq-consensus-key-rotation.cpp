@@ -30,7 +30,9 @@
 //     election is signed with B, and that signature verifies under B and not under A; a
 //     set listing a key the node does not hold, or holds expired, gets no signer at all.
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -38,11 +40,14 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <sys/wait.h>
 #include <thread>
+#include <unistd.h>
 #include <variant>
 #include <vector>
 
 #include "crypto/pq/consensus-config-json.h"
+#include "crypto/pq/consensus-key-file.h"
 #include "crypto/pq/consensus-key-schedule.h"
 #include "crypto/pq/mldsa44.h"
 #include "crypto/pq/pq-consensus.h"
@@ -283,24 +288,38 @@ void custody_checks() {
         validator::pq_signer_for_set(set_with_a, ValidatorId{filled(0x53)}, custody, now).is_error());
 
   // An expired key answers for nothing: not as a group signer, not as a member, not for a
-  // vote, not for a stake, and the other held key is never substituted for it.
-  validator::PqConsensusCustody expiring;
-  // A store whose deadline is not its window's end is refused: the two are one fact.
-  check("custody_refuses_a_store_without_the_windows_deadline",
-        expiring.install(validator_id, key_a, 0, now).is_error() && expiring.empty());
-  const auto expiring_a = key_from('\x0a', now);
-  check("custody_of_an_expiring_a", expiring.install(validator_id, expiring_a, 0, now).is_ok());
-  check("custody_of_b_beside_it", expiring.install(validator_id, key_b, 10, 0).is_ok());
-  check("an_unexpired_key_still_signs",
-        expiring.get_matching_store(validator_id, set_with_a[0], now - 1) == expiring_a);
-  check("an_expired_key_signs_no_group", expiring.get_matching_store(validator_id, set_with_a[0], now) == nullptr);
-  check("an_expired_key_is_not_held_for_use",
-        !expiring.holds(validator_id, id_a, now) && expiring.usable_key_ids(validator_id, now).size() == 1);
-  check("an_expired_key_is_not_membership", !validator::node_validator_membership(set_a, {}, {}, expiring, now).second);
-  check("an_expired_key_signs_no_vote",
-        validator::pq_signer_for_set(set_with_a, validator_id, expiring, now).is_error());
-  check("an_expired_key_signs_no_named_stake", expiring.select_stake_store(validator_id, 5, now, id_a).is_error());
-  check("an_expired_key_is_still_listed_for_removal", expiring.held_keys(validator_id).count(id_a) == 1);
+  // vote, not for a stake, and the other held key is never substituted for it. Expiry
+  // seen by custody retires the identity for the process, so this case has keys of its
+  // own (X expiring, Y beside it) rather than A and B.
+  {
+    validator::PqConsensusCustody expiring;
+    // A store whose deadline is not its window's end is refused: the two are one fact.
+    check("custody_refuses_a_store_without_the_windows_deadline",
+          expiring.install(validator_id, key_from('\x3a'), 0, now).is_error() && expiring.empty());
+    const auto key_x = key_from('\x3a', now);
+    const auto key_y = key_from('\x3b');
+    const auto id_x = validator::PqConsensusCustody::key_id_of(*key_x);
+    const auto set_with_x = std::vector<ValidatorDescr>{descriptor(validator_id, *key_x, 0xc0)};
+    block::ValidatorSet set_x(0, ShardIdFull{masterchainId}, set_with_x);
+    check("custody_of_an_expiring_x", expiring.install(validator_id, key_x, 0, now).is_ok());
+    check("custody_of_y_beside_it", expiring.install(validator_id, key_y, 10, 0).is_ok());
+    check("an_unexpired_key_still_signs", expiring.get_matching_store(validator_id, set_with_x[0], now - 1) == key_x);
+    check("an_expired_key_signs_no_group", expiring.get_matching_store(validator_id, set_with_x[0], now) == nullptr);
+    check("an_expired_key_is_not_held_for_use",
+          !expiring.holds(validator_id, id_x, now) && expiring.usable_key_ids(validator_id, now).size() == 1);
+    check("an_expired_key_is_not_membership",
+          !validator::node_validator_membership(set_x, {}, {}, expiring, now).second);
+    check("an_expired_key_signs_no_vote",
+          validator::pq_signer_for_set(set_with_x, validator_id, expiring, now).is_error());
+    check("an_expired_key_signs_no_named_stake", expiring.select_stake_store(validator_id, 5, now, id_x).is_error());
+    check("an_expired_key_is_still_listed_for_removal", expiring.held_keys(validator_id).count(id_x) == 1);
+    // Seen expired by custody alone -- no signature asked for -- it stays expired.
+    check("custody_observation_retires_the_identity",
+          key_x->retired() && tos::pq::consensus_key_retired(key_x->consensus_key().key_id));
+    check("an_expired_key_stays_expired_when_asked_with_an_earlier_time",
+          expiring.get_matching_store(validator_id, set_with_x[0], now - 1) == nullptr &&
+              !expiring.holds(validator_id, id_x, now - 1));
+  }
 
   // A restart after the successor B expired: B is configured but not loaded, and only its
   // window is known. The stake for an election B was scheduled for is refused; the older
@@ -320,26 +339,32 @@ void custody_checks() {
   check("restart_refuses_a_zero_key_id_request",
         restarted.select_stake_store(validator_id, 2'000'000'000U, now, ConsensusKeyId{}).is_error());
 
-  // Removal judged at the moment it takes effect: A never expires and no set lists it; B,
-  // the only other key, expires at 100. Admitted at 99 (B still usable), refused at 100
-  // (only an expired B would remain) -- the same state, one clock tick apart, as when the
+  // Removal judged at the moment it takes effect: P never expires and no set lists it; Q,
+  // the only other key, expires at 100. Admitted at 99 (Q still usable), refused at 100
+  // (only an expired Q would remain) -- the same state, one clock tick apart, as when the
   // engine checks before its hop to the validator manager and the manager acts after it.
   {
     validator::PqConsensusCustody crossing;
-    const auto expiring_b = key_from('\x0b', 100);
-    check("crossing_holds_a", crossing.install(validator_id, key_a, 0, 0).is_ok());
-    check("crossing_holds_b_until_100", crossing.install(validator_id, expiring_b, 50, 100).is_ok());
+    const auto key_p = key_from('\x3c');
+    const auto key_q = key_from('\x3d', 100);
+    const auto id_p = validator::PqConsensusCustody::key_id_of(*key_p);
+    const auto id_q = validator::PqConsensusCustody::key_id_of(*key_q);
+    check("crossing_holds_p", crossing.install(validator_id, key_p, 0, 0).is_ok());
+    check("crossing_holds_q_until_100", crossing.install(validator_id, key_q, 50, 100).is_ok());
     const std::vector<std::vector<ValidatorDescr>> no_sets;
-    check("removal_of_a_admitted_while_b_is_usable",
-          !crossing.removal_refusal(validator_id, id_a, 99, no_sets).has_value());
-    auto at_deadline = crossing.removal_refusal(validator_id, id_a, 100, no_sets);
-    check("removal_of_a_refused_once_b_expired",
+    const std::vector<std::vector<ValidatorDescr>> listing_p{{descriptor(validator_id, *key_p, 0xc0)}};
+    check("removal_of_a_listed_key_is_refused",
+          crossing.removal_refusal(validator_id, id_p, 99, listing_p).has_value());
+    check("removal_of_p_admitted_while_q_is_usable",
+          !crossing.removal_refusal(validator_id, id_p, 99, no_sets).has_value());
+    auto at_deadline = crossing.removal_refusal(validator_id, id_p, 100, no_sets);
+    check("removal_of_p_refused_once_q_expired",
           at_deadline.has_value() &&
               at_deadline->find("every configured consensus key has expired") != std::string::npos);
-    check("removal_of_expired_b_is_admitted", !crossing.removal_refusal(validator_id, id_b, 100, no_sets).has_value());
-    const std::vector<std::vector<ValidatorDescr>> listing_a{set_with_a};
-    check("removal_of_a_listed_key_is_refused",
-          crossing.removal_refusal(validator_id, id_a, 99, listing_a).has_value());
+    check("removal_of_expired_q_is_admitted", !crossing.removal_refusal(validator_id, id_q, 100, no_sets).has_value());
+    // Q was retired by that decision; asked again at 99, P is still not removable.
+    check("removal_of_p_still_refused_at_99_once_q_was_seen_expired",
+          crossing.removal_refusal(validator_id, id_p, 99, no_sets).has_value());
     check("removal_of_an_absent_key_is_refused",
           crossing.removal_refusal(validator_id, validator::PqConsensusCustody::key_id_of(*key_c), 99, no_sets)
               .has_value());
@@ -355,15 +380,15 @@ void custody_checks() {
 
 // A scripted wall clock: each reading takes the next value, and the last one repeats.
 std::vector<std::int64_t> test_clock_values;
-std::size_t test_clock_next = 0;
+std::atomic<std::size_t> test_clock_next{0};
 std::int64_t test_clock() noexcept {
   if (test_clock_values.empty()) {
     return 0;
   }
-  const auto index = std::min(test_clock_next, test_clock_values.size() - 1);
-  test_clock_next++;
+  const auto index = std::min(test_clock_next.fetch_add(1), test_clock_values.size() - 1);
   return test_clock_values[index];
 }
+// Set while no other thread reads the clock.
 void set_test_clock(std::vector<std::int64_t> values) {
   test_clock_values = std::move(values);
   test_clock_next = 0;
@@ -430,6 +455,47 @@ void deadline_checks() {
   auto fresh = pq::ValidatorPQKeyStore::from_seed(std::string(32, '\x11'));
   fresh->set_expire_at(105);
   check("a_key_never_seen_expired_signs_at_104", fresh->sign_consensus("at 104").has_value() && !fresh->retired());
+
+  // The latch belongs to the key's identity, not to a store, so both of these hold.
+  // (1) A never expires; B expires at 100 and is seen expired at 100. The clock then goes
+  // back to 99: B is still retired, so removing A would leave only a key that signs
+  // nothing, and is refused.
+  {
+    const auto validator_id = ValidatorId{filled(0x71)};
+    const auto key_a = key_from('\x21');
+    const auto key_b = key_from('\x22', 100);
+    validator::PqConsensusCustody custody;
+    check("latch_custody_holds_a", custody.install(validator_id, key_a, 0, 0).is_ok());
+    check("latch_custody_holds_b", custody.install(validator_id, key_b, 50, 100).is_ok());
+    set_test_clock({100});
+    check("latch_b_refused_at_100", !key_b->sign_consensus("at 100").has_value());
+    set_test_clock({99});
+    const std::vector<std::vector<ValidatorDescr>> no_sets;
+    auto removal = custody.removal_refusal(validator_id, validator::PqConsensusCustody::key_id_of(*key_a), 99, no_sets);
+    check("removing_a_is_refused_while_b_is_retired_though_the_clock_says_99",
+          removal.has_value() && removal->find("every configured consensus key has expired") != std::string::npos);
+    check("a_retired_key_is_not_held_for_use_at_99",
+          !custody.holds(validator_id, validator::PqConsensusCustody::key_id_of(*key_b), 99));
+  }
+  // (2) D expires at 105 and is seen expired at 106; it is removed and a new store is
+  // built from the same seed with the same window. With the clock back at 104 the new
+  // store still signs nothing, and custody refuses to hold it again.
+  {
+    const auto validator_id = ValidatorId{filled(0x72)};
+    const auto key_d = key_from('\x23', 105);
+    const auto key_e = key_from('\x24');
+    validator::PqConsensusCustody custody;
+    check("readd_custody_holds_e", custody.install(validator_id, key_e, 0, 0).is_ok());
+    check("readd_custody_holds_d", custody.install(validator_id, key_d, 50, 105).is_ok());
+    set_test_clock({106});
+    check("readd_d_refused_at_106", !key_d->sign_consensus("at 106").has_value());
+    check("readd_d_removed", custody.remove_key(validator_id, validator::PqConsensusCustody::key_id_of(*key_d)));
+    set_test_clock({104});
+    const auto key_d_again = key_from('\x23', 105);
+    check("a_new_store_from_the_same_seed_signs_nothing_at_104",
+          !key_d_again->sign_consensus("at 104").has_value() && key_d_again->retired());
+    check("a_retired_key_cannot_be_held_again", custody.install(validator_id, key_d_again, 50, 105).is_error());
+  }
   pq::ValidatorPQKeyStore::set_clock_for_test(nullptr);
 }
 
@@ -497,10 +563,169 @@ void json_checks() {
 
 }  // namespace
 
+// The registry of retired keys: one per process, by key identity, written by a store's own
+// deadline check and by custody's, read everywhere. Each case uses keys of its own, since
+// a retirement lasts for the rest of the process.
+void registry_checks() {
+  const std::vector<std::vector<ValidatorDescr>> no_sets;
+
+  // Custody alone sees R1's window closed at 100 -- no signature is ever asked for. R1 is
+  // removed; with the clock back at 99, the same seed and window cannot be held again.
+  {
+    const auto validator_id = ValidatorId{filled(0x81)};
+    const auto r0 = key_from('\x40');
+    const auto r1 = key_from('\x41', 100);
+    const auto id_r1 = validator::PqConsensusCustody::key_id_of(*r1);
+    validator::PqConsensusCustody custody;
+    check("observe_holds_r0", custody.install(validator_id, r0, 0, 0).is_ok());
+    check("observe_holds_r1", custody.install(validator_id, r1, 50, 100).is_ok());
+    check("observe_custody_sees_r1_expired_at_100", !custody.holds(validator_id, id_r1, 100));
+    check("observe_r1_removed", custody.remove_key(validator_id, id_r1));
+    set_test_clock({99});
+    check("observe_readding_r1_at_99_is_refused",
+          custody.install(validator_id, key_from('\x41', 100), 50, 100).is_error());
+    check("observe_readding_r1_with_no_expiry_is_refused",
+          custody.install(validator_id, key_from('\x41', 0), 60, 0).is_error());
+    check("observe_a_new_r1_store_signs_nothing_at_99", !key_from('\x41', 0)->sign_consensus("99").has_value());
+    // Retiring R1 retired nothing else.
+    check("retiring_one_key_leaves_the_other",
+          !r0->retired() && r0->sign_consensus("r0").has_value() &&
+              custody.holds(validator_id, validator::PqConsensusCustody::key_id_of(*r0), 99));
+  }
+
+  // The same identity from a different file path is the same retired key.
+  {
+    char pattern[] = "/tmp/tos-pq-registry-XXXXXX";
+    const char* dir = ::mkdtemp(pattern);
+    if (dir == nullptr) {
+      check("path_test_directory", false);
+    } else {
+      const std::string seed(32, '\x42');
+      const std::string first = std::string(dir) + "/first.seed";
+      const std::string second = std::string(dir) + "/second.seed";
+      const bool placed = std::holds_alternative<pq::ConsensusPQKey>(pq::import_consensus_key(first, seed)) &&
+                          std::holds_alternative<pq::ConsensusPQKey>(pq::import_consensus_key(second, seed));
+      auto a = pq::load_consensus_key(first);
+      auto b = pq::load_consensus_key(second);
+      check("path_two_files_load", placed && std::holds_alternative<pq::ValidatorPQKeyStore>(a) &&
+                                       std::holds_alternative<pq::ValidatorPQKeyStore>(b));
+      if (std::holds_alternative<pq::ValidatorPQKeyStore>(a) && std::holds_alternative<pq::ValidatorPQKeyStore>(b)) {
+        std::get<pq::ValidatorPQKeyStore>(a).set_expire_at(100);
+        std::get<pq::ValidatorPQKeyStore>(b).set_expire_at(100);
+        auto from_first =
+            std::make_shared<const pq::ValidatorPQKeyStore>(std::move(std::get<pq::ValidatorPQKeyStore>(a)));
+        auto from_second =
+            std::make_shared<const pq::ValidatorPQKeyStore>(std::move(std::get<pq::ValidatorPQKeyStore>(b)));
+        set_test_clock({100});
+        check("path_first_file_refused_at_100", !from_first->sign_consensus("100").has_value());
+        set_test_clock({99});
+        validator::PqConsensusCustody custody;
+        check("path_second_file_is_the_same_retired_key",
+              custody.install(ValidatorId{filled(0x82)}, from_second, 50, 100).is_error() &&
+                  !from_second->sign_consensus("99").has_value());
+      }
+      ::unlink(first.c_str());
+      ::unlink(second.c_str());
+      ::rmdir(dir);
+    }
+  }
+
+  // Every reader, after B was seen expired and the clock went back: A never expires and
+  // is valid for every election; B is valid from 50 and expires at 100, and the set lists B.
+  {
+    const auto validator_id = ValidatorId{filled(0x83)};
+    const auto a = key_from('\x48');
+    const auto b = key_from('\x49', 100);
+    const auto id_b = validator::PqConsensusCustody::key_id_of(*b);
+    validator::PqConsensusCustody custody;
+    check("readers_hold_a", custody.install(validator_id, a, 0, 0).is_ok());
+    check("readers_hold_b", custody.install(validator_id, b, 50, 100).is_ok());
+    const auto set_with_b = std::vector<ValidatorDescr>{descriptor(validator_id, *b, 0xc0)};
+    block::ValidatorSet set_b(0, ShardIdFull{masterchainId}, set_with_b);
+    check("readers_b_signs_before_its_deadline", custody.get_matching_store(validator_id, set_with_b[0], 99) == b);
+    set_test_clock({100});
+    check("readers_b_refused_at_100", !b->sign_election("100").has_value());
+    set_test_clock({99});
+    check("readers_membership_refused_at_99", !validator::node_validator_membership(set_b, {}, {}, custody, 99).second);
+    check("readers_descriptor_matching_refused_at_99",
+          custody.get_matching_store(validator_id, set_with_b[0], 99) == nullptr);
+    check("readers_vote_signer_refused_at_99",
+          validator::pq_signer_for_set(set_with_b, validator_id, custody, 99).is_error());
+    auto scheduled_b = custody.select_stake_store(validator_id, 60, 99, std::nullopt);
+    check("readers_stake_for_bs_election_refused_without_falling_back_to_a",
+          scheduled_b.is_error() && scheduled_b.error().message().str().find("has expired") != std::string::npos);
+    auto scheduled_a = custody.select_stake_store(validator_id, 40, 99, std::nullopt);
+    check("readers_stake_for_as_election_still_signed_with_a", scheduled_a.is_ok() && scheduled_a.ok() == a);
+    check("readers_b_listed_by_a_set_is_removable_once_retired",
+          !custody.removal_refusal(validator_id, id_b, 99, {set_with_b}).has_value() &&
+              custody.key_expired(validator_id, id_b, 99));
+    // Every signing domain refuses through a fresh store of B's identity.
+    const auto fresh_b = key_from('\x49');
+    check("readers_fresh_store_refuses_consensus", !fresh_b->sign_consensus("x").has_value());
+    check("readers_fresh_store_refuses_config_votes", !fresh_b->sign_config_vote("x").has_value());
+    check("readers_fresh_store_refuses_election", !fresh_b->sign_election("x").has_value());
+  }
+
+  // Two stores of one identity in two threads: once the retirement through one has
+  // returned, the other refuses its next signature. The registry is the ordering point,
+  // and its lock is never held while a signature is computed.
+  {
+    const auto validator_id = ValidatorId{filled(0x84)};
+    const auto first = key_from('\x4a', 300);
+    const auto second = key_from('\x4a', 300);
+    validator::PqConsensusCustody custody;
+    check("threads_hold_first", custody.install(validator_id, first, 0, 300).is_ok());
+    set_test_clock({104});
+    std::atomic<bool> retired_done{false};
+    std::atomic<int> before{0};
+    std::atomic<int> after_signed{0};
+    std::atomic<int> after_refused{0};
+    std::thread signer([&] {
+      for (int i = 0; i < 2000 && after_refused.load() < 3; i++) {
+        const bool done = retired_done.load(std::memory_order_acquire);
+        const bool signed_ok = second->sign_consensus("thread").has_value();
+        if (!done) {
+          before += signed_ok ? 1 : 0;
+        } else if (signed_ok) {
+          after_signed++;
+        } else {
+          after_refused++;
+        }
+      }
+    });
+    while (before.load() < 2) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check("threads_custody_retires_at_300",
+          !custody.holds(validator_id, validator::PqConsensusCustody::key_id_of(*first), 300));
+    retired_done.store(true, std::memory_order_release);
+    signer.join();
+    check("threads_the_other_store_signed_before", before.load() >= 2);
+    check("threads_the_other_store_never_signs_after", after_signed.load() == 0 && after_refused.load() >= 1);
+  }
+
+  // A retirement that cannot be recorded stops the process before any signature returns.
+  {
+    const pid_t child = ::fork();
+    if (child == 0) {
+      auto store = key_from('\x4b', 100);
+      set_test_clock({200});
+      pq::fail_next_retirement_for_test();
+      const auto signature = store->sign_consensus("must not return");
+      ::_exit(signature.has_value() ? 3 : 4);
+    }
+    int status = 0;
+    const bool waited = child > 0 && ::waitpid(child, &status, 0) == child;
+    check("allocation_failure_aborts_before_returning", waited && WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+  }
+  pq::ValidatorPQKeyStore::set_clock_for_test(nullptr);
+}
+
 int main() {
   schedule_checks();
   custody_checks();
   deadline_checks();
+  registry_checks();
   json_checks();
   if (failures == 0) {
     std::printf("test-pq-consensus-key-rotation: all scenarios OK\n");

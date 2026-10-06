@@ -5000,7 +5000,9 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKeyInfo> ValidatorE
   }
   return tos::create_tl_object<tos::tos_api::engine_validator_pqConsensusKeyInfo>(
       key_id, key.consensus_key_file, static_cast<td::int32>(key.valid_from), static_cast<td::int32>(key.expire_at),
-      tos::pq::consensus_key_expired(key.expire_at, now));
+      tos::pq::consensus_key_expired(key.expire_at, now) ||
+          (config_.pq_consensus && !key_id.is_zero() &&
+           pq_custody_.key_expired(config_.pq_consensus->validator_id, tos::ConsensusKeyId{key_id}, now)));
 }
 
 void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_getPqConsensusKeys &query, td::BufferSlice data,
@@ -5196,8 +5198,9 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqCons
   }
   // A key a running, previous or next set lists for this validator is still the key this
   // node signs that set with. Removing it now would take the validator out of that set's
-  // consensus until the set ends. Once the key has expired it signs nothing and may go.
-  if (!tos::pq::consensus_key_expired(entry->second.expire_at, pq_custody_now())) {
+  // consensus until the set ends. Once the key has expired (or been retired in this
+  // process, whatever the clock now says) it signs nothing and may go.
+  if (!pq_custody_.key_expired(validator_id, key_id, pq_custody_now())) {
     for (const auto &set : {validator_set_prev_, validator_set_, validator_set_next_}) {
       if (set.is_null()) {
         continue;

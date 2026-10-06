@@ -4409,9 +4409,9 @@ void ValidatorManagerImpl::del_pq_consensus_key(tos::ValidatorId validator_id, t
   const auto now = pq_custody_now();
   std::vector<std::vector<tos::ValidatorDescr>> sets;
   if (last_masterchain_state_.is_null()) {
-    const auto held = pq_custody_.held_keys(validator_id);
-    auto entry = held.find(key_id);
-    if (entry != held.end() && !tos::pq::consensus_key_expired(entry->second.expire_at, now)) {
+    // Judged as everywhere else: a key retired in this process is expired, whatever its
+    // timestamp says after a clock step back, and may be removed without any set.
+    if (pq_custody_.held_keys(validator_id).count(key_id) != 0 && !pq_custody_.key_expired(validator_id, key_id, now)) {
       promise.set_error(td::Status::Error(tos::ErrorCode::notready,
                                           "no masterchain state yet; which sets list this key cannot be told"));
       return;
