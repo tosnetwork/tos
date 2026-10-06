@@ -2416,3 +2416,34 @@ is still authorized after rotation, recover LMS leaf state, validate physical
 backup separation or complete a mnemonic/CLI/Vault recovery operation. Existing
 live proof, retirement and custody requirements continue to apply.
 Evidence: `test/wallet-v5r2/manifest-key-recovery-20261006.json`.
+
+### Initial manifest to encrypted Vault recovery
+
+With `native-wallet-vault`, `restore_initial_master_to_vault` uses the initial
+manifest's role public key, network, global ID, account index and generation to
+restore a resolved master into an authenticated, exclusively owned encrypted
+Vault session. It checks the role-specific input format before invoking the
+existing bound derivation/persistence API. The master wipe guard is constructed
+before returning the future, so dropping an unpolled operation also clears the
+borrowed input. Success returns only the public key, not a signing handle.
+
+The existing Vault adapter enforces key binding before writing, new-only storage,
+flush and bound readback. Errors do not automatically erase or overwrite an
+uncertain record. This operation accepts an already opened Vault; it does not
+claim preflight before storage opening. Native mnemonic validation precedes the
+resolved-master API. Restoring an initial key does not establish its current
+on-chain authority or authorize any message.
+
+Tests use real encrypted file storage and both PQ roles with different declared
+input formats. They check unpolled cancellation, profile and master mismatch,
+changed derivation metadata, absence of records after rejection, successful
+persistence, duplicate refusal without changing file bytes, and bound loading
+after closing and reopening the Vault. Four semantic controls bypass profile
+checking, force the original account index/generation, or delay the wipe guard
+until polling. Each must fail its corresponding assertion; restored tests pass.
+The existing five initial-master controls are rerun after sharing the wipe guard.
+
+These are local public-fixture custody tests, not authenticated backup transport,
+CLI orchestration, successor recovery, real chain readiness or device isolation.
+Existing persistence-failure tests remain at the underlying Vault adapter.
+Evidence: `test/wallet-v5r2/manifest-vault-20261006.json`.

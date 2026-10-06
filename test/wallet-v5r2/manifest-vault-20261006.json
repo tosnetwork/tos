@@ -1,0 +1,93 @@
+{
+  "base_commit": "5492eb73d5f813e969b57e91e4bcb357e358b171",
+  "scope": "Initial manifest-bound PQ master restoration into an already authenticated encrypted Vault; no signing handle returned.",
+  "tests": {
+    "native_vault": "5 passed baseline/restored",
+    "vault_controls": {
+      "input_profile": {
+        "exit": 101,
+        "semantic_witness": "vault accepted wrong input profile"
+      },
+      "account_index": {
+        "exit": 101,
+        "semantic_witness": "vault accepted changed account_index"
+      },
+      "key_generation": {
+        "exit": 101,
+        "semantic_witness": "vault accepted changed key_generation"
+      },
+      "unpolled_wipe": {
+        "exit": 101,
+        "semantic_witness": "unpolled manifest restore retained master"
+      }
+    },
+    "shared_wipe_regression_controls": {
+      "key_binding": {
+        "exit": 101,
+        "semantic_witness": "recovery accepted wrong master"
+      },
+      "input_profile": {
+        "exit": 101,
+        "semantic_witness": "recovery accepted wrong input profile"
+      },
+      "account_index": {
+        "exit": 101,
+        "semantic_witness": "recovery accepted changed account_index"
+      },
+      "key_generation": {
+        "exit": 101,
+        "semantic_witness": "recovery accepted changed key_generation"
+      },
+      "preflight_wipe": {
+        "exit": 101,
+        "semantic_witness": "preflight failure retained master"
+      }
+    },
+    "format_and_ruff": "passed"
+  },
+  "commands": [
+    "python3 test/wallet-v5r2/manifest_vault_controls.py --output <fresh-directory>",
+    "python3 test/wallet-v5r2/manifest_recovery_controls.py --output <fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_manifest.rs",
+      "bytes": 27895,
+      "sha256": "5864fa4c6a1cd49abe9f56369d020a9ca05946c3a11a9390fed2790b6566edfa"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/manifest_vault_controls.py",
+      "bytes": 3190,
+      "sha256": "d1a2d549920ec31cccd6c800e355a27aac801c663dbad5e0e8157442579db23f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 19509,
+      "sha256": "d8851d238f4e6ac64058987b2fd813557c7fbbbab01b9c49a72d465c4dd0370e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 156748,
+      "sha256": "906092bb314a5d868fbfaa7e656ae42febd53566080b3f83a0fda887a7408647"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-vault-controls/MANIFEST.json",
+      "bytes": 1894,
+      "sha256": "95a6adfb7e9ff2347ef03c8598163340f4807d72deee0782e2ecceb87f03cd63"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-vault-master-controls/MANIFEST.json",
+      "bytes": 1962,
+      "sha256": "f58b3d1f5ee2be20f49486f7272a7d867b57ff1b9e4befa3d905a5e26bc21877"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Initial keys only, not current authority or successor recovery.",
+    "Caller provides authenticated exclusive encrypted Vault session and validated resolved master.",
+    "CLI/mnemonic transport, LMS journal, physical custody and final-head CI remain separate gates."
+  ]
+}

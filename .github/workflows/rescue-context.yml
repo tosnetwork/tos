@@ -131,6 +131,7 @@ jobs:
         run: |
           python test/wallet-v5r2/manifest_controls.py --output artifacts/context/initial-manifest-controls
           python test/wallet-v5r2/manifest_recovery_controls.py --output artifacts/context/manifest-recovery-controls
+          python test/wallet-v5r2/manifest_vault_controls.py --output artifacts/context/manifest-vault-controls
       - name: Wallet SDK semantic deletion controls
         if: matrix.runner == 'ubuntu-24.04'
         run: |

@@ -70,6 +70,16 @@ fn bytes<const N: usize>(value: &str) -> anyhow::Result<[u8; N]> {
     Ok(decoded)
 }
 
+#[cfg(feature = "native-wallet-signer")]
+struct Wipe<'a>(&'a mut [u8]);
+#[cfg(feature = "native-wallet-signer")]
+impl Drop for Wipe<'_> {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.0.zeroize();
+    }
+}
+
 impl InitialRecoveryManifest {
     /// Prepare public metadata without asserting possession, deployment or current
     /// authority. Callers retain these declared KDF inputs in authenticated backup.
@@ -136,13 +146,6 @@ impl InitialRecoveryManifest {
             Role,
             kdf::{DerivationContext, derive_signer_and_wipe},
         };
-        use zeroize::Zeroize;
-        struct Wipe<'a>(&'a mut [u8]);
-        impl Drop for Wipe<'_> {
-            fn drop(&mut self) {
-                self.0.zeroize();
-            }
-        }
         let master = Wipe(master);
         let (profile, expected) = match role {
             Role::Primary => (self.wire.derivation.primary_seed_profile, &self.wire.primary_key),
@@ -161,6 +164,41 @@ impl InitialRecoveryManifest {
             "recovered key differs from initial enrollment"
         );
         Ok(())
+    }
+
+    /// Persist a recovered initial role in an already authenticated, exclusively
+    /// owned encrypted Vault. No signing handle or current-authority claim is
+    /// returned. The guard is installed synchronously, including unpolled Drop.
+    /// Uncertain writes must be preserved; no overwrite or automatic cleanup.
+    #[cfg(feature = "native-wallet-vault")]
+    pub fn restore_initial_master_to_vault<'a>(
+        &'a self,
+        vault: &'a secrets_vault::vault::SecretVault,
+        id: &'a secrets_vault::types::secret_id::SecretId,
+        master: &'a mut [u8],
+        role: wallet_pq_signer::Role,
+        input_profile: SeedProfile,
+    ) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>> + 'a {
+        let master = Wipe(master);
+        async move {
+            use wallet_pq_signer::{Role, kdf::DerivationContext, vault::restore_derived_and_wipe};
+            let d = &self.wire.derivation;
+            let (declared, key) = match role {
+                Role::Primary => (d.primary_seed_profile, &self.wire.primary_key),
+                Role::Rescue => (d.rescue_seed_profile, &self.wire.rescue_key),
+            };
+            anyhow::ensure!(declared == input_profile, "vault recovery input profile mismatch");
+            let context = DerivationContext {
+                network: bytes(&self.wire.network)?,
+                global_id: self.wire.global_id,
+                account_index: d.account_index,
+                key_generation: d.key_generation,
+            };
+            let expected = hex::decode(key)?;
+            let signer =
+                restore_derived_and_wipe(vault, id, role, master.0, context, &expected).await?;
+            Ok(signer.public_key().to_vec())
+        }
     }
 
     /// Validate bounded strict metadata and reconstruct the initial identities.
@@ -494,6 +532,150 @@ mod recovery_tests {
                 );
                 assert_eq!(master, [0; 32]);
             }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "native-wallet-vault"))]
+mod vault_recovery_tests {
+    use super::*;
+    use crate::wallet_v5r2_genesis::tests::{bundle, parameters};
+    use secrets_vault::{
+        crypto::{factory::AutoCryptoFactory, key_material::KeyMaterial, master_key::MasterKey},
+        events::null_handler::NullEventHandler,
+        memory::protected_memory::ProtectedMemory,
+        storage::file_json::FileJsonStorage,
+        types::secret_id::SecretId,
+        vault::SecretVault,
+    };
+    use std::{path::Path, sync::Arc};
+    use wallet_pq_signer::{
+        Role,
+        kdf::{DerivationContext, derive_signer_and_wipe},
+        vault::load_bound,
+    };
+    async fn open(path: &Path) -> SecretVault {
+        let key = ProtectedMemory::from_slice(&[0x77; 32]).await.unwrap();
+        let master =
+            MasterKey::from_key_material(KeyMaterial::new_symmetric_key(key).await.unwrap())
+                .await
+                .unwrap();
+        let storage = FileJsonStorage::new(master, path, Box::new(AutoCryptoFactory {}), false)
+            .await
+            .unwrap();
+        SecretVault::new(Arc::new(storage), Arc::new(NullEventHandler {}))
+    }
+    #[tokio::test]
+    async fn manifest_vault_restores_only_bound_keys_without_overwrite() {
+        let mut p = parameters();
+        let context = DerivationContext {
+            network: p.network,
+            global_id: p.global_id,
+            account_index: 5,
+            key_generation: 7,
+        };
+        let primary = derive_signer_and_wipe(&mut [11; 32], context, Role::Primary).unwrap();
+        let rescue = derive_signer_and_wipe(&mut [22; 32], context, Role::Rescue).unwrap();
+        p.primary_key.copy_from_slice(primary.public_key());
+        p.rescue_key.copy_from_slice(rescue.public_key());
+        let (m, g) = InitialRecoveryManifest::prepare(
+            bundle(),
+            p,
+            RecoveryDerivation {
+                account_index: 5,
+                key_generation: 7,
+                primary_seed_profile: SeedProfile::RawMaster32,
+                rescue_seed_profile: SeedProfile::NativeMnemonic,
+                fee_seed_profile: SeedProfile::RawMaster32,
+            },
+        )
+        .unwrap();
+        let encoded = m.to_json().unwrap();
+        let expected_wallet = *g.wallet_init().repr_hash().as_array();
+        let (m, _) =
+            InitialRecoveryManifest::parse_and_reconstruct(&encoded, bundle(), expected_wallet)
+                .unwrap();
+        for (role, seed, profile, other, key) in [
+            (
+                Role::Primary,
+                11,
+                SeedProfile::RawMaster32,
+                SeedProfile::NativeMnemonic,
+                primary.public_key(),
+            ),
+            (
+                Role::Rescue,
+                22,
+                SeedProfile::NativeMnemonic,
+                SeedProfile::RawMaster32,
+                rescue.public_key(),
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("vault.json");
+            let v = open(&path).await;
+            let id = SecretId::new("recovered.initial");
+            let mut master = [seed; 32];
+            drop(m.restore_initial_master_to_vault(&v, &id, &mut master, role, profile));
+            assert_eq!(master, [0; 32], "unpolled manifest restore retained master");
+            assert!(!v.exists(&id).await.unwrap());
+            let mut master = [seed; 32];
+            assert!(
+                m.restore_initial_master_to_vault(&v, &id, &mut master, role, other).await.is_err(),
+                "vault accepted wrong input profile"
+            );
+            assert_eq!(master, [0; 32]);
+            assert!(!v.exists(&id).await.unwrap());
+            let mut master = [33; 32];
+            assert!(
+                m.restore_initial_master_to_vault(&v, &id, &mut master, role, profile)
+                    .await
+                    .is_err(),
+                "vault accepted wrong master"
+            );
+            assert_eq!(master, [0; 32]);
+            assert!(!v.exists(&id).await.unwrap());
+            for field in ["account_index", "key_generation"] {
+                let mut changed: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+                changed["derivation"][field] = 0.into();
+                let (changed, _) = InitialRecoveryManifest::parse_and_reconstruct(
+                    &serde_json::to_vec(&changed).unwrap(),
+                    bundle(),
+                    expected_wallet,
+                )
+                .unwrap();
+                let mut master = [seed; 32];
+                assert!(
+                    changed
+                        .restore_initial_master_to_vault(&v, &id, &mut master, role, profile)
+                        .await
+                        .is_err(),
+                    "vault accepted changed {field}"
+                );
+                assert_eq!(master, [0; 32]);
+                assert!(!v.exists(&id).await.unwrap());
+            }
+            let mut master = [seed; 32];
+            assert_eq!(
+                m.restore_initial_master_to_vault(&v, &id, &mut master, role, profile)
+                    .await
+                    .unwrap(),
+                key
+            );
+            assert_eq!(master, [0; 32]);
+            let before = std::fs::read(&path).unwrap();
+            let mut master = [seed; 32];
+            assert!(
+                m.restore_initial_master_to_vault(&v, &id, &mut master, role, profile)
+                    .await
+                    .is_err(),
+                "vault overwrote recovered key"
+            );
+            assert_eq!(master, [0; 32]);
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            drop(v);
+            let reopened = open(&path).await;
+            assert_eq!(load_bound(&reopened, &id, role, key).await.unwrap().public_key(), key);
         }
     }
 }
