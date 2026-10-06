@@ -22,6 +22,9 @@ on:
       - 'test/wallet-v5r2/**'
       - 'test/test-ext-message-ingress.cpp'
       - 'test/test-ext-message-ingress-fixtures.cpp'
+      - 'test/test-ext-message-admission-budget.cpp'
+      - 'test/test-ext-message-pool.cpp'
+      - 'validator/impl/ext-message-*'
       - 'validator/impl/external-message*'
       - 'validator/impl/CMakeLists.txt'
 
@@ -189,6 +192,8 @@ jobs:
         run: |
           cmake --build build --target test-ext-message-pool -j2
           build/test-ext-message-pool
+          python test/wallet-v5r2/admission_budget_controls.py --build build --pool-controls \
+            --output artifacts/context/r2-admission-byte-budget-controls
           python test/wallet-v5r2/ingress_boundary_controls.py --build build \
             --output artifacts/context/r2-ingress-boundary-controls
           cmake --build build --target test-ext-message-ingress-fixtures -j2

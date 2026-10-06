@@ -773,6 +773,9 @@ target_link_libraries(test-ext-message-ingress PRIVATE tos_external_message_pars
 add_executable(test-ext-message-ingress-fixtures test/test-ext-message-ingress-fixtures.cpp)
 target_link_libraries(test-ext-message-ingress-fixtures PRIVATE tos_external_message_parser)
 
+add_executable(test-ext-message-admission-budget test/test-td-main.cpp test/test-ext-message-admission-budget.cpp)
+target_link_libraries(test-ext-message-admission-budget PRIVATE tos_crypto tdutils)
+
 add_executable(test-msg-envelope test/test-td-main.cpp test/test-msg-envelope.cpp)
 target_link_libraries(test-msg-envelope PRIVATE tos_crypto)
 
@@ -1795,6 +1798,7 @@ tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-ingress)
+tos_test(test-ext-message-admission-budget)
 tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
 tos_test(test-full-node-shard-admission)

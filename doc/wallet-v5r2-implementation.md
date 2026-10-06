@@ -1799,3 +1799,31 @@ response, prevent concurrent reservations elsewhere, or establish rollback-free
 cross-device custody. The caller must keep custody ownership intact and recheck
 before fee signing. Fixture keys remain public and chain proof metadata remains
 synthetic. Evidence: `test/wallet-v5r2/migration-custody-20261006.json`.
+
+### Aggregate external-message admission byte budget
+
+The admission pool now reserves serialized input bytes before checking chain state
+or suspending for a checker slot. A move-only scope reservation holds the charge
+through coroutine completion and releases it on success and early errors. The
+default per-pool cap is 64 MiB; exhaustion returns `notready`. The existing size,
+source-rate and adaptive count limits remain in force. Operators can observe the
+used and limit values in `ext_msg_admission_bytes` statistics.
+
+The previous maximum of 50,000 waiting requests permitted about 3.28 GB of raw
+65,535-byte inputs by count alone, excluding active checks and other allocations.
+This is a static capacity calculation, not a demonstrated network exploit. With
+the new cap, at most 1,024 such inputs can hold reservations simultaneously.
+Transport actor mailboxes before admission, parsed cell expansion, coroutine
+metadata, accepted mempool ownership and caller-held buffers are outside this
+budget. This change does not establish a whole-process memory cap or a concurrent
+network load SLA, and it does not change gas credit, tariffs or signature rules.
+
+Two local native tests cover aggregate exhaustion, overflow-sized requests,
+move ownership and early-return release. Deleting either the rejection or release
+guard produces a semantic test failure; restored tests pass. An actual pool actor
+test also checks charging before state lookup and release on missing-state errors.
+Both its translation unit and the production pool compile locally. Full actor
+execution and its charge-deletion control require Linux CI because this macOS
+build encounters unrelated Linux-only diagnostic IPC dependencies. Both rescue
+CI architectures run these tests and controls. Evidence and exact local limits:
+`test/wallet-v5r2/admission-byte-budget-20261006.json`.

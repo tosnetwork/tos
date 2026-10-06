@@ -53,6 +53,34 @@ TEST(ExtMessagePool, RejectsAdmissionBeforeMasterchainState) {
   });
 }
 
+TEST(ExtMessagePool, AdmissionByteBudgetRejectsAndReleases) {
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<adnl::AdnlExtByteBudget>(32);
+    auto pool = td::actor::create_actor<ExtMessagePool>("ext-message-byte-budget", td::Ref<ValidatorManagerOptions>{},
+                                                        td::actor::ActorId<ValidatorManager>{}, budget);
+    // Hold the capacity as though other checks were suspended. This request
+    // must be refused before state lookup, not placed into an uncharged queue.
+    ASSERT_TRUE(budget->try_reserve(32));
+    auto rejected = co_await td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
+                                            td::BufferSlice{"input"}, 0, false, td::optional<PublicKeyHash>{})
+                        .wrap();
+    ASSERT_TRUE(rejected.is_error());
+    EXPECT_EQ(rejected.error().message(), "external message admission byte budget exhausted");
+    EXPECT_EQ(budget->used(), 32u);
+    ASSERT_TRUE(budget->release(32));
+    for (unsigned i = 0; i < 3; ++i) {
+      auto unavailable = co_await td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
+                                                 td::BufferSlice{"input"}, 0, false, td::optional<PublicKeyHash>{})
+                             .wrap();
+      ASSERT_TRUE(unavailable.is_error());
+      EXPECT_EQ(unavailable.error().message(), "not ready");
+      EXPECT_EQ(budget->used(), 0u);
+    }
+    co_return td::Unit{};
+  });
+}
+
 TEST(ExtMessageChecker, RejectsMalformedBagOfCellsBeforeStateLookup) {
   td::actor::TestScheduler scheduler;
   scheduler.run([&]() -> td::actor::Task<td::Unit> {

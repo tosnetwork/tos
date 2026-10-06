@@ -24,14 +24,18 @@
 #include "td/utils/PersistentTreap.h"
 #include "td/utils/RateLimiterWindow.h"
 
+#include "ext-message-admission-budget.hpp"
 #include "ext-message-checker.hpp"
 
 namespace tos::validator {
 
 class ExtMessagePool : public td::actor::Actor {
  public:
-  ExtMessagePool(td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager)
-      : opts_(opts), manager_(manager) {
+  ExtMessagePool(td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager,
+                 std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget =
+                     std::make_shared<adnl::AdnlExtByteBudget>(ext_message_admission_bytes))
+      : opts_(opts), manager_(manager), admission_budget_(std::move(admission_budget)) {
+    CHECK(admission_budget_ != nullptr);
   }
 
   struct CheckResult {
@@ -165,6 +169,7 @@ class ExtMessagePool : public td::actor::Actor {
   void init_checkers();
 
   size_t inflight_checks_{0};
+  std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget_;
   std::deque<td::actor::StartedTask<>::ExternalPromise> admission_waiters_;
   void release_check_slot();
 

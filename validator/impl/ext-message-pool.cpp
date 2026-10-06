@@ -40,6 +40,13 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
     ++admission_window_.rejected;
     co_return td::Status::Error(ErrorCode::notready, "external message source rate limit exceeded");
   }
+  auto reserved = ExtMessageAdmissionReservation::acquire(admission_budget_, data.size());
+  if (reserved.is_error()) {
+    ++admission_window_.rejected;
+    co_return reserved.move_as_error();
+  }
+  // Retain through every suspension and release on every completion/error path.
+  auto input_reservation = reserved.move_as_ok();
   if (last_masterchain_state_.is_null()) {
     ++admission_window_.rejected;
     co_return td::Status::Error(ErrorCode::notready, "not ready");
@@ -363,6 +370,8 @@ std::vector<std::pair<std::string, std::string>> ExtMessagePool::prepare_stats()
                    PSTRING() << "ok:" << total_check_ext_messages_ok_ << " error:" << total_check_ext_messages_error_);
   vec.emplace_back("total.ext_msg_applied_cleanup", PSTRING() << "requested:" << applied_ext_msgs_delete_requests_
                                                               << " deleted:" << applied_ext_msgs_deleted_);
+  vec.emplace_back("ext_msg_admission_bytes",
+                   PSTRING() << "used:" << admission_budget_->used() << " limit:" << admission_budget_->limit());
   return vec;
 }
 

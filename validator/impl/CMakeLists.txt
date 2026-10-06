@@ -25,6 +25,7 @@ set(TOS_VALIDATOR_SOURCE
   external-message.hpp
   ext-message-checker.hpp
   ext-message-pool.hpp
+  ext-message-admission-budget.hpp
   ihr-message.hpp
   liteserver.hpp
   liteserver-cache.hpp

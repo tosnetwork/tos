@@ -1,0 +1,92 @@
+{
+  "base_commit": "78dcd4996bd6f773a1fe892543d1cf4615732e21",
+  "scope": "Aggregate serialized inputs retained by external-message admission coroutines; default 64 MiB per pool.",
+  "tests": {
+    "native_tests_passed": 2,
+    "semantic_controls": {
+      "capacity": {
+        "exit": 1,
+        "test": "ExtMessageAdmissionBudget_RejectsAggregateBytesBeforeCountLimit",
+        "semantic_witness": "over.is_error()"
+      },
+      "release": {
+        "exit": 1,
+        "test": "ExtMessageAdmissionBudget_MoveAndEarlyReturnReleaseExactlyOnce",
+        "semantic_witness": "budget->used()"
+      }
+    },
+    "production_pool_and_actor_test_translation_units": "compiled successfully",
+    "full_actor_test_and_charge_control": "pending Linux CI; not executed locally"
+  },
+  "commands": [
+    "python3 test/wallet-v5r2/admission_budget_controls.py --build build --output <fresh-directory>",
+    "ninja -C build validator/impl/CMakeFiles/tos_validator.dir/ext-message-pool.cpp.o CMakeFiles/test-ext-message-pool.dir/test/test-ext-message-pool.cpp.o",
+    "build/test-ext-message-admission-budget"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/validator/impl/ext-message-admission-budget.hpp",
+      "bytes": 1751,
+      "sha256": "b43f6b35070c619b7843199555bd3d4bd9af1a9688b2783aa4b5bfb2c1c96985"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/validator/impl/ext-message-pool.cpp",
+      "bytes": 18723,
+      "sha256": "7c3674d5913c1802156327abf3d296e0e08cfe0901dff42d5fca80982c92453e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/validator/impl/ext-message-pool.hpp",
+      "bytes": 7805,
+      "sha256": "d34e1b19a302e0a2f49de54600af8f045b76f8b66f49c0ef585edb887e6f971b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/test-ext-message-admission-budget.cpp",
+      "bytes": 2056,
+      "sha256": "e8e93630ec4e8439f7b5083b50acdd502755ba4b3cb0d7fba052491944bf3d3e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/test-ext-message-pool.cpp",
+      "bytes": 5189,
+      "sha256": "d25ce0485eb1502e4fe3d2fcdaac2c42a7d70aee6d9af9f403db6b0ffa2fe5a2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/admission_budget_controls.py",
+      "bytes": 3891,
+      "sha256": "c6dc340bdf6973c3b653f712334f71c5d88ffdcdd5feb22c6cacd60d72766b91"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/CMakeLists.txt",
+      "bytes": 103348,
+      "sha256": "c8e62d0efd202b0eb89b6bf8e2ee05635c0900fc86a46e5cd26c987d40da1c4b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/validator/impl/CMakeLists.txt",
+      "bytes": 1776,
+      "sha256": "d7d0886424d7604e90dacfe4fbaea163f4bd9d95038c65cd8963da3b1c55c61d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 16415,
+      "sha256": "61a28533b55c1c7a2d7df0065c2650911647fd400eee3a0f72294851f2d6ae79"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 117457,
+      "sha256": "c2e759785d962fe00ff50dfe6b8020b4bf3ac691a0af1d14e6da144bf097731d"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-byte-budget-controls/MANIFEST.json",
+      "bytes": 2344,
+      "sha256": "7e836bf7252a1442155bc9fccb4f26fc617c5d1f1214eb53607772bf930778dd"
+    }
+  ],
+  "limitations": [
+    "Count-only 50000 * 65535 = 3276750000 bytes is a static upper bound, not an observed exploit.",
+    "Budget excludes transport mailboxes, parsed cells, coroutine overhead, authenticated mempool and caller ownership; no whole-process memory or concurrency SLA.",
+    "Full local actor linkage is blocked by Linux-only diagnostic IPC APIs; isolated tests and actual consumer translation units pass.",
+    "Default 10000 gas-credit admission remains failed; no credit or tariff change."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}
