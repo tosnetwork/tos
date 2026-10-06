@@ -32,6 +32,34 @@
   "ios": {
     "baseline_tests": 3,
     "initial_independent_vector_cases": 4,
-    "controls": "running, session 16156"
+    "controls": {
+      "source_sha256": "c49b39ac331d73bf008072b6be0bb630e8c060fefa18fcea7a50ba450bf7f7cd",
+      "controls": [
+        {
+          "name": "pins",
+          "method": "testCodePinsAndFixedHSSProfileRequired",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "a583312af2538279e6bb5c8ca149670c9c97e2155ad2458b723567e6d73da8f7"
+        },
+        {
+          "name": "hss",
+          "method": "testCodePinsAndFixedHSSProfileRequired",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "b0b78b127d52530ab164c7b0ea3648840b60c4824efda048f81996af99a7941f"
+        },
+        {
+          "name": "basechain",
+          "method": "testSuccessorUsesOriginalAddressAndRefusesWrongScope",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "92b658b72abf040c3d79ee5a8d2b7a23b9304a787f613299652c3d3d60355f65"
+        }
+      ],
+      "restored_exit": 0
+    },
+    "head": "393dda9",
+    "status": "three tests and three semantic controls passed; restored baseline passed"
   }
 }

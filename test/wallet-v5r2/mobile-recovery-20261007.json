@@ -1,0 +1,36 @@
+{
+  "status": "local source-bound component evidence",
+  "scope": "POP and SLH preparation framing with independent wire vectors; not funded possession, deployment, live proof acquisition, durable LMS custody or mobile recovery acceptance",
+  "android": {
+    "pop_vectors": 4,
+    "preparation_vectors": 3,
+    "baseline_tests": 3,
+    "controls": {
+      "source_sha256": "c28b1265ce312853f3d6b1c1ca078c5152d4a11b25d55af81f84a29cf6157ea5",
+      "controls": [
+        {
+          "name": "challenge",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<Nonzero 32-byte POP challenge required> but was:<null>"
+        },
+        {
+          "name": "positive-amount",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<Positive deployment amounts required> but was:<null>"
+        },
+        {
+          "name": "slh-signature",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<SLH preparation signature required> but was:<null>"
+        }
+      ],
+      "restored_exit": 0
+    }
+  },
+  "ios": {
+    "pop_vectors": 4,
+    "preparation_vectors": 3,
+    "baseline_tests": 3,
+    "controls": "running, session 73374"
+  }
+}
