@@ -43,6 +43,7 @@
 #include "rldp2/rldp.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
+#include "td/utils/port/FileFd.h"
 #include "tos/tos-types.h"
 #include "validator/full-node-master.h"
 #include "validator/full-node-slave-key.h"
@@ -207,6 +208,8 @@ class ValidatorEngine : public td::actor::Actor {
   std::string local_config_ = "";
   std::string global_config_ = "tos-global.config";
   std::string config_file_;
+  // Held from before the configuration is read until the process exits; see run().
+  td::FileFd config_lock_;
   std::string temp_config_file() const {
     return config_file_ + ".tmp";
   }
