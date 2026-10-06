@@ -1,7 +1,7 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
-#include "admission-work-profile.h"
-
 #include "td/utils/misc.h"
+
+#include "admission-work-profile.h"
 
 namespace tos::validator {
 

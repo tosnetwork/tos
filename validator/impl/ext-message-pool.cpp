@@ -459,7 +459,7 @@ std::vector<std::pair<std::string, std::string>> ExtMessagePool::prepare_stats()
                    PSTRING() << "used:" << admission_budget_->used() << " limit:" << admission_budget_->limit());
   if (work_admission_) {
     vec.emplace_back("ext_msg_admission_work", PSTRING() << "available:" << work_admission_->available()
-                                                       << " supported:" << work_profile_supported_);
+                                                         << " supported:" << work_profile_supported_);
   }
   return vec;
 }

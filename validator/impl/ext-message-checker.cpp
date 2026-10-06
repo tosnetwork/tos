@@ -116,15 +116,14 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::B
   if (exec_config == nullptr) {
     exec_config = CO_TRY(ExtMessageQ::ExecutionConfig::create(*config_snapshot.config, wc, state.utime, false));
     if (exec_configs_.size() > 16) {
-      std::erase_if(exec_configs_, [&](const auto& item) {
-        return item.second == nullptr || item.first.utime + 60 < state.utime;
-      });
+      std::erase_if(exec_configs_,
+                    [&](const auto& item) { return item.second == nullptr || item.first.utime + 60 < state.utime; });
     }
   }
 
   // Admission failures must not trigger a second VM execution just to collect logs.
-  CO_TRY(ExtMessageQ::run_message_on_account(wc, &account, state.utime, state.lt + 1, message->root_cell(),
-                                            *exec_config));
+  CO_TRY(
+      ExtMessageQ::run_message_on_account(wc, &account, state.utime, state.lt + 1, message->root_cell(), *exec_config));
   result.timings.vm = timer.elapsed();
   co_return result;
 }

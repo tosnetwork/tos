@@ -7,13 +7,12 @@
     (at your option) any later version.
 */
 
-#include "validator/validator.h"
-
 #include <cstdio>
 #include <string>
 #include <utility>
 
 #include "td/utils/misc.h"
+#include "validator/validator.h"
 
 int main() {
   auto options = tos::validator::ValidatorManagerOptions::create(tos::BlockIdExt{}, tos::BlockIdExt{});
@@ -64,8 +63,8 @@ int main() {
   const auto hash = td::hex_encode(profile.config_root.as_slice());
   auto parsed = tos::validator::ExtMessageWorkProfile::parse(hash + ",2,1,1000000000,1,65535,512");
   if (parsed.is_error() || parsed.ok().config_root != profile.config_root || parsed.ok().capacity != 2 ||
-      parsed.ok().refill_units != 1 || parsed.ok().refill_interval_ns != 1000000000 ||
-      parsed.ok().attempt_units != 1 || parsed.ok().max_bytes != 65535 || parsed.ok().max_depth != 512) {
+      parsed.ok().refill_units != 1 || parsed.ok().refill_interval_ns != 1000000000 || parsed.ok().attempt_units != 1 ||
+      parsed.ok().max_bytes != 65535 || parsed.ok().max_depth != 512) {
     std::fprintf(stderr, "valid admission CLI profile did not preserve fields\n");
     return 1;
   }

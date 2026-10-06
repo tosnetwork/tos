@@ -13,10 +13,14 @@ namespace tos::validator {
 // Rate/profile selection and dispatch must use the same validated configuration.
 class ExtMessageWorkBudget {
  public:
-  ExtMessageWorkBudget(std::uint64_t capacity, std::uint64_t refill_units,
-                       std::uint64_t refill_interval, std::uint64_t now)
-      : capacity_(capacity), refill_units_(refill_units), refill_interval_(refill_interval),
-        available_(capacity), last_refill_(now), last_observed_(now) {
+  ExtMessageWorkBudget(std::uint64_t capacity, std::uint64_t refill_units, std::uint64_t refill_interval,
+                       std::uint64_t now)
+      : capacity_(capacity)
+      , refill_units_(refill_units)
+      , refill_interval_(refill_interval)
+      , available_(capacity)
+      , last_refill_(now)
+      , last_observed_(now) {
     CHECK(capacity > 0 && refill_units > 0 && refill_interval > 0);
   }
 

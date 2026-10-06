@@ -18,8 +18,8 @@
 #include <filesystem>
 
 #include "block/block-parse.h"
-#include "td/utils/filesystem.h"
 #include "td/actor/TestScheduler.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/tests.h"
 #include "validator/impl/ext-message-checker.hpp"
 #include "validator/impl/ext-message-pool.hpp"
@@ -129,20 +129,21 @@ namespace tos::validator {
 class AdmissionLimitsState final : public MasterchainStateQ {
  public:
   explicit AdmissionLimitsState(unsigned max_size)
-      : MasterchainStateQ(BlockIdExt{}, td::BufferSlice{}), max_size_(max_size) {}
+      : MasterchainStateQ(BlockIdExt{}, td::BufferSlice{}), max_size_(max_size) {
+  }
   block::SizeLimitsConfig::ExtMsgLimits get_ext_msg_limits() const override {
     block::SizeLimitsConfig::ExtMsgLimits limits;
     limits.max_size = max_size_;
     return limits;
   }
+
  private:
   unsigned max_size_;
 };
 
 class ExtMessagePoolTestHarness final : public ExtMessagePool {
  public:
-  ExtMessagePoolTestHarness(td::Ref<ValidatorManagerOptions> options,
-                           std::shared_ptr<adnl::AdnlExtByteBudget> bytes)
+  ExtMessagePoolTestHarness(td::Ref<ValidatorManagerOptions> options, std::shared_ptr<adnl::AdnlExtByteBudget> bytes)
       : ExtMessagePool(std::move(options), {}, std::move(bytes)) {
     inflight_checks_ = MAX_INFLIGHT_CHECKS;
   }
@@ -208,8 +209,7 @@ TEST(ExtMessagePool, QueuedRequestUsesFreshLimitsWithoutCountingDispatch) {
     auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
     auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("queued-config", bytes);
     auto pending = td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
-                                  td::BufferSlice{"queued input"}, 0, false,
-                                  td::optional<PublicKeyHash>{});
+                                  td::BufferSlice{"queued input"}, 0, false, td::optional<PublicKeyHash>{});
     co_await td::actor::ask(pool.get(), &ExtMessagePoolTestHarness::shrink_limits_and_release);
     auto result = co_await std::move(pending).wrap();
     ASSERT_TRUE(result.is_error());
@@ -257,9 +257,15 @@ TEST(ExtMessageChecker, RejectedContractExecutesVmExactlyOnce) {
   td::Ref<MasterchainState> state = state_result.move_as_ok();
   // Valid external envelope, but an empty body cannot authorize the config
   // contract. Count the transaction layer's actual vm.run entry/exit logs.
-  auto message = vm::CellBuilder().store_long(2, 2).store_zeroes(2)
-      .store_long(2, 2).store_zeroes(1).store_long(-1, 8)
-      .store_bits(address.cbits(), 256).store_zeroes(4 + 1 + 1).finalize();
+  auto message = vm::CellBuilder()
+                     .store_long(2, 2)
+                     .store_zeroes(2)
+                     .store_long(2, 2)
+                     .store_zeroes(1)
+                     .store_long(-1, 8)
+                     .store_bits(address.cbits(), 256)
+                     .store_zeroes(4 + 1 + 1)
+                     .finalize();
   auto encoded = vm::std_boc_serialize(message);
   ASSERT_TRUE(encoded.is_ok());
   VmExecutionCounter counter;
@@ -275,8 +281,9 @@ TEST(ExtMessageChecker, RejectedContractExecutesVmExactlyOnce) {
     td::actor::TestScheduler scheduler;
     scheduler.run([&]() -> td::actor::Task<td::Unit> {
       auto checker = td::actor::create_actor<ExtMessageChecker>("vm-count", td::actor::ActorId<ValidatorManager>{});
-      auto result = co_await td::actor::ask(checker.get(), &ExtMessageChecker::check,
-          encoded.move_as_ok(), state->get_ext_msg_limits(), state).wrap();
+      auto result = co_await td::actor::ask(checker.get(), &ExtMessageChecker::check, encoded.move_as_ok(),
+                                            state->get_ext_msg_limits(), state)
+                        .wrap();
       ASSERT_TRUE(result.is_error());
       co_return td::Unit{};
     });
@@ -294,8 +301,8 @@ namespace tos::validator {
 namespace {
 void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = false, bool accepted_loop = false) {
   ASSERT_TRUE(vm::init_vm().is_ok());
-  auto file = td::read_file((std::filesystem::path(__FILE__).parent_path() /
-                            "pq-native/data/c04-pq-genesis.boc").string());
+  auto file =
+      td::read_file((std::filesystem::path(__FILE__).parent_path() / "pq-native/data/c04-pq-genesis.boc").string());
   ASSERT_TRUE(file.is_ok());
   auto decoded = vm::std_boc_deserialize(file.move_as_ok());
   ASSERT_TRUE(decoded.is_ok());
@@ -353,8 +360,8 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
   }
   if (accepted_loop) {
     ASSERT_TRUE(ordinary_account);
-    auto source = td::read_file((std::filesystem::path(__FILE__).parent_path() /
-                                "wallet-v5r2/post-accept-probe.boc").string());
+    auto source =
+        td::read_file((std::filesystem::path(__FILE__).parent_path() / "wallet-v5r2/post-accept-probe.boc").string());
     ASSERT_TRUE(source.is_ok());
     auto code = vm::std_boc_deserialize(source.move_as_ok());
     ASSERT_TRUE(code.is_ok());
@@ -391,11 +398,17 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
     ASSERT_TRUE(config.is_ok());
     ASSERT_TRUE(!config.ok()->is_special_smartcontract(destination));
   }
-  auto rejected_root = vm::CellBuilder().store_long(2, 2).store_zeroes(2)
-      .store_long(2, 2).store_zeroes(1).store_long(-1, 8)
-      .store_bits(destination.cbits(), 256).store_zeroes(4 + 1 + 1)
-      .store_long(accepted_loop ? 1 : 0, accepted_loop ? 1 : 0)
-      .store_long(accepted_loop ? 5000 : 0, accepted_loop ? 32 : 0).finalize();
+  auto rejected_root = vm::CellBuilder()
+                           .store_long(2, 2)
+                           .store_zeroes(2)
+                           .store_long(2, 2)
+                           .store_zeroes(1)
+                           .store_long(-1, 8)
+                           .store_bits(destination.cbits(), 256)
+                           .store_zeroes(4 + 1 + 1)
+                           .store_long(accepted_loop ? 1 : 0, accepted_loop ? 1 : 0)
+                           .store_long(accepted_loop ? 5000 : 0, accepted_loop ? 32 : 0)
+                           .finalize();
   auto rejected_message = vm::std_boc_serialize(rejected_root);
   ASSERT_TRUE(rejected_message.is_ok());
   VmExecutionCounter counter;
@@ -423,14 +436,15 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
   auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
   td::actor::TestScheduler scheduler;
   scheduler.run([&]() -> td::actor::Task<td::Unit> {
-    auto pool = td::actor::create_actor<ExtMessagePool>("work-budget", options,
-        td::actor::ActorId<ValidatorManager>{}, bytes);
+    auto pool =
+        td::actor::create_actor<ExtMessagePool>("work-budget", options, td::actor::ActorId<ValidatorManager>{}, bytes);
     co_await td::actor::ask(pool.get(), &ExtMessagePool::update_last_masterchain_state, state);
     for (unsigned i = 0; i < 4; ++i) {
       if (i == 2) {
         auto changed_rate = profile;
         changed_rate.capacity = 3;
-        auto refused = co_await td::actor::ask(pool.get(), &ExtMessagePool::configure_work_profile, changed_rate).wrap();
+        auto refused =
+            co_await td::actor::ask(pool.get(), &ExtMessagePool::configure_work_profile, changed_rate).wrap();
         ASSERT_TRUE(refused.is_error());
         EXPECT_EQ(refused.error().message(), "external admission rate or cost changes require restart");
         co_await td::actor::ask(pool.get(), &ExtMessagePool::configure_work_profile, profile);
@@ -444,8 +458,10 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
         hash.data()[0] = static_cast<unsigned char>(i);
         peer = PublicKeyHash{hash};
       }
-      auto result = co_await td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
-          i == 0 ? rejected_message.ok().clone() : td::BufferSlice{"not a bag of cells"}, 0, false, peer).wrap();
+      auto result = co_await td::actor::ask(
+                        pool.get(), &ExtMessagePool::check_add_external_message,
+                        i == 0 ? rejected_message.ok().clone() : td::BufferSlice{"not a bag of cells"}, 0, false, peer)
+                        .wrap();
       if (accepted_loop && i == 0) {
         if (result.is_error()) {
           LOG(ERROR) << result.error();
@@ -508,8 +524,8 @@ TEST(ExtMessagePool, WorkBudgetChargesRejectedOrdinaryVmReportingZeroGas) {
 
 namespace {
 void exercise_queued_profile_rebind(bool initially_supported) {
-  auto file = td::read_file((std::filesystem::path(__FILE__).parent_path() /
-                            "pq-native/data/c04-pq-genesis.boc").string());
+  auto file =
+      td::read_file((std::filesystem::path(__FILE__).parent_path() / "pq-native/data/c04-pq-genesis.boc").string());
   ASSERT_TRUE(file.is_ok());
   auto decoded = vm::std_boc_deserialize(file.move_as_ok());
   ASSERT_TRUE(decoded.is_ok());
@@ -539,7 +555,7 @@ void exercise_queued_profile_rebind(bool initially_supported) {
     auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("queued-profile", options, bytes);
     co_await td::actor::ask(pool.get(), &ExtMessagePool::update_last_masterchain_state, state);
     auto pending = td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
-        td::BufferSlice{"queued malformed input"}, 0, false, td::optional<PublicKeyHash>{});
+                                  td::BufferSlice{"queued malformed input"}, 0, false, td::optional<PublicKeyHash>{});
     // Change only the reviewed config pin while the real coroutine is suspended.
     // The admission decision must observe this update when the slot is released.
     profile.config_root.data()[0] ^= 1;
@@ -574,9 +590,9 @@ TEST(ExtMessagePool, QueuedCancellationReleasesBytesWithoutDispatchOrCharge) {
   scheduler.run([&]() -> td::actor::Task<td::Unit> {
     auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("cancel-queued", options, bytes);
     co_await td::actor::ask(pool.get(), &ExtMessagePool::update_last_masterchain_state,
-                           td::Ref<MasterchainState>{td::make_ref<AdmissionLimitsState>(65535)});
+                            td::Ref<MasterchainState>{td::make_ref<AdmissionLimitsState>(65535)});
     auto pending = td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
-        td::BufferSlice{"queued input"}, 0, false, td::optional<PublicKeyHash>{});
+                                  td::BufferSlice{"queued input"}, 0, false, td::optional<PublicKeyHash>{});
     co_await td::actor::ask(pool.get(), &ExtMessagePoolTestHarness::cancel_waiter);
     auto result = co_await std::move(pending).wrap();
     ASSERT_TRUE(result.is_error());
@@ -593,7 +609,7 @@ TEST(ExtMessagePool, StoppingPoolReleasesQueuedInput) {
   scheduler.run([&]() -> td::actor::Task<td::Unit> {
     auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("stop-queued", bytes);
     auto pending = td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
-        td::BufferSlice{"queued input"}, 0, false, td::optional<PublicKeyHash>{});
+                                  td::BufferSlice{"queued input"}, 0, false, td::optional<PublicKeyHash>{});
     td::actor::send_closure(pool.get(), &ExtMessagePoolTestHarness::stop_while_queued);
     auto result = co_await std::move(pending).wrap();
     ASSERT_TRUE(result.is_error());

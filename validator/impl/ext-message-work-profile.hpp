@@ -1,9 +1,10 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 
-#include "ext-message-work-budget.hpp"
-#include "validator/admission-work-profile.h"
 #include "td/utils/port/Clocks.h"
+#include "validator/admission-work-profile.h"
+
+#include "ext-message-work-budget.hpp"
 
 namespace tos::validator {
 
@@ -46,8 +47,9 @@ class ExtMessageWorkAdmission {
 
  private:
   ExtMessageWorkAdmission(ExtMessageWorkProfile profile, std::uint64_t now)
-      : profile_(std::move(profile)), budget_(profile_.capacity, profile_.refill_units,
-                                           profile_.refill_interval_ns, now) {}
+      : profile_(std::move(profile))
+      , budget_(profile_.capacity, profile_.refill_units, profile_.refill_interval_ns, now) {
+  }
   ExtMessageWorkProfile profile_;
   ExtMessageWorkBudget budget_;
 };

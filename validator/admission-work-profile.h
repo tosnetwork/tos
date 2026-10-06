@@ -22,8 +22,8 @@ struct ExtMessageWorkProfile {
   std::uint32_t max_depth{0};
 
   td::Status validate() const {
-    if (config_root.is_zero() || capacity == 0 || refill_units == 0 || refill_interval_ns == 0 ||
-        attempt_units == 0 || attempt_units > capacity || max_bytes == 0 || max_depth == 0) {
+    if (config_root.is_zero() || capacity == 0 || refill_units == 0 || refill_interval_ns == 0 || attempt_units == 0 ||
+        attempt_units > capacity || max_bytes == 0 || max_depth == 0) {
       return td::Status::Error("invalid external admission work profile");
     }
     return td::Status::OK();

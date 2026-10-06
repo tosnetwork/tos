@@ -976,8 +976,11 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
     network_tag = bytes(range(32))
     baseline_wc = None
     baseline_mc = None
-    for label, enabled, admission in (("default16", False, False), ("candidate17", True, False),
-                                       ("admission18", True, True)):
+    for label, enabled, admission in (
+        ("default16", False, False),
+        ("candidate17", True, False),
+        ("admission18", True, True),
+    ):
         directory = tmp_path / label
         directory.mkdir()
         _write_pq_manifest(directory)
@@ -997,7 +1000,9 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
         )
         state = _load_masterchain_state(directory / "zerostate.boc")
         cfg = state.custom.config.config
-        assert ConfigParam8.deserialize(cfg[8].copy()).version == (18 if admission else 17 if enabled else 16)
+        assert ConfigParam8.deserialize(cfg[8].copy()).version == (
+            18 if admission else 17 if enabled else 16
+        )
         mc_gas = ConfigParam20.deserialize(cfg[20].copy())
         wc_gas = ConfigParam21.deserialize(cfg[21].copy())
         assert mc_gas.other.gas_credit == 10000
@@ -1039,8 +1044,12 @@ def _generate_admission_candidate(directory, source):
         "true constant v5r2-admission-candidate\n"
         f'"{template}" include\n'
     )
-    result = subprocess.run(_create_state_command(wrapper), cwd=directory, capture_output=True,
-                            env=_mainnet_genesis_env())
+    result = subprocess.run(
+        _create_state_command(wrapper),
+        cwd=directory,
+        capture_output=True,
+        env=_mainnet_genesis_env(),
+    )
     (directory / "generation.stdout.raw").write_bytes(result.stdout)
     (directory / "generation.stderr.raw").write_bytes(result.stderr)
     result.check_returncode()
@@ -1061,7 +1070,9 @@ def test_admission_candidate_parameter_mutation_is_detected(tmp_path, boundary):
     else:
         anchor, replacement = "30 *M 30 *M 20000 60 *M", "30 *M 30 *M 10000 60 *M"
     assert source.count(anchor) == 1
-    mutated = _generate_admission_candidate(tmp_path / "mutated", source.replace(anchor, replacement))
+    mutated = _generate_admission_candidate(
+        tmp_path / "mutated", source.replace(anchor, replacement)
+    )
     with pytest.raises(AssertionError, match="candidate " + boundary):
         _assert_admission_candidate(mutated)
     _assert_admission_candidate(_generate_admission_candidate(tmp_path / "restored", source))
@@ -1069,10 +1080,16 @@ def test_admission_candidate_parameter_mutation_is_detected(tmp_path, boundary):
 
 def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path):
     wrapper = tmp_path / "missing-tag.fif"
-    wrapper.write_text("true constant v5r2-admission-candidate\n"
-                       f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n')
-    result = subprocess.run(_create_state_command(wrapper), cwd=tmp_path, capture_output=True,
-                            env=_mainnet_genesis_env())
+    wrapper.write_text(
+        "true constant v5r2-admission-candidate\n"
+        f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n'
+    )
+    result = subprocess.run(
+        _create_state_command(wrapper),
+        cwd=tmp_path,
+        capture_output=True,
+        env=_mainnet_genesis_env(),
+    )
     assert result.returncode != 0
     assert b"V5R2 admission candidate requires an explicit AUTH network tag" in result.stderr
     assert not (tmp_path / "main-wallet.pk").exists()
@@ -1084,22 +1101,36 @@ def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path)
     guard = '  def? v5r2-network-tag not abort"V5R2 admission candidate requires an explicit AUTH network tag"'
     assert source.count(guard) == 1
     mutated = tmp_path / "without-guard.fif"
-    mutated.write_text(source.replace(guard, "  // Controlled deletion of early namespace validation."))
-    wrapper.write_text("true constant v5r2-admission-candidate\n" f'"{mutated}" include\n')
-    result = subprocess.run(_create_state_command(wrapper), cwd=tmp_path, capture_output=True,
-                            env=_mainnet_genesis_env())
+    mutated.write_text(
+        source.replace(guard, "  // Controlled deletion of early namespace validation.")
+    )
+    wrapper.write_text(f'true constant v5r2-admission-candidate\n"{mutated}" include\n')
+    result = subprocess.run(
+        _create_state_command(wrapper),
+        cwd=tmp_path,
+        capture_output=True,
+        env=_mainnet_genesis_env(),
+    )
     (tmp_path / "unguarded.stderr.raw").write_bytes(result.stderr)
     with pytest.raises(AssertionError, match="early namespace guard"):
-        assert b"V5R2 admission candidate requires an explicit AUTH network tag" in result.stderr, "early namespace guard"
+        assert b"V5R2 admission candidate requires an explicit AUTH network tag" in result.stderr, (
+            "early namespace guard"
+        )
     assert (tmp_path / "main-wallet.pk").exists(), "unguarded candidate reached custody generation"
 
 
 def test_admission_candidate_localnet_matches_generated_canonical_gas_fields(tmp_path, monkeypatch):
-    canonical = _generate_admission_candidate(tmp_path / "canonical",
-        (REPO / "crypto/smartcont/gen-zerostate.fif").read_text())
-    config = NetworkConfig(global_version=18, auth_network_tag=bytes(range(32)),
-                      v5r2_admission_candidate=True, deployment_fee_schedule=True,
-                      genesis_time=EXPECTED_MAINNET_GENESIS_UTIME, genesis_wallet_seed=b"\x53" * 32)
+    canonical = _generate_admission_candidate(
+        tmp_path / "canonical", (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    )
+    config = NetworkConfig(
+        global_version=18,
+        auth_network_tag=bytes(range(32)),
+        v5r2_admission_candidate=True,
+        deployment_fee_schedule=True,
+        genesis_time=EXPECTED_MAINNET_GENESIS_UTIME,
+        genesis_wallet_seed=b"\x53" * 32,
+    )
 
     def generate_and_compare(local_dir):
         local_dir.mkdir()
@@ -1107,7 +1138,9 @@ def test_admission_candidate_localnet_matches_generated_canonical_gas_fields(tmp
         cfg = _load_masterchain_state(local.masterchain.file).custom.config.config
         _assert_admission_candidate(cfg)
         for param in (20, 21):
-            assert cfg[param].to_cell().hash == canonical[param].to_cell().hash, f"ConfigParam {param} differs"
+            assert cfg[param].to_cell().hash == canonical[param].to_cell().hash, (
+                f"ConfigParam {param} differs"
+            )
 
     generate_and_compare(tmp_path / "local")
     original = zerostate_module.fee_schedule_for
@@ -1125,20 +1158,37 @@ def test_admission_candidate_localnet_matches_generated_canonical_gas_fields(tmp
     generate_and_compare(tmp_path / "restored")
 
 
-@pytest.mark.parametrize("change", [{"global_version": 17}, {"global_version": 19},
-    {"deployment_fee_schedule": False}, {"auth_network_tag": None}, {"v5r2_admission_candidate": "yes"}])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"global_version": 17},
+        {"global_version": 19},
+        {"deployment_fee_schedule": False},
+        {"auth_network_tag": None},
+        {"v5r2_admission_candidate": "yes"},
+    ],
+)
 def test_admission_candidate_localnet_rejects_incompatible_profile(tmp_path, change):
-    config = NetworkConfig(global_version=18, auth_network_tag=bytes(range(32)),
-        v5r2_admission_candidate=True, deployment_fee_schedule=True)
+    config = NetworkConfig(
+        global_version=18,
+        auth_network_tag=bytes(range(32)),
+        v5r2_admission_candidate=True,
+        deployment_fee_schedule=True,
+    )
     with pytest.raises(ValueError, match="V5R2 admission candidate"):
         create_zerostate(Install(BUILD_DIR, REPO), tmp_path, replace(config, **change), [Key()])
     assert not (tmp_path / "main-wallet.pk").exists()
 
 
 def test_admission_candidate_localnet_validation_deletion_is_detected(tmp_path, monkeypatch):
-    config = NetworkConfig(global_version=17, auth_network_tag=bytes(range(32)),
-        v5r2_admission_candidate=True, deployment_fee_schedule=True,
-        genesis_time=EXPECTED_MAINNET_GENESIS_UTIME, genesis_wallet_seed=b"\x53" * 32)
+    config = NetworkConfig(
+        global_version=17,
+        auth_network_tag=bytes(range(32)),
+        v5r2_admission_candidate=True,
+        deployment_fee_schedule=True,
+        genesis_time=EXPECTED_MAINNET_GENESIS_UTIME,
+        genesis_wallet_seed=b"\x53" * 32,
+    )
 
     def require_rejection(directory):
         directory.mkdir()
@@ -1153,8 +1203,13 @@ def test_admission_candidate_localnet_validation_deletion_is_detected(tmp_path, 
     require_rejection(tmp_path / "baseline")
     original = zerostate_module.fee_schedule_for
     with monkeypatch.context() as context:
-        context.setattr(zerostate_module, "fee_schedule_for",
-            lambda cfg: original(replace(cfg, v5r2_admission_candidate=False)))
-        with pytest.raises(AssertionError, match="incompatible candidate reached genesis generation"):
+        context.setattr(
+            zerostate_module,
+            "fee_schedule_for",
+            lambda cfg: original(replace(cfg, v5r2_admission_candidate=False)),
+        )
+        with pytest.raises(
+            AssertionError, match="incompatible candidate reached genesis generation"
+        ):
             require_rejection(tmp_path / "mutated")
     require_rejection(tmp_path / "restored")

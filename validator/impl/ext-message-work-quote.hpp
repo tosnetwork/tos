@@ -17,9 +17,9 @@ namespace tos::validator {
 // The caller must derive the precompiled-config flag from the same snapshot:
 // native implementations and TVM fallback cannot use this ordinary bound.
 inline td::Result<std::uint64_t> external_tvm_initial_gas_bound(std::uint64_t gas_limit,
-                                                               std::uint64_t special_gas_limit,
-                                                               std::uint64_t gas_credit,
-                                                               bool has_precompiled_contracts) {
+                                                                std::uint64_t special_gas_limit,
+                                                                std::uint64_t gas_credit,
+                                                                bool has_precompiled_contracts) {
   if (has_precompiled_contracts) {
     return td::Status::Error("external admission precompiled execution profile is not calibrated");
   }
@@ -38,11 +38,11 @@ inline td::Result<std::uint64_t> external_tvm_initial_gas_bound(std::uint64_t ga
 // bound. This remains a gas bound, not calibrated CPU work, and excludes the
 // separately bounded instruction overshoot, parsing and state lookup.
 inline td::Result<std::uint64_t> external_tvm_complete_gas_bound(std::uint64_t gas_limit,
-                                                                std::uint64_t special_gas_limit,
-                                                                std::uint64_t gas_credit,
-                                                                bool has_precompiled_contracts) {
-  TRY_RESULT(initial, external_tvm_initial_gas_bound(gas_limit, special_gas_limit, gas_credit,
-                                                    has_precompiled_contracts));
+                                                                 std::uint64_t special_gas_limit,
+                                                                 std::uint64_t gas_credit,
+                                                                 bool has_precompiled_contracts) {
+  TRY_RESULT(initial,
+             external_tvm_initial_gas_bound(gas_limit, special_gas_limit, gas_credit, has_precompiled_contracts));
   constexpr auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
   if (gas_limit > maximum) {
     return td::Status::Error("external admission complete gas exceeds supported VM range");

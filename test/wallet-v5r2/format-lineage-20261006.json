@@ -1,0 +1,443 @@
+{
+  "schema": "tos-ci-format-lineage-v1",
+  "recorded_at_utc": "2026-10-06T20:53:04+00:00",
+  "repository": "tosnetwork/tos",
+  "pr": 138,
+  "source_head_before_format": "18349b79b401d249db0c464d99d81b7218f1f33b",
+  "scope": "Formatting only. This record describes static edits and checks; no native build, contract compilation, baseline execution or source mutation control was run.",
+  "ci_failure": {
+    "run_id": 37486477783,
+    "run_url": "https://github.com/tosnetwork/tos/actions/runs/37486477783",
+    "job_id": 112347685561,
+    "step": "Check C++ formatting of changed lines",
+    "exit_code": 1,
+    "workflow_head_sha": "18349b79b401d249db0c464d99d81b7218f1f33b",
+    "job_checkout_sha": "7f5891dd5ba886aa55b9e452bf44adc78c64e93b",
+    "checkout_first_parent": "237f72ed5c574d70b70195ef04073007987e049c",
+    "diff_base": "6f4dbdad748f3ab38a05066ee5b86f750ac8f9c9",
+    "strict_build_job_id": 112347685916,
+    "strict_build_conclusion": "success",
+    "python_lint_steps": "skipped after C++ formatting failure",
+    "ownership": "All 13 failing pre-format blobs equal PR head bytes and differ from both the event base and merge first parent."
+  },
+  "formatters": {
+    "clang_format": "clang-format version 21.1.8",
+    "ruff": "ruff 0.15.2"
+  },
+  "commands": {
+    "cpp_check": [
+      "python",
+      "<clang-format 21.1.8 package>/git_clang_format.py",
+      "--binary",
+      "<clang-format 21.1.8>",
+      "--diff",
+      "--extensions",
+      "h,hpp,cpp",
+      "6f4dbdad748f3ab38a05066ee5b86f750ac8f9c9",
+      "--",
+      ":/",
+      ":(exclude)crypto/smartcont/tol-stdlib/",
+      ":(exclude)tol/",
+      ":(exclude)tol-tester/",
+      ":(exclude)third-party/"
+    ],
+    "cpp_edit": "git apply --check - and git apply - using the exact locally reproduced CI formatting diff; only Git abbreviation length differs from the CI log.",
+    "python_edit": [
+      "ruff",
+      "format",
+      "--no-cache",
+      "scripts/check-ext-message-options-controls.py",
+      "scripts/check-ext-message-pool-controls.py",
+      "scripts/check-ext-message-replay-controls.py",
+      "scripts/check-ext-message-work-budget.py",
+      "scripts/check-ext-message-work-cli.py",
+      "test/auth-extensions/native.py",
+      "test/tostester/src/tostester/zerostate.py",
+      "test/tostester/tests/tostester/test_zerostate_supply.py",
+      "test/wallet-v5r2/admission_config_controls.py"
+    ],
+    "whitespace_check": [
+      "git",
+      "diff",
+      "--check",
+      "--",
+      "<22 listed source files>"
+    ]
+  },
+  "files": [
+    {
+      "path": "test/test-ext-message-manager.cpp",
+      "before_git_blob": "bc892d5c1f2a41c1f6700129a77e4c1dff4fe63d",
+      "after_git_blob": "3824c4bc7b112524927453458501e1fe64c4d382",
+      "before_sha256": "906c7eb70bc5f20475d83f933e9aa4a1de95e4eee2695d0217d2d99568fcefb3",
+      "after_sha256": "a1bbec568b944f3a291f6ac1b7515cab2772b95b486c5fb363291e8ac7635b29"
+    },
+    {
+      "path": "test/test-ext-message-pool.cpp",
+      "before_git_blob": "96d69d91a6ae672aca26ff0bf859fe6ee4f74e66",
+      "after_git_blob": "27071c0e69a0f6605b2e0b1d22d30322c52eb7f1",
+      "before_sha256": "184910a14dc81cc0bca1441ff66bc3a3ef7da71e5721c2f69901727c6d1df043",
+      "after_sha256": "769d44ef1a2fd9db30ce3e55d54343af6b48dd61f095f270927c22c381ee0838"
+    },
+    {
+      "path": "test/test-validator-options.cpp",
+      "before_git_blob": "233d851301f13b8130b28a15c5756cc67ce7bda3",
+      "after_git_blob": "0f66377922dc7f85f0620d0cac490bb0aee48013",
+      "before_sha256": "67ed983dddf641316fec76c9ce11f3df5b77f8dd419a1f6f055f02f4716acd39",
+      "after_sha256": "e978da4202826f7c245c4d00d9f99c6116421925ca62c04743d5b73cb06efe29"
+    },
+    {
+      "path": "validator-engine/validator-engine.cpp",
+      "before_git_blob": "a584bd10fd9d09c320e71b3b5f6bb23360514847",
+      "after_git_blob": "fd0482baf68bc67c5a480adec40cc14788f57e30",
+      "before_sha256": "1c67374272dab20cbf2ecd318f049458600dd09722e468fb1cd8486f3bc378ce",
+      "after_sha256": "701c751c2b392bf3e41c51ad70813763df3c8c936d6f050df20c565d12b1d54b"
+    },
+    {
+      "path": "validator/admission-work-profile.cpp",
+      "before_git_blob": "44fcb2133418fd38548bdff34ee9e0c0081ee9f3",
+      "after_git_blob": "2190f69c84fc122fbf20cf8cb65db7b26a6eb10a",
+      "before_sha256": "3ea55c796a07ac92003765da2cd3bee417d575dc7bdb03718bb3b03a878c6566",
+      "after_sha256": "a1d520e38614c712e4538884dd862aae9962b5aca72d0b85054b4ea270a193ec"
+    },
+    {
+      "path": "validator/admission-work-profile.h",
+      "before_git_blob": "144e55505f30882a0e01c1dae1269d2d76ffd51e",
+      "after_git_blob": "1fca98d8bf7406bb5309308f3f02665142db1ab4",
+      "before_sha256": "9810c0ddc459fa5a740817cbf20da817b5ba0c8f0344eec0152a28360138913a",
+      "after_sha256": "e7e44f2284df87ee54d6e37b49b58d0b1d33ad615c7d262a388f6dcef58f10ff"
+    },
+    {
+      "path": "validator/impl/ext-message-checker.cpp",
+      "before_git_blob": "4caaffb54440f3322dc20527418c84eaa7fce2dd",
+      "after_git_blob": "07c15c33312afa6f8c4993cac333b7c2bc9d46be",
+      "before_sha256": "080ef0c13ba023e4f2f04b9dbe673b9a878931614db7c3b31504eb6207ed6a85",
+      "after_sha256": "c5400624f6394a0a6c7115da984c7fe5065703c8d0c335e20b7bd2cf7edccae0"
+    },
+    {
+      "path": "validator/impl/ext-message-pool.cpp",
+      "before_git_blob": "17e9034577a071d29e0e9258d8cc802e74f89bbe",
+      "after_git_blob": "79b8881308abe22bafaaf9e1535edd26503cf1a5",
+      "before_sha256": "e5acfb7bef80120b105c846b64272ce86cad7287b36d2b636b8995d47cb6afd1",
+      "after_sha256": "72ff3fcbc775097dde5714a81a965b440c3b7a8f728115e4616e321fdb28f62e"
+    },
+    {
+      "path": "validator/impl/ext-message-pool.hpp",
+      "before_git_blob": "68bce7f8883223a34ca9f35d0b5581b713003ce4",
+      "after_git_blob": "a342d314431b41d01a11274529ecaa4f69e75178",
+      "before_sha256": "171c438c94fa6701dae4b372a2d40ce9175a5190af193a18b4499a57fc20e648",
+      "after_sha256": "ce7a05ad3f180877c9dedf152ac4b1201a8f5e94c232d58247fa7714f50e07ad"
+    },
+    {
+      "path": "validator/impl/ext-message-work-budget.hpp",
+      "before_git_blob": "94af54bc67606b6be627c95a9560df53e268495d",
+      "after_git_blob": "25f9ce951c8e88c1ed32330b01b54e3ac8e405c7",
+      "before_sha256": "29792d9f09465f4497c1a304a7deabc8dbff97cd9b2c05e2418288d7a1ba0298",
+      "after_sha256": "1778c2c7a4819367f04f160ff02e9f8d38514cab1b836834a19d61cb09ed0aea"
+    },
+    {
+      "path": "validator/impl/ext-message-work-profile.hpp",
+      "before_git_blob": "a4327c492fb935fedb909d47f36ade099e08f6b7",
+      "after_git_blob": "a034f72e621c0fdae03ebafb9e6f070237e4e13e",
+      "before_sha256": "124d09aa912e8e4989fb4b68fbe7d57826d123617371a95d31427d827e7880f2",
+      "after_sha256": "fb4b80c8abdaa671999233ad04ddf12d9dbfe302ce53d0c238d0c090749e98e8"
+    },
+    {
+      "path": "validator/impl/ext-message-work-quote.hpp",
+      "before_git_blob": "a131c860a9c31691b8d73c1fc4fb1654f437c48c",
+      "after_git_blob": "932f64611bdf491d522b9186dfa300c247f3c5fb",
+      "before_sha256": "3b81f0f6fb56c3c9da43062c251dae4f3a01e7c023eca473993ff69703f875a9",
+      "after_sha256": "978baebd00d0475c60074a88462584b0c8f2075ec5b402093c70d67eae8dc343"
+    },
+    {
+      "path": "validator/validator.h",
+      "before_git_blob": "30a7c0bca9e291cccc099275e59e908caab7a71d",
+      "after_git_blob": "2da986f7e302a0edfe9b7ed45f9fa47bff4c44af",
+      "before_sha256": "c4b925b73961325627949c3103fe81ace859c9817ffbbb5f8e99edabc859d394",
+      "after_sha256": "ebd231aa711374cedb9083161a60ad929f7b3d2e47339a3330d6527b54cd9f1d"
+    },
+    {
+      "path": "scripts/check-ext-message-options-controls.py",
+      "before_git_blob": "9f5b1b47861345db3bb4a067a8c213c1560a1a73",
+      "after_git_blob": "6b32abdb0fb0b0f8f3c58fc0644603a108824397",
+      "before_sha256": "6feb1689a36f2e46ae41a335e5ea1ee374210c262d73714fef07ed01e7d1ae5c",
+      "after_sha256": "6af0fafd68304abad0387cd3240ae5001777fdf6b47ffe08231a7172214c8907",
+      "python_ast_equal": true
+    },
+    {
+      "path": "scripts/check-ext-message-pool-controls.py",
+      "before_git_blob": "95d8e48797a625bb49b9055cf4d69b252c61989e",
+      "after_git_blob": "47ce050ac77ee0e4fcfee7c91f6aee6b83dc8460",
+      "before_sha256": "ec7813506cec76a92290a527dbd6faa4806d2001534b0b0b352a0ac5e44592d4",
+      "after_sha256": "62fbb8daf694a0f1be291a9029f9a44c3dac8e7ff1396142bbe6842b20be3997",
+      "python_ast_equal": true
+    },
+    {
+      "path": "scripts/check-ext-message-replay-controls.py",
+      "before_git_blob": "8650f3ee74925fb75300e4873a2c7317b206f8a0",
+      "after_git_blob": "b15cc3ffbdc3cabf0e76f4c8f256855bfd805bff",
+      "before_sha256": "2de52f0fecc6b9e4f56124396052976be25eea29accd3eef296563a48930075a",
+      "after_sha256": "ba481f1f7025ff22caf26a1c61bb5c5c72316bcdba41f204202e2091d23d6eb1",
+      "python_ast_equal": true
+    },
+    {
+      "path": "scripts/check-ext-message-work-budget.py",
+      "before_git_blob": "6ed181603d5e1860f30958ef0e9258a1cda66324",
+      "after_git_blob": "3927ad93d87454f47d83960eca6e63c803a8f1ae",
+      "before_sha256": "a1ac1bccb57ae3f095c6995a8760777d06f1624a281f719649d7f1f26946be34",
+      "after_sha256": "3c23874bb06150e7863321a2f57e4c3a8ae2e894a0970b039a76ff83b3d09c4a",
+      "python_ast_equal": true
+    },
+    {
+      "path": "scripts/check-ext-message-work-cli.py",
+      "before_git_blob": "5efb11a855d478b07e8df400d6bdb27fe823c27e",
+      "after_git_blob": "7f8c1be21da93aba00eb9e88ba8733c2775a89cb",
+      "before_sha256": "149ac5856724c7a9222524ca373ca898995fc78d3f6e91f2c39459b4c4afe9bb",
+      "after_sha256": "f673339a14bcd6a5422aac996950e0096451a02609e4537411cf91306943e322",
+      "python_ast_equal": true
+    },
+    {
+      "path": "test/auth-extensions/native.py",
+      "before_git_blob": "e65191be3f97326cc07976c61da2d38f3e6eb6ec",
+      "after_git_blob": "6b384ea42712cdf4143825272e4280b25e5d26c9",
+      "before_sha256": "a12555c82eafb849de167f825dbc2e926eef871fc9fe75a5c57b6899265188f4",
+      "after_sha256": "aa6c3baa80129b1127e19bfe65c0f38e5e5ac72e2d6aa14d734dace3ad52f2ae",
+      "python_ast_equal": true
+    },
+    {
+      "path": "test/tostester/src/tostester/zerostate.py",
+      "before_git_blob": "d95a1809675a2ce76752a6fe5d319ceef5ad1db2",
+      "after_git_blob": "ebdce230a2ddb97c7bc3efcdd33babeff53f3c60",
+      "before_sha256": "0a199a320b9d02809ba34ecebd9148c4da46d66b24e9ff55e386e9d8ac5b3afa",
+      "after_sha256": "63328d71f07bbd9a035e8972e36f3fdfaea7c8a08c36bc65215fc2956780873d",
+      "python_ast_equal": true
+    },
+    {
+      "path": "test/tostester/tests/tostester/test_zerostate_supply.py",
+      "before_git_blob": "9e0cee022f62b3959610fb5b88487b6b363769ec",
+      "after_git_blob": "b78c354578f757aaeb903280e51f2a619bac45f0",
+      "before_sha256": "f41ad565b0b92d2b72009d2acd3af7fb8a1dc1f6ae16aef1160a86e08f799fcd",
+      "after_sha256": "f42d389770c1e406401879ce9d525cd80136691ed7c3730ca650eb83004a309a",
+      "python_ast_equal": true
+    },
+    {
+      "path": "test/wallet-v5r2/admission_config_controls.py",
+      "before_git_blob": "af76556e5da5c158c7d1fe894d6ff3119b70981b",
+      "after_git_blob": "aa6c5a2dce9036ae6d2744fc2bed6cd32a9f49dc",
+      "before_sha256": "8af6a443b2737c7107ac433442c020f21499e65440ef81cef86020acdd9eb7e6",
+      "after_sha256": "18a86f1fb80b97f78a5c69965ea28c02e91e1a7fcc6ef76fb451357c85f95dcb",
+      "python_ast_equal": true
+    }
+  ],
+  "static_verification": {
+    "cpp_before_exit_code": 1,
+    "cpp_after_exit_code": 0,
+    "cpp_after_output": "clang-format did not modify any files",
+    "cpp_files": 13,
+    "python_files": 9,
+    "python_ast_equal": 9,
+    "literal_scan": {
+      "method": "Parse tracked Python scripts whose path contains control or check-ext-message; compare occurrences of every str/bytes AST constant of at least eight bytes that matches a changed C++ source before formatting. Constants from the pre-format AST are checked against both source snapshots.",
+      "matching_literal_source_pairs": 656,
+      "changed_counts": 0
+    },
+    "mutation_anchors": [
+      {
+        "control": "generated:disable-stop",
+        "source": "validator/impl/external-message.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "generated:wrong-workchain-prices",
+        "source": "validator/impl/ext-message-checker.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "generated:skip-charge",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "generated:ignore-setgaslimit",
+        "source": "crypto/vm/tosops.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:stale-limits",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:false-completion",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:reset-work-on-update",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:disable-on-options-update",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:skip-work-charge",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:skip-accepted-work-charge",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:skip-zero-gas-work-charge",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:skip-profile-check",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:stale-profile-on-rebind",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:ignore-queued-cancellation",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:skip-shutdown-drain",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "pool:skip-shared-charge",
+        "source": "validator/impl/ext-message-pool.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "options:setter-validation",
+        "source": "validator/validator-options.hpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "options:parser-validation",
+        "source": "validator/admission-work-profile.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "options:canonical-hash",
+        "source": "validator/admission-work-profile.cpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "budget:missing-special-credit",
+        "source": "validator/impl/ext-message-work-quote.hpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "budget:missing-debit",
+        "source": "validator/impl/ext-message-work-budget.hpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "budget:unpriced-precompiled",
+        "source": "validator/impl/ext-message-work-quote.hpp",
+        "before_count": 1,
+        "after_count": 1
+      },
+      {
+        "control": "stop-accept:disable-stop",
+        "source": "validator/impl/external-message.cpp",
+        "before_count": 1,
+        "after_count": 1
+      }
+    ],
+    "ruff_changed_python_files": 192,
+    "ruff_checks": [
+      {
+        "command": [
+          "ruff",
+          "check",
+          "--no-cache",
+          "<192 changed Python files>"
+        ],
+        "exit_code": 0,
+        "output": "All checks passed!"
+      },
+      {
+        "command": [
+          "ruff",
+          "format",
+          "--check",
+          "--no-cache",
+          "<192 changed Python files>"
+        ],
+        "exit_code": 0,
+        "output": "192 files already formatted"
+      }
+    ],
+    "whitespace_exit_code": 0
+  },
+  "historical_evidence": {
+    "policy": "Historical source and runner SHA values remain the identity of the executions actually recorded. This mapping does not relabel earlier binaries, traces or semantic controls as executions of formatted sources.",
+    "unchanged_indices": {
+      "test/wallet-v5r2/checker-replay-controls-20261006.json": "ed1705b30d9c02d6509ac264ec965df3a7af1743ce7d03485fabac87e32c0218",
+      "test/wallet-v5r2/checker-stop-accept-20261006.json": "dafb3d72ff60921baea584aa4825db2c929401b35ac9a669b1fe0db8ac5518be",
+      "test/wallet-v5r2/generated-checker-20261006.json": "1d2c0f41f820068ffb668afa65493f50349b9a604e3902bd0ba4d6ecca11004d",
+      "test/wallet-v5r2/localnet-admission-20261006.json": "e9e5e8f46922b88be5e1d6c5e0b6ab2f6ed2f59ba584d2e0cca231d12ffa0830",
+      "test/wallet-v5r2/manager-admission-20261006.json": "b928f04a3a6484275c15ca54cf19a12ef5fcd14865a3eb33ecb22a64f52d992d",
+      "test/wallet-v5r2/ordinary-work-20261006.json": "e7700c3cc31ffd79bae8e9a5ddca353ac0078bfbf627b0654833c83b3d7b54c0",
+      "test/wallet-v5r2/queued-cancel-20261006.json": "8d79d2f179dbee11ebab96898776ea6383c4b2786a69270e02ce8c32c66bdf14",
+      "test/wallet-v5r2/queued-profile-20261006.json": "9d2de907739ff875e63748203129b2328c69862d334c8b459c0a6ee7408f1db5",
+      "test/wallet-v5r2/release-config-transactions-20261006.json": "e9ee003f7b2f3303b5ff42c832292a6ae996c24eb19b7936136990bffe232d78",
+      "test/wallet-v5r2/release-corpus-20261006.json": "f6801ad9cbfd0d861d64ac161eabe3445a7e3d00e07cae9374fc6b9f252003cc",
+      "test/wallet-v5r2/release-wallet-20261006.json": "f3e199e56bfbf39fe6d6437d4890a418cac099c5f2d8c6d1ac08b7bf3f67c9dd",
+      "test/wallet-v5r2/rust-admission-config-20261006.json": "95052366ac26e5994845de6348061fbf9c3254d626a4a57158d70e8e6d19580c",
+      "test/wallet-v5r2/work-budget-primitive-20261006.json": "3fd748127f06bd29053116d2cc4a12a23ae8ef77cf455e73dcbaac0abe2fd1b1",
+      "test/wallet-v5r2/work-cli-20261006.json": "a60b2c175320e471003538d5b10b402c9a5d57bb45f3d7b2e61501066569e088",
+      "test/wallet-v5r2/work-dispatch-20261006.json": "9ff35d628b5886d5a9c2ccb91f4953ad4425b1f99518be35515f4a8f2f39d663",
+      "test/wallet-v5r2/work-options-20261006.json": "7d5fc0fc97527671ee4a7b571ace2dca3523d86d55a2a0efda406cece94f6a2f",
+      "test/wallet-v5r2/work-quote-20261006.json": "68a1316b5731a5205cda0555c4505a67875d1d89c5587c7267b8507df7a74b8e"
+    },
+    "review_candidate_manifest": {
+      "path": "test/wallet-v5r2/review-candidate-manifest.json",
+      "unchanged_sha256": "b11e01c2ea64823f30f8b60aa753811e3e94eaa33ee7628ed6197b3abe25517d",
+      "affected_entry": "repository/test/auth-extensions/native.py",
+      "status": "The manifest has deliberately not been rewritten. The repository owner will rebuild and review the candidate bundle after the coordinated source freeze."
+    }
+  },
+  "limits": [
+    "Formatting changes are not new semantic-control evidence.",
+    "Build and runtime validation are deferred to the coordinated source freeze and subsequent CI.",
+    "Raw CI log availability is governed by the linked workflow retention; this compact record stores source hashes and commands, not the full log."
+  ]
+}

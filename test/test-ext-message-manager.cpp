@@ -1,16 +1,16 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
 #include <filesystem>
 
+#include "auto/tl/lite_api.hpp"
+#include "quic/quic-sender.h"
 #include "td/actor/TestScheduler.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/tests.h"
-#include "auto/tl/lite_api.hpp"
 #include "tl-utils/lite-utils.hpp"
-#include "quic/quic-sender.h"
 #include "validator/impl/applied-ext-message-cleanup.hpp"
 #include "validator/impl/ext-message-pool.hpp"
-#include "validator/impl/liteserver.hpp"
 #include "validator/impl/liteserver-cache.hpp"
+#include "validator/impl/liteserver.hpp"
 #include "validator/impl/shard.hpp"
 #include "validator/manager.hpp"
 #include "vm/boc.h"
@@ -21,10 +21,11 @@ namespace tos::validator {
 class ExtMessageManagerTestHarness final : public ValidatorManagerImpl {
  public:
   explicit ExtMessageManagerTestHarness(td::Ref<ValidatorManagerOptions> options)
-      : ValidatorManagerImpl(std::move(options), "", {}, {}, {}, {}, {}) {}
-  void start_up() override {}
-  td::actor::Task<> initialize(td::Ref<MasterchainState> state,
-                             std::shared_ptr<adnl::AdnlExtByteBudget> bytes) {
+      : ValidatorManagerImpl(std::move(options), "", {}, {}, {}, {}, {}) {
+  }
+  void start_up() override {
+  }
+  td::actor::Task<> initialize(td::Ref<MasterchainState> state, std::shared_ptr<adnl::AdnlExtByteBudget> bytes) {
     ext_message_pool_ = td::actor::create_actor<ExtMessagePool>("shared-manager-pool", opts_, actor_id(this), bytes);
     co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::update_last_masterchain_state, std::move(state));
     started_ = true;
@@ -45,8 +46,8 @@ class ExtMessageManagerTestHarness final : public ValidatorManagerImpl {
 };
 
 TEST(ExtMessageManager, BroadcastQueryAndLiteServerShareWorkBudget) {
-  auto file = td::read_file((std::filesystem::path(__FILE__).parent_path() /
-                            "pq-native/data/c04-pq-genesis.boc").string());
+  auto file =
+      td::read_file((std::filesystem::path(__FILE__).parent_path() / "pq-native/data/c04-pq-genesis.boc").string());
   ASSERT_TRUE(file.is_ok());
   auto decoded = vm::std_boc_deserialize(file.move_as_ok());
   ASSERT_TRUE(decoded.is_ok());
@@ -84,12 +85,14 @@ TEST(ExtMessageManager, BroadcastQueryAndLiteServerShareWorkBudget) {
       std::string error;
       if (i % 3 == 0) {
         auto result = co_await td::actor::ask(manager, &ValidatorManager::new_external_message_broadcast,
-                                             std::move(input), 0, peer).wrap();
+                                              std::move(input), 0, peer)
+                          .wrap();
         ASSERT_TRUE(result.is_error());
         error = result.error().message().str();
       } else if (i % 3 == 1) {
-        auto result = co_await td::actor::ask(manager, &ValidatorManager::new_external_message_query,
-                                             std::move(input), peer).wrap();
+        auto result =
+            co_await td::actor::ask(manager, &ValidatorManager::new_external_message_query, std::move(input), peer)
+                .wrap();
         ASSERT_TRUE(result.is_error());
         error = result.error().message().str();
       } else {
@@ -100,7 +103,8 @@ TEST(ExtMessageManager, BroadcastQueryAndLiteServerShareWorkBudget) {
         ASSERT_TRUE(result.is_error());
         error = result.error().message().str();
       }
-      const char* expected = i < 3 ? "cannot deserialize bag-of-cells" : "external message admission work budget exhausted";
+      const char* expected =
+          i < 3 ? "cannot deserialize bag-of-cells" : "external message admission work budget exhausted";
       EXPECT(error.find(expected) != std::string::npos);
       EXPECT_EQ(bytes->used(), 0u);
     }

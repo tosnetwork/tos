@@ -521,10 +521,14 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     if type(config.v5r2_admission_candidate) is not bool:
         raise ValueError("V5R2 admission candidate flag must be boolean")
     if config.v5r2_admission_candidate and (
-        config.global_version != 18 or not config.deployment_fee_schedule
-        or not isinstance(config.auth_network_tag, bytes) or len(config.auth_network_tag) != 32
+        config.global_version != 18
+        or not config.deployment_fee_schedule
+        or not isinstance(config.auth_network_tag, bytes)
+        or len(config.auth_network_tag) != 32
     ):
-        raise ValueError("V5R2 admission candidate requires version 18, deployment fees and a 32-byte AUTH network tag")
+        raise ValueError(
+            "V5R2 admission candidate requires version 18, deployment fees and a 32-byte AUTH network tag"
+        )
     if config.deployment_fee_schedule:
         credit = 20000 if config.v5r2_admission_candidate else 10000
         return {

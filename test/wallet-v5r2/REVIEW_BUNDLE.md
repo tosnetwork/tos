@@ -79,3 +79,11 @@ After all client source guards were restored, an additional build and independen
 check using Clang 18-built Func/Fift reproduced the same 74 frozen identities as
 the earlier GCC-built tools. This is local compiler-build reproducibility; the
 18 control outcomes above and final-head architecture CI remain distinct.
+
+The later CI formatting repair explicitly refreshes one of the 74 pinned files:
+`test/auth-extensions/native.py`. Its Python AST is unchanged. A fresh build and
+independent comparison preserve all code/configuration identities and the other
+73 files; the same 18 control outcomes pass again against the refreshed pin.
+[The refresh record](review-format-refresh-20261006.json) retains both manifest
+identities and the exact commands. The earlier evidence index remains unchanged
+and continues to describe its original manifest, rather than the refreshed one.

@@ -246,9 +246,7 @@ class Emulator:
         self.lib.transaction_emulator_set_lt.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
         self.lib.transaction_emulator_set_ignore_chksig.argtypes = [ctypes.c_void_p, ctypes.c_bool]
         self.lib.emulator_set_verbosity_level(0)
-        self.ptr = self.lib.transaction_emulator_create(
-            configuration.b64(), vm_log_verbosity
-        )
+        self.ptr = self.lib.transaction_emulator_create(configuration.b64(), vm_log_verbosity)
         assert self.ptr, "native emulator must load the test configuration"
         self.lib.transaction_emulator_set_unixtime(self.ptr, NOW)
         self.lib.transaction_emulator_set_ignore_chksig(self.ptr, False)

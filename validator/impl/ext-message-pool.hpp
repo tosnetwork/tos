@@ -36,8 +36,10 @@ class ExtMessagePool : public td::actor::Actor {
                  std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget =
                      std::make_shared<adnl::AdnlExtByteBudget>(ext_message_admission_bytes),
                  std::unique_ptr<ExtMessageWorkAdmission> work_admission = nullptr)
-      : opts_(opts), manager_(manager), admission_budget_(std::move(admission_budget)),
-        work_admission_(std::move(work_admission)) {
+      : opts_(opts)
+      , manager_(manager)
+      , admission_budget_(std::move(admission_budget))
+      , work_admission_(std::move(work_admission)) {
     CHECK(admission_budget_ != nullptr);
   }
 
