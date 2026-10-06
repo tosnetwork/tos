@@ -10,6 +10,9 @@ on:
       - 'validator-engine/**'
       - 'test/test-ext-message-*.cpp'
       - 'test/test-validator-options.cpp'
+      - 'test/pq-native/data/c04-pq-genesis.boc'
+      - 'crypto/block/transaction.*'
+      - 'crypto/vm/**'
       - 'scripts/check-ext-message-*.py'
       - 'tdutils/td/utils/misc.h'
 
@@ -49,6 +52,9 @@ jobs:
           for boundary in setter parser-validation parser-canonical; do
             python3 scripts/check-ext-message-options-controls.py --build-dir build-admission --boundary "$boundary" --output-dir "artifacts/admission/$boundary"
           done
+      - name: Pool dispatch deletion controls
+        run: |
+          python3 scripts/check-ext-message-pool-controls.py --build-dir build-admission --output-dir artifacts/admission/pool-controls
       - name: Record source identity
         if: always()
         run: |

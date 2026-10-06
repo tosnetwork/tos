@@ -140,6 +140,11 @@ class AdmissionLimitsState final : public MasterchainStateQ {
 
 class ExtMessagePoolTestHarness final : public ExtMessagePool {
  public:
+  ExtMessagePoolTestHarness(td::Ref<ValidatorManagerOptions> options,
+                           std::shared_ptr<adnl::AdnlExtByteBudget> bytes)
+      : ExtMessagePool(std::move(options), {}, std::move(bytes)) {
+    inflight_checks_ = MAX_INFLIGHT_CHECKS;
+  }
   explicit ExtMessagePoolTestHarness(std::shared_ptr<adnl::AdnlExtByteBudget> bytes)
       : ExtMessagePool({}, {}, std::move(bytes)) {
     last_masterchain_state_ = td::make_ref<AdmissionLimitsState>(65535);
@@ -159,6 +164,26 @@ class ExtMessagePoolTestHarness final : public ExtMessagePool {
     EXPECT_EQ(admission_window_.checked, 0u);
     EXPECT_EQ(admission_budget_->used(), 0u);
     EXPECT(admission_waiters_.empty());
+  }
+  void rebind_profile_and_release(ExtMessageWorkProfile profile) {
+    ASSERT_TRUE(admission_waiters_.size() == 1);
+    ASSERT_TRUE(work_admission_ != nullptr);
+    EXPECT_EQ(work_admission_->available(), 2u);
+    ASSERT_TRUE(configure_work_profile(std::move(profile)).is_ok());
+    EXPECT_EQ(work_admission_->available(), 2u);
+    inflight_checks_ = 1;
+    release_check_slot(false);
+  }
+  void verify_work_released(bool dispatched) {
+    EXPECT_EQ(inflight_checks_, 0u);
+    EXPECT_EQ(completions_in_rate_window_, dispatched ? 1u : 0u);
+    EXPECT_EQ(admission_window_.checked, dispatched ? 1u : 0u);
+    EXPECT_EQ(work_admission_->available(), dispatched ? 1u : 2u);
+    EXPECT_EQ(admission_budget_->used(), 0u);
+    EXPECT(admission_waiters_.empty());
+    for (auto count : checker_inflight_) {
+      EXPECT_EQ(count, 0u);
+    }
   }
 };
 
@@ -353,5 +378,63 @@ TEST(ExtMessagePool, WorkBudgetChargesFailuresAcrossPeerAndLocalSources) {
 }
 TEST(ExtMessagePool, WorkBudgetRejectsUnmatchedConfigurationWithoutDispatch) {
   exercise_work_dispatch(true);
+}
+
+namespace {
+void exercise_queued_profile_rebind(bool initially_supported) {
+  auto file = td::read_file((std::filesystem::path(__FILE__).parent_path() /
+                            "pq-native/data/c04-pq-genesis.boc").string());
+  ASSERT_TRUE(file.is_ok());
+  auto decoded = vm::std_boc_deserialize(file.move_as_ok());
+  ASSERT_TRUE(decoded.is_ok());
+  auto root = decoded.move_as_ok();
+  BlockIdExt id{masterchainId, shardIdAll, 0, root->get_hash().bits(), FileHash::zero()};
+  auto loaded = MasterchainStateQ::fetch(id, td::BufferSlice{}, root);
+  ASSERT_TRUE(loaded.is_ok());
+  td::Ref<MasterchainState> state = loaded.move_as_ok();
+  auto config = block::ConfigInfo::extract_config(root, id, 0xFFFF);
+  ASSERT_TRUE(config.is_ok());
+  ExtMessageWorkProfile profile;
+  profile.config_root = config.ok()->get_root_cell()->get_hash().bits();
+  profile.capacity = 2;
+  profile.refill_units = 1;
+  profile.refill_interval_ns = std::numeric_limits<std::int64_t>::max();
+  profile.attempt_units = 1;
+  profile.max_bytes = 65535;
+  profile.max_depth = 512;
+  if (!initially_supported) {
+    profile.config_root.data()[0] ^= 1;
+  }
+  auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  ASSERT_TRUE(options.write().set_ext_message_work_profile(profile).is_ok());
+  auto bytes = std::make_shared<adnl::AdnlExtByteBudget>(65535);
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<td::Unit> {
+    auto pool = td::actor::create_actor<ExtMessagePoolTestHarness>("queued-profile", options, bytes);
+    co_await td::actor::ask(pool.get(), &ExtMessagePool::update_last_masterchain_state, state);
+    auto pending = td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
+        td::BufferSlice{"queued malformed input"}, 0, false, td::optional<PublicKeyHash>{});
+    // Change only the reviewed config pin while the real coroutine is suspended.
+    // The admission decision must observe this update when the slot is released.
+    profile.config_root.data()[0] ^= 1;
+    co_await td::actor::ask(pool.get(), &ExtMessagePoolTestHarness::rebind_profile_and_release, profile);
+    auto result = co_await std::move(pending).wrap();
+    ASSERT_TRUE(result.is_error());
+    if (initially_supported) {
+      EXPECT_EQ(result.error().message(), "external admission configuration is outside the work profile");
+    } else {
+      EXPECT(result.error().message().str().find("cannot deserialize bag-of-cells") != std::string::npos);
+    }
+    co_await td::actor::ask(pool.get(), &ExtMessagePoolTestHarness::verify_work_released, !initially_supported);
+    co_return td::Unit{};
+  });
+}
+}  // namespace
+
+TEST(ExtMessagePool, QueuedProfileRebindRejectsPreviouslySupportedConfig) {
+  exercise_queued_profile_rebind(true);
+}
+TEST(ExtMessagePool, QueuedProfileRebindAdmitsNewlySupportedConfig) {
+  exercise_queued_profile_rebind(false);
 }
 }  // namespace tos::validator

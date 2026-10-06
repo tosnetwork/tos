@@ -1,0 +1,120 @@
+{
+  "base_commit": "32d306ce3a3e2ebea924785426f098bd3539a6e1",
+  "source_state": "uncommitted tests and runner on base commit; production sources unchanged",
+  "sources": {
+    "test/test-ext-message-pool.cpp": "29afab3154bd1ce112420bb85d3a8e53c6328f1d112532f97911650180fd6af7",
+    "validator/impl/ext-message-pool.cpp": "f42bd694b77a2bf807c2f2fc0e3037851dbedbea4617748f63c98300f98167a7",
+    "validator/impl/ext-message-pool.hpp": "8361ea98bdd4741f4cdc00b80e8ea38ef9560796cd25d6f4c442e54f2c932510",
+    "validator/impl/ext-message-work-profile.hpp": "124d09aa912e8e4989fb4b68fbe7d57826d123617371a95d31427d827e7880f2",
+    "scripts/check-ext-message-pool-controls.py": "f9cb84222d2ce1239258fdb31309c3b2d09c4d0eee2d4905f95b8c7a0de4d3c9",
+    ".github/workflows/admission-work.yml": "c056fa315aaa7e6c67f5ecc798b7f026f9b253da4616aad8fdf7a85a52321ff5"
+  },
+  "platform": "Linux AArch64 Release clang",
+  "retain_until": "2027-01-06",
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-queued-profile-controls",
+  "command": "python3 scripts/check-ext-message-pool-controls.py --container v5r2-admission-linux --build-dir /build-shadow --output-dir /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-queued-profile-controls",
+  "results": {
+    "source_sha256": "f42bd694b77a2bf807c2f2fc0e3037851dbedbea4617748f63c98300f98167a7",
+    "returncodes": {
+      "baseline-build": 0,
+      "baseline": 0,
+      "stale-limits-build": 0,
+      "stale-limits": 1,
+      "false-completion-build": 0,
+      "false-completion": 1,
+      "reset-work-on-update-build": 0,
+      "reset-work-on-update": 1,
+      "disable-on-options-update-build": 0,
+      "disable-on-options-update": 1,
+      "skip-work-charge-build": 0,
+      "skip-work-charge": 1,
+      "skip-profile-check-build": 0,
+      "skip-profile-check": 1,
+      "stale-profile-on-rebind-build": 0,
+      "stale-profile-on-rebind": 1,
+      "restored-build": 0,
+      "restored": 0
+    },
+    "logs": {
+      "baseline-build.log": {
+        "sha256": "4c21e9e82a4c3d272e520b7194ef029f430517d257ecf5f72979f905464fda05",
+        "bytes": 398
+      },
+      "baseline.log": {
+        "sha256": "6dc2eb62616c5a0248b65b9cddadc4cfb947dce7151a23aab2d1d2f138f5396d",
+        "bytes": 5655
+      },
+      "disable-on-options-update-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "disable-on-options-update.log": {
+        "sha256": "c6804bb7b98d58fa0215de3b4277e3316a684d855101dc90be79e99f9e832101",
+        "bytes": 7285
+      },
+      "false-completion-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "false-completion.log": {
+        "sha256": "98c060aaa262866791867bbc549676fea34b20639740be4817d8968a3ea296f9",
+        "bytes": 6405
+      },
+      "reset-work-on-update-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "reset-work-on-update.log": {
+        "sha256": "44c92d239a50fff231bbb1a275f809cc4d5016bda6d3f12e573c7b4c9d955cd9",
+        "bytes": 6330
+      },
+      "restored-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "restored.log": {
+        "sha256": "7616eb4fb5255a70096ee5bba5568c09ec7f6a6935635e26809e7aa38b0710c9",
+        "bytes": 5657
+      },
+      "skip-profile-check-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "skip-profile-check.log": {
+        "sha256": "67910dd1e72fadde36c913faee7d6ca99e1517df484fba9e0f41591ce7034bad",
+        "bytes": 8779
+      },
+      "skip-work-charge-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "skip-work-charge.log": {
+        "sha256": "105ba36c09fde670de812ca24969c5597deb69376e3a956ba6281cc330679e2f",
+        "bytes": 6856
+      },
+      "stale-limits-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "stale-limits.log": {
+        "sha256": "43093a9707fd2072d59c491e8afae91cbdef8a180f69c0ad92c860170b05ce6c",
+        "bytes": 6352
+      },
+      "stale-profile-on-rebind-build.log": {
+        "sha256": "217b27fb002c5ffc16c6c0c82276b624c9be6157ff023237f4ed67e5c59219f0",
+        "bytes": 302
+      },
+      "stale-profile-on-rebind.log": {
+        "sha256": "dd77c30cf88d31df14e6f6d1dcb32338a25cbb8b0cda0919c75f7eaa4522cf5b",
+        "bytes": 7467
+      }
+    },
+    "scope": "actual pool coroutine, shared work charge, exact config pin, and failure VM-count regression"
+  },
+  "scope": "A real pool coroutine waits behind synthetic inflight occupancy. Rebinding the profile from supported to unsupported prevents dispatch without consuming tokens; the reverse allows one malformed-input dispatch and consumes exactly one unit. Both leave zero byte/inflight/checker occupancy and no waiters. Deleting the support refresh fails both new tests. Baseline and restoration each pass 10 tests; all seven targeted mutations fail.",
+  "limitations": [
+    "The queued input is malformed and does not enter the VM. The suite separately retains its real rejected-VM single-execution test.",
+    "Synthetic occupancy and explicit local profile rebind do not establish live chain-configuration transition, cancellation, peer/RPC integration or attack-load fairness.",
+    "New CI workflow has not yet run on the remote branch."
+  ]
+}

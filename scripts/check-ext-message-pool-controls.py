@@ -56,6 +56,10 @@ def main():
         ('skip-profile-check', b'    if (!work_profile_supported_) {',
          b'    if (false) {', 'external admission configuration is outside the work profile',
          'WorkBudgetRejectsUnmatchedConfigurationWithoutDispatch'),
+        ('stale-profile-on-rebind', b'  update_last_masterchain_state(last_masterchain_state_);',
+         b'  // Controlled deletion of supported-profile refresh after rebind.',
+         'external admission configuration is outside the work profile',
+         'QueuedProfileRebindRejectsPreviouslySupportedConfig'),
     ]
     for name, anchor, _, _, _ in mutations:
         if original.count(anchor) != 1:
