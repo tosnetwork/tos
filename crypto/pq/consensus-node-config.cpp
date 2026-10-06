@@ -2,10 +2,13 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <functional>
+#include <optional>
 #include <openssl/rand.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <variant>
+#include <vector>
 
 #include "auto/tl/tos_api.h"
 #include "auto/tl/tos_api_json.h"
@@ -14,6 +17,7 @@
 #include "tl/tl_json.h"
 
 #include "consensus-key-file.h"
+#include "consensus-key-schedule.h"
 #include "consensus-node-config.h"
 #include "seed-file.h"
 
@@ -284,64 +288,82 @@ bool schema_keeps_everything(const std::string& original, const tos::tos_api::en
   return true;
 }
 
-bool same_binding(const tos::tos_api::engine_validator_pqConsensus& held, const td::Bits256& id,
-                  const std::string& file) {
-  return held.validator_id_ == id && held.consensus_key_file_ == file;
+// The keys a configuration names, in order: the single `consensus_key_file` first, when
+// there is one, then each entry of `keys`.
+std::vector<NodeConsensusKeyEntry> configured_keys(const tos::tos_api::engine_validator_pqConsensus& pq) {
+  std::vector<NodeConsensusKeyEntry> out;
+  if (!pq.consensus_key_file_.empty()) {
+    out.push_back(NodeConsensusKeyEntry{pq.consensus_key_file_, 0, 0, true});
+  }
+  for (const auto& key : pq.keys_) {
+    if (key) {
+      out.push_back(NodeConsensusKeyEntry{key->consensus_key_file_, static_cast<std::uint32_t>(key->valid_from_),
+                                          static_cast<std::uint32_t>(key->expire_at_), false});
+    }
+  }
+  return out;
 }
 
-}  // namespace
+bool same_binding(const tos::tos_api::engine_validator_pqConsensus& held, const td::Bits256& id,
+                  const std::string& file) {
+  return held.validator_id_ == id && held.consensus_key_file_ == file && held.keys_.empty();
+}
 
-bool parse_validator_id(std::string_view text, std::array<std::uint8_t, 32>& out, std::string& why) {
-  if (text.size() == 67 && text.substr(0, 3) == "-1:") {
-    text.remove_prefix(3);
-  } else if (text.find(':') != std::string_view::npos) {
-    why = "a validator id is a masterchain controller: 64 hex digits or -1:<64 hex digits>";
+// Open, check and read the configuration at `path` whole. The same checks for every
+// command: a regular file (a FIFO is refused, not waited on), not a symbolic link, owned
+// by this user, of a plausible size, read to its end.
+bool read_config_file(const std::string& path, struct stat& before, std::string& original, std::string& why) {
+  // Opened without blocking, so a FIFO at this name is refused rather than waited on.
+  Descriptor fd(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+  if (!fd.valid()) {
+    why = errno_text(path + ": cannot open the configuration (a symbolic link is refused)");
     return false;
   }
-  if (text.size() != 64) {
-    why = "a validator id is 64 hexadecimal digits";
+  if (::fstat(fd.get(), &before) != 0) {
+    why = errno_text(path);
     return false;
   }
-  bool zero = true;
-  for (std::size_t i = 0; i < out.size(); i++) {
-    const int hi = nibble(text[2 * i]);
-    const int lo = nibble(text[2 * i + 1]);
-    if (hi < 0 || lo < 0) {
-      why = "a validator id is 64 hexadecimal digits";
-      return false;
-    }
-    out[i] = static_cast<std::uint8_t>(hi * 16 + lo);
-    zero = zero && out[i] == 0;
+  if (!S_ISREG(before.st_mode)) {
+    why = path + ": the configuration is not a regular file";
+    return false;
   }
-  if (zero) {
-    why = "the validator id is zero; the node refuses to start with it";
+  const int flags = ::fcntl(fd.get(), F_GETFL);
+  if (flags < 0 || ::fcntl(fd.get(), F_SETFL, flags & ~O_NONBLOCK) != 0) {
+    why = errno_text(path);
+    return false;
+  }
+  // The engine rewrites this file as the user it runs as. A file that user does not own
+  // would come back owned by whoever ran this, and the engine could not replace it.
+  if (before.st_uid != ::geteuid()) {
+    why = path + ": the configuration is owned by another user; run this as the node's service account";
+    return false;
+  }
+  if (before.st_size <= 0 || before.st_size > config_size_limit) {
+    why = path + ": the configuration is empty or too large to be one";
+    return false;
+  }
+  if (!read_whole(fd.get(), before.st_size, original)) {
+    why = path + ": the configuration could not be read to its end, or changed while it was read";
     return false;
   }
   return true;
 }
 
-NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, NodeConsensusBindingResult& result,
-                                           std::string& why) {
-  // The node runs with / as its working directory under a service manager, so a relative
-  // path would name a different file there than here.
-  if (binding.key_file.empty() || binding.key_file.front() != '/') {
-    why = "the key file must be given as an absolute path";
-    return NodeBindingOutcome::refused;
-  }
+// What a change to the configuration decided, having seen it.
+enum class EditVerdict { refuse, unchanged, write };
+using ConfigEdit = std::function<EditVerdict(tos::tos_api::engine_validator_config&, std::string&)>;
 
-  // The key is checked under the node's own rules, by the node's own loader, as the user
-  // running this. That is why this has to run as the node's service account: a key the
-  // node cannot read would be accepted here and refused at start.
-  auto loaded = load_consensus_key(binding.key_file);
-  if (std::holds_alternative<ConsensusKeyFileError>(loaded)) {
-    why = binding.key_file + ": " + describe(std::get<ConsensusKeyFileError>(loaded));
-    return NodeBindingOutcome::refused;
-  }
-  result.key_id = std::get<ValidatorPQKeyStore>(loaded).consensus_key().key_id;
-
+// The one read-modify-write every command that changes a node's configuration goes
+// through. Both locks (the configuration lock, and the cell database's when it exists)
+// are held for the whole of it. Refuses, writing nothing, when either is held elsewhere,
+// when a config.json.tmp from an interrupted engine write is present, when the
+// configuration is not a regular file owned by this user, when it holds anything the
+// engine's schema would drop, when `edit` refuses, or when the file's group cannot be
+// kept. Every field the schema knows is written back as the engine itself would write it.
+NodeBindingOutcome edit_node_config(const std::string& db_root, const ConfigEdit& edit, std::string& config_path,
+                                    std::string& why) {
   // The engine reads <db>/config.json and nothing else, so the database root is what is
   // named, and the configuration is found where the engine finds it.
-  const std::string& db_root = binding.db_root;
   {
     struct stat root{};
     if (db_root.empty() || ::stat(db_root.c_str(), &root) != 0 || !S_ISDIR(root.st_mode)) {
@@ -350,7 +372,7 @@ NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, 
     }
   }
   const std::string path = db_root + "/config.json";
-  result.config_path = path;
+  config_path = path;
 
   // Held from here until the new configuration is in place: no engine starts, and no
   // other binder reads, until then.
@@ -383,40 +405,8 @@ NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, 
 
   struct stat before{};
   std::string original;
-  {
-    // Opened without blocking, so a FIFO at this name is refused rather than waited on.
-    Descriptor fd(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
-    if (!fd.valid()) {
-      why = errno_text(path + ": cannot open the configuration (a symbolic link is refused)");
-      return NodeBindingOutcome::refused;
-    }
-    if (::fstat(fd.get(), &before) != 0) {
-      why = errno_text(path);
-      return NodeBindingOutcome::refused;
-    }
-    if (!S_ISREG(before.st_mode)) {
-      why = path + ": the configuration is not a regular file";
-      return NodeBindingOutcome::refused;
-    }
-    const int flags = ::fcntl(fd.get(), F_GETFL);
-    if (flags < 0 || ::fcntl(fd.get(), F_SETFL, flags & ~O_NONBLOCK) != 0) {
-      why = errno_text(path);
-      return NodeBindingOutcome::refused;
-    }
-    // The engine rewrites this file as the user it runs as. A file that user does not own
-    // would come back owned by whoever ran this, and the engine could not replace it.
-    if (before.st_uid != ::geteuid()) {
-      why = path + ": the configuration is owned by another user; run this as the node's service account";
-      return NodeBindingOutcome::refused;
-    }
-    if (before.st_size <= 0 || before.st_size > config_size_limit) {
-      why = path + ": the configuration is empty or too large to be one";
-      return NodeBindingOutcome::refused;
-    }
-    if (!read_whole(fd.get(), before.st_size, original)) {
-      why = path + ": the configuration could not be read to its end, or changed while it was read";
-      return NodeBindingOutcome::refused;
-    }
+  if (!read_config_file(path, before, original, why)) {
+    return NodeBindingOutcome::refused;
   }
 
   tos::tos_api::engine_validator_config config;
@@ -429,30 +419,15 @@ NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, 
     return NodeBindingOutcome::refused;
   }
 
-  td::Bits256 id;
-  std::memcpy(id.data(), binding.validator_id.data(), binding.validator_id.size());
-
-  if (config.extraconfig_ && config.extraconfig_->pq_consensus_) {
-    const auto& held = *config.extraconfig_->pq_consensus_;
-    if (same_binding(held, id, binding.key_file)) {
-      return NodeBindingOutcome::unchanged;
-    }
-    if (!binding.replace) {
-      why = path + ": the node is already bound to validator " + hex(held.validator_id_) + " with key file " +
-            held.consensus_key_file_ + "; pass --replace to change it deliberately";
+  switch (edit(config, why)) {
+    case EditVerdict::refuse:
+      why = path + ": " + why;
       return NodeBindingOutcome::refused;
-    }
+    case EditVerdict::unchanged:
+      return NodeBindingOutcome::unchanged;
+    case EditVerdict::write:
+      break;
   }
-
-  if (!config.extraconfig_) {
-    // An absent extra configuration means the engine's defaults, and the one default that
-    // is not the type's own is that the state serializer runs. Creating the object with
-    // the type's default would turn it off.
-    config.extraconfig_ = tos::create_tl_object<tos::tos_api::engine_validator_extraConfig>();
-    config.extraconfig_->state_serializer_enabled_ = true;
-  }
-  config.extraconfig_->pq_consensus_ =
-      tos::create_tl_object<tos::tos_api::engine_validator_pqConsensus>(id, binding.key_file);
 
   const std::string updated = encode(config);
 
@@ -502,7 +477,7 @@ NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, 
     ::unlink(temporary.c_str());
     return NodeBindingOutcome::refused;
   }
-  // From here the binding is in place. What remains is making the rename itself survive a
+  // From here the change is in place. What remains is making the rename itself survive a
   // crash; failing that is not a refusal, and is reported as what it is.
   Descriptor dir(::open(db_root.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY));
   if (!dir.valid() || ::fsync(dir.get()) != 0) {
@@ -510,6 +485,289 @@ NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, 
     return NodeBindingOutcome::applied_not_durable;
   }
   return NodeBindingOutcome::applied;
+}
+
+// Load a configured key under the node's own rules and derive its identity.
+bool load_key_id(const std::string& key_file, ConsensusKeyIdBytes& key_id, std::string& why) {
+  auto loaded = load_consensus_key(key_file);
+  if (std::holds_alternative<ConsensusKeyFileError>(loaded)) {
+    why = key_file + ": " + describe(std::get<ConsensusKeyFileError>(loaded));
+    return false;
+  }
+  key_id = std::get<ValidatorPQKeyStore>(loaded).consensus_key().key_id;
+  return true;
+}
+
+// Write `keys` back as a configuration states them: the single `consensus_key_file`, when
+// one key is marked so, and every other key with its window.
+void store_keys(tos::tos_api::engine_validator_pqConsensus& pq, const std::vector<NodeConsensusKeyEntry>& keys) {
+  pq.consensus_key_file_.clear();
+  pq.keys_.clear();
+  for (const auto& key : keys) {
+    if (key.primary && pq.consensus_key_file_.empty()) {
+      pq.consensus_key_file_ = key.key_file;
+    } else {
+      pq.keys_.push_back(tos::create_tl_object<tos::tos_api::engine_validator_pqConsensusKey>(
+          key.key_file, static_cast<std::int32_t>(key.valid_from), static_cast<std::int32_t>(key.expire_at)));
+    }
+  }
+}
+
+bool parse_key_id(std::string_view text, ConsensusKeyIdBytes& out) {
+  if (text.size() != 64) {
+    return false;
+  }
+  for (std::size_t i = 0; i < out.size(); i++) {
+    const int hi = nibble(text[2 * i]);
+    const int lo = nibble(text[2 * i + 1]);
+    if (hi < 0 || lo < 0) {
+      return false;
+    }
+    out[i] = static_cast<std::uint8_t>(hi * 16 + lo);
+  }
+  return true;
+}
+
+}  // namespace
+
+bool parse_validator_id(std::string_view text, std::array<std::uint8_t, 32>& out, std::string& why) {
+  if (text.size() == 67 && text.substr(0, 3) == "-1:") {
+    text.remove_prefix(3);
+  } else if (text.find(':') != std::string_view::npos) {
+    why = "a validator id is a masterchain controller: 64 hex digits or -1:<64 hex digits>";
+    return false;
+  }
+  if (text.size() != 64) {
+    why = "a validator id is 64 hexadecimal digits";
+    return false;
+  }
+  bool zero = true;
+  for (std::size_t i = 0; i < out.size(); i++) {
+    const int hi = nibble(text[2 * i]);
+    const int lo = nibble(text[2 * i + 1]);
+    if (hi < 0 || lo < 0) {
+      why = "a validator id is 64 hexadecimal digits";
+      return false;
+    }
+    out[i] = static_cast<std::uint8_t>(hi * 16 + lo);
+    zero = zero && out[i] == 0;
+  }
+  if (zero) {
+    why = "the validator id is zero; the node refuses to start with it";
+    return false;
+  }
+  return true;
+}
+
+NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, NodeConsensusBindingResult& result,
+                                           std::string& why) {
+  // The node runs with / as its working directory under a service manager, so a relative
+  // path would name a different file there than here.
+  if (binding.key_file.empty() || binding.key_file.front() != '/') {
+    why = "the key file must be given as an absolute path";
+    return NodeBindingOutcome::refused;
+  }
+
+  // The key is checked under the node's own rules, by the node's own loader, as the user
+  // running this. That is why this has to run as the node's service account: a key the
+  // node cannot read would be accepted here and refused at start.
+  if (!load_key_id(binding.key_file, result.key_id, why)) {
+    return NodeBindingOutcome::refused;
+  }
+
+  td::Bits256 id;
+  std::memcpy(id.data(), binding.validator_id.data(), binding.validator_id.size());
+
+  return edit_node_config(
+      binding.db_root,
+      [&](tos::tos_api::engine_validator_config& config, std::string& reason) {
+        if (config.extraconfig_ && config.extraconfig_->pq_consensus_) {
+          const auto& held = *config.extraconfig_->pq_consensus_;
+          if (same_binding(held, id, binding.key_file)) {
+            return EditVerdict::unchanged;
+          }
+          // A node rotating its key holds several. Rebinding it would drop all but one in a
+          // single step that neither names nor checks them; they are removed one by one,
+          // with the checks remove-node-key makes, before the node is rebound.
+          if (!held.keys_.empty()) {
+            reason = "the node holds " + std::to_string(configured_keys(held).size()) +
+                     " consensus keys; remove all but one with remove-node-key before binding it anew";
+            return EditVerdict::refuse;
+          }
+          if (!binding.replace) {
+            reason = "the node is already bound to validator " + hex(held.validator_id_) + " with key file " +
+                     held.consensus_key_file_ + "; pass --replace to change it deliberately";
+            return EditVerdict::refuse;
+          }
+        }
+        if (!config.extraconfig_) {
+          // An absent extra configuration means the engine's defaults, and the one default
+          // that is not the type's own is that the state serializer runs. Creating the
+          // object with the type's default would turn it off.
+          config.extraconfig_ = tos::create_tl_object<tos::tos_api::engine_validator_extraConfig>();
+          config.extraconfig_->state_serializer_enabled_ = true;
+        }
+        config.extraconfig_->pq_consensus_ = tos::create_tl_object<tos::tos_api::engine_validator_pqConsensus>(
+            id, binding.key_file, std::vector<tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKey>>{});
+        return EditVerdict::write;
+      },
+      result.config_path, why);
+}
+
+NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& addition,
+                                          NodeConsensusBindingResult& result, std::string& why) {
+  if (addition.key_file.empty() || addition.key_file.front() != '/') {
+    why = "the key file must be given as an absolute path";
+    return NodeBindingOutcome::refused;
+  }
+  if (consensus_key_expired(addition.expire_at, addition.now)) {
+    why = "the key would already have expired at " + std::to_string(addition.expire_at);
+    return NodeBindingOutcome::refused;
+  }
+  if (!load_key_id(addition.key_file, result.key_id, why)) {
+    return NodeBindingOutcome::refused;
+  }
+
+  return edit_node_config(
+      addition.db_root,
+      [&](tos::tos_api::engine_validator_config& config, std::string& reason) {
+        if (!config.extraconfig_ || !config.extraconfig_->pq_consensus_) {
+          reason = "the node is not bound to a validator; bind it with bind-node first";
+          return EditVerdict::refuse;
+        }
+        auto& pq = *config.extraconfig_->pq_consensus_;
+        auto keys = configured_keys(pq);
+        for (const auto& key : keys) {
+          if (key.key_file == addition.key_file) {
+            if (!key.primary && key.valid_from == addition.valid_from && key.expire_at == addition.expire_at) {
+              return EditVerdict::unchanged;
+            }
+            reason = "key file " + addition.key_file + " is already configured with another window";
+            return EditVerdict::refuse;
+          }
+        }
+        keys.push_back(NodeConsensusKeyEntry{addition.key_file, addition.valid_from, addition.expire_at, false});
+
+        // The configuration as the node will read it at its next start, judged as it will
+        // judge it: windows and file names first, then the identities of every key it will
+        // load, so the same key under two file names is refused here rather than there.
+        std::vector<ConfiguredConsensusKey> configured;
+        for (const auto& key : keys) {
+          configured.push_back(ConfiguredConsensusKey{key.key_file, key.valid_from, key.expire_at});
+        }
+        auto plan = plan_consensus_key_load(configured, addition.now);
+        if (std::holds_alternative<std::string>(plan)) {
+          reason = std::get<std::string>(plan);
+          return EditVerdict::refuse;
+        }
+        std::vector<ConsensusKeyWindow> schedule;
+        for (const auto index : std::get<std::vector<std::size_t>>(plan)) {
+          ConsensusKeyWindow window{{}, keys[index].valid_from, keys[index].expire_at};
+          if (keys[index].key_file == addition.key_file) {
+            window.key_id = result.key_id;
+          } else if (!load_key_id(keys[index].key_file, window.key_id, reason)) {
+            reason = "a configured key cannot be loaded, so the node would not start: " + reason;
+            return EditVerdict::refuse;
+          }
+          schedule.push_back(window);
+        }
+        if (auto refused = check_consensus_key_schedule(schedule)) {
+          reason = *refused;
+          return EditVerdict::refuse;
+        }
+        store_keys(pq, keys);
+        return EditVerdict::write;
+      },
+      result.config_path, why);
+}
+
+NodeBindingOutcome remove_node_consensus_key(const NodeConsensusKeyRemoval& removal,
+                                             NodeConsensusBindingResult& result, std::string& why) {
+  // A key is named by the absolute path it is configured at, or by its identity.
+  ConsensusKeyIdBytes wanted{};
+  const bool by_path = !removal.key.empty() && removal.key.front() == '/';
+  if (!by_path && !parse_key_id(removal.key, wanted)) {
+    why = "a key is named by its absolute key file path or by its 64-hex key id";
+    return NodeBindingOutcome::refused;
+  }
+
+  return edit_node_config(
+      removal.db_root,
+      [&](tos::tos_api::engine_validator_config& config, std::string& reason) {
+        if (!config.extraconfig_ || !config.extraconfig_->pq_consensus_) {
+          reason = "the node is not bound to a validator and holds no consensus key";
+          return EditVerdict::refuse;
+        }
+        auto& pq = *config.extraconfig_->pq_consensus_;
+        auto keys = configured_keys(pq);
+        std::optional<std::size_t> found;
+        for (std::size_t i = 0; i < keys.size() && !found; i++) {
+          if (by_path) {
+            if (keys[i].key_file == removal.key) {
+              found = i;
+              // Reported when the seed is still there; a removed key's seed may be gone.
+              std::string ignored;
+              if (!load_key_id(keys[i].key_file, result.key_id, ignored)) {
+                result.key_id = {};
+              }
+            }
+            continue;
+          }
+          // By identity: only a key whose seed can be read can be recognised by it.
+          ConsensusKeyIdBytes key_id{};
+          std::string ignored;
+          if (load_key_id(keys[i].key_file, key_id, ignored) && key_id == wanted) {
+            found = i;
+            result.key_id = key_id;
+          }
+        }
+        if (!found) {
+          reason = by_path ? "no consensus key is configured at " + removal.key
+                           : "no configured key whose seed can be read has key id " + removal.key +
+                                 "; name it by its key file instead";
+          return EditVerdict::refuse;
+        }
+        if (keys.size() <= 1) {
+          reason = "this is the node's last consensus key; a bound validator keeps at least one";
+          return EditVerdict::refuse;
+        }
+        keys.erase(keys.begin() + static_cast<std::ptrdiff_t>(*found));
+        store_keys(pq, keys);
+        return EditVerdict::write;
+      },
+      result.config_path, why);
+}
+
+bool list_node_consensus_keys(const std::string& db_root, std::uint32_t now, NodeConsensusKeyListing& listing,
+                              std::string& why) {
+  // Read only, and without the lock: a running node's configuration can be listed. The
+  // engine replaces the file by rename, so what is read is one whole version of it.
+  const std::string path = db_root + "/config.json";
+  struct stat before{};
+  std::string original;
+  if (!read_config_file(path, before, original, why)) {
+    return false;
+  }
+  tos::tos_api::engine_validator_config config;
+  if (!decode(original, config, why)) {
+    why = path + ": " + why;
+    return false;
+  }
+  if (!config.extraconfig_ || !config.extraconfig_->pq_consensus_) {
+    why = path + ": the node is not bound to a validator and holds no consensus key";
+    return false;
+  }
+  const auto& pq = *config.extraconfig_->pq_consensus_;
+  std::memcpy(listing.validator_id.data(), pq.validator_id_.data(), listing.validator_id.size());
+  listing.keys.clear();
+  for (const auto& entry : configured_keys(pq)) {
+    NodeConsensusKeyListing::Key key;
+    key.entry = entry;
+    key.expired = consensus_key_expired(entry.expire_at, now);
+    key.loaded = load_key_id(entry.key_file, key.key_id, key.refusal);
+    listing.keys.push_back(std::move(key));
+  }
+  return true;
 }
 
 }  // namespace tos::pq

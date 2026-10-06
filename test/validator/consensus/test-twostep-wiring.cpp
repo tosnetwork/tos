@@ -306,7 +306,7 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
     last_known_key_block_handle_ = zero;
   }
   void hold(const Epoch& epoch, size_t index) {
-    pq_custody_.install(epoch.members[index].validator_id, epoch.custody[index]).ensure();
+    pq_custody_.install(epoch.members[index].validator_id, epoch.custody[index], 0, 0).ensure();
   }
   void advance(Snapshot snapshot, BlockSeqno height, bool key_block, td::Promise<> promise) {
     last_masterchain_seqno_ = height;

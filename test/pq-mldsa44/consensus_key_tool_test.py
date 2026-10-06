@@ -216,6 +216,7 @@ def check(tool: Path, work: Path, shim: Path | None) -> None:
 
     check_export(tool, work, home)
     check_bind_node(tool, work, home, shim)
+    check_node_keys(tool, work, home)
 
 
 def export_through_pty(tool: Path, key: Path) -> tuple[int, bytes]:
@@ -388,6 +389,7 @@ def pq_consensus(validator_hex: str, key_file: Path) -> dict:
         "@type": "engine.validator.pqConsensus",
         "validator_id": b64(bytes.fromhex(validator_hex)),
         "consensus_key_file": str(key_file),
+        "keys": [],
     }
 
 
@@ -725,6 +727,175 @@ def check_bind_node(tool: Path, work: Path, home: Path, shim: Path | None) -> No
         print("note: no fsync shim given; the directory-flush case did not run", file=sys.stderr)
 
 
+def rotation_key(key_file: Path, valid_from: int, expire_at: int = 0) -> dict:
+    return {
+        "@type": "engine.validator.pqConsensusKey",
+        "consensus_key_file": str(key_file),
+        "valid_from": valid_from,
+        "expire_at": expire_at,
+    }
+
+
+def node_keys(tool: Path, command: str, args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run([str(tool), command, *args], capture_output=True, timeout=120)
+
+
+def refuses_keys(tool: Path, command: str, args: list[str], reason: bytes, why: str) -> None:
+    refused = node_keys(tool, command, args)
+    if refused.returncode != 1:
+        raise Failure(f"{command} did not refuse {why}: {refused!r}")
+    if reason not in refused.stderr:
+        raise Failure(f"{command} refused {why} without saying why: {refused.stderr!r}")
+    if refused.stdout != b"":
+        raise Failure(f"{command} printed a result while refusing {why}")
+
+
+def check_node_keys(tool: Path, work: Path, home: Path) -> None:
+    """Several keys at once: what a rotation without downtime needs, and nothing looser."""
+    primary = home / "c.key"  # the SEED_HEX key
+    same_seed = home / "d.key"  # the same seed under another name
+    successor = home / "a.key"
+    third = home / "b.key"
+    primary_id = key_id_of(run(tool, ["show", str(primary)]).stdout)
+    successor_id = key_id_of(run(tool, ["show", str(successor)]).stdout)
+    seed = bytes.fromhex(SEED_HEX)
+
+    db = private_dir(work, "db-keys")
+    path = write_config(db, node_config())
+
+    # Not bound yet: there is no validator to hold a second key for.
+    refuses_keys(tool, "add-node-key", [str(db), str(successor), "1000"], b"bind-node first", "an unbound node")
+    refuses_keys(tool, "list-node-keys", [str(db)], b"not bound", "listing an unbound node")
+
+    if node_keys(tool, "bind-node", [str(db), str(primary), VALIDATOR_HEX]).returncode != 0:
+        raise Failure("bind-node failed before the rotation checks")
+    single = path.read_bytes()
+
+    # The successor goes in beside the key the node already holds, with its window, and
+    # the single key the node was bound with stays exactly as it was.
+    added = node_keys(tool, "add-node-key", [str(db), str(successor), "1000"])
+    if added.returncode != 0:
+        raise Failure(f"add-node-key failed: {added.stderr!r}")
+    for stream in (added.stdout, added.stderr):
+        if seed in stream or SEED_HEX.encode() in stream:
+            raise Failure("add-node-key printed a seed")
+    if bound_key_id(added.stdout) != successor_id or not added.stdout.endswith(b" updated\n"):
+        raise Failure(f"add-node-key did not report the key it added: {added.stdout!r}")
+    two = {**pq_consensus(VALIDATOR_HEX, primary), "keys": [rotation_key(successor, 1000)]}
+    written = json.loads(path.read_text())
+    if written["extraconfig"]["pq_consensus"] != two:
+        raise Failure(f"add-node-key wrote another binding: {json.dumps(written['extraconfig'], indent=1)}")
+    if {k: v for k, v in written.items() if k != "extraconfig"} != node_config():
+        raise Failure("add-node-key changed fields other than the keys")
+    if leftovers(db):
+        raise Failure(f"add-node-key left temporary files: {leftovers(db)}")
+
+    # Adding it again changes nothing, not even the timestamps.
+    before = path.read_bytes()
+    stamp = path.stat().st_mtime_ns
+    again = node_keys(tool, "add-node-key", [str(db), str(successor), "1000", "0"])
+    if again.returncode != 0 or not again.stdout.endswith(b" unchanged\n"):
+        raise Failure(f"adding the same key twice was not a no-op: {again!r}")
+    unchanged(path, before, "an identical key was added")
+    if path.stat().st_mtime_ns != stamp:
+        raise Failure("an identical key rewrote the configuration")
+
+    # Listing works without the lock and reports each key's derived identity and window.
+    with held_lock(db / "config.json.lock"):
+        listed = node_keys(tool, "list-node-keys", [str(db)])
+    if listed.returncode != 0:
+        raise Failure(f"list-node-keys failed beside a held lock: {listed!r}")
+    lines = listed.stdout.decode().splitlines()
+    if lines[0] != f"validator_id {VALIDATOR_HEX}":
+        raise Failure(f"list-node-keys did not name the validator: {lines!r}")
+    if lines[1] != f"key {primary_id} valid_from 0 expire_at 0 primary file {primary}":
+        raise Failure(f"list-node-keys misreported the bound key: {lines[1]!r}")
+    if lines[2] != f"key {successor_id} valid_from 1000 expire_at 0 file {successor}":
+        raise Failure(f"list-node-keys misreported the added key: {lines[2]!r}")
+    if seed in listed.stdout or SEED_HEX.encode() in listed.stdout:
+        raise Failure("list-node-keys printed a seed")
+
+    # Refusals, each naming its reason and leaving the configuration as it was.
+    loose = work / "loose" / "k.key"
+    bad = {
+        "a second key valid from the same election date": (
+            [str(db), str(third), "1000"],
+            b"same election date",
+        ),
+        "the bound key's own date for a new key": ([str(db), str(third), "0"], b"same election date"),
+        "the same key under another file name": ([str(db), str(same_seed), "2000"], b"configured twice"),
+        "a window that closes before it opens": (
+            [str(db), str(third), "4000000000", "4000000000"],
+            b"not after its window",
+        ),
+        "a key that has already expired": ([str(db), str(third), "3000", "3001"], b"already have expired"),
+        "a configured file with another window": ([str(db), str(successor), "5000"], b"another window"),
+        "a relative key path": ([str(db), "b.key", "3000"], b"absolute"),
+        "a key readable by others": ([str(db), str(loose), "3000"], b"readable or writable by group or others"),
+        "a missing key": ([str(db), str(home / "missing.key"), "3000"], b"cannot be opened"),
+    }
+    for why, (args, reason) in bad.items():
+        refuses_keys(tool, "add-node-key", args, reason, why)
+        unchanged(path, before, f"{why} was refused")
+    for args in ([str(db), str(third), "x"], [str(db), str(third), "3000", "-1"], [str(db), str(third), "4294967296"]):
+        refused = node_keys(tool, "add-node-key", args)
+        if refused.returncode == 0 or b"unix time" not in refused.stderr:
+            raise Failure(f"add-node-key accepted a malformed time: {args!r}")
+        unchanged(path, before, "a malformed time was refused")
+    with held_lock(db / "config.json.lock"):
+        refuses_keys(tool, "add-node-key", [str(db), str(third), "3000"], b"held by a running node", "a running node")
+    unchanged(path, before, "adding a key to a running node was refused")
+
+    # A node holding several keys is not rebound in one step, not even deliberately.
+    refuses(tool, [str(db), str(third), VALIDATOR_HEX], b"remove-node-key", "rebinding a rotating node")
+    refuses(tool, ["--replace", str(db), str(third), VALIDATOR_HEX], b"remove-node-key", "replacing a rotating node")
+    unchanged(path, before, "rebinding a node with several keys was refused")
+
+    # The bound key is removed by its identity once the set that lists it has ended; the
+    # successor is then the node's only key, and the last key is never removed.
+    refuses_keys(tool, "remove-node-key", [str(db), "zz" * 32], b"64-hex key id", "a malformed key id")
+    refuses_keys(tool, "remove-node-key", [str(db), str(third)], b"no consensus key is configured", "an absent key")
+    refuses_keys(tool, "remove-node-key", [str(db), "11" * 32], b"no configured key", "an unknown key id")
+    unchanged(path, before, "removing an absent key was refused")
+    removed = node_keys(tool, "remove-node-key", [str(db), primary_id])
+    if removed.returncode != 0 or bound_key_id(removed.stdout) != primary_id:
+        raise Failure(f"remove-node-key failed: {removed!r}")
+    after = json.loads(path.read_text())["extraconfig"]["pq_consensus"]
+    if after != {**pq_consensus(VALIDATOR_HEX, primary), "consensus_key_file": "", "keys": [rotation_key(successor, 1000)]}:
+        raise Failure(f"remove-node-key left another binding: {after!r}")
+    rest = path.read_bytes()
+    refuses_keys(tool, "remove-node-key", [str(db), str(successor)], b"last consensus key", "the last key")
+    unchanged(path, rest, "removing the last key was refused")
+
+    # The next rotation: a third key, added and then the successor removed by its path.
+    if node_keys(tool, "add-node-key", [str(db), str(third), "9000"]).returncode != 0:
+        raise Failure("add-node-key refused the next rotation")
+    if node_keys(tool, "remove-node-key", [str(db), str(successor)]).returncode != 0:
+        raise Failure("remove-node-key refused a key named by its path")
+    final = json.loads(path.read_text())["extraconfig"]["pq_consensus"]
+    if final["keys"] != [rotation_key(third, 9000)] or final["consensus_key_file"] != "":
+        raise Failure(f"the second rotation left another binding: {final!r}")
+
+    # A bounded number of keys: a rotation, not a key store.
+    db_many = private_dir(work, "db-many")
+    path_many = write_config(db_many, node_config())
+    many = private_dir(work, "many-keys")
+    if node_keys(tool, "bind-node", [str(db_many), str(primary), VALIDATOR_HEX]).returncode != 0:
+        raise Failure("bind-node failed before the capacity check")
+    for index in range(1, 9):
+        key = many / f"k{index}.key"
+        if run(tool, ["generate", str(key)]).returncode != 0:
+            raise Failure("could not generate a key for the capacity check")
+        added = node_keys(tool, "add-node-key", [str(db_many), str(key), str(index * 100)])
+        if index < 8 and added.returncode != 0:
+            raise Failure(f"key {index + 1} of 8 was refused: {added.stderr!r}")
+        if index == 8:
+            if added.returncode != 1 or b"at most 8" not in added.stderr:
+                raise Failure(f"a ninth key was not refused: {added!r}")
+    if len(json.loads(path_many.read_text())["extraconfig"]["pq_consensus"]["keys"]) != 7:
+        raise Failure("the capacity check did not leave exactly eight keys")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tool", required=True, help="path to tos-pq-consensus-key")
@@ -748,7 +919,9 @@ def main() -> int:
         "CONSENSUS_KEY_TOOL_OK generate/import/show round-trip; a seed that is not exactly "
         "64 digits is refused and writes nothing; only export prints a seed, only into a "
         "pipe, and export | import moves it; bind-node binds a stopped node's configuration "
-        "under the configuration lock and refuses everything else"
+        "under the configuration lock and refuses everything else; add-node-key, "
+        "remove-node-key and list-node-keys hold several keys for a rotation and refuse an "
+        "ambiguous, duplicated, expired, unbounded or last-key change"
     )
     return 0
 

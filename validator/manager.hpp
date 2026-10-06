@@ -420,16 +420,20 @@ class ValidatorManagerImpl : public ValidatorManager {
   // recorded so membership lapses on its own once the set records a different one,
   // rather than a node continuing to act for a validator that has rotated away from it.
   void add_pq_consensus_key(tos::ValidatorId validator_id, std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store,
-                            td::Promise<td::Unit> promise) override {
-    auto status = pq_custody_.install(validator_id, std::move(store));
+                            td::uint32 valid_from, td::uint32 expire_at, td::Promise<td::Unit> promise) override {
+    auto status = pq_custody_.install(validator_id, std::move(store), valid_from, expire_at);
     if (status.is_error()) {
       promise.set_error(std::move(status));
       return;
     }
     promise.set_value(td::Unit());
   }
-  void del_pq_consensus_key(tos::ValidatorId validator_id, td::Promise<td::Unit> promise) override {
-    pq_custody_.remove(validator_id);
+  void del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
+                            td::Promise<td::Unit> promise) override {
+    if (!pq_custody_.remove_key(validator_id, key_id)) {
+      promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no such post-quantum consensus key is custodied"));
+      return;
+    }
     promise.set_value(td::Unit());
   }
 
@@ -834,6 +838,11 @@ class ValidatorManagerImpl : public ValidatorManager {
   // identity each belongs to. Consensus membership is decided from this; the Ed25519
   // sets above are for network and operator duties and cannot confer it.
   PqConsensusCustody pq_custody_;
+  // The local time custody decisions are made at: a consensus key whose expiry has
+  // passed answers for nothing from then on.
+  static td::uint32 pq_custody_now() {
+    return static_cast<td::uint32>(td::Clocks::system());
+  }
 
  private:
   td::Ref<ValidatorManagerOptions> opts_;

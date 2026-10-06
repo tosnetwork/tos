@@ -713,12 +713,25 @@ engine.validator.fullNodeConfig ext_messages_broadcast_disabled:Bool = engine.va
 engine.validator.fastSyncMemberCertificate adnl_id:int256 certificate:overlay.MemberCertificate = engine.validator.FastSyncMemberCertificate;
 engine.validator.fastSyncOverlayClient adnl_id:int256 slot:int = engine.validator.FastSyncOverlayClient;
 engine.validator.collatorNodeWhitelist enabled:Bool adnl_ids:(vector int256) = engine.validator.CollatorNodeWhitelist;
-// Which validator this node holds a post-quantum consensus key for, and where that key
-// is. The identity is the controller account the validator was registered as; it is
-// stated here because it cannot be derived from the key, which rotates while the identity
-// does not. No key identity is configured: that is derived from the seed, so a
+// One more post-quantum consensus key for the same validator, held alongside the others
+// so the consensus key can rotate without a moment at which the node holds only the
+// wrong one. valid_from is the first election date (unix time) the key may sign a stake
+// for; a stake for an election is signed with the key whose valid_from is the greatest
+// not after the election date. expire_at is the unix time from which the node stops
+// using the key for anything; 0 means never. Both are read as unsigned 32-bit values.
+engine.validator.pqConsensusKey consensus_key_file:string valid_from:int expire_at:int = engine.validator.PqConsensusKey;
+// Which validator this node holds post-quantum consensus keys for, and where those keys
+// are. The identity is the controller account the validator was registered as; it is
+// stated here because it cannot be derived from a key, which rotates while the identity
+// does not. No key identity is configured: that is derived from each seed, so a
 // configuration cannot claim to hold a key it does not.
-engine.validator.pqConsensus validator_id:int256 consensus_key_file:string = engine.validator.PqConsensus;
+//
+// consensus_key_file, when not empty, is a key valid for every election and never
+// expiring: the whole configuration of a node that does not rotate. keys holds the keys
+// with explicit windows. Together they must name at least one key, no key twice, and no
+// two keys valid from the same election date.
+engine.validator.pqConsensus validator_id:int256 consensus_key_file:string
+    keys:(vector engine.validator.pqConsensusKey) = engine.validator.PqConsensus;
 
 engine.validator.extraConfig state_serializer_enabled:Bool fast_sync_member_certificates:(vector engine.validator.fastSyncMemberCertificate)
     collator_node_whitelist:engine.validator.collatorNodeWhitelist
@@ -791,6 +804,11 @@ engine.validator.success = engine.validator.Success;
 engine.validator.jsonConfig data:string = engine.validator.JsonConfig;
 
 engine.validator.pqStakeAuthorization validator_id:int256 key_id:int256 algorithm_id:int public_key:bytes signature:bytes = engine.validator.PqStakeAuthorization;
+// The consensus keys a node holds, by identity and window; never a seed.
+engine.validator.pqConsensusKeyInfo key_id:int256 consensus_key_file:string valid_from:int expire_at:int
+    expired:Bool = engine.validator.PqConsensusKeyInfo;
+engine.validator.pqConsensusKeys validator_id:int256 keys:(vector engine.validator.pqConsensusKeyInfo)
+    = engine.validator.PqConsensusKeys;
 engine.validator.proposalVote perm_key:int256 to_send:bytes = engine.validator.ProposalVote;
 
 engine.validator.dhtServerStatus id:int256 status:int = engine.validator.DhtServerStatus;
@@ -874,6 +892,18 @@ engine.validator.getConfig = engine.validator.JsonConfig;
 engine.validator.setVerbosity verbosity:int = engine.validator.Success;
 
 engine.validator.createPqStakeAuthorization election_date:int max_factor:int adnl_addr:int256 stake_owner:int256 = engine.validator.PqStakeAuthorization;
+// The same authorization, signed with the named held key rather than the one the key
+// schedule assigns to the election. The key must still be unexpired and valid for it.
+engine.validator.createPqStakeAuthorizationWithKey election_date:int max_factor:int adnl_addr:int256
+    stake_owner:int256 key_id:int256 = engine.validator.PqStakeAuthorization;
+// Consensus key rotation while the node runs. add loads the seed under the same rules as
+// at startup and refuses a key that would make the schedule ambiguous; del refuses the
+// last key and an unexpired key a current, previous or next validator set lists for
+// this validator.
+engine.validator.getPqConsensusKeys = engine.validator.PqConsensusKeys;
+engine.validator.addPqConsensusKey consensus_key_file:string valid_from:int expire_at:int
+    = engine.validator.PqConsensusKeyInfo;
+engine.validator.delPqConsensusKey key_id:int256 = engine.validator.Success;
 engine.validator.createProposalVote vote:bytes = engine.validator.ProposalVote;
 engine.validator.createComplaintVote election_id:int vote:bytes = engine.validator.ProposalVote;
 
