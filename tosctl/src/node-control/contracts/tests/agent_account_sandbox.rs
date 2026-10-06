@@ -6,17 +6,19 @@
  */
 
 use chain_block::{
-    BuilderData, Cell, Coins, CurrencyCollection, Deserializable, IBitstring, MerkleProof,
-    MsgAddressInt, Serializable, SizeLimitsConfig, SliceData, TickTock, TrComputePhase,
-    ed25519_create_private_key,
+    AccountStatus, BuilderData, Cell, Coins, CurrencyCollection, Deserializable, IBitstring,
+    MerkleProof, MsgAddressInt, Serializable, SizeLimitsConfig, SliceData, TickTock,
+    TrComputePhase, TransactionDescr, ed25519_create_private_key,
 };
 use contracts::{
     AGENT_ACCOUNT_MAX_ACTION_GAS, AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_UPDATE_POLICY_OPCODE,
     AgentAccountContract, AgentAccountInit, AgentAccountPolicyUpdate, AgentCheckedContractCallV2,
     AgentDeploySend, TaskEscrowContract, TaskEscrowInit,
 };
+use tos_executor::error::ExecutorError;
 use tos_sandbox::{
-    Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury, compile_func_with_stdlib,
+    Blockchain, MessageBuilder, SandboxError, SandboxResult, SendResult, Treasury,
+    compile_func_with_stdlib,
 };
 
 const TOS: u64 = 1_000_000_000;
@@ -1076,17 +1078,12 @@ fn admission_does_not_depend_on_the_size_of_the_payload() {
 }
 
 #[test]
-fn deploy_send_above_the_configured_message_limit_is_reported_not_skipped() {
-    // The size check reads the live ConfigParam 43 through the unpacked
-    // configuration register, so a network that tightens the limits below the
-    // protocol defaults reports the deploy as a failed transaction instead of
-    // letting the action phase skip it after the daily spend was committed.
-    //
-    // Measuring the payload costs one cell load per distinct cell, which is
-    // why this runs after acceptance rather than inside the fixed admission
-    // credit. Keeping it before acceptance is what made this error
-    // unreachable in practice: the walk exhausted the credit and the message
-    // was dropped by the collator with nothing on chain to read.
+fn deploy_send_above_the_configured_message_limit_preserves_account_and_signed_retry() {
+    // ConfigParam 43 limits this external message before contract execution:
+    // the outbound attachments are a subset of the imported message's DAG.
+    // This fixture cannot witness the contract's post-accept exit 1713. That
+    // separate internal-AUTH path is exercised by test_auth.py's
+    // test_module_request_rejected_after_acceptance_is_consumed_not_bounced.
     let mut fixture = Fixture::new();
     let init = TaskEscrowInit {
         creator: fixture.account.clone(),
@@ -1114,33 +1111,68 @@ fn deploy_send_above_the_configured_message_limit_is_reported_not_skipped() {
 
     let tightened = SizeLimitsConfig { max_msg_cells: 8, ..SizeLimitsConfig::default() };
     fixture.bc.set_size_limits_config(tightened).expect("tighten");
-    let rejected = fixture.send_external(action).expect("oversize is reported, not dropped");
-    rejected.expect_exit_code(1713).expect_out_msgs(0);
-    // The seqno was consumed and committed before the size was measured, so
-    // the oversized request cannot be replayed. No value moved, so the daily
-    // budget records nothing.
-    assert_eq!(fixture.seqno(), 1);
+    let before = fixture
+        .bc
+        .get_account(&fixture.account)
+        .expect("account")
+        .serialize()
+        .expect("account cell");
+    let signed_hash = action.repr_hash();
+    match fixture.send_external(action.clone()) {
+        Err(SandboxError::ExecutionFailed(error)) => assert_eq!(
+            error.downcast_ref::<ExecutorError>(),
+            Some(&ExecutorError::InvalidExtMessage),
+            "oversized external import must have the precise size-rejection error"
+        ),
+        Err(error) => panic!("unexpected import failure: {error}"),
+        Ok(_) => panic!("oversized external import must be refused before execution"),
+    }
+    assert_eq!(
+        fixture
+            .bc
+            .get_account(&fixture.account)
+            .expect("account")
+            .serialize()
+            .expect("account cell"),
+        before,
+        "refused import must preserve the entire account"
+    );
+    assert_eq!(fixture.seqno(), 0);
     assert_eq!(fixture.spent_today(), 0);
     assert!(fixture.bc.get_account(&target).is_none(), "nothing may reach the target");
 
-    // Once the limit allows the message again, a request signed at the
-    // consumed seqno goes through.
+    // Restore the limit and send the identical signed seqno-0 body. No
+    // resigning is needed because the refused import consumed no state.
     fixture.bc.set_size_limits_config(SizeLimitsConfig::default()).expect("restore");
-    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
-    let retried = fixture.signed_deploy(
-        &fixture.controller_secret,
-        1,
-        fixture.bc.now() + 300,
-        &target,
-        2 * TOS,
-        state_init,
-        Cell::default(),
-    );
-    let result = fixture.send_external(retried).expect("resigned after the fix");
+    assert_eq!(action.repr_hash(), signed_hash, "the retry must retain the signed bytes");
+    let result = fixture.send_external(action).expect("same signed body after restoring the limit");
     result.expect_success().expect_out_msgs(1);
-    assert_eq!(fixture.seqno(), 2);
+    assert_eq!(fixture.seqno(), 1);
     assert_eq!(fixture.spent_today(), 2 * TOS as i128);
-    assert!(fixture.bc.get_account(&target).is_some(), "the deploy reached the target");
+    let recipient_transactions = result.transactions_for(&target);
+    assert_eq!(
+        recipient_transactions.len(),
+        1,
+        "the retry must execute the recipient exactly once"
+    );
+    let TransactionDescr::Ordinary(recipient) =
+        recipient_transactions[0].read_description().expect("recipient description")
+    else {
+        panic!("the recipient must have an ordinary deployment transaction");
+    };
+    assert!(!recipient.aborted, "the recipient deployment must not abort");
+    let TrComputePhase::Vm(compute) = recipient.compute_ph else {
+        panic!("the recipient deployment must run its VM");
+    };
+    assert!(compute.success, "the recipient deployment VM must succeed");
+    assert_eq!(compute.exit_code, 0, "the recipient deployment must exit successfully");
+    let deployed = fixture.bc.get_account(&target).expect("deployed recipient");
+    assert_eq!(deployed.status(), AccountStatus::AccStateActive);
+    assert_eq!(
+        deployed.get_code().expect("deployed recipient code").repr_hash(),
+        TaskEscrowContract::code().expect("expected task code").repr_hash(),
+        "the retry must install the requested contract code"
+    );
 }
 
 #[test]

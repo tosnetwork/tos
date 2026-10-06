@@ -56,10 +56,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - runner: ubuntu-24.04
+            timeout_minutes: 150
+          - runner: ubuntu-24.04-arm
+            timeout_minutes: 180
     runs-on: ${{ matrix.runner }}
-    # Full custody/recovery controls now include repeated complete H20 rebuilds.
-    timeout-minutes: 150
+    # Leave ARM headroom for repeated H20 rebuilds and the final native ingress build.
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     env:
       TOS_ROOT: ${{ github.workspace }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/build-cargo

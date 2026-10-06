@@ -3778,3 +3778,74 @@ iOS/Android acceptance remain open. They do not add candidate-config evidence
 to the separate version-18 corpus. See
 [rotation behavior and reproduction](../test/wallet-v5r2/CLI_ROTATION.md) and
 [the bounded current index](../test/wallet-v5r2/cli-rotation-20261006.json).
+
+### CI integration closeout after `18349b79` (2026-10-06)
+
+The first continuation head completed both architecture jobs for admission and
+V5R2 readiness. Rescue completed on x86; ARM passed the client migration and
+14 rotation guard groups before its 150-minute job limit interrupted the final
+native ingress build. Its explicit timeout annotation, completed steps and
+unexecuted tail are retained in
+[the timeout index](../test/wallet-v5r2/ci-rescue-timeout-20261006.json).
+The matrix gives ARM 180 minutes and keeps x86 at 150 minutes without removing
+checks. That budget uses one run's measured progress and is not a tested runtime
+upper bound or a successful ARM result.
+
+Lint's Clang 21 strict build passed, while its formatting step rejected 13 C++
+files. A local run of the subsequent pinned Ruff check also identified nine
+Python formatting changes. Applying the exact formatters preserves all nine
+ASTs and the source-mutation anchors. The
+[lineage index](../test/wallet-v5r2/format-lineage-20261006.json) records old and
+new source identities; historical result indexes retain their original bytes.
+The reviewed candidate manifest is explicitly refreshed for one formatted
+adapter file. The three contract code identities, configuration and 73 other
+file identities remain equal, and the 18 bundle outcomes pass against the new
+pin. [The refresh record](../test/wallet-v5r2/review-format-refresh-20261006.json)
+retains the earlier manifest and the new comparison rather than overwriting the
+earlier execution evidence.
+
+The subsequent normal Clang 18 Release build retains QUIC and keeps Werror
+disabled. Options, budget (11), pool (14), manager (1), generated checker (6) and
+CLI (5) baselines pass. This adds no repeated source-control count and remains
+separate from the earlier Clang 21 Werror CI result. The
+[normal baseline index](../test/wallet-v5r2/ci-format-baseline-20261006.json)
+pins the actual source, tools, commands and results.
+
+The Falcon disposable chain previously stopped before genesis because version
+19 requires an explicit AUTH namespace. The launcher now accepts exactly 64
+hexadecimal digits through `--auth-network-tag` or `TOS_AUTH_NETWORK_TAG`, and
+the workflow selects the public `0x46` repeated 32 times. Default version 16 and
+an absent namespace remain unchanged; the existing genesis version/tag guards
+still refuse invalid combinations. A saved chain refuses an explicit namespace
+override rather than implying that its genesis changed. The regression suite
+also exercises the real `__main__` call site so omitting the parsed argument
+cannot be hidden by a direct test call to `main`.
+
+The agent-account sandbox's old eight-cell external fixture conflicted with
+the repaired import-size counter. Its signed StateInit already exceeds the
+incoming limit, so it must be refused before VM execution. The revised test
+requires exactly `InvalidExtMessage`, byte-identical complete account state,
+unchanged seqno/spend, no recipient, and a successful retry with the original
+signed body after restoring the limit. The separate internal-AUTH native test
+continues to cover post-accept exit 1713 and consumption of seqno/nonce.
+The final namespace suite passes eight tests and the agent-account suite passes
+31, with the retry requiring one successful, non-aborted recipient VM
+transaction and the expected active contract code. Four Python controls, one
+Rust import-guard control and one private FunC size-guard control each compile
+or parse successfully and then fail at the specified semantic assertion.
+Restoration returns their eight-test, 31-test and one-test baselines to green;
+an earlier Python full-suite mutation with an unrelated fixture setup error is
+retained but excluded from the semantic-red count.
+
+The real disposable genesis confirms version 19, global ID 3 and namespace
+`0x46` repeated 32 times. All four live Falcon cases (FunC/Tolk, modes 2 and 3)
+reach their actual recipients, consume nonce 1 and refuse replay with exit
+1804. This is an operator-controlled local-chain result, distinct from the
+version-18/global-ID-1/namespace-`0x42` candidate and production checkpoint
+authentication. Its recorded Git HEAD is the parent `18349b79`, while the
+executed working-tree overlay is identified by source SHA-256 values. Restored
+Ruff checks pass for 194 selected Python files and workspace rustfmt passes.
+[The integration index](../test/wallet-v5r2/ci-launcher-sandbox-20261006.json)
+records the corresponding tests, semantic-control receipts and the explicit
+scope of the disposable-chain run. Relevant final-head CI and all production
+release gates remain distinct from these working-tree checks.

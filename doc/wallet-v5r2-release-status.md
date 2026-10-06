@@ -142,6 +142,77 @@ it does not mark the entire requirement passed at this head.
 
 ## Evidence and CI interpretation
 
+The completed CI for continuation head
+`18349b79b401d249db0c464d99d81b7218f1f33b` establishes the following source-bound
+results. It also identifies four integration issues addressed by the follow-on
+changes; these results do not certify a later commit.
+
+| Workflow at `18349b79` | Observed result and follow-on change |
+| --- | --- |
+| [External admission work boundaries](https://github.com/tosnetwork/tos/actions/runs/37486477919) | Both architectures passed, including the generated-state checker controls. |
+| [V5R2 genesis and trusted-state validation](https://github.com/tosnetwork/tos/actions/runs/37486477477) | Both architectures passed. |
+| [Experimental rescue context parity](https://github.com/tosnetwork/tos/actions/runs/37486477438) | x86 completed successfully. ARM passed the client migration and 14 rotation guard groups, then exceeded its explicit 150-minute job timeout while building the native ingress target. The follow-on matrix permits 180 minutes on ARM and preserves 150 on x86, with all steps retained. ARM's unexecuted ingress and tail checks remain unpassed at this head. |
+| [Lint](https://github.com/tosnetwork/tos/actions/runs/37486477783) | The Clang 21 strict full build passed. Hygiene failed on 13 C++ formatting diffs; the skipped Python check concealed nine additional Ruff formatting diffs. The follow-on edits use those exact formatter versions and preserve Python ASTs and mutation anchors. This job tested merge `7f5891dd5ba886aa55b9e452bf44adc78c64e93b`. |
+| [Falcon wallet AUTH](https://github.com/tosnetwork/tos/actions/runs/37486477573) | ARM's selected steps passed. x86 reached the disposable version-19 genesis without the required AUTH network tag, so its four real-chain delivery cases did not run. The launcher now accepts an explicit 32-byte namespace; the workflow supplies a public test value. Existing genesis version/tag guards remain in force. |
+| [Smart contract sandboxes](https://github.com/tosnetwork/tos/actions/runs/37486477855) | The agent-account suite reported 30 passed and one failed at merge `7f5891dd...`. Its old eight-cell fixture expected an oversized external import to enter the VM. The revised test requires the exact import rejection, unchanged account state and successful reuse of the original signature after restoring limits. |
+| [Source hygiene](https://github.com/tosnetwork/tos/actions/runs/37486477436), [Branch PQ chain and Python tests](https://github.com/tosnetwork/tos/actions/runs/37486477843), [tosctl service](https://github.com/tosnetwork/tos/actions/runs/37486477930) | Reported success at this continuation head; retain their own tested checkout boundaries. |
+
+The ARM timeout budget is based on one observed run, not a measured upper bound
+or an ARM completion result. The [timeout receipt](../test/wallet-v5r2/ci-rescue-timeout-20261006.json)
+preserves the explicit check annotation and separates completed work from the
+unexecuted tail. The [format lineage](../test/wallet-v5r2/format-lineage-20261006.json)
+preserves the earlier source hashes instead of rewriting historical evidence.
+Refreshing the candidate manifest changes only the formatted `native.py` entry:
+all code/configuration identities and the other 73 files reproduce unchanged,
+and all 18 bundle outcomes pass again. See the
+[explicit refresh record](../test/wallet-v5r2/review-format-refresh-20261006.json).
+
+The follow-on normal native build uses Clang 18 Release with QUIC enabled and
+Werror disabled. Options, 11 budget tests, 14 pool tests, one manager test, six
+generated-state checker cases and five CLI boundaries pass. This is separate
+from the parent-head Clang 21 Werror CI result. No historical C++ source controls
+were recounted in this normal run; see the
+[format baseline index](../test/wallet-v5r2/ci-format-baseline-20261006.json).
+
+The oversized external fixture does not cover the contract's post-accept exit
+1713. The separate internal-AUTH test
+`test_module_request_rejected_after_acceptance_is_consumed_not_bounced` retains
+that reachable boundary. Launcher and sandbox regression evidence, source
+controls and real-chain execution scope are recorded in the
+[integration index](../test/wallet-v5r2/ci-launcher-sandbox-20261006.json).
+The final local namespace suite passes all eight tests, including the actual
+launcher entrypoint. The agent-account sandbox passes all 31 tests and requires
+one successful recipient VM transaction with the expected deployed code on
+retry. Four Python source controls, one external-import Rust control and one
+private native FunC control each reach their named assertion after successful
+parsing or compilation; restoring the original source returns the respective
+eight-test, 31-test and one-test baselines to green. The rejected full-suite
+Python mutation attempt with a fixture setup error is excluded from these
+semantic-control results.
+
+The disposable chain now creates a real version-19 genesis and passes all four
+Falcon live cases (FunC/Tolk, modes 2 and 3), including actual recipient balance
+changes, nonce 1 and replay exit 1804. Its public genesis confirms namespace
+`0x46` repeated 32 times and global ID 3. This operator-controlled chain is
+separate from the version-18/global-ID-1/namespace-`0x42` reviewed candidate and
+does not establish production checkpoint authentication or release pricing.
+These executions used the working-tree overlay on `18349b79`; their indexes
+bind the exercised source bytes and do not label the unmodified parent as
+passing. Final restored static checks pass for all 194 selected Python files
+and the Rust workspace.
+
+The [closeout index](../test/wallet-v5r2/ci-closeout-20261006.json) maps each
+changed boundary to its required checks and retains the observed parent-head
+workflow conclusions.
+
+| Changed boundary | Required validation |
+| --- | --- |
+| C++ formatting and admission option/checker paths | Changed-line Clang formatting, strict build, normal native tests and relevant admission/rescue architecture jobs |
+| Python formatting and the frozen compiler adapter | Pinned Ruff checks, AST/anchor equivalence, independently rebuilt candidate and rescue bundle controls |
+| Localnet namespace parsing and actual launcher entrypoint | Namespace regression tests and their semantic controls; Falcon's disposable version-19 chain and real delivery cases |
+| External import size rejection and signature retry | Agent-account sandbox suite and the import-guard sensitivity result; contract sandbox CI |
+| ARM job time budget | Complete rescue architecture jobs with the original checks retained |
+
 The rescue and admission workflows check out the PR's actual head SHA. Their
 source-mutating controls must run sequentially; a build failure is never a
 semantic red result. Generated-config transactions and the new PRIMARY and

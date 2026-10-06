@@ -1,0 +1,516 @@
+{
+  "schema": "tos-ci-format-baseline-v1",
+  "recorded_at_utc": "2026-10-06T21:21:21+00:00",
+  "status": "Local normal build and existing baselines passed after formatting; final-head CI remains separate.",
+  "repository": "tosnetwork/tos",
+  "pr": 138,
+  "source_identity": {
+    "base_commit": "18349b79b401d249db0c464d99d81b7218f1f33b",
+    "working_tree_overlay": "The 22 formatting-only edits pinned by the linked lineage; this is not a claim that the base commit contains those edits.",
+    "format_lineage": {
+      "path": "test/wallet-v5r2/format-lineage-20261006.json",
+      "sha256": "4953585ee7356ef9bd578e408b962c404b8291b392bd510021125e7b315fada5",
+      "bytes": 19744
+    },
+    "frozen_source_sha256": {
+      "test/test-ext-message-manager.cpp": "a1bbec568b944f3a291f6ac1b7515cab2772b95b486c5fb363291e8ac7635b29",
+      "test/test-ext-message-pool.cpp": "769d44ef1a2fd9db30ce3e55d54343af6b48dd61f095f270927c22c381ee0838",
+      "test/test-validator-options.cpp": "e978da4202826f7c245c4d00d9f99c6116421925ca62c04743d5b73cb06efe29",
+      "validator-engine/validator-engine.cpp": "701c751c2b392bf3e41c51ad70813763df3c8c936d6f050df20c565d12b1d54b",
+      "validator/admission-work-profile.cpp": "a1d520e38614c712e4538884dd862aae9962b5aca72d0b85054b4ea270a193ec",
+      "validator/admission-work-profile.h": "e7e44f2284df87ee54d6e37b49b58d0b1d33ad615c7d262a388f6dcef58f10ff",
+      "validator/impl/ext-message-checker.cpp": "c5400624f6394a0a6c7115da984c7fe5065703c8d0c335e20b7bd2cf7edccae0",
+      "validator/impl/ext-message-pool.cpp": "72ff3fcbc775097dde5714a81a965b440c3b7a8f728115e4616e321fdb28f62e",
+      "validator/impl/ext-message-pool.hpp": "ce7a05ad3f180877c9dedf152ac4b1201a8f5e94c232d58247fa7714f50e07ad",
+      "validator/impl/ext-message-work-budget.hpp": "1778c2c7a4819367f04f160ff02e9f8d38514cab1b836834a19d61cb09ed0aea",
+      "validator/impl/ext-message-work-profile.hpp": "fb4b80c8abdaa671999233ad04ddf12d9dbfe302ce53d0c238d0c090749e98e8",
+      "validator/impl/ext-message-work-quote.hpp": "978baebd00d0475c60074a88462584b0c8f2075ec5b402093c70d67eae8dc343",
+      "validator/validator.h": "ebd231aa711374cedb9083161a60ad929f7b3d2e47339a3330d6527b54cd9f1d",
+      "scripts/check-ext-message-options-controls.py": "6af0fafd68304abad0387cd3240ae5001777fdf6b47ffe08231a7172214c8907",
+      "scripts/check-ext-message-pool-controls.py": "62fbb8daf694a0f1be291a9029f9a44c3dac8e7ff1396142bbe6842b20be3997",
+      "scripts/check-ext-message-replay-controls.py": "ba481f1f7025ff22caf26a1c61bb5c5c72316bcdba41f204202e2091d23d6eb1",
+      "scripts/check-ext-message-work-budget.py": "3c23874bb06150e7863321a2f57e4c3a8ae2e894a0970b039a76ff83b3d09c4a",
+      "scripts/check-ext-message-work-cli.py": "f673339a14bcd6a5422aac996950e0096451a02609e4537411cf91306943e322",
+      "test/auth-extensions/native.py": "aa6c3baa80129b1127e19bfe65c0f38e5e5ac72e2d6aa14d734dace3ad52f2ae",
+      "test/tostester/src/tostester/zerostate.py": "63328d71f07bbd9a035e8972e36f3fdfaea7c8a08c36bc65215fc2956780873d",
+      "test/tostester/tests/tostester/test_zerostate_supply.py": "f42d389770c1e406401879ce9d525cd80136691ed7c3730ca650eb83004a309a",
+      "test/wallet-v5r2/admission_config_controls.py": "18a86f1fb80b97f78a5c69965ea28c02e91e1a7fcc6ef76fb451357c85f95dcb"
+    },
+    "all_22_unchanged_before_and_after_normal_tests": true
+  },
+  "environment": {
+    "build_directory": "build-clang",
+    "setup": [
+      "source ../env.sh",
+      "source ../clang-env.sh"
+    ],
+    "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "cmake": "cmake version 4.4.4",
+    "ninja": "1.13.2.git.kitware.jobserver-pipe-1",
+    "cache": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_CXX_COMPILER": "/workspace/scratch/58828491a8ce/clang18/usr/lib/llvm-18/bin/clang++",
+      "CMAKE_C_COMPILER": "/workspace/scratch/58828491a8ce/clang18/usr/lib/llvm-18/bin/clang",
+      "SECP256K1_INCLUDE_DIR": "/workspace/scratch/58828491a8ce/tos/third-party/secp256k1/include",
+      "SECP256K1_LIBRARY": "/workspace/scratch/58828491a8ce/tos/build-secp/src/libsecp256k1.a",
+      "TOS_USE_LLD": "ON",
+      "TOS_WERROR_BUILD": "OFF",
+      "USE_QUIC": "ON"
+    },
+    "prebuilt_c_secp256k1_archive": {
+      "sha256": "6dfb5c89559881df88c81c3fb411b4ab4c091ccca6439f6c35aa857fac0af377",
+      "bytes": 1217220
+    },
+    "scope_note": "Existing Clang 18 Release configuration, QUIC enabled, LLD enabled, Werror disabled; no compiler or feature change. The prebuilt secp256k1 archive is the same C-only dependency used by the earlier Clang build."
+  },
+  "build_attempts": [
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "build-clang",
+        "--target",
+        "test-validator-options",
+        "test-ext-message-admission-budget",
+        "test-ext-message-pool",
+        "test-ext-message-manager",
+        "test-ext-message-generated-checker",
+        "validator-engine",
+        "dht-server",
+        "validator-engine-console",
+        "lite-client",
+        "create-state",
+        "generate-random-id",
+        "tos-pq-consensus-key",
+        "toslibjson",
+        "tol",
+        "-j2"
+      ],
+      "started_at": "2026-10-06T20:59:04+00:00",
+      "finished_at": "2026-10-06T21:15:00+00:00",
+      "exit_code": 130,
+      "exit_scope": "exec session interrupted by Ctrl-C; direct CMake return code unavailable because the wrapper was interrupted",
+      "reason": "Authorized resource scheduling, not semantic evidence or compile failure",
+      "kind": "resource-scheduling interruption"
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "build-clang",
+        "--target",
+        "test-validator-options",
+        "test-ext-message-admission-budget",
+        "test-ext-message-pool",
+        "test-ext-message-manager",
+        "test-ext-message-generated-checker",
+        "validator-engine",
+        "dht-server",
+        "validator-engine-console",
+        "lite-client",
+        "create-state",
+        "generate-random-id",
+        "tos-pq-consensus-key",
+        "toslibjson",
+        "tol",
+        "-j4"
+      ],
+      "started_at": "2026-10-06T21:15:13+00:00",
+      "finished_at": "2026-10-06T21:18:47+00:00",
+      "exit_code": 0,
+      "kind": "successful normal build"
+    }
+  ],
+  "build_interruption_note": "The first attempt was interrupted solely to increase parallelism after independent builds became idle. Exec-session exit 130 is not a compiler failure, semantic red, or source mutation. The second attempt kept the same targets/configuration and reused completed objects with -j4.",
+  "normal_tests": [
+    {
+      "name": "options",
+      "command": [
+        "build-clang/test-validator-options"
+      ],
+      "started_at_utc": "2026-10-06T21:19:19+00:00",
+      "finished_at_utc": "2026-10-06T21:19:19+00:00",
+      "duration_seconds": 0.008,
+      "exit_code": 0,
+      "passed_test_counts": []
+    },
+    {
+      "name": "budget",
+      "command": [
+        "build-clang/test-ext-message-admission-budget"
+      ],
+      "started_at_utc": "2026-10-06T21:19:19+00:00",
+      "finished_at_utc": "2026-10-06T21:19:19+00:00",
+      "duration_seconds": 0.004,
+      "exit_code": 0,
+      "passed_test_counts": [
+        11
+      ]
+    },
+    {
+      "name": "pool",
+      "command": [
+        "build-clang/test-ext-message-pool"
+      ],
+      "started_at_utc": "2026-10-06T21:19:19+00:00",
+      "finished_at_utc": "2026-10-06T21:19:19+00:00",
+      "duration_seconds": 0.016,
+      "exit_code": 0,
+      "passed_test_counts": [
+        14
+      ]
+    },
+    {
+      "name": "manager",
+      "command": [
+        "build-clang/test-ext-message-manager"
+      ],
+      "started_at_utc": "2026-10-06T21:19:19+00:00",
+      "finished_at_utc": "2026-10-06T21:19:19+00:00",
+      "duration_seconds": 0.008,
+      "exit_code": 0,
+      "passed_test_counts": [
+        1
+      ]
+    },
+    {
+      "name": "generated-checker",
+      "command": [
+        "python",
+        "scripts/check-ext-message-generated.py",
+        "--build-dir",
+        "build-clang",
+        "--output-dir",
+        "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/native-baseline/generated-checker"
+      ],
+      "started_at_utc": "2026-10-06T21:19:19+00:00",
+      "finished_at_utc": "2026-10-06T21:19:19+00:00",
+      "duration_seconds": 0.165,
+      "exit_code": 0,
+      "passed_test_counts": []
+    },
+    {
+      "name": "cli",
+      "command": [
+        "python",
+        "scripts/check-ext-message-work-cli.py",
+        "--engine",
+        "build-clang/validator-engine/validator-engine",
+        "--output-dir",
+        "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/native-baseline/cli"
+      ],
+      "started_at_utc": "2026-10-06T21:19:19+00:00",
+      "finished_at_utc": "2026-10-06T21:19:19+00:00",
+      "duration_seconds": 0.064,
+      "exit_code": 0,
+      "passed_test_counts": []
+    }
+  ],
+  "results": {
+    "options_exit_code": 0,
+    "budget_tests_passed": 11,
+    "pool_tests_passed": 14,
+    "manager_tests_passed": 1,
+    "generated_checker_tests_passed": 6,
+    "generated_controls_enabled": false,
+    "cli_cases_passed": 5,
+    "source_mutation_controls_run": 0,
+    "accepted_probe_measurements": [
+      {
+        "workchain": 0,
+        "operation": "ACCEPT",
+        "gas_used": 3932,
+        "config_root": "afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726"
+      },
+      {
+        "workchain": 0,
+        "operation": "SETGASLIMIT",
+        "gas_used": 4004,
+        "config_root": "afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726"
+      },
+      {
+        "workchain": -1,
+        "operation": "ACCEPT",
+        "gas_used": 3932,
+        "config_root": "afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726"
+      },
+      {
+        "workchain": -1,
+        "operation": "SETGASLIMIT",
+        "gas_used": 4004,
+        "config_root": "afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726"
+      }
+    ],
+    "insufficient_setgaslimit_measurements": [
+      {
+        "chain": "Basechain",
+        "setgaslimit_argument": 1,
+        "actual_vm_steps": 82,
+        "actual_vm_gas_used": 4004,
+        "gas_max": 30000000,
+        "gas_limit": 0,
+        "gas_credit": 20000,
+        "out_of_gas": true,
+        "accepted": false,
+        "exit_code": -14,
+        "outward_diagnostic_steps": 82,
+        "outward_diagnostic_gas_used": 0
+      },
+      {
+        "chain": "Masterchain",
+        "setgaslimit_argument": 1,
+        "actual_vm_steps": 82,
+        "actual_vm_gas_used": 4004,
+        "gas_max": 1000000,
+        "gas_limit": 0,
+        "gas_credit": 10000,
+        "out_of_gas": true,
+        "accepted": false,
+        "exit_code": -14,
+        "outward_diagnostic_steps": 82,
+        "outward_diagnostic_gas_used": 0
+      }
+    ],
+    "config_scope": "Canonical generated candidate version 18 ConfigParams, with synthetic funded ordinary accounts and shard descriptors; not the later live Falcon version-19 chain.",
+    "note": "The rejected probes actually consumed 4004 VM gas despite the outward rejection diagnostic reporting gas_used=0."
+  },
+  "generated_checker_source_sha256": {
+    "crypto/smartcont/gen-zerostate.fif": "e837c6a29ffdf605ebd723f65db1eaa29982061480982122dce4f3814d828d4e",
+    "test/wallet-v5r2/checker-gas-probe.fc": "d6792cfa16fd2adf4d7a49b2c8ca1d4a161a57eb4e791bd2ee8b921684a6f1b5",
+    "test/test-ext-message-generated-checker.cpp": "fbfa318bf9b5da143441d4cf5b7fb2986398be1f4ca4b316dea2309457cfa3ca",
+    "scripts/check-ext-message-generated.py": "da084c41fad88fb09992842edeb4171529a4af270c93d330d56a133a4d764273",
+    "validator/impl/ext-message-checker.cpp": "c5400624f6394a0a6c7115da984c7fe5065703c8d0c335e20b7bd2cf7edccae0",
+    "validator/impl/external-message.cpp": "9bfd5d53f8fb72d3cf0b4b97edd0e94ef40edebb0ab9bbdddc1f487839fc39fe",
+    "validator/impl/ext-message-pool.cpp": "72ff3fcbc775097dde5714a81a965b440c3b7a8f728115e4616e321fdb28f62e",
+    "crypto/vm/tosops.cpp": "d3bf79e7c4e2c9e1c3dc132fa392a8c5eb544954b375eabb5138a553031fb617"
+  },
+  "binaries": {
+    "test-validator-options": {
+      "sha256": "682944802f0187cb1044fb2f54c0f35c1d718a1e277100a4fe2c5d1cb872ce6a",
+      "bytes": 868704
+    },
+    "test-ext-message-admission-budget": {
+      "sha256": "a5e11db5bbbfb68e6ab7a2a486c8f9d8d5131b25ec2a082fbb0fe014ef3d34b1",
+      "bytes": 6591512
+    },
+    "test-ext-message-pool": {
+      "sha256": "36e214f190edac8e55556c0821f8d1b2cb01341ec24a657e78407835a2582861",
+      "bytes": 13373720
+    },
+    "test-ext-message-manager": {
+      "sha256": "333c7f88d719b8c5bf47864684ef9c2ecf8930eafff1c2b56d8a337544c5b833",
+      "bytes": 37904712
+    },
+    "test-ext-message-generated-checker": {
+      "sha256": "cf030c6086ec7e1172f7a23295b97ab0298b1d43238676f568c3e48ea796301d",
+      "bytes": 41224984
+    },
+    "validator-engine/validator-engine": {
+      "sha256": "8df004753cad5b1f1da54e25eac4aee79ebf0afbe7b0a041040c7943d0ef4e42",
+      "bytes": 55928192
+    },
+    "dht-server/dht-server": {
+      "sha256": "9d93ad3b81fdbb1d8e48b9b8f0703904f1d31d54195ebafcc7910b91caf8a562",
+      "bytes": 20257520
+    },
+    "validator-engine-console/validator-engine-console": {
+      "sha256": "ff55c1beb287fdfb1ed32a1a806b4e81f0afaacf1eaffa2fb9049ca2255b6122",
+      "bytes": 8657192
+    },
+    "lite-client/lite-client": {
+      "sha256": "2ea11ab310a2efdba70ac3b31d2a5226267bf6a5d26a31087a87810b8de48c14",
+      "bytes": 14655080
+    },
+    "crypto/create-state": {
+      "sha256": "77fb19329e1860a370b5d8163a1c905dc35783e3a48db1634d3c67b3e112196f",
+      "bytes": 12777032
+    },
+    "utils/generate-random-id": {
+      "sha256": "7df1d2630f5e8dd83dfdd43964f5322c11f7a8567f326a03c73aa42bbb36c20e",
+      "bytes": 6778720
+    },
+    "crypto/pq/tos-pq-consensus-key": {
+      "sha256": "6731cf29ae7dc70a8e0f79b251e24013341947f2ac6cb36c3d60d98d8f24529b",
+      "bytes": 5998496
+    },
+    "toslib/libtoslibjson.so": {
+      "sha256": "1a0810c8b864ed1eff4e1a39c9ddf8a3380439361a504e26d30492823a618cee",
+      "bytes": 21237160
+    },
+    "tol/tol": {
+      "sha256": "2eabcc6c1cf68be1ed8b0a5a82706856d0f1ee195b163d9dff183bb0db102f57",
+      "bytes": 2420368
+    },
+    "crypto/func": {
+      "sha256": "79bae039443e47519769fadef2d541e6f384cb799ec275381ebdebec815b6284",
+      "bytes": 1619960
+    },
+    "crypto/fift": {
+      "sha256": "1f41717f2e203f1689ed6ccea8c826d72a91e7c0ae1cf67012603d44aa2a78d5",
+      "bytes": 11340080
+    }
+  },
+  "followup_tools": "The requested validator, DHT, console, lite-client, create-state, identity/key tools, toslibjson and tol binaries are built. Their subsequent live version-19 chain execution is outside this baseline record.",
+  "raw_artifacts": {
+    "directory": "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/native-baseline",
+    "retention": "Local scratch; no durable retention guarantee. Commands and hashes are committed here; raw logs are not independently durable merely because their hashes are listed. Subsequent hosted CI artifacts have their own retention.",
+    "files": {
+      "binaries.json": {
+        "sha256": "afc9d77df789c12506415a8059add3815c32fcdfb237e5d442d69812ed6e0702",
+        "bytes": 2252
+      },
+      "budget.log": {
+        "sha256": "0e284d210e86e31619963b2645045072eb458d533cdac24b3a13d2e2b16702ba",
+        "bytes": 1082
+      },
+      "build-attempt1-j2-command.json": {
+        "sha256": "a668301c1ec53c791e37a035541675a629e21eba7f5c3bb25f2c844560d83453",
+        "bytes": 559
+      },
+      "build-attempt1-j2-result.json": {
+        "sha256": "9d1d9c6633cd18c12ee47e8ce43c7179e96273253b796f16b312336188a20cf8",
+        "bytes": 793
+      },
+      "build-attempt1-j2.log": {
+        "sha256": "7b3028caeee008761d9cfa7e6f570cc63d54e2ce1c272b00a90817efa17d6ef7",
+        "bytes": 14884
+      },
+      "build-attempt2-j4-command.json": {
+        "sha256": "03d9c87febc1b0f238c6a4be38d5d8edfc6c9725637cd6ab036ea425f17d215f",
+        "bytes": 559
+      },
+      "build-attempt2-j4-result.json": {
+        "sha256": "3a9a1c10737e2a871b0601a05d6a26842d22163e69261185e817979943f6bd5d",
+        "bytes": 575
+      },
+      "build-attempt2-j4.log": {
+        "sha256": "ed9b197024f93710b73384b459891b3a773b3c7142e70fd6334485ea5e232e10",
+        "bytes": 8423
+      },
+      "build-command.json": {
+        "sha256": "a668301c1ec53c791e37a035541675a629e21eba7f5c3bb25f2c844560d83453",
+        "bytes": 559
+      },
+      "build-reschedule.json": {
+        "sha256": "f7613511093c96462f2600a2d4d880c907d868b9b74ffbcc3f09313448ec290f",
+        "bytes": 1929
+      },
+      "build.log": {
+        "sha256": "7b3028caeee008761d9cfa7e6f570cc63d54e2ce1c272b00a90817efa17d6ef7",
+        "bytes": 14884
+      },
+      "cli/duplicate.log": {
+        "sha256": "0d6003f77a8037636a8ee9a440798796bccb54e0c2ea21ed85696bd8975635fb",
+        "bytes": 171
+      },
+      "cli/overflow.log": {
+        "sha256": "55e862df132e30a859a2e9ec6757ebe0466c2ce13b85bdc4d302fc24b66dbb2e",
+        "bytes": 163
+      },
+      "cli/results.json": {
+        "sha256": "919fd667f087bbb0fdcd270b61a7427b395027e9ab6a39bd0d23cd52a3cb0f0e",
+        "bytes": 2111
+      },
+      "cli/uppercase.log": {
+        "sha256": "fe7204dc2c2c9ee8c217a28342a59db3284b49f2f9be1c567cd87fcaa5a02f3d",
+        "bytes": 179
+      },
+      "cli/valid.log": {
+        "sha256": "0c3745ac0477e78b6f68870b2ce1a962610ecc5a05c4adc186214655f9c5c880",
+        "bytes": 9976
+      },
+      "cli/zero-root.log": {
+        "sha256": "656ad583f9f18c0b19970072576a73d4909dbd6a4ca0d3affee97611ae509052",
+        "bytes": 158
+      },
+      "cli.log": {
+        "sha256": "a1202edd4a0e9dc47f223aaee5b9048553d39627d51459182590efcbd457f4e2",
+        "bytes": 63
+      },
+      "frozen-sources.json": {
+        "sha256": "31d47603c8257bb2ec38cbab7204149063572dc0a147a89ca415bfd60419d3d5",
+        "bytes": 2466
+      },
+      "generated-checker/assemble-probe.log": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "generated-checker/baseline.log": {
+        "sha256": "f6bd95e4efcfaf9cdde30648a7da5d1529159f5284f82c32c533723cf7feb881",
+        "bytes": 82752
+      },
+      "generated-checker/compile-probe.log": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "generated-checker/generate.log": {
+        "sha256": "1002fd7faed27270f625ceaaa1e272fce93cdf3322a6d9bd0b308c279f54ee88",
+        "bytes": 54698
+      },
+      "generated-checker/generated/basestate0.boc": {
+        "sha256": "8375256a7007a9d4fdea1952d0aa12f8ef074c56a620abe6b252baef7cf864b2",
+        "bytes": 105
+      },
+      "generated-checker/generated/checker-gas-probe.boc": {
+        "sha256": "d1518f823cd3e5bd6d3a526074c4031b59eae1f3cf0a9747c78f113bdc147661",
+        "bytes": 190
+      },
+      "generated-checker/generated/zerostate.boc": {
+        "sha256": "d968dd78910f940fe337f7eb88bad87fc15e2f3e0e37775c149efdeb089325dc",
+        "bytes": 21721
+      },
+      "generated-checker/result.json": {
+        "sha256": "2e820ca29e106f9fd60a19de5790cf2b383a3dbd1b9655af86f044502124da40",
+        "bytes": 4687
+      },
+      "generated-checker.log": {
+        "sha256": "b6d3034b2abe9ab30f65d00e94f5e8fae7f6b2aeb8ab786e3c02d91923b28ea0",
+        "bytes": 279
+      },
+      "manager.log": {
+        "sha256": "3087889ee13bbfaa0ff1f8462a3fd43d3bdc65470efc4d552416c789499166ee",
+        "bytes": 2195
+      },
+      "normal-tests.json": {
+        "sha256": "83557a75caa2d8ce892a46fb891b45105ed3d3851d0bad41df1bd75c5e34d3dd",
+        "bytes": 2140
+      },
+      "options.log": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "pool.log": {
+        "sha256": "27530303580f4ac7cf6bcef2f5e5baeb9f1b0f1d278b188724a415aefc29e5ab",
+        "bytes": 14280
+      },
+      "stale-temp-cleanup.json": {
+        "sha256": "554a74f10d7b49b463f8a431a712fd217aba85c64a3da9b1c5d5fadff8f50da2",
+        "bytes": 8460
+      },
+      "stale-temp-refill-placeholders.json": {
+        "sha256": "b35570a7bb796c3d0588cd887e892c2cedd7b4f5af29ffff0f58597f1f05bbe5",
+        "bytes": 3634
+      }
+    }
+  },
+  "environment_cleanup": {
+    "initial_blocker": "The first preflight could not create the output directory due to ENOSPC; no build had started at that point.",
+    "receipts": [
+      "stale-temp-cleanup.json",
+      "stale-temp-refill-placeholders.json"
+    ],
+    "scope": "Only explicitly approved stale temporary copies were removed or replaced with newer empty placeholders. Normal binaries, libraries, examples and raw test evidence were preserved. FD observations are limited to readable proc entries, as recorded in the receipts. Cache cleanup is not test evidence."
+  },
+  "execution_window": {
+    "normal_build_finished_at_utc": "2026-10-06T21:18:47+00:00",
+    "normal_tests_finished_at_utc": "2026-10-06T21:19:19+00:00",
+    "matching_cmake_ninja_processes_after_tests": 0,
+    "all_test_subprocesses_returned": true,
+    "released_to_parent": true
+  },
+  "limits": [
+    "No source mutation or historical guard was rerun or recounted.",
+    "No production CPU/rate/burst calibration, full legal-input maximum, activation or rollout claim.",
+    "These local normal baselines do not replace the final commit CI result or the prior head Clang 21 Werror build identity."
+  ]
+}

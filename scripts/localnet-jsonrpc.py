@@ -385,9 +385,15 @@ async def main(
     reuse,
     base_port,
     bootstrap_validator_set_valid_for,
+    auth_network_tag=None,
 ):
     install = Install(BUILD_DIR, REPO)
     if reuse and saved_network_exists(workdir, num_validators):
+        if auth_network_tag is not None:
+            raise ValueError(
+                "--auth-network-tag only applies while creating a fresh localnet; "
+                "refuse to imply it changed an existing genesis"
+            )
         if bootstrap_validator_set_valid_for is not None:
             raise ValueError(
                 "--bootstrap-validator-set-valid-for only applies while creating "
@@ -411,6 +417,8 @@ async def main(
         if os.environ.get("TOS_GLOBAL_VERSION"):
             network.config.global_version = int(os.environ["TOS_GLOBAL_VERSION"])
             print(f"   version  : global_version={network.config.global_version}", flush=True)
+        if auth_network_tag is not None:
+            network.config.auth_network_tag = auth_network_tag
         if bootstrap_validator_set_valid_for is not None:
             # A long-running acceptance chain without an election exercise
             # must retain an active ConfigParam 34 for its entire run. The
@@ -507,13 +515,28 @@ async def main(
             await asyncio.gather(*node_tasks, return_exceptions=True)
 
 
-if __name__ == "__main__":
+def parse_auth_network_tag(value):
+    if re.fullmatch(r"[0-9a-fA-F]{64}", value) is None:
+        raise argparse.ArgumentTypeError("AUTH network tag must be exactly 64 hexadecimal digits")
+    return bytes.fromhex(value)
+
+
+def parse_args(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--rpc", default="127.0.0.1:18545")
     p.add_argument("--control", default="127.0.0.1:18745")
     p.add_argument("--validators", type=int, default=1)
     p.add_argument("--workdir", default=str(REPO / "test/integration/.localnet"))
     p.add_argument("--boot-timeout", type=float, default=120.0)
+    p.add_argument(
+        "--auth-network-tag",
+        type=parse_auth_network_tag,
+        default=os.environ.get("TOS_AUTH_NETWORK_TAG"),
+        help=(
+            "explicit public 32-byte AUTH namespace for a fresh version >=17 genesis "
+            "(64 hex digits; defaults to TOS_AUTH_NETWORK_TAG when set)"
+        ),
+    )
     p.add_argument(
         "--base-port",
         type=int,
@@ -537,7 +560,11 @@ if __name__ == "__main__":
         action="store_true",
         help="resume an existing validator database; create it when absent",
     )
-    a = p.parse_args()
+    return p.parse_args(argv)
+
+
+if __name__ == "__main__":
+    a = parse_args()
     try:
         asyncio.run(
             main(
@@ -551,6 +578,7 @@ if __name__ == "__main__":
                 a.reuse,
                 a.base_port,
                 a.bootstrap_validator_set_valid_for,
+                a.auth_network_tag,
             )
         )
     except KeyboardInterrupt:

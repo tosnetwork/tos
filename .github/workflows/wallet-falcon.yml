@@ -15,6 +15,7 @@ on:
       - 'test/tostester/**'
       - 'tools/falcon/**'
       - 'scripts/localnet-jsonrpc.py'
+      - 'scripts/test_localnet_auth_namespace.py'
       - 'test/pq-readiness/live_chain.py'
       - 'test/tostester/generate_tl.py'
       - 'CMakeLists.txt'
@@ -55,6 +56,10 @@ jobs:
           python -m pip install bitarray==3.7.2 PyNaCl==1.5.0 pycryptodome==3.23.0 cryptography==46.0.4
           cd third-party/falcon-reference
           sha256sum -c SHA256SUMS
+      - name: Localnet AUTH namespace input and genesis boundary
+        run: |
+          python test/tostester/generate_tl.py
+          PYTHONPATH="$PWD/test/tostester/src" python -m unittest discover -s scripts -p test_localnet_auth_namespace.py -v
       - name: Build both VMs and offline signer
         run: |
           if [ '${{ matrix.arch }}' = x86_64 ]; then
@@ -130,6 +135,7 @@ jobs:
           falcon_network_dir="$RUNNER_TEMP/falcon-devnet"
           setsid env PYTHONUNBUFFERED=1 PYTHONPATH="$PWD/test/tostester/src" \
             TOS_BUILD_DIR="$PWD/build" TOS_GLOBAL_VERSION=19 \
+            TOS_AUTH_NETWORK_TAG=4646464646464646464646464646464646464646464646464646464646464646 \
             python scripts/localnet-jsonrpc.py --validators 1 --boot-timeout 180 \
             --rpc 127.0.0.1:28545 --control 127.0.0.1:28745 --base-port 29000 \
             --workdir "$falcon_network_dir" > "$RUNNER_TEMP/falcon-network.log" 2>&1 &

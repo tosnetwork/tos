@@ -1,0 +1,394 @@
+{
+  "schema": "tos-ci-closeout-source-boundaries/1",
+  "source_parent": "18349b79b401d249db0c464d99d81b7218f1f33b",
+  "scope": "Completed parent-head CI and local follow-on validation. This index does not certify an eventual pushed head or authorize release activation.",
+  "parent_ci": {
+    "observed_at_utc": "2026-10-06 21:05:22 UTC",
+    "collection_scope": "First page of pull-request workflow runs returned for this commit; not a branch-protection requirements inventory.",
+    "counts": {
+      "success": 19,
+      "failure": 3,
+      "cancelled": 1
+    },
+    "runs": [
+      {
+        "id": 37486479221,
+        "name": "No Removed Execution Domains",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486479221"
+      },
+      {
+        "id": 37486477436,
+        "name": "Source hygiene",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477436"
+      },
+      {
+        "id": 37486477706,
+        "name": "Source guards",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477706"
+      },
+      {
+        "id": 37486477783,
+        "name": "Lint",
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477783"
+      },
+      {
+        "id": 37486477881,
+        "name": "PQ v16 readiness",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477881"
+      },
+      {
+        "id": 37486477891,
+        "name": "ML-DSA Auth Module E2E",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477891"
+      },
+      {
+        "id": 37486477919,
+        "name": "External admission work boundaries",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477919"
+      },
+      {
+        "id": 37486477652,
+        "name": "Authentication extension validation",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477652"
+      },
+      {
+        "id": 37486477723,
+        "name": "CI cache validation",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477723"
+      },
+      {
+        "id": 37486477977,
+        "name": "N6 microbench smoke",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477977"
+      },
+      {
+        "id": 37486477418,
+        "name": "Post-quantum quorum and high-volume wallet",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477418"
+      },
+      {
+        "id": 37486477971,
+        "name": "TOS bridge validation",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477971"
+      },
+      {
+        "id": 37486478064,
+        "name": "Classical Consensus Inventory",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486478064"
+      },
+      {
+        "id": 37486477438,
+        "name": "Experimental rescue context parity",
+        "status": "completed",
+        "conclusion": "cancelled",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477438"
+      },
+      {
+        "id": 37486477911,
+        "name": "Native ML-DSA-44 verification",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477911"
+      },
+      {
+        "id": 37486477843,
+        "name": "Branch PQ chain and Python tests",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477843"
+      },
+      {
+        "id": 37486477803,
+        "name": "Network safety ASAN",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477803"
+      },
+      {
+        "id": 37486477930,
+        "name": "tosctl service",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477930"
+      },
+      {
+        "id": 37486477832,
+        "name": "Node health monitor",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477832"
+      },
+      {
+        "id": 37486477477,
+        "name": "V5R2 genesis and trusted-state validation",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477477"
+      },
+      {
+        "id": 37486477855,
+        "name": "Smart contract sandboxes",
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477855"
+      },
+      {
+        "id": 37486477883,
+        "name": "Validator signature conformance",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477883"
+      },
+      {
+        "id": 37486477573,
+        "name": "Falcon wallet AUTH",
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/tosnetwork/tos/actions/runs/37486477573"
+      }
+    ]
+  },
+  "checkout_boundaries": {
+    "exact_pr_head": [
+      "Experimental rescue context parity",
+      "External admission work boundaries",
+      "V5R2 genesis and trusted-state validation",
+      "Falcon wallet AUTH"
+    ],
+    "observed_merge_jobs": {
+      "checkout": "7f5891dd5ba886aa55b9e452bf44adc78c64e93b",
+      "merged_into": "237f72ed5c574d70b70195ef04073007987e049c",
+      "event_diff_base": "6f4dbdad748f3ab38a05066ee5b86f750ac8f9c9",
+      "jobs": [
+        {
+          "id": 112347685561,
+          "name": "Lint / hygiene"
+        },
+        {
+          "id": 112347695348,
+          "name": "Smart contract sandboxes"
+        }
+      ]
+    },
+    "other_workflows": "Reported conclusions are retained as metadata; consult each run's checkout for its tested tree."
+  },
+  "local_evidence": {
+    "formatting": "test/wallet-v5r2/format-lineage-20261006.json",
+    "reviewed_bundle_refresh": "test/wallet-v5r2/review-format-refresh-20261006.json",
+    "normal_native_baseline": "test/wallet-v5r2/ci-format-baseline-20261006.json",
+    "rescue_timeout": "test/wallet-v5r2/ci-rescue-timeout-20261006.json",
+    "launcher_and_sandbox": "test/wallet-v5r2/ci-launcher-sandbox-20261006.json",
+    "static_final": {
+      "scope": "Restored final working-tree static gates",
+      "python_files": 194,
+      "python_selection": "Existing Python paths changed against event base 6f4dbdad748f3ab38a05066ee5b86f750ac8f9c9, plus the new launcher regression file; the receipt records all 194 exact paths.",
+      "ruff_version": "0.15.2",
+      "checks": [
+        {
+          "command": [
+            "git",
+            "diff",
+            "--check"
+          ],
+          "exit": 0,
+          "duration_seconds": 0.06,
+          "log": "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/restored-static-0.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "command": [
+            "git",
+            "diff",
+            "--cached",
+            "--check"
+          ],
+          "exit": 0,
+          "duration_seconds": 0.034,
+          "log": "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/restored-static-1.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "command": [
+            "cargo",
+            "fmt",
+            "--manifest-path",
+            "tosctl/src/Cargo.toml",
+            "--all",
+            "--",
+            "--check"
+          ],
+          "exit": 0,
+          "duration_seconds": 3.709,
+          "log": "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/restored-static-2.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "command": [
+            "/root/.cache/uv/archive-v0/4gq8L2zhITVrHcZH/bin/ruff",
+            "check",
+            "--no-cache",
+            "<selected Python paths recorded in the receipt>"
+          ],
+          "exit": 0,
+          "duration_seconds": 0.031,
+          "log": "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/restored-static-3.log",
+          "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+        },
+        {
+          "command": [
+            "/root/.cache/uv/archive-v0/4gq8L2zhITVrHcZH/bin/ruff",
+            "format",
+            "--check",
+            "<selected Python paths recorded in the receipt>"
+          ],
+          "exit": 0,
+          "duration_seconds": 0.036,
+          "log": "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/restored-static-4.log",
+          "sha256": "8a3c48ec7e59470082514b24f8e582e707c6e53229531a22055ba1aa406958d3"
+        }
+      ],
+      "executor_import_guard_restored_to_parent": true,
+      "agent_contract_unchanged": true,
+      "raw_receipt": {
+        "path": "/workspace/scratch/58828491a8ce/artifacts/pr138-ci-closeout/restored-static.json",
+        "bytes": 22039,
+        "sha256": "773a2e1268b1a95b1e9e03f87cefb234376480962a00953f5839adaa763bb1f0",
+        "retention": "Local scratch only; commands, result summaries and source-bound evidence indexes are committed."
+      }
+    }
+  },
+  "required_validation": [
+    {
+      "boundary": "C++ admission formatting, option/checker paths",
+      "gates": [
+        "Lint / hygiene",
+        "Lint / strict-build",
+        "External admission work boundaries",
+        "Experimental rescue context parity"
+      ],
+      "local": "Normal native build/tests; exact pinned formatter diff and unchanged mutation anchors."
+    },
+    {
+      "boundary": "Python formatting and frozen native adapter",
+      "gates": [
+        "Lint / hygiene",
+        "Branch PQ chain and Python tests",
+        "V5R2 genesis and trusted-state validation",
+        "Experimental rescue context parity"
+      ],
+      "local": "Pinned Ruff, nine AST comparisons and rebuilt 74-entry bundle with 18 control outcomes."
+    },
+    {
+      "boundary": "Explicit localnet AUTH namespace and entrypoint",
+      "gates": [
+        "Falcon wallet AUTH"
+      ],
+      "local": "CLI/env/default/reuse regressions, four source controls and disposable version-19 live delivery."
+    },
+    {
+      "boundary": "External import limit and original-signature retry",
+      "gates": [
+        "Smart contract sandboxes"
+      ],
+      "local": "31-test agent-account suite, precise import-guard sensitivity and actual successful recipient execution."
+    },
+    {
+      "boundary": "ARM runtime budget",
+      "gates": [
+        "Experimental rescue context parity"
+      ],
+      "local": "YAML structural comparison retaining all 58 workflow steps; actual completion must come from the new ARM job."
+    }
+  ],
+  "release_boundary": "The PR remains draft. Independent review, complete release acceptance and explicit activation/default-switch approval remain open. Required branch-protection checks are not waived.",
+  "local_evidence_index_identities": {
+    "test/wallet-v5r2/format-lineage-20261006.json": {
+      "bytes": 19744,
+      "sha256": "4953585ee7356ef9bd578e408b962c404b8291b392bd510021125e7b315fada5"
+    },
+    "test/wallet-v5r2/review-format-refresh-20261006.json": {
+      "bytes": 8462,
+      "sha256": "8ea1cb0906a0de968f7fcf12c646d797f60d66b2887ea6098cbf7872a2c2a07e"
+    },
+    "test/wallet-v5r2/ci-format-baseline-20261006.json": {
+      "bytes": 21400,
+      "sha256": "01b9a4df0bfa9b35cdeb4b411e3680e62efcf6257bd166e70eb76fb217dc1af2"
+    },
+    "test/wallet-v5r2/ci-rescue-timeout-20261006.json": {
+      "bytes": 16808,
+      "sha256": "e5d8b28dd3fb4f4607042832bcd5c20524d7d52a051f452b44afb8017a810097"
+    },
+    "test/wallet-v5r2/ci-launcher-sandbox-20261006.json": {
+      "bytes": 23441,
+      "sha256": "95b8472b6fa6a0277856fd40193569f9a9e9ac45bd3e2c7a517b511c7c8cdf55"
+    }
+  },
+  "local_result_summary": {
+    "normal_native": {
+      "options_exit": 0,
+      "budget": 11,
+      "pool": 14,
+      "manager": 1,
+      "generated_checker_cases": 6,
+      "cli_cases": 5,
+      "compiler": "Clang 18 Release, QUIC enabled, Werror disabled",
+      "historical_cpp_controls_recounted": false
+    },
+    "namespace": {
+      "normal_tests": 8,
+      "semantic_source_controls": 4,
+      "restored_tests": 8
+    },
+    "agent_account_sandbox": {
+      "normal_tests": 31,
+      "semantic_source_controls": 1,
+      "restored_tests": 31,
+      "retry_recipient": "One ordinary, non-aborted VM transaction, success/exit 0, active state and expected code hash"
+    },
+    "independent_internal_auth_1713": {
+      "baseline_tests": 1,
+      "private_compiling_semantic_control": 1,
+      "restored_tests": 1
+    },
+    "falcon_disposable_live": {
+      "cases": 4,
+      "global_version": 19,
+      "global_id": 3,
+      "auth_network_tag": "4646464646464646464646464646464646464646464646464646464646464646",
+      "scope": "Operator-controlled local chain; separate from the v18/global-ID-1/namespace-42 reviewed candidate and production checkpoint authentication"
+    },
+    "review_bundle": {
+      "entries": 74,
+      "unchanged_entries": 73,
+      "changed_entry": "repository/test/auth-extensions/native.py",
+      "outcomes": 18
+    },
+    "source_boundary": "Executions used a working-tree overlay on source_parent; individual indexes bind exercised source and tool hashes. No final-head hosted CI result is inferred."
+  }
+}

@@ -1,0 +1,451 @@
+{
+  "base_git_head": "18349b79b401d249db0c464d99d81b7218f1f33b",
+  "commands": {
+    "falcon_signer": "cmake -S tools/falcon -B build-falcon -G Ninja -DCMAKE_BUILD_TYPE=Release; cmake --build build-falcon --target tos_falcon_offline -j1",
+    "native_baseline": "FUNC_PATH=$PWD/build/crypto/func FIFT_PATH=$PWD/build/crypto/fift TOL_PATH=$PWD/build-clang/tol/tol EMULATOR_PATH=$PWD/build/emulator/libemulator.so PYTHONPATH=$PWD/test/auth-extensions:$PYTHONPATH python -m unittest test_auth.AuthenticationTests.test_module_request_rejected_after_acceptance_is_consumed_not_bounced",
+    "native_mutation": "Copy agent-account-code.fc and auth-extension.fc to a private directory; apply the exact recorded replacement, compile with native.compile_contract, assign test_auth.CODES[\"agent\"] to that BOC, then directly run AuthenticationTests(recorded_test_method) with unittest.TextTestRunner. Require exactly one failure, zero errors and the recorded expected-exit witness; restore the original CODES entry and rerun.",
+    "python_baseline": "PYTHONPATH=\"$PWD/scripts:$PWD/test/tostester/src:$PYTHONPATH\" python -B -m unittest discover -s scripts -p test_localnet_auth_namespace.py -v",
+    "rust_baseline": "CARGO_BUILD_JOBS=2 cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --test agent_account_sandbox"
+  },
+  "default_boundaries": {
+    "default_auth_network_tag": null,
+    "default_global_version": 16,
+    "v5r2_release_candidate": "Unchanged and distinct: explicit version18/global_id1/namespace42x32; this Falcon run uses version19/global_id3/namespace46x32. No profile is activated by default.",
+    "version_at_least_17_missing_namespace": "Still rejected by the existing genesis guard"
+  },
+  "execution_scope": "Local working-tree overlay on the base Git HEAD. The live runner source_commit field reports that HEAD only; it does not claim unmodified 18349 passed. Exact exercised sources and tools are SHA-256 bound below.",
+  "format": "tos-ci-launcher-sandbox-evidence-v1",
+  "independent_post_accept_1713": {
+    "after": "",
+    "baseline": {
+      "errors": 0,
+      "failures": 0,
+      "tests": 1
+    },
+    "before": "  throw_unless(err::message_too_large, ok);",
+    "compiled": true,
+    "mutant_code_hash": "7ebccf898cf6828edcd4cb45448336495e9209fc3df08aa287d720db720d68ae",
+    "original_code_hash": "efc5675d718c3172f65c87ecef648beb6a2f6e2046099883ccccf03683051620",
+    "private_source": "private-agent/agent-account-code.fc (inside the raw artifact; repository source unchanged)",
+    "red": {
+      "errors": 0,
+      "failure_excerpt": "AssertionError: agent: expected exit 1713, got {'exit': 7, 'gas': 13696, 'gas_limit': 100000, 'compute_success': True, 'aborted': False, 'action': {'success': True, 'code': 0}}",
+      "failures": 1,
+      "tests": 1,
+      "witness": "agent: expected exit 1713"
+    },
+    "restored": {
+      "errors": 0,
+      "failures": 0,
+      "tests": 1
+    },
+    "scope": "Native internal AUTH destination-limit fixture; not an externally imported oversize message or release gas calibration.",
+    "source": "crypto/smartcont/agent-account-code.fc",
+    "source_sha256": "8c954ff96a5d4ecbb1d618dab44552b80502c5e3b3a0bb4b66d1ac31a35ea799",
+    "test": "AuthenticationTests.test_module_request_rejected_after_acceptance_is_consumed_not_bounced"
+  },
+  "live_falcon": {
+    "actual_genesis": {
+      "auth_network_tag": "4646464646464646464646464646464646464646464646464646464646464646",
+      "config48_marker": 161,
+      "global_version": 19,
+      "scope": "public ConfigParams read from the actual disposable chain genesis",
+      "zerostate_root_hash": "6841d4e16ee599b56de6053714bc156a0c5ffe79f418dc2e20dfcc231826d62e"
+    },
+    "environment": {
+      "TOS_AUTH_NETWORK_TAG": "4646464646464646464646464646464646464646464646464646464646464646",
+      "TOS_BUILD_DIR": "/workspace/scratch/58828491a8ce/tos/build-clang",
+      "TOS_GLOBAL_VERSION": "19"
+    },
+    "launcher_command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+      "-B",
+      "scripts/localnet-jsonrpc.py",
+      "--validators",
+      "1",
+      "--boot-timeout",
+      "180",
+      "--rpc",
+      "127.0.0.1:28545",
+      "--control",
+      "127.0.0.1:28745",
+      "--base-port",
+      "29000",
+      "--workdir",
+      "/workspace/scratch/58828491a8ce/artifacts/ci-launcher-sandbox/runtime"
+    ],
+    "launcher_exit": 0,
+    "live_command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python",
+      "-B",
+      "test/falcon-auth/live_relay.py",
+      "--build",
+      "/workspace/scratch/58828491a8ce/tos/build-clang",
+      "--library",
+      "/workspace/scratch/58828491a8ce/tos/build-falcon/libtos_falcon_offline.so",
+      "--lite-client",
+      "/workspace/scratch/58828491a8ce/tos/build-clang/lite-client/lite-client",
+      "--lite-config",
+      "/workspace/scratch/58828491a8ce/artifacts/ci-launcher-sandbox/runtime/lite-client.json",
+      "--control",
+      "127.0.0.1:28745",
+      "--out",
+      "/workspace/scratch/58828491a8ce/artifacts/ci-launcher-sandbox/live"
+    ],
+    "live_exit": 0,
+    "process_group_gone": true,
+    "ready": true,
+    "report": {
+      "cases": 4,
+      "events": [
+        {
+          "account": "0:522d4f12d462ae304c7abd948139b4301c8e250e653f2b283031acdcab592230",
+          "account_tx": "43000005:07C5E114EFD4CD9D9400C99E5309EEA3974E5F2BA86389D24B46E0F97B030675",
+          "anchor": "(-1,8000000000000000,35):879B4A39347A0A4EE954231787C82A508EE4E20A590EEFE2EFD1498F608E6D18:33F6F34655543897DAA2272CD3629DC0B69C4CDEEB200CD7444AB107CABDDB5F",
+          "broadcast": "0:d6f727c358454a2036f2f31cdbd7b02c089dc2a1823ff159c81a340d0caac9c4:4",
+          "commitment": "88554bb24ae1ded383183e5fed53f506663de884cfc9b3743be508d10087f1ca",
+          "language": "func",
+          "mode": 2,
+          "module": "0:276f1be10b9b40404b8837d7b14a467f8dc7b8973fc4405399808fd1591f12ac",
+          "module_tx": "43000003:56C66D80815C346A290169A0C3B7C71DD2A654D2CA4DD9EAF468F69A37F33588",
+          "nonce": 1,
+          "rejected_module_tx": "38000003:4A289BC63C42E3A6A23671153DF53611914B489F423E5E40F0A75B1A4ABDFDB9",
+          "replay_exit": 1804,
+          "replay_tx": "48000005:560C4BBB2952AD1D24096777B244240FC873ED92C7A4E86F9DDEA2CD0DF29F3E",
+          "target_received": 1000000000
+        },
+        {
+          "account": "0:bcb3cc6cbb94b503401d63ca9df80ff7387ee38a445b82a700131454ce1dcaa8",
+          "account_tx": "69000005:EF01AA589BDD02FC677EB1B7CF0D767761DCBBC998A03BD594248F1DFF7A8FBF",
+          "anchor": "(-1,8000000000000000,62):A318A4D8F20EE0E4A34E259DBA3213DE4FDE9C29B537941B3F1E73C12C08D4CE:967C16F011709AFEAFB8CD8483CCADC666249D76B344D90517663BEDEF59278D",
+          "broadcast": "0:d6f727c358454a2036f2f31cdbd7b02c089dc2a1823ff159c81a340d0caac9c4:9",
+          "commitment": "728a763db0fd9d4dbb60c11cbf373d1bdfbb103ce1db3ac6c8542651604656fc",
+          "language": "func",
+          "mode": 3,
+          "module": "0:c26fb33bd983d65781b0e85a6a84d7fbc1954902b8ead523eed996b1287e9a47",
+          "module_tx": "69000003:5E5158788C0A6FE7FB5DFD0DF9A41EE45A5B318193D98AF2737C1BCF908A01F0",
+          "nonce": 1,
+          "rejected_module_tx": "64000003:7A31363C7FF59DA4846714EF567F24A1890A0E2BD7E509DC712E47E5389F05F6",
+          "replay_exit": 1804,
+          "replay_tx": "75000005:E92689A768BE44B4E50E832628720B339FD44F09EB6A16FA1C5AA3CF33FF52A8",
+          "target_received": 999999999
+        },
+        {
+          "account": "0:362ec596a09b934a5cbe1c8b4656679f020ec76c937ebf2555766ac047fdc02d",
+          "account_tx": "96000005:C5B92756EE8CD4A90772E0A49FFAB81FF723D67AEBD11BFA82405C3199C34928",
+          "anchor": "(-1,8000000000000000,88):F3901EE4E67D039BA4B3A7423798750CE2EEF3128487B4DBA71EAED1482D1D61:B814123BDFC02B0BAAFEFA4EB4686FF4EA1D297966A20507572DCDFBB6E50D1F",
+          "broadcast": "0:d6f727c358454a2036f2f31cdbd7b02c089dc2a1823ff159c81a340d0caac9c4:14",
+          "commitment": "7f6bd8d74d56e77593958af9af2813bb203b238b890944bdbae5afaa60f53555",
+          "language": "tol",
+          "mode": 2,
+          "module": "0:83171fd2639ac839e3185a13bce60a1869ba997ac27c7e28a7e3f9518d799ae4",
+          "module_tx": "96000003:DC39D5D774E5699CA2E8B7EF71DDC1EE862D3BC0B4CD4CE4D986611FBFD94271",
+          "nonce": 1,
+          "rejected_module_tx": "91000003:73A7FB148C552ABF93DC83141A39230B5432462C336D6C13D927A6ABD9E692B2",
+          "replay_exit": 1804,
+          "replay_tx": "101000005:2BB82BE12C050A9C9B04E4F02474E1C0221FDBF4A634E8707990FAC3E0BDB3D8",
+          "target_received": 999999999
+        },
+        {
+          "account": "0:9240caf7c59bcab534abe4fd3bc688054147d6cf2ad91066a987cb34c59f696c",
+          "account_tx": "123000005:F547A7A84C32C54E180CC09950DBF2B87782186DCCF510BCB0D3FE552ED0EE27",
+          "anchor": "(-1,8000000000000000,115):54C63DC1C0A5143DEBA3D636C16B1CB14FD29E67100A5A5D4285424C7341C5D7:E06FF65BAE938A4F065931956415EDBD2B348A24155CC9D69C2A9155E5E22D33",
+          "broadcast": "0:d6f727c358454a2036f2f31cdbd7b02c089dc2a1823ff159c81a340d0caac9c4:19",
+          "commitment": "4cd0b927d9294381b2da34b5aa04e63bc6e37da46f261a96384dd367114a3bf3",
+          "language": "tol",
+          "mode": 3,
+          "module": "0:eed5a0c6a4f4b7c1dad85fa6569bfade10626700e2920c005296402a1fb1a551",
+          "module_tx": "123000003:3718B0C3C898D60C7123237647B04475C14C89DBA545FD1B1F29B893537C313A",
+          "nonce": 1,
+          "rejected_module_tx": "117000003:E1E584198B0F384307DC04A4F65CC8776BB2D2D9EF0741ECE697DDEB5D9D9FCC",
+          "replay_exit": 1804,
+          "replay_tx": "128000005:31824C14D6D7B28F7E707A0BE34B8BC56AC2904498C2D37CBDF5F10F430C5194",
+          "target_received": 999999999
+        }
+      ],
+      "global_version": 19,
+      "network": 3,
+      "scope": "disposable-controlled-live-chain",
+      "source_commit": "18349b79b401d249db0c464d99d81b7218f1f33b",
+      "success": true,
+      "trust": "operator-controlled local node; production checkpoint authentication not claimed"
+    },
+    "scope": "Disposable operator-controlled chain only. Production checkpoint authentication, release admission CPU calibration, and v18 release-candidate acceptance are not claimed."
+  },
+  "prior_ci_failures": [
+    {
+      "actual_checkout": "7f5891dd5ba886aa55b9e452bf44adc78c64e93b",
+      "cause": "ConfigParam 43 also bounds external import. The previous fixture expected a post-accept 1713 even though its inbound DAG exceeded eight cells.",
+      "counts": "30 passed; 1 failed",
+      "error": "agent_account_sandbox.rs:1117:50: oversize is reported, not dropped: ExecutionFailed(Invalid external message)",
+      "job": 112347695348,
+      "run": 37486477855,
+      "run_head": "18349b79b401d249db0c464d99d81b7218f1f33b",
+      "step": "Contract sandbox suites",
+      "url": "https://github.com/tosnetwork/tos/actions/runs/37486477855/job/112347695348"
+    },
+    {
+      "actual_checkout": "18349b79b401d249db0c464d99d81b7218f1f33b",
+      "cause": "Version 19 was selected without the required explicit AUTH namespace; genesis failed before live_relay ran.",
+      "error": "ValueError: version 17 Genesis requires an explicit 32-byte AUTH network tag",
+      "job": 112347682577,
+      "run": 37486477573,
+      "step": "Disposable version-19 chain and real funded delivery",
+      "url": "https://github.com/tosnetwork/tos/actions/runs/37486477573/job/112347682577"
+    }
+  ],
+  "python_namespace": {
+    "excluded_attempt": {
+      "log": "namespace-assignment-full-suite-setup-failure.log",
+      "reason": "Running all negative scenarios under assignment deletion also reached a fake Install path; not counted as a semantic red."
+    },
+    "mutations": [
+      {
+        "after": "",
+        "before": "    if re.fullmatch(r\"[0-9a-fA-F]{64}\", value) is None:\n        raise argparse.ArgumentTypeError(\"AUTH network tag must be exactly 64 hexadecimal digits\")\n",
+        "command": [
+          "python",
+          "-B",
+          "-m",
+          "unittest",
+          "test_localnet_auth_namespace.LocalnetAuthNamespaceTests.test_malformed_cli_and_environment_inputs_are_rejected",
+          "-v"
+        ],
+        "compile": "Python compile() succeeded",
+        "exit_code": 1,
+        "failure_excerpt": [
+          "AssertionError: SystemExit not raised : malformed namespace was accepted",
+          "AssertionError: SystemExit not raised : malformed namespace was accepted"
+        ],
+        "log": "namespace_length.log",
+        "log_sha256": "63d8a4ae80a3f744d9498dff0ea520fb6ada16804641d43412f77dfe8aae1b89",
+        "name": "namespace_length",
+        "source": "scripts/localnet-jsonrpc.py",
+        "witness": "malformed namespace was accepted"
+      },
+      {
+        "after": "",
+        "before": "        if auth_network_tag is not None:\n            network.config.auth_network_tag = auth_network_tag\n",
+        "command": [
+          "python",
+          "-B",
+          "-m",
+          "unittest",
+          "test_localnet_auth_namespace.LocalnetAuthNamespaceTests.test_cli_and_environment_reach_config_before_any_node_is_created",
+          "-v"
+        ],
+        "compile": "Python compile() succeeded",
+        "exit_code": 1,
+        "failure_excerpt": [
+          "AssertionError: None != b'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' : explicit namespace must reach genesis configuration before node creation",
+          "AssertionError: None != b'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' : explicit namespace must reach genesis configuration before node creation"
+        ],
+        "log": "namespace_assignment.log",
+        "log_sha256": "60fbc7367f82d3d4a01c8191296e660e8ace70a0d1f7c7668eba93e1f47eabab",
+        "name": "namespace_assignment",
+        "source": "scripts/localnet-jsonrpc.py",
+        "witness": "explicit namespace must reach genesis configuration before node creation"
+      },
+      {
+        "after": "",
+        "before": "        if auth_network_tag is not None:\n            raise ValueError(\n                \"--auth-network-tag only applies while creating a fresh localnet; \"\n                \"refuse to imply it changed an existing genesis\"\n            )\n",
+        "command": [
+          "python",
+          "-B",
+          "-m",
+          "unittest",
+          "test_localnet_auth_namespace.LocalnetAuthNamespaceTests.test_reuse_refuses_to_imply_the_existing_namespace_was_changed",
+          "-v"
+        ],
+        "compile": "Python compile() succeeded",
+        "exit_code": 1,
+        "failure_excerpt": [
+          "AssertionError: ValueError not raised"
+        ],
+        "log": "namespace_reuse.log",
+        "log_sha256": "b276b7a623758bc0bcec36fcb4e0d834a3883e296c56f7f7a8ba954fbac2cb4e",
+        "name": "namespace_reuse",
+        "source": "scripts/localnet-jsonrpc.py",
+        "witness": "ValueError not raised"
+      },
+      {
+        "after": "",
+        "before": "                a.auth_network_tag,\n",
+        "command": [
+          "python",
+          "-B",
+          "-m",
+          "unittest",
+          "test_localnet_auth_namespace.LocalnetAuthNamespaceTests.test_main_entrypoint_forwards_cli_and_environment_namespace",
+          "-v"
+        ],
+        "compile": "Python compile() succeeded",
+        "exit_code": 1,
+        "failure_excerpt": [
+          "AssertionError: None != b'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' : the launcher entrypoint must forward the explicit namespace",
+          "AssertionError: None != b'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' : the launcher entrypoint must forward the explicit namespace"
+        ],
+        "log": "namespace_entrypoint.log",
+        "log_sha256": "c23333a2a15595d01029c6ba91147861f1765502bbfd545f3693e9093ed2c122",
+        "name": "namespace_entrypoint",
+        "source": "scripts/localnet-jsonrpc.py",
+        "witness": "the launcher entrypoint must forward the explicit namespace"
+      }
+    ],
+    "restored_exit": 0,
+    "restored_tests": 8,
+    "source_sha256": "9e796cafeebf0a61abae1cbe7396b76a804df7695403cc29e3e80bd40d3ddeb2"
+  },
+  "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+  "raw_artifacts": {
+    "bytes": 130215,
+    "directory": "/workspace/scratch/58828491a8ce/artifacts/ci-launcher-sandbox",
+    "path": "/workspace/scratch/58828491a8ce/artifacts/ci-launcher-sandbox-public.tar.gz",
+    "retention": "Local scratch only; no guaranteed durable retention. Bounded semantic failure receipts and public live transaction references are embedded in this committed index. New-head hosted CI remains to be run.",
+    "scope": "Logs, control metadata, private public-source mutation, generated public contract code, live receipt and public v19 zerostate. Runtime node databases/configuration/ephemeral keys are excluded.",
+    "sha256": "afb525ad9f5a6c35527adcc081d8ddff42f29bdc8a338a2463d645cdfce01e49"
+  },
+  "recorded_utc": "2026-10-06T21:27:46.636167+00:00",
+  "rust_sandbox": {
+    "behavior": [
+      "Precise ExecutorError::InvalidExtMessage; entire serialized account, seqno and spent unchanged; target absent.",
+      "Same signed seqno-0 body succeeds after restoring size limits, with one recipient transaction, ordinary/non-aborted, VM success/exit0, active state and expected TaskEscrow code hash."
+    ],
+    "final_normal_suite_exit": 0,
+    "final_normal_suite_passed": 31,
+    "mutation": {
+      "after": "            if calc.bits() > limits.max_msg_bits as u64\n                || calc.cells() > limits.max_msg_cells as u64\n            {\n                log::debug!(target: \"executor\", \"inbound external message too large, invalid\");\n            }\n",
+      "before": "            if calc.bits() > limits.max_msg_bits as u64\n                || calc.cells() > limits.max_msg_cells as u64\n            {\n                log::debug!(target: \"executor\", \"inbound external message too large, invalid\");\n                fail!(ExecutorError::InvalidExtMessage)\n            }\n",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "-p",
+        "contracts",
+        "--test",
+        "agent_account_sandbox",
+        "deploy_send_above_the_configured_message_limit_preserves_account_and_signed_retry",
+        "--",
+        "--exact"
+      ],
+      "compile_exit": 0,
+      "exit_code": 101,
+      "failure_excerpt": "---- deploy_send_above_the_configured_message_limit_preserves_account_and_signed_retry stdout ----\n\nthread 'deploy_send_above_the_configured_message_limit_preserves_account_and_signed_retry' (104) panicked at node-control/contracts/tests/agent_account_sandbox.rs:1128:18:\noversized external import must be refused before execution\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "restored_exit": 0,
+      "restored_tests": 31,
+      "source": "tosctl/src/executor/src/ordinary_transaction.rs",
+      "source_sha256": "ee4a62a5f21c565c3d253da429127c38fb6316ba7976db9713c379c073d9ac4b",
+      "witness": "oversized external import must be refused before execution"
+    },
+    "normal_target_exit": 0,
+    "normal_target_passed": 1,
+    "target": "deploy_send_above_the_configured_message_limit_preserves_account_and_signed_retry"
+  },
+  "sources": {
+    ".github/workflows/wallet-falcon.yml": {
+      "bytes": 12559,
+      "sha256": "9af563ccdff6a481d0ab8987fbd1f3acb2f7f61e6c198587cacf42c8f7d66bcd"
+    },
+    "crypto/smartcont/agent-account-code.fc": {
+      "bytes": 32258,
+      "sha256": "8c954ff96a5d4ecbb1d618dab44552b80502c5e3b3a0bb4b66d1ac31a35ea799"
+    },
+    "crypto/smartcont/auth-extension.fc": {
+      "bytes": 8109,
+      "sha256": "347ad54ee6058c295ab12535b9317aefbcc5f608afa3bf131db51c0cdd51fae9"
+    },
+    "scripts/localnet-jsonrpc.py": {
+      "bytes": 22008,
+      "sha256": "9e796cafeebf0a61abae1cbe7396b76a804df7695403cc29e3e80bd40d3ddeb2"
+    },
+    "scripts/test_localnet_auth_namespace.py": {
+      "bytes": 6885,
+      "sha256": "cb85eaa79b4b180c1412173767e59669e9450051bc2aa1f7f705f12e6529efb3"
+    },
+    "test/auth-extensions/native.py": {
+      "bytes": 8243,
+      "sha256": "aa6c3baa80129b1127e19bfe65c0f38e5e5ac72e2d6aa14d734dace3ad52f2ae"
+    },
+    "test/auth-extensions/test_auth.py": {
+      "bytes": 21240,
+      "sha256": "9f818886d9ca7870f0252168811d6dd0deea9e9b4c2d1ca436ed242ea49439fd"
+    },
+    "test/falcon-auth/build_contracts.py": {
+      "bytes": 3205,
+      "sha256": "5dccb77a53204daa9b25146963b10a2578ee2ceb827c4c6d5643e3aca42b6473"
+    },
+    "test/falcon-auth/live_relay.py": {
+      "bytes": 9886,
+      "sha256": "dae898f989c7e91e2b6bd1bc137b8efc932e87819a5bd76fcd95e6375c7b3a53"
+    },
+    "test/tostester/src/tostester/network.py": {
+      "bytes": 26450,
+      "sha256": "157f82028a9cf226825e8b8534419730b04d5ea3e5e3c7e95254928b7d044b46"
+    },
+    "test/tostester/src/tostester/zerostate.py": {
+      "bytes": 35945,
+      "sha256": "63328d71f07bbd9a035e8972e36f3fdfaea7c8a08c36bc65215fc2956780873d"
+    },
+    "tools/falcon/signer.c": {
+      "bytes": 1978,
+      "sha256": "b85e4959448e72396a5cac3ee1f9537fe822150db6890fb60bb1f5c376aa8a67"
+    },
+    "tosctl/src/block/src/accounts.rs": {
+      "bytes": 46415,
+      "sha256": "1def726e6acec3dac8e8ee88920eff1b7ed41b8f25fde4dc93ca22a96a4f6480"
+    },
+    "tosctl/src/executor/src/ordinary_transaction.rs": {
+      "bytes": 20260,
+      "sha256": "ee4a62a5f21c565c3d253da429127c38fb6316ba7976db9713c379c073d9ac4b"
+    },
+    "tosctl/src/node-control/contracts/tests/agent_account_sandbox.rs": {
+      "bytes": 67596,
+      "sha256": "47fe1f7bc88f583cbe7cbfe4d8d82a90ee80e70c32b387fad2f8ab9ccea91cf1"
+    }
+  },
+  "tools": {
+    "build-clang/crypto/fift": {
+      "bytes": 11340080,
+      "sha256": "1f41717f2e203f1689ed6ccea8c826d72a91e7c0ae1cf67012603d44aa2a78d5"
+    },
+    "build-clang/crypto/func": {
+      "bytes": 1619960,
+      "sha256": "79bae039443e47519769fadef2d541e6f384cb799ec275381ebdebec815b6284"
+    },
+    "build-clang/lite-client/lite-client": {
+      "bytes": 14655080,
+      "sha256": "2ea11ab310a2efdba70ac3b31d2a5226267bf6a5d26a31087a87810b8de48c14"
+    },
+    "build-clang/tol/tol": {
+      "bytes": 2420368,
+      "sha256": "2eabcc6c1cf68be1ed8b0a5a82706856d0f1ee195b163d9dff183bb0db102f57"
+    },
+    "build-clang/toslib/libtoslibjson.so": {
+      "bytes": 21237160,
+      "sha256": "1a0810c8b864ed1eff4e1a39c9ddf8a3380439361a504e26d30492823a618cee"
+    },
+    "build-clang/validator-engine/validator-engine": {
+      "bytes": 55928192,
+      "sha256": "8df004753cad5b1f1da54e25eac4aee79ebf0afbe7b0a041040c7943d0ef4e42"
+    },
+    "build-falcon/libtos_falcon_offline.so": {
+      "bytes": 186256,
+      "sha256": "38877d85c37e8a08de02c25c02c11e6fcab6d6b81569540645ef255d1c90084e"
+    },
+    "build/crypto/fift": {
+      "bytes": 6951664,
+      "sha256": "c98186b8034be5ee06fc4ce5c1f60486dd7b351d69352c5df13adc6bd7cdf870"
+    },
+    "build/crypto/func": {
+      "bytes": 2645192,
+      "sha256": "b027fbc14f834d8958556a73209213b120db59d88019e5b661a15a76d15180e1"
+    },
+    "build/emulator/libemulator.so": {
+      "bytes": 7166848,
+      "sha256": "49a78896ca75de48d068f01881f87bfb3e464fe1d6382e549363f65ad48199ed"
+    }
+  },
+  "validation_policy": "Every counted mutation compiled before running and failed the named semantic assertion. Build failures, timeouts and the excluded mixed fixture-error attempt do not count. Repository source bytes were restored and final Python8/Rust31 baselines passed."
+}
