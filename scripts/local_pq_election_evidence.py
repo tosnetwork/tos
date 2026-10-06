@@ -2,11 +2,10 @@
 
 from types import SimpleNamespace
 
+from local_pq_transactions import decoded, fingerprint, successful
 from pytosiq_core import InternalMsgInfo
 from tosapi import toslib_api
 from tostester.pq_election_fixture import elector_reply
-
-from local_pq_transactions import decoded, fingerprint, successful
 
 RELAY = 0x50517232
 RESULT = 0x50516232
@@ -14,16 +13,23 @@ NEW_STAKE = 0x4E73744B
 
 
 def internal(message, sender, destination, *, bounced=False):
-    return (message is not None and isinstance(message.info, InternalMsgInfo)
-            and message.info.src == sender and message.info.dest == destination
-            and message.info.bounced is bounced)
+    return (
+        message is not None
+        and isinstance(message.info, InternalMsgInfo)
+        and message.info.src == sender
+        and message.info.dest == destination
+        and message.info.bounced is bounced
+    )
 
 
 def failure(transaction, kind):
     compute = getattr(transaction.description, "compute_ph", None)
     action = getattr(transaction.description, "action", None)
-    return dict(kind=kind, exit_code=getattr(compute, "exit_code", None),
-                action_code=getattr(action, "result_code", None))
+    return dict(
+        kind=kind,
+        exit_code=getattr(compute, "exit_code", None),
+        action_code=getattr(action, "result_code", None),
+    )
 
 
 def election_result(pool_history, controller_history, *, owner, pool, controller, query, body_hash):
@@ -67,26 +73,37 @@ def election_result(pool_history, controller_history, *, owner, pool, controller
             if cs.remaining_bits >= 96 and cs.load_uint(32) == RESULT:
                 # Decode business fields from the same verified transaction BOC,
                 # not independently supplied raw-RPC message metadata.
-                envelope = SimpleNamespace(in_msg=SimpleNamespace(
-                    source=SimpleNamespace(account_address=message.info.src.to_str(is_user_friendly=False)),
-                    msg_data=toslib_api.Msg_dataRaw(body=message.body.to_boc(), init_state=b"")))
+                envelope = SimpleNamespace(
+                    in_msg=SimpleNamespace(
+                        source=SimpleNamespace(
+                            account_address=message.info.src.to_str(is_user_friendly=False)
+                        ),
+                        msg_data=toslib_api.Msg_dataRaw(body=message.body.to_boc(), init_state=b""),
+                    )
+                )
                 answer = elector_reply([envelope], query, controller=controller)
                 if answer:
-                    return dict(kind="accepted" if answer[0] == 0xF374484C else "elector_refused",
-                                reply=list(answer))
+                    return dict(
+                        kind="accepted" if answer[0] == 0xF374484C else "elector_refused",
+                        reply=list(answer),
+                    )
         if not internal(message, controller, pool, bounced=True):
             continue
         cs = message.body.begin_parse()
-        if (cs.remaining_bits < 288 or cs.load_uint(32) != 0xFFFFFFFF
-                or cs.load_uint(256) != prefix):
+        if cs.remaining_bits < 288 or cs.load_uint(32) != 0xFFFFFFFF or cs.load_uint(256) != prefix:
             continue
-        result = dict(kind="controller_bounced", exit_code=None, action_code=None,
-                      returned_nano=message.info.value.tomis,
-                      pool_bounce_applied=successful(tx))
+        result = dict(
+            kind="controller_bounced",
+            exit_code=None,
+            action_code=None,
+            returned_nano=message.info.value.tomis,
+            pool_bounce_applied=successful(tx),
+        )
         for controller_item in controller_history:
             controller_tx = decoded(controller_item)
-            if (controller_tx.in_msg is not None
-                    and fingerprint(controller_tx.in_msg) == fingerprint(relay)):
+            if controller_tx.in_msg is not None and fingerprint(
+                controller_tx.in_msg
+            ) == fingerprint(relay):
                 result.update(failure(controller_tx, "controller_bounced"))
                 break
         return result

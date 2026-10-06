@@ -90,56 +90,62 @@ growing past the first boundary:
   election periods;
 - check that `VALCLEANUP pass` reports a non-zero `gc_seqno`.
 
-## Controller funding before election rehearsal
+## Controller funding and continuous elections
 
 `--rotate` selects a ten-minute development election profile and adds candidate
 node 7. The election driver alternates the four-member sets 1/2/3/7 and 1/2/3/4.
-This is different from the default 30-day bootstrap profile above.
+This is different from the default 30-day bootstrap profile above. Keep elections
+running on a persistent development network; a bounded rehearsal's shutdown is
+not the default and can prevent the key-block progression needed for retention.
 
-A controller forwards a stake to the Elector only within an explicit, root-signed
-operating authorization (controller action kind 4). A newly deployed controller
-has none: `operating_state` reads all zero, and every relay is refused with exit
-180. A plain balance transfer does not create an authorization.
+A controller needs a root-signed kind-4 operating authorization before forwarding
+a stake. A new controller has zero allowance and expiry. A plain balance transfer
+does not authorize spending; exit 180 is a shared guard code, not a unique diagnosis.
 
-`setup-testnet.sh --rotate` therefore runs `scripts/local-pq-fund-controllers.py`
-after the network is deployed and **before** it starts `tos-pq-elections`. For
-each candidate controller (nodes 1, 2, 3, 4 and 7) the tool:
+`setup-testnet.sh --rotate` runs `local-pq-fund-controllers.py` after deployment
+and before starting the election service. Setup and the steady-state driver use
+the same helper in `local_pq_funding.py`; the driver rechecks selected candidates
+before each new round. For all five candidate controllers it:
 
-1. deploys the controller's birth StateInit if the account has no code;
-2. reads `controller_state` (authority epoch and root nonce) and
-   `operating_state`;
-3. if the authorization is missing, expires within a day, or has less than
-   100 TOS of funds or allowance, encodes the kind 4 payload, signs it with
-   `/usr/local/bin/tos-pq-controller fund-operations` using the development root
-   seed `/data/elections/keys/root-<i>.seed`, and sends it from the Genesis
-   wallet, which becomes the bound payer;
-4. waits for the root nonce to advance and reads `operating_state` back. It
-   refuses to continue if the values differ, and never resends blindly;
-5. tops up ordinary capital so the balance covers the recorded funds plus the
-   storage floor plus a 20 TOS margin.
+1. verifies the explicit disposable network and controller birth/code/authority
+   identity, deploying the exact StateInit when necessary;
+2. reads current authority, operating state and Config20/24 fee parameters;
+3. calculates the authorized automatic grant and a 30-day target, renewing at
+   the 25% threshold or on missing/mismatched policy;
+4. deposits only the deficit, signs using `/usr/local/bin/tos-pq-controller`,
+   and confirms the actual controller transaction and exact state transition;
+5. separately tops up ordinary capital to funds plus storage floor plus margin.
 
-Defaults: 1,000 TOS deposit, 1,000 TOS allowance, 20 TOS per-request limit,
-10 TOS floor, 30-day sponsorship. These are local development values, not
-production fee estimates. The Python payload encoder is byte-for-byte equal
-(same cell hash) to `contracts::validator_controller::operating_funding_payload`.
+Defaults are a 30-day funds/allowance target computed as `4320 * current_grant`,
+a 20 TOS per-request cap, 10 TOS floor, 20 TOS capital margin and 30-day
+sponsorship. They are development policy, not fixed production fees. A policy
+renewal can deposit zero; kind 4 adds the deposit to existing funds but replaces
+the allowance and policy. Its signature expires after 600 seconds, independently
+of sponsorship expiry. Unsupported prices or caps cause a visible failure.
 
-The tool is idempotent. Check or renew authorizations on a running network
-during a quiet interval. The election service exclusively owns the Genesis
-wallet while it runs, so stop it first and always restart it afterwards:
+Read-only checks do not require stopping healthy elections:
 
 ```bash
 sudo env PYTHONPATH=test/tostester/src:scripts .venv/bin/python \
-  scripts/local-pq-fund-controllers.py --check     # report only
-sudo systemctl stop tos-pq-elections
+  scripts/local-pq-fund-controllers.py --check
 sudo env PYTHONPATH=test/tostester/src:scripts .venv/bin/python \
-  scripts/local-pq-fund-controllers.py             # renew where needed
-sudo systemctl start tos-pq-elections
+  scripts/check-local-pq-elections.py
 ```
 
-Each relay consumes part of the allowance and funds, and the authorization
-expires after 30 days. A long-running rehearsal must re-run the tool before
-either runs out; `--check` shows what is left. The development root seeds are
-deterministic fixtures and must never control real funds.
+`--check` reports a renewal need without signing or writing. The service normally
+renews automatically; a manual write requires exclusive ownership of the faucet.
+Do not run setup/traffic bootstraps concurrently with the election service.
+Any maintenance stop must be followed by a checked restart, not left unnoticed.
+
+The sender records its exact signed request before broadcasting. A restart
+reuses the same wallet seqno and reconciles the destination transaction. Per-node
+intent records prevent repeated funding of a partially completed round. Do not
+delete `faucet-journal/`, `candidate-intent-*.json` or `submitted.json` to force a
+retry: first reconcile the saved request and chain state. Unknown outcomes and
+deterministic refusals require attention rather than blind new payments.
+
+The development root seeds in `/data/elections/keys/` are deterministic fixtures
+and must never control real funds. This automation is not production root custody.
 
 ### Diagnose a missing stake confirmation
 
@@ -149,8 +155,8 @@ deterministic fixtures and must never control real funds.
 | `operating_state` reads all zero or expired | The controller has no operating authorization. Run `scripts/local-pq-fund-controllers.py` with the election service stopped. |
 | Controller rejects with exit 180 | This is a shared relay guard code, not a unique diagnosis. Inspect the request and exact transaction; check balance against recorded funds plus floor, as well as the other relay preconditions. |
 | Pool receives a native bounce after forwarding | Decode the controller compute/action failure and pool bounce transaction. Confirm where principal returned before retrying. A bounce is not an elector acceptance. |
-| Election driver reports a confirmation timeout | The driver waits for business receipts and may miss a controller rejection/bounce. Pause automatic submission, inspect raw transactions and getters, and do not infer that the stake is lost or accepted. |
-| Re-running the driver adds more faucet capital | It funds pools before submission; a retry can add another deposit even when the previous principal returned. Reconcile balances and accepted stake separately. |
+| Election driver reports a confirmation timeout | The signed intent remains unresolved. Inspect the complete transaction path and retained journal; do not infer acceptance or send a new payment. |
+| A restart appears to repeat funding | Check that the installed snapshot contains this repair, and preserve the journal. Reconcile exact transaction identities and balances; do not delete records to bypass duplicate protection. |
 
 Do not disable contract guards to make deployment succeed. Correct missing
 initialization or insufficient capital first; investigate unexpected failures
@@ -177,10 +183,11 @@ against the exact deployed code hash.
   new member and exclusion of the retired member from current first-hop sets.
 - Inspect restarts, compute/action failures and balance/allowance consumption.
   A reserved operating-budget debit is not necessarily the actual gas spent.
-- After a bounded rehearsal, stop further automated staking with
-  `sudo systemctl disable --now tos-pq-elections`. This leaves node services
-  running. Continuing recurring elections requires monitoring and replenishing
-  the finite authorized budget; it is not an unattended recovery guarantee.
+- For a persistent network, keep the election service and its health check
+  active. Use `scripts/check-local-pq-elections.py` to surface stale heartbeat,
+  expired Config34 and low operating runway. A deliberately bounded disposable
+  rehearsal may be stopped, but leaving validators running without continued
+  elections is not a safe default retention policy.
 
 One successful election does not validate the later unfreeze/withdrawal cycle,
 all failure recovery paths, or production costs. Validate those separately.
@@ -247,7 +254,7 @@ after a reset:
 The validator restart in a reset stops the edges (`BindsTo=`). Start them again
 after `setup-testnet.sh`, even when the network ID does not change.
 
-Keep node health collection running independently of the bounded election
+Keep node health collection running independently of the election
 submission driver. Resetting the chain again requires repeating this binding
 procedure, not merely restarting the previous monitoring units.
 
@@ -288,3 +295,19 @@ reserve/backing getters. `deploy-pool` resumes an interrupted deployment;
 it checks an existing account before sending another deployment.
 Pool proofs and withdrawals use the matching development parameters from
 `tools/shielded-pool-circuit`; deployment does not claim a withdrawal test.
+
+
+### Installed privacy generator independence
+
+The installed traffic generator embeds both the pool gas-ceiling source and the
+development verifying-key fixture. Installation validates its `resources`
+response under `ProtectHome=true` with source/build roots inaccessible, before
+publishing the new snapshot. A failed check preserves the previous `current`.
+The existing ELF, symlink and Python search-path checks remain mandatory.
+
+Rebuild the generator after either embedded source changes. When installing without
+`--build`, existing artifacts must still match the checkout's exact resource bytes. A successful
+resource check or locally generated proof is not on-chain privacy acceptance.
+Confirm deposit, transfer and withdrawal through the installed service and its
+cross-node checks. See [the repair record](local-pq-network-defects-20261006.md)
+for the tested revisions and outstanding acceptance gates.

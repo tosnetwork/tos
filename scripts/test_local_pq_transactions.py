@@ -1,15 +1,23 @@
 """The real sender/decoder with a deterministic RPC transport (not a chain VM)."""
+
 import asyncio
 from types import SimpleNamespace as Obj
 
 import nacl.signing
 import pytest
 from contract import WalletV1
-from pytosiq_core import Cell, ExternalMsgInfo, MessageAny
-
 from local_pq_test_wire import address, message, transaction
-from local_pq_transactions import (Faucet, atomic_json, cursor, decoded, faucet_lock,
-                                   history_since, read_json, successful)
+from local_pq_transactions import (
+    Faucet,
+    atomic_json,
+    cursor,
+    decoded,
+    faucet_lock,
+    history_since,
+    read_json,
+    successful,
+)
+from pytosiq_core import Builder, Cell, ExternalMsgInfo, MessageAny, StateInit
 
 
 class Network:
@@ -22,14 +30,21 @@ class Network:
         self.fail_after_delivery = False
         self.fail_before_delivery = False
         self.on_broadcast = None
+        self.mutate_outgoing = None
         self.clock = 10
         self.client_wallet = None
 
     def add(self, addr, inbound, outputs=(), **kwargs):
         items = self.history.setdefault(addr.to_str(False), [])
         self.clock += 10
-        item = transaction(addr, self.clock, inbound, outputs,
-                           previous=items[0].transaction_id if items else None, **kwargs)
+        item = transaction(
+            addr,
+            self.clock,
+            inbound,
+            outputs,
+            previous=items[0].transaction_id if items else None,
+            **kwargs,
+        )
         items.insert(0, item)
         return item
 
@@ -40,10 +55,11 @@ class Network:
     async def raw_get_transactions(self, addr, pos):
         items = self.history.get(addr.to_str(False), [])
         offset = next(i for i, item in enumerate(items) if item.transaction_id.lt == pos.lt)
-        page = items[offset:offset + 2]  # Deliberately exercise pagination.
-        tail = items[offset + 2:]
-        return Obj(transactions=page,
-                   previous_transaction_id=tail[0].transaction_id if tail else None)
+        page = items[offset : offset + 2]  # Deliberately exercise pagination.
+        tail = items[offset + 2 :]
+        return Obj(
+            transactions=page, previous_transaction_id=tail[0].transaction_id if tail else None
+        )
 
     async def broadcast(self, signed):
         self.broadcasts.append(signed.to_boc())
@@ -61,11 +77,17 @@ class Network:
             return  # WalletV1 refuses a repeated signed request at an old seqno.
         self.seqno += 1
         outgoing.info.created_lt = self.clock + 5
+        if self.mutate_outgoing:
+            self.mutate_outgoing(outgoing)
         external = MessageAny(ExternalMsgInfo(None, self.client_wallet.address, 0), None, signed)
         self.add(self.client_wallet.address, external, [outgoing])
         if self.deliver:
-            self.add(outgoing.info.dest, outgoing, success=not self.refuse,
-                     exit_code=180 if self.refuse else 0)
+            self.add(
+                outgoing.info.dest,
+                outgoing,
+                success=not self.refuse,
+                exit_code=180 if self.refuse else 0,
+            )
         if self.fail_after_delivery:
             raise ConnectionError("transport lost after inclusion")
 
@@ -97,7 +119,8 @@ def setup(tmp_path):
 def test_journal_exists_before_broadcast_and_done_has_destination_receipt(tmp_path):
     net, sender = setup(tmp_path)
     net.on_broadcast = lambda signed: (
-        read_json(sender.pending)["signed"] is not None or pytest.fail("missing WAL"))
+        read_json(sender.pending)["signed"] is not None or pytest.fail("missing WAL")
+    )
     result = asyncio.run(sender.transfer("one", address(2), 123))
     assert result["ok"] and result["transaction"]["lt"] == 30
     assert not sender.pending.exists() and sender.path("one").exists()
@@ -143,8 +166,11 @@ def test_unobserved_destination_remains_pending(tmp_path):
 def test_network_or_payment_mismatch_never_broadcasts(tmp_path):
     net, sender = setup(tmp_path)
     asyncio.run(sender.transfer("one", address(2), 123))
-    for changes in (dict(dest=address(3), amount=123), dict(dest=address(2), amount=124),
-                    dict(dest=address(2), amount=123, bounce=True)):
+    for changes in (
+        dict(dest=address(3), amount=123),
+        dict(dest=address(2), amount=124),
+        dict(dest=address(2), amount=123, bounce=True),
+    ):
         with pytest.raises(ValueError, match="different payment"):
             asyncio.run(sender.transfer("one", **changes))
     changed = Faucet(net, sender.wallet, sender.directory, "another-root")
@@ -173,16 +199,26 @@ def test_history_paginates_and_checks_exact_baseline():
         net.add(address(2), message(address(1), address(2)))
     assert len(asyncio.run(history_since(net, address(2), cursor(base.transaction_id)))) == 5
     with pytest.raises(ValueError, match="hash changed"):
-        asyncio.run(history_since(net, address(2), {"lt": base.transaction_id.lt, "hash": "ff" * 32}))
+        asyncio.run(
+            history_since(net, address(2), {"lt": base.transaction_id.lt, "hash": "ff" * 32})
+        )
     with pytest.raises(ValueError, match="bounded"):
         asyncio.run(history_since(net, address(2), cursor(base.transaction_id), max_pages=1))
 
 
-@pytest.mark.parametrize("compute,action,expected", [(True,None,True), (False,None,False),
-                                                      (True,37,False), (True,0,True)])
+@pytest.mark.parametrize(
+    "compute,action,expected",
+    [(True, None, True), (False, None, False), (True, 37, False), (True, 0, True)],
+)
 def test_real_transaction_boc_compute_and_action_are_both_required(compute, action, expected):
-    tx = transaction(address(1), 10, message(address(2), address(1)),
-                     success=compute, exit_code=180 if not compute else 0, action_code=action)
+    tx = transaction(
+        address(1),
+        10,
+        message(address(2), address(1)),
+        success=compute,
+        exit_code=180 if not compute else 0,
+        action_code=action,
+    )
     assert successful(decoded(tx)) is expected
 
 
@@ -192,3 +228,34 @@ def test_atomic_records_are_private(tmp_path):
     atomic_json(path, {"after": 2})
     assert read_json(path) == {"after": 2}
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("mutation", ["missing_init", "different_init", "bounce", "bounced"])
+def test_wallet_output_must_preserve_the_complete_intended_payment(tmp_path, mutation):
+    net, sender = setup(tmp_path)
+    init = StateInit(code=Cell.empty(), data=Builder().store_uint(1, 1).end_cell())
+
+    def mutate(outgoing):
+        if mutation == "missing_init":
+            outgoing.init = None
+        elif mutation == "different_init":
+            outgoing.init = StateInit(code=Cell.empty(), data=Builder().store_uint(0, 1).end_cell())
+        elif mutation == "bounce":
+            outgoing.info.bounce = False
+        else:
+            outgoing.info.bounced = True
+
+    net.mutate_outgoing = mutate
+    with pytest.raises(ValueError, match="exact intended payment"):
+        asyncio.run(sender.transfer("deployment", address(2), 123, init=init, bounce=True))
+    assert sender.pending.exists() and not sender.path("deployment").exists()
+    assert net.seqno == 1 and len(net.broadcasts) == 1
+
+
+def test_valid_initialization_and_bounce_flag_are_preserved(tmp_path):
+    net, sender = setup(tmp_path)
+    init = StateInit(code=Cell.empty(), data=Builder().store_uint(1, 1).end_cell())
+    result = asyncio.run(sender.transfer("deployment", address(2), 123, init=init, bounce=True))
+    assert result["ok"] and not sender.pending.exists()
+    assert result["init"] == init.serialize().hash.hex()
+    assert result["bounce"] is True and len(net.broadcasts) == 1

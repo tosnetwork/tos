@@ -16,8 +16,9 @@ def coins(value, name="amount", *, zero=False):
     return value
 
 
-def funding_plan(state, *, now, grant, payer, period=600, days=30,
-                 limit=20 * NANO, floor=10 * NANO, target=None):
+def funding_plan(
+    state, *, now, grant, payer, period=600, days=30, limit=20 * NANO, floor=10 * NANO, target=None
+):
     """Return a deficit-based kind-4 policy, or None when renewal is unnecessary.
 
     `funds` is additive on chain; every other payload field replaces its old
@@ -40,14 +41,23 @@ def funding_plan(state, *, now, grant, payer, period=600, days=30,
     for name in ("funds", "allowance", "limit", "floor"):
         coins(state[name], name, zero=True)
     remaining = max(2 * grant, (target + 3) // 4)
-    renew = (min(state["funds"], state["allowance"]) <= remaining
-             or state["expires"] <= now + lifetime // 4
-             or state["limit"] != limit or state["floor"] != floor
-             or state["payer"] != payer)
+    renew = (
+        min(state["funds"], state["allowance"]) <= remaining
+        or state["expires"] <= now + lifetime // 4
+        or state["limit"] != limit
+        or state["floor"] != floor
+        or state["payer"] != payer
+    )
     if not renew:
         return None
     deposit = max(0, target - state["funds"])
     coins(state["funds"] + deposit, "resulting funds", zero=True)
-    return dict(deposit=deposit, funds=state["funds"] + deposit,
-                allowance=target, limit=limit, floor=floor,
-                expires=now + lifetime, payer=payer)
+    return dict(
+        deposit=deposit,
+        funds=state["funds"] + deposit,
+        allowance=target,
+        limit=limit,
+        floor=floor,
+        expires=now + lifetime,
+        payer=payer,
+    )

@@ -1,4 +1,5 @@
 """Regressions for the actual shared deficit/runway policy (no node required)."""
+
 import unittest
 
 from local_pq_funding_policy import DAY, NANO, coins, funding_plan
@@ -10,8 +11,14 @@ PAYER = "-1:" + "01" * 32
 
 
 def state(**changes):
-    value = dict(funds=TARGET, allowance=TARGET, limit=20 * NANO,
-                 floor=10 * NANO, expires=NOW + 30 * DAY, payer=PAYER)
+    value = dict(
+        funds=TARGET,
+        allowance=TARGET,
+        limit=20 * NANO,
+        floor=10 * NANO,
+        expires=NOW + 30 * DAY,
+        payer=PAYER,
+    )
     value.update(changes)
     return value
 
@@ -69,16 +76,22 @@ class FundingPolicyTests(unittest.TestCase):
             coins(0)
 
     def test_invalid_lifetime_or_expiry_is_refused(self):
-        for changes in (dict(days=0), dict(days=31), dict(period=1),
-                        dict(now=(1 << 32) - DAY), dict(now=True)):
+        for changes in (
+            dict(days=0),
+            dict(days=31),
+            dict(period=1),
+            dict(now=(1 << 32) - DAY),
+            dict(now=True),
+        ):
             args = dict(now=NOW, grant=GRANT, payer=PAYER)
             args.update(changes)
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 funding_plan(state(), **args)
 
     def test_explicit_short_run_target_does_not_change_persistent_default(self):
-        result = funding_plan(state(funds=0, allowance=0), now=NOW,
-                              grant=GRANT, payer=PAYER, target=80 * NANO, days=1)
+        result = funding_plan(
+            state(funds=0, allowance=0), now=NOW, grant=GRANT, payer=PAYER, target=80 * NANO, days=1
+        )
         self.assertEqual(result["deposit"], 80 * NANO)
         self.assertEqual(plan(funds=0)["deposit"], TARGET)
 

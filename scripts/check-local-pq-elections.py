@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Read-only liveness/operating-budget check for persistent local PQ elections."""
+
 import argparse
 import json
 import subprocess
@@ -20,7 +21,9 @@ def check(directory, now=None):
         if since is not None:
             activation = json.loads((directory / f"activation-{since}.json").read_text())
             if activation["config34"]["utime_until"] <= now:
-                errors.append("Config34 expired without a new observed activation; key-block/GC risk")
+                errors.append(
+                    "Config34 expired without a new observed activation; key-block/GC risk"
+                )
         for index in (1, 2, 3, 4, 7):
             row = json.loads((directory / f"operations-{index}.json").read_text())
             if not row.get("ready"):
@@ -36,8 +39,12 @@ def check(directory, now=None):
                 errors.append(f"controller {index} authorization has expired")
     except (OSError, ValueError, KeyError, TypeError) as error:
         errors.append(f"missing or invalid election evidence: {error}")
-    return dict(healthy=not errors, errors=errors, warnings=warnings,
-                note="persistent elections drive key blocks; do not leave a stopped driver unnoticed")
+    return dict(
+        healthy=not errors,
+        errors=errors,
+        warnings=warnings,
+        note="persistent elections drive key blocks; do not leave a stopped driver unnoticed",
+    )
 
 
 def main():

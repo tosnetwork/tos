@@ -17,11 +17,17 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import local_pq_testnet as local
-from pytosiq_core import (
-    Address, Cell, CurrencyCollection, ExternalMsgInfo, InternalMsgInfo, MessageAny, Transaction, WalletMessage,
-)
-
 from local_pq_funding_policy import coins
+from pytosiq_core import (
+    Address,
+    Cell,
+    CurrencyCollection,
+    ExternalMsgInfo,
+    InternalMsgInfo,
+    MessageAny,
+    Transaction,
+    WalletMessage,
+)
 
 
 def atomic_json(path, value):
@@ -82,9 +88,11 @@ def successful(transaction):
     description = transaction.description
     compute = getattr(description, "compute_ph", None)
     action = getattr(description, "action", None)
-    return (getattr(description, "aborted", True) is False
-            and getattr(compute, "success", False) is True
-            and (action is None or (action.success and action.valid)))
+    return (
+        getattr(description, "aborted", True) is False
+        and getattr(compute, "success", False) is True
+        and (action is None or (action.success and action.valid))
+    )
 
 
 async def history_since(client, address, baseline, max_pages=64):
@@ -120,9 +128,16 @@ def fingerprint(message):
     info = message.info
     if not isinstance(info, InternalMsgInfo):
         return None
-    return dict(src=raw(info.src), dest=raw(info.dest), lt=info.created_lt,
-                body=message.body.hash.hex(), value=info.value.tomis,
-                init=message.init.serialize().hash.hex() if message.init else None)
+    return dict(
+        src=raw(info.src),
+        dest=raw(info.dest),
+        lt=info.created_lt,
+        body=message.body.hash.hex(),
+        value=info.value.tomis,
+        bounce=info.bounce,
+        bounced=info.bounced,
+        init=message.init.serialize().hash.hex() if message.init else None,
+    )
 
 
 class Faucet:
@@ -145,8 +160,11 @@ class Faucet:
                 return None
         else:
             return None
-        if (value["label"] != label or value["network"] != self.network_id
-                or value["wallet"] != raw(self.wallet.address)):
+        if (
+            value["label"] != label
+            or value["network"] != self.network_id
+            or value["wallet"] != raw(self.wallet.address)
+        ):
             raise ValueError("faucet intent belongs to another chain, wallet or operation")
         return value
 
@@ -177,26 +195,50 @@ class Faucet:
             body = body if body is not None else Cell.empty()
             account = await self.client.raw_get_account_state(self.wallet.address)
             seqno = (await self.wallet.current).seqno
-            message = WalletMessage(send_mode=3, message=MessageAny(
-                info=InternalMsgInfo(ihr_disabled=True, bounce=bounce, bounced=False,
-                                     src=self.wallet.address, dest=dest,
-                                     value=CurrencyCollection(tomis=amount), ihr_fee=0,
-                                     fwd_fee=0, created_lt=0, created_at=0),
-                init=init, body=body))
+            message = WalletMessage(
+                send_mode=3,
+                message=MessageAny(
+                    info=InternalMsgInfo(
+                        ihr_disabled=True,
+                        bounce=bounce,
+                        bounced=False,
+                        src=self.wallet.address,
+                        dest=dest,
+                        value=CurrencyCollection(tomis=amount),
+                        ihr_fee=0,
+                        fwd_fee=0,
+                        created_lt=0,
+                        created_at=0,
+                    ),
+                    init=init,
+                    body=body,
+                ),
+            )
             signed = self.wallet.sign(message, seqno)
             destination = await self.client.raw_get_account_state(dest)
-            value = dict(label=label, network=self.network_id, wallet=raw(self.wallet.address),
-                         dest=raw(dest), amount=amount, body=body.hash.hex(), init=init.serialize().hash.hex() if init else None,
-                         bounce=bounce, seqno=seqno,
-                         signed=base64.b64encode(signed.to_boc()).decode(),
-                         wallet_baseline=cursor(account.last_transaction_id),
-                         destination_baseline=cursor(destination.last_transaction_id),
-                         state="prepared")
+            value = dict(
+                label=label,
+                network=self.network_id,
+                wallet=raw(self.wallet.address),
+                dest=raw(dest),
+                amount=amount,
+                body=body.hash.hex(),
+                init=init.serialize().hash.hex() if init else None,
+                bounce=bounce,
+                seqno=seqno,
+                signed=base64.b64encode(signed.to_boc()).decode(),
+                wallet_baseline=cursor(account.last_transaction_id),
+                destination_baseline=cursor(destination.last_transaction_id),
+                state="prepared",
+            )
             atomic_json(self.pending, value)
-        elif (value["dest"] != raw(dest) or value["amount"] != amount
-              or value["body"] != (body if body is not None else Cell.empty()).hash.hex()
-              or value["init"] != (init.serialize().hash.hex() if init else None)
-              or value["bounce"] != bounce):
+        elif (
+            value["dest"] != raw(dest)
+            or value["amount"] != amount
+            or value["body"] != (body if body is not None else Cell.empty()).hash.hex()
+            or value["init"] != (init.serialize().hash.hex() if init else None)
+            or value["bounce"] != bounce
+        ):
             raise ValueError("operation label reused for a different payment")
         return await self.finish(value)
 
@@ -216,26 +258,38 @@ class Faucet:
         outgoing = None
         while time.monotonic() < deadline:
             if outgoing is None:
-                history = await history_since(self.client, self.wallet.address,
-                                              value["wallet_baseline"])
+                history = await history_since(
+                    self.client, self.wallet.address, value["wallet_baseline"]
+                )
                 transactions = [decoded(t) for t in history]
-                matches = [tx for tx in transactions
-                           if tx.in_msg is not None
-                           and isinstance(tx.in_msg.info, ExternalMsgInfo)
-                           and tx.in_msg.info.dest == self.wallet.address
-                           and tx.in_msg.body.hash == signed.hash]
+                matches = [
+                    tx
+                    for tx in transactions
+                    if tx.in_msg is not None
+                    and isinstance(tx.in_msg.info, ExternalMsgInfo)
+                    and tx.in_msg.info.dest == self.wallet.address
+                    and tx.in_msg.body.hash == signed.hash
+                ]
                 if len(matches) > 1:
                     raise ValueError("signed faucet intent appears more than once")
                 if matches:
                     tx = matches[0]
                     if not successful(tx):
-                        raise ValueError("faucet transaction failed; operator reconciliation required")
-                    outputs = [m for m in tx.out_msgs
-                               if isinstance(m.info, InternalMsgInfo)
-                               and m.info.src == self.wallet.address
-                               and raw(m.info.dest) == value["dest"]
-                               and m.body.hash.hex() == value["body"]
-                               and m.info.value.tomis == value["amount"]]
+                        raise ValueError(
+                            "faucet transaction failed; operator reconciliation required"
+                        )
+                    outputs = [
+                        m
+                        for m in tx.out_msgs
+                        if isinstance(m.info, InternalMsgInfo)
+                        and m.info.src == self.wallet.address
+                        and raw(m.info.dest) == value["dest"]
+                        and m.body.hash.hex() == value["body"]
+                        and m.info.value.tomis == value["amount"]
+                        and m.info.bounce is value["bounce"]
+                        and not m.info.bounced
+                        and (m.init.serialize().hash.hex() if m.init else None) == value["init"]
+                    ]
                     if len(outputs) != 1:
                         raise ValueError("wallet inclusion did not emit the exact intended payment")
                     outgoing = fingerprint(outputs[0])
@@ -243,17 +297,21 @@ class Faucet:
                 # Do not mistake that lag for an unrelated wallet payment; retain
                 # the intent and keep looking within this bounded observation.
             if outgoing is not None:
-                history = await history_since(self.client, Address(value["dest"]),
-                                              value["destination_baseline"])
+                history = await history_since(
+                    self.client, Address(value["dest"]), value["destination_baseline"]
+                )
                 for item in history:
                     tx = decoded(item)
                     if tx.in_msg is not None and fingerprint(tx.in_msg) == outgoing:
                         compute = getattr(tx.description, "compute_ph", None)
                         action = getattr(tx.description, "action", None)
-                        value.update(state="done", ok=successful(tx),
-                                     transaction=cursor(item.transaction_id),
-                                     exit_code=getattr(compute, "exit_code", None),
-                                     action_code=getattr(action, "result_code", None))
+                        value.update(
+                            state="done",
+                            ok=successful(tx),
+                            transaction=cursor(item.transaction_id),
+                            exit_code=getattr(compute, "exit_code", None),
+                            action_code=getattr(action, "result_code", None),
+                        )
                         atomic_json(self.path(value["label"]), value)
                         self.clear_pending(value["label"])
                         return value
@@ -263,5 +321,7 @@ class Faucet:
 
 def require_success(receipt):
     if not receipt["ok"]:
-        raise ValueError(f"{receipt['label']} refused: exit={receipt['exit_code']}, "
-                         f"action={receipt['action_code']}")
+        raise ValueError(
+            f"{receipt['label']} refused: exit={receipt['exit_code']}, "
+            f"action={receipt['action_code']}"
+        )

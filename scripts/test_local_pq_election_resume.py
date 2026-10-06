@@ -4,6 +4,7 @@ The driver builds real stake BOCs. Wallet/TL-B correlation is covered separately
 by test_local_pq_transactions and test_local_pq_election_evidence, not mocked here
 and misrepresented as a live chain.
 """
+
 import asyncio
 import base64
 import importlib.util
@@ -11,10 +12,9 @@ from pathlib import Path
 from types import SimpleNamespace as Obj
 
 import pytest
-from pytosiq_core import Cell
-
 from local_pq_test_wire import address
 from local_pq_transactions import read_json
+from pytosiq_core import Cell
 
 SPEC = importlib.util.spec_from_file_location(
     "resume_elections", Path(__file__).with_name("local-pq-elections.py")
@@ -25,9 +25,13 @@ NANO = 10**9
 ELECTION = 1791257021
 QUERY = (1 << 63) + 1
 NETWORK = dict(global_id=3, zerostate_root="aa" * 32)
-CANDIDATE = dict(controller=address(3).to_str(is_user_friendly=False),
-                 adnl_id="04" * 32, key_id="05" * 32, public_key="06" * 1312,
-                 witness_b64=base64.b64encode(Cell.empty().to_boc()).decode())
+CANDIDATE = dict(
+    controller=address(3).to_str(is_user_friendly=False),
+    adnl_id="04" * 32,
+    key_id="05" * 32,
+    public_key="06" * 1312,
+    witness_b64=base64.b64encode(Cell.empty().to_boc()).decode(),
+)
 ACCEPTED = dict(kind="accepted", reply=[0xF374484C, 0])
 
 
@@ -92,20 +96,30 @@ def harness(tmp_path, monkeypatch):
     class Console:
         async def request_with_raw(self, request):
             observed["authorization"] += 1
-            auth = Obj(validator_id=address(3).hash_part, key_id=bytes.fromhex("05" * 32),
-                       public_key=bytes.fromhex("06" * 1312), algorithm_id=1,
-                       signature=b"\x07" * 2420)
+            auth = Obj(
+                validator_id=address(3).hash_part,
+                key_id=bytes.fromhex("05" * 32),
+                public_key=bytes.fromhex("06" * 1312),
+                algorithm_id=1,
+                signature=b"\x07" * 2420,
+            )
             return auth, b"", b"{}"
 
     monkeypatch.setattr(driver, "ensure_operations", funding)
     monkeypatch.setattr(driver, "lite_int", lite)
     monkeypatch.setattr(driver, "history_since", history)
     monkeypatch.setattr(driver, "election_result", result)
-    monkeypatch.setattr(driver.tos_api, "Engine_validator_createPqStakeAuthorizationRequest", Request)
+    monkeypatch.setattr(
+        driver.tos_api, "Engine_validator_createPqStakeAuthorizationRequest", Request
+    )
 
     def run(election=ELECTION, network=NETWORK):
-        return asyncio.run(driver.submit_candidate(transport, transport, Console(),
-                                                   CANDIDATE, pool, election, 1, network))
+        return asyncio.run(
+            driver.submit_candidate(
+                transport, transport, Console(), CANDIDATE, pool, election, 1, network
+            )
+        )
+
     return transport, observed, run
 
 

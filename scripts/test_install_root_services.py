@@ -64,17 +64,42 @@ def setup(tmp_path):
     (repo / "build/toslib/libtoslibjson.so").symlink_to(library.name)
     # The checker is the installer's own; run the real one from the fake checkout.
     shutil.copy(INSTALLER.with_name("install-root-services-check.py"), repo / "scripts")
-    shutil.copy(INSTALLER.with_name("check-local-pq-resources.py"), repo / "scripts")
+    # These installer tests run unprivileged and already fake systemd-run.
+    # Exercise the real admission logic, but not its privileged CLI entry point.
+    # The production root requirement is tested separately in test_local_pq_resources.
+    shutil.copy(
+        INSTALLER.with_name("check-local-pq-resources.py"),
+        repo / "scripts/resource-admission-impl.py",
+    )
+    write(
+        repo / "scripts/check-local-pq-resources.py",
+        "import runpy, sys\n"
+        "from pathlib import Path\n"
+        "module = runpy.run_path(str(Path(__file__).with_name('resource-admission-impl.py')))\n"
+        "module['check'](*sys.argv[1:])\n",
+    )
     contract = 'int deposit_gas_ceiling() asm "123 PUSHINT";\nint transact_gas_ceiling() asm "456 PUSHINT";\n'
     fixture = json.dumps({"verifying_key": {"hex": "00" * 1248}})
     write(repo / "crypto/smartcont/tos-shielded-pool-v1.fc", contract)
     write(repo / "tools/shielded-pool-circuit/fixtures/groth16-development.json", fixture)
     tools = tmp_path / "tools"
     write(tools / "uv", STUB, 0o755)
-    result = dict(ok=True, result=dict(schema="tos.local-pq-runtime-resources.v1",
-                  pool_source=contract, development_fixture=fixture,
-                  verifying_key_hex="00" * 1248, deposit_gas_ceiling=123, transact_gas_ceiling=456))
-    write(tools / "systemd-run", "#!/usr/bin/env python3\nprint(" + repr(json.dumps(result)) + ")\n", 0o755)
+    result = dict(
+        ok=True,
+        result=dict(
+            schema="tos.local-pq-runtime-resources.v1",
+            pool_source=contract,
+            development_fixture=fixture,
+            verifying_key_hex="00" * 1248,
+            deposit_gas_ceiling=123,
+            transact_gas_ceiling=456,
+        ),
+    )
+    write(
+        tools / "systemd-run",
+        "#!/usr/bin/env python3\nprint(" + repr(json.dumps(result)) + ")\n",
+        0o755,
+    )
     base_parent = tmp_path / "opt"
     base_parent.mkdir()
     base_parent.chmod(0o755)
@@ -86,7 +111,12 @@ def install(repo, tools, base, extra=None, env=None):
         (tools / "uv-extra.json").write_text(json.dumps(extra))
     return subprocess.run(
         ["bash", str(INSTALLER), str(base), str(repo), str(repo / "build"), str(repo / GENERATOR)],
-        env={**os.environ, "UV": str(tools / "uv"), "PATH": str(tools) + os.pathsep + os.environ["PATH"], **(env or {})},
+        env={
+            **os.environ,
+            "UV": str(tools / "uv"),
+            "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+            **(env or {}),
+        },
         capture_output=True,
         text=True,
     )
@@ -609,7 +639,11 @@ def test_failed_resource_admission_preserves_the_previous_snapshot(setup):
     first = install(repo, tools, base)
     assert first.returncode == 0, first.stderr
     previous = (base / "current").resolve()
-    write(tools / "systemd-run", "#!/usr/bin/env python3\nprint('{\"ok\": false, \"error\": \"missing checkout\"}')\n", 0o755)
+    write(
+        tools / "systemd-run",
+        '#!/usr/bin/env python3\nprint(\'{"ok": false, "error": "missing checkout"}\')\n',
+        0o755,
+    )
     result = install(repo, tools, base)
     assert result.returncode != 0
     assert (base / "current").resolve() == previous and previous.exists()
