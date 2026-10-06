@@ -1,4 +1,4 @@
-"""Measure private function-extraction experiments without changing production source."""
+"""Measure private compiler-layout experiments without changing production source."""
 
 import argparse
 import json
@@ -13,6 +13,30 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def transform(source, variant):
+    if variant == "verify-before-budget":
+        check = (
+            "  throw_unless(2007, lms_check_fee_hash(cell_hash(intent), leaf, signature, key));\n"
+        )
+        anchor = "  ;; Fee-relative class bounds:"
+        assert source.count(check) == source.count(anchor) == 1
+        # All binding, budget and signature checks remain before ACCEPT. This
+        # experiment changes rejection work ordering and is not adoption approval.
+        return source.replace(check, "").replace(anchor, check + anchor)
+    if variant == "literal-request-tags":
+        helpers = """(slice, int) r2fee_pop_tag(slice s) asm "x{504f5033} SDBEGINSQ";
+(slice, int) r2fee_prepare_tag(slice s) asm "x{50525033} SDBEGINSQ";
+"""
+        anchor = "const int r2fee::max_cells"
+        assert source.count(anchor) == 1
+        source = source.replace(anchor, helpers + anchor)
+        for name, tag in [("pop", "504f5033"), ("prepare", "50525033")]:
+            old = f"    throw_unless(2012, request~load_uint(32) == 0x{tag});"
+            assert source.count(old) == 1
+            source = source.replace(
+                old,
+                f"    (request, int tag_ok) = r2fee_{name}_tag(request);\n    throw_unless(2012, tag_ok);",
+            )
+        return source
     if variant == "bounds-payload":
         return transform(transform(source, "bounds"), "payload")
     if variant == "late-send":
@@ -60,7 +84,17 @@ def prepare_output(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--variant", choices=("bounds", "bounds-inline", "payload", "late-send", "bounds-payload"), required=True
+        "--variant",
+        choices=(
+            "bounds",
+            "bounds-inline",
+            "payload",
+            "late-send",
+            "bounds-payload",
+            "verify-before-budget",
+            "literal-request-tags",
+        ),
+        required=True,
     )
     parser.add_argument("--route", choices=("auth", "pop", "prepare"), required=True)
     parser.add_argument("--trees", type=Path, required=True)

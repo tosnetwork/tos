@@ -3342,3 +3342,23 @@ request and raw pre-account BOCs alongside native transactions and RPC transcrip
 for review. This still uses a mocked proof verifier, not deployed proof acquisition.
 
 Evidence: [initial POP receipt CLI and binding controls](../test/wallet-v5r2/cli-pop-receipt-20261006.json).
+
+### Additional admission layout experiments
+
+Two private source-copy experiments on the native preparation fixture remain
+rejected. Moving the LMS check before budget calculations reduced admission from
+13,515 to 13,487 gas (28 saved), still 3,487 above the default credit. Replacing
+request tag loads/comparisons with literal `SDBEGINSQ` helpers increased it to
+13,589 gas (74 more). The production fee contract is unchanged. Neither result
+justifies moving checks after `ACCEPT` or changing the network gas allowance.
+
+Both candidates retain signature and budget checks before `ACCEPT`, but the
+first changes rejection work ordering and the second can change the error for
+truncated tags. These are measurements, not equivalence approval. Complete native
+preparation/action fixtures ran at diagnostic credit 20,000; default credit still
+fails. Standalone AUTH and POP admission were not measured for these variants.
+The output-preservation suite passed all three cases, including its guard-deletion
+control. Candidate reconstruction, trace totals and independently probed credit
+agree with the retained artifacts.
+
+Evidence: [rejected ordering and literal-tag experiments](../test/wallet-v5r2/admission-order-tags-20261006.json).
