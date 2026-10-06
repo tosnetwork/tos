@@ -2215,11 +2215,20 @@ mod proposal_read_back_tests {
         assert_eq!(outcome, ProposalOutcome::WalletAcceptedUnconfirmed);
         assert!(error.is_some_and(|e| e.contains("reading the proposal back failed")));
 
-        // A malformed answer is a read error too, not "absent".
-        let malformed = ABSENT_LIVE.replace(r#""elements":[]"#, r#""elements":[{"@type":"tvm.stackEntryNumber","number":{"@type":"tvm.numberDecimal","number":"0"}}]"#);
-        assert_ne!(malformed, ABSENT_LIVE);
-        let (_, read) = script(vec![Ok(malformed)]);
-        assert!(poll_registration(None, read, 15, NO_WAIT).await.is_err());
+        // A malformed answer is a read error too, not "absent": a non-empty list, and
+        // a numeric zero in place of the null (how some getters' nil has been seen).
+        let null = r#"{"@type":"tvm.stackEntryList","list":{"@type":"tvm.list","elements":[]}}"#;
+        let zero = r#"{"@type":"tvm.stackEntryNumber","number":{"@type":"tvm.numberDecimal","number":"0"}}"#;
+        for malformed in [
+            ABSENT_LIVE.replace(r#""elements":[]"#, &format!(r#""elements":[{zero}]"#)),
+            ABSENT_LIVE.replace(null, zero),
+        ] {
+            assert_ne!(malformed, ABSENT_LIVE);
+            // One poll: an exhausted script must not be what makes this an error.
+            let (_, read) = script(vec![Ok(malformed)]);
+            let observed = poll_registration(None, read, 1, NO_WAIT).await;
+            assert!(observed.is_err_and(|e| !e.contains("script exhausted")));
+        }
     }
 
     #[tokio::test]
