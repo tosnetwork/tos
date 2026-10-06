@@ -1,7 +1,7 @@
 # Official TOS Docker image
 
 1. [Dockerfile](#docker)
-2. [Kubernetes deployment on-premises](#deploy-on-premises-with-metallb-load-balancer-)
+2. [Kubernetes deployment on-premises](#deploy-on-premises-with-metallb-load-balancer)
 3. [Kubernetes deployment on AWS](#deploy-on-aws-cloud-amazon-web-services)
 4. [Kubernetes deployment on GCP](#deploy-on-gcp-google-cloud-platform)
 5. [Kubernetes deployment on AliCloud](#deploy-on-ali-cloud)
@@ -255,6 +255,38 @@ If you use lite-client outside the Docker container, copy the **liteserver.pub**
 ```
 docker stop tos-node
 ```
+
+### Database lock
+The node holds `/var/tos-work/db/config.json.lock` while it runs. A second
+container started on the same database volume exits with status 2 and names
+the lock. Stop the running container before starting a replacement, and before
+running any tool that edits `config.json`.
+
+### Validator operations
+The full procedure for a post-quantum validator (controller deployment,
+elections, operating authorization, configuration votes) is in
+[doc/validator-operator-guide.md](../doc/validator-operator-guide.md). Points
+specific to the image:
+
+- Retired validator consensus databases under `/var/tos-work/db/consensus/`
+  are deleted by default. To keep them, add
+  `--disable-validator-consensus-cleanup` to `CUSTOM_ARG`; the database then
+  grows without bound.
+- The key tools (`tos-pq-consensus-key`, `tos-pq-vote`) run in a one-off
+  container with the same volumes and user as the node, for example
+  `docker run --rm -v /data/keys:/var/tos-work/keys --entrypoint tos-pq-vote <IMAGE> ...`.
+  `tos-pq-key` and `tos-pq-controller` sign with the controller root key and
+  belong on an offline machine.
+- To rotate the consensus key, stop the container, mount the new key file,
+  and run
+  `tos-pq-consensus-key bind-node --replace /var/tos-work/db <new key path> <VALIDATOR_ID>`
+  in a one-off container with the database volume. Then start the node with
+  `PQ_CONSENSUS_KEY_FILE` naming the new key: the entrypoint refuses a
+  variable that differs from the binding in `config.json`. Rotation is safe
+  only in the interval the guide describes.
+- `GLOBAL_CONFIG_URL` must serve a global config whose `validator.init_block`
+  is a recent key block; a stale one leaves a new node unable to prove its way
+  to the current chain.
 
 ## Kubernetes
 ### Deploy in a quick way (without load balancer)

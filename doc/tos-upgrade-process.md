@@ -171,7 +171,7 @@ All changes must be deployed to testnet before mainnet. There are no exceptions 
 | Change category | Testnet duration | Test requirements |
 |---|---|---|
 | Protocol changes | At least 1 full validation cycle | 4-node testnet consensus validation; must demonstrate that upgraded and non-upgraded nodes handle the transition correctly |
-| API changes | At least 1 testnet deployment cycle | Must pass the full JSON-RPC regression suite (currently 484 tests) |
+| API changes | At least 1 testnet deployment cycle | Must pass the full JSON-RPC regression suite |
 | Operator changes | At least 1 testnet deployment cycle | Must pass the affected `tosctl` workflow tests |
 
 **Additional staging requirements for protocol changes:**
@@ -188,9 +188,9 @@ The release mechanism depends on the change category.
 
 1. Binary containing the new protocol logic is released and made available to validators.
 2. Validators upgrade their binaries. The new protocol logic remains dormant until activated.
-3. A config parameter vote is initiated via `tosctl vote offer create`.
-4. Validators vote via `tosctl vote offer vote`.
-5. When the vote reaches supermajority (2/3 + 1 by weight), the config parameter change takes effect and the new protocol logic activates.
+3. A config parameter proposal is created with `tosctl vote offer create` (see [section 7](#7-config-parameter-changes)).
+4. Validators vote with their consensus keys (`tos-pq-vote config`).
+5. When the proposal has passed the number of voting rounds ConfigParam 11 requires, the config parameter change takes effect and the new protocol logic activates.
 
 This two-phase approach (binary update, then config activation) ensures that the network does not fork during the upgrade window.
 
@@ -206,6 +206,14 @@ This two-phase approach (binary update, then config activation) ensures that the
 1. New `tosctl` version is released.
 2. Operators update `tosctl`.
 3. Release notes and changelog document all command, flag, and output changes.
+
+**Node binaries:**
+
+Validators upgrade one at a time, keeping the quorum, as described in [Validator.md](Validator.md#recommended-upgrade-procedure). The old process must have exited before the new one starts: the engine holds `<db>/config.json.lock` and a second engine on the same database exits with status 2. Release notes must call out changed defaults; for example, deletion of retired validator consensus databases is on by default and `--disable-validator-consensus-cleanup` turns it off. The operator steps for a post-quantum validator are in [validator-operator-guide.md](validator-operator-guide.md).
+
+**Global config:**
+
+A release that publishes a network's global config refreshes its `validator.init_block` to a recent key block with `scripts/refresh-global-config-init-block.py`, so that new nodes and clients can still prove their way forward from it. The refreshed file is authenticated by the release that carries it (digest and attestation), not by the tool.
 
 ### 4.5 Deprecation
 
@@ -242,7 +250,7 @@ Every change must have a rollback plan before deployment. The plan must be docum
 
 ### 5.1 Protocol Change Rollback
 
-- Revert the config parameter change via a new validator vote (`tosctl vote offer create` to propose the revert, then `tosctl vote offer vote`).
+- Revert the config parameter change via a new validator vote (`tosctl vote offer create` to propose the revert, then votes signed with `tos-pq-vote config`).
 - The binary must support both the old and new protocol behavior, controlled by the config parameter, so that reverting the config parameter is sufficient.
 - If the binary cannot support both behaviors, the rollback plan must include a binary rollback to the previous version.
 
@@ -304,10 +312,10 @@ Config parameters are the protocol's runtime settings. They control consensus ru
 
 ### 7.1 Mechanism
 
-1. A validator creates a config parameter change proposal: `tosctl vote offer create`.
-2. Other validators review and vote: `tosctl vote offer vote`.
-3. The change takes effect when the vote reaches supermajority (2/3 + 1 by validator weight).
-4. The change applies at the next applicable boundary (election cycle, block boundary, etc., depending on the parameter).
+1. A config parameter change proposal is created and paid for: `tosctl vote offer create --param N` with `--value-boc`, `--value-boc-file` or `--remove`. The proposal's price comes from live ConfigParam 11. A parameter listed in ConfigParam 10 needs `--critical`; a parameter listed in ConfigParam 9 must name the value it replaces (`--bind-current` or `--if-hash-equal`). The proposal must come from a masterchain wallet (`--wallet`, or an external masterchain wallet sending the printed body and value).
+2. Validators review it (`tosctl vote offer ls`, `tosctl vote offer diff --hash HASH`) and vote. A vote is signed with the validator's ML-DSA-44 consensus key: `tos-pq-vote config KEYFILE GLOBAL_ID SET_ID_HEX VALIDATOR_ID_HEX IDX PROPOSAL_HEX` prints the message body, which a wallet sends to the configuration contract with enough value to pay for the signature check. `tosctl vote offer cast` does not send post-quantum votes. See [validator-operator-guide.md](validator-operator-guide.md#13-configuration-proposals-and-votes).
+3. A voting round is won when validators holding three quarters of the current set's total weight have voted for the proposal. The proposal passes after the number of won rounds, and fails after the number of lost rounds, that ConfigParam 11 sets (separately for critical parameters).
+4. The new value is installed when the proposal passes; parameters read at a boundary (election cycle, validator set switch) take effect from there.
 
 ### 7.2 Parameter Risk Tiers
 

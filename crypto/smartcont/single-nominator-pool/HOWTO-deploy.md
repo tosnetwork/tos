@@ -1,31 +1,61 @@
 # Deploy single-nominator-pool
 
-### 1. Generate state-init
+A pool has three roles, all fixed in its storage and therefore in its address:
+
+- the **owner** holds the funds and can take them home;
+- the **validator** is the masterchain wallet that may spend them on a stake and on
+  nothing else (the contract refuses a stake request from any other workchain);
+- the **controller** is the account that stands in the election: a deployed Validator
+  Controller in the masterchain, authorised by a post-quantum root key kept off the
+  validator's machine. The elector takes a stake from such an account and from nowhere
+  else.
+
+Deploy the controller first: its address is part of the pool's address, and a pool cannot
+change it afterwards. The controller deployment, its operating authorization and the rest
+of the validator path are described in
+[doc/validator-operator-guide.md](../../../doc/validator-operator-guide.md).
+
+`tosctl deploy pool --node NODE --owner OWNER --controller CONTROLLER --amount TOS`
+performs the steps below from a node's configured validator wallet. To do it by hand:
+
+### 1. Generate the state-init
+
 Command:
 ```
-./init.fif <code.boc | code.hex> <owner-address-EQ> <validator-address-Ef> <controller-address-Ef>
+./init.fif <code.boc | code.hex> <owner-address> <validator-address> <controller-address> <file-base>
 ```
 
 Example:
 ```
-./init.fif snominator-code.hex EQDYDK1NivLsfSVxYE1aUt5xU-behhWSin29vgE7M6wzLMjN Ef8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAU Ef8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAU
+./init.fif single-nominator-code.hex <OWNER_ADDRESS> <VALIDATOR_WALLET_ADDRESS> <CONTROLLER_ADDRESS> snominator
 ```
 
-The three roles: the owner holds the funds and can take them home, the validator may
-spend them on a stake and on nothing else, and the controller is the account that stands
-in the election. The controller is a deployed Validator Controller in the masterchain,
-authorised by a post-quantum root key kept off the validator's machine; the elector takes
-a stake from such an account and from nowhere else.
+The pool is always in the masterchain. The script prints the StateInit and the pool's
+address, saves the address in `<file-base>.addr` and the StateInit in
+`<file-base>-query.boc` (`snominator-query.boc` in the example).
 
-### 2. Sign and send a message
+### 2. Sign and send the deployment message
 
 Command:
 ```
-./wallet-v3.fif <filename-base> <nominator-address-Ef> <subwallet-id> <seqno> 2 -n -I snominator-init.boc
+./wallet-v3.fif <filename-base> <pool-address> <subwallet-id> <seqno> <amount> -n -I <file-base>-query.boc
 ```
 
 Example:
 ```
-./wallet-v3.fif mywallet Ef9rfl-0S4wuAs6-rwl6RgjXznkhQaZNvlq9jMDHBlDpMe8h 698983191 7 1 -n -I snominator-init.boc
+./wallet-v3.fif mywallet <POOL_ADDRESS> 698983191 7 1 -n -I snominator-query.boc
 ```
-Expects to have `mywallet.addr` `mywallet.pk` files.
+
+Expects `mywallet.addr` and `mywallet.pk` files. `-n` sends the message non-bounceable,
+because the pool does not exist yet. The script saves the signed message to
+`wallet-query.boc`; send it with a lite client (`sendfile wallet-query.boc`).
+
+### 3. Before the first stake
+
+- Record the pool in tosctl with `tosctl config pool add --name POOL --address
+  POOL_ADDRESS --owner OWNER_ADDRESS --controller CONTROLLER_ADDRESS` and bind it to the
+  node with `tosctl config bind add --node NODE --wallet WALLET --pool POOL`.
+- Import the controller's birth with `tosctl config bind import-birth`.
+- Make sure the controller holds a current operating authorization
+  (`tosctl controller operations status --controller CONTROLLER_ADDRESS`); without one the
+  controller refuses to relay the pool's stake.
