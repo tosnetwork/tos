@@ -188,7 +188,9 @@ jobs:
           mkdir -p artifacts/context/r2-fee-prepare/native
           ln artifacts/context/r2-fee-auth/native/PUBLIC-TEST-ONLY-lms-tree \
             artifacts/context/r2-fee-prepare/native/PUBLIC-TEST-ONLY-lms-tree
-          python test/wallet-v5r2/sdk_auth_parity.py \
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
+            --example lms_fee_cache_fixture --features native-wallet-signer
+          python test/wallet-v5r2/sdk_auth_parity.py --require-native-fee-signer \
             --native-signer "$CARGO_TARGET_DIR/debug/examples/public_fixture" \
             --auth-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_auth_encode" \
             --pop-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_pop_encode" \
@@ -304,7 +306,7 @@ jobs:
       - name: Real cached signature verification deletion control
         if: matrix.runner == 'ubuntu-24.04'
         run: |
-          python test/wallet-v5r2/cache_verification_control.py \
+          python test/wallet-v5r2/cache_verification_control.py --native-fee-signer \
             --baseline artifacts/context/r2-fee-auth/native/sdk-cache \
             --driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-cache-verification-control

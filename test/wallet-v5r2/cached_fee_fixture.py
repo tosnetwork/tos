@@ -15,7 +15,11 @@ def signature(driver, out, *, tree, key, vault, digest, now, epoch0):
         request = {
             "directory": str(journal),
             "tree": str(tree.resolve()),
-            "backend": os.environ["LMS_TOOL"],
+            "backend": (
+                "/NO-EXTERNAL-FEE-SIGNER"
+                if os.environ.get("TOS_TEST_REQUIRE_NATIVE_FEE") == "1"
+                else os.environ["LMS_TOOL"]
+            ),
             "vault": f"{vault:064x}",
             "digest": digest.hex(),
             "public_key": key.hex(),
@@ -41,6 +45,8 @@ def signature(driver, out, *, tree, key, vault, digest, now, epoch0):
 
         signed = run("sign", {"mode": "sign"})
         assert signed["backend_calls"] == 1 and signed["verified"]
+        if os.environ.get("TOS_TEST_REQUIRE_NATIVE_FEE") == "1":
+            assert signed.get("backend_kind") == "native-lms", signed
         # A different process reopens the journal at current time. An unavailable
         # backend proves that the retry cannot quietly generate another signature.
         retry = {"mode": "retry", "opened_time": now, "backend": str(journal / "NO-SIGNER")}
@@ -75,6 +81,7 @@ def signature(driver, out, *, tree, key, vault, digest, now, epoch0):
             json.dumps(
                 {
                     "real_lms_signature": True,
+                    "backend_kind": signed["backend_kind"],
                     "independent_rust_vm_verification": True,
                     "signer_calls": 1,
                     "restart_retry_signer_calls": 0,

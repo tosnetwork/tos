@@ -1,0 +1,206 @@
+{
+  "base_commit": "48dc1af037e5f2ac924eccb9bf2728a394da041f",
+  "scope": "Native LMS primitive within the durable FeeJournal fixture, real dual-VM transactions at diagnostic credit 20000. Public test keys and fixture chain time. Not encrypted-Vault/live-proof client integration or production admission.",
+  "parity": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 67,
+    "observed_transactions": 67,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 6,
+    "final_chain_time": 1780007190,
+    "transactions": 22,
+    "recipient_received": true,
+    "primary_auth_signing_used": false,
+    "primary_pop_signing_used": true,
+    "funded_pop_roles": [
+      1,
+      2
+    ],
+    "proven_wallet_migration_gate": true,
+    "migration_custody_observed": true,
+    "production_admission_passed": false
+  },
+  "cache": {
+    "real_lms_signature": true,
+    "backend_kind": "native-lms",
+    "independent_rust_vm_verification": true,
+    "signer_calls": 1,
+    "restart_retry_signer_calls": 0,
+    "retry_bytes_identical": true,
+    "wrong_intent_rejected": true,
+    "wrong_public_key_rejected": true,
+    "restart_signing_blocked": true,
+    "corrupted_backend_rejected_and_leaf_burned": true,
+    "scope": "Public deterministic test key, fixture chain time; not production custody"
+  },
+  "native_cache_control": {
+    "native_fee_signer_required": true,
+    "deleted_verifier_accepts_wrong_key": true,
+    "fixture_detected_semantic_failure": true,
+    "restored_real_signature_and_negative_controls_pass": true
+  },
+  "external_cache_regression": {
+    "native_fee_signer_required": false,
+    "deleted_verifier_accepts_wrong_key": true,
+    "fixture_detected_semantic_failure": true,
+    "restored_real_signature_and_negative_controls_pass": true
+  },
+  "formatted_binding_controls": {
+    "root": {
+      "exit": 101,
+      "semantic_witness": "fee binding accepted invalid input 0"
+    },
+    "profile": {
+      "exit": 101,
+      "semantic_witness": "fee binding accepted invalid input 6"
+    },
+    "wipe": {
+      "exit": 101,
+      "semantic_witness": "fee binding retained valid seed"
+    }
+  },
+  "regression": {
+    "signer_unit_passed": 11,
+    "signer_doc_passed": 2,
+    "full_h20_test_ignored": 1,
+    "rust_format_exit": 0,
+    "ruff_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example lms_fee_cache_fixture --features native-wallet-signer",
+    "python test/wallet-v5r2/sdk_auth_parity.py --require-native-fee-signer --native-signer tosctl/src/target/debug/examples/public_fixture --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --fee-driver tosctl/src/target/debug/examples/v5r2_fee_encode --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration",
+    "python test/wallet-v5r2/cache_verification_control.py --native-fee-signer --baseline /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-cache --driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-cache-control",
+    "python test/wallet-v5r2/cache_verification_control.py --baseline /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-cache --driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-external-fee-cache-regression",
+    "python test/wallet-v5r2/fee_seed_binding_controls.py --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-formatted-fee-binding-controls",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer",
+    "make -C tosctl/src fmt-check"
+  ],
+  "retention_through": "2027-01-06",
+  "raw_archives": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration.tar.gz",
+      "sha256": "2d24ebdef06cfebb1574a3f0fdd0b07f38dad4a11a814f4e2217a55b48f5d566",
+      "bytes": 1812791
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-cache-control.tar.gz",
+      "sha256": "1b03278ce0a6967124e5a5754fbf238c0702eaa16c0185260d009326607c54bd",
+      "bytes": 17228
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-external-fee-cache-regression.tar.gz",
+      "sha256": "7444d1ceeca55e66e47416e940d0c446c00bc15d489916651dbb046983c472c3",
+      "bytes": 16174
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-formatted-fee-binding-controls.tar.gz",
+      "sha256": "6b8b065c7ddfd905ff95dcf551be1e05fc94ed34ac120b40949bdbcf7bff7401",
+      "bytes": 2041
+    }
+  ],
+  "public_trees_excluded_from_archives": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/PUBLIC-TEST-ONLY-lms-tree",
+      "sha256": "2ff622ca4346594180539a2d95f040f383a9f6d30d97de7f25477dfb9e5a1332",
+      "bytes": 67108864
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/PUBLIC-TEST-ONLY-successor-tree",
+      "sha256": "d777a1c7ab0d584e0e953e00f5f7de333de00707f6d27013c0477a9a270e3646",
+      "bytes": 67108864
+    }
+  ],
+  "logs": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-signer-regression.log",
+      "sha256": "3e6a9da09b911bc74a390bdb4a3634eea05f5b9277432357df32672dad2ff701",
+      "bytes": 5988
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-hygiene-failed.log",
+      "sha256": "1e92e382eda9b84888f75306f8d1745836233cf503182635d960eb1b9eddc3e5",
+      "bytes": 22299
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-hygiene.patch",
+      "sha256": "30abf651af56d4eccb6d654b933914d4aa1844398b0a668f3240e9d6d0a5dca5",
+      "bytes": 8226
+    }
+  ],
+  "source_files": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "075482ff9aa52458adb7a316aa29075fdb195e9f31f17ca93160468233e0e672",
+      "bytes": 23108
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/wallet-lms-fee-c.cpp",
+      "sha256": "ed866ea8337dc92765b17eaf07848f16f43e45931797795fcb95c0fb133960e5",
+      "bytes": 1384
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/wallet-lms-sign-c.cpp",
+      "sha256": "7edbcbea93e989d7794a306453fdaa1308a3922abad809782db8dd773986005c",
+      "bytes": 4841
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/wallet-lms-tree-c.cpp",
+      "sha256": "71eae0daa9454358c87101cbc7f4ebf8175784e6f80e3df1a488acb6c757f89c",
+      "bytes": 2267
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "sha256": "4012f9bcb0430193eaa1a1513c4271d7a40d1a3e400c969a91bdb1856bc9e429",
+      "bytes": 184583
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cache_verification_control.py",
+      "sha256": "962a90f5ea3cf43cac16e34f2115b15b89bae08f0b77a23e7b46e06d6ae1675d",
+      "bytes": 3414
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cached_fee_fixture.py",
+      "sha256": "8889b7f0f52562767f15cc14f0acb35b5bdd43096d52743f29cc8ff2146f2fc9",
+      "bytes": 4287
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cached_fee_session.py",
+      "sha256": "6802a8bcee847c37131ea53516bd1629b480955377e297cdc0610d83bb117dc0",
+      "bytes": 3103
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_seed_binding_controls.py",
+      "sha256": "16c357a9fb5eebbc688eaf3db140b81048665195bfaeb62aee13b31b3b999885",
+      "bytes": 3060
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/sdk_auth_parity.py",
+      "sha256": "f20414f861257cfe5acfde1dc34ddf20861598818166b0a4702b8a2ba24f6b93",
+      "bytes": 6220
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/examples/lms_fee_cache_fixture.rs",
+      "sha256": "6afc46f855012863440fb00643a77ac459a351bf4ad79fa5d3d034880b6834e3",
+      "bytes": 8568
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/examples/fee_fixture/native.rs",
+      "sha256": "52fe319e24cc75f57397c4b712258308d74e88bdab2ed8c84f0af1e926d1a8fa",
+      "bytes": 2163
+    }
+  ],
+  "formatting_note": "The three C++ files match the exact blob hashes requested by clang-format-21 in CI job 112139452512. Fee binding mutation anchor updated and all three controls rerun."
+}

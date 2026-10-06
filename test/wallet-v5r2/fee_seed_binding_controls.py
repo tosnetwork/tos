@@ -17,8 +17,10 @@ def main():
     native = ROOT / "crypto/pq/wallet-lms-sign-c.cpp"
     rust = ROOT / "tosctl/src/wallet-pq-signer/src/fee_binding.rs"
     originals = {p: p.read_text() for p in (native, rust)}
-    profile = """!tos::pq::lms_fee_worst_compressions(
-          std::string_view(reinterpret_cast<const char*>(public_key), key_size), 32)"""
+    profile = (
+        "!tos::pq::lms_fee_worst_compressions("
+        "std::string_view(reinterpret_cast<const char*>(public_key), key_size), 32)"
+    )
     cases = [
         (
             "root",

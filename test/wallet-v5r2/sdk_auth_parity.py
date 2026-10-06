@@ -3,6 +3,7 @@
 import argparse
 import inspect
 import json
+import os
 import runpy
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from test_rescue_e2e import digest  # noqa: E402
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native-signer", type=Path)
+    parser.add_argument("--require-native-fee-signer", action="store_true")
     parser.add_argument("--genesis-driver", type=Path)
     parser.add_argument("--fee-driver", type=Path)
     parser.add_argument("--preparation-driver", type=Path)
@@ -101,6 +103,8 @@ def main():
         argv += ["--preparation-driver", str(args.preparation_driver)]
     argv += ["--pop-role", str(args.pop_role)] if args.pop_role else ["--prepare", "--recovery"]
     with ExitStack() as stack:
+        if args.require_native_fee_signer:
+            stack.enter_context(patch.dict(os.environ, {"TOS_TEST_REQUIRE_NATIVE_FEE": "1"}))
         if args.native_signer:
             from native_signer_fixture import NativeSignerFixture
 

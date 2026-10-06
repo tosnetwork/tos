@@ -14,7 +14,11 @@ class CachedFeeSession:
         self.request = dict(
             directory=str(journal.resolve()),
             tree=str(tree.resolve()),
-            backend=os.environ["LMS_TOOL"],
+            backend=(
+                "/NO-EXTERNAL-FEE-SIGNER"
+                if os.environ.get("TOS_TEST_REQUIRE_NATIVE_FEE") == "1"
+                else os.environ["LMS_TOOL"]
+            ),
             vault=f"{vault[1]:064x}",
             public_key=key.hex(),
             epoch0=epoch0,
@@ -72,6 +76,8 @@ class CachedFeeSession:
         args = dict(digest=intent.hash.hex(), leaf=leaf)
         signed = self.call("sign", now, **args)
         assert signed.get("verified") and signed["backend_calls"] == 1, signed
+        if os.environ.get("TOS_TEST_REQUIRE_NATIVE_FEE") == "1":
+            assert signed.get("backend_kind") == "native-lms", signed
         cached = self.call("retry", now, backend="/NO-PUBLIC-TEST-SIGNER", **args)
         assert cached.get("verified") and cached["backend_calls"] == 0, cached
         assert cached["signature"] == signed["signature"]

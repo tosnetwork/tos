@@ -8,18 +8,28 @@ use std::{
     env, fs,
     io::{BufRead, Write},
     path::PathBuf,
-    process::Command,
 };
 use tos_vm::{
     executor::{Engine, gas::gas_state::Gas},
     stack::{Stack, StackItem, integer::IntegerData, savelist::SaveList},
 };
 
+#[cfg(not(feature = "native-wallet-signer"))]
+use std::process::Command;
+#[cfg(feature = "native-wallet-signer")]
+#[path = "fee_fixture/native.rs"]
+mod native_fixture;
+
+fn backend_kind() -> &'static str {
+    if cfg!(feature = "native-wallet-signer") { "native-lms" } else { "external-test-tool" }
+}
+
 #[derive(Deserialize)]
 struct Input {
     mode: String,
     directory: PathBuf,
     tree: PathBuf,
+    #[cfg_attr(feature = "native-wallet-signer", allow(dead_code))]
     backend: PathBuf,
     vault: String,
     digest: String,
@@ -123,23 +133,28 @@ fn execute(
                         .checked_add(1)
                         .ok_or_else(|| anyhow::anyhow!("call count overflow"))?,
                 );
-                let files = tempfile::tempdir()?;
-                let msg = files.path().join("message");
-                let sig = files.path().join("signature");
-                fs::write(&msg, message)?;
-                let output = Command::new(&input.backend)
-                    .arg("sign")
-                    .arg((if input.successor { "77" } else { "44" }).repeat(32))
-                    .arg((if input.successor { "88" } else { "55" }).repeat(16))
-                    .arg("20")
-                    .arg(&input.tree)
-                    .arg(leaf.to_string())
-                    .arg(msg)
-                    .arg("66".repeat(32))
-                    .arg(&sig)
-                    .output()?;
-                anyhow::ensure!(output.status.success(), "public test signer failed");
-                let mut bytes = fs::read(sig)?;
+                #[cfg(feature = "native-wallet-signer")]
+                let mut bytes = native_fixture::sign(&input, leaf, message, &public_key)?;
+                #[cfg(not(feature = "native-wallet-signer"))]
+                let mut bytes = {
+                    let files = tempfile::tempdir()?;
+                    let msg = files.path().join("message");
+                    let sig = files.path().join("signature");
+                    fs::write(&msg, message)?;
+                    let output = Command::new(&input.backend)
+                        .arg("sign")
+                        .arg((if input.successor { "77" } else { "44" }).repeat(32))
+                        .arg((if input.successor { "88" } else { "55" }).repeat(16))
+                        .arg("20")
+                        .arg(&input.tree)
+                        .arg(leaf.to_string())
+                        .arg(msg)
+                        .arg("66".repeat(32))
+                        .arg(&sig)
+                        .output()?;
+                    anyhow::ensure!(output.status.success(), "public test signer failed");
+                    fs::read(sig)?
+                };
                 if input.mode == "corrupt" {
                     let last =
                         bytes.last_mut().ok_or_else(|| anyhow::anyhow!("empty signature"))?;
@@ -170,7 +185,7 @@ fn execute(
             verify(input.leaf, &digest, &signature, &public_key)?,
             "cached signature failed real verification"
         );
-        serde_json::json!({"signature": hex::encode(signature), "backend_calls": calls.get(), "verified": true})
+        serde_json::json!({"signature": hex::encode(signature), "backend_calls": calls.get(), "verified": true, "backend_kind": backend_kind()})
     };
     Ok(report)
 }

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -13,10 +14,13 @@ SOURCE = ROOT / "tosctl/src/node-control/contracts/examples/lms_fee_cache_fixtur
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--native-fee-signer", action="store_true")
     parser.add_argument("--baseline", type=Path, required=True, help="SDK cache fixture directory")
     parser.add_argument("--driver", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.native_fee_signer:
+        os.environ["TOS_TEST_REQUIRE_NATIVE_FEE"] = "1"
     args.output.mkdir(parents=True, exist_ok=True)
     fixture = json.loads((args.baseline / "sign-input.json").read_text())
     source = SOURCE.read_text()
@@ -35,6 +39,7 @@ def main():
                 "contracts",
                 "--example",
                 "lms_fee_cache_fixture",
+                *(["--features", "native-wallet-signer"] if args.native_fee_signer else []),
             ],
             capture_output=True,
             text=True,
@@ -74,6 +79,7 @@ def main():
     (args.output / "results.json").write_text(
         json.dumps(
             {
+                "native_fee_signer_required": args.native_fee_signer,
                 "deleted_verifier_accepts_wrong_key": True,
                 "fixture_detected_semantic_failure": True,
                 "restored_real_signature_and_negative_controls_pass": True,

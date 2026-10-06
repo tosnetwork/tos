@@ -2861,3 +2861,28 @@ matrix, including repeated complete H20 rebuilds. The earlier ARM run at
 `82d74c610c78ed13904c2ac2d9ff83f6f630889c` took about 71 minutes before these added
 controls. Increasing the job deadline does not waive individual assertions or
 semantic-control subprocess deadlines; final-head CI is still required.
+
+### Native fee signing in the funded transaction fixture
+
+The test-only `lms_fee_cache_fixture` example now selects the in-process native
+LMS primitive with `native-wallet-signer`. It reads authentication paths from
+independently generated public H20 trees and calls the primitive only inside
+`FeeJournal::sign_once`'s post-reservation callback. The no-feature example keeps
+the external public test signer. Neither mode is an application custody API.
+
+`sdk_auth_parity.py --require-native-fee-signer` makes external fee signing
+unavailable and requires the native backend report for the single-process and
+persistent-session fixtures. The local run completed 67 transactions with no
+C++/Rust executor differences, including 22 continuous funded recovery
+transactions, six journal-backed recovery signatures and recipient delivery.
+Primary/rescue signing uses the existing native signer fixture. Cached retries
+return identical bytes without another signing call; corrupt backend output
+burns the leaf and creates no signature cache. Removing the independent Rust VM
+cache verification admits the wrong public key and triggers the intended
+negative assertion; restoring it passes all cache checks.
+
+These are public test keys, controlled chain-time inputs and diagnostic gas
+credit 20,000. They do not demonstrate encrypted-Vault-to-live-chain integration,
+current proof acquisition, device takeover/revocation, default-credit admission,
+or production readiness. Evidence: `test/wallet-v5r2/native-fee-integration-20261006.json`.
+The full SDK transaction CI and cache deletion control require this native mode.

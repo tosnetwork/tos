@@ -11,9 +11,8 @@ extern "C" {
 
 // All output nodes are public. Index zero is unused, index one is the root.
 // This fixed-profile operation derives public chains only; it never signs.
-extern "C" int tos_wallet_lms_fee_generate_tree(
-    const unsigned char* seed, std::size_t seed_size,
-    unsigned char* output, std::size_t output_size) noexcept {
+extern "C" int tos_wallet_lms_fee_generate_tree(const unsigned char* seed, std::size_t seed_size, unsigned char* output,
+                                                std::size_t output_size) noexcept {
   constexpr std::uint32_t leaves = 1u << 20;
   constexpr std::size_t bytes = std::size_t{leaves} * 2 * 32;
   if (!seed || seed_size != 48 || !output || output_size != bytes) {
