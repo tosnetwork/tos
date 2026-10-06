@@ -1,0 +1,54 @@
+{
+  "scope": "Full native C API; warm-cache public fixtures; not worst-case or release clearance",
+  "base_commit": "b58db0eb4fd53b7014bc4dd9448e81e390081898",
+  "gas_credit": 20000,
+  "build_type": "Release (build/CMakeCache.txt)",
+  "transactions": 65,
+  "verified_executions": 2145,
+  "measured_repetitions": 30,
+  "warmups": 3,
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "maximum_scenario_median_ns": 2081062.5,
+  "artifact": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-transaction-timing/measurements.json",
+    "sha256": "e48df3fc057f9ce4cf80905a1a3005e117f0a4802d7cf1b3510657ed048ade14",
+    "bytes": 51901
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/benchmark_transactions.py",
+      "sha256": "d20b0ddf3705506391a45bc0bf7729663ad54ce5d9d2d7124662e8032c758bd5",
+      "bytes": 5941
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_benchmark_transactions.py",
+      "sha256": "0b0bcf94ea3c5e0628014fa4e548068267e7fb864fa2f1f3149ffd400e820ce1",
+      "bytes": 1570
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_tx_parity.py",
+      "sha256": "1924d0d40a09a071874d0b6706751102e769753404452c9f5af99287566ec0b9",
+      "bytes": 6443
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/auth-extensions/native.py",
+      "sha256": "a6d49fd2d17aa7c191881e65b08c95e6205dcf8423c9315147782d686c185809",
+      "bytes": 7854
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/auth-extensions/cells.py",
+      "sha256": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281",
+      "bytes": 7222
+    }
+  ],
+  "controls": "3 passed; altered rejection refused, deletion admits it; existing output preserved",
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh && /Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/benchmark_transactions.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-signer-integration-final/recovery --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-transaction-timing --iterations 30 --warmup 3",
+  "reproduction": "Choose a fresh output path; existing paths are deliberately refused.",
+  "retention": "Retain raw measurements and referenced public fixture inputs through 2027-01-06 or later release review.",
+  "remaining": [
+    "Default-credit admission",
+    "Adversarial worst-case coverage and pre-ACCEPT isolation",
+    "Reference hardware measurements on both architectures",
+    "Independent pricing and abuse-budget review"
+  ]
+}

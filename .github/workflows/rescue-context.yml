@@ -138,6 +138,12 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-fee-prepare
+      - name: Receipt-checked native transaction timing smoke
+        run: |
+          python test/wallet-v5r2/test_benchmark_transactions.py
+          python test/wallet-v5r2/benchmark_transactions.py \
+            --fixtures artifacts/context/r2-fee-prepare \
+            --output artifacts/context/r2-native-timing --iterations 10 --warmup 2
       - name: Receipt-bound module rent invariant
         run: |
           python test/wallet-v5r2/module_rent_control.py \

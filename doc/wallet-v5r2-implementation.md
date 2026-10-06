@@ -1286,3 +1286,26 @@ not production SDK custody integration or real-network finality. The first
 primary-POP invocation supplied a genesis option reserved for the recovery
 harness and failed setup; the corrected fresh-directory run passed. Raw runs,
 source hashes and that limitation are indexed in `native-signer-integration-20261006.json`.
+
+## Receipt-checked native transaction timing
+
+`test/wallet-v5r2/benchmark_transactions.py` replays the recorded full recovery
+transactions through the native emulator C API with signature verification enabled
+and VM tracing disabled. Each warmup and measured execution must match the recorded
+parity transcript (including rejection codes, gas, outgoing message hashes, balance,
+data hash and execution flags where available). A changed rejection receipt is
+refused; deleting that comparison demonstrably admits the changed receipt. Existing
+output directories are refused to preserve evidence.
+
+The timed interval includes native input BOC decoding, transaction execution and
+JSON/BOC result serialization, but excludes Python decoding, comparison, setup and
+warmup. This is repeated-input, warm-cache measurement at the fixture's recorded
+credit. It does not isolate pre-ACCEPT cost, characterize worst-case adversarial
+inputs, measure node ingress/finality, or establish a hardware tariff. Both CI
+architectures run a short receipt-checked timing smoke; hosted runners are not
+approved reference hardware. No gas tariff or default credit is changed.
+
+The local Release/arm64 sample covers 65 transactions with 30 measured repetitions
+and three warmups each (2,145 verified executions), at diagnostic credit 20,000.
+See `test/wallet-v5r2/native-timing-20261006.json` for source and artifact hashes.
+Default-credit admission and production hardware/pricing approval remain open.
