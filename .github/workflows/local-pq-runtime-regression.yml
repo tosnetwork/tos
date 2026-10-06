@@ -26,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Persistent deficit-policy regressions
         env:
@@ -42,7 +43,43 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: local-pq-evidence-${{ github.sha }}
+          name: local-pq-evidence-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/local-pq-evidence
           retention-days: 3
           if-no-files-found: error
+
+  generator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RAYON_NUM_THREADS: 2
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - run: scripts/install-rust-toolchain.sh
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: local-pq-generator
+          cache-bin: false
+          workspaces: tools/shielded-pool-circuit/crosscheck -> target
+      - name: Compiled production resource-reader mutations
+        run: python3 scripts/check-local-pq-resource-mutations.py
+      - name: Build and test the real generator
+        run: |
+          cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --bin local_pool_traffic
+          cargo build --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --bin local_pool_traffic
+      - name: Real deposit, private transfer and withdrawal generation without the checkout
+        run: |
+          set -o pipefail
+          timeout 900 python3 scripts/check-local-pq-generator.py --checkout "$GITHUB_WORKSPACE" --generator tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic | tee "$RUNNER_TEMP/generator-isolation.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: local-pq-generator-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/generator-isolation.log
+            tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic
+          retention-days: 3

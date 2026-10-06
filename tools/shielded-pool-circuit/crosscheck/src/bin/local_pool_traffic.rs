@@ -16,15 +16,25 @@ use shielded_pool_circuit::{
     groth16, imt, notes, scenario, tree, wire,
 };
 use shielded_pool_circuit_crosscheck::{
-    pool::{
-        be, contract_gas_ceiling, dec, development_vk_bytes, Pool, DEPLOYED_DENOMINATIONS,
-        WITHDRAWAL_FEE,
-    },
+    pool::{be, dec, Pool, DEPLOYED_DENOMINATIONS, WITHDRAWAL_FEE},
     transact::{Anchor, Recipient, Transact, SIGNATURE_CONTEXT},
     wire::byte_chain,
 };
 
+#[path = "../runtime_resources.rs"]
+mod runtime_resources;
+use runtime_resources::{DEVELOPMENT_FIXTURE, POOL_SOURCE};
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+fn contract_gas_ceiling(name: &str) -> Result<i64> {
+    runtime_resources::gas_ceiling(name).map_err(Into::into)
+}
+fn development_vk_bytes() -> Result<Vec<u8>> {
+    let fixture: Value = serde_json::from_str(DEVELOPMENT_FIXTURE)?;
+    let value = fixture["verifying_key"]["hex"].as_str().ok_or("missing development verifying key")?;
+    need(value.len() == 2 * 1248, "development verifying key length")?;
+    unhex(value)
+}
 fn need(ok: bool, message: &str) -> Result<()> {
     if ok {
         Ok(())
@@ -133,6 +143,20 @@ fn fee(name: &str) -> Result<u64> {
 }
 fn plan(req: Value, keys: &mut Option<groth16::DevelopmentKeys>) -> Result<Value> {
     let op = req["operation"].as_str().ok_or("no operation")?;
+    if op == "resources" {
+        // Public build inputs only, never notes or private signing material.
+        // The installer compares these exact bytes before publishing a snapshot.
+        let verifying_key = development_vk_bytes()?;
+        return Ok(json!({
+            "schema": "tos.local-pq-runtime-resources.v1",
+            "withdrawal_fee": WITHDRAWAL_FEE,
+            "pool_source": POOL_SOURCE,
+            "development_fixture": DEVELOPMENT_FIXTURE,
+            "verifying_key_hex": hex(&verifying_key),
+            "deposit_gas_ceiling": contract_gas_ceiling("deposit_gas_ceiling")?,
+            "transact_gas_ceiling": contract_gas_ceiling("transact_gas_ceiling")?
+        }));
+    }
     let mut s = req["state"].clone();
     if op == "init" {
         s = json!({"leaves":[],"nullifiers":[],"notes":[],"liability":0});
