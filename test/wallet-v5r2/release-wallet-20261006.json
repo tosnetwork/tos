@@ -1,0 +1,165 @@
+{
+  "base_commit": "9e230933aba8444fcae9a825a20dcb6dcc7de8c2",
+  "source_state": "Candidate harness/runner/CI/documentation changes on base commit; production wallet sources unchanged; unrelated installed-enrollment client work excluded",
+  "platform": "macOS AArch64 native Release emulator and Rust debug executor",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "test/wallet-v5r2/test_fee_delivery.py": "89c715432c04f204a44a797ae1fff97a36cf8006dc7525292882958bd4668388",
+    "test/wallet-v5r2/fee_tx_parity.py": "acc6eadaff9fdf2b230020338e52f6999523c5fc14be27b8c1b10fec1a614fa5",
+    "test/wallet-v5r2/funded_recovery.py": "f0d52e96d70c3b7c9ba8c9df55704de252e958489c98cad33711db87251e6c1a",
+    "test/wallet-v5r2/release_wallet_corpus.py": "9ef99ba8ab28b9b9a08301a83b8ac0b9a8891855ead0c78a6aedd59c3432fc54",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "86fa8187104581a5e53b6a8513a9500e4657e35445e96275b1918f21c0cd9246",
+    ".github/workflows/rescue-context.yml": "88543ec0658fe84089a3e26795397bddbc4608366dbcffb33846ce9f8aebc6d4",
+    "test/auth-extensions/native.py": "a12555c82eafb849de167f825dbc2e926eef871fc9fe75a5c57b6899265188f4",
+    "tosctl/src/executor/examples/pq-tx-parity.rs": "fe90412ba4def751809a9d98c651adb2815dce99761a981d3fb963c3e12c9e50",
+    "crypto/smartcont/wallet-v5r2-code.fc": "1ef620521a87cb642a35285d5bb64a0bda8610f0dd199ebb272ed96b90c5229f",
+    "crypto/smartcont/wallet-v5r2-module.fc": "263c0c24e14e0f65aa481633f18cc2bac61ce160038b151b81a8f032b3dbe802",
+    "crypto/smartcont/wallet-v5r2-fee-vault.fc": "cd0f70e45d2deee0a4b674fe4efa0d13d01eda185d258014b4b4e2d16948e33a",
+    "crypto/smartcont/gen-zerostate.fif": "e837c6a29ffdf605ebd723f65db1eaa29982061480982122dce4f3814d828d4e"
+  },
+  "results": {
+    "passed": true,
+    "config_sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+    "profiles": {
+      "auth": {
+        "command": [
+          "/Users/tomisetsu/tos/.venv/bin/python",
+          "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_tx_parity.py",
+          "--chain-config",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc",
+          "--output",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-wallet-corpus/auth",
+          "--driver",
+          "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/pq-tx-parity"
+        ],
+        "exit": 0,
+        "transactions": 26,
+        "maximum_successful_fee_gas": 14641
+      },
+      "pop-1": {
+        "command": [
+          "/Users/tomisetsu/tos/.venv/bin/python",
+          "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_tx_parity.py",
+          "--chain-config",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc",
+          "--output",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-wallet-corpus/pop-1",
+          "--driver",
+          "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/pq-tx-parity",
+          "--pop-role",
+          "1"
+        ],
+        "exit": 0,
+        "transactions": 24,
+        "maximum_successful_fee_gas": 15231
+      },
+      "pop-2": {
+        "command": [
+          "/Users/tomisetsu/tos/.venv/bin/python",
+          "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_tx_parity.py",
+          "--chain-config",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc",
+          "--output",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-wallet-corpus/pop-2",
+          "--driver",
+          "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/pq-tx-parity",
+          "--pop-role",
+          "2"
+        ],
+        "exit": 0,
+        "transactions": 24,
+        "maximum_successful_fee_gas": 15231
+      },
+      "recovery": {
+        "command": [
+          "/Users/tomisetsu/tos/.venv/bin/python",
+          "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_tx_parity.py",
+          "--chain-config",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc",
+          "--output",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-wallet-corpus/recovery",
+          "--driver",
+          "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/pq-tx-parity",
+          "--prepare",
+          "--recovery"
+        ],
+        "exit": 0,
+        "transactions": 64,
+        "maximum_successful_fee_gas": 15556
+      },
+      "delete-lock": {
+        "command": [
+          "/Users/tomisetsu/tos/.venv/bin/python",
+          "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_fee_delivery.py",
+          "--chain-config",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc",
+          "--output",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-wallet-corpus/delete-lock",
+          "--prepare",
+          "--recovery",
+          "--recovery-delete-transition",
+          "lock"
+        ],
+        "exit": 1,
+        "assertion": "lock state transition missing"
+      },
+      "delete-migrate": {
+        "command": [
+          "/Users/tomisetsu/tos/.venv/bin/python",
+          "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_fee_delivery.py",
+          "--chain-config",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc",
+          "--output",
+          "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-wallet-corpus/delete-migrate",
+          "--prepare",
+          "--recovery",
+          "--recovery-delete-transition",
+          "migrate"
+        ],
+        "exit": 1,
+        "assertion": "migration state transition missing"
+      }
+    },
+    "scope": "Run selected full-wallet fee and recovery flows on unchanged generated config.\n\nThe corpus proves recipient execution after recovery and source-transition\nsensitivity. It is not the complete worst-case admission or client release gate.\n"
+  },
+  "legacy_regression": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": false,
+    "expected_transactions": 64,
+    "observed_transactions": 64,
+    "differences": [],
+    "success": true
+  },
+  "recovery": {
+    "sdk_cached_signatures": 0,
+    "final_chain_time": 1789437600,
+    "transactions": 22,
+    "recipient_received": true,
+    "primary_auth_signing_used": false,
+    "primary_pop_signing_used": true,
+    "funded_pop_roles": [
+      1,
+      2
+    ],
+    "proven_wallet_migration_gate": false,
+    "migration_custody_observed": false,
+    "production_admission_passed": false
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-wallet-evidence.tar.gz",
+    "sha256": "ce63478ef1ef49a404962e22278911c6697f768ca440c0f8f56bf9412a00c059",
+    "bytes": 3645331
+  },
+  "excluded_raw_files": "Regenerable deterministic PUBLIC-TEST-ONLY LMS tree caches remain outside the archive; test keygen commands are in the retained runner",
+  "limits": [
+    "Selected 138-transaction corpus, not full worst-case input admission clearance",
+    "Initial funded account states are synthetic; successor deployments and all later action phases execute",
+    "Generated-config path does not yet use SDK cached signing, encoding, initial deployment or proven installed-enrollment CLI drivers",
+    "Only SLH spending in this corpus; PQ PRIMARY AUTH has separate tests and still needs generated-config release coverage",
+    "Rust defaults remain credit 10000; actual loaded generated basechain config is credit 20000",
+    "Remote release CI, hardware rate calibration, live network and production activation remain pending"
+  ]
+}

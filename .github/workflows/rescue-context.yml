@@ -92,6 +92,14 @@ jobs:
             --config artifacts/context/r2-generated-config/restored-config.boc \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-release-transaction-controls
+      - name: Full wallet flows on the generated candidate configuration
+        run: |
+          candidate_controls=()
+          if [ '${{ matrix.runner }}' = ubuntu-24.04 ]; then candidate_controls=(--controls); fi
+          python test/wallet-v5r2/release_wallet_corpus.py \
+            --config artifacts/context/r2-generated-config/restored-config.boc \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-release-wallet "${candidate_controls[@]}"
       - name: PQ-only native wallet signer and fault controls
         run: |
           python test/wallet-v5r2/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer

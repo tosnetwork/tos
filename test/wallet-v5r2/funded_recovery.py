@@ -62,6 +62,11 @@ def _run(
     retime_pop=None,
     primary_pop=None,
     migration_signer=None,
+    network=123,
+    global_id=42,
+    auth_fee_amount=5_000_000_000,
+    pop_fee_amount=5_000_000_000,
+    prepare_fee_amount=50_000_000_000,
 ):
     out.mkdir(parents=True, exist_ok=True)
     results = {}
@@ -127,6 +132,8 @@ def _run(
 
     def auth(root, epoch, kind, body=None, signer=sign_old):
         req = request(
+            network=network,
+            global_id=global_id,
             root=root,
             account=wallet.address,
             role=2,
@@ -138,7 +145,7 @@ def _run(
         return Cell().uint(0x53554233, 32).ref(req).ref(chain(signer(digest(req))))
 
     def old_hop(
-        name, vault_state, module_state, leaf, payload, kind=1, value=5_000_000_000, outputs=1
+        name, vault_state, module_state, leaf, payload, kind=1, value=auth_fee_amount, outputs=1
     ):
         intent = fee_intent(kind=kind, leaf=leaf, payload=payload, value=value, deadline=now + 600)
         if old_session:
@@ -174,7 +181,7 @@ def _run(
         13 if cache_driver else 9,
         prepare,
         kind=3,
-        value=50_000_000_000,
+        value=prepare_fee_amount,
         outputs=2,
     )
     deployed = []
@@ -207,7 +214,7 @@ def _run(
             config_hash=new.header,
             leaf=16,
             deadline=now + 600,
-            value=5_000_000_000,
+            value=pop_fee_amount,
             payload=retime_pop(now),
         )
         signature = new_session.signature(intent, now, 16)
@@ -258,7 +265,7 @@ def _run(
         config_hash=new.header,
         leaf=primary_leaf,
         deadline=now + 600,
-        value=5_000_000_000,
+        value=pop_fee_amount,
         payload=primary_pop(now),
     )
     primary_external = new_external(primary_intent, primary_leaf)
@@ -302,7 +309,7 @@ def _run(
         config_hash=new.header,
         leaf=18 if cache_driver else 10,
         deadline=now + 600,
-        value=5_000_000_000,
+        value=auth_fee_amount,
         payload=payload,
     )
     external = new_external(intent, 18 if cache_driver else 10)

@@ -168,3 +168,33 @@ This closes a configuration-plumbing and version-18 instruction-execution gap.
 The probe is not the V5R2 wallet: full wallet AUTH/POP/preparation/recovery,
 post-rotation recipient payment and the complete worst-case external admission
 corpus must still run using the generated configuration and aligned identities.
+
+
+## Selected full-wallet corpus on generated configuration
+
+The [full-wallet corpus evidence](release-wallet-20261006.json) loads the same
+canonical version-18 ConfigParams BOC unchanged in both transaction executors.
+Module identity, vault identity and signature domains use its ConfigParam 19
+global ID and ConfigParam 48 AUTH namespace. Transaction time is after the
+canonical genesis. Funding amounts are calculated from the generated compute,
+forwarding and storage tariffs; no gas credit or protocol tariff is changed.
+
+The corpus covers 26 AUTH fee-delivery transactions, 24 primary POP transactions,
+24 SLH POP transactions and 64 recovery transactions. The recovery flow locks
+PRIMARY, deploys a fresh module and fee vault, proves both successor keys,
+installs the new tuple at the existing wallet address, rejects the old route and
+pays the recipient through the new route. Recipient data and balance changes are
+checked. PRIMARY signs POP only during recovery; all spending uses SLH and LMS
+pays the fee route. No classical signature is required.
+
+Deleting the lock retirement update or migration module update must fail at the
+specific wallet state-transition assertion. These mutations occur only in
+private contract copies. The durable runner is
+`test/wallet-v5r2/release_wallet_corpus.py`; `--controls` includes both deletions.
+
+Initial funded account states are synthetic; successor deployments and all
+following action phases execute as real emulator transactions. This is a
+selected local corpus, not full worst-case admission clearance, actual-network
+acceptance or installed-enrollment CLI custody acceptance. The generated-config
+path does not yet exercise SDK cache/encoding/proof-provider drivers. Those and
+aligned initial deployment remain open gates.

@@ -1,12 +1,14 @@
 """Real LMS fee delivery for wallet AUTH, per-key POP or bounded successor preparation; candidate limits."""
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -18,19 +20,47 @@ import fee_failure_controls  # noqa: E402
 import native  # noqa: E402
 from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 from test_auth_policy import policy as global_policy  # noqa: E402
-from test_fee_identity import vault_data  # noqa: E402
+from test_fee_identity import vault_data as fixture_vault_data  # noqa: E402
 from test_identity import chain  # noqa: E402
-from test_pop import challenge as pop_challenge  # noqa: E402
+from test_pop import challenge as fixture_pop_challenge  # noqa: E402
 from test_pop import signed as pop_signed  # noqa: E402
-from test_preparation import request as preparation_request  # noqa: E402
+from test_preparation import request as fixture_preparation_request  # noqa: E402
 from test_preparation import signed as preparation_signed  # noqa: E402
-from test_receiver_auth import request  # noqa: E402
+from test_receiver_auth import request as fixture_request  # noqa: E402
 from test_rescue_e2e import Signers, digest  # noqa: E402
 from test_state import fee, state  # noqa: E402
 
 
+def generated_tariffs(parameters, now):
+    prices = parameters[21].refs[0].slice()
+    assert prices.uint(8) == 0xD1
+    flat_limit, flat_price = prices.uint(64), prices.uint(64)
+    assert prices.uint(8) == 0xDE
+    gas_price = prices.uint(64)
+
+    def compute(gas):
+        return flat_price + (max(gas - flat_limit, 0) * gas_price + 65535) // 65536
+
+    forward = parameters[25].refs[0].slice()
+    assert forward.uint(8) == 0xEA
+    lump, bit_price, cell_price = (forward.uint(64) for _ in range(3))
+    forwarding = lump + (1024 * 1023 * bit_price + 1024 * cell_price + 65535) // 65536
+    storage_prices = read_dict(parameters[18].refs[0], 32)
+    active = storage_prices[max(t for t in storage_prices if t <= now)].slice()
+    assert active.uint(8) == 0xCC
+    active.uint(32)
+    storage_bit, storage_cell = active.uint(64), active.uint(64)
+    storage = (33554432 * (128 * 1023 * storage_bit + 128 * storage_cell) + 65535) // 65536
+    reserve = compute(65536) + 2 * forwarding + storage
+    vault_floor = 2 * (compute(2000000) + 2 * forwarding + reserve)
+    return compute, forwarding, reserve, vault_floor
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--chain-config", type=Path, help="Use unchanged generated version-18 ConfigParams"
+    )
     p.add_argument("--genesis-driver", type=Path)
     p.add_argument("--fee-driver", type=Path)
     p.add_argument("--preparation-driver", type=Path)
@@ -73,6 +103,47 @@ def main():
         help="Test-only Rust gate over recorded native receipts",
     )
     options = p.parse_args()
+    chain_config = None
+    chain_bytes = None
+    network, global_id = 123, 42
+    now = native.NOW
+    if options.chain_config:
+        assert not options.credit_probe and options.fault is None
+        assert not any(
+            (
+                options.genesis_driver,
+                options.fee_driver,
+                options.preparation_driver,
+                options.cache_driver,
+            )
+        )
+        chain_bytes = options.chain_config.read_bytes()
+        configuration = from_boc(chain_bytes)
+        assert len(configuration.bits) == 256 and len(configuration.refs) == 1
+        chain_config = configuration.refs[0]
+        parameters = read_dict(chain_config, 32)
+        version = parameters[8].refs[0].slice()
+        assert version.uint(8) == 0xC4 and version.uint(32) == 18
+        identity = parameters[48].refs[0].slice()
+        assert identity.uint(8) == 0xA1
+        network = identity.uint(256)
+        global_id = parameters[19].refs[0].slice().sint(32)
+        now = 1_789_437_600  # One hour after canonical genesis.
+    auth_fee_amount = pop_fee_amount = 5_000_000_000
+    if chain_config is not None:
+        generated_compute, generated_forward, generated_reserve, generated_vault_floor = (
+            generated_tariffs(parameters, now)
+        )
+        auth_fee_amount = 2 * (generated_compute(2000000) + 2 * generated_forward)
+        pop_fee_amount = 2 * (generated_compute(1000000) + 2 * generated_forward)
+    request = partial(fixture_request, network=network, global_id=global_id, deadline=now + 600)
+    pop_challenge = partial(
+        fixture_pop_challenge, network=network, global_id=global_id, deadline=now + 600
+    )
+    preparation_request = partial(
+        fixture_preparation_request, network=network, global_id=global_id, deadline=now + 600
+    )
+    vault_data = partial(fixture_vault_data, network=network, global_id=global_id)
     assert not options.gas_trace or options.credit_probe, "--gas-trace requires --credit-probe"
     assert not options.recovery_delete_transition or options.recovery
     assert not options.recovery or options.prepare
@@ -101,7 +172,7 @@ def main():
             [os.environ["LMS_TOOL"], "keygen", *args], check=True, capture_output=True, text=True
         ).stdout.strip()
     )
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, patch.object(native, "NOW", now):
         work = Path(tmp)
         for src in (ROOT / "crypto/smartcont").glob("wallet-v5r2-*.fc"):
             shutil.copyfile(src, work / src.name)
@@ -156,15 +227,15 @@ def main():
         (work / "wallet.fc").write_text(
             '#include "wallet-v5r2-code.fc";\n'
             + const
-            + f"int r2wallet_network() inline {{ return 123; }}\nint r2wallet_module_hash() inline {{ return 0x{module.hash.hex()}; }}\ncell r2wallet_vault_code() inline {{ return compiled_vault(); }}\n"
+            + f"int r2wallet_network() inline {{ return {network}; }}\nint r2wallet_module_hash() inline {{ return 0x{module.hash.hex()}; }}\ncell r2wallet_vault_code() inline {{ return compiled_vault(); }}\n"
         )
         wallet = native.compile_contract(str(work / "wallet.fc"), out / "wallet.boc")
         signer = Signers(work)
         md = (
             Cell()
             .uint(1, 8)
-            .sint(42, 32)
-            .uint(123, 256)
+            .sint(global_id, 32)
+            .uint(network, 256)
             .uint(1, 8)
             .ref(chain(signer.ml_pk.read_bytes()))
             .raw(signer.slh_pk)
@@ -172,7 +243,7 @@ def main():
         )
         mi = native.state_init(module, md)
         root = int.from_bytes(mi.hash, "big")
-        metadata = fee(key=chain(pub), epoch0=native.NOW - 2 * 3600 - 10)
+        metadata = fee(key=chain(pub), epoch0=now - 2 * 3600 - 10)
         wd = state(mi, metadata=metadata, mode=2, seqno=0, epoch=1, primary=0, rescue=0, retired=0)
         wa = (0, int.from_bytes(native.state_init(wallet, wd).hash, "big"))
         vd = vault_data(metadata=metadata, wallet=wa[1], module=root)
@@ -246,7 +317,7 @@ def main():
             )
             assert successor_key != pub, "successor must use a distinct LMS key"
             successor_metadata = fee(
-                key=chain(successor_key), tree_id=457, epoch0=native.NOW - 2 * 3600 - 10
+                key=chain(successor_key), tree_id=457, epoch0=now - 2 * 3600 - 10
             )
             successor_pk = work / "successor-ml.pk"
             successor_sk = work / "successor-ml.sk"
@@ -274,8 +345,8 @@ def main():
             successor_data = (
                 Cell()
                 .uint(1, 8)
-                .sint(42, 32)
-                .uint(123, 256)
+                .sint(global_id, 32)
+                .uint(network, 256)
                 .uint(1, 8)
                 .ref(chain(successor_pk.read_bytes()))
                 .raw(new_slh_pk)
@@ -325,6 +396,9 @@ def main():
                     )
                 )
             module_amount, vault_amount = 10**10, 2 * 10**10
+            if chain_config is not None:
+                module_amount = 2 * generated_reserve
+                vault_amount = 2 * generated_vault_floor
             plan = (
                 Cell()
                 .coins(module_amount)
@@ -339,7 +413,7 @@ def main():
                 from sdk_prepare_fixture import encode as encode_preparation
 
                 submit = encode_preparation(
-                    options.preparation_driver, out / "sdk-prepare-initial.json", submit, native.NOW
+                    options.preparation_driver, out / "sdk-prepare-initial.json", submit, now
                 )
 
         elif options.pop_role:
@@ -356,6 +430,17 @@ def main():
         else:
             submit = Cell().uint(0x53554233, 32).ref(req).ref(chain(signer.slh(digest(req))))
         amount = 50_000_000_000 if options.prepare else 5_000_000_000
+        if chain_config is not None:
+            if options.prepare:
+                generated_overhead = generated_compute(1000000) + 2 * generated_forward
+                generated_floor = module_amount + vault_amount + generated_overhead
+                generated_ceiling = (
+                    4 * (generated_reserve + generated_vault_floor) + generated_overhead
+                )
+                amount = (generated_floor + generated_ceiling) // 2
+            else:
+                amount = pop_fee_amount if options.pop_role else auth_fee_amount
+
         header = vd.slice().uint(8 + 32 + 256) & ((1 << 256) - 1)
 
         def make_intent(
@@ -364,7 +449,7 @@ def main():
             target=va,
             config_hash=header,
             leaf=8,
-            deadline=native.NOW + 600,
+            deadline=now + 600,
             value=amount,
             payload=submit,
         ):
@@ -401,10 +486,8 @@ def main():
             assert options.cache_driver, "SDK fee integration requires journal-backed signing"
             from sdk_fee_fixture import FeeEncoder
 
-            fee_encoder = FeeEncoder(
-                options.fee_driver, out / "sdk-fee", native.NOW - 2 * 3600 - 10
-            )
-            intent = fee_encoder.encode(intent, native.NOW)
+            fee_encoder = FeeEncoder(options.fee_driver, out / "sdk-fee", now - 2 * 3600 - 10)
+            intent = fee_encoder.encode(intent, now)
         if options.cache_driver:
             from cached_fee_fixture import signature as cached_fee_signature
 
@@ -415,20 +498,23 @@ def main():
                 key=pub,
                 vault=va[1],
                 digest=intent.hash,
-                now=native.NOW,
-                epoch0=native.NOW - 2 * 3600 - 10,
+                now=now,
+                epoch0=now - 2 * 3600 - 10,
             )
             sig.write_bytes(cached_signature)
             body = (
-                fee_encoder.encode(intent, native.NOW, cached_signature)
+                fee_encoder.encode(intent, now, cached_signature)
                 if fee_encoder
                 else Cell().ref(intent).ref(chain(cached_signature))
             )
             ext = native.external(va, body)
         else:
             ext = sign_fee(intent)
-        entries = read_dict(native.config(17), 32)
-        entries[48] = Cell().ref(global_policy())
+        if chain_config is None:
+            entries = read_dict(native.config(17), 32)
+            entries[48] = Cell().ref(global_policy())
+        else:
+            entries = read_dict(chain_config, 32)
         cap = {
             "low-gas-cap": 12000,
             "low-gas-cap-unguarded": 12000,
@@ -471,7 +557,7 @@ def main():
                 return flat_price + (max(gas - flat_limit, 0) * gas_price + 65535) // 65536
 
             prices = read_dict(entries[18].refs[0], 32)
-            active = prices[max(t for t in prices if t <= native.NOW)].slice()
+            active = prices[max(t for t in prices if t <= now)].slice()
             assert active.uint(8) == 0xCC
             active.uint(32)
             storage_bit, storage_cell = active.uint(64), active.uint(64)
@@ -542,8 +628,18 @@ def main():
             )
             (out / "credit-probe.json").write_text(json.dumps(credit_probe, indent=2) + "\n")
             print(json.dumps(credit_probe), flush=True)
-        with patch.object(native, "config", return_value=make_dict(entries, 32)):
-            e = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
+        if chain_config is None:
+            with patch.object(native, "config", return_value=make_dict(entries, 32)):
+                e = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
+        else:
+            original_parameters = read_dict(chain_config, 32)
+            assert {k: v.hash for k, v in entries.items()} == {
+                k: v.hash for k, v in original_parameters.items()
+            }
+            with patch.object(
+                native, "config", side_effect=AssertionError("synthesized configuration forbidden")
+            ):
+                e = native.Emulator.from_config(chain_config, vm_log_verbosity=1)
         try:
             genesis_accounts = None
             if genesis_cells:
@@ -594,8 +690,8 @@ def main():
                 ("class_four", {"kind": 4}, 2012),
                 ("wrong_vault", {"target": (0, va[1] ^ 1)}, 2002),
                 ("wrong_config", {"config_hash": header ^ 1}, 2013),
-                ("expired", {"deadline": native.NOW}, 2003),
-                ("ttl_overflow", {"deadline": native.NOW + 3601}, 2003),
+                ("expired", {"deadline": now}, 2003),
+                ("ttl_overflow", {"deadline": now + 3601}, 2003),
                 ("future_slot", {"leaf": 12}, 2009),
                 ("old_slot", {"leaf": 3}, 2009),
                 ("below_floor", {"value": fee_floor - 1}, 2010),
@@ -692,8 +788,8 @@ def main():
             for name, changes in [
                 ("minimum_amount", {"value": fee_floor}),
                 ("maximum_amount", {"value": fee_ceiling}),
-                ("minimum_ttl", {"deadline": native.NOW + 1}),
-                ("maximum_ttl", {"deadline": native.NOW + 3600}),
+                ("minimum_ttl", {"deadline": now + 1}),
+                ("maximum_ttl", {"deadline": now + 3600}),
             ]:
                 accepted = e.send(initial, sign_fee(make_intent(**changes)))
                 (out / f"boundary-{name}.json").write_text(json.dumps(accepted, indent=2) + "\n")
@@ -798,8 +894,8 @@ def main():
                     .addr(next_address)
                     .uint(next_header, 256)
                     .uint(8, 32)
-                    .uint(native.NOW + 600, 32)
-                    .coins(5_000_000_000)
+                    .uint(now + 600, 32)
+                    .coins(pop_fee_amount)
                     .ref(next_body)
                 )
                 next_msg, next_sig = work / "next-fee-message", work / "next-fee-signature"
@@ -902,6 +998,11 @@ def main():
                     recovery = run_recovery(
                         e,
                         out / "recovery",
+                        network=network,
+                        global_id=global_id,
+                        auth_fee_amount=auth_fee_amount,
+                        pop_fee_amount=pop_fee_amount,
+                        prepare_fee_amount=amount,
                         old=SimpleNamespace(
                             key=pub,
                             tree=tree,
@@ -1079,6 +1180,12 @@ def main():
 
             report = {
                 "scope": __doc__,
+                "chain_config_sha256": hashlib.sha256(chain_bytes).hexdigest()
+                if chain_bytes
+                else None,
+                "chain_version": 18 if chain_config is not None else 17,
+                "network": f"{network:064x}",
+                "global_id": global_id,
                 "pop_role": options.pop_role,
                 "prepare": options.prepare,
                 "preparation_deployments": preparation_deployments,
