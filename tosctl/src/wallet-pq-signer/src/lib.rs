@@ -1,7 +1,9 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
 //! Owned in-process wallet signer, with fixed PQ roles and contexts.
-//! No persistence, seed export, chain proof validation or action approval is
-//! provided here. Obtain the expected public key from authenticated enrollment.
+//! The core handle neither persists nor exports seeds. The optional `vault`
+//! module creates and loads versioned encrypted-backend records. Chain proof
+//! validation and action approval remain the caller's responsibility; obtain
+//! expected public keys from authenticated enrollment.
 #[cfg(feature = "vault")]
 pub mod vault;
 

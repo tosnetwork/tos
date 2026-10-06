@@ -1,0 +1,108 @@
+{
+  "base_commit": "8e9cd91dd3313df5f7561f6dbe4d2f7e62e9a23d",
+  "scope": "Vault-backed PRIMARY and ordinary RESCUE signing through proven-state gates before and after loading; synthetic proof metadata, actual encrypted storage and native signatures.",
+  "tests": {
+    "integration_test_passed": 1,
+    "state_tests_passed": 16,
+    "semantic_controls": {
+      "primary_preflight": {
+        "exit": 101,
+        "semantic_witness": "opened custody before policy validation"
+      },
+      "rescue_preflight": {
+        "exit": 101,
+        "semantic_witness": "opened custody before rescue validation"
+      },
+      "clock_regression": {
+        "exit": 101,
+        "semantic_witness": "accepted regressed clock after custody load"
+      },
+      "primary_recheck": {
+        "exit": 101,
+        "semantic_witness": "accepted stale proof after custody load"
+      },
+      "rescue_recheck": {
+        "exit": 101,
+        "semantic_witness": "accepted rescue stale proof after custody load"
+      },
+      "migration_preflight": {
+        "exit": 101,
+        "semantic_witness": "opened custody for ungated migration"
+      }
+    },
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-vault --lib fee_state_tests",
+    "python3 test/wallet-v5r2/proven_vault_controls.py --output <fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_vault.rs",
+      "bytes": 2695,
+      "sha256": "c680193b1544a710047c8384b2ce149a6b134d446cdf6215609cbb34321c5b42"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "bytes": 136227,
+      "sha256": "4ddf69119cf52f815bca3b7405a739b24bdbf85a14b421af37045fc999855957"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2.rs",
+      "bytes": 15283,
+      "sha256": "062cdc5a6179a9394ba0bb09d58e03fae359a6b5a5f5f8f5379ba246ee8df47a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lib.rs",
+      "bytes": 5506,
+      "sha256": "2bacfcdcd7460c484439bc7173bedcc9c99e019a938ff08ae260047113b8f81a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/Cargo.toml",
+      "bytes": 1666,
+      "sha256": "c0066b7e6be949bfa726025ae6717125eec96474eb0cd0494c8bb565ecaf38e4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/lib.rs",
+      "bytes": 10067,
+      "sha256": "fa02924921ffa9eba1e712e9e7c6a9c7f0ebc3ad73f67f3f6d73ece59d3bce12"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.lock",
+      "bytes": 148707,
+      "sha256": "30504a7ffe9b74e16079fae537ef9de8fb063044a33b4607a2c3ce285277b515"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/proven_vault_controls.py",
+      "bytes": 3338,
+      "sha256": "249b60c92c3294c43e383aa0f4f738e34cee8ef0ea4c17adab2c7bf9dd3051b3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 17083,
+      "sha256": "9b77700f592570e171dc5a595563db0507d49e51d219157a6b556d6f1cd8d85e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 131271,
+      "sha256": "561740d4d5a87c89ce962f64da8bb9cb6fe6e6c7128451ea544040ad8b076185"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-proven-vault-controls/MANIFEST.json",
+      "bytes": 2500,
+      "sha256": "f7a31c5c5b2505b23380f2fb11ec211e6387b4ba2894179f8d03e2ece76d81e1"
+    }
+  ],
+  "limitations": [
+    "Synthetic proof fixtures are not live verified network observations; signed envelopes are not transaction/delivery evidence.",
+    "Clock and action approval supplied by trusted caller; no nonce reservation, network submission or finality.",
+    "Separate files in a local test do not establish separate-device custody.",
+    "POP, preparation and funded migration Vault convenience APIs and full CLI remain unfinished.",
+    "Final-head Linux CI pending; default 10000 gas-credit admission remains failed."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}

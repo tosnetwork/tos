@@ -1111,6 +1111,145 @@ mod fee_state_tests {
         assert!(wallet.account.set_data(w.into_cell().unwrap()));
         refresh_proof_data(wallet);
     }
+    #[cfg(feature = "native-wallet-vault")]
+    #[tokio::test]
+    async fn vault_wallet_signing_rechecks_proofs_after_loading() {
+        use crate::wallet_v5r2::AuthAction;
+        use crate::wallet_v5r2_policy::tests::policy;
+        use crate::wallet_v5r2_vault::VaultKey;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use secrets_vault::{
+            crypto::{
+                factory::AutoCryptoFactory, key_material::KeyMaterial, master_key::MasterKey,
+            },
+            events::null_handler::NullEventHandler,
+            memory::protected_memory::ProtectedMemory,
+            storage::file_json::FileJsonStorage,
+            types::secret_id::SecretId,
+            vault::SecretVault,
+        };
+        use std::{path::Path, sync::Arc};
+        use wallet_pq_signer::{Role, vault::create_new};
+        async fn vault(path: &Path) -> SecretVault {
+            let key = ProtectedMemory::from_slice(&[0x77; 32]).await.unwrap();
+            let master =
+                MasterKey::from_key_material(KeyMaterial::new_symmetric_key(key).await.unwrap())
+                    .await
+                    .unwrap();
+            let storage = FileJsonStorage::new(master, path, Box::new(AutoCryptoFactory {}), false)
+                .await
+                .unwrap();
+            SecretVault::new(Arc::new(storage), Arc::new(NullEventHandler {}))
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let primary_vault = vault(&dir.path().join("primary.json")).await;
+        let rescue_vault = vault(&dir.path().join("rescue.json")).await;
+        let id = SecretId::new("wallet.key");
+        let primary = create_new(&primary_vault, &id, Role::Primary).await.unwrap();
+        let rescue = create_new(&rescue_vault, &id, Role::Rescue).await.unwrap();
+        let (g, proof) = fixture_with_keys(
+            RescuePolicy::Ready,
+            primary.public_key().try_into().unwrap(),
+            rescue.public_key().try_into().unwrap(),
+        );
+        drop(primary);
+        drop(rescue);
+        let mut wallet = account_proof(proof, g.wallet_init());
+        let (_, proof) = fixture();
+        let module = account_proof(proof, g.module_init());
+        let view = ProvenWalletState::bind_initial(&wallet, &module, &g, 4620, 30).unwrap();
+        let pkey = VaultKey { vault: &primary_vault, id: &id };
+        let rkey = VaultKey { vault: &rescue_vault, id: &id };
+        let missing = SecretId::new("missing.record");
+        let missing_key = VaultKey { vault: &primary_vault, id: &missing };
+        let expected_error =
+            view.primary_request(&wallet, 4620, 4700, Cell::default()).err().unwrap().to_string();
+        let error = missing_key
+            .sign_primary(&view, &wallet, || Ok(4620), 4700, Cell::default())
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!(error, expected_error, "opened custody before policy validation");
+        let expected_error =
+            view.rescue_request(4631, 4700, AuthAction::LockPrimary).err().unwrap().to_string();
+        let error = missing_key
+            .sign_rescue(&view, || Ok(4631), 4700, AuthAction::LockPrimary)
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!(error, expected_error, "opened custody before rescue validation");
+        wallet.config_params.insert(48, policy([1; 32], 0, &[], true));
+        let signed =
+            pkey.sign_primary(&view, &wallet, || Ok(4620), 4700, Cell::default()).await.unwrap();
+        assert_eq!(
+            signed.reference(0).unwrap().repr_hash(),
+            view.primary_request(&wallet, 4620, 4700, Cell::default()).unwrap().cell().repr_hash()
+        );
+        let signed =
+            rkey.sign_rescue(&view, || Ok(4620), 4700, AuthAction::LockPrimary).await.unwrap();
+        assert_eq!(
+            signed.reference(0).unwrap().repr_hash(),
+            view.rescue_request(4620, 4700, AuthAction::LockPrimary).unwrap().cell().repr_hash()
+        );
+        assert!(pkey.sign_rescue(&view, || Ok(4620), 4700, AuthAction::LockPrimary).await.is_err());
+        for (after, deadline, label) in [
+            (4619, 4700, "regressed clock"),
+            (4631, 4700, "stale proof"),
+            (4621, 4621, "expired request"),
+        ] {
+            let mut calls = 0;
+            let result = pkey
+                .sign_primary(
+                    &view,
+                    &wallet,
+                    || {
+                        calls += 1;
+                        Ok(if calls == 1 { 4620 } else { after })
+                    },
+                    deadline,
+                    Cell::default(),
+                )
+                .await;
+            assert!(result.is_err(), "accepted {label} after custody load");
+            assert_eq!(calls, 2);
+            let mut calls = 0;
+            let result = rkey
+                .sign_rescue(
+                    &view,
+                    || {
+                        calls += 1;
+                        Ok(if calls == 1 { 4620 } else { after })
+                    },
+                    deadline,
+                    AuthAction::LockPrimary,
+                )
+                .await;
+            assert!(result.is_err(), "accepted rescue {label} after custody load");
+            assert_eq!(calls, 2);
+        }
+        let error = missing_key
+            .sign_rescue(
+                &view,
+                || Ok(4620),
+                4700,
+                AuthAction::Migrate {
+                    module_init: g.module_init().clone(),
+                    metadata: g.metadata().clone(),
+                    vault_init: g.vault_init().clone(),
+                },
+            )
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            error, "migration signing requires both funded POPs",
+            "opened custody for ungated migration"
+        );
+    }
+
     #[cfg(feature = "native-wallet-signer")]
     #[test]
     fn native_wallet_signing_binds_proven_keys_and_policy() {

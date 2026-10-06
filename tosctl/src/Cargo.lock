@@ -871,6 +871,7 @@ dependencies = [
  "fs2",
  "hex",
  "libc",
+ "secrets-vault",
  "serde",
  "serde_json",
  "sha2",

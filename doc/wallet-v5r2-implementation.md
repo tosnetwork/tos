@@ -2007,3 +2007,35 @@ restores the generated assembly even if a test fails.
 These fixes address failures observed on CI head `f6837f42a`; local evidence does
 not substitute for a fresh Linux run of the final branch head. Reproduction and
 retained outputs: `test/wallet-v5r2/native-ci-repair-20261006.json`.
+
+### Proven-state signing with a borrowed Vault session
+
+The optional contracts feature `native-wallet-vault` exposes
+`wallet_v5r2_vault::VaultKey`. Its PRIMARY and ordinary RESCUE methods first build
+the request through `ProvenWalletState`, then load the exact proven role/public
+key from the selected encrypted Vault record. After the asynchronous load, they
+sample the caller's trusted clock again, reject backward movement, and invoke the
+existing strict signing method with the new time. This reruns freshness, deadline,
+identity, counter, action and PRIMARY policy gates before producing a signature.
+No authorization decision is derived from Vault tags or a raw record ID.
+
+Ordinary rescue refuses Migrate before accessing custody and retains the existing
+signing gate's rejection as well. The funded dual-POP migration API remains the
+required migration path. Preparation, POP and migration do not yet have equivalent
+Vault convenience methods. Applications must still approve actions, use a trusted
+clock, authenticate current proof sources, reserve concurrent counters and fee
+leaves, submit exact bytes and check delivery/finality. These methods do not perform
+network I/O or prove that chain state cannot change after the observed checkpoint.
+
+The integration test creates separate encrypted PRIMARY and RESCUE files, generates
+fresh ephemeral native keys, binds them to synthetic authenticated-proof fixtures,
+and checks both signed request bodies against the expected requests. It rejects
+wrong-role custody, missing policy before secret access, stale rescue proofs before
+secret access, backward clocks, proofs/deadlines that expire across loading, and
+ungated migration before secret access. Six controls independently remove PRIMARY
+or RESCUE preflight, clock ordering, each role's post-load time check, or migration
+preflight; each fails the corresponding assertion and restoration passes.
+
+These are real Vault/native-signature operations with synthetic proof metadata,
+not live network evidence or full client release acceptance. Evidence:
+`test/wallet-v5r2/proven-vault-20261006.json`.

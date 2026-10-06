@@ -31,6 +31,7 @@ impl AuthRole {
 
 /// Canonical envelopes. Referenced actions and StateInit witnesses remain
 /// subject to full receiving-contract validation; construction is not approval.
+#[derive(Clone)]
 pub enum AuthAction {
     Execute { actions: Cell },
     Configure { fee_replacement: Option<(Cell, Cell)> },

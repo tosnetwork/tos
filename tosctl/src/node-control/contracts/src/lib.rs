@@ -57,6 +57,8 @@ pub mod wallet_v5r2_pop;
 pub mod wallet_v5r2_prepare;
 pub mod wallet_v5r2_receipts;
 pub mod wallet_v5r2_state;
+#[cfg(feature = "native-wallet-vault")]
+pub mod wallet_v5r2_vault;
 pub mod wallet_v5r2_wallet_state;
 
 pub use agent_account::{
