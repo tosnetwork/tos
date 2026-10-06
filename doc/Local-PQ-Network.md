@@ -67,25 +67,41 @@ A local `ExecStart` override, such as a health-monitoring drop-in, replaces the
 template's command line. It must carry the same three options. Verify with
 `systemctl show tos-pq-validator@1 -p ExecStart`.
 
-**Garbage collection needs key blocks and a persistent state.** The GC floor
-only advances behind the last key block, a validator-set rotation and the last
-persistent state, and only for states older than `state-ttl`. A persistent
-state is written only at the first key block after each 2^17 s (about 36.4 h)
-boundary of Unix time (`ValidatorManager::is_persistent_state`). So on a new
-network nothing is collected until it has crossed such a boundary, which takes
-up to about 36 hours. Plan for roughly that many hours of full growth, about
-7 GB/h for the seven nodes, before usage levels off.
+**Garbage collection needs key blocks.** The GC floor advances only while it
+is behind the last key block, the last validator-set rotation and the
+persistent-state serializer, and only for states older than `state-ttl`. The
+serializer walks every masterchain block and normally keeps up. It pauses only
+when a key block starts a new 2^17 s (about 36.4 h) period
+(`ValidatorManager::is_persistent_state`). Then it waits a random 0–6 h before
+writing that persistent state, and the floor cannot pass it in the meantime.
+
+On this network, with a key block every ten-minute election, the floor runs
+about `state-ttl` (one hour) behind the head. Usage levels off after the first
+few hours: about 29 GB for the seven nodes, measured on 2026-10-06. Expect a
+temporary rise of up to six hours of growth, about 7 GB/h, when a persistent
+state falls due.
 
 Elections and set changes produce the key blocks. A network whose elections
 fail keeps only its Genesis key block and never collects anything, whatever the
 TTLs are. The validator logs then show
 `VALCLEANUP pass gc_seqno=0 … reserved=0` indefinitely. If `/data` keeps
-growing past the first boundary:
+growing:
 
 - check that elections still complete;
 - check that `last_known_key_block_ago` in the node log stays below a few
   election periods;
-- check that `VALCLEANUP pass` reports a non-zero `gc_seqno`.
+- check that `VALCLEANUP pass` reports a `gc_seqno` about one hour behind the
+  head.
+
+**Short retention removes the early key blocks.** A toslib client that starts
+from the zero state proves its way forward through every key block since
+Genesis. Once those blocks are collected, every newly started client fails
+with `LITE_SERVER_NOTREADY: block handle not in db`. The local drivers
+therefore load their lite-client configs through
+`local_pq_testnet.lite_config()`, which starts the proof chain at the latest
+key block read from a local node. A client started with an unmodified
+`/data/configs/node-*-lite.json` fails in the same way. A production client
+takes a recent `init_block` from its global config instead.
 
 ## Controller funding before election rehearsal
 
@@ -105,24 +121,38 @@ each candidate controller (nodes 1, 2, 3, 4 and 7) the tool:
 1. deploys the controller's birth StateInit if the account has no code;
 2. reads `controller_state` (authority epoch and root nonce) and
    `operating_state`;
-3. if the authorization is missing, expires within a day, or has less than
-   100 TOS of funds or allowance, encodes the kind 4 payload, signs it with
-   `/usr/local/bin/tos-pq-controller fund-operations` using the development root
-   seed `/data/elections/keys/root-<i>.seed`, and sends it from the Genesis
-   wallet, which becomes the bound payer;
-4. waits for the root nonce to advance and reads `operating_state` back. It
-   refuses to continue if the values differ, and never resends blindly;
+3. renews the authorization when it is missing, expires within seven days, or
+   when its funds or allowance have fallen below 25 % of their target. Renewing
+   means:
+   - encode the kind 4 payload;
+   - sign it with `/usr/local/bin/tos-pq-controller fund-operations` using the
+     development root seed `/data/elections/keys/root-<i>.seed`;
+   - send it from the Genesis wallet, which becomes the bound payer;
+4. waits for the root nonce to advance and reads `operating_state` back.
+   Recorded funds must equal the old funds plus the deposit exactly, and every
+   other field must equal what was signed. Otherwise it stops, and it never
+   resends blindly;
 5. tops up ordinary capital so the balance covers the recorded funds plus the
    storage floor plus a 20 TOS margin.
 
-Defaults: 1,000 TOS deposit, 1,000 TOS allowance, 20 TOS per-request limit,
-10 TOS floor, 30-day sponsorship. These are local development values, not
-production fee estimates. The Python payload encoder is byte-for-byte equal
+The contract **adds** a deposit to the recorded funds and **replaces** every
+other field. The tool therefore deposits only the deficit
+`funds_target - funds`, which is zero when only the expiry or the allowance
+needs renewing, and resets the allowance to its target. It never withdraws
+funds above the target.
+
+Defaults: 50,000 TOS funds and allowance targets, 20 TOS per-request limit,
+10 TOS floor, 30-day sponsorship. On this profile nodes 1, 2 and 3 relay a stake
+every ten-minute round, at about 6.44 TOS each, which is about 930 TOS per
+controller per day. The targets therefore outlast the sponsorship. These are
+local development values, not production fee estimates. The Python payload encoder is byte-for-byte equal
 (same cell hash) to `contracts::validator_controller::operating_funding_payload`.
 
-The tool is idempotent. Check or renew authorizations on a running network
-during a quiet interval. The election service exclusively owns the Genesis
-wallet while it runs, so stop it first and always restart it afterwards:
+The tool is idempotent: a healthy controller gets no transaction. Check or
+renew authorizations on a running network during a quiet interval. The
+election service exclusively owns the Genesis wallet while it runs, so the
+tool refuses to send anything while the service is active. Stop it first and
+always restart it afterwards:
 
 ```bash
 sudo env PYTHONPATH=test/tostester/src:scripts .venv/bin/python \
@@ -134,8 +164,8 @@ sudo systemctl start tos-pq-elections
 ```
 
 Each relay consumes part of the allowance and funds, and the authorization
-expires after 30 days. A long-running rehearsal must re-run the tool before
-either runs out; `--check` shows what is left. The development root seeds are
+expires after 30 days. A network that runs longer must re-run the tool before
+then. `--check` shows what is left and whether a renewal is due. The development root seeds are
 deterministic fixtures and must never control real funds.
 
 ### Diagnose a missing stake confirmation
