@@ -542,12 +542,12 @@ struct RocksScan {
   ValidatorCleanupManager& m;
   ValidatorCleanupOracles oracles;
   td::KeyValueReader* reader = nullptr;  // page scans; the RocksDb itself by default
-  std::function<void()> while_page_in_flight;
-  std::function<void()> before_point_reads;
-  std::function<bool(const PendingValidatorConsensusDbCleanup&)> fail_point;
-  std::function<bool(const PendingValidatorConsensusDbCleanup&)> fail_delete;
+  std::function<void()> while_page_in_flight{};
+  std::function<void()> before_point_reads{};
+  std::function<bool(const PendingValidatorConsensusDbCleanup&)> fail_point{};
+  std::function<bool(const PendingValidatorConsensusDbCleanup&)> fail_delete{};
   bool hold_deletes = false;
-  std::vector<ReservedValidatorDelete> held;
+  std::vector<ReservedValidatorDelete> held{};
   size_t ticks = 0;
   size_t page_reads = 0;
   size_t page_errors = 0;
