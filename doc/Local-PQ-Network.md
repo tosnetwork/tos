@@ -70,14 +70,25 @@ A local `ExecStart` override, such as a health-monitoring drop-in, replaces the
 template's command line. It must carry the same three options. Verify with
 `systemctl show tos-pq-validator@1 -p ExecStart`.
 
-**Garbage collection needs key blocks.** The GC floor only advances behind the
-last key block, the persistent-state serializer and a validator-set rotation,
-and only for states older than `state-ttl`. Elections and set changes produce
-those key blocks. A network whose elections fail keeps only its Genesis key
-block. Then nothing is collected whatever the TTLs are, and the validator logs
-show `VALCLEANUP pass gc_seqno=0 … reserved=0`. If `/data` grows without
-bound, first check that elections still complete and that
-`last_known_key_block_ago` in the node log stays below a few election periods.
+**Garbage collection needs key blocks and a persistent state.** The GC floor
+only advances behind the last key block, a validator-set rotation and the last
+persistent state, and only for states older than `state-ttl`. A persistent
+state is written only at the first key block after each 2^17 s (about 36.4 h)
+boundary of Unix time (`ValidatorManager::is_persistent_state`). So on a new
+network nothing is collected until it has crossed such a boundary, which takes
+up to about 36 hours. Plan for roughly that many hours of full growth, about
+7 GB/h for the seven nodes, before usage levels off.
+
+Elections and set changes produce the key blocks. A network whose elections
+fail keeps only its Genesis key block and never collects anything, whatever the
+TTLs are. The validator logs then show
+`VALCLEANUP pass gc_seqno=0 … reserved=0` indefinitely. If `/data` keeps
+growing past the first boundary:
+
+- check that elections still complete;
+- check that `last_known_key_block_ago` in the node log stays below a few
+  election periods;
+- check that `VALCLEANUP pass` reports a non-zero `gc_seqno`.
 
 ## Controller funding before election rehearsal
 
