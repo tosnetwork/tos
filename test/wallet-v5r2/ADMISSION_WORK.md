@@ -107,9 +107,8 @@ ConfigParam 20/21 cells match the canonical candidate byte-for-byte; incompatibl
 profiles fail before key generation. The localnet credit and validation bypass
 controls are recorded in [localnet evidence](localnet-admission-20261006.json).
 
-This is a configuration candidate for further acceptance work. Rust defaults,
-release-config opcode execution, full default-credit
-transaction parity, calibrated node rates and public-network activation remain
+This is a configuration candidate for further acceptance work. Rust defaults, full wallet transaction parity under the generated
+configuration, calibrated node rates and public-network activation remain
 pending; generating a BOC does not establish these gates.
 
 The [Rust loading controls](rust-admission-config-20261006.json) generate the
@@ -141,3 +140,31 @@ close G02's requirement to execute through the actual generated release
 configuration, nor prove full transaction, network, hardware or deployment
 acceptance. Previous version-16 Falcon development histories require their
 original binary; this candidate is for a fresh development genesis.
+
+
+## Transactions with the generated candidate configuration
+
+The [generated-config transaction evidence](release-config-transactions-20261006.json)
+uses the actual public ConfigParams BOC emitted by the canonical candidate test.
+`Emulator.from_config` loads its dictionary directly; the Rust transaction driver
+loads the same file without replacing ConfigParam 8 or any gas fields. A probe
+contract reads version 18, basechain credit 20,000 and masterchain credit 10,000
+before signature verification. The test runs after the canonical genesis time.
+
+Ten real transactions cover valid/invalid signatures for generic suites 1–4
+and the dedicated Falcon entry. ML-DSA, SLH and LMS valid cases update state;
+invalid signatures and both Falcon entries preserve it. Native/Rust transcripts
+agree on compute/action results, gas, outgoing messages, balance and data hash.
+This probe emits no messages, so it is not recipient-delivery evidence.
+
+Three sensitivity controls require failure for native synthesized-config fallback,
+removed signature verification and Rust default-config fallback. The last
+control fails inside the contract with exit 904 (basechain credit mismatch).
+All sources and binaries are restored, and all ten transactions pass again.
+The older 67-transaction version-17 wallet recovery corpus also remains unchanged
+in both execution paths; those older transactions still use diagnostic fixtures.
+
+This closes a configuration-plumbing and version-18 instruction-execution gap.
+The probe is not the V5R2 wallet: full wallet AUTH/POP/preparation/recovery,
+post-rotation recipient payment and the complete worst-case external admission
+corpus must still run using the generated configuration and aligned identities.

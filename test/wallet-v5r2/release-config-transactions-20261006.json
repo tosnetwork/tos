@@ -1,0 +1,148 @@
+{
+  "base_commit": "f8213fc24a2b1c755a501301bc775a285cb8ab38",
+  "source_state": "Candidate test/adapter/driver changes on base commit; all mutation sources and driver restored; unrelated client work excluded",
+  "platform": "macOS AArch64; native Release emulator and Rust debug executor",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "test/auth-extensions/native.py": "a12555c82eafb849de167f825dbc2e926eef871fc9fe75a5c57b6899265188f4",
+    "tosctl/src/executor/examples/pq-tx-parity.rs": "fe90412ba4def751809a9d98c651adb2815dce99761a981d3fb963c3e12c9e50",
+    "test/wallet-v5r2/release-config-probe.fc": "11a20d9c751a22a272cb51d0988e246f407de52ee79b467ecee3802f6cf538e7",
+    "test/wallet-v5r2/release_config_transactions.py": "f1d301bc91f5d8ac7b3ae89af0d72ea87c5fa2cc87dc63d2b1428b9129fe0fc8",
+    "test/wallet-v5r2/release_config_controls.py": "2025372781004f3b409235d79e0948005984d482dc3784619f375a21399bd45f",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "ed77852f8bc7111d2f9a5bb7451235ec34df8b81a5d0273836191dc618f3d52c",
+    ".github/workflows/rescue-context.yml": "bf4d3334cda4f7343edd511688a8e0c37227ffadf2356d1554333da4a2d56f35",
+    "crypto/smartcont/gen-zerostate.fif": "e837c6a29ffdf605ebd723f65db1eaa29982061480982122dce4f3814d828d4e",
+    "tosctl/src/node-control/contracts/tests/chain_gas_envelope_sandbox.rs": "f0d9c684990e7e14bb0bcc61d40612f916d0e02191b56da0d8e521ede3ac795c"
+  },
+  "commands": [
+    "TOS_ROOT=$PWD V5R2_ADMISSION_CONFIG_OUT=/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --test chain_gas_envelope_sandbox admission_candidate_executor_loads_the_generated_chain_configuration -j1 -- --nocapture",
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "python3 test/wallet-v5r2/release_config_controls.py --config /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-config-controls"
+  ],
+  "results": {
+    "transactions": {
+      "passed": true,
+      "config_sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+      "config_root": "afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726",
+      "version": 18,
+      "namespace": "4242424242424242424242424242424242424242424242424242424242424242",
+      "rust_command": [
+        "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/pq-tx-parity",
+        "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-config-controls/rust-fallback-restored/config.boc",
+        "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-config-controls/rust-fallback-restored/scenarios.tsv",
+        "18",
+        "--details"
+      ],
+      "cases": [
+        {
+          "name": "s1-valid",
+          "exit": 0,
+          "gas": 61786,
+          "state_changed": true
+        },
+        {
+          "name": "s1-bitflip",
+          "exit": 901,
+          "gas": 61225,
+          "state_changed": false
+        },
+        {
+          "name": "s2-valid",
+          "exit": 5,
+          "gas": 4098,
+          "state_changed": false
+        },
+        {
+          "name": "s2-bitflip",
+          "exit": 5,
+          "gas": 4098,
+          "state_changed": false
+        },
+        {
+          "name": "s3-valid",
+          "exit": 0,
+          "gas": 769147,
+          "state_changed": true
+        },
+        {
+          "name": "s3-bitflip",
+          "exit": 901,
+          "gas": 768586,
+          "state_changed": false
+        },
+        {
+          "name": "s4-h20w4-valid",
+          "exit": 0,
+          "gas": 10999,
+          "state_changed": true
+        },
+        {
+          "name": "s4-h20w4-bitflip",
+          "exit": 901,
+          "gas": 10438,
+          "state_changed": false
+        },
+        {
+          "name": "dedicated-s2-valid",
+          "exit": 6,
+          "gas": 4102,
+          "state_changed": false
+        },
+        {
+          "name": "dedicated-s2-bitflip",
+          "exit": 6,
+          "gas": 4102,
+          "state_changed": false
+        }
+      ],
+      "scope": "Generated config unchanged; whole transactions for PQ availability and rejected-state preservation; not full wallet or external admission acceptance"
+    },
+    "controls": {
+      "passed": true,
+      "runs": {
+        "baseline": 0,
+        "native-fallback": 1,
+        "native-fallback-restored": 0,
+        "verification-deleted": 1,
+        "verification-deleted-restored": 0,
+        "rust-fallback": 1,
+        "rust-fallback-restored": 0
+      },
+      "restored_green": true
+    },
+    "legacy_native_and_rust_replay": {
+      "cases": 67,
+      "comparison": "byte-for-byte against recorded native.tsv",
+      "inputs": {
+        "config.boc": {
+          "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-gated-migration-recovery-final/config.boc",
+          "bytes": 916,
+          "sha256": "844a190ea88e7fb1ca390ecfe3a69f9c942f21a194eb920835fe24569dca32c7"
+        },
+        "scenarios.tsv": {
+          "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-gated-migration-recovery-final/scenarios.tsv",
+          "bytes": 1824648,
+          "sha256": "216a1116a8c0e5523312aac25e524150009118742c155734df80d9ee1bf4ce2d"
+        },
+        "native.tsv": {
+          "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-gated-migration-recovery-final/native.tsv",
+          "bytes": 7836,
+          "sha256": "fd35d6a554e7c9609b835494d317012abb65bb18ef479d6db6a064a8f7a79de0"
+        }
+      }
+    }
+  },
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-config-evidence.tar.gz",
+    "bytes": 147554,
+    "sha256": "6245f247dbc2634d853b1d6731ae5875ddea89ad22c9e3ef66dd4b627e36b302"
+  },
+  "limits": [
+    "Probe contracts, not full V5R2 wallet acceptance",
+    "No emitted messages; not recipient delivery evidence",
+    "Internal funded transactions, not worst-case pre-ACCEPT external admission",
+    "Version-18 generated config; version-19 availability has separate explicit-version opcode evidence",
+    "Legacy 67-case regression retains its older version-17 diagnostic configuration",
+    "Remote CI has not run this local commit"
+  ]
+}

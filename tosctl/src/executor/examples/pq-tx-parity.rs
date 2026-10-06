@@ -8,8 +8,7 @@
 use std::{env, fs};
 
 use chain_block::{
-    read_single_root_boc, Account, ConfigParam8, ConfigParamEnum, ConfigParams, Deserializable,
-    Serializable, Transaction,
+    read_single_root_boc, Account, ConfigParams, Deserializable, Serializable, Transaction,
 };
 use tos_executor::{
     BlockchainConfig, ExecuteParams, OrdinaryTransactionExecutor, TransactionExecutor,
@@ -34,7 +33,7 @@ fn main() -> anyhow::Result<()> {
         Some(value) => value.parse()?,
         None => 16,
     };
-    let mut config = ConfigParams::construct_from_file(&args[1])?;
+    let config = ConfigParams::construct_from_file(&args[1])?;
     let version = config
         .get_global_version()
         .map_err(|e| anyhow::anyhow!("configuration without a global version: {e}"))?;
@@ -43,7 +42,6 @@ fn main() -> anyhow::Result<()> {
         "the scenarios need global version {required}, configuration has {}",
         version.version
     );
-    config.set_config(ConfigParamEnum::ConfigParam8(ConfigParam8 { global_version: version }))?;
     let blockchain = BlockchainConfig::with_config(config)?;
 
     let data = fs::read_to_string(&args[2])?;

@@ -79,6 +79,19 @@ jobs:
       - name: Generated admission configuration loading
         run: |
           python test/wallet-v5r2/admission_config_controls.py --output-dir artifacts/context/r2-generated-config
+      - name: Whole transactions using the generated admission configuration
+        run: |
+          python test/wallet-v5r2/release_config_transactions.py \
+            --config artifacts/context/r2-generated-config/restored-config.boc \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-release-transactions
+      - name: Generated-config transaction sensitivity controls
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/wallet-v5r2/release_config_controls.py \
+            --config artifacts/context/r2-generated-config/restored-config.boc \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-release-transaction-controls
       - name: PQ-only native wallet signer and fault controls
         run: |
           python test/wallet-v5r2/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer
