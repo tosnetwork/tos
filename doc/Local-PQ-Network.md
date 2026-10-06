@@ -51,9 +51,9 @@ A full reset of the local development network, in order:
 On this chain a validator writes about 1.4 GB per hour and an observer about
 0.4 GB per hour. With the node defaults, block files and archives are kept for
 `state-ttl + archive-ttl` = 8 days and retired consensus databases are never
-deleted. The session statistics file needs nothing: the node rotates it to a
-single `.old` copy at 256 MiB. The local network
-then needs more than 600 GB and fills a typical development disk in 3–4 days.
+deleted. The local network then needs more than 600 GB and fills a typical
+development disk in 3–4 days. The session statistics file needs nothing: the
+node rotates it to a single `.old` copy at 256 MiB.
 
 The local unit templates therefore pass:
 
