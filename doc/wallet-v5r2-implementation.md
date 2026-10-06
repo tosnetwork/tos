@@ -2581,3 +2581,40 @@ This supplies verification for a future real fee signing backend, not that
 backend itself. The current test LMS tool remains unsuitable for secrets or
 production custody. No change to VM consensus verification or gas pricing is
 made here. Evidence: `test/wallet-v5r2/native-fee-verification-20261006.json`.
+
+### Internal fee signing primitive and pinned source
+
+`third-party/lms-reference/SOURCE.json` pins selected signing/derivation sources
+and headers to revision `44e6c7de934c05942bf17cc819a81e765cfe67d7` of
+<https://github.com/cisco/hash-sigs>. The retained license permits redistribution
+subject to its notices and conditions. Selected files are unmodified and each
+SHA-256 is checked by the semantic-control runner. The build uses SECRET_METHOD=2
+and OpenSSL SHA-256. That profile accepts direct SEED[32] || I[16] material, as
+required by the frozen fee KDF; the high-level HSS state-management APIs are not
+compiled into this subset.
+
+An internal C ABI accepts a borrowed 48-byte seed/identifier, reserved leaf,
+32-byte intent digest, twenty-node public authentication path and the enrolled
+60-byte public key. It builds only the fixed H20/W4 single-level HSS signature,
+using the primitive's deterministic per-leaf randomizer. It checks identifier
+binding and validates the result with the existing native consensus verifier
+before returning success. For correctly sized output storage, preflight and
+verification failures clear every output byte; derivation context storage is
+cleared before return. The caller owns the seed buffer and must protect and wipe
+it. No full stack/snapshot erasure or side-channel audit claim is made.
+
+There is deliberately no Rust public signer API for this primitive yet. It owns
+no persistent state, cannot prove leaf uniqueness and must not be called with
+real secrets until journal and custody integration are complete. The new source
+is not a replacement for the reservation/restore barriers or exclusive custody.
+It also does not generate authentication trees. RFC 8554 section 9.2 remains the
+state-reuse constraint: <https://www.rfc-editor.org/rfc/rfc8554.html#section-9.2>.
+
+A fixed public seed/identifier and authentication path generate a fresh signature
+that passes both the native verifier and the independent Rust VM; a corrupted
+signature fails the Rust VM. Primitive tests cover wrong seed, identifier, root,
+path, leaf bounds and input lengths, with rejected outputs cleared. Three
+semantic controls remove post-signature verification or either output-clearing
+step and must fail named assertions before restored tests pass. Evidence:
+`test/wallet-v5r2/native-fee-signing-20261006.json`. This is an internal primitive
+and interoperability result, not production fee-signer completion.

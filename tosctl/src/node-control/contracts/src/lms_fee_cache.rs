@@ -261,6 +261,103 @@ mod tests {
 
     #[cfg(feature = "native-wallet-signer")]
     #[test]
+    fn internal_fee_signature_matches_independent_vm() -> anyhow::Result<()> {
+        use chain_block::{BuilderData, Cell};
+        use tos_vm::{
+            executor::{Engine, gas::gas_state::Gas},
+            stack::{Stack, StackItem, integer::IntegerData, savelist::SaveList},
+        };
+        unsafe extern "C" {
+            fn tos_wallet_lms_fee_sign_reserved(
+                seed: *const u8,
+                seed_size: usize,
+                leaf: u32,
+                digest: *const u8,
+                digest_size: usize,
+                path: *const u8,
+                path_size: usize,
+                key: *const u8,
+                key_size: usize,
+                output: *mut u8,
+                output_size: usize,
+            ) -> i32;
+        }
+        fn chain(bytes: &[u8]) -> anyhow::Result<Cell> {
+            let mut tail = None;
+            for chunk in bytes.chunks(127).rev() {
+                let mut b = BuilderData::new();
+                b.append_raw(chunk, chunk.len() * 8)?;
+                if let Some(cell) = tail {
+                    b.checked_append_reference(cell)?;
+                }
+                tail = Some(b.into_cell()?);
+            }
+            tail.ok_or_else(|| anyhow::anyhow!("empty fixture"))
+        }
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../wallet-pq-signer/tests/fixtures/lms-fee-signature.json"
+        ))?;
+        let key = hex::decode(fixture["public_key"].as_str().unwrap())?;
+        let old = hex::decode(fixture["signature"].as_str().unwrap())?;
+        let digest: [u8; 32] =
+            hex::decode(fixture["digest"].as_str().unwrap())?.try_into().unwrap();
+        let leaf = u32::try_from(fixture["leaf"].as_u64().unwrap())?;
+        // Fixed public test key, never runtime key material.
+        let mut seed = [0x44; 48];
+        seed[32..].fill(0x55);
+        let mut signature = vec![0; 2832];
+        assert_eq!(
+            unsafe {
+                tos_wallet_lms_fee_sign_reserved(
+                    seed.as_ptr(),
+                    seed.len(),
+                    leaf,
+                    digest.as_ptr(),
+                    digest.len(),
+                    old[2192..].as_ptr(),
+                    640,
+                    key.as_ptr(),
+                    key.len(),
+                    signature.as_mut_ptr(),
+                    signature.len(),
+                )
+            },
+            1
+        );
+        wallet_pq_signer::fee::verify_reserved_signature(&key, leaf, &digest, &signature)?;
+        for corrupted in [false, true] {
+            let mut sig = signature.clone();
+            if corrupted {
+                sig[2831] ^= 1;
+            }
+            let mut stack = Stack::new();
+            stack.push(StackItem::int(IntegerData::from_unsigned_bytes_be(&digest)));
+            stack.push(StackItem::int(IntegerData::from_i64(i64::from(leaf))));
+            stack.push(StackItem::Cell(chain(&sig)?));
+            stack.push(StackItem::Cell(chain(&key)?));
+            let mut code = BuilderData::new();
+            code.append_raw(&[0xf9, 0x31, 0x03], 24)?;
+            let mut vm = Engine::with_capabilities(0).setup_checked(
+                code.into_cell()?,
+                SaveList::new(),
+                stack,
+                Gas::test_with_limit(100_000),
+                vec![],
+            )?;
+            vm.set_block_version(17);
+            assert_eq!(vm.execute()?, 0);
+            assert_eq!(vm.stack().depth(), 1);
+            assert_eq!(
+                vm.stack().get(0)?.as_integer_value(-1..=0)?,
+                if corrupted { 0 } else { -1 },
+                "native fee signing disagrees with independent VM"
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    #[test]
     fn native_fee_verification_guards_backend_cache_and_retry() -> anyhow::Result<()> {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../wallet-pq-signer/tests/fixtures/lms-fee-signature.json"

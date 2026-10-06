@@ -10,9 +10,11 @@ fn main() {
     for path in [&pq, &ml, &slh] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
+    let lms = root.join("third-party/lms-reference");
+    println!("cargo:rerun-if-changed={}", lms.display());
     let openssl = env::var_os("DEP_OPENSSL_INCLUDE").expect("OpenSSL dependency include path");
     let mut signing = cc::Build::new();
-    signing.cpp(true).std("c++17").include(&pq).include(&ml).include(&slh);
+    signing.cpp(true).std("c++17").include(&pq).include(&ml).include(&slh).include(&lms);
     for path in env::split_paths(&openssl) {
         signing.include(path);
     }
@@ -23,6 +25,7 @@ fn main() {
         .file(pq.join("slhdsa128s.cpp"))
         .file(pq.join("lms-fee.cpp"))
         .file(pq.join("wallet-lms-fee-c.cpp"))
+        .file(pq.join("wallet-lms-sign-c.cpp"))
         .compile("tos_wallet_pq_signer_ffi");
     cc::Build::new()
         .cpp(true)
@@ -45,6 +48,23 @@ fn main() {
             .warnings(false)
             .compile(name);
     }
+    let mut fee = cc::Build::new();
+    fee.std("c99").include(&lms).warnings(false);
+    for path in env::split_paths(&openssl) {
+        fee.include(path);
+    }
+    for source in [
+        "hss_derive.c",
+        "hss_zeroize.c",
+        "lm_common.c",
+        "lm_ots_common.c",
+        "lm_ots_sign.c",
+        "endian.c",
+        "hash.c",
+    ] {
+        fee.file(lms.join(source));
+    }
+    fee.compile("tos_wallet_lms_primitives");
     let mut build = cc::Build::new();
     for source in ["slh_dsa.c", "slh_sha2.c", "sha2_256.c", "sha2_512.c"] {
         build.file(slh.join(source));

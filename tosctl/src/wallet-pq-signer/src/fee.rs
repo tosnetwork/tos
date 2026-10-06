@@ -87,3 +87,86 @@ mod tests {
         assert!(verify_reserved_signature(&key, leaf, &digest, &signature[..2831]).is_err());
     }
 }
+
+#[cfg(test)]
+mod signing_primitive_tests {
+    use super::*;
+    unsafe extern "C" {
+        fn tos_wallet_lms_fee_sign_reserved(
+            seed: *const u8,
+            seed_size: usize,
+            leaf: u32,
+            digest: *const u8,
+            digest_size: usize,
+            path: *const u8,
+            path_size: usize,
+            key: *const u8,
+            key_size: usize,
+            output: *mut u8,
+            output_size: usize,
+        ) -> i32;
+    }
+    #[test]
+    fn internal_fee_primitive_signs_and_clears_rejected_outputs() {
+        let v: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/lms-fee-signature.json")).unwrap();
+        let key = hex::decode(v["public_key"].as_str().unwrap()).unwrap();
+        let original = hex::decode(v["signature"].as_str().unwrap()).unwrap();
+        let path = &original[2192..];
+        let digest: [u8; 32] =
+            hex::decode(v["digest"].as_str().unwrap()).unwrap().try_into().unwrap();
+        let leaf = u32::try_from(v["leaf"].as_u64().unwrap()).unwrap();
+        // Public fixture material only: never use this key for funds.
+        let mut seed = [0x44; 48];
+        seed[32..].fill(0x55);
+        let sign = |seed: &[u8], leaf, key: &[u8], path: &[u8], digest: &[u8]| {
+            let mut output = vec![0xa5; 2832];
+            let result = unsafe {
+                tos_wallet_lms_fee_sign_reserved(
+                    seed.as_ptr(),
+                    seed.len(),
+                    leaf,
+                    digest.as_ptr(),
+                    digest.len(),
+                    path.as_ptr(),
+                    path.len(),
+                    key.as_ptr(),
+                    key.len(),
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            };
+            (result, output)
+        };
+        let (status, signature) = sign(&seed, leaf, &key, path, &digest);
+        assert_eq!(status, 1);
+        verify_reserved_signature(&key, leaf, &digest, &signature).unwrap();
+        assert_eq!(sign(&seed, leaf, &key, path, &digest).1, signature);
+        for case in 0..8 {
+            let mut bad_seed = seed.to_vec();
+            let mut bad_key = key.clone();
+            let mut bad_path = path.to_vec();
+            let mut bad_digest = digest.to_vec();
+            let mut q = leaf;
+            match case {
+                0 => bad_seed[0] ^= 1,
+                1 => bad_seed[32] ^= 1,
+                2 => bad_key[28] ^= 1,
+                3 => bad_path[0] ^= 1,
+                4 => q = 1 << 20,
+                5 => {
+                    bad_seed.pop();
+                }
+                6 => {
+                    bad_path.pop();
+                }
+                _ => {
+                    bad_digest.pop();
+                }
+            }
+            let (status, output) = sign(&bad_seed, q, &bad_key, &bad_path, &bad_digest);
+            assert_eq!(status, 0, "fee primitive accepted bad input {case}");
+            assert!(output.iter().all(|b| *b == 0), "fee primitive leaked rejected output {case}");
+        }
+    }
+}

@@ -1,0 +1,139 @@
+{
+  "base_commit": "145f69244456b01b5597646658ba987fc6a13acf",
+  "scope": "Pinned fixed-profile LMOTS primitive with internal C ABI for reserved-leaf fee signing; post-verification and rejected-output clearing. No public Rust signing API or persistent backend yet.",
+  "tests": {
+    "semantic_controls": {
+      "verify_output": {
+        "exit": 101,
+        "semantic_witness": "fee primitive accepted bad input 0"
+      },
+      "initial_clear": {
+        "exit": 101,
+        "semantic_witness": "fee primitive leaked rejected output 1"
+      },
+      "failed_clear": {
+        "exit": 101,
+        "semantic_witness": "fee primitive leaked rejected output 0"
+      }
+    },
+    "signer_vault": "17 passed",
+    "compile_fail_doctests": "2 passed",
+    "journal_and_independent_vm": "22 passed, 1 ignored child-process helper",
+    "commands": {
+      "signer": {
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "tosctl/src/Cargo.toml",
+          "--locked",
+          "-p",
+          "wallet-pq-signer",
+          "--features",
+          "vault"
+        ],
+        "exit": 0
+      },
+      "journal": {
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "tosctl/src/Cargo.toml",
+          "--locked",
+          "-p",
+          "contracts",
+          "--features",
+          "native-wallet-signer",
+          "--lib",
+          "lms_fee_"
+        ],
+        "exit": 0
+      },
+      "format": {
+        "command": [
+          "make",
+          "-C",
+          "tosctl/src",
+          "fmt-check"
+        ],
+        "exit": 0
+      }
+    },
+    "vendor_source_hashes": "all matched pinned source manifest",
+    "ruff": "passed"
+  },
+  "control_command": "python3 test/wallet-v5r2/native_fee_sign_controls.py --output <fresh-directory>",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.gitattributes",
+      "bytes": 3146,
+      "sha256": "231a561f1c0874259ff9f8ff971c7b667ece774ebbd510d87b3cc5961814e501"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/wallet-lms-sign-c.cpp",
+      "bytes": 2464,
+      "sha256": "0f2916045e9a719a9f4e07bf37824e33f9d26e85806cf708909f44073b8b3467"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/build.rs",
+      "bytes": 2694,
+      "sha256": "cca4ffe4b483485d4212e0598dfba6f7cf070fae690e530bfcd0255ef1d99566"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/fee.rs",
+      "bytes": 6693,
+      "sha256": "d5b2a69cd010a098eb74b54a8b019fd4a99324595d38234fd18526efbb27a6d4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_cache.rs",
+      "bytes": 23398,
+      "sha256": "ebe51432db6318705f31224b5c7367688fb97bb036ceedf8975c479ec558b208"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/native_fee_sign_controls.py",
+      "bytes": 3247,
+      "sha256": "b379b093cd7118f4698d0ce01511bb1f9b00108efbc7a78333b90dbd99d5145b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/third-party/lms-reference/SOURCE.json",
+      "bytes": 3910,
+      "sha256": "6cd6773426df8edca1a721975499916b0947ed2fdaf8ef2089b325da4ae0e1d5"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/third-party/lms-reference/license.txt",
+      "bytes": 1654,
+      "sha256": "becfee09d72fb931a6a73153db6688175b63dfb80e16a92a98520ca5a138ca64"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 20765,
+      "sha256": "75983b765eddc513570719bee8b73a6f779e5ae542ebc1e5fd14efce35d754fd"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 167848,
+      "sha256": "e54d77c0e41966099377ddc2d6a5a354a7d8f3aff4e608b230a47b792ce00927"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-sign-controls-final/MANIFEST.json",
+      "bytes": 1489,
+      "sha256": "918d14512fb27013546d28a9946e287cc6f7d1189c8d1657d28bd20efc4077e0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-sign-regression/MANIFEST.json",
+      "bytes": 993,
+      "sha256": "7a10340df0fe202ca31bc69cc306b534af043a6384d4a31f6e50446ebf51de96"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Internal primitive has no persistence or anti-reuse enforcement; real-secret use requires complete journal/custody integration.",
+    "Borrowed SEED/identifier remains caller-owned; no complete snapshot-erasure or side-channel certification claim.",
+    "No authentication-tree generation, protected signer session, hardware rollback defense or real-funds acceptance.",
+    "Public fixture signature passes native and independent Rust VM verification; this is not a full transaction or production-admission run.",
+    "Final-head CI and default-credit gates remain open."
+  ]
+}

@@ -49,3 +49,6 @@ artifacts/phase1/*.bin binary
 
 # Preserve the official response file byte-for-byte, including its final blank line.
 test/pq-falcon512/official/falcon512-KAT.rsp -text whitespace=-blank-at-eof
+
+# Preserve the pinned vendor source bytes, including original whitespace.
+third-party/lms-reference/* -text -whitespace
