@@ -1,0 +1,39 @@
+{
+  "source_base": "9f3917bcb8dd1de16e3a3ce716a056c494e0eaf1",
+  "source_sha256": {
+    "crypto/pq/wallet-pq-signer.cpp": "c2812e6fccebea28e6202a11deaab8a752d2659c8436148928c445854420cfd1",
+    "crypto/pq/wallet-pq-signer.h": "4bf2f881b44ed0ff54b7891b515231a106b1fad9e805627323e7dfc6807c980c",
+    "crypto/pq/wallet-signer-config.h": "b595983368e2111b3dbbb1f0bd2df815f5d62e2be37b5c2119dc938f8ea7ddf5",
+    "crypto/pq/CMakeLists.txt": "822e65f9707bc3d3d51103d3638f3e8625035ea951ddfc2db347fe2cf1a1431a",
+    "test/wallet-v5r2/pq-signer-test.cpp": "480c572f976bb2057923a8958f5c2b6dc858c8f472dfb813800e23ee4697415d",
+    "test/wallet-v5r2/pq-signer-rejection-test.cpp": "216e349c24484aac7017aa6018003268a37620e90266c1cf0684e5c96fd1e7f4",
+    "test/wallet-v5r2/pq-signer-rng-test.cpp": "63b729d64028789340b0f87de10417fc2c82f9506cf4b93e2bf2671855e003d6",
+    "test/wallet-v5r2/pq_signer_controls.py": "f3452bad22b21d644bcb673b80c9c284cffe07b29c1278056945edc24fe1d100"
+  },
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-wallet-pq-signer",
+  "retain_until": "2027-01-06",
+  "manifest": {
+    "sha256": "d62847a418f795de0dfbe99d15bed8f47c6c73cdfbe597f0602194fbc56864ba",
+    "bytes": 3095
+  },
+  "results": {
+    "native_executables_passed": 3,
+    "semantic_controls_detected": 5,
+    "allowed_role_purpose_combinations": 5,
+    "backend_namespace_audit_passed": true,
+    "final_build_and_tests_exit": 0
+  },
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cmake --build build --target test-wallet-pq-signer test-wallet-pq-signer-rejection test-wallet-pq-signer-rng -j4",
+    "ctest --test-dir build -R '^wallet-pq-signer' --output-on-failure",
+    "python3 test/wallet-v5r2/pq_signer_controls.py --build build --output <new-output-directory>"
+  ],
+  "limits": [
+    "Local macOS native build; both-architecture CI and independent backend/secret-handling review remain required.",
+    "Test executables substitute random-source or verifier verdicts only in their own links. Production library does not expose fault injection.",
+    "In-memory backend only: no SDK approval integration, protected persistence, backup/revocation, locked memory, core-dump policy, hardware isolation or LMS stateful custody completion.",
+    "Caller owns recovery seed buffer and must approve the request and prove current wallet policy before signing its digest.",
+    "No default-credit admission or production activation claim."
+  ]
+}

@@ -1231,3 +1231,32 @@ transaction. Loopback/proof plumbing and these native receipts still use
 synthetic finality wrappers for V5R2; real-network acceptance is not established.
 The API is read-only and historical, does not approve or submit requests, and
 cannot infer final spendable balance, replay safety or custody readiness.
+
+### In-memory PQ wallet signing backend
+
+`tos_wallet_pq_signer` is a separate native library with wallet-only ML-DSA
+key-generation/signing symbols. It supports ML-DSA-44 primary and
+SLH-DSA-SHA2-128s rescue keys, with no classical algorithm or caller-chosen
+context. Requests accept exactly a 32-byte SDK digest. AUTH uses each role's
+frozen context, POP uses its separate context, and preparation is SLH-only.
+Invalid roles/purposes and moved-from key stores refuse signing.
+
+Fresh keys and per-signature randomizers use `RAND_priv_bytes` and fail closed.
+Recovery accepts explicit 32-byte ML-DSA or 48-byte SLH seeds; the caller owns
+and must wipe its input copy. The move-only signer wipes its expanded secrets,
+local generation seeds and randomizers on destruction. Every signature is
+verified before returning it. No key material is printed or persisted by this
+library, and it is not linked into node verification or validator custody.
+
+Native tests cover both suites and five allowed role/purpose combinations,
+deterministic recovery identity, fresh-key separation, randomized signatures,
+wrong context/message/key/signature, invalid lengths and moved-from refusal.
+Two separate executables substitute failed random-source and failed verification
+verdicts. Five source mutation controls must cause semantic failures; restored
+binaries pass. The rescue-context workflow runs these on both architectures.
+
+This is a cryptographic component, not completed production custody. Protected
+persistence, backup/revocation, process/device isolation, locked-memory/core-dump
+policy, independent secret-handling review and SDK approval/state integration
+remain required. It does not approve the actions behind a digest, prove current
+wallet policy, or solve LMS stateful custody/default-credit admission.

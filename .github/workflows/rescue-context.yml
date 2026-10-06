@@ -67,6 +67,8 @@ jobs:
             --example fee-native-cost --example suite-parity --example pq-tx-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
             --example lms_fee_cache_fixture --example v5r2_auth_encode --example v5r2_pop_encode --example v5r2_prepare_encode --example v5r2_fee_encode --example v5r2_genesis_encode
+      - name: PQ-only native wallet signer and fault controls
+        run: python test/wallet-v5r2/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule
