@@ -218,6 +218,35 @@ old retained evidence as current health.
   should continue following the same chain. Short memory samples do not prove
   the absence of a leak or replace a complete trend window.
 
+### Rebinding the local health stack
+
+The local stack lives in `~/.local/state/tos-local-health/<first 12 hex of the
+network ID>/`. It has 31 user units (`tos-local-health-*`) and seven system
+units (`tos-local-health-edge-<i>`, bound to the validator's PID). To rebind it
+after a reset:
+
+1. Take the network ID from the **new** chain:
+   `sudo jq -r .zerostate_root /data/network.json`. It must equal the
+   `payload.network_id` that a node reports at
+   `http://127.0.0.1:901<i>/health-snapshot`. Read it only after
+   `setup-testnet.sh` has finished: a value read before the reset belongs to
+   the previous chain. The symptom is an edge logging
+   `native sample refused: native v3 identity or generation mismatch` every
+   minute, with every MCP snapshot at `CACHE_MISS`.
+2. Stop the user units and the edges. Create the new directory with copies of
+   `bin/`, `pki/`, `config/` and `observe.py`, and empty `control/`,
+   `evidence/`, `query/` and `sockets/`, so that no old database is reused.
+   Replace the old network ID and directory name in the copied `config/*` and
+   in all 38 unit files.
+3. `daemon-reload` both managers, start the units, wait about three minutes,
+   then run `observe.py` from the new directory. Expected: all seven nodes
+   answer, observers `ok` and validators `partial` with the known gaps listed
+   above. `host` and `telemetry` answer `CACHE_MISS` on this deployment: no
+   collector feeds them, and they did not before the reset either.
+
+The validator restart in a reset stops the edges (`BindsTo=`). Start them again
+after `setup-testnet.sh`, even when the network ID does not change.
+
 Keep node health collection running independently of the bounded election
 submission driver. Resetting the chain again requires repeating this binding
 procedure, not merely restarting the previous monitoring units.
