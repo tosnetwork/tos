@@ -48,6 +48,35 @@ impl PopRequest {
         enrollment: &crate::wallet_v5r2_genesis::WalletGenesis,
         execution_time: u32,
     ) -> anyhow::Result<Self> {
+        Self::from_enrolled_cell(
+            cell,
+            enrollment.module_init(),
+            *enrollment.wallet_init().repr_hash().as_array(),
+            execution_time,
+        )
+    }
+
+    /// Reconstruct a retained successor challenge without substituting the
+    /// template wallet. Funded receipt verification is still required.
+    pub fn from_successor_cell(
+        cell: Cell,
+        enrollment: &crate::wallet_v5r2_genesis::SuccessorDeployment,
+        execution_time: u32,
+    ) -> anyhow::Result<Self> {
+        Self::from_enrolled_cell(
+            cell,
+            enrollment.module_init(),
+            *enrollment.wallet(),
+            execution_time,
+        )
+    }
+
+    fn from_enrolled_cell(
+        cell: Cell,
+        module: &Cell,
+        wallet: [u8; 32],
+        execution_time: u32,
+    ) -> anyhow::Result<Self> {
         use chain_block::{CellType, SliceData};
         anyhow::ensure!(
             cell.cell_type() == CellType::Ordinary && cell.level() == 0,
@@ -67,14 +96,8 @@ impl PopRequest {
         };
         let challenge = *wire.get_next_hash()?.as_array();
         let deadline = wire.get_next_u32()?;
-        let (request, _, _) = Self::from_enrolled(
-            enrollment.module_init(),
-            *enrollment.wallet_init().repr_hash().as_array(),
-            role,
-            challenge,
-            deadline,
-            execution_time,
-        )?;
+        let (request, _, _) =
+            Self::from_enrolled(module, wallet, role, challenge, deadline, execution_time)?;
         anyhow::ensure!(
             request.cell.repr_hash() == cell.repr_hash(),
             "retained POP enrollment or canonical encoding mismatch"

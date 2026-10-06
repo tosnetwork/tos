@@ -65,7 +65,13 @@ def main():
     parser.add_argument("--fee-session-pop", action="store_true")
     parser.add_argument("--fee-pop-receipts", action="store_true")
     parser.add_argument("--fee-session-prepare", action="store_true")
+    parser.add_argument("--successor-fee-fixture", type=Path)
+    parser.add_argument("--expect-fee-reuse-refusal", action="store_true")
     args = parser.parse_args()
+    if args.expect_fee_reuse_refusal:
+        args.fee_session_prepare = True
+    if args.successor_fee_fixture:
+        args.fee_session_prepare = True
     if args.fee_session_prepare:
         assert args.fee_session_tree and not args.fee_session_pop and not args.fee_pop_receipts
     if args.fee_pop_receipts:

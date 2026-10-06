@@ -11,7 +11,12 @@ import cli_sign_primary as shared
 Cell, from_boc, native = shared.Cell, shared.from_boc, shared.native
 
 
-def check_receipts(args, root, common, receipts, addresses, codes, data):
+def check_receipts(args, root, common, receipts, addresses, codes, data, *, successor=False):
+    status = (
+        "successor_funded_pop_proven_at_checkpoint"
+        if successor
+        else "initial_funded_pop_proven_at_checkpoint"
+    )
     transactions = {}
     for item in receipts:
         for label in ("paid", "proved"):
@@ -89,11 +94,11 @@ def check_receipts(args, root, common, receipts, addresses, codes, data):
         if expected:
             assert result.returncode != 0, f"receipt CLI accepted {label}"
             assert expected in result.stderr, result.stderr
-            assert "initial_funded_pop_proven_at_checkpoint" not in result.stdout
+            assert status not in result.stdout
         else:
             assert result.returncode == 0, result.stderr
             report = json.loads(result.stdout)
-            assert report["status"] == "initial_funded_pop_proven_at_checkpoint"
+            assert report["status"] == status
             assert report["role"] == item["role"]
             assert (
                 report["fee_transaction_hash"] == from_boc(item["paid"]["transaction"]).hash.hex()

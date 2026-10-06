@@ -970,6 +970,14 @@ mod fee_state_tests {
         primary_key: [u8; 1312],
         rescue_key: [u8; 32],
     ) -> (WalletGenesis, ProvenAccountState) {
+        fixture_with_keys_and_fee(policy, primary_key, rescue_key, 0)
+    }
+    fn fixture_with_keys_and_fee(
+        policy: RescuePolicy,
+        primary_key: [u8; 1312],
+        rescue_key: [u8; 32],
+        fee_tag: u8,
+    ) -> (WalletGenesis, ProvenAccountState) {
         fixture_with_parameters(
             policy,
             primary_key,
@@ -977,6 +985,7 @@ mod fee_state_tests {
             Cell::default(),
             Cell::default(),
             (42, [1; 32]),
+            fee_tag,
         )
     }
     fn fixture_with_parameters(
@@ -986,6 +995,7 @@ mod fee_state_tests {
         module_code: Cell,
         vault_code: Cell,
         namespace: (i32, [u8; 32]),
+        fee_tag: u8,
     ) -> (WalletGenesis, ProvenAccountState) {
         let code = Cell::default();
         let hash = *vault_code.repr_hash().as_array();
@@ -999,6 +1009,7 @@ mod fee_state_tests {
         key[..4].copy_from_slice(&1u32.to_be_bytes());
         key[4..8].copy_from_slice(&8u32.to_be_bytes());
         key[8..12].copy_from_slice(&3u32.to_be_bytes());
+        key[59] = fee_tag;
         let genesis = WalletGenesis::new(
             bundle,
             GenesisParameters {
@@ -1076,6 +1087,44 @@ mod fee_state_tests {
         proof.evidence.account.data_hash = proof.account.get_data_hash().unwrap().to_hex_string();
         proof.evidence.account.code_hash = proof.account.get_code_hash().unwrap().to_hex_string();
     }
+    #[test]
+    fn preparation_rejects_active_lms_key_in_another_vault() {
+        use crate::wallet_v5r2_genesis::SuccessorDeployment;
+        use crate::wallet_v5r2_prepare::PreparationAmounts;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        let (birth, wallet, module) = wallet_pair();
+        let view = ProvenWalletState::bind_initial(&wallet, &module, &birth, 4620, 30).unwrap();
+        let (template, _) = fixture_with_keys(RescuePolicy::Required, [8; 1312], [9; 32]);
+        let successor =
+            SuccessorDeployment::new(template, *birth.wallet_init().repr_hash().as_array())
+                .unwrap();
+        assert_ne!(successor.vault_init().repr_hash(), birth.vault_init().repr_hash());
+        let error = view
+            .preparation_request(
+                4620,
+                4700,
+                &successor,
+                PreparationAmounts { module: 100, vault: 200 },
+                None,
+            )
+            .err()
+            .expect("preparation accepted reused active LMS key");
+        assert!(error.to_string().contains("reuses active LMS public key"), "{error}");
+        let (template, _) =
+            fixture_with_keys_and_fee(RescuePolicy::Required, [2; 1312], [3; 32], 1);
+        let fresh = SuccessorDeployment::new(template, *birth.wallet_init().repr_hash().as_array())
+            .unwrap();
+        assert_eq!(fresh.module_init().repr_hash(), birth.module_init().repr_hash());
+        view.preparation_request(
+            4620,
+            4700,
+            &fresh,
+            PreparationAmounts { module: 100, vault: 200 },
+            None,
+        )
+        .expect("fresh fee-only rollover refused");
+    }
+
     fn wallet_pair() -> (WalletGenesis, ProvenAccountState, ProvenAccountState) {
         let (g, proof) = fixture();
         let wallet = account_proof(proof, g.wallet_init());
@@ -1409,7 +1458,8 @@ mod fee_state_tests {
         let module = account_proof(proof, birth.module_init());
         set_wallet_counters(&birth, &mut wallet, u32::MAX, 9, u64::MAX, u64::MAX);
         let view = ProvenWalletState::bind_initial(&wallet, &module, &birth, 4620, 30).unwrap();
-        let (template, _) = fixture_with_keys(RescuePolicy::Required, [8; 1312], [9; 32]);
+        let (template, _) =
+            fixture_with_keys_and_fee(RescuePolicy::Required, [8; 1312], [9; 32], 1);
         let successor =
             SuccessorDeployment::new(template, *birth.wallet_init().repr_hash().as_array())
                 .unwrap();
@@ -1709,10 +1759,11 @@ mod fee_state_tests {
         w.config_params.insert(48, policy([1; 32], 2, &[], true));
         let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
         let target = |policy, wallet| {
-            let (template, _) = fixture_with_keys(
+            let (template, _) = fixture_with_keys_and_fee(
                 policy,
                 primary.public_key().try_into().unwrap(),
                 next.public_key().try_into().unwrap(),
+                1,
             );
             SuccessorDeployment::new(template, wallet).unwrap()
         };
@@ -1743,6 +1794,7 @@ mod fee_state_tests {
                 module_code,
                 vault_code,
                 namespace,
+                1,
             );
             let target =
                 SuccessorDeployment::new(template, *g.wallet_init().repr_hash().as_array())

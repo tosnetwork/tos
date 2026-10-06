@@ -148,7 +148,7 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
         if args.fee_session_prepare:
             from cli_fee_session_prepare import check_preparation
 
-            check_preparation(args, root, request, journal, payload, codes, data, addresses)
+            check_preparation(args, root, request, journal, payload, codes, data, addresses, common)
             stop()
             return
         if args.fee_session_pop:

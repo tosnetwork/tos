@@ -240,6 +240,21 @@ pub struct SuccessorDeployment {
     config_hash: [u8; 32],
 }
 impl SuccessorDeployment {
+    /// Compare actual LMS public keys, not tree IDs or vault addresses. This
+    /// rejects reuse of the active one-time keys under a different fee route.
+    /// The caller must authenticate the previous metadata; this does not scan
+    /// all historical enrollments or replace durable custody state.
+    pub fn require_fresh_fee_key(&self, previous_metadata: &Cell) -> anyhow::Result<()> {
+        let previous =
+            SliceData::load_cell(previous_metadata.clone())?.checked_drain_reference()?;
+        let candidate = SliceData::load_cell(self.metadata().clone())?.checked_drain_reference()?;
+        anyhow::ensure!(
+            candidate.repr_hash() != previous.repr_hash(),
+            "successor reuses active LMS public key"
+        );
+        Ok(())
+    }
+
     /// Whether the proposed successor permits PRIMARY authorization. This is
     /// the policy encoded by the typed genesis builder, not a live policy check.
     pub fn policy(&self) -> RescuePolicy {

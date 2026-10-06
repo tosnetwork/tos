@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import subprocess
 import time
 from unittest.mock import patch
@@ -11,7 +12,7 @@ import cli_sign_primary as shared
 native, Cell, from_boc = shared.native, shared.Cell, shared.from_boc
 
 
-def check_preparation(args, root, request, journal, payload, codes, data, addresses):
+def check_preparation(args, root, request, journal, payload, codes, data, addresses, common):
     original = json.loads(args.fixture.read_text())["input"]
     template = dict(payload)
     template.pop("expected_wallet", None)
@@ -19,6 +20,35 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
     for name in ("primary_key", "rescue_key", "fee_public_key", "fee_tree_id"):
         template[name] = original[name]
     template["policy"] = 2
+    if args.successor_fee_fixture:
+        vectors = json.loads(
+            (
+                shared.ROOT / "tosctl/src/tos-native-mnemonic/tests/fixtures/native-pq.json"
+            ).read_text()
+        )
+        vector = vectors["vectors"][0]
+        fee_vector = json.loads(
+            (args.successor_fee_fixture / "native-fee-recovery.json").read_text()
+        )
+        subprocess.run(
+            [
+                os.environ["MLDSA_TOOL"],
+                "keygen",
+                vector["derived"]["ML-DSA-44"],
+                str(root / "successor.pub"),
+                str(root / "PUBLIC-TEST-ONLY-successor.secret"),
+            ],
+            check=True,
+        )
+        template["primary_key"] = (root / "successor.pub").read_bytes().hex()
+        template["rescue_key"] = subprocess.check_output(
+            [os.environ["SLH_TOOL"], "keygen", vector["derived"]["SLH-DSA-SHA2-128s"]], text=True
+        ).split()[0]
+        template["fee_public_key"] = fee_vector["public_key_hex"]
+        template["fee_tree_id"] = fee_vector["tree_id_hex"]
+        template["epoch0"] = int(time.time()) - 3600 + 45
+        for name in ["primary_key", "rescue_key", "fee_public_key"]:
+            assert template[name] != payload[name], "successor reused source key"
 
     def genesis(value):
         run = subprocess.run(
@@ -65,6 +95,16 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
     )
     before = (journal / "fee-reservations").read_bytes()
     failures = {}
+    if args.expect_fee_reuse_refusal:
+        refused = request(operation)
+        assert (
+            refused["status"] == "request_refused"
+            and "reuses active LMS public key" in refused["reason"]
+        ), f"preparation accepted reused active LMS key: {refused}"
+        assert not output.exists() and (journal / "fee-reservations").read_bytes() == before
+        (args.output / "reused-fee-key-refusal.json").write_text(json.dumps(refused, indent=2))
+        print("Reused active LMS key refused before output, custody and reservation")
+        return
     for label, change in [
         ("wrong_template", dict(expected_template_wallet="ff" * 32)),
         ("zero_module", dict(module_nanotos="0")),
@@ -178,6 +218,7 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
         assert len(deployments) == 2, "preparation did not emit both deployments"
         unchanged, _ = native.account_data(from_boc(prepared["shard_account"]))
         assert unchanged.hash == data["module"].hash, "preparation changed current authority"
+        deployed_states = {}
         for name, deployment, amount in zip(["module", "vault"], deployments, [10**10, 2 * 10**10]):
             target = from_boc(bytes.fromhex(successor[f"{name}_init"]))
             fields = deployment.slice()
@@ -193,6 +234,7 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
                 final.hash == from_boc(bytes.fromhex(successor[f"{name}_data"])).hash
                 and balance > 0
             )
+            deployed_states[name] = from_boc(deployed["shard_account"])
             (args.output / f"prepare-deployed-{name}.json").write_text(
                 json.dumps(deployed, indent=2)
             )
@@ -202,6 +244,23 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
             (args.output / ("prepare-" + path.name)).write_bytes(path.read_bytes())
         (args.output / "prepare-controls.json").write_text(json.dumps(failures, indent=2))
         print("6 preparation refusals, exact retry and both native successor deployments passed")
+        if args.successor_fee_fixture:
+            from cli_successor_pop import check_successor_pops
+
+            check_successor_pops(
+                args,
+                root,
+                common,
+                template,
+                manifest,
+                pin,
+                successor,
+                deployed_states,
+                paid,
+                prepared,
+                addresses,
+            )
+
     finally:
         emu.close()
         limited.close()

@@ -17,6 +17,11 @@ use std::time::Duration;
 pub struct PqVerifyPopInitialCmd {
     #[command(flatten)]
     proof: InitialProofArgs,
+    /// Verify POPs through this enrolled successor before wallet migration.
+    #[arg(long, requires = "expected_template_wallet")]
+    successor_manifest: Option<PathBuf>,
+    #[arg(long, requires = "successor_manifest")]
+    expected_template_wallet: Option<String>,
     /// Locally retained POP3 challenge, not a challenge chosen by the RPC server.
     #[arg(long)]
     pop_request: PathBuf,
@@ -50,7 +55,15 @@ impl PqVerifyPopInitialCmd {
         let fee_before = read_cell(&self.fee_before_account)?;
         let module_before = read_cell(&self.module_before_account)?;
         let context = self.proof.context()?;
+        let context = match (&self.successor_manifest, &self.expected_template_wallet) {
+            (Some(manifest), Some(pin)) => {
+                context.with_successor(self.proof.successor(manifest, pin)?)
+            }
+            (None, None) => context,
+            _ => anyhow::bail!("successor receipt requires manifest and independent template pin"),
+        };
         let proof = context.read(&[]).await?;
+        let pop_module = context.pop_module_at(proof.wallet.evidence().checkpoint.clone()).await?;
         let fee_account = context.fee_at(proof.wallet.evidence().checkpoint.clone()).await?;
         let rpc = ClientJsonRpc::connect(self.transaction_rpc_url.clone(), None)?;
         let timeout = Duration::from_secs(self.timeout_seconds);
@@ -62,8 +75,7 @@ impl PqVerifyPopInitialCmd {
             &rpc,
         )
         .await?;
-        let module_address = proof
-            .module
+        let module_address = pop_module
             .account()
             .get_addr()
             .ok_or_else(|| anyhow::anyhow!("proven module address missing"))?;
@@ -78,23 +90,34 @@ impl PqVerifyPopInitialCmd {
         let delivered = delivered
             .ok_or_else(|| anyhow::anyhow!("fee transaction emitted no module message"))?;
         let module = ProvenTransaction::find_inbound_rpc(
-            &proof.module,
+            &pop_module,
             &delivered,
             self.history_limit,
             timeout,
             &rpc,
         )
         .await?;
-        let request = PopRequest::from_initial_cell(
-            retained,
-            context.enrollment(),
-            module.transaction().now(),
-        )?;
-        request.require_initial_funded_receipt(
-            &FundedPopReceipts { fee: &fee, module: &module, fee_before, module_before },
-            &external,
-            context.enrollment(),
-        )?;
+        let request = match context.successor() {
+            Some(successor) => {
+                PopRequest::from_successor_cell(retained, successor, module.transaction().now())?
+            }
+            None => PopRequest::from_initial_cell(
+                retained,
+                context.enrollment(),
+                module.transaction().now(),
+            )?,
+        };
+        let receipts = FundedPopReceipts { fee: &fee, module: &module, fee_before, module_before };
+        match context.successor() {
+            Some(successor) => {
+                request.require_successor_funded_receipt(&receipts, &external, successor)?
+            }
+            None => request.require_initial_funded_receipt(
+                &receipts,
+                &external,
+                context.enrollment(),
+            )?,
+        }
         let checkpoint = &proof.wallet.evidence().checkpoint;
         let role = match request.role() {
             AuthRole::Primary => "primary",
@@ -103,9 +126,9 @@ impl PqVerifyPopInitialCmd {
         println!(
             "{}",
             serde_json::json!({
-                "status": "initial_funded_pop_proven_at_checkpoint", "role": role,
+                "status": if context.successor().is_some() { "successor_funded_pop_proven_at_checkpoint" } else { "initial_funded_pop_proven_at_checkpoint" }, "role": role,
                 "wallet": proof.wallet.evidence().account.address,
-                "module": proof.module.evidence().account.address,
+                "module": pop_module.evidence().account.address,
                 "vault": fee_account.evidence().account.address,
                 "checkpoint": {"seqno": checkpoint.seqno, "root_hash": checkpoint.root_hash,
                     "file_hash": checkpoint.file_hash},

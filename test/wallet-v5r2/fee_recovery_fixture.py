@@ -14,13 +14,17 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--vector-index", type=int, default=1)
+    parser.add_argument("--tree-id", default="a5" * 32)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     source = ROOT / "tosctl/src/tos-native-mnemonic/tests/fixtures/native-pq.json"
     data = json.loads(source.read_text())
-    vector = data["vectors"][1]
+    assert 0 <= args.vector_index < len(data["vectors"]), "unknown public mnemonic vector"
+    vector = data["vectors"][args.vector_index]
     context = data["context"]
-    tree_id = bytes([0xA5]) * 32
+    tree_id = bytes.fromhex(args.tree_id)
+    assert len(tree_id) == 32, "tree ID must be 32 bytes"
     label = b"TOS-FEE-LMS-SHA256-M32-v1"
     info = bytes([1, len(label)]) + label + bytes.fromhex(context["network_hex"])
     info += context["global_id"].to_bytes(4, "big", signed=True)

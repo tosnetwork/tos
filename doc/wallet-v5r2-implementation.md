@@ -3407,3 +3407,66 @@ REQUIRED preparation to request PRIMARY policy fails its availability assertion.
 Restored code passes. Four genesis/vector tests and the existing three funded
 POPs, nine receipt cases and subsequent native SLH lock also pass.
 Evidence: [fee-session preparation controls](../test/wallet-v5r2/cli-fee-prepare-20261006.json).
+
+### Prepared-successor POP sessions and receipts
+
+`pq-fee-session-initial` accepts optional `--successor-manifest` and
+`--expected-template-wallet` together. The original initial-wallet proof arguments
+remain required: this is the pre-migration workflow, not a generic inspector for
+an already migrated wallet. The approved template is reconstructed under the
+same code pins, and its fee vault is paired with the existing wallet. The session
+loads that successor's proven fee state, matching tree cache, custody and journal
+route. It permits only `status`, `pop`, `retry` and `quit`; it cannot authorize
+wallet operations or another preparation through the uninstalled successor.
+
+Before opening POP custody, the client reads the enrolled POP module at the
+wallet checkpoint, requires its exact address/code/data, and checks both proof
+timestamps against the local age bound. It generates a fresh challenge for the
+successor module and existing wallet, signs through the SDK's successor Vault
+API, rechecks the observed module, and uses fee class 2 through the successor
+vault. Both raw observed accounts remain available for later receipt verification.
+The module check also applies to initial POPs. Neither role creates wallet
+authority, and a historical challenge cannot establish current readiness.
+
+`pq-verify-pop-initial` accepts the same optional successor arguments. It follows
+the successor fee/module histories from the wallet checkpoint and reconstructs
+the retained challenge against the actual existing-wallet pairing. Success uses
+`successor_funded_pop_proven_at_checkpoint`; it still requires completed execution
+of both transactions, exact input/output binding and authenticated pre-state
+roots. Initial and successor retained decoders share strict canonical parsing
+and full reconstructed-cell equality.
+
+The native client fixture now continues from the preparation's actual deployed
+accounts. It restores different public test mnemonic roots and a distinct LMS
+tree into separate test custody files, waits across the real successor journal
+restore boundary, executes PRIMARY/RESCUE/PRIMARY POPs, advances mock account
+proofs to their actual VM output states, and verifies historical receipts through
+the CLI RPC adapter. The test's PRIMARY and RESCUE records share a public-test
+Vault; this is not evidence of independent devices or backup custody. Proof
+acquisition remains mocked and native execution still needs diagnostic credit.
+Migration signing/orchestration and deployed proof acquisition remain unfinished.
+
+Review of this lifecycle reproduced an unsafe enrollment: changing the proposed
+module/tree descriptor while retaining the active LMS public key was accepted by
+the preparation CLI, and the native diagnostic fixture deployed the second vault.
+That result was a defect, not successful fresh-tree recovery. Successor enrollment
+now compares the actual canonical LMS public-key cell against the source metadata.
+CLI preparation, successor POP/receipt route selection, and the SDK's proven-state
+preparation/migration gates reject an equal active key. The SDK retains the
+authenticated current fee metadata when binding a wallet view. A different public
+key still permits fee-only rollover with the same module; synthetic successor
+fixtures now use distinct fee keys so they continue reaching their intended guards.
+
+This comparison covers the active tuple. It does not scan every historical tree,
+prevent arbitrary cross-wallet key reuse, replace the fee journal, establish
+safe purged-vault reconstruction, or finish the client custody-history policy.
+Those remain release gates alongside complete migration and default admission.
+
+The three successor operation/module/retained-request controls fail their named
+assertions when the corresponding guard is deleted. Removing the active-key
+comparison separately makes both the SDK and actual CLI accept the reused key;
+restored code rejects it and passes 19 SDK state/signing tests, including fee-only
+rollover. The final restored client run completes preparation, three successor
+POPs and nine receipt cases. Initial POP/receipt/lock regression and four POP
+codec tests also pass at their recorded stage. Evidence and stage boundaries:
+[successor client lifecycle and active-key reuse controls](../test/wallet-v5r2/successor-client-pop-20261006.json).

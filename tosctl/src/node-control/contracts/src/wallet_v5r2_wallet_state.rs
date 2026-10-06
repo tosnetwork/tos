@@ -40,6 +40,7 @@ pub struct ProvenWalletState {
     rescue_key: [u8; 32],
     module_code: [u8; 32],
     vault_code: [u8; 32],
+    fee_metadata: Cell,
     master_time: u32,
     wallet_time: u32,
     module_time: u32,
@@ -206,6 +207,7 @@ impl ProvenWalletState {
                 .checked_drain_reference()?
                 .repr_hash()
                 .as_array(),
+            fee_metadata: metadata.clone(),
             master_time: w.block_gen_utime,
             wallet_time: w.account.gen_utime,
             module_time: m.account.gen_utime,
@@ -368,6 +370,7 @@ impl ProvenWalletState {
             2 => (),
             _ => anyhow::bail!("unsupported successor policy"),
         }
+        successor.require_fresh_fee_key(&self.fee_metadata)?;
         Ok(())
     }
 

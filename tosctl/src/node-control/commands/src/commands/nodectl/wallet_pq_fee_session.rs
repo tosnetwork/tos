@@ -22,6 +22,11 @@ use std::io::{BufRead, Read, Write};
 pub struct PqFeeSessionInitialCmd {
     #[command(flatten)]
     proof: InitialProofArgs,
+    /// Select a separately enrolled successor fee route for POP/status/retry only.
+    #[arg(long, requires = "expected_template_wallet")]
+    successor_manifest: Option<PathBuf>,
+    #[arg(long, requires = "successor_manifest")]
+    expected_template_wallet: Option<String>,
     /// Existing absolute, owner-only mode-0700 journal directory.
     #[arg(long)]
     journal_dir: PathBuf,
@@ -152,6 +157,13 @@ impl PqFeeSessionInitialCmd {
             "record IDs must not be empty"
         );
         let context = self.proof.context()?;
+        let context = match (&self.successor_manifest, &self.expected_template_wallet) {
+            (Some(manifest), Some(pin)) => {
+                context.with_successor(self.proof.successor(manifest, pin)?)
+            }
+            (None, None) => context,
+            _ => anyhow::bail!("successor route requires manifest and independent template pin"),
+        };
         let view = context.fee().await?;
         let key = *view.fee_public_key();
         let tree_file = self.fee_tree_cache.clone();
@@ -233,6 +245,14 @@ impl PqFeeSessionInitialCmd {
         journal: &mut FeeJournal,
         tree: &wallet_pq_signer::fee::FeeTree,
     ) -> anyhow::Result<serde_json::Value> {
+        anyhow::ensure!(
+            context.successor().is_none()
+                || matches!(
+                    &request,
+                    Request::Status | Request::Pop { .. } | Request::Retry { .. } | Request::Quit
+                ),
+            "successor fee session permits possession proofs only"
+        );
         let view = context.fee().await?;
         let mut preparation = None;
         let (pop_role, valid_for_seconds, value_nanotos, output_dir) = match request {
@@ -353,28 +373,41 @@ impl PqFeeSessionInitialCmd {
                 ),
             };
             anyhow::ensure!(!id.trim().is_empty(), "POP record ID must not be empty");
-            let request = PopRequest::fresh_initial(
-                context.enrollment(),
-                role,
-                deadline,
-                proof.wallet.evidence().block_gen_utime,
-            )?;
+            let module = context.pop_module_at(proof.wallet.evidence().checkpoint.clone()).await?;
+            let request = match context.successor() {
+                Some(successor) => PopRequest::fresh_successor(
+                    successor,
+                    role,
+                    deadline,
+                    module.evidence().block_gen_utime,
+                )?,
+                None => PopRequest::fresh_initial(
+                    context.enrollment(),
+                    role,
+                    deadline,
+                    module.evidence().block_gen_utime,
+                )?,
+            };
             std::fs::create_dir(&output_dir)?;
             // Retain this exact fresh challenge before opening signing custody.
             put(&output_dir, "pop-request.boc", &chain_block::write_boc(request.cell())?)?;
             let vault = open_vault_file(file, Some(key), None).await?;
             let id = SecretId::new(id);
-            let submission = VaultKey { vault: &vault, id: &id }
-                .sign_pop_initial(&request, context.enrollment(), now)
-                .await?;
+            let signer = VaultKey { vault: &vault, id: &id };
+            let submission = match context.successor() {
+                Some(successor) => signer.sign_pop_successor(&request, successor, now).await?,
+                None => signer.sign_pop_initial(&request, context.enrollment(), now).await?,
+            };
             drop(vault);
             // Possession does not authorize spending, even for a PRIMARY key.
             // Revalidate the initial enrollment after asynchronous secret loading.
             let observed = context.read(&[]).await?;
+            let module =
+                context.pop_module_at(observed.wallet.evidence().checkpoint.clone()).await?;
             put(
                 &output_dir,
                 "module-observed-account.boc",
-                &chain_block::write_boc(observed.module.root())?,
+                &chain_block::write_boc(module.root())?,
             )?;
             (FeeClass::Pop, submission)
         } else {

@@ -1,0 +1,142 @@
+{
+  "base_commit": "53df6dd9ae23e064df2c0b8c50f5da4fa489c88f",
+  "scope": "Pre-migration client lifecycle: actual prepared successor accounts, distinct PQ/fee roots, durable successor journal, both funded POP roles and authenticated-history receipts. Active LMS-key reuse was reproduced and refused in SDK/CLI successor gates. No migration/broadcast or deployment clearance.",
+  "commands": [
+    "python test/wallet-v5r2/fee_recovery_fixture.py --vector-index 0 --tree-id a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6 --output <fresh-successor-fixture>",
+    "python test/wallet-v5r2/cli_successor_pop_controls.py --cli <tosctl> --genesis-driver <v5r2_genesis_encode> --fixture <native/sdk-genesis.json> --fee-session-tree <initial-public-tree> --successor-fee-fixture <fresh-successor-fixture> --output <fresh-directory>",
+    "python test/wallet-v5r2/fresh_fee_controls.py --cli <tosctl> --genesis-driver <v5r2_genesis_encode> --fixture <native/sdk-genesis.json> --fee-session-tree <initial-public-tree> --successor-fee-fixture <fresh-successor-fixture> --output <fresh-directory>"
+  ],
+  "environment": "Source retained 20261005-baseline/env.sh and use retained test-venv Python; commands run from worktree root.",
+  "runner_exits": {
+    "successor_controls": 0,
+    "fresh_key_controls": 0,
+    "initial_pop_regression": 0,
+    "codec_tests": 0,
+    "pre_fix_reuse_probe": 0
+  },
+  "controls": {
+    "operation": "successor authority preflight gate missing",
+    "module": "successor POP accepted changed module data",
+    "retained": "receipt CLI accepted wrong_enrollment"
+  },
+  "fresh_key_controls": {
+    "sdk": "Deleted actual public-key equality guard accepts a different vault using the active LMS key; named test fails. Restored SDK suite passes 19 tests, including fresh fee-only rollover with unchanged module.",
+    "cli": "Deleted guard returns fee_message_cached for reused-key preparation; named refusal assertion fails. Restored CLI refuses before output or reservation and fresh successor deployment/POP/receipts pass."
+  },
+  "stage_boundaries": "Three successor guard deletions and initial POP/lock regression preceded the active-key restriction. Final restored fresh-key control reruns actual deployment, new module-data refusal, three successor POPs and all nine receipt cases with the restriction enabled. Exact current production source hashes follow.",
+  "report_check_change": "After the control run, replace a brittle exact SDK test count in the runner with required named passing gates. Required names were checked in retained restored-sdk.log; commands and mutations are unchanged. The exact executed runner is archived as 20261006-fresh-fee-controls/executed-runner.py.",
+  "pre_fix_reuse_probe": "A deliberately reused active fee public key with a new tree ID was accepted and both successor accounts deployed at diagnostic credit. This is defect evidence, not release success; the deleted-guard CLI and SDK controls reproduce acceptance after the fix was introduced.",
+  "regressions": {
+    "pop_codec_tests": 4,
+    "initial_funded_pops": 3,
+    "initial_receipt_cases": 9,
+    "subsequent_initial_slh_lock": "passed"
+  },
+  "limits": {
+    "default_credit": 10000,
+    "production_admission_passed": false,
+    "native_diagnostic_credit": 20000,
+    "proof_acquisition": "trusted local mock; authentic native transaction BOCs are walked through the actual CLI RPC adapter",
+    "key_independence": "distinct public-test mnemonic inputs and fee tree; primary/rescue test records share a Vault, not proof of independent devices",
+    "fresh_key_scope": "active tuple only; historical/cross-wallet reuse, purge lifecycle and custody history remain release gates",
+    "migration": "not orchestrated or broadcast"
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 29372,
+      "sha256": "95e5135949a16621317166362ac0dd9918cf25ffcc796a3d861e45bca3aad353"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_prepare.py",
+      "bytes": 11871,
+      "sha256": "4611cc3065733358bed4127288857cccaa2a3b787a08f935930cd3822508144d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_sign.py",
+      "bytes": 13533,
+      "sha256": "b2cd95f51e33a102276d7324cbcdd813efa1d9cbf435d95a8fa0c5d3783abc21"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_pop_receipt.py",
+      "bytes": 7448,
+      "sha256": "831ec4f223b96dc9c817481af0168e29215c922ca89711078b19acd17e2c8e9f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_sign_primary.py",
+      "bytes": 24174,
+      "sha256": "21ac81861cc14f64d41c08b68f4928a43833d963aa96d1b940dcd05d91266eb3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fee_recovery_fixture.py",
+      "bytes": 2950,
+      "sha256": "d60dc3affe094441ad35f8eb4b8277f492ddb50c13baf87df4daad8157f93156"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs",
+      "bytes": 19841,
+      "sha256": "e0988afde6b71629c4c1d0d0a48ca8edc6893ae0011431e3034b22044b21b044"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "bytes": 9457,
+      "sha256": "f6d51aac1fae990baa1c9717d7635f10bbf05ed4d8cbdf330dc583dd0dfcf40b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_pop_receipt_cmd.rs",
+      "bytes": 6405,
+      "sha256": "11b44b570eba062ad614bda677fa24a7c9d8c1d284e2b53ef599e32102ddc50c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "bytes": 161681,
+      "sha256": "afb9e549bf9d8454825b5e72dd1a177d60bce51e99b52bf01fdc959aeb2e94bb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_genesis.rs",
+      "bytes": 17936,
+      "sha256": "440fafa25c55bb16db59ff766df598fcd7faa690af4450fa8cf6dc05fe509e4d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs",
+      "bytes": 23835,
+      "sha256": "341950b46567326849b327b34269c6749fbcd75dc562b519dcd730a61dfb4dcb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "bytes": 23008,
+      "sha256": "0483feb66384475e27f3bd1fb79d64b483bbe892db88f35d712ef0d9e8440308"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_successor_pop.py",
+      "bytes": 12667,
+      "sha256": "cc3483bd7fd534f48ca7f16ee7094e2db2c3526a8e1e8e30b66eec78cd9b3bd1"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_successor_pop_controls.py",
+      "bytes": 4268,
+      "sha256": "c67a9f045107af48de1a6e76819de83c8c204a77eb17bff795ea3e429ae5064b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/fresh_fee_controls.py",
+      "bytes": 5062,
+      "sha256": "0faac30edce39aeafe2810684fd9317585aaaff8555df1e5fc3d0f9853518ff5"
+    }
+  ],
+  "archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-successor-client-pop.tar.gz",
+    "bytes": 1347008,
+    "sha256": "84810027bbe4e8dbe4834bc6ae1ea2792b6c3ed29dfbc68da15fcb8d7a453a7c"
+  },
+  "raw_manifest": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-successor-client-pop-MANIFEST.json",
+    "bytes": 84387,
+    "sha256": "49a89dd0c667f63f079859ae29ce84b73118f065cd7fa8bbcd413b353b776b64"
+  },
+  "retained_public_tree": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-successor-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree",
+    "bytes": 67108864,
+    "sha256": "0310259858f0f50c48c5a75a8f7311ce7b182a0e653df2f3bad424ea34da6bb0"
+  },
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}

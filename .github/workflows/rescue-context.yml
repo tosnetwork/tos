@@ -300,6 +300,28 @@ jobs:
             --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-prepare-controls
+      - name: Successor fee tree and funded POP lifecycle controls
+        run: |
+          python test/wallet-v5r2/fee_recovery_fixture.py \
+            --vector-index 0 \
+            --tree-id a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6 \
+            --output artifacts/context/successor-fee-recovery-fixture
+          python test/wallet-v5r2/cli_successor_pop_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
+            --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
+            --output artifacts/context/cli-successor-pop-controls
+      - name: Reject active LMS key reuse in successor routes
+        run: |
+          python test/wallet-v5r2/fresh_fee_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
+            --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
+            --output artifacts/context/fresh-fee-controls
       - name: Compiled-code manifest reconstruction controls
         run: |
           python test/wallet-v5r2/manifest_integration_controls.py \

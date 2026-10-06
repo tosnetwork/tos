@@ -3,7 +3,7 @@ use super::{InitialCodeArgs, PathBuf, bounded_public_file, public_hash};
 use common::app_config::ProofVerifierConfig;
 use contracts::{
     proven_getters::{ProvenAccountState, ProvenGetterProvider, ReadPolicy},
-    wallet_v5r2_genesis::WalletGenesis,
+    wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis},
     wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
     wallet_v5r2_state::ProvenFeeVault,
     wallet_v5r2_wallet_state::ProvenWalletState,
@@ -48,6 +48,7 @@ pub(super) struct InitialProof {
 
 pub(super) struct InitialContext {
     genesis: WalletGenesis,
+    successor: Option<SuccessorDeployment>,
     provider: ProvenGetterProvider,
     max_age_seconds: u32,
 }
@@ -65,10 +66,12 @@ impl InitialProofArgs {
             self.code.load()?,
             public_hash(expected_template_wallet)?,
         )?;
-        contracts::wallet_v5r2_genesis::SuccessorDeployment::new(
+        let successor = contracts::wallet_v5r2_genesis::SuccessorDeployment::new(
             template,
             public_hash(&self.expected_wallet)?,
-        )
+        )?;
+        successor.require_fresh_fee_key(self.context()?.enrollment().metadata())?;
+        Ok(successor)
     }
 
     pub(super) fn context(&self) -> anyhow::Result<InitialContext> {
@@ -84,7 +87,12 @@ impl InitialProofArgs {
             "proof configuration needs a live age no greater than the wallet age policy"
         );
         let provider = ProvenGetterProvider::new(&config)?;
-        Ok(InitialContext { genesis, provider, max_age_seconds: self.max_age_seconds })
+        Ok(InitialContext {
+            genesis,
+            successor: None,
+            provider,
+            max_age_seconds: self.max_age_seconds,
+        })
     }
     pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
         self.context()?.read(config_params).await
@@ -92,6 +100,49 @@ impl InitialProofArgs {
 }
 
 impl InitialContext {
+    pub(super) fn with_successor(mut self, successor: SuccessorDeployment) -> Self {
+        self.successor = Some(successor);
+        self
+    }
+    pub(super) fn successor(&self) -> Option<&SuccessorDeployment> {
+        self.successor.as_ref()
+    }
+    fn fee_init(&self) -> &chain_block::Cell {
+        match &self.successor {
+            Some(successor) => successor.vault_init(),
+            None => self.genesis.vault_init(),
+        }
+    }
+    pub(super) async fn pop_module_at(
+        &self,
+        checkpoint: contracts::MasterchainCheckpoint,
+    ) -> anyhow::Result<ProvenAccountState> {
+        use chain_block::{Deserializable, StateInit};
+        let init = match &self.successor {
+            Some(successor) => successor.module_init(),
+            None => self.genesis.module_init(),
+        };
+        let address = format!("0:{}", init.repr_hash().to_hex_string());
+        let account = self
+            .provider
+            .read_account(&address.parse()?, &ReadPolicy::Historical(checkpoint))
+            .await?;
+        let expected = StateInit::construct_from_cell(init.clone())?;
+        anyhow::ensure!(
+            account.evidence().account.address == address
+                && account.account().get_code() == expected.code
+                && account.account().get_data() == expected.data,
+            "POP module differs from enrolled deployment"
+        );
+        let observed = now()?;
+        for time in [account.evidence().block_gen_utime, account.evidence().account.gen_utime] {
+            let age = observed
+                .checked_sub(time)
+                .ok_or_else(|| anyhow::anyhow!("POP module proof is in the future"))?;
+            anyhow::ensure!(age <= self.max_age_seconds, "stale POP module proof");
+        }
+        Ok(account)
+    }
     pub(super) fn enrollment(&self) -> &WalletGenesis {
         &self.genesis
     }
@@ -101,18 +152,21 @@ impl InitialContext {
     pub(super) async fn fee_snapshot(
         &self,
     ) -> anyhow::Result<(ProvenAccountState, ProvenFeeVault)> {
-        let address =
-            format!("0:{}", self.genesis.vault_init().repr_hash().to_hex_string()).parse()?;
+        let address = format!("0:{}", self.fee_init().repr_hash().to_hex_string()).parse()?;
         let account = self.provider.read_account(&address, &ReadPolicy::Live).await?;
-        let view = ProvenFeeVault::bind(&account, &self.genesis, now()?, self.max_age_seconds)?;
+        let view = match &self.successor {
+            Some(successor) => {
+                ProvenFeeVault::bind_successor(&account, successor, now()?, self.max_age_seconds)?
+            }
+            None => ProvenFeeVault::bind(&account, &self.genesis, now()?, self.max_age_seconds)?,
+        };
         Ok((account, view))
     }
     pub(super) async fn fee_at(
         &self,
         checkpoint: contracts::MasterchainCheckpoint,
     ) -> anyhow::Result<ProvenAccountState> {
-        let address =
-            format!("0:{}", self.genesis.vault_init().repr_hash().to_hex_string()).parse()?;
+        let address = format!("0:{}", self.fee_init().repr_hash().to_hex_string()).parse()?;
         self.provider.read_account(&address, &ReadPolicy::Historical(checkpoint)).await
     }
     pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
