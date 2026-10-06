@@ -66,12 +66,12 @@ pub struct DisputeDeployCmd {
     #[arg(long, help = "Local dispute record name; defaults to dispute-<address prefix>")]
     name: Option<String>,
     #[arg(
-        allow_hyphen_values = true,
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
         long,
         help = "Claimant address; must match the funding wallet"
     )]
     claimant: String,
-    #[arg(allow_hyphen_values = true, long, help = "Respondent address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Respondent address")]
     respondent: String,
     #[arg(long, help = "Reviewer (arbitrator) address")]
     reviewer: String,
@@ -115,7 +115,7 @@ pub struct DisputeLsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show Dispute state by address or local record name")]
 pub struct DisputeShowCmd {
-    #[arg(allow_hyphen_values = true, long, conflicts_with = "name", help = "Dispute address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, conflicts_with = "name", help = "Dispute address")]
     address: Option<String>,
     #[arg(long, help = "Local dispute record name from `agent dispute ls`")]
     name: Option<String>,
@@ -143,7 +143,7 @@ enum DisputeRuling {
 pub struct DisputeSendCmd {
     #[arg(long, value_enum)]
     operation: DisputeOperation,
-    #[arg(allow_hyphen_values = true, long, conflicts_with = "name", help = "Dispute address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, conflicts_with = "name", help = "Dispute address")]
     address: Option<String>,
     #[arg(long, help = "Local dispute record name from `agent dispute ls`")]
     name: Option<String>,

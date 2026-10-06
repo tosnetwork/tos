@@ -95,7 +95,7 @@ impl ThresholdArgs {
 #[command(about = "Show the controller's operating authorization and its runway")]
 pub struct ControllerOperationsStatusCmd {
     /// Validator controller address (-1:<hex>)
-    #[arg(long, allow_hyphen_values = true)]
+    #[arg(long, allow_hyphen_values = true, value_parser = super::utils::address_arg)]
     controller: String,
     #[command(flatten)]
     thresholds: ThresholdArgs,
@@ -121,10 +121,10 @@ pub struct ControllerOperationsStatusCmd {
 )]
 pub struct ControllerOperationsPlanCmd {
     /// Validator controller address (-1:<hex>)
-    #[arg(long, allow_hyphen_values = true)]
+    #[arg(long, allow_hyphen_values = true, value_parser = super::utils::address_arg)]
     controller: String,
     /// Wallet that sends the signed request; the contract requires sender == payer
-    #[arg(long, allow_hyphen_values = true)]
+    #[arg(long, allow_hyphen_values = true, value_parser = super::utils::address_arg)]
     payer: String,
     #[command(flatten)]
     thresholds: ThresholdArgs,
@@ -759,9 +759,9 @@ mod tests {
             .try_get_matches_from([
                 "plan",
                 "--controller",
-                "-1:00",
+                "-1:0000000000000000000000000000000000000000000000000000000000000000",
                 "--payer",
-                "-1:00",
+                "-1:0000000000000000000000000000000000000000000000000000000000000000",
                 "--expiry-only",
                 "--funds-target-nanotos",
                 "1",

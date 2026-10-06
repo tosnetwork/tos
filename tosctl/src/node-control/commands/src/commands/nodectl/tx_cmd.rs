@@ -45,7 +45,7 @@ pub enum TxAction {
 #[command(about = "Build a canonical transaction intent")]
 pub struct TxBuildIntentCmd {
     /// Source account address
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     /// Message body as base64-encoded BOC
@@ -69,7 +69,7 @@ pub struct TxBuildIntentCmd {
 #[command(about = "Get signing payload for a transaction")]
 pub struct TxSigningPayloadCmd {
     /// Source account address
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     /// Message body as base64-encoded BOC

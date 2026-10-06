@@ -46,21 +46,21 @@ pub struct PoolAddCmd {
     #[arg(short = 'n', long = "name", help = "Pool name (unique identifier)")]
     name: String,
     #[arg(
-        allow_hyphen_values = true,
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
         short = 'a',
         long = "address",
         help = "Pool contract address, raw or base64url (if already deployed)"
     )]
     address: Option<String>,
     #[arg(
-        allow_hyphen_values = true,
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
         short = 'o',
         long = "owner",
         help = "Owner address, raw or base64url (for deployment/verification)"
     )]
     owner: Option<String>,
     #[arg(
-        allow_hyphen_values = true,
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
         long = "controller",
         help = "Validator controller address the pool relays its stake through"
     )]

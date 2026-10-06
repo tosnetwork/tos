@@ -80,7 +80,7 @@ pub enum AccountAction {
 #[derive(clap::Args, Clone)]
 #[command(about = "Account status and summary")]
 pub struct AccountStatusCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     /// Output format: table or json
@@ -91,7 +91,7 @@ pub struct AccountStatusCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Inspect account capability")]
 pub struct AccountCapabilityCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     #[arg(long)]
@@ -107,7 +107,7 @@ pub struct AccountCapabilityCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Inspect account delegations")]
 pub struct AccountDelegationsCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     #[arg(long, default_value_t = false)]
@@ -126,7 +126,7 @@ pub struct AccountDelegationsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Inspect account sessions")]
 pub struct AccountSessionsCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     #[arg(long, default_value_t = false)]
@@ -145,7 +145,7 @@ pub struct AccountSessionsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Inspect account agents")]
 pub struct AccountAgentsCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     #[arg(long, default_value_t = false)]
@@ -168,7 +168,7 @@ pub struct AccountAgentsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Account transaction history")]
 pub struct AccountTxsCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     #[arg(long, default_value_t = 10, help = "Number of transactions to fetch (max 100)")]
@@ -212,7 +212,7 @@ pub struct AccountBookmarkLsCmd {
 pub struct AccountBookmarkAddCmd {
     #[arg(long)]
     name: String,
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 }
 
@@ -230,7 +230,7 @@ pub struct AccountBookmarkRmCmd {
 #[command(about = "Run a get-method on a smart contract")]
 pub struct AccountRunMethodCmd {
     /// Contract address (raw or friendly format)
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
 
     /// Method name (e.g. "seqno", "get_pool_data")
@@ -267,7 +267,7 @@ pub struct AccountSendBocCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Grant a delegation (lifecycle mutation)")]
 pub struct AccountDelegationGrantCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
     #[arg(long)]
     grantee: String,
@@ -286,7 +286,7 @@ pub struct AccountDelegationGrantCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Revoke a delegation (lifecycle mutation)")]
 pub struct AccountDelegationRevokeCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
     #[arg(long)]
     permission_id: String,
@@ -297,7 +297,7 @@ pub struct AccountDelegationRevokeCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Grant a session capability (lifecycle mutation)")]
 pub struct AccountSessionGrantCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
     #[arg(long)]
     grantee: String,
@@ -316,7 +316,7 @@ pub struct AccountSessionGrantCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Revoke a session capability (lifecycle mutation)")]
 pub struct AccountSessionRevokeCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
     #[arg(long)]
     permission_id: String,
@@ -327,7 +327,7 @@ pub struct AccountSessionRevokeCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Grant an agent capability (lifecycle mutation)")]
 pub struct AccountAgentGrantCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
     #[arg(long)]
     grantee: String,
@@ -346,7 +346,7 @@ pub struct AccountAgentGrantCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Revoke an agent capability (lifecycle mutation)")]
 pub struct AccountAgentRevokeCmd {
-    #[arg(allow_hyphen_values = true, long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     address: String,
     #[arg(long)]
     permission_id: String,

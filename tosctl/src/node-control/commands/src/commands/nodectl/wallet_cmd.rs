@@ -298,7 +298,7 @@ pub struct WalletSendCmd {
     #[arg(long, help = "Source wallet name from config")]
     from: String,
 
-    #[arg(allow_hyphen_values = true, long, help = "Destination address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Destination address")]
     to: String,
 
     #[arg(
@@ -1604,7 +1604,7 @@ mod wallet_send_cli_tests {
                 "--from",
                 "anchor",
                 "--to",
-                "0:abc",
+                "0:abababababababababababababababababababababababababababababababab",
                 "--amount-nanotos",
                 "7",
                 "--yes",
@@ -1626,7 +1626,7 @@ mod wallet_send_cli_tests {
                 "--from",
                 "anchor",
                 "--to",
-                "0:abc",
+                "0:abababababababababababababababababababababababababababababababab",
                 "--amount-nanotos",
                 "7",
                 "--body-boc",
@@ -1717,7 +1717,7 @@ mod wallet_send_cli_tests {
                     "--from",
                     "anchor",
                     "--to",
-                    "0:abc",
+                    "0:abababababababababababababababababababababababababababababababab",
                     "--amount",
                     "1",
                     "--amount-nanotos",
@@ -1736,7 +1736,7 @@ mod wallet_send_cli_tests {
                 "--from",
                 "anchor",
                 "--to",
-                "0:abc",
+                "0:abababababababababababababababababababababababababababababababab",
                 "--amount-nanotos",
                 "1",
                 "--config-fd",

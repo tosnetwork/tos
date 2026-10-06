@@ -70,7 +70,7 @@ impl CapabilityRegistryCmd {
 pub struct CapabilityRegistryDeployCmd {
     #[arg(long, help = "Local registry record name; defaults to registry-<address prefix>")]
     name: Option<String>,
-    #[arg(allow_hyphen_values = true, long, help = "Owner address; must match the funding wallet")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner address; must match the funding wallet")]
     owner: String,
     #[arg(long, help = "Optional verifier allowed to adjust the reputation score")]
     verifier: Option<String>,
@@ -103,7 +103,7 @@ pub struct CapabilityRegistryDeployCmd {
 pub struct CapabilityRegistryLsCmd {
     #[arg(long, help = "Read current bond, reputation and active status from each registry entry")]
     on_chain: bool,
-    #[arg(allow_hyphen_values = true, long, help = "Filter by owner address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Filter by owner address")]
     owner: Option<String>,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -113,7 +113,7 @@ pub struct CapabilityRegistryLsCmd {
 #[command(about = "Show Capability Registry state by address or local record name")]
 pub struct CapabilityRegistryShowCmd {
     #[arg(
-        allow_hyphen_values = true,
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
         long,
         conflicts_with = "name",
         help = "Capability Registry address"
@@ -142,7 +142,7 @@ pub struct CapabilityRegistrySendCmd {
     #[arg(long, value_enum)]
     operation: CapabilityRegistryOperation,
     #[arg(
-        allow_hyphen_values = true,
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
         long,
         conflicts_with = "name",
         help = "Capability Registry address"
@@ -181,7 +181,7 @@ pub struct CapabilityRegistrySendCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Build deterministic Capability Registry StateInit")]
 pub struct CapabilityRegistryBuildStateCmd {
-    #[arg(allow_hyphen_values = true, long, help = "Owner address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner address")]
     owner: String,
     #[arg(long, help = "Optional verifier allowed to adjust the reputation score")]
     verifier: Option<String>,

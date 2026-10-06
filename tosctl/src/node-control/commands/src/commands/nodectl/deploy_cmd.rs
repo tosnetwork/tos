@@ -109,7 +109,7 @@ pub(crate) struct DeployContractCmd {
     wait: bool,
 
     /// Contract address to monitor (required with --wait)
-    #[arg(allow_hyphen_values = true, long, help = "Address to watch (required with --wait)")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Address to watch (required with --wait)")]
     address: Option<String>,
 
     /// Output format
