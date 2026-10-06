@@ -1,11 +1,11 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
 //! PQ-only V5R2 AUTH wire construction, independent of custody and transport.
 //!
-//! This encoder does not verify chain proofs, installed code, action policy or
-//! signatures. The caller must obtain counters and parties from trusted current
+//! This encoder checks the strict send-action list, but does not verify chain
+//! proofs, installed code or signatures. The caller must obtain counters from trusted current
 //! state and validate migration witnesses before requesting a signature. The
 //! module and receiving wallet enforce those checks again on chain.
-use chain_block::{BuilderData, Cell, IBitstring};
+use chain_block::{BuilderData, Cell, IBitstring, SliceData};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthRole {
@@ -43,6 +43,7 @@ impl AuthAction {
         let mut b = BuilderData::new();
         let kind = match self {
             Self::Execute { actions } => {
+                validate_actions(&actions)?;
                 b.append_u32(0x45584543)?;
                 b.checked_append_reference(actions)?;
                 0
@@ -75,6 +76,33 @@ impl AuthAction {
             }
         };
         Ok((kind, b.into_cell()?))
+    }
+}
+
+/// Validate the V5 strict AUTH OutList before exposing a signing digest.
+/// Message contents, available funds and delivery remain execution-time checks;
+/// this is not approval of a recipient, amount or message body by the owner.
+pub fn validate_actions(actions: &Cell) -> anyhow::Result<()> {
+    let mut current = actions.clone();
+    let mut count = 0u16;
+    loop {
+        let mut slice = SliceData::load_cell(current)?;
+        if slice.remaining_bits() == 0 {
+            anyhow::ensure!(slice.remaining_references() == 0, "action tail must be empty");
+            return Ok(());
+        }
+        anyhow::ensure!(count < 255, "at most 255 send actions");
+        anyhow::ensure!(
+            slice.remaining_bits() == 40 && slice.remaining_references() == 2,
+            "send action shape"
+        );
+        anyhow::ensure!(slice.get_next_u32()? == 0x0ec3c86d, "only send actions are allowed");
+        let mode = slice.get_next_byte()?;
+        anyhow::ensure!(mode & 2 != 0, "send action requires ignore-errors flag");
+        anyhow::ensure!(mode & 44 == 0, "forbidden send mode flags");
+        anyhow::ensure!(mode & 192 != 192, "conflicting send value modes");
+        current = slice.checked_drain_reference()?;
+        count = count.checked_add(1).ok_or_else(|| anyhow::anyhow!("action count overflow"))?;
     }
 }
 
@@ -213,6 +241,67 @@ mod tests {
 
     fn execute() -> AuthAction {
         AuthAction::Execute { actions: Cell::default() }
+    }
+
+    fn send(previous: Cell, tag: u32, mode: u8) -> Cell {
+        let mut b = BuilderData::new();
+        b.append_u32(tag).expect("tag");
+        b.append_u8(mode).expect("mode");
+        b.checked_append_reference(previous).expect("previous");
+        b.checked_append_reference(Cell::default()).expect("message fixture");
+        b.into_cell().expect("action")
+    }
+
+    #[test]
+    fn strict_send_modes_before_signing() {
+        // Enumerated from the shared wallet's allowed flags: +1, +2, +16,
+        // optional 64 OR 128. All other mode bytes must be refused.
+        let allowed = [2, 3, 18, 19, 66, 67, 82, 83, 130, 131, 146, 147];
+        for mode in 0..=255u8 {
+            for role in [AuthRole::Primary, AuthRole::Rescue] {
+                let result = AuthRequest::new(
+                    binding(1_780_000_600),
+                    role,
+                    AuthAction::Execute { actions: send(Cell::default(), 0x0ec3c86d, mode) },
+                    1_780_000_000,
+                );
+                assert_eq!(result.is_ok(), allowed.contains(&mode), "role {role:?}, mode {mode}");
+            }
+        }
+    }
+
+    #[test]
+    fn strict_action_shape_and_count_before_signing() {
+        let mut actions = Cell::default();
+        for count in 0..=256 {
+            assert_eq!(validate_actions(&actions).is_ok(), count <= 255, "count {count}");
+            actions = send(actions, 0x0ec3c86d, 3);
+        }
+        for tag in [0xad4de08e, 0x36e6b809, 0] {
+            assert!(validate_actions(&send(Cell::default(), tag, 3)).is_err(), "tag {tag}");
+        }
+        let mut tail = BuilderData::new();
+        tail.checked_append_reference(Cell::default()).expect("dangling reference");
+        assert!(validate_actions(&send(tail.into_cell().expect("tail"), 0x0ec3c86d, 3)).is_err());
+        assert!(validate_actions(&byte(1)).is_err());
+        for (extra_bit, extra_ref) in [(true, false), (false, true)] {
+            let mut malformed = BuilderData::new();
+            malformed.append_u32(0x0ec3c86d).expect("tag");
+            malformed.append_u8(3).expect("mode");
+            if extra_bit {
+                malformed.append_bit_zero().expect("extra bit");
+            }
+            malformed.checked_append_reference(Cell::default()).expect("tail");
+            malformed.checked_append_reference(Cell::default()).expect("message");
+            if extra_ref {
+                malformed.checked_append_reference(Cell::default()).expect("extra ref");
+            }
+            assert!(validate_actions(&malformed.into_cell().expect("malformed action")).is_err());
+        }
+        // The check must traverse the entire list, including its oldest action.
+        assert!(
+            validate_actions(&send(send(Cell::default(), 0x0ec3c86d, 32), 0x0ec3c86d, 3)).is_err()
+        );
     }
 
     #[test]

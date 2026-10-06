@@ -32,6 +32,29 @@ def main():
         module = "wallet_v5r2_genesis"
     source = source_path.read_text()
     cases = [
+        ("action_gate", "validate_actions(&actions)?;", "", "strict_send_modes_before_signing"),
+        ("action_ignore_errors", "mode & 2 != 0", "true", "strict_send_modes_before_signing"),
+        ("action_flags", "mode & 44 == 0", "true", "strict_send_modes_before_signing"),
+        ("action_value_modes", "mode & 192 != 192", "true", "strict_send_modes_before_signing"),
+        ("action_count", "count < 255", "true", "strict_action_shape_and_count_before_signing"),
+        (
+            "action_tail",
+            'slice.remaining_references() == 0, "action tail must be empty"',
+            'true, "action tail must be empty"',
+            "strict_action_shape_and_count_before_signing",
+        ),
+        (
+            "action_shape",
+            "slice.remaining_bits() == 40 && slice.remaining_references() == 2",
+            "true",
+            "strict_action_shape_and_count_before_signing",
+        ),
+        (
+            "action_tag",
+            "slice.get_next_u32()? == 0x0ec3c86d",
+            "{ slice.get_next_u32()?; true }",
+            "strict_action_shape_and_count_before_signing",
+        ),
         ("parties", "binding.account != binding.module", "true", "wallet_cannot_be_its_own_module"),
         (
             "primary_authority",

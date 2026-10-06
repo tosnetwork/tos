@@ -1357,3 +1357,20 @@ this suite does not prove an upstream payer transaction, wallet deployment, or a
 external PRIMARY admission route. The paired rescue vault remains RESCUE-only for
 AUTH. This closes the module-to-recipient evidence gap without claiming production
 funding, custody, client integration or finality acceptance.
+
+## SDK action validation before signing
+
+`AuthRequest::new` now validates execute OutLists before exposing the signing
+digest, for both PRIMARY and RESCUE. It applies the shared wallet's structural
+and mode rules: 0–255 send actions, exact 40-bit/two-reference nodes and empty
+terminal cell, send opcode only, mandatory `+2`, no bits 2/3/5, and no combined
+64/128 value modes. Validation traverses the entire list with a checked counter.
+Tests enumerate all 256 mode bytes for both roles and cover action-count, tag,
+shape and tail boundaries. Independent wire vectors retain their prior hashes.
+Eight new deletion controls cover the call site and each rule in addition to the
+five existing AUTH controls, using the existing SDK CI runner.
+
+This rejects known-invalid requests before signature generation. It does not
+approve recipients or amounts, parse application payload semantics, establish
+available funds, prove delivery, or replace the on-chain action checks. Other
+request constructors still require proven state and appropriate key custody.

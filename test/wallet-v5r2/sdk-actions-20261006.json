@@ -1,0 +1,144 @@
+{
+  "base_commit": "0f7a6ca30e69fe0906fc852c88429f7749062396",
+  "change": "Validate strict V5 send-action shape/count/modes before AuthRequest exposes a signing digest for either PQ role",
+  "unit_tests": 6,
+  "mode_combinations": 512,
+  "action_count_boundaries": "0 through 256",
+  "mutation_controls": {
+    "action_gate": {
+      "exit": 101,
+      "semantic_witness": "strict_send_modes_before_signing"
+    },
+    "action_ignore_errors": {
+      "exit": 101,
+      "semantic_witness": "strict_send_modes_before_signing"
+    },
+    "action_flags": {
+      "exit": 101,
+      "semantic_witness": "strict_send_modes_before_signing"
+    },
+    "action_value_modes": {
+      "exit": 101,
+      "semantic_witness": "strict_send_modes_before_signing"
+    },
+    "action_count": {
+      "exit": 101,
+      "semantic_witness": "strict_action_shape_and_count_before_signing"
+    },
+    "action_tail": {
+      "exit": 101,
+      "semantic_witness": "strict_action_shape_and_count_before_signing"
+    },
+    "action_shape": {
+      "exit": 101,
+      "semantic_witness": "strict_action_shape_and_count_before_signing"
+    },
+    "action_tag": {
+      "exit": 101,
+      "semantic_witness": "strict_action_shape_and_count_before_signing"
+    },
+    "parties": {
+      "exit": 101,
+      "semantic_witness": "wallet_cannot_be_its_own_module"
+    },
+    "primary_authority": {
+      "exit": 101,
+      "semantic_witness": "primary_cannot_change_authority"
+    },
+    "ttl": {
+      "exit": 101,
+      "semantic_witness": "deadline_and_signature_framing_are_strict"
+    },
+    "signature_width": {
+      "exit": 101,
+      "semantic_witness": "deadline_and_signature_framing_are_strict"
+    },
+    "domain": {
+      "exit": 101,
+      "semantic_witness": "independent_python_wire_vectors"
+    }
+  },
+  "full_recovery": {
+    "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+    "pop_role": null,
+    "prepare": true,
+    "recovery": true,
+    "sdk_cache": true,
+    "expected_transactions": 65,
+    "observed_transactions": 65,
+    "differences": [],
+    "success": true
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2.rs",
+      "sha256": "b415634b43be720e67ac90c5a565d4931284616657243eef44e98a97cfcb790b",
+      "bytes": 15266
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/sdk_auth_controls.py",
+      "sha256": "f0a12206b9085b738871f0bafa523a8d5b8bad8845a64b49b4191c46b3f6651e",
+      "bytes": 10426
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-controls/MANIFEST.json",
+      "sha256": "91fb5f8ebdf290136b22239f4df43321e81245354b704c158214d2246206d103",
+      "bytes": 4027
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-controls/results.json",
+      "sha256": "2133e67c03ba3e559874f7bcc9e6c9391ef8268b5459468fbc61a33876e30ebf",
+      "bytes": 1377
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-controls/restored.log",
+      "sha256": "ad71d4285195bc5ba0a788d11662afc8e5fda7af9b9d392f205bb6b0792b23de",
+      "bytes": 5016
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-controls/recovery.log",
+      "sha256": "0787ca7490111d3885c603948ab61ea571f3a66879e744417eb8a1edf764ac78",
+      "bytes": 4250
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-controls/encoder-build.log",
+      "sha256": "75281859152c5feb9a50b246feab1a1b6dc889b6e36d43dfd8458f2d22ea7632",
+      "bytes": 5000
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-controls/fmt-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-recovery/MANIFEST.json",
+      "sha256": "ebd8c0821ae0ae43597e18c901dc9efefe79c0841f35408db0d36ef3069d25f4",
+      "bytes": 35478
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-recovery/parity.json",
+      "sha256": "fc5486aa00685a20f157ad28e20734cb1b72fea84a346061288c32d0f1f34136",
+      "bytes": 280
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-sdk-action-recovery/sdk-auth.json",
+      "sha256": "97ab5dc28fbfa9f0e5bd06c5d9d05fd88ee3da5efb091a1c656b4cd4ac4dfab7",
+      "bytes": 25621
+    }
+  ],
+  "commands": [
+    "python test/wallet-v5r2/sdk_auth_controls.py --output <fresh-directory>",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts --example v5r2_auth_encode",
+    "make -C tosctl/src fmt-check",
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; python test/wallet-v5r2/sdk_auth_parity.py --native-signer build/crypto/pq/test-wallet-pq-signer-fixture --auth-driver tosctl/src/target/debug/examples/v5r2_auth_encode --pop-driver tosctl/src/target/debug/examples/v5r2_pop_encode --preparation-driver tosctl/src/target/debug/examples/v5r2_prepare_encode --fee-driver tosctl/src/target/debug/examples/v5r2_fee_encode --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --cache-driver tosctl/src/target/debug/examples/lms_fee_cache_fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output <fresh-directory>"
+  ],
+  "retention": "Keep raw inputs/results through 2027-01-06 or later release review. Public LMS trees may be hardlinked from the retained funded recovery run.",
+  "remaining": [
+    "Action validation is not user approval or delivery verification",
+    "Production signing custody and client flow",
+    "Default 10000 credit still fails; recovery uses diagnostic 20000",
+    "Independent review and latest-head CI"
+  ]
+}
