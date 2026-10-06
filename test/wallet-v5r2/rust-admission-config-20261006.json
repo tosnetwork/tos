@@ -1,0 +1,109 @@
+{
+  "base_commit": "681b538cc05d52ff05a528bbe283a809a7a3830f",
+  "source_state": "uncommitted test and runner changes on base commit; executor source restored unchanged",
+  "platform": "macOS AArch64 native create-state and Rust executor configuration loader",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "tosctl/src/node-control/contracts/tests/chain_gas_envelope_sandbox.rs": "f0d9c684990e7e14bb0bcc61d40612f916d0e02191b56da0d8e521ede3ac795c",
+    "tosctl/src/executor/src/blockchain_config.rs": "6132198b8601d671fe9625e5d694fef05168d428859ef84a4399cacd5c3a5a10",
+    "crypto/smartcont/gen-zerostate.fif": "e837c6a29ffdf605ebd723f65db1eaa29982061480982122dce4f3814d828d4e",
+    "test/wallet-v5r2/admission_config_controls.py": "8af6a443b2737c7107ac433442c020f21499e65440ef81cef86020acdd9eb7e6",
+    ".github/workflows/rescue-context.yml": "6870e216e5abe7767880f15d76bcdd5a27d62e5f49a558907fbefb5e7e7e050d",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "6b9c899e62ff2ac89c920da16182aa0d4d111c34ecd01088e4f94521e208f7fc"
+  },
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-generated-config-controls",
+  "command": "python3 test/wallet-v5r2/admission_config_controls.py --output-dir /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-generated-config-controls",
+  "results": {
+    "source": "tosctl/src/executor/src/blockchain_config.rs",
+    "source_sha256": "6132198b8601d671fe9625e5d694fef05168d428859ef84a4399cacd5c3a5a10",
+    "runs": {
+      "baseline": {
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.toml",
+          "--locked",
+          "-p",
+          "contracts",
+          "--test",
+          "chain_gas_envelope_sandbox",
+          "-j",
+          "1",
+          "--",
+          "--nocapture"
+        ],
+        "returncode": 0
+      },
+      "fallback-default": {
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.toml",
+          "--locked",
+          "-p",
+          "contracts",
+          "--test",
+          "chain_gas_envelope_sandbox",
+          "-j",
+          "1",
+          "admission_candidate_executor_loads_the_generated_chain_configuration",
+          "--",
+          "--nocapture"
+        ],
+        "returncode": 101
+      },
+      "restored": {
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.toml",
+          "--locked",
+          "-p",
+          "contracts",
+          "--test",
+          "chain_gas_envelope_sandbox",
+          "-j",
+          "1",
+          "--",
+          "--nocapture"
+        ],
+        "returncode": 0
+      }
+    },
+    "artifacts": {
+      "baseline-config.boc": {
+        "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+        "bytes": 7387
+      },
+      "baseline.log": {
+        "sha256": "9b6b2e327c0d7bcb9f123b68702bd5273abdc007ab2dab2ca647ccfc5d120f3e",
+        "bytes": 7940
+      },
+      "fallback-default-config.boc": {
+        "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+        "bytes": 7387
+      },
+      "fallback-default.log": {
+        "sha256": "ba83d0bdefd196aced47f34600f9de1a85e3403ea05bd3a19e078388c64d4688",
+        "bytes": 6908
+      },
+      "restored-config.boc": {
+        "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+        "bytes": 7387
+      },
+      "restored.log": {
+        "sha256": "5fd6c48d448cdfc7d2dc343c1523119e5ee26c6bf3a6099aee3f69fccb2d6c12",
+        "bytes": 8142
+      }
+    },
+    "scope": "Generated canonical candidate passed directly into Rust BlockchainConfig::with_config; no transaction execution"
+  },
+  "scope": "Four Rust gas/forward-price tests pass on baseline and restoration. Candidate config is generated with version18, masterchain credit10000 and basechain credit20000, then passed into BlockchainConfig::with_config without test overrides. All serialized gas fields and derived max_gas_threshold match. Replacing basechain loading with the legacy default table fails the candidate credit assertion.",
+  "limitations": [
+    "Configuration loading only; no wallet transaction execution under this BOC yet.",
+    "Fallback defaults remain the legacy 10000-credit profile; public activation and release parity are pending."
+  ]
+}

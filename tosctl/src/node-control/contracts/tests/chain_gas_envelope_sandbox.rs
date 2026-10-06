@@ -19,9 +19,63 @@
 //!
 //! This test needs `build/crypto/create-state`, which `TOS_ROOT` locates.
 
-use chain_block::{GasLimitsPrices, MsgForwardPrices};
+use chain_block::{GasLimitsPrices, MsgForwardPrices, Serializable};
 
 const ACTIVE_VERSION: u32 = 16;
+
+#[test]
+fn admission_candidate_executor_loads_the_generated_chain_configuration() {
+    let directory = tempfile::tempdir().expect("candidate wrapper directory");
+    let wrapper = directory.path().join("admission-candidate.fif");
+    let template =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont/gen-zerostate.fif");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "0x{} constant v5r2-network-tag\ntrue constant v5r2-admission-candidate\n\"{template}\" include\n",
+            "42".repeat(32)
+        ),
+    )
+    .expect("write explicit candidate wrapper");
+    let state =
+        tos_sandbox::generate_zerostate_state(&wrapper).expect("generate candidate genesis");
+    let config = state.read_custom().expect("masterchain extra").expect("masterchain").config;
+    assert_eq!(config.get_global_version().expect("version").version, 18);
+    assert_eq!(config.gas_prices(false).expect("basechain prices").gas_credit, 20000);
+    assert_eq!(config.gas_prices(true).expect("masterchain prices").gas_credit, 10000);
+    if let Ok(path) = std::env::var("V5R2_ADMISSION_CONFIG_OUT") {
+        config.write_to_file(&path).expect("retain generated public configuration");
+    }
+    // No set_gas_credit, version replacement or fallback defaults on this path.
+    let executor = tos_executor::BlockchainConfig::with_config(config.clone())
+        .expect("load generated candidate configuration");
+    assert_eq!(executor.global_version(), 18);
+    for (masterchain, name) in [(false, "basechain"), (true, "masterchain")] {
+        let expected = config.gas_prices(masterchain).expect("generated gas prices");
+        let actual = executor.get_gas_config(masterchain);
+        let rows = [
+            ("gas_price", expected.gas_price, actual.gas_price),
+            ("gas_limit", expected.gas_limit, actual.gas_limit),
+            ("special_gas_limit", expected.special_gas_limit, actual.special_gas_limit),
+            ("gas_credit", expected.gas_credit, actual.gas_credit),
+            ("block_gas_limit", expected.block_gas_limit, actual.block_gas_limit),
+            ("flat_gas_limit", expected.flat_gas_limit, actual.flat_gas_limit),
+            ("flat_gas_price", expected.flat_gas_price, actual.flat_gas_price),
+            ("freeze_due_limit", expected.freeze_due_limit, actual.freeze_due_limit),
+            ("delete_due_limit", expected.delete_due_limit, actual.delete_due_limit),
+        ];
+        for (field, expected_value, actual_value) in rows {
+            eprintln!(
+                "candidate {name} {field}: generated={expected_value} executor={actual_value}"
+            );
+            assert_eq!(expected_value, actual_value, "candidate {name} {field}");
+        }
+        assert_eq!(
+            expected.max_gas_threshold, actual.max_gas_threshold,
+            "candidate {name} max_gas_threshold"
+        );
+    }
+}
 
 fn zerostate_config() -> chain_block::ConfigParams {
     let template =

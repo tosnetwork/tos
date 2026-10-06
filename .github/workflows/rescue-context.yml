@@ -70,12 +70,15 @@ jobs:
       - name: Build native Release tools and both Rust drivers
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift tlbc emulator test-fee-native-cost test-pq-suite-parity test-wallet-pq-signer-fixture -j2
+          cmake --build build --target func fift tlbc create-state emulator test-fee-native-cost test-pq-suite-parity test-wallet-pq-signer-fixture -j2
           sh test/rescue-fee-gate/tools/build.sh build-signers
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_vm -p tos_executor \
             --example fee-native-cost --example suite-parity --example pq-tx-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
             --example lms_fee_cache_fixture --example v5r2_auth_encode --example v5r2_pop_encode --example v5r2_prepare_encode --example v5r2_fee_encode --example v5r2_genesis_encode
+      - name: Generated admission configuration loading
+        run: |
+          python test/wallet-v5r2/admission_config_controls.py --output-dir artifacts/context/r2-generated-config
       - name: PQ-only native wallet signer and fault controls
         run: |
           python test/wallet-v5r2/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer

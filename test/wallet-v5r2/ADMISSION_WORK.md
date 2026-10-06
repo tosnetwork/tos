@@ -111,3 +111,10 @@ This is a configuration candidate for further acceptance work. Rust defaults,
 opcode version boundaries, full default-credit
 transaction parity, calibrated node rates and public-network activation remain
 pending; generating a BOC does not establish these gates.
+
+The [Rust loading controls](rust-admission-config-20261006.json) generate the
+canonical candidate and pass its `ConfigParams` directly into
+`BlockchainConfig::with_config`. Version and every gas field match the generated
+configuration. Replacing basechain loading with the old default table fails at
+credit 20,000 versus 10,000. The runner retains the public ConfigParams BOC for
+transaction testing; this loading check does not execute wallet transactions.
