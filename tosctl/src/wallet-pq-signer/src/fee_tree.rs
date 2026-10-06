@@ -1,6 +1,8 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
 //! Fixed H20/W4 public tree reconstruction. No message signing or journal state.
 use crate::{Rejected, WipeSeed};
+#[path = "fee_tree_cache.rs"]
+mod cache;
 
 const LEAVES: usize = 1 << 20;
 const TREE_BYTES: usize = LEAVES * 2 * 32;
@@ -121,6 +123,14 @@ mod tests {
             tree.authentication_path(12).unwrap().as_slice(),
             &signature[2192..],
             "fee tree independent path mismatch"
+        );
+        let mut encoded = Vec::new();
+        tree.write_cache(&mut encoded).unwrap();
+        let restored = FeeTree::read_cache(encoded.as_slice(), tree.public_key()).unwrap();
+        assert_eq!(restored.public_key(), tree.public_key());
+        assert_eq!(
+            restored.authentication_path(12).unwrap(),
+            tree.authentication_path(12).unwrap()
         );
         for q in [0, 1, 12, (1 << 19) + 1, (1 << 20) - 1] {
             crate::fee::verify_seed_and_wipe(

@@ -1,0 +1,248 @@
+{
+  "base_commit": "49864954646d7e8f43776c0d0ba2c8b8186d4638",
+  "scope": "Enrollment-bound full public fee tree cache with exact framing, every parent hash verified, new-only Unix file publication with sync and readback. Structural fault tests plus actual full H20 cryptographic fixture cache roundtrip. No seed or signing state in cache; mnemonic client flow remains incomplete.",
+  "semantic_controls": {
+    "magic": {
+      "exit": 101,
+      "semantic_witness": "fee cache accepted changed magic"
+    },
+    "enrollment": {
+      "exit": 101,
+      "semantic_witness": "fee cache ignored enrollment"
+    },
+    "profile": {
+      "exit": 101,
+      "semantic_witness": "fee cache accepted wrong profile"
+    },
+    "unused": {
+      "exit": 101,
+      "semantic_witness": "fee cache accepted changed unused"
+    },
+    "root": {
+      "exit": 101,
+      "semantic_witness": "fee cache ignored tree root"
+    },
+    "parents": {
+      "exit": 101,
+      "semantic_witness": "fee cache accepted changed parent"
+    },
+    "trailing": {
+      "exit": 101,
+      "semantic_witness": "fee cache accepted trailing data"
+    },
+    "new_only": {
+      "exit": 101,
+      "semantic_witness": "fee cache overwrote destination"
+    }
+  },
+  "prior_signing_controls": {
+    "verify_output": {
+      "exit": 101,
+      "semantic_witness": "fee primitive accepted bad input 0"
+    },
+    "initial_clear": {
+      "exit": 101,
+      "semantic_witness": "fee primitive leaked rejected output 1"
+    },
+    "failed_clear": {
+      "exit": 101,
+      "semantic_witness": "fee primitive leaked rejected output 0"
+    }
+  },
+  "regression": {
+    "full_tree_cache": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "wallet-pq-signer",
+        "--lib",
+        "fee_tree_matches_independent_enrollment",
+        "--",
+        "--ignored"
+      ],
+      "exit": 0
+    },
+    "signer": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "wallet-pq-signer",
+        "--features",
+        "vault"
+      ],
+      "exit": 0
+    },
+    "vault_signing": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-vault",
+        "--lib",
+        "native_fee_signing_preserves_proof_reservation_and_seed_cleanup"
+      ],
+      "exit": 0
+    },
+    "fmt": {
+      "command": [
+        "make",
+        "-C",
+        "tosctl/src",
+        "fmt-check"
+      ],
+      "exit": 0
+    },
+    "ruff": {
+      "command": [
+        "/Users/tomisetsu/tos/.venv/bin/ruff",
+        "check",
+        "test/wallet-v5r2/fee_tree_cache_controls.py",
+        "test/wallet-v5r2/native_fee_sign_controls.py"
+      ],
+      "exit": 0
+    }
+  },
+  "results": {
+    "full_tree_cache": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 68.72s"
+    ],
+    "signer": [
+      "test result: ok. 20 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 16.40s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s"
+    ],
+    "vault_signing": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 261 filtered out; finished in 0.15s"
+    ]
+  },
+  "retention_until": "2027-01-06",
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/baseline.log",
+      "size": 4719,
+      "sha256": "bd1137df0ba1c9e8d773c7f86679e3baa2aaa7e9a94c3e6683fbb0a94469c646"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/enrollment.log",
+      "size": 6108,
+      "sha256": "8b6a47e5f3f9fc35cf45132e22778112715e5289e7cf20656d1fa0d50bf898a6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/magic.log",
+      "size": 5397,
+      "sha256": "e0820fe4a0a898cdb6408f17ba6757df027684295610189b23c5db522f5831d8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/new_only.log",
+      "size": 5396,
+      "sha256": "5c254ccb2ebee5000d74ce564a65fc033f37afe0d607122967c71a84216e48cc"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/parents.log",
+      "size": 6391,
+      "sha256": "d232f169cf425dfa6de6920f530287e99b6cb64779c65128b0eafb7bb1a3d280"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/profile.log",
+      "size": 5396,
+      "sha256": "001d7aebf5a4e5bdc3374c0475299fa138589f0954bf441a52c1a3404048e391"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/restored.log",
+      "size": 4832,
+      "sha256": "c0e9203cd846733fd38e2a033a5978ffd41e69a80a4fe93bbaa4748a3a780ac7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/results.json",
+      "size": 762,
+      "sha256": "7d28f9075ba7ca049131d27a27140d7ee7685176a35e9ad770b171034cab7f14"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/root.log",
+      "size": 5391,
+      "sha256": "dbda0433064ff00bc01a42f6c525f845a5b24551da102731094638cec85bd807"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/trailing.log",
+      "size": 6505,
+      "sha256": "8398cb59bf5d1f76a4f08cfb952dcc083abd7ab5fc522c02aaf42165b069c053"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-tree-cache-controls/unused.log",
+      "size": 5398,
+      "sha256": "8a9f050ba61a1f497a5e2b721f6b7e9d244ee8622ef4e527dd68a91084daaeb9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-regression/fmt.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-regression/full_tree_cache.log",
+      "size": 4796,
+      "sha256": "a1598098ff1a5c9731fb0e6f0a6b11d9d4f8bf2097663ea61be485f634d6f760"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-regression/results.json",
+      "size": 1209,
+      "sha256": "3aa82b7e450eeb8365e5c37759fc59d53eefc3b6b0e397ccecad95bc8f2d7231"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-regression/ruff.log",
+      "size": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-regression/signer.log",
+      "size": 6705,
+      "sha256": "8cec8d2944e9a6ccc723e10c909e80203d9773001091fc157becbe016b01cbc9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-regression/vault_signing.log",
+      "size": 9143,
+      "sha256": "c3ba7d75c2a997d5a88b36bc20bdc0253fbb4e066dd90285043f54beeb49e671"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-sign-controls/baseline.log",
+      "size": 5206,
+      "sha256": "10fd27006279807915fdbe83832c7bfee51c15e0a7602265fb547262b4cc989f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-sign-controls/failed_clear.log",
+      "size": 5894,
+      "sha256": "23dc35ec6bb3f5cf8a5266c436b34a56add6e8e0cec55c081385fb66457b5551"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-sign-controls/initial_clear.log",
+      "size": 5894,
+      "sha256": "71e3a05fb65c47313f433ba25f5cd0462bfa2b6348a7e70cdde1aeaa0061f239"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-sign-controls/restored.log",
+      "size": 5319,
+      "sha256": "8a17544e28e150e8308449c1f9f6700460c2da1fae161287aaad1dd9962b121b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-sign-controls/results.json",
+      "size": 322,
+      "sha256": "894d5069bb0f0fdc32a388b1479c2ccfad4b1dcabb61d48d2e1ecbb7b470f614"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-cache-sign-controls/verify_output.log",
+      "size": 6414,
+      "sha256": "b97d3af3e367d4672f22592270289eb3e1755258e302965f7b92787c8bf00786"
+    }
+  ]
+}

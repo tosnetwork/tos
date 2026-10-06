@@ -2717,9 +2717,8 @@ on every return. The API returns the fixed-profile 60-byte public key and bounde
 Generation is synchronous and CPU-heavy. Clients must run it on a worker and
 compare the result with independently authenticated enrollment during restore.
 Rebuilding the public tree does not revoke another signer or bypass the journal's
-next-slot wait. This initial API retains public nodes in memory; a durable,
-integrity-checked public tree cache and the mnemonic-driven client flow remain
-to be integrated. No phone performance, side-channel resistance or hardware
+next-slot wait. The cache adapter below persists and authenticates public nodes. The
+mnemonic-driven client flow remains to be integrated. No phone performance, side-channel resistance or hardware
 anti-rollback claim follows from this implementation.
 
 The explicit full-tree test reconstructs the existing independent public fixture,
@@ -2730,3 +2729,32 @@ is marked ignored only to avoid accidental repetition in generic test runs;
 `fee_tree_controls.py` explicitly runs it in baseline, native domain mutation and
 restored states on both CI architectures. Evidence:
 `test/wallet-v5r2/fee-tree-20261006.json`.
+
+
+### Enrollment-bound public fee tree cache
+
+`FeeTree::write_cache` writes `TOSFT001`, the fixed 60-byte public key and exactly
+64 MiB of public binary-heap nodes. No seed, signature reservation or restore
+state is encoded. `read_cache` requires an independently authenticated expected
+public key, validates the exact profile and framing, checks canonical unused
+node zero and root equality, then recomputes every parent from its two children.
+This authenticates all cached nodes to the enrolled root; an attacker-controlled
+checksum is not used as an enrollment check. Allocation is bounded to one node
+buffer, and truncated or trailing input is rejected.
+
+On Unix, `save_cache_new` creates a new destination with mode 0600, synchronizes
+contents, validates readback using the same file handle, and synchronizes the
+parent directory. It refuses existing destinations. The caller must control the
+parent directory. A failed operation may leave a partial file; this is not atomic
+publication, and callers must not overwrite it automatically. The generic stream
+writer delegates publication/durability to its caller. Cache loading is read-only
+and does not replace secret-to-key verification or journal recovery barriers.
+
+Structural tests use public zero leaf hashes solely to exercise cache integrity
+and file lifecycle. The separately executed full H20 reconstruction test also
+round-trips the real independent cryptographic fixture through the cache codec.
+Eight semantic controls require magic, enrollment, profile, canonical zero, root,
+parent hashing, trailing-byte rejection and new-only publication to fail named
+assertions when removed. Evidence:
+`test/wallet-v5r2/fee-tree-cache-20261006.json`. These are local SDK results, not
+proof of live enrollment authentication or completed mnemonic recovery UX.

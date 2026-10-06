@@ -1,13 +1,12 @@
-"""Require internal LMS signing to verify output and erase rejected output bytes."""
+"""Require public fee tree caches to bind enrollment, all nodes and exact framing."""
 
 import argparse
-import hashlib
 import json
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TEST = "internal_fee_primitive_signs_and_clears_rejected_outputs"
+TEST = "fee_tree_cache_authenticates_all_nodes_and_exact_framing"
 
 
 def main():
@@ -15,30 +14,32 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
-    vendor = ROOT / "third-party/lms-reference"
-    for item in json.loads((vendor / "SOURCE.json").read_text())["files"]:
-        assert hashlib.sha256((vendor / item["file"]).read_bytes()).hexdigest() == item["sha256"], (
-            item["file"]
-        )
-    source = ROOT / "crypto/pq/wallet-lms-sign-c.cpp"
+    source = ROOT / "tosctl/src/wallet-pq-signer/src/fee_tree_cache.rs"
     original = source.read_text()
-    verify = original[original.index("  if (!signed_ok ||") :].split(" {", 1)[0]
-    clear = "  OPENSSL_cleanse(output, output_size);\n"
-    preflight = original[original.index(clear) : original.index("  struct seed_derive derive{};")]
     cases = [
-        ("verify_output", verify, "  if (!signed_ok)", "fee primitive accepted bad input 0"),
+        ("magic", "&magic != MAGIC", "false", "fee cache accepted changed magic"),
+        ("enrollment", "&key != expected_key", "false", "fee cache ignored enrollment"),
         (
-            "initial_clear",
-            preflight,
-            preflight.replace(clear, "", 1) + clear,
-            "fee primitive leaked rejected output 1",
+            "profile",
+            "key[..12] != [0, 0, 0, 1, 0, 0, 0, 8, 0, 0, 0, 3]",
+            "false",
+            "fee cache accepted wrong profile",
+        ),
+        ("unused", "nodes[..32] != [0; 32]", "false", "fee cache accepted changed unused"),
+        ("root", "nodes[32..64] != key[28..]", "false", "fee cache ignored tree root"),
+        (
+            "parents",
+            "nodes.get(start..end).ok_or(Rejected)? != digest",
+            "false",
+            "fee cache accepted changed parent",
         ),
         (
-            "failed_clear",
-            "    OPENSSL_cleanse(output, output_size);\n    return 0;\n  }\n  return 1;",
-            "    return 0;\n  }\n  return 1;",
-            "fee primitive leaked rejected output 0",
+            "trailing",
+            "input.read(&mut extra).map_err(|_| Rejected)? != 0",
+            "false",
+            "fee cache accepted trailing data",
         ),
+        ("new_only", ".create_new(true)", ".create(true)", "fee cache overwrote destination"),
     ]
     for name, old, _, _ in cases:
         assert original.count(old) == 1, name
@@ -54,7 +55,7 @@ def main():
                 "-p",
                 "wallet-pq-signer",
                 "--lib",
-                "fee::",
+                TEST,
             ],
             capture_output=True,
             text=True,
@@ -66,7 +67,7 @@ def main():
 
     def positive(label):
         code, log = run(label)
-        assert code == 0 and "5 passed; 0 failed" in log and f"::{TEST} ... ok" in log, log[-4000:]
+        assert code == 0 and "1 passed; 0 failed" in log and f"::{TEST} ... ok" in log, log[-4000:]
 
     results = {}
     try:
@@ -86,7 +87,7 @@ def main():
         source.write_text(original)
         positive("restored")
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("3 internal fee-signing controls detected; restored tests and vendor hashes pass")
+    print("8 public fee cache controls detected; restored test passes")
 
 
 if __name__ == "__main__":
