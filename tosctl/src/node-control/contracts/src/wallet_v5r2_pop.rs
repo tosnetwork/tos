@@ -160,6 +160,99 @@ impl PopRequest {
     pub fn encode_submission(&self, signature: &[u8]) -> anyhow::Result<Cell> {
         encode_pq_submission(0x50505333, &self.cell, self.role, signature)
     }
+
+    /// Sign this challenge only for the exact locally pinned enrollment. POP
+    /// confers no authority and does not depend on primary retirement policy.
+    /// Caller supplies fresh proof-checked chain time and a fresh challenge;
+    /// require_initial_receipt must still establish its funded execution.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn sign_initial(
+        &self,
+        enrollment: &crate::wallet_v5r2_genesis::WalletGenesis,
+        proven_time: u32,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        self.sign_enrolled(
+            enrollment.module_init(),
+            *enrollment.wallet_init().repr_hash().as_array(),
+            proven_time,
+            signer,
+        )
+    }
+
+    /// Successor POP is allowed before installation in the wallet. Its receipt
+    /// proves possession/execution for this exact proposed tuple, not migration.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn sign_successor(
+        &self,
+        enrollment: &crate::wallet_v5r2_genesis::SuccessorDeployment,
+        proven_time: u32,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        self.sign_enrolled(enrollment.module_init(), *enrollment.wallet(), proven_time, signer)
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    fn sign_enrolled(
+        &self,
+        module_init: &Cell,
+        wallet: [u8; 32],
+        proven_time: u32,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        use chain_block::SliceData;
+        let init = StateInit::construct_from_cell(module_init.clone())?;
+        let data = init.data.ok_or_else(|| anyhow::anyhow!("enrolled module data missing"))?;
+        let mut data = SliceData::load_cell(data)?;
+        anyhow::ensure!(data.get_next_byte()? == 1, "unsupported module layout");
+        let global_id = i32::from_be_bytes(data.get_next_u32()?.to_be_bytes());
+        let network = *data.get_next_hash()?.as_array();
+        anyhow::ensure!(data.get_next_byte()? == 1, "unsupported primary suite");
+        let rescue_key = *data.get_next_hash()?.as_array();
+        let policy = match data.get_next_byte()? {
+            1 => RescuePolicy::Ready,
+            2 => RescuePolicy::Required,
+            _ => anyhow::bail!("unsupported rescue policy"),
+        };
+        let primary = data.checked_drain_reference()?;
+        anyhow::ensure!(
+            data.remaining_bits() == 0 && data.remaining_references() == 0,
+            "module data tail"
+        );
+        let mut original = SliceData::load_cell(self.cell.clone())?;
+        original.move_by(32 + 32 + 256 + 8)?;
+        let challenge = *original.get_next_hash()?.as_array();
+        let valid_until = original.get_next_u32()?;
+        let expected = Self::new(
+            PopBinding {
+                global_id,
+                network,
+                account: wallet,
+                module: *module_init.repr_hash().as_array(),
+                challenge,
+                valid_until,
+            },
+            self.role,
+            policy,
+            *primary.repr_hash().as_array(),
+            rescue_key,
+            proven_time,
+        )?;
+        anyhow::ensure!(
+            expected.cell.repr_hash() == self.cell.repr_hash(),
+            "POP enrollment binding mismatch"
+        );
+        let (role, key) = match self.role {
+            AuthRole::Primary => (
+                wallet_pq_signer::Role::Primary,
+                crate::wallet_v5r2_wallet_state::primary_key_bytes(primary)?,
+            ),
+            AuthRole::Rescue => (wallet_pq_signer::Role::Rescue, rescue_key.to_vec()),
+        };
+        let signature =
+            signer.sign_bound(role, &key, wallet_pq_signer::Purpose::Pop, self.digest())?;
+        self.encode_submission(&signature)
+    }
 }
 
 #[cfg(test)]

@@ -1434,3 +1434,24 @@ test seeds; not a production CLI) signs the 65-transaction recovery suite and th
 The recovery suite still uses diagnostic 20,000 credit. Both architecture CI jobs
 now exercise the Rust signer in SDK recovery/POP, retaining the direct C++ signer
 module suite as well. Evidence is indexed in `rust-signer-20261006.json`.
+
+## Native POP signing for initial and successor enrollment
+
+Under `native-wallet-signer`, `PopRequest::sign_initial` and `sign_successor`
+reconstruct the expected POP from the pinned enrollment and compare its complete
+cell hash before signing. Namespace, wallet/module identities, both keys and policy
+must match; the supplied fresh proof-checked time must still admit the deadline.
+The signer must match the selected enrolled key and uses the POP-only context,
+returning PPS3. Successor POP does not require installation in the wallet: it is
+needed before migration. PRIMARY POP remains allowed under REQUIRED policy and
+does not consult global primary retirement, because it grants no authority.
+
+These methods do not generate a fresh challenge or independently verify the supplied
+time. Callers must generate unpredictable, non-reused challenges and obtain fresh
+chain evidence. Successful signing is not possession-proof completion: the existing
+authenticated initial/successor receipt checks must still prove funded execution of
+that exact challenge. Tests use locally constructed enrollment, real signatures and
+independent primary verification, including wrong parties/keys/policy, expiry, and
+old-key/wrong-role refusal for successor POP. Three new mutations remove enrollment
+matching, replace the POP context with AUTH, and substitute the signer's own key;
+the Rust signer control suite detects them alongside its existing three controls.

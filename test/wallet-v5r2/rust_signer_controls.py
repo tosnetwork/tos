@@ -15,7 +15,8 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     wrapper = ROOT / "tosctl/src/wallet-pq-signer/src/lib.rs"
     state = ROOT / "tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs"
-    sources = {path: path.read_text() for path in (wrapper, state)}
+    pop = ROOT / "tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs"
+    sources = {path: path.read_text() for path in (wrapper, state, pop)}
     commands = {
         wrapper: ["-p", "wallet-pq-signer", "--lib"],
         state: [
@@ -27,7 +28,36 @@ def main():
             "native_wallet_signing_binds_proven_keys_and_policy",
         ],
     }
+    commands[pop] = [
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-signer",
+        "--lib",
+        "native_pop_signing_binds_initial_and_successor_enrollment",
+    ]
     cases = [
+        (
+            "pop_enrollment",
+            pop,
+            "expected.cell.repr_hash() == self.cell.repr_hash()",
+            "true",
+            "native_pop_signing_binds_initial_and_successor_enrollment",
+        ),
+        (
+            "pop_domain",
+            pop,
+            "wallet_pq_signer::Purpose::Pop",
+            "wallet_pq_signer::Purpose::Auth",
+            "native_pop_signing_binds_initial_and_successor_enrollment",
+        ),
+        (
+            "pop_key",
+            pop,
+            "signer.sign_bound(role, &key,",
+            "signer.sign_bound(role, &signer.public_key().to_vec(),",
+            "native_pop_signing_binds_initial_and_successor_enrollment",
+        ),
         ("seed_wipe", wrapper, "self.0.zeroize();", "", "import_wipes_on_success_and_failure"),
         (
             "failure_status",
@@ -78,7 +108,7 @@ def main():
             code, log = run(path, f"restored-{index}")
             assert code == 0, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("Three Rust signer controls detected; restored tests pass")
+    print(f"{len(cases)} Rust signer controls detected; restored tests pass")
 
 
 if __name__ == "__main__":

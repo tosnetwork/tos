@@ -1,0 +1,106 @@
+{
+  "base_commit": "dcb94777f8066f05af32985c25ad641db4b7aada",
+  "scope": "Native POP signing bound to typed initial/successor enrollment; real signatures over locally constructed test enrollment, not live funded POP acceptance",
+  "tests": {
+    "feature_state": 12,
+    "default_state": 10,
+    "pop_wire": 3,
+    "workspace_format": "passed"
+  },
+  "controls": {
+    "pop_enrollment": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "pop_domain": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "pop_key": {
+      "exit": 101,
+      "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+    },
+    "seed_wipe": {
+      "exit": 101,
+      "witness": "import_wipes_on_success_and_failure"
+    },
+    "failure_status": {
+      "exit": 101,
+      "witness": "bound_signatures_and_independent_primary_verification"
+    },
+    "proven_key": {
+      "exit": 101,
+      "witness": "native_wallet_signing_binds_proven_keys_and_policy"
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs",
+      "sha256": "e6b4cbb035f0571ff417023f20b5abffc3804d8f908324cdcb4995085e7519b2",
+      "bytes": 13142
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "sha256": "c341389a659340a35143c338663f0430bac9d207e9429788a8c489ec1faafba0",
+      "bytes": 14664
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "f820a4f3dd47ec13dbd4cac9bddb46814bbd379d8ca352a8ee138e3b33f8c75d",
+      "bytes": 102195
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/rust_signer_controls.py",
+      "sha256": "068f8fca169d2bc290763dfa119136f5c2248c89c5e6478c22aa8b2b90a1f29e",
+      "bytes": 4174
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-native-signing-controls/MANIFEST.json",
+      "sha256": "68e25ad4ffe5c5cbae3137cd549c08b621ce1c4bdbe70f18ad1377bcbce7eb9d",
+      "bytes": 3748
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-native-signing-controls/results.json",
+      "sha256": "d2d1a0ce92107670325601d11e3d0e2c6b1098f84e5f061e8f6af1272e56ef8e",
+      "bytes": 664
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-native-signing-controls/feature-state-tests.log",
+      "sha256": "6c58111bb1e5c074c0512d89bbd2ab7fea2a6d0baa1f22e736c30f4e58798193",
+      "bytes": 5708
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-native-signing-controls/default-feature-tests.log",
+      "sha256": "d4fe612f4735276979dd1da53ae2579f04aed0ccc6c873c5dcae29ac079c6147",
+      "bytes": 5509
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-native-signing-controls/pop-wire-receipts.log",
+      "sha256": "266089072180d0c048ec5a2b3056ec0fbd4ca89c06bb53701f7a2513cfb64c3d",
+      "bytes": 4693
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-native-signing-controls/fmt-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  ],
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib fee_state_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib wallet_v5r2_pop",
+    "python test/wallet-v5r2/rust_signer_controls.py --output <fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "retention": "Keep indexed raw artifacts through 2027-01-06 or later release review.",
+  "remaining": [
+    "Caller still generates fresh non-reused challenge and supplies verified chain time",
+    "Authenticated receipt still required for exact funded POP completion",
+    "Preparation signing client integration",
+    "Key persistence, backup and isolation",
+    "Default external-credit admission and production acceptance",
+    "Final-head CI"
+  ]
+}

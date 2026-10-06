@@ -1170,6 +1170,115 @@ mod fee_state_tests {
         assert_eq!(body.reference(0).unwrap().repr_hash(), expected.cell().repr_hash());
     }
 
+    #[cfg(feature = "native-wallet-signer")]
+    #[test]
+    fn native_pop_signing_binds_initial_and_successor_enrollment() {
+        use crate::wallet_v5r2::AuthRole;
+        use crate::wallet_v5r2_genesis::SuccessorDeployment;
+        use crate::wallet_v5r2_pop::{PopBinding, PopRequest};
+        use chain_block::SliceData;
+        use fips204::traits::{SerDes, Verifier};
+        use wallet_pq_signer::{Role, Signer};
+        let mut primary = Signer::import_and_wipe(Role::Primary, &mut [0x11; 32]).unwrap();
+        let mut rescue = Signer::import_and_wipe(Role::Rescue, &mut [0x22; 48]).unwrap();
+        // Required policy deliberately permits per-key primary POP, not AUTH.
+        let (g, _) = fixture_with_keys(
+            RescuePolicy::Required,
+            primary.public_key().try_into().unwrap(),
+            rescue.public_key().try_into().unwrap(),
+        );
+        let binding = || PopBinding {
+            global_id: 42,
+            network: [1; 32],
+            account: *g.wallet_init().repr_hash().as_array(),
+            module: *g.module_init().repr_hash().as_array(),
+            challenge: [0x55; 32],
+            valid_until: 4700,
+        };
+        let primary_hash = *g.module_data().reference(0).unwrap().repr_hash().as_array();
+        let rescue_key: [u8; 32] = rescue.public_key().try_into().unwrap();
+        for role in [AuthRole::Primary, AuthRole::Rescue] {
+            let req = PopRequest::new(
+                binding(),
+                role,
+                RescuePolicy::Required,
+                primary_hash,
+                rescue_key,
+                4600,
+            )
+            .unwrap();
+            let signer = if role == AuthRole::Primary { &mut primary } else { &mut rescue };
+            let submission = req.sign_initial(&g, 4620, signer).unwrap();
+            let mut header = SliceData::load_cell(submission.clone()).unwrap();
+            assert_eq!(header.get_next_u32().unwrap(), 0x50505333);
+            assert_eq!(submission.reference(0).unwrap().repr_hash(), req.cell().repr_hash());
+            let mut cell = submission.reference(1).unwrap();
+            let mut signature = Vec::new();
+            loop {
+                let mut s = SliceData::load_cell(cell).unwrap();
+                signature.extend(s.get_bytestring(0));
+                if s.remaining_references() == 0 {
+                    break;
+                }
+                cell = s.checked_drain_reference().unwrap();
+            }
+            assert_eq!(signature.len(), role.signature_bytes());
+            if role == AuthRole::Primary {
+                let key = fips204::ml_dsa_44::PublicKey::try_from_bytes(
+                    signer.public_key().try_into().unwrap(),
+                )
+                .unwrap();
+                assert!(key.verify(
+                    req.digest(),
+                    &signature.try_into().unwrap(),
+                    b"TOS-RESCUE-POP-v1"
+                ));
+            }
+            assert!(req.sign_initial(&g, 4700, signer).is_err());
+            for wrong in 0..6 {
+                let mut b = binding();
+                let mut key_hash = primary_hash;
+                let mut slh_key = rescue_key;
+                let mut policy = RescuePolicy::Required;
+                match wrong {
+                    0 => b.account[0] ^= 1,
+                    1 => b.module[0] ^= 1,
+                    2 => b.network[0] ^= 1,
+                    3 => key_hash[0] ^= 1,
+                    4 => slh_key[0] ^= 1,
+                    _ => policy = RescuePolicy::Ready,
+                }
+                let changed = PopRequest::new(b, role, policy, key_hash, slh_key, 4600).unwrap();
+                let error = changed.sign_initial(&g, 4620, signer).unwrap_err();
+                assert!(error.to_string().contains("POP enrollment binding mismatch"), "{error}");
+            }
+        }
+        let mut next = Signer::import_and_wipe(Role::Rescue, &mut [0x33; 48]).unwrap();
+        let (template, _) = fixture_with_keys(
+            RescuePolicy::Required,
+            primary.public_key().try_into().unwrap(),
+            next.public_key().try_into().unwrap(),
+        );
+        let successor =
+            SuccessorDeployment::new(template, *g.wallet_init().repr_hash().as_array()).unwrap();
+        let mut b = binding();
+        b.module = *successor.module_init().repr_hash().as_array();
+        let req = PopRequest::new(
+            b,
+            AuthRole::Rescue,
+            RescuePolicy::Required,
+            primary_hash,
+            next.public_key().try_into().unwrap(),
+            4600,
+        )
+        .unwrap();
+        assert!(req.sign_successor(&successor, 4620, &mut rescue).is_err());
+        assert!(req.sign_successor(&successor, 4620, &mut primary).is_err());
+        assert!(req.sign_initial(&g, 4620, &mut next).is_err());
+        let signed = req.sign_successor(&successor, 4620, &mut next).unwrap();
+        assert_eq!(signed.reference(0).unwrap().repr_hash(), req.cell().repr_hash());
+    }
+
     #[test]
     fn primary_request_requires_current_proven_policy() {
         use crate::wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole};

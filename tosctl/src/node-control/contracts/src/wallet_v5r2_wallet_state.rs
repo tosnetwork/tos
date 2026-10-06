@@ -165,25 +165,7 @@ impl ProvenWalletState {
         md.move_by(8)?;
         let rescue_key = *md.get_next_hash()?.as_array();
         let policy = md.get_next_byte()?;
-        let mut key_cell = md.checked_drain_reference()?;
-        let mut primary_key = Vec::with_capacity(1312);
-        while primary_key.len() < 1312 {
-            let remaining = 1312usize
-                .checked_sub(primary_key.len())
-                .ok_or_else(|| anyhow::anyhow!("primary key length overflow"))?;
-            let chunk = remaining.min(127);
-            let mut key = ordinary(&key_cell)?;
-            anyhow::ensure!(
-                key.remaining_bits()
-                    == chunk.checked_mul(8).ok_or_else(|| anyhow::anyhow!("key bits overflow"))?
-                    && key.remaining_references() == usize::from(remaining > 127),
-                "noncanonical enrolled primary key"
-            );
-            primary_key.extend(key.get_next_bytes(chunk)?);
-            if remaining > 127 {
-                key_cell = key.checked_drain_reference()?;
-            }
-        }
+        let primary_key = primary_key_bytes(md.checked_drain_reference()?)?;
         let result = Self {
             checkpoint: w.checkpoint.clone(),
             global_id,
@@ -374,6 +356,28 @@ impl ProvenWalletState {
             self.wallet_time,
         )
     }
+}
+
+pub(crate) fn primary_key_bytes(mut key_cell: Cell) -> anyhow::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(1312);
+    while bytes.len() < 1312 {
+        let remaining = 1312usize
+            .checked_sub(bytes.len())
+            .ok_or_else(|| anyhow::anyhow!("primary key length overflow"))?;
+        let chunk = remaining.min(127);
+        let mut key = ordinary(&key_cell)?;
+        anyhow::ensure!(
+            key.remaining_bits()
+                == chunk.checked_mul(8).ok_or_else(|| anyhow::anyhow!("key bits overflow"))?
+                && key.remaining_references() == usize::from(remaining > 127),
+            "noncanonical enrolled primary key"
+        );
+        bytes.extend(key.get_next_bytes(chunk)?);
+        if remaining > 127 {
+            key_cell = key.checked_drain_reference()?;
+        }
+    }
+    Ok(bytes)
 }
 
 fn ordinary(cell: &Cell) -> anyhow::Result<SliceData> {
