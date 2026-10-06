@@ -6,6 +6,7 @@ use contracts::{
     wallet_v5r2_genesis::{
         CodeBundle, CodeHashes, GenesisParameters, SuccessorDeployment, WalletGenesis,
     },
+    wallet_v5r2_manifest::{InitialRecoveryManifest, RecoveryDerivation},
     wallet_v5r2_pop::RescuePolicy,
 };
 use serde::Deserialize;
@@ -28,6 +29,9 @@ struct Input {
     fee_public_key: String,
     epoch0: u32,
     existing_wallet: Option<String>,
+    recovery_derivation: Option<RecoveryDerivation>,
+    recovery_manifest: Option<String>,
+    expected_wallet: Option<String>,
 }
 fn bytes<const N: usize>(s: &str) -> anyhow::Result<[u8; N]> {
     hex::decode(s)?.try_into().map_err(|_| anyhow::anyhow!("field width"))
@@ -44,31 +48,55 @@ fn main() -> anyhow::Result<()> {
         2 => RescuePolicy::Required,
         _ => anyhow::bail!("unknown policy"),
     };
-    let code = CodeBundle::new(
-        cell(&i.wallet_code)?,
-        cell(&i.module_code)?,
-        cell(&i.vault_code)?,
-        CodeHashes {
-            wallet: bytes(&i.wallet_pin)?,
-            module: bytes(&i.module_pin)?,
-            vault: bytes(&i.vault_pin)?,
-        },
-    )?;
-    let g = WalletGenesis::new(
-        code,
-        GenesisParameters {
-            global_id: i.global_id,
-            network: bytes(&i.network)?,
-            wallet_id: i.wallet_id,
-            primary_key: bytes(&i.primary_key)?,
-            rescue_key: bytes(&i.rescue_key)?,
-            policy,
-            fee_tree_id: bytes(&i.fee_tree_id)?,
-            fee_public_key: bytes(&i.fee_public_key)?,
-            epoch0: i.epoch0,
-        },
-    )?;
+    let code = || {
+        CodeBundle::new(
+            cell(&i.wallet_code)?,
+            cell(&i.module_code)?,
+            cell(&i.vault_code)?,
+            CodeHashes {
+                wallet: bytes(&i.wallet_pin)?,
+                module: bytes(&i.module_pin)?,
+                vault: bytes(&i.vault_pin)?,
+            },
+        )
+    };
+    let parameters = GenesisParameters {
+        global_id: i.global_id,
+        network: bytes(&i.network)?,
+        wallet_id: i.wallet_id,
+        primary_key: bytes(&i.primary_key)?,
+        rescue_key: bytes(&i.rescue_key)?,
+        policy,
+        fee_tree_id: bytes(&i.fee_tree_id)?,
+        fee_public_key: bytes(&i.fee_public_key)?,
+        epoch0: i.epoch0,
+    };
     let mut result = serde_json::Map::new();
+    let g = if let Some(derivation) = i.recovery_derivation {
+        anyhow::ensure!(
+            i.existing_wallet.is_none(),
+            "initial manifest cannot reconstruct successor"
+        );
+        let (prepared, _) = InitialRecoveryManifest::prepare(code()?, parameters, derivation)?;
+        let encoded = match i.recovery_manifest {
+            Some(encoded) => encoded.into_bytes(),
+            None => prepared.to_json()?,
+        };
+        let expected = i
+            .expected_wallet
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("independent expected wallet required"))?;
+        let (manifest, genesis) =
+            InitialRecoveryManifest::parse_and_reconstruct(&encoded, code()?, bytes(expected)?)?;
+        result.insert("recovery_manifest".into(), String::from_utf8(manifest.to_json()?)?.into());
+        genesis
+    } else {
+        anyhow::ensure!(
+            i.recovery_manifest.is_none() && i.expected_wallet.is_none(),
+            "manifest reconstruction requires declared derivation"
+        );
+        WalletGenesis::new(code()?, parameters)?
+    };
     if let Some(owner) = i.existing_wallet {
         let successor = SuccessorDeployment::new(g, bytes(&owner)?)?;
         for (name, cell) in [

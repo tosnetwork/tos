@@ -2362,3 +2362,32 @@ restored tests. Both CI architectures run these controls. Fixtures use dummy cod
 cells and public test keys; these tests do not prove deployment or real-key
 possession. Complete creation/CLI orchestration with compiled release code remains
 pending. Evidence: `test/wallet-v5r2/initial-manifest-20261006.json`.
+
+### Compiled-code manifest reconstruction in the execution fixture
+
+The genesis adapter now accepts optional declared derivation metadata and an
+independently supplied expected wallet identity. With those fields, initial
+StateInit output is taken from `InitialRecoveryManifest::parse_and_reconstruct`,
+not the pre-manifest genesis object. The Python fixture independently computes
+the expected wallet address and all seven cells, supplies code pins from its local
+compiler, and compares reconstructed cell hashes. Successor deployment keeps its
+separate path; the adapter refuses initial-manifest use for successors.
+
+The fixture rejects changes to wallet/module/vault StateInit hashes, wallet code
+hash and the independent expected wallet. A rebuilt-adapter negative control
+replaces supplied manifest bytes with freshly prepared bytes, bypassing the
+supplied manifest. The rejection test must then fail specifically because a
+tampered manifest was accepted; four altered manifests are confirmed accepted
+by that mutant. Restoring and rebuilding the adapter restores all refusals and
+identical compiled-code outputs. Both CI architectures run this control after
+the complete recovery fixture.
+
+Local execution with reconstructed initial cells passed 67 transaction comparisons
+across both executors with no differences, including a 22-transaction continuous
+recovery sequence with both funded POP roles and confirmed recipient delivery.
+The suite still uses diagnostic gas credit 20,000: default-credit admission is
+explicitly false. Public fixture keys and declared derivation inputs do not prove
+real backup recovery; local compiler pins are not authenticated production release
+pins. This is execution integration evidence, not a complete user-facing creation
+command, current chain proof verification or production readiness.
+Evidence: `test/wallet-v5r2/manifest-integration-20261006.json`.

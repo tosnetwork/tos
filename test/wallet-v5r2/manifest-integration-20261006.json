@@ -1,0 +1,114 @@
+{
+  "base_commit": "17cc168346594f3ab5ed5400cf07d89a88b68c27",
+  "scope": "Initial manifest reconstruction feeds compiled-code StateInit deployment and complete recovery fixture.",
+  "tests": {
+    "parity": {
+      "scope": "Actual transaction parity at diagnostic credit 20000; default admission unpassed",
+      "pop_role": null,
+      "prepare": true,
+      "recovery": true,
+      "sdk_cache": true,
+      "expected_transactions": 67,
+      "observed_transactions": 67,
+      "differences": [],
+      "success": true
+    },
+    "recovery": {
+      "sdk_cached_signatures": 6,
+      "final_chain_time": 1780007190,
+      "transactions": 22,
+      "recipient_received": true,
+      "primary_auth_signing_used": false,
+      "primary_pop_signing_used": true,
+      "funded_pop_roles": [
+        1,
+        2
+      ],
+      "proven_wallet_migration_gate": true,
+      "migration_custody_observed": true,
+      "production_admission_passed": false
+    },
+    "manifest_rejections": [
+      "wallet_state_init",
+      "module_state_init",
+      "vault_state_init",
+      "wallet_code",
+      "independent_wallet"
+    ],
+    "adapter_bypass_witness": "('adapter accepted tampered manifest', 'wallet_state_init')",
+    "restored_rejections": {
+      "wallet_state_init": {
+        "exit": 1,
+        "stderr": "Error: manifest reconstructed identity mismatch\n"
+      },
+      "module_state_init": {
+        "exit": 1,
+        "stderr": "Error: manifest reconstructed identity mismatch\n"
+      },
+      "vault_state_init": {
+        "exit": 1,
+        "stderr": "Error: manifest reconstructed identity mismatch\n"
+      },
+      "wallet_code": {
+        "exit": 1,
+        "stderr": "Error: manifest release code mismatch\n"
+      }
+    },
+    "workspace_format_and_ruff": "passed"
+  },
+  "commands": [
+    "python test/wallet-v5r2/sdk_auth_parity.py --native-signer <public_fixture> --auth-driver <v5r2_auth_encode> --pop-driver <v5r2_pop_encode> --preparation-driver <v5r2_prepare_encode> --fee-driver <v5r2_fee_encode> --genesis-driver <v5r2_genesis_encode> --cache-driver <lms_fee_cache_fixture> --driver <pq-tx-parity> --output <fresh-directory>",
+    "python3 test/wallet-v5r2/manifest_integration_controls.py --driver <v5r2_genesis_encode> --fixture <fresh-directory>/native/sdk-genesis.json --output <another-fresh-directory>"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/examples/v5r2_genesis_encode.rs",
+      "bytes": 4761,
+      "sha256": "3a7f75543bdbf5972f2ac0e2360866173abedf54330750af3c26f5ca082e54e2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_manifest.rs",
+      "bytes": 14828,
+      "sha256": "8297f9fc9b5b6b47603c7d7273734e39205a860292cee2c547af0947e4cfd052"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/sdk_genesis_fixture.py",
+      "bytes": 4613,
+      "sha256": "ab6ade48a77547de4c64454be6fbc5d33967130a8880c6c24286fe2c682b7132"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/manifest_integration_controls.py",
+      "bytes": 3870,
+      "sha256": "aeefe4e1517be0411239fade5954d6ed1e6044c975703831ffce63d886bdbff7"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 19279,
+      "sha256": "69875e027e1f5f53902532918f3501d0589d9109594838be0022efbbe2f6b2c6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 153215,
+      "sha256": "190073e3bbd01360a58b8b3ad5ae94f0a30a9cbdd10ba8bc3ec67a03144e56d6"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-recovery-integration/MANIFEST.json",
+      "bytes": 42722,
+      "sha256": "09f4aa6353bd51711fccfde4ea7ec1dd09be9badff4c92e7f1b57a9503003581"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-integration-controls/MANIFEST.json",
+      "bytes": 1736,
+      "sha256": "d2cd5ace912a51ddccf810f0a0a50e67a5e2eb2d76c41457d88cf16df6db4a5e"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Diagnostic 20000 gas credit; default 10000 admission remains unpassed.",
+    "Local compiler pins and public fixture keys; no authenticated production release, real backup possession or live proof verification.",
+    "Fixture adapter is not complete user-facing creation or successor recovery orchestration.",
+    "Final-head dual-architecture CI remains pending."
+  ]
+}

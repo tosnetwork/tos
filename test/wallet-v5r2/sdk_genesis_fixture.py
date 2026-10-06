@@ -41,11 +41,44 @@ def encode(
     )
     if existing_wallet is not None:
         payload["existing_wallet"] = f"{existing_wallet:064x}"
+    if existing_wallet is None:
+        # Public fixture declarations only; these keys are not derived from a backup.
+        payload["recovery_derivation"] = dict(
+            account_index=5,
+            key_generation=7,
+            primary_seed_profile="raw-master-32-v1",
+            rescue_seed_profile="raw-master-32-v1",
+            fee_seed_profile="raw-master-32-v1",
+        )
+        payload["expected_wallet"] = expected["wallet_init"].hash.hex()
     result = subprocess.run(
         [str(driver.resolve())], input=json.dumps(payload), capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
     response = json.loads(result.stdout)
+    if existing_wallet is None:
+        manifest = json.loads(response["recovery_manifest"])
+        assert manifest["wallet_state_init"] == payload["expected_wallet"]
+        controls = []
+        for field in ("wallet_state_init", "module_state_init", "vault_state_init", "wallet_code"):
+            changed = dict(manifest)
+            changed[field] = "ff" * 32
+            altered = dict(payload, recovery_manifest=json.dumps(changed))
+            rejected = subprocess.run(
+                [str(driver.resolve())], input=json.dumps(altered), capture_output=True, text=True
+            )
+            assert rejected.returncode != 0 and "manifest" in rejected.stderr, field
+            controls.append(field)
+        # A valid manifest cannot choose its own independent enrollment identity.
+        altered = dict(
+            payload, recovery_manifest=response["recovery_manifest"], expected_wallet="ff" * 32
+        )
+        rejected = subprocess.run(
+            [str(driver.resolve())], input=json.dumps(altered), capture_output=True, text=True
+        )
+        assert rejected.returncode != 0 and "trusted enrollment" in rejected.stderr
+        controls.append("independent_wallet")
+        response["manifest_rejections"] = controls
     actual = {name: from_boc(bytes.fromhex(response[name])) for name in expected}
     for name, cell in expected.items():
         assert actual[name].hash == cell.hash, name

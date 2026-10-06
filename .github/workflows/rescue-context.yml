@@ -182,6 +182,12 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-fee-prepare
+      - name: Compiled-code manifest reconstruction controls
+        run: |
+          python test/wallet-v5r2/manifest_integration_controls.py \
+            --driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --output artifacts/context/manifest-integration-controls
       - name: Verify gated migration signature was actually executed
         run: |
           python test/wallet-v5r2/recorded_migration_control.py \
