@@ -1,0 +1,69 @@
+{
+  "status": "local-source-bound",
+  "scope": "JS AUTH/genesis/successor codecs only; not complete JS wallet lifecycle or mobile release",
+  "tests": {
+    "wallets": 105,
+    "auth_groups": 6,
+    "genesis_groups": 5,
+    "typecheck": "passed"
+  },
+  "sources": {
+    "sdk/js/packages/wallets/src/V5R2Auth.ts": "dc8bcef77244225155d744a6341b43a10efbb34da42c0baa6e8d43931e330e5e",
+    "sdk/js/packages/wallets/src/V5R2Auth.test.ts": "d78923fd2482aa30ae198ebd3d71a08258b76f7eb49ceb02defb35b7c01bb1a5",
+    "sdk/js/packages/wallets/src/WalletV5R2.ts": "07c78822e11e2368eb73318286c15bb59b7b9ab7ac24f9c8f911339ad66115ed",
+    "sdk/js/packages/wallets/src/WalletV5R2.test.ts": "bc193387e83e4cad501b06dc60dba9842911b3358d87a5aede15d33206c41384"
+  },
+  "controls": {
+    "20261007-js-auth": {
+      "index": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-js-auth/controls.json",
+      "sha256": "fc550a8f3c9d38a4a1a783e47c7cd8d181fe0c8a3c52aa804833ded366f6d700",
+      "results": [
+        {
+          "name": "primary-control",
+          "exit": 1,
+          "semantic_failure": true
+        },
+        {
+          "name": "send-mode",
+          "exit": 1,
+          "semantic_failure": true
+        },
+        {
+          "name": "signature-length",
+          "exit": 1,
+          "semantic_failure": true
+        },
+        {
+          "name": "basechain",
+          "exit": 1,
+          "semantic_failure": true
+        },
+        {
+          "restored_sha256": "8aae96850b4d7afbabd0fbaba232d5049807a20a8107b7b6026b33f7ab4a428f"
+        }
+      ],
+      "scope": "guards exercised before private-field layout hardening; final layout baseline separately passes"
+    },
+    "20261007-js-genesis": {
+      "index": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-js-genesis/controls.json",
+      "sha256": "8eda61dd4fb470fcdd9e1e1ad228c88fb8f76a70cc41299e9db22a164b277657",
+      "results": [
+        {
+          "name": "code-pin",
+          "exit": 1,
+          "semantic_failure": true
+        },
+        {
+          "name": "fixed-hss",
+          "exit": 1,
+          "semantic_failure": true
+        },
+        {
+          "name": "successor-workchain",
+          "exit": 1,
+          "semantic_failure": true
+        }
+      ]
+    }
+  }
+}

@@ -36,6 +36,8 @@ export { WalletV3R2, WalletV4R2, WalletV5R1 };
 
 export { V5R2AuthRequest, validateV5R2Actions } from "./V5R2Auth.js";
 export type { V5R2Role, V5R2Action, V5R2Binding } from "./V5R2Auth.js";
+export { WalletV5R2 } from "./WalletV5R2.js";
+export type { V5R2Policy, V5R2CodeBundle, V5R2CodePins, V5R2GenesisParameters } from "./WalletV5R2.js";
 
 // Signer
 export { KeyPairSigner } from "./KeyPairSigner.js";
