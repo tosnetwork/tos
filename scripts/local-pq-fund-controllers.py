@@ -15,8 +15,17 @@ election service owns the Genesis wallet whenever it runs.
     sudo env PYTHONPATH=test/tostester/src:scripts .venv/bin/python \
       scripts/local-pq-fund-controllers.py [--check]
 
-The tool is idempotent: a controller whose authorization is unexpired for at
-least `--min-remaining` seconds and still covers `--min-funds` is left alone.
+Funding is by deficit. The contract adds a deposit to the recorded funds and
+replaces every other field, so the tool deposits only `funds_target - funds`
+and resets the allowance to its target. It renews only when the
+authorization expires within `--renew-days`, or when funds or allowance fall
+below `--renew-percent` of their target. A healthy controller gets no
+transaction, so the tool is safe to run repeatedly.
+
+The defaults suit the ten-minute `--rotate` profile, where nodes 1, 2 and 3
+relay a stake every round. At about 6.44 TOS per relay that is about 930 TOS
+per controller per day, so a 50,000 TOS target lasts about 54 days, longer
+than the 30-day sponsorship.
 """
 
 import argparse
@@ -42,7 +51,6 @@ from pytosiq_core import (
     WalletMessage,
 )
 from pytosiq_core.tlb.block import CurrencyCollection
-from tosapi import tos_api
 
 from toslib import ToslibCDLL, ToslibClient
 
@@ -56,10 +64,38 @@ CANDIDATES = (1, 2, 3, 4, 7)
 AUTHORIZATION_WINDOW = 600
 
 
-def coins(value, name):
-    if not isinstance(value, int) or value <= 0 or value >= COINS_LIMIT:
-        raise ValueError(f"{name} must be a positive amount below 2^120 nano-TOS, got {value}")
+def coins(value, name, *, allow_zero=False):
+    low = 0 if allow_zero else 1
+    if not isinstance(value, int) or isinstance(value, bool) or not low <= value < COINS_LIMIT:
+        raise ValueError(f"{name} must be an amount in [{low}, 2^120) nano-TOS, got {value}")
     return value
+
+
+def plan_renewal(
+    state, now, *, funds_target, allowance_target, limit, renew_percent, renew_seconds
+):
+    """Return the deposit to send, or None when the authorization is healthy.
+
+    The deposit tops funds up to the target; it is zero when only the expiry
+    or the allowance needs renewing. Funds above the target are never touched.
+    """
+    coins(funds_target, "funds target")
+    coins(allowance_target, "allowance target")
+    coins(limit, "per-request limit")
+    if limit > min(funds_target, allowance_target):
+        raise ValueError("per-request limit exceeds the funds or allowance target")
+    if not 0 < renew_percent < 100:
+        raise ValueError("renew percent must be between 0 and 100")
+    funds, allowance = state["funds"], state["allowance"]
+    healthy = (
+        state["expires"] > now + renew_seconds
+        and state["limit"] == limit
+        and funds * 100 >= funds_target * renew_percent
+        and allowance * 100 >= allowance_target * renew_percent
+    )
+    if healthy:
+        return None
+    return max(0, funds_target - funds)
 
 
 def operating_payload(payer: Address, deposit, allowance, limit, floor, expires) -> Cell:
@@ -69,7 +105,7 @@ def operating_payload(payer: Address, deposit, allowance, limit, floor, expires)
     return (
         Builder()
         .store_address(payer)
-        .store_coins(coins(deposit, "deposit"))
+        .store_coins(coins(deposit, "deposit", allow_zero=True))
         .store_coins(coins(allowance, "allowance"))
         .store_coins(coins(limit, "per-request limit"))
         .store_coins(coins(floor, "storage floor"))
@@ -179,20 +215,29 @@ async def balance(client, address: Address) -> int:
     return int((await client.raw_get_account_state(address)).balance)
 
 
+def election_service_active() -> bool:
+    result = subprocess.run(
+        ["systemctl", "is-active", "--quiet", "tos-pq-elections"], check=False, timeout=30
+    )
+    return result.returncode == 0
+
+
 async def main(args) -> int:
     local.require_installed_executable(local.INSTALLED_LITE_CLIENT)
+    if not args.check and election_service_active():
+        # Both would spend from the Genesis wallet and relays would change the
+        # funds between the read and the readback.
+        raise SystemExit("stop tos-pq-elections first; it owns the Genesis wallet while it runs")
     network = json.loads((DATA / "network.json").read_text())
     global_id = int(network["global_id"])
-    deposit = coins(args.deposit * NANO, "deposit")
-    allowance = coins(args.allowance * NANO, "allowance")
+    funds_target = coins(args.funds_target * NANO, "funds target")
+    allowance = coins(args.allowance_target * NANO, "allowance target")
     limit = coins(args.per_request_limit * NANO, "per-request limit")
     floor = coins(args.floor * NANO, "storage floor")
     margin = coins(args.capital_margin * NANO, "capital margin")
     cdll = ToslibCDLL(REPO / "build/toslib/libtoslibjson.so")
     cdll.client_set_verbosity_level(0)
-    config = tos_api.Liteclient_config_global.from_dict(
-        json.loads((DATA / "configs/node-1-lite.json").read_text())
-    )
+    config = local.lite_config(DATA / "configs/node-1-lite.json")
     async with ToslibClient(config, cdll) as client:
         wallet = WalletV1(
             client,
@@ -218,10 +263,17 @@ async def main(args) -> int:
                 await wait(deployed)
             state = operating_state(controller)
             now = int(time.time())
-            current = state["expires"] > now + args.min_remaining and min(
-                state["funds"], state["allowance"]
-            ) >= coins(args.min_funds * NANO, "minimum funds")
-            if not current and not args.check:
+            deposit = plan_renewal(
+                state,
+                now,
+                funds_target=funds_target,
+                allowance_target=allowance,
+                limit=limit,
+                renew_percent=args.renew_percent,
+                renew_seconds=args.renew_days * 86400,
+            )
+            if deposit is not None and not args.check:
+                old_funds = state["funds"]
                 epoch, nonce = controller_state(controller)
                 expires = now + args.sponsorship_seconds
                 payload = operating_payload(
@@ -254,7 +306,7 @@ async def main(args) -> int:
                     limit,
                     floor,
                     expires,
-                ) or state["funds"] < deposit:
+                ) or state["funds"] != old_funds + deposit:
                     raise RuntimeError(f"controller {i} operating state differs: {state}")
             need = state["funds"] + state["floor"] + margin
             have = await balance(client, controller)
@@ -267,6 +319,7 @@ async def main(args) -> int:
                         "node": i,
                         "controller": controller.to_str(is_user_friendly=False),
                         "operating_state": state,
+                        "renewal_due": deposit is not None and args.check,
                         "balance": have,
                         "covers_funds_plus_floor": have >= state["funds"] + state["floor"],
                     }
@@ -279,13 +332,13 @@ async def main(args) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="report only, send nothing")
-    parser.add_argument("--deposit", type=int, default=1000, help="operating deposit, TOS")
-    parser.add_argument("--allowance", type=int, default=1000, help="spending allowance, TOS")
+    parser.add_argument("--funds-target", type=int, default=50000, help="operating funds, TOS")
+    parser.add_argument("--allowance-target", type=int, default=50000, help="allowance, TOS")
     parser.add_argument("--per-request-limit", type=int, default=20, help="TOS")
     parser.add_argument("--floor", type=int, default=10, help="storage floor, TOS")
     parser.add_argument("--capital-margin", type=int, default=20, help="TOS above funds plus floor")
     parser.add_argument("--processing-fee", type=int, default=20, help="TOS sent above the deposit")
     parser.add_argument("--sponsorship-seconds", type=int, default=30 * 86400)
-    parser.add_argument("--min-remaining", type=int, default=86400, help="re-authorize below this")
-    parser.add_argument("--min-funds", type=int, default=100, help="re-authorize below this, TOS")
+    parser.add_argument("--renew-days", type=int, default=7, help="renew when expiring sooner")
+    parser.add_argument("--renew-percent", type=int, default=25, help="renew below this share")
     sys.exit(asyncio.run(main(parser.parse_args())))
