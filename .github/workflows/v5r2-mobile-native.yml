@@ -1,0 +1,30 @@
+name: V5R2 mobile native crypto
+on:
+  pull_request:
+    paths:
+      - 'sdk/native/v5r2/**'
+      - 'test/wallet-v5r2/mobile-native-test.c'
+      - 'third-party/mldsa-native/**'
+      - 'third-party/slhdsa-c/**'
+      - '.github/workflows/v5r2-mobile-native.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Build fixed-profile native API and run assertions
+        run: |
+          cmake -S sdk/native/v5r2 -B "$RUNNER_TEMP/v5r2-native" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/v5r2-native" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/v5r2-native" --output-on-failure

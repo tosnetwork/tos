@@ -1,0 +1,45 @@
+{
+  "status": "local source-bound implementation candidate",
+  "scope": "stateless ML-DSA-44 and SLH-SHA2-128s native custody primitive; not mobile lifecycle, independent backend interop, LMS state or release acceptance",
+  "local_checks": {
+    "canonical_release_ctest": "passed",
+    "android_mobile_library_host_smoke": "passed before direct-backend assertion extension",
+    "android_jni_cpp_syntax": "passed",
+    "ios_project_tests": "running, unified exec session 86748"
+  },
+  "controls": {
+    "source_sha256": "22b90e34daee0fc6144e531bd6979036be395b8dff4f804818349a00b441f937",
+    "controls": [
+      {
+        "name": "primary-preparation",
+        "compile_exit": 0,
+        "test_exit": 8,
+        "semantic_failure": true,
+        "log_sha256": "8914cfced1a10bde4c4a6ad8456c2ebf0f1c96fe9b7fcd71ec1cbef9d23f34c7"
+      },
+      {
+        "name": "pop-domain",
+        "compile_exit": 0,
+        "test_exit": 8,
+        "semantic_failure": true,
+        "log_sha256": "69188d60c01bc9209d54247b1002b67ce28f43cc9acd300aa354972184b6340e"
+      },
+      {
+        "name": "entropy-size",
+        "compile_exit": 0,
+        "test_exit": 8,
+        "semantic_failure": true,
+        "log_sha256": "61df871ea4ad9be9143214a1e2fe99e3e903a947aa9c297e7326acf15f6397e8"
+      }
+    ],
+    "restored_exit": 0,
+    "excluded_attempt": "Initial timestamp-cached builds all reached the first mutation assertion; excluded, reruns use --clean-first and verify each named assertion."
+  },
+  "sources": {
+    "sdk/native/v5r2/tos_v5r2.h": "53580e333f93c75defccf98d365845c41e4b99fbc1368a3dcd3dfec219d7a617",
+    "sdk/native/v5r2/CMakeLists.txt": "ec11342321204447f67523a51b154c0958f266db52dea72abdd9a165a17b5474",
+    "sdk/native/v5r2/tos_v5r2.c": "22b90e34daee0fc6144e531bd6979036be395b8dff4f804818349a00b441f937",
+    "sdk/native/v5r2/mldsa-config.h": "8bb2830c8c25ee263de9c333ab6525c57036b6595a216cfd3aaf5df559183bfb",
+    "test/wallet-v5r2/mobile-native-test.c": "cdd395d7e9b8acf74e577f0aa1c1ecb1823c796cc94c355064604eb1d8d236d2"
+  }
+}
