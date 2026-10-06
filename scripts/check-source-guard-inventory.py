@@ -20,6 +20,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "config-validator-set-parity-source",
         "consensus-no-fallback",
         "dns-pq-vote-source",
+        "docker-validator-role",
         "escrow-deploy-policy",
         "finality-evidence-admission-marker-mutations",
         "finality-evidence-admission-source",

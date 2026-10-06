@@ -1688,6 +1688,9 @@ set_tests_properties(llvm-apt-key-pin PROPERTIES LABELS "source-guard")
 add_test(NAME snapshot-import-offline
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_import_snapshot.py)
 set_tests_properties(snapshot-import-offline PROPERTIES LABELS "source-guard")
+add_test(NAME docker-validator-role
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_docker_validator_role.py)
+set_tests_properties(docker-validator-role PROPERTIES LABELS "source-guard")
 add_test(NAME dns-pq-vote-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-dns-pq-vote-source.py
           ${CMAKE_CURRENT_SOURCE_DIR})

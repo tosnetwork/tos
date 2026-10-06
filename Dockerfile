@@ -58,7 +58,7 @@ COPY --from=builder /tos/build/crypto/smartcont/auto/* /usr/share/tos/smartcont/
 COPY --from=builder /tos/crypto/fift/lib/* /usr/lib/fift/
 
 WORKDIR /var/tos-work/db
-COPY ./docker/init.sh ./docker/import-snapshot.sh ./docker/control.template /var/tos-work/scripts/
-RUN chmod +x /var/tos-work/scripts/init.sh /var/tos-work/scripts/import-snapshot.sh
+COPY ./docker/init.sh ./docker/import-snapshot.sh ./docker/validator-role.sh ./docker/control.template /var/tos-work/scripts/
+RUN chmod +x /var/tos-work/scripts/init.sh /var/tos-work/scripts/import-snapshot.sh /var/tos-work/scripts/validator-role.sh
 
 ENTRYPOINT ["/var/tos-work/scripts/init.sh"]

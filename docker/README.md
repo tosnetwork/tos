@@ -56,7 +56,9 @@ Below is the list of supported arguments and their default values:
 | VALIDATOR_PORT    | UDP port that must be available from the outside. Used for communication with other nodes.                                                                                                |     no     |                          30001                          |
 | CONSOLE_PORT      | This TCP port is used to access validator's console. Not necessarily to be opened for external access.                                                                                    |     no     |                          30002                          |
 | LITE_PORT         | Lite-server's TCP port. Used by lite-client.                                                                                                                                              |     no     |                          30003                          |
-| LITESERVER        | true or false. Set to true if you want up and running lite-server.                                                                                                                        |     no     |                          false                          |
+| LITESERVER        | Any non-empty value starts a lite-server; leave it unset for none. Refused together with the validator role.                                                                              |     no     |                         unset                           |
+| VALIDATOR_ID      | Validator role: the controller account's 256-bit id, 64 hex digits. Requires PQ_CONSENSUS_KEY_FILE. See [Run a validator](#run-a-validator).                                             |     no     |                                                         |
+| PQ_CONSENSUS_KEY_FILE | Validator role: absolute path, inside the container, of the mounted 32-byte consensus seed. Requires VALIDATOR_ID.                                                                   |     no     |                                                         |
 | STATE_TTL         | Node's state will be gc'd after this time (in seconds).                                                                                                                                   |     no     |                          86400                          |
 | ARCHIVE_TTL       | Node's archived blocks will be deleted after this time (in seconds).                                                                                                                      |     no     |                          86400                          |
 | THREADS           | Number of threads used by validator-engine.                                                                                                                                               |     no     |                            8                            |
@@ -72,7 +74,7 @@ This approach simplifies networking configuration for the container, and usually
 
 Keep in mind that this option can also introduce security concerns because the container has access to the host's network interfaces directly, which might not be desirable in a multi-tenant environment.
 
-Check your firewall configuration and make sure that at least UDP port 43677 is publicly available.
+Check your firewall configuration and make sure that at least the UDP port VALIDATOR_PORT (default 30001) is publicly available.
 Find out your PUBLIC_IP:
 ```
 curl -4 ifconfig.me
@@ -105,6 +107,56 @@ docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 ```
 Adjust ports per your need.
 Check your firewall configuration and make sure that customized ports (443/udp, 88/tcp and 443/tcp in this example) are publicly available.
+
+### Run a validator
+The image runs a full node unless the validator role is requested. The role
+needs two things the image cannot provide: the controller account the
+validator is registered as, and its post-quantum consensus key.
+
+Generate the key once, on the validator host, with the `tos-pq-consensus-key`
+tool shipped in the image and in the release archives. It refuses to
+overwrite a key and prints the key id and public key, never the seed. Run it
+as the user the node container runs as (root, unless you start the container
+with `-u`), because the node only loads a key owned by its own user:
+```
+install -d -m 700 /data/keys
+docker run --rm -v /data/keys:/keys --entrypoint tos-pq-consensus-key \
+  <IMAGE> generate /keys/pq-consensus.seed
+```
+Mount the key read-only and name it together with the controller id:
+```
+docker run -d --name tos-validator -v /data/db:/var/tos-work/db \
+-v /data/keys/pq-consensus.seed:/var/tos-work/keys/pq-consensus.seed:ro \
+-e "PUBLIC_IP=<PUBLIC_IP>" \
+-e "VALIDATOR_ID=<64 hex digits of the controller account id>" \
+-e "PQ_CONSENSUS_KEY_FILE=/var/tos-work/keys/pq-consensus.seed" \
+-p 30001:30001/udp \
+-it <IMAGE>
+```
+On every start the entrypoint checks the key with the rules the node applies
+when it loads it, and stops with exit status 4 before anything else happens if
+one fails:
+- the path is absolute and not a symbolic link;
+- it is a regular file of exactly 32 bytes;
+- it is owned by the user the node runs as;
+- it has no group or other permission bits (`chmod 600`);
+- its directory is not group- or world-writable.
+
+On the first start it then records the binding as
+`extraconfig.pq_consensus {validator_id, consensus_key_file}` in
+`/var/tos-work/db/config.json`. The binding is never rewritten from the
+environment afterwards: if `config.json` already names another validator or
+key file, the container refuses to start, and changing the identity a node
+signs for is a deliberate edit of that file.
+
+A validator serves no public queries. The role is refused together with
+`LITESERVER`, and with a `--json-rpc-address` in `CUSTOM_ARG` that is not a
+loopback address. Keep the console port (CONSOLE_PORT) unpublished; wallets
+and explorers use separate RPC nodes.
+
+Back the seed up offline and encrypted, never on the host. The controller root
+key (`tos-pq-key`) and the controller actions it signs (`tos-pq-controller`)
+belong to an offline machine, not to the validator host.
 
 ### Database snapshots
 A new node can start from a database snapshot instead of synchronizing from
@@ -464,9 +516,9 @@ docker run -it -v /data/db:/var/tos-work/db \
 -e "HOST_IP=<PUBLIC_IP>" \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
 -e "LITESERVER=true" \
--p 43677:43677/udp \
--p 43678:43678/tcp \
--p 43679:43679/tcp \
+-p 30001:30001/udp \
+-p 30002:30002/tcp \
+-p 30003:30003/tcp \
 --entrypoint /bin/bash \
 <IMAGE>
 ```
