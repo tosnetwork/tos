@@ -52,6 +52,8 @@ pub enum VoteOfferAction {
     Diff(VoteOfferDiffCmd),
     /// Cast vote on one or more offers
     Cast(VoteOfferCastCmd),
+    /// Create a configuration proposal
+    Create(VoteOfferCreateCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -75,6 +77,395 @@ pub struct VoteOfferCastCmd {
     /// Proposal hash (hex) to vote on. If omitted, lists proposals and prompts.
     #[arg(long)]
     hash: Option<String>,
+}
+
+// ── Offer create ─────────────────────────────────────────────────────
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Create a configuration proposal",
+    long_about = "Create a configuration proposal for the configuration contract.\n\n\
+        The proposal sets parameter --param to the given value (or removes it), for the \
+        given lifetime. The storage price is computed from live ConfigParam 11 and checked \
+        against the contract's own proposal_storage_price. A parameter listed in \
+        ConfigParam 10 needs --critical; one listed in ConfigParam 9 must name the value it \
+        replaces (--bind-current or --if-hash-equal), or the contract refuses it.\n\n\
+        Without --wallet the message body and the value to send are printed for an \
+        external masterchain wallet: the contract ignores a proposal from any other \
+        workchain and keeps its value."
+)]
+pub struct VoteOfferCreateCmd {
+    /// Configuration parameter index
+    #[arg(long, allow_hyphen_values = true)]
+    param: i32,
+    /// New value as a standard base64 cell BOC
+    #[arg(long, group = "new_value")]
+    value_boc: Option<String>,
+    /// New value as a BOC file
+    #[arg(long, group = "new_value")]
+    value_boc_file: Option<std::path::PathBuf>,
+    /// Propose removing the parameter
+    #[arg(long, group = "new_value")]
+    remove: bool,
+    /// Proposal lifetime in seconds (at least ConfigParam 11 min_store_sec)
+    #[arg(long, default_value_t = 30 * 86_400)]
+    expires_in: u32,
+    /// Mark the proposal critical (required for a parameter in ConfigParam 10)
+    #[arg(long)]
+    critical: bool,
+    /// Bind the proposal to the parameter's current value hash (0 when absent)
+    #[arg(long, conflicts_with = "if_hash_equal")]
+    bind_current: bool,
+    /// Bind the proposal to this current value hash (64 hex characters)
+    #[arg(long)]
+    if_hash_equal: Option<String>,
+    /// Query id echoed in the contract's answer (default: current unix time)
+    #[arg(long)]
+    query_id: Option<u64>,
+    /// Value in nanoTOS sent above price + 2^30; the contract returns the change
+    #[arg(long, default_value_t = 1_000_000_000)]
+    margin_nanotos: u64,
+    /// Masterchain wallet from config that sends the proposal; prints the message otherwise
+    #[arg(long)]
+    wallet: Option<String>,
+    /// Confirm sending non-interactively
+    #[arg(long)]
+    yes: bool,
+    /// Do not require the new value to decode as the parameter's known type
+    #[arg(long)]
+    skip_value_check: bool,
+    /// Output format: table or json
+    #[arg(short, long, default_value = "table")]
+    format: super::output_format::OutputFormat,
+}
+
+/// A proposal message, priced, ready to send or to hand to an external wallet.
+pub(crate) struct PreparedProposal {
+    pub body: chain_block::Cell,
+    pub proposal_hash: [u8; 32],
+    pub critical: bool,
+    pub stored_secs: u32,
+    pub bits: u64,
+    pub refs: u64,
+    pub price: u128,
+    pub value: u128,
+}
+
+/// What the live configuration says about one parameter.
+pub(crate) struct ParameterRules {
+    pub critical: bool,
+    pub mandatory: bool,
+    pub setup: chain_block::ConfigProposalSetup,
+}
+
+/// Refuses a value that does not decode as the type this tool knows for the parameter.
+/// The contract registers any cell; a malformed one would be voted on and then either
+/// refused at installation or installed as a parameter the node cannot read.
+pub(crate) fn check_value_shape(param_id: i32, value: &chain_block::Cell) -> anyhow::Result<()> {
+    let Ok(index) = u32::try_from(param_id) else {
+        return Ok(());
+    };
+    let refuse = |why: String| {
+        anyhow::anyhow!(
+            "the new value does not decode as ConfigParam {param_id}: {why}; pass \
+             --skip-value-check to propose it anyway"
+        )
+    };
+    let parsed = chain_block::ConfigParamEnum::construct_from_cell_and_number(value.clone(), index)
+        .map_err(|e| refuse(e.to_string()))?;
+    // Decoding stops at the fields it knows; only a value that re-encodes to the same
+    // cell carries nothing else.
+    let mut builder = chain_block::BuilderData::new();
+    parsed.write_to_cell(&mut builder).map_err(|e| refuse(e.to_string()))?;
+    let reencoded = builder.into_cell()?.reference(0)?;
+    anyhow::ensure!(
+        reencoded.repr_hash() == value.repr_hash(),
+        refuse(
+            "it carries data beyond, or encoded differently from, that parameter's fields".into()
+        )
+    );
+    Ok(())
+}
+
+/// The proposal an operator asks for.
+pub(crate) struct ProposalRequest {
+    pub param_id: i32,
+    /// `None` proposes removing the parameter.
+    pub value: Option<chain_block::Cell>,
+    pub if_hash_equal: Option<[u8; 32]>,
+    pub critical: bool,
+    pub ttl_secs: u32,
+    pub query_id: u64,
+    pub margin: u64,
+}
+
+/// Builds and prices the proposal, refusing locally what the contract would refuse.
+pub(crate) fn prepare_proposal(
+    request: ProposalRequest,
+    rules: &ParameterRules,
+) -> anyhow::Result<PreparedProposal> {
+    use contracts::config_contract::messages::proposal;
+    let ProposalRequest { param_id, value, if_hash_equal, critical, ttl_secs, query_id, margin } =
+        request;
+    anyhow::ensure!(
+        !rules.critical || critical,
+        "parameter {param_id} is critical (ConfigParam 10); pass --critical"
+    );
+    if rules.mandatory {
+        anyhow::ensure!(
+            value.is_some(),
+            "parameter {param_id} is mandatory (ConfigParam 9) and cannot be removed"
+        );
+        anyhow::ensure!(
+            if_hash_equal.is_some(),
+            "parameter {param_id} is mandatory (ConfigParam 9): the contract refuses a \
+             proposal for it that does not name the value it replaces; pass --bind-current \
+             or --if-hash-equal"
+        );
+    }
+    let (price, stored_secs) = proposal::storage_price(&rules.setup, value.as_ref(), ttl_secs)?;
+    let (_, bits, refs) = proposal::value_size(value.as_ref())?;
+    let cell = proposal::proposal_cell(param_id, value, if_hash_equal)?;
+    let mut proposal_hash = [0u8; 32];
+    proposal_hash.copy_from_slice(cell.repr_hash().as_slice());
+    let body = proposal::new_proposal_body(query_id, ttl_secs, cell, critical)?;
+    let value = price
+        .checked_add(proposal::MIN_VALUE_ABOVE_PRICE)
+        .and_then(|value| value.checked_add(u128::from(margin)))
+        .ok_or_else(|| anyhow::anyhow!("proposal value overflows"))?;
+    Ok(PreparedProposal { body, proposal_hash, critical, stored_secs, bits, refs, price, value })
+}
+
+impl VoteOfferCreateCmd {
+    fn new_value(&self) -> anyhow::Result<Option<chain_block::Cell>> {
+        use base64::Engine;
+        let bytes = match (&self.value_boc, &self.value_boc_file, self.remove) {
+            (Some(encoded), None, false) => base64::engine::general_purpose::STANDARD
+                .decode(encoded.trim())
+                .map_err(|e| anyhow::anyhow!("--value-boc is not base64: {e}"))?,
+            (None, Some(path), false) => {
+                std::fs::read(path).map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?
+            }
+            (None, None, true) => return Ok(None),
+            _ => anyhow::bail!(
+                "exactly one of --value-boc, --value-boc-file or --remove is required"
+            ),
+        };
+        Ok(Some(chain_block::read_single_root_boc(bytes)?))
+    }
+
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use super::utils::{
+            SEND_TIMEOUT, get_wallet_config, load_config_vault_rpc_client, make_wallet,
+            try_create_rpc_client, wait_for_seqno_change, wallet_info,
+        };
+        use anyhow::Context;
+        use base64::Engine;
+        use chain_block::{ConfigParamEnum, MsgAddressInt, write_boc};
+        use colored::Colorize;
+        use common::app_config::AppConfig;
+        use contracts::{ChainProvider, DefaultChainProvider, Wallet};
+        use std::path::Path;
+
+        let value = self.new_value()?;
+        if let (Some(cell), false) = (&value, self.skip_value_check) {
+            check_value_shape(self.param, cell)?;
+        }
+        let if_hash_equal = match &self.if_hash_equal {
+            Some(text) => {
+                let bytes = hex::decode(text.trim_start_matches("0x"))
+                    .map_err(|e| anyhow::anyhow!("--if-hash-equal is not hex: {e}"))?;
+                let hash: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("--if-hash-equal must be 32 bytes"))?;
+                Some(hash)
+            }
+            None => None,
+        };
+
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let chain = DefaultChainProvider::new(rpc_client.clone());
+
+        let config_address = match chain.get_config_param(0).await? {
+            ConfigParamEnum::ConfigParam0(param) => {
+                MsgAddressInt::with_standart(None, -1, param.config_addr)?
+            }
+            other => anyhow::bail!("live ConfigParam 0 has unexpected representation: {other:?}"),
+        };
+        let contains = |param: ConfigParamEnum| -> anyhow::Result<bool> {
+            Ok(match param {
+                ConfigParamEnum::ConfigParam9(value) => {
+                    value.mandatory_params.get(&self.param)?.is_some()
+                }
+                ConfigParamEnum::ConfigParam10(value) => {
+                    value.critical_params.get(&self.param)?.is_some()
+                }
+                other => anyhow::bail!("unexpected configuration parameter: {other:?}"),
+            })
+        };
+        let mandatory = contains(chain.get_config_param(9).await?)?;
+        let critical_param = contains(chain.get_config_param(10).await?)?;
+        let critical = self.critical || critical_param;
+        let setup = match chain.get_config_param(11).await? {
+            ConfigParamEnum::ConfigParam11(value) => {
+                if critical {
+                    value.read_critical_params()?
+                } else {
+                    value.read_normal_params()?
+                }
+            }
+            other => anyhow::bail!("live ConfigParam 11 has unexpected representation: {other:?}"),
+        };
+        let if_hash_equal = if self.bind_current {
+            let index = u32::try_from(self.param).map_err(|_| {
+                anyhow::anyhow!(
+                    "--bind-current reads only non-negative parameters; pass --if-hash-equal"
+                )
+            })?;
+            match chain.get_optional_config_param(index).await? {
+                None => Some([0u8; 32]),
+                Some(_) => {
+                    let current = chain.get_config_param_cell(index).await?;
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(current.repr_hash().as_slice());
+                    Some(hash)
+                }
+            }
+        } else {
+            if_hash_equal
+        };
+
+        let prepared = prepare_proposal(
+            ProposalRequest {
+                param_id: self.param,
+                value,
+                if_hash_equal,
+                critical: self.critical,
+                ttl_secs: self.expires_in,
+                query_id: self.query_id.unwrap_or_else(common::time_format::now),
+                margin: self.margin_nanotos,
+            },
+            &ParameterRules { critical: critical_param, mandatory, setup },
+        )?;
+
+        // The contract's own price for the same inputs: a disagreement means this
+        // tool and the deployed contract read the configuration differently.
+        let quoted = chain
+            .run_get_method(
+                config_address.to_string(),
+                "proposal_storage_price",
+                vec![
+                    contracts::stack_utils::i64_to_stack_entry(if prepared.critical {
+                        -1
+                    } else {
+                        0
+                    }),
+                    contracts::stack_utils::i64_to_stack_entry(i64::from(self.expires_in)),
+                    contracts::stack_utils::i64_to_stack_entry(i64::try_from(prepared.bits)?),
+                    contracts::stack_utils::i64_to_stack_entry(i64::try_from(prepared.refs)?),
+                ],
+            )
+            .await?
+            .decimal_string(0)?
+            .parse::<u128>()
+            .context("proposal_storage_price")?;
+        anyhow::ensure!(
+            quoted == prepared.price,
+            "the configuration contract quotes {quoted} nanoTOS for this proposal and this tool computed {}",
+            prepared.price
+        );
+
+        let body_b64 = base64::engine::general_purpose::STANDARD.encode(write_boc(&prepared.body)?);
+        let value = u64::try_from(prepared.value).context("proposal value exceeds u64")?;
+        let summary = serde_json::json!({
+            "config_contract": config_address.to_string(),
+            "param_id": self.param,
+            "critical": prepared.critical,
+            "stored_secs": prepared.stored_secs,
+            "value_bits": prepared.bits,
+            "value_refs": prepared.refs,
+            "price_nanotos": prepared.price.to_string(),
+            "value_nanotos": value,
+            "proposal_hash": hex::encode(prepared.proposal_hash),
+            "body_boc_base64": body_b64,
+            "sent": self.wallet.is_some(),
+        });
+        if self.format == super::output_format::OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        } else {
+            println!();
+            println!("{}", "Configuration proposal".bold());
+            println!("{}", "\u{2500}".repeat(72));
+            println!("  {:<20} {}", "Config contract:", config_address);
+            println!("  {:<20} {}", "Parameter:", self.param);
+            println!("  {:<20} {}", "Critical:", prepared.critical);
+            println!("  {:<20} {} s", "Stored for:", prepared.stored_secs);
+            println!("  {:<20} {} nanoTOS", "Storage price:", prepared.price);
+            println!("  {:<20} {} nanoTOS", "Value to send:", value);
+            println!("  {:<20} {}", "Proposal hash:", hex::encode(prepared.proposal_hash));
+            println!("  {:<20} {}", "Body (base64):", body_b64);
+            println!();
+        }
+
+        let Some(wallet_name) = &self.wallet else {
+            if self.format != super::output_format::OutputFormat::Json {
+                println!(
+                    "  Send the body to {} with exactly {} nanoTOS from a masterchain wallet\n  \
+                     (bounceable). The contract answers 0xee565052 when the proposal is registered.\n",
+                    config_address, value
+                );
+            }
+            return Ok(());
+        };
+
+        let (config, vault, rpc_client) =
+            load_config_vault_rpc_client(Path::new(config_path)).await?;
+        let wallet_cfg =
+            get_wallet_config(wallet_name, &config.wallets, config.master_wallet.as_ref())?;
+        let (wallet_address, info, secret) =
+            wallet_info(rpc_client.clone(), wallet_cfg, vault).await?;
+        anyhow::ensure!(
+            wallet_address.workchain_id() == -1,
+            "wallet '{wallet_name}' is on workchain {}; the configuration contract only hears \
+             masterchain senders and would keep the value",
+            wallet_address.workchain_id()
+        );
+        anyhow::ensure!(
+            info.balance > value,
+            "wallet '{wallet_name}' holds {} nanoTOS and the proposal needs {value} plus fees",
+            info.balance
+        );
+        if !self.yes {
+            print!("Send {value} nanoTOS from '{wallet_name}' to register this proposal? [y/N] ");
+            std::io::Write::flush(&mut std::io::stdout())?;
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+            if !matches!(answer.trim(), "y" | "Y" | "yes" | "Yes") {
+                println!("{}", "Cancelled".yellow());
+                return Ok(());
+            }
+        }
+        let wallet = make_wallet(rpc_client.clone(), wallet_cfg, secret, wallet_name).await?;
+        let message = wallet
+            .build_message(config_address.clone(), value, prepared.body, true, None, None, None)
+            .await?;
+        rpc_client.send_boc(&write_boc(&message)?).await?;
+        wait_for_seqno_change(
+            rpc_client.clone(),
+            &wallet_address,
+            info.seqno,
+            &common::task_cancellation::CancellationCtx::default(),
+            SEND_TIMEOUT,
+        )
+        .await?;
+        println!(
+            "{} Proposal sent; check it with `tosctl vote offer diff --hash {}`",
+            "OK".green().bold(),
+            hex::encode(prepared.proposal_hash)
+        );
+        Ok(())
+    }
 }
 
 // ── Complaint ────────────────────────────────────────────────────────
@@ -185,6 +576,7 @@ impl VoteOfferCmd {
             VoteOfferAction::Ls(cmd) => cmd.run(config_path).await,
             VoteOfferAction::Diff(cmd) => cmd.run(config_path).await,
             VoteOfferAction::Cast(cmd) => cmd.run(config_path).await,
+            VoteOfferAction::Create(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -1019,5 +1411,145 @@ impl VoteElectionCastCmd {
         anyhow::bail!(
             "a wallet cannot stake directly to the PQ elector: configure a single-nominator pool and an admitted validator controller, then use the pool bid command"
         )
+    }
+}
+
+#[cfg(test)]
+mod offer_create_tests {
+    use super::*;
+    use chain_block::{BuilderData, ConfigProposalSetup, IBitstring, Serializable, SliceData};
+
+    #[test]
+    fn a_value_must_decode_as_the_parameter() {
+        let cp15 = chain_block::ConfigParam15 {
+            validators_elected_for: 65_536,
+            elections_start_before: 32_768,
+            elections_end_before: 8_192,
+            stake_held_for: 32_768,
+        };
+        let good = cp15.serialize().unwrap();
+        assert!(check_value_shape(15, &good).is_ok());
+        let mut bad = BuilderData::new();
+        bad.append_u8(1).unwrap();
+        let bad = bad.into_cell().unwrap();
+        assert!(
+            check_value_shape(15, &bad)
+                .err()
+                .is_some_and(|e| e.to_string().contains("ConfigParam 15"))
+        );
+        let mut trailing = BuilderData::from_cell(&good).unwrap();
+        trailing.append_u8(0xff).unwrap();
+        let trailing = trailing.into_cell().unwrap();
+        assert!(check_value_shape(15, &trailing).is_err(), "trailing data was accepted");
+        // An index this tool has no type for, and a negative one, are not judged.
+        assert!(check_value_shape(1000, &bad).is_ok());
+        assert!(check_value_shape(-71, &bad).is_ok());
+    }
+
+    fn rules(critical: bool, mandatory: bool) -> ParameterRules {
+        ParameterRules {
+            critical,
+            mandatory,
+            setup: ConfigProposalSetup {
+                min_tot_rounds: 2,
+                max_tot_rounds: 6,
+                min_wins: 2,
+                max_losses: 2,
+                min_store_sec: 1_000_000,
+                max_store_sec: 10_000_000,
+                bit_price: 1,
+                cell_price: 500,
+            },
+        }
+    }
+
+    fn ask(
+        param_id: i32,
+        value: Option<chain_block::Cell>,
+        if_hash_equal: Option<[u8; 32]>,
+        critical: bool,
+        ttl_secs: u32,
+    ) -> ProposalRequest {
+        ProposalRequest {
+            param_id,
+            value,
+            if_hash_equal,
+            critical,
+            ttl_secs,
+            query_id: 1,
+            margin: 0,
+        }
+    }
+
+    fn value() -> chain_block::Cell {
+        let mut b = BuilderData::new();
+        b.append_u32(9).unwrap();
+        b.into_cell().unwrap()
+    }
+
+    #[test]
+    fn a_proposal_carries_price_plus_the_contract_surplus_plus_margin() {
+        let request = ProposalRequest {
+            query_id: 5,
+            margin: 7,
+            ..ask(42, Some(value()), None, false, 2_000_000)
+        };
+        let prepared = prepare_proposal(request, &rules(false, false)).unwrap();
+        assert_eq!(prepared.price, (32 + 1024 + 500 * 2) * 2_000_000);
+        assert_eq!(prepared.value, prepared.price + (1 << 30) + 7);
+        let mut cs = SliceData::load_cell(prepared.body).unwrap();
+        assert_eq!(cs.get_next_u32().unwrap(), 0x6e56_5052);
+        assert_eq!(cs.get_next_u64().unwrap(), 5);
+        assert_eq!(cs.get_next_u32().unwrap(), 2_000_000);
+        let proposal = cs.checked_drain_reference().unwrap();
+        assert_eq!(proposal.repr_hash().as_slice(), &prepared.proposal_hash);
+        assert!(!cs.get_next_bit().unwrap());
+    }
+
+    #[test]
+    fn local_refusals_match_the_contract() {
+        let critical =
+            prepare_proposal(ask(7, Some(value()), None, false, 2_000_000), &rules(true, false));
+        assert!(critical.err().is_some_and(|e| e.to_string().contains("--critical")));
+        assert!(
+            prepare_proposal(ask(7, Some(value()), None, true, 2_000_000), &rules(true, false))
+                .is_ok()
+        );
+
+        let unbound =
+            prepare_proposal(ask(7, Some(value()), None, true, 2_000_000), &rules(true, true));
+        assert!(unbound.err().is_some_and(|e| e.to_string().contains("--bind-current")));
+        let removal =
+            prepare_proposal(ask(7, None, Some([0; 32]), true, 2_000_000), &rules(true, true));
+        assert!(removal.err().is_some_and(|e| e.to_string().contains("cannot be removed")));
+        assert!(
+            prepare_proposal(
+                ask(7, Some(value()), Some([0; 32]), true, 2_000_000),
+                &rules(true, true)
+            )
+            .is_ok()
+        );
+
+        let short =
+            prepare_proposal(ask(42, Some(value()), None, false, 999_999), &rules(false, false));
+        assert!(short.err().is_some_and(|e| e.to_string().contains("at least 1000000")));
+    }
+
+    #[test]
+    fn exactly_one_new_value_source_is_accepted() {
+        use clap::{Args, Command, FromArgMatches};
+        let parse = |args: &[&str]| {
+            let mut argv = vec!["create", "--param", "-71"];
+            argv.extend_from_slice(args);
+            VoteOfferCreateCmd::augment_args(Command::new("create"))
+                .try_get_matches_from(argv)
+                .and_then(|m| VoteOfferCreateCmd::from_arg_matches(&m))
+        };
+        let removal = parse(&["--remove"]).unwrap();
+        assert_eq!(removal.param, -71);
+        assert!(removal.new_value().unwrap().is_none());
+        assert!(parse(&["--remove", "--value-boc", "AA=="]).is_err());
+        assert!(parse(&["--bind-current", "--if-hash-equal", "00"]).is_err());
+        assert!(parse(&[]).unwrap().new_value().is_err());
     }
 }
