@@ -2391,3 +2391,28 @@ real backup recovery; local compiler pins are not authenticated production relea
 pins. This is execution integration evidence, not a complete user-facing creation
 command, current chain proof verification or production readiness.
 Evidence: `test/wallet-v5r2/manifest-integration-20261006.json`.
+
+### Verify the recovered initial PQ key
+
+With `native-wallet-signer`, an initial manifest exposes
+`verify_initial_master_and_wipe`. It checks the selected role's declared input
+profile, derives its native PQ public key using the manifest's network, global ID,
+account index and key generation, and compares it with initial enrollment. The
+caller supplies a resolved 32-byte master; native mnemonic validation must already
+have run for that input profile. The method clears the caller's master on every
+return, including profile rejection before derivation. It returns no signer or
+secret material and performs no storage or chain write.
+
+This closes the gap between reconstructing an address and checking recovered
+key material. Derivation metadata can change without changing StateInit; tests
+explicitly reconstruct such a changed manifest successfully and then require
+actual key recovery to fail for both PQ roles. Both correct masters pass; wrong
+masters, profiles and short inputs fail with wiped input. Five semantic controls
+remove key binding, input-profile binding, account-index use, generation use or
+preflight cleanup and must fail the corresponding assertion. Restored tests pass.
+
+Successful checking is limited to the initial key. It does not show that the key
+is still authorized after rotation, recover LMS leaf state, validate physical
+backup separation or complete a mnemonic/CLI/Vault recovery operation. Existing
+live proof, retirement and custody requirements continue to apply.
+Evidence: `test/wallet-v5r2/manifest-key-recovery-20261006.json`.

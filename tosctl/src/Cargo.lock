@@ -882,6 +882,7 @@ dependencies = [
  "tos_vm",
  "tracing",
  "wallet-pq-signer",
+ "zeroize",
 ]
 
 [[package]]

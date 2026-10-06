@@ -1,0 +1,83 @@
+{
+  "base_commit": "159af65967c1dd5a87bed8e379fe1953faa1413d",
+  "scope": "Bind recovered resolved master to initial PQ enrollment using manifest derivation metadata; wipe caller input on every return.",
+  "tests": {
+    "native_feature": "4 passed baseline and restored",
+    "default_feature": "3 passed",
+    "semantic_controls": {
+      "key_binding": {
+        "exit": 101,
+        "semantic_witness": "recovery accepted wrong master"
+      },
+      "input_profile": {
+        "exit": 101,
+        "semantic_witness": "recovery accepted wrong input profile"
+      },
+      "account_index": {
+        "exit": 101,
+        "semantic_witness": "recovery accepted changed account_index"
+      },
+      "key_generation": {
+        "exit": 101,
+        "semantic_witness": "recovery accepted changed key_generation"
+      },
+      "preflight_wipe": {
+        "exit": 101,
+        "semantic_witness": "preflight failure retained master"
+      }
+    },
+    "format_and_ruff": "passed"
+  },
+  "commands": [
+    "python3 test/wallet-v5r2/manifest_recovery_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2_manifest",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_manifest.rs",
+      "bytes": 20211,
+      "sha256": "4bec819b8fda1832a9d87dc91a04d8ea7836adcdbce58cab950678c625b64018"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/Cargo.toml",
+      "bytes": 1680,
+      "sha256": "8c59fab1127e15f4e37abd75dbbd40644ad34a1d69c757a2183fbab2f3848ccc"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.lock",
+      "bytes": 148972,
+      "sha256": "b6f964ebd0cc802479b947bd52e91f875b7178adcd1988730995d61e09b8a8c1"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/manifest_recovery_controls.py",
+      "bytes": 3265,
+      "sha256": "fea717c7e58e600515027d6d8a811d4a56c8b63c9d9a40987e78d68c8a2b5913"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 19397,
+      "sha256": "ceecf432748b014da90df9e8e6cec55b15b3db8ca733b4fab1a2a3a1a24e4d8b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 154783,
+      "sha256": "61751382055b310f611e23b6f39ec0680a8a7137afc254b5e13248efce56136c"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-key-recovery-final/MANIFEST.json",
+      "bytes": 2391,
+      "sha256": "add2274a74c9d0327c57a9ae46f38db766665bca1a3d69ca5e4da2bb4893e1b2"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Initial enrollment key comparison only; no current authority or retirement proof.",
+    "Resolved 32-byte masters are supplied by caller; mnemonic validation and protected input precede this API.",
+    "No signing handle returned and no Vault persistence or LMS state restoration.",
+    "Fixed public fixture masters, not real secret backups or physical-device isolation evidence.",
+    "Final-head CI and full user recovery orchestration remain pending."
+  ]
+}

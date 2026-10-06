@@ -121,6 +121,48 @@ impl InitialRecoveryManifest {
         &self.wire.derivation
     }
 
+    /// Check a resolved master against the initial enrolled role, wiping it on
+    /// every return. Native mnemonic validation must precede this call when that
+    /// input profile is selected. Success proves only the initial key binding;
+    /// it neither returns a signer nor authorizes a retired key or fee-tree reuse.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn verify_initial_master_and_wipe(
+        &self,
+        master: &mut [u8],
+        role: wallet_pq_signer::Role,
+        input_profile: SeedProfile,
+    ) -> anyhow::Result<()> {
+        use wallet_pq_signer::{
+            Role,
+            kdf::{DerivationContext, derive_signer_and_wipe},
+        };
+        use zeroize::Zeroize;
+        struct Wipe<'a>(&'a mut [u8]);
+        impl Drop for Wipe<'_> {
+            fn drop(&mut self) {
+                self.0.zeroize();
+            }
+        }
+        let master = Wipe(master);
+        let (profile, expected) = match role {
+            Role::Primary => (self.wire.derivation.primary_seed_profile, &self.wire.primary_key),
+            Role::Rescue => (self.wire.derivation.rescue_seed_profile, &self.wire.rescue_key),
+        };
+        anyhow::ensure!(profile == input_profile, "recovery input profile mismatch");
+        let context = DerivationContext {
+            network: bytes(&self.wire.network)?,
+            global_id: self.wire.global_id,
+            account_index: self.wire.derivation.account_index,
+            key_generation: self.wire.derivation.key_generation,
+        };
+        let signer = derive_signer_and_wipe(master.0, context, role)?;
+        anyhow::ensure!(
+            hex::encode(signer.public_key()) == *expected,
+            "recovered key differs from initial enrollment"
+        );
+        Ok(())
+    }
+
     /// Validate bounded strict metadata and reconstruct the initial identities.
     /// CodeBundle pins and expected_basechain_wallet must be independently trusted,
     /// not read from this same manifest. This does not validate an epoch hint or
@@ -372,5 +414,86 @@ mod tests {
             InitialRecoveryManifest::parse_and_reconstruct(&oversized, bundle(), expected).is_err(),
             "manifest accepted oversized input"
         );
+    }
+}
+
+#[cfg(all(test, feature = "native-wallet-signer"))]
+mod recovery_tests {
+    use super::*;
+    use crate::wallet_v5r2_genesis::tests::{bundle, parameters};
+    use wallet_pq_signer::{
+        Role,
+        kdf::{DerivationContext, derive_signer_and_wipe},
+    };
+
+    #[test]
+    fn recovered_master_matches_initial_enrollment_and_is_wiped() {
+        let mut p = parameters();
+        let context = DerivationContext {
+            network: p.network,
+            global_id: p.global_id,
+            account_index: 5,
+            key_generation: 7,
+        };
+        let primary = derive_signer_and_wipe(&mut [11; 32], context, Role::Primary).unwrap();
+        let rescue = derive_signer_and_wipe(&mut [22; 32], context, Role::Rescue).unwrap();
+        p.primary_key.copy_from_slice(primary.public_key());
+        p.rescue_key.copy_from_slice(rescue.public_key());
+        let (manifest, g) = InitialRecoveryManifest::prepare(
+            bundle(),
+            p,
+            RecoveryDerivation {
+                account_index: 5,
+                key_generation: 7,
+                primary_seed_profile: SeedProfile::RawMaster32,
+                rescue_seed_profile: SeedProfile::NativeMnemonic,
+                fee_seed_profile: SeedProfile::RawMaster32,
+            },
+        )
+        .unwrap();
+        let encoded = manifest.to_json().unwrap();
+        let expected = *g.wallet_init().repr_hash().as_array();
+        let (manifest, _) =
+            InitialRecoveryManifest::parse_and_reconstruct(&encoded, bundle(), expected).unwrap();
+        for (role, seed, profile, wrong_profile) in [
+            (Role::Primary, 11, SeedProfile::RawMaster32, SeedProfile::NativeMnemonic),
+            (Role::Rescue, 22, SeedProfile::NativeMnemonic, SeedProfile::RawMaster32),
+        ] {
+            let mut master = [seed; 32];
+            manifest.verify_initial_master_and_wipe(&mut master, role, profile).unwrap();
+            assert_eq!(master, [0; 32], "successful recovery retained master");
+            let mut wrong = [33; 32];
+            assert!(
+                manifest.verify_initial_master_and_wipe(&mut wrong, role, profile).is_err(),
+                "recovery accepted wrong master"
+            );
+            assert_eq!(wrong, [0; 32]);
+            let mut wrong = [seed; 32];
+            assert!(
+                manifest.verify_initial_master_and_wipe(&mut wrong, role, wrong_profile).is_err(),
+                "recovery accepted wrong input profile"
+            );
+            assert_eq!(wrong, [0; 32], "preflight failure retained master");
+            let mut short = [seed; 31];
+            assert!(manifest.verify_initial_master_and_wipe(&mut short, role, profile).is_err());
+            assert_eq!(short, [0; 31]);
+            for field in ["account_index", "key_generation"] {
+                let mut changed: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+                changed["derivation"][field] = 0.into();
+                // Address reconstruction cannot authenticate declared derivation metadata.
+                let (changed, _) = InitialRecoveryManifest::parse_and_reconstruct(
+                    &serde_json::to_vec(&changed).unwrap(),
+                    bundle(),
+                    expected,
+                )
+                .unwrap();
+                let mut master = [seed; 32];
+                assert!(
+                    changed.verify_initial_master_and_wipe(&mut master, role, profile).is_err(),
+                    "recovery accepted changed {field}"
+                );
+                assert_eq!(master, [0; 32]);
+            }
+        }
     }
 }
