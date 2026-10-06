@@ -2447,3 +2447,22 @@ These are local public-fixture custody tests, not authenticated backup transport
 CLI orchestration, successor recovery, real chain readiness or device isolation.
 Existing persistence-failure tests remain at the underlying Vault adapter.
 Evidence: `test/wallet-v5r2/manifest-vault-20261006.json`.
+
+### Native control log decoding repair (2026-10-06)
+
+Run `37410539906` at `4a2e32a9bc3e2343bb72da402612169cb840dfcd`
+completed successfully on AArch64. Its x86-64 job stopped in
+`admission_budget_controls.py`: a native diagnostic contained byte `0x99`, and
+Python's implicit strict UTF-8 decoding raised `UnicodeDecodeError` before the
+control could inspect the process result. This is not a passing pool-control
+receipt or final-head clearance.
+
+Admission-budget and ingress-boundary runners now capture bytes, retain each
+stdout/stderr stream exactly in separate binary artifacts, and render invalid
+UTF-8 as backslash escapes in the text log. Build success, native exit status,
+named test and semantic assertion checks are unchanged. A subprocess emitting
+invalid UTF-8 reproduces the former failure and confirms exact raw preservation,
+nonzero status and assertion text with the repaired reader. The three local
+budget controls and two parser controls pass, including restored positives.
+The Linux-only complete pool control still requires the next x86-64 CI run.
+Evidence: `test/wallet-v5r2/native-log-repair-20261006.json`.

@@ -1,0 +1,94 @@
+{
+  "base_commit": "9e33406d15200525fe0fd68a9747c786bef47338",
+  "failed_ci": {
+    "run": 37410539906,
+    "commit": "4a2e32a9bc3e2343bb72da402612169cb840dfcd",
+    "arm": "success",
+    "x86": "UnicodeDecodeError in admission_budget_controls.py native output decoding"
+  },
+  "tests": {
+    "20261006-native-log-decoding": {
+      "strict_utf8_reproduced_failure": true,
+      "native_exit_preserved": 7,
+      "raw_streams_exact": true,
+      "semantic_witnesses_preserved": true
+    },
+    "20261006-native-budget-log-controls": {
+      "capacity": {
+        "exit": 1,
+        "test": "ExtMessageAdmissionBudget_RejectsAggregateBytesBeforeCountLimit",
+        "semantic_witness": "over.is_error()"
+      },
+      "release": {
+        "exit": 1,
+        "test": "ExtMessageAdmissionBudget_MoveAndEarlyReturnReleaseExactlyOnce",
+        "semantic_witness": "budget->used()"
+      },
+      "coroutine_release": {
+        "exit": 1,
+        "test": "ExtMessageAdmissionBudget_HoldsAcrossSuspensionAndReleasesOnCompletion",
+        "semantic_witness": "budget->used()"
+      }
+    },
+    "20261006-native-ingress-log-controls": {
+      "size": {
+        "exit": 1,
+        "witness": "forbidden message parsed successfully",
+        "test": "SerializedSizeBoundary"
+      },
+      "depth": {
+        "exit": 1,
+        "witness": "forbidden message parsed successfully",
+        "test": "DepthBoundary"
+      }
+    }
+  },
+  "commands": [
+    "python3 test/wallet-v5r2/admission_budget_controls.py --build build --output <fresh-directory>",
+    "python3 test/wallet-v5r2/ingress_boundary_controls.py --build build --output <fresh-directory>"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/native_control_log.py",
+      "bytes": 462,
+      "sha256": "a0f820de3214de102e0d7645b536b978804c27b95fe6a8d64d473a82f7179ade"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/admission_budget_controls.py",
+      "bytes": 4125,
+      "sha256": "c2dd1693f5bb0f167c8bc1f0780eeb8bf11918caf0bffcfc784aa97e4a581c61"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/ingress_boundary_controls.py",
+      "bytes": 2700,
+      "sha256": "67cca78a95392a25e17c9fcac6a0cc439dd5af426cfd666dfbae3987da77cb8d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 157879,
+      "sha256": "0708485d9144b286721167a685ff2407b3165f2b7ec05f2429b5f1d5b7a5878c"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-log-decoding/MANIFEST.json",
+      "bytes": 1215,
+      "sha256": "9445febf4f663e30301cc0103d97d9fa5b788156612d9e8dd1dd010e23f55713"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-budget-log-controls/MANIFEST.json",
+      "bytes": 7337,
+      "sha256": "079a8991d19e4253eb31b968b0bb0dc2121f8cd13aa81c43be1b7ef494ce4026"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-ingress-log-controls/MANIFEST.json",
+      "bytes": 5878,
+      "sha256": "96d85e08e00c6cc785d3e885cf7ad9bb624284a68336054251734b95337a4a4d"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Local macOS isolated native tests only; Linux complete pool and final-head dual-architecture CI pending.",
+    "Byte preservation does not turn undecodable output or nonzero exit alone into semantic failure evidence."
+  ]
+}

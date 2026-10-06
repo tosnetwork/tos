@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from native_control_log import retain_output
+
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "validator/impl/external-message-parser.cpp"
 
@@ -40,19 +42,16 @@ def main():
                 "2",
             ],
             capture_output=True,
-            text=True,
             timeout=600,
         )
-        (args.output / f"{label}-build.log").write_text(built.stdout + built.stderr)
-        assert built.returncode == 0, (built.stdout + built.stderr)[-4000:]
+        build_log = retain_output(args.output, label + "-build", built)
+        assert built.returncode == 0, build_log[-4000:]
         result = subprocess.run(
             [str((args.build / "test-ext-message-ingress").resolve()), "--filter", test],
             capture_output=True,
-            text=True,
             timeout=60,
         )
-        log = result.stdout + result.stderr
-        (args.output / f"{label}.log").write_text(log)
+        log = retain_output(args.output, label, result)
         return result.returncode, log
 
     results = {}
