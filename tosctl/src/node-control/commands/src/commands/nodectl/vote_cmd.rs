@@ -93,11 +93,10 @@ pub struct VoteOfferCastCmd {
         Without --wallet the message body and the value to send are printed for an \
         external masterchain wallet: the contract ignores a proposal from any other \
         workchain and keeps its value.\n\n\
-        --wallet is refused for now: bounding the wallet's own fees needs its storage \
-        metadata (used cells and bits, last paid, storage debt), which the node's JSON-RPC \
-        does not publish, and a mode-3 send that cannot pay its fees sends nothing. \
-        Where it is available, the wallet must hold the value plus its own fees, read at \
-        one block. \
+        With --wallet the wallet must hold the value plus its own fees: storage accrued and \
+        owed (from the storage_stat the node serves with the account), computation and \
+        forwarding, all read at one block. A node that does not serve storage_stat makes \
+        --wallet refuse, since a mode-3 send that cannot pay its fees sends nothing. \
         The report's status is registered only when the configuration contract is then \
         observed holding the proposal, new or with a later expiry; that is observed state \
         and does not prove this transaction caused it."
@@ -133,9 +132,8 @@ pub struct VoteOfferCreateCmd {
     /// Value in nanoTOS sent above price + 2^30; the contract returns the change
     #[arg(long, default_value_t = 1_000_000_000)]
     margin_nanotos: u64,
-    /// Masterchain wallet from config that sends the proposal (currently refused: the
-    /// node does not publish the storage metadata its fee bound needs); prints the
-    /// message otherwise
+    /// Masterchain wallet from config that sends the proposal (needs a node that serves
+    /// the wallet's storage_stat); prints the message otherwise
     #[arg(long)]
     wallet: Option<String>,
     /// Confirm sending non-interactively
@@ -702,23 +700,36 @@ async fn pinned_wallet_reserve(
 }
 
 /// The wallet's storage metadata (used cells and bits, last paid, recorded debt), as
-/// the storage phase will charge it. The node's JSON-RPC answers an account with its
-/// balance, code, data and last transaction only: neither it nor any other method
-/// returns the raw account, and code and data are not a bound (they omit the
-/// library dictionary, extra currencies under older global versions, and any debt).
-/// So the wallet's own charge cannot be bounded and sending is refused rather than
-/// guessed; the printed body can still be sent from an external wallet.
+/// the storage phase will charge it, from the `storage_stat` the node serves with the
+/// account at the pinned block. Code and data are not a bound (they omit the library
+/// dictionary, extra currencies under older global versions, and any debt), so a
+/// node that does not serve `storage_stat` makes the send fail closed; the printed
+/// body can still be sent from an external wallet.
 pub(crate) fn wallet_storage_from_rpc(
     wallet: &chain_block::MsgAddressInt,
-    _account: &contracts::chain_provider::AddressInfo,
+    account: &contracts::chain_provider::AddressInfo,
 ) -> anyhow::Result<contracts::wallet::send_fees::WalletStorage> {
-    anyhow::bail!(
-        "cannot bound the fees of wallet {wallet}: the node's JSON-RPC does not publish an \
-         account's storage metadata (used cells and bits, last paid, storage debt), and \
-         with mode 3 a wallet that cannot pay sends nothing while still advancing its \
-         seqno. Run without --wallet and send the printed body from an external \
-         masterchain wallet with value + margin for its fees"
-    )
+    let Some(stat) = &account.storage_stat else {
+        anyhow::bail!(
+            "cannot bound the fees of wallet {wallet}: the node did not return its storage \
+             metadata (storage_stat: used cells and bits, last paid, storage debt), as a node \
+             older than this tool does not, and with mode 3 a wallet that cannot pay sends \
+             nothing while still advancing its seqno. Run without --wallet and send the \
+             printed body from an external masterchain wallet with value + margin for its fees"
+        );
+    };
+    let due_payment = match &stat.due_payment {
+        Some(text) => text.parse::<u128>().map_err(|e| {
+            anyhow::anyhow!("storage_stat.due_payment '{text}' is not an amount: {e}")
+        })?,
+        None => 0,
+    };
+    Ok(contracts::wallet::send_fees::WalletStorage {
+        cells: stat.used_cells,
+        bits: stat.used_bits,
+        last_paid: stat.last_paid,
+        due_payment,
+    })
 }
 
 /// The wallet must hold the value and its own fees.
@@ -1808,6 +1819,47 @@ mod offer_create_tests {
         let error = wallet_storage_from_rpc(&wallet, &info).unwrap_err().to_string();
         assert!(error.contains("storage metadata"), "{error}");
         assert!(error.contains("without --wallet"), "{error}");
+    }
+
+    /// A node that serves storage_stat gives the reserve the account's own figures,
+    /// debt included.
+    #[test]
+    fn a_wallet_send_uses_the_served_storage_stat() {
+        let mut account = serde_json::json!({
+            "@type": "raw.fullAccountState",
+            "balance": "1000000000000",
+            "code": "",
+            "data": "",
+            "last_transaction_id": {"@type": "internal.transactionId", "lt": "5", "hash": ""},
+            "block_id": {
+                "@type": "tos.blockIdExt", "workchain": -1, "shard": "-9223372036854775808",
+                "seqno": 1, "root_hash": "", "file_hash": ""
+            },
+            "sync_utime": 1,
+            "state": "active",
+            "storage_stat": {
+                "@type": "storage.stat",
+                "used_cells": "7",
+                "used_bits": "4321",
+                "last_paid": 1700000123,
+                "due_payment": "2000000000"
+            },
+        });
+        let wallet = chain_block::MsgAddressInt::standard(-1, [0xAA; 32]);
+        let info: contracts::chain_provider::AddressInfo =
+            serde_json::from_value(account.clone()).unwrap();
+        assert_eq!(
+            wallet_storage_from_rpc(&wallet, &info).unwrap(),
+            contracts::wallet::send_fees::WalletStorage {
+                cells: 7,
+                bits: 4321,
+                last_paid: 1_700_000_123,
+                due_payment: 2_000_000_000,
+            }
+        );
+        account["storage_stat"]["due_payment"] = serde_json::Value::Null;
+        let info: contracts::chain_provider::AddressInfo = serde_json::from_value(account).unwrap();
+        assert_eq!(wallet_storage_from_rpc(&wallet, &info).unwrap().due_payment, 0);
     }
 
     /// A lost answer to the send itself still yields the final report, as an

@@ -80,6 +80,23 @@ pub struct GetAddressInformationRes {
     pub state: AccountState,
     #[serde(default)]
     pub frozen_hash: String,
+    /// The account's storage metadata at `block_id`, as the storage phase reads it.
+    /// Absent for an account that does not exist, and from nodes that predate it.
+    #[serde(default)]
+    pub storage_stat: Option<StorageStat>,
+}
+
+/// `storage_stat` of an account: what its storage is charged for, when it last
+/// paid, and the storage debt it carries.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct StorageStat {
+    #[serde(with = "serde_utils::u64_as_str_or_num")]
+    pub used_cells: u64,
+    #[serde(with = "serde_utils::u64_as_str_or_num")]
+    pub used_bits: u64,
+    pub last_paid: u32,
+    /// Decimal nanoTOS; null when the account records no due payment.
+    pub due_payment: Option<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
