@@ -1,0 +1,49 @@
+{
+  "profile": "TOS-WALLET-DUALROOT-KDF-v1",
+  "scope": "Public new-wallet KDF vectors only; no key-generation, signature, or module conformance claim. Never use these inputs for production keys.",
+  "kdf": "HKDF-SHA256 (RFC 5869 full Extract and Expand)",
+  "salt_ascii": "TOS-WALLET-DUALROOT-KDF-v1",
+  "salt_hex": "544f532d57414c4c45542d4455414c524f4f542d4b44462d7631",
+  "info_encoding": "0x01 || uint8(len(label)) || ASCII(label) || network_tag[32] || int32be(global_id) || uint32be(account_index) || uint32be(key_generation)",
+  "inputs": {
+    "master_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "network_tag_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "global_id": -239
+  },
+  "vectors": [
+    {
+      "account_index": 0,
+      "key_generation": 0,
+      "outputs": {
+        "ML-DSA-44": {
+          "info_hex": "01094d4c2d4453412d3434202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fffffff110000000000000000",
+          "material_hex": "7e818ac507abf0c92d98bb1fe1cde59af6b050fe3c7a44544084c4852b82d455"
+        },
+        "SLH-DSA-SHA2-128s": {
+          "info_hex": "0111534c482d4453412d534841322d31323873202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fffffff110000000000000000",
+          "material_hex": "6a722ced6bb6a327db70e5c4ee35f2cb5fcb53dd60fbf56fc724595c6564a6ca7d9e63457ac0bad4adb0ee44977e442c",
+          "SK.seed_hex": "6a722ced6bb6a327db70e5c4ee35f2cb",
+          "SK.prf_hex": "5fcb53dd60fbf56fc724595c6564a6ca",
+          "PK.seed_hex": "7d9e63457ac0bad4adb0ee44977e442c"
+        }
+      }
+    },
+    {
+      "account_index": 1,
+      "key_generation": 1,
+      "outputs": {
+        "ML-DSA-44": {
+          "info_hex": "01094d4c2d4453412d3434202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fffffff110000000100000001",
+          "material_hex": "a6e88bc3532b29ccb4cd2ee6b4bbca1fab3344051876f34f90e4e59ddf99a16d"
+        },
+        "SLH-DSA-SHA2-128s": {
+          "info_hex": "0111534c482d4453412d534841322d31323873202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fffffff110000000100000001",
+          "material_hex": "6645b7ee6340ed3efe5392a8388dfcbda20514497449471eff81901fbf23e01d6a2e02909c4e1cf6106367f1eac94691",
+          "SK.seed_hex": "6645b7ee6340ed3efe5392a8388dfcbd",
+          "SK.prf_hex": "a20514497449471eff81901fbf23e01d",
+          "PK.seed_hex": "6a2e02909c4e1cf6106367f1eac94691"
+        }
+      }
+    }
+  ]
+}

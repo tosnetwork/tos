@@ -82,6 +82,7 @@ jobs:
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer
+          python test/wallet-v5r2/kdf_controls.py --output artifacts/context/wallet-kdf-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests
           python test/wallet-v5r2/rust_signer_controls.py --output artifacts/context/rust-wallet-signer-controls
           python test/wallet-v5r2/vault_signer_controls.py --output artifacts/context/vault-wallet-signer-controls

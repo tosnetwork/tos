@@ -1,0 +1,142 @@
+{
+  "base_commit": "c5800dabb84fb01155a0985c3fca4a7bdcb831f3",
+  "scope": "Fixed dual-root/fee HKDF-SHA256 derivation with exact design bytes, caller-master cleanup and native signer import.",
+  "tests": {
+    "kdf_tests": 3,
+    "frozen_vectors": 7,
+    "full_vault_signer_unit_tests": 11,
+    "compile_fail_doctests": 2,
+    "semantic_controls": {
+      "extract_expand": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "KDF output differs from frozen vector"
+      },
+      "salt": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "KDF output differs from frozen vector"
+      },
+      "role_label": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "KDF info bytes changed"
+      },
+      "master_width": {
+        "exit": 101,
+        "test": "rejected_sizes_clear_master_and_output",
+        "semantic_witness": "invalid KDF width accepted"
+      },
+      "master_wipe": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "master not wiped after derivation"
+      },
+      "failure_output": {
+        "exit": 101,
+        "test": "rejected_sizes_clear_master_and_output",
+        "semantic_witness": "failed derivation retained output"
+      },
+      "network": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "KDF info bytes changed"
+      },
+      "global_id": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "KDF info bytes changed"
+      },
+      "account_index": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "KDF info bytes changed"
+      },
+      "key_generation": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "KDF info bytes changed"
+      },
+      "tree_id": {
+        "exit": 101,
+        "test": "frozen_dual_root_and_fee_vectors",
+        "semantic_witness": "KDF info bytes changed"
+      }
+    },
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --lib kdf::tests",
+    "python3 test/wallet-v5r2/kdf_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --features vault",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/kdf.rs",
+      "bytes": 9772,
+      "sha256": "7fafeb1316d17ef27d2d7bf368e2a3451dced935c9210f5f1554423bf46c999f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/lib.rs",
+      "bytes": 10080,
+      "sha256": "fba35294301607b7ec6ce8a06c5550c37daf02805ef818ce8c893d05dccb4f55"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/Cargo.toml",
+      "bytes": 573,
+      "sha256": "fe44b2da2fd61fe51538a1eb1a779f88aef96c13d961c2ec1202816c624433f6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.lock",
+      "bytes": 148742,
+      "sha256": "88aabed0ba9c095ed73d6cab40b8fc3df48d53c5aabf01806fdea2702b3e48cb"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/tests/fixtures/dual-root-kdf.json",
+      "bytes": 2483,
+      "sha256": "dc77c31594168f0bca6fdf491f8e147e9ae7faada5d9cf888d2accc52bfb2bb2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/rescue-fee-gate/fee-kdf-vectors.json",
+      "bytes": 2770,
+      "sha256": "e521f4cbfd2a641a01ce87356fe45d316b62475176f93a291acdca90f4ff67fe"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/kdf_controls.py",
+      "bytes": 3892,
+      "sha256": "e2abdbe8ead13fa1cf3cd08635f01948955a711adfa8ecf308d8e4c1e9400707"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 17394,
+      "sha256": "3ce418fd81a654c9fced82e323c17f03e2dc3068c41ccc29e83af8a3ed2a3ac6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 137456,
+      "sha256": "f307ff2fd568a3c205c6507755a446a1f27ca9b597e6b656cc06e735148cb10a"
+    }
+  ],
+  "dual_root_vector_origin": {
+    "path": "/Users/tomisetsu/memo/wallet-slhdsa-rescue/bk/evidence/kdf-vectors.json",
+    "bytes": 2483,
+    "sha256": "dc77c31594168f0bca6fdf491f8e147e9ae7faada5d9cf888d2accc52bfb2bb2"
+  },
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-kdf-controls/MANIFEST.json",
+      "bytes": 3744,
+      "sha256": "23d2e95faa110dc1706520948bc991ab2c155af0b9b4b4ddd0468f68dd8b6d2b"
+    }
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Derivation is not mnemonic validation, complete wallet restoration or authenticated recovery metadata.",
+    "Successful seed output and other master copies are caller-owned secrets requiring protection and cleanup.",
+    "No independent-device, swap/register/snapshot erasure or production cryptographic review claim.",
+    "Fee material alone does not prove a fresh tree or restore safe leaf state; existing restore barriers remain required.",
+    "Client persistence of derived keys, full creation/restore integration, default-credit admission and final-head CI remain release gates."
+  ]
+}

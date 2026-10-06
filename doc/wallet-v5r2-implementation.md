@@ -2099,3 +2099,41 @@ custody tests, not funded transaction, live-proof or production-client evidence.
 Full CLI/mobile lifecycle, actual proof sources, device isolation, default-credit
 admission and final-head release validation remain open. Evidence:
 `test/wallet-v5r2/vault-pop-20261006.json`.
+
+
+### Fixed dual-root and fee derivation in the native client library
+
+`wallet_pq_signer::kdf` now implements the design's fixed
+`TOS-WALLET-DUALROOT-KDF-v1` encoding using OpenSSL HKDF-SHA256 in explicit
+Extract-and-Expand mode. `DerivationContext` binds the public network tag, signed
+big-endian global ID, unsigned account index and key generation. The three fixed
+labels derive 32 bytes for ML-DSA-44, 48 bytes for SLH-DSA-SHA2-128s, or 48 bytes
+for LMS SEED/identifier with the additional public fee-tree identity. Callers
+cannot substitute labels, an expansion-only mode, hash functions or output widths.
+The existing locked OpenSSL crate is reused; no package versions are upgraded.
+
+`derive_seed_and_wipe` writes into caller-owned secret storage and clears the
+provided master on success and failure. It clears output before validation and
+copies the derived result only after successful native derivation of the exact
+expected size. Temporary seed material is zeroized on drop. The caller must
+protect and wipe successful output; the library cannot erase other master copies
+owned by callers or guarantee operating-system snapshot/register erasure.
+`derive_signer_and_wipe` imports derived PQ material directly into the native
+single-owner handle without returning the seed.
+
+Tests match all seven existing public dual-root/fee vectors byte-for-byte,
+including the complete info encoding, and compare derived signer public keys with
+those generated from the frozen seeds. They test exact master/output widths,
+cleanup on success/rejection, and separation across network, global ID, account
+index and generation, including unsigned maxima. Eleven deletion/substitution
+controls detect omitted bindings, changed labels/salt/mode, accepted short masters
+and missing cleanup, followed by restored positive tests. Both architecture jobs
+run these controls.
+
+This is the deterministic derivation layer, not a completed mnemonic restore or
+wallet creation flow. Native mnemonic validation, recovery manifest authentication,
+Vault persistence of derived roles, separate-device custody and the LMS restore
+barrier must still be integrated by clients. Fee derivation neither proves that a
+tree identity is fresh nor licenses reuse of previously signed leaves. Independent
+masters use the same public generation; legacy derivations remain unchanged.
+Evidence: `test/wallet-v5r2/kdf-20261006.json`.
