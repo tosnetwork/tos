@@ -4,7 +4,11 @@ version = "0.3.0"
 edition = "2024"
 license = 'GPL-3.0'
 
+[features]
+pq-wallet = ["dep:wallet-pq-signer"]
+
 [dependencies]
+wallet-pq-signer = { path = "../../wallet-pq-signer", features = ["vault"], optional = true }
 tos-native-mnemonic = { path = "../../tos-native-mnemonic" }
 serde = { features = ["derive", "rc"], version = "1.0" }
 serde_json = "1.0"

@@ -811,6 +811,7 @@ dependencies = [
  "tokio",
  "tos-native-mnemonic",
  "tracing",
+ "wallet-pq-signer",
  "zeroize",
 ]
 

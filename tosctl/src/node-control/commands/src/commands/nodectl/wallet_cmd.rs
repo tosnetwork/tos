@@ -64,6 +64,9 @@ pub struct WalletCmd {
 
 #[derive(clap::Subcommand, Clone)]
 pub enum WalletAction {
+    /// Restore one enrolled PQ key into an encrypted local Vault
+    #[cfg(feature = "pq-wallet")]
+    PqRestoreKey(super::wallet_pq_cmd::PqRestoreKeyCmd),
     /// Create a new wallet
     Create(WalletCreateCmd),
     /// Activate wallet
@@ -372,6 +375,8 @@ pub struct WalletBroadcastPreparedCmd {
 impl WalletCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         match &self.action {
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqRestoreKey(cmd) => cmd.run().await,
             WalletAction::Create(cmd) => cmd.run(&self.config).await,
             WalletAction::Activate(cmd) => cmd.run(&self.config).await,
             WalletAction::Ls(cmd) => cmd.run(&self.config).await,

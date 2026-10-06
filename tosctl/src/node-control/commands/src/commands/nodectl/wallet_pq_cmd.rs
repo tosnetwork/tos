@@ -1,0 +1,188 @@
+// Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
+use secrets_vault::{
+    crypto::{factory::AutoCryptoFactory, key_material::KeyMaterial, master_key::MasterKey},
+    events::null_handler::NullEventHandler,
+    memory::protected_memory::ProtectedMemory,
+    secret_input,
+    storage::file_json::FileJsonStorage,
+    types::secret_id::SecretId,
+    vault::SecretVault,
+};
+use std::{path::PathBuf, sync::Arc};
+use wallet_pq_signer::{Role, kdf::DerivationContext};
+use zeroize::Zeroizing;
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum PqRole {
+    Primary,
+    Rescue,
+}
+impl PqRole {
+    fn native(self) -> Role {
+        match self {
+            Self::Primary => Role::Primary,
+            Self::Rescue => Role::Rescue,
+        }
+    }
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Restore an enrolled PQ key; this does not deploy a wallet or establish readiness"
+)]
+pub struct PqRestoreKeyCmd {
+    #[arg(long)]
+    vault_file: PathBuf,
+    #[arg(long)]
+    record_id: String,
+    #[arg(long, value_enum)]
+    role: PqRole,
+    /// Public key from independently authenticated enrollment, in hex.
+    #[arg(long)]
+    expected_public_key: String,
+    /// Public 32-byte network tag in hex, from the recovery manifest.
+    #[arg(long)]
+    network_tag: String,
+    #[arg(long, allow_hyphen_values = true)]
+    global_id: i32,
+    #[arg(long)]
+    account_index: u32,
+    #[arg(long)]
+    key_generation: u32,
+    /// Protected mnemonic file; without a file/fd, prompt without echo.
+    #[arg(long, conflicts_with = "mnemonic_fd")]
+    mnemonic_file: Option<PathBuf>,
+    #[arg(long, conflicts_with = "mnemonic_file")]
+    mnemonic_fd: Option<i32>,
+    /// Exact UTF-8 password bytes, including whitespace/newlines; absent means empty.
+    #[arg(long, conflicts_with = "password_fd")]
+    password_file: Option<PathBuf>,
+    #[arg(long, conflicts_with = "password_file")]
+    password_fd: Option<i32>,
+    /// Protected file containing the Vault encryption key as 32-byte hex.
+    #[arg(long, conflicts_with = "vault_key_fd")]
+    vault_key_file: Option<PathBuf>,
+    /// Without a file/fd, prompt for the Vault encryption key without echo.
+    #[arg(long, conflicts_with = "vault_key_file")]
+    vault_key_fd: Option<i32>,
+}
+
+impl PqRestoreKeyCmd {
+    fn enrollment(&self) -> anyhow::Result<(DerivationContext, Vec<u8>)> {
+        anyhow::ensure!(!self.record_id.trim().is_empty(), "record ID must not be empty");
+        let key = hex::decode(&self.expected_public_key)
+            .map_err(|_| anyhow::anyhow!("expected public key must be hex"))?;
+        anyhow::ensure!(
+            key.len() == self.role.native().public_key_bytes(),
+            "wrong public-key width for PQ role"
+        );
+        let network = hex::decode(&self.network_tag)
+            .map_err(|_| anyhow::anyhow!("network tag must be hex"))?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("network tag must be 32 bytes"))?;
+        // One descriptor cannot independently supply multiple EOF-delimited secrets.
+        let fds = [self.mnemonic_fd, self.password_fd, self.vault_key_fd];
+        for i in 0..fds.len() {
+            for j in 0..i {
+                anyhow::ensure!(
+                    fds[i].is_none() || fds[i] != fds[j],
+                    "secret inputs require distinct file descriptors"
+                );
+            }
+        }
+        Ok((
+            DerivationContext {
+                network,
+                global_id: self.global_id,
+                account_index: self.account_index,
+                key_generation: self.key_generation,
+            },
+            key,
+        ))
+    }
+
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let (context, expected_key) = self.enrollment()?;
+        let phrase_source = secret_input::select_source(
+            self.mnemonic_file.as_deref(),
+            self.mnemonic_fd,
+            "--mnemonic-file",
+            "--mnemonic-fd",
+            "TOS mnemonic (hidden): ",
+        )?;
+        let phrase = secret_input::read_secret(&phrase_source)?;
+        let phrase =
+            std::str::from_utf8(&phrase).map_err(|_| anyhow::anyhow!("mnemonic is not UTF-8"))?;
+        let password = match (&self.password_file, self.password_fd) {
+            (None, None) => Zeroizing::new(Vec::new()),
+            _ => secret_input::read_secret_exact(&secret_input::select_source(
+                self.password_file.as_deref(),
+                self.password_fd,
+                "--password-file",
+                "--password-fd",
+                "Password (hidden): ",
+            )?)?,
+        };
+        let password =
+            std::str::from_utf8(&password).map_err(|_| anyhow::anyhow!("password is not UTF-8"))?;
+        // Validate the mnemonic before creating/opening persistent custody.
+        let mut master = Zeroizing::new(
+            tos_native_mnemonic::private_seed(phrase, password)
+                .map_err(|_| anyhow::anyhow!("native mnemonic or password rejected"))?,
+        );
+        let derived = wallet_pq_signer::kdf::derive_signer_and_wipe(
+            &mut *master,
+            context,
+            self.role.native(),
+        )?;
+        anyhow::ensure!(
+            derived.public_key() == expected_key,
+            "derived PQ key does not match enrolled public key"
+        );
+        drop(derived);
+        // Retain no plaintext Vault encryption key after constructing protected memory.
+        let source = secret_input::select_source(
+            self.vault_key_file.as_deref(),
+            self.vault_key_fd,
+            "--vault-key-file",
+            "--vault-key-fd",
+            "Vault encryption key, hex (hidden): ",
+        )?;
+        let encryption_key = {
+            let text = secret_input::read_secret(&source)?;
+            let bytes = secret_input::decode_hex(&text)?;
+            anyhow::ensure!(bytes.len() == 32, "Vault encryption key must be 32 bytes");
+            ProtectedMemory::from_slice(&bytes).await?
+        };
+        let encryption_key =
+            MasterKey::from_key_material(KeyMaterial::new_symmetric_key(encryption_key).await?)
+                .await?;
+        let storage = FileJsonStorage::new(
+            encryption_key,
+            &self.vault_file,
+            Box::new(AutoCryptoFactory {}),
+            false,
+        )
+        .await?;
+        let vault = SecretVault::new(Arc::new(storage), Arc::new(NullEventHandler {}));
+        let id = SecretId::new(self.record_id.as_str());
+        let signer = wallet_pq_signer::vault::restore_mnemonic(
+            &vault,
+            &id,
+            self.role.native(),
+            phrase,
+            password,
+            context,
+            &expected_key,
+        )
+        .await?;
+        println!(
+            "{}",
+            serde_json::json!({"status":"key_record_restored", "record_id":self.record_id,
+            "role":wallet_pq_signer::vault::role_tag(self.role.native()), "public_key":hex::encode(signer.public_key()),
+            "network_tag":self.network_tag, "global_id":self.global_id, "account_index":self.account_index,
+            "key_generation":self.key_generation})
+        );
+        Ok(())
+    }
+}

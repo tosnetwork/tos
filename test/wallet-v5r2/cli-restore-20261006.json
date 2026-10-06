@@ -1,0 +1,237 @@
+{
+  "base_commit": "3f1e3aef5ac35a0c4ef35445952550a937846b3e",
+  "scope": "Actual feature-gated tosctl PQ custody restore command, protected/exact secret input and pre-custody enrollment validation.",
+  "tests": {
+    "cli_outcomes": {
+      "record-id": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "key-width": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "network-width": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "duplicate-fd": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "0-primary-wrong-key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "0-primary-restore": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "0-primary-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "0-primary-wrong-encryption-key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "0-primary-classical-role": {
+        "exit": 2,
+        "expected_success": false
+      },
+      "0-primary-unsafe-file": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "inherited-fd": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "0-rescue-wrong-key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "0-rescue-restore": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "0-rescue-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "0-rescue-wrong-encryption-key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "0-rescue-classical-role": {
+        "exit": 2,
+        "expected_success": false
+      },
+      "0-rescue-unsafe-file": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "1-primary-wrong-key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "1-primary-restore": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "1-primary-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "1-primary-wrong-encryption-key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "1-primary-classical-role": {
+        "exit": 2,
+        "expected_success": false
+      },
+      "1-primary-unsafe-file": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "1-rescue-wrong-key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "1-rescue-restore": {
+        "exit": 0,
+        "expected_success": true
+      },
+      "1-rescue-duplicate": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "1-rescue-wrong-encryption-key": {
+        "exit": 1,
+        "expected_success": false
+      },
+      "1-rescue-classical-role": {
+        "exit": 2,
+        "expected_success": false
+      },
+      "1-rescue-unsafe-file": {
+        "exit": 1,
+        "expected_success": false
+      }
+    },
+    "cli_semantic_controls": {
+      "custody_preflight": {
+        "exit": 1,
+        "semantic_witness": "CLI opened custody before enrollment validation"
+      },
+      "exact_password": {
+        "exit": 1,
+        "semantic_witness": "CLI rejected valid exact-password recovery"
+      },
+      "record_id": {
+        "exit": 1,
+        "semantic_witness": "CLI lost record-id preflight"
+      },
+      "key_width": {
+        "exit": 1,
+        "semantic_witness": "CLI lost key-width preflight"
+      },
+      "duplicate_fd": {
+        "exit": 1,
+        "semantic_witness": "CLI lost duplicate-fd preflight"
+      }
+    },
+    "secret_input_tests_passed": 12,
+    "secret_input_tests_ignored": 1,
+    "default_commands_check": "passed",
+    "pq_cli_check_and_build": "passed",
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet",
+    "python3 test/wallet-v5r2/cli_restore.py --cli <built-tosctl> --output <fresh-directory>",
+    "python3 test/wallet-v5r2/cli_restore_controls.py --cli <built-tosctl> --output <another-fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p secrets-vault --lib secret_input::",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --locked -p commands --lib --no-default-features",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_cmd.rs",
+      "bytes": 7167,
+      "sha256": "8520e2aca336ef7c1d17b0d51486c9b52e9de815c1bb2ae238175e535f8badd1"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_cmd.rs",
+      "bytes": 71283,
+      "sha256": "c097b843b74c408903f6bd3d68f10f37e39a183b0af35c9118b93c9b2b40d2be"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/mod.rs",
+      "bytes": 1294,
+      "sha256": "e2c62c429c29324acf0a6b879780e807a86c6e1e8a2130542fb8922e4982fad8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/Cargo.toml",
+      "bytes": 1461,
+      "sha256": "4d40a22947f0753378a72c9ae45a8430d1ed89d3fbaf1df72a73a4f73b8e914c"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/nodectl/Cargo.toml",
+      "bytes": 435,
+      "sha256": "d1d93d4b54f3f31f65134be85091cf36f76de40be6c0491f0a99bd109129d1bf"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/secrets-vault/src/secret_input.rs",
+      "bytes": 20048,
+      "sha256": "43d65a2f3ead9636e3132356df61d8da9a88133aca1fc8c62b185fd10b9be7f3"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.lock",
+      "bytes": 148960,
+      "sha256": "a9c377740b89ff9f09f69c5489488f5fc5a4d9b47b7b9e1fe4c937e7d34f29e2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_restore.py",
+      "bytes": 8862,
+      "sha256": "03792c3dbb12283d109cdf0278b3be122679baee3794e4149231daebc622530d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_restore_controls.py",
+      "bytes": 4583,
+      "sha256": "9f1903f19961d6308c40c766695bb4d205b164a0ba18af5eb6d02e435046c40f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 18451,
+      "sha256": "dfc14cad62e5d7ccfda1fa03f656336d60d1bc85b2831a490acba106c2303e0f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 146063,
+      "sha256": "40bf25d6b32b48acb8fb03fa90eb9606d2742138c29476ef2a0585fa7043081a"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-pq-restore-final/MANIFEST.json",
+      "bytes": 21938,
+      "sha256": "333e6fcfb12e7386f910b69510d63f058c67137c33e5e7fadf15477d64248cc4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-pq-controls-final/MANIFEST.json",
+      "bytes": 29358,
+      "sha256": "608ddac59658f6cdfc54b76e2f1d81ece3687af201ec2923f0e6355c546dce66"
+    }
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Explicit pq-wallet build feature; default wallet behavior is not switched or relabelled.",
+    "Command restores one encrypted seed record, not a deployed/ready wallet or completed recovery handoff.",
+    "Expected public key and namespace are caller-supplied from independently authenticated enrollment; this command does not authenticate a manifest or fetch chain proofs.",
+    "No independent-device custody, backup-loss scheduling, transaction delivery or mobile acceptance claim.",
+    "Current remote CI run 37410539906 is at 4a2e32a9b and does not include this local change; final-head CI and default-credit admission remain release gates."
+  ]
+}

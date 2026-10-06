@@ -2222,3 +2222,58 @@ CLI/mobile creation/restore commands, authenticated recovery manifests, separate
 custody and chain readiness remain to be completed. Existing CLI identities are
 not relabelled V5R2. Evidence:
 `test/wallet-v5r2/native-mnemonic-20261006.json`.
+
+
+### PQ key restoration through the actual CLI
+
+Building `tosctl` with `--features pq-wallet` enables `wallet pq-restore-key`.
+The command requires an explicit local encrypted Vault path, record ID, PQ role,
+independently authenticated expected public key and every public KDF namespace
+field. It accepts only PRIMARY/ML-DSA-44 and RESCUE/SLH-DSA-SHA2-128s. It does not
+reuse the classical wallet import/configuration path or change wallet defaults.
+
+Mnemonic and Vault encryption-key inputs use the existing protected file, inherited
+FD or hidden-prompt reader. The encryption key is exactly 32 bytes of hex and is
+moved into protected memory before the Vault is opened. Optional password file/FD
+input preserves exact UTF-8 bytes, including whitespace and newlines; no selector
+means the empty password. The new `read_secret_exact` retains the same file/FD
+protection and size limits while permitting empty passwords. Existing mandatory
+secret readers continue rejecting empty/whitespace-only inputs. No mnemonic,
+password or encryption-key value is a command-line argument or environment input
+for this command. Distinct FD selectors are required for distinct secrets.
+
+Public metadata is validated before secret reading. The mnemonic and derived
+public key are validated before opening custody, then the shared bound restoration
+path repeats derivation and enforces new-record persistence/readback. Output is
+public JSON with status `key_record_restored`, role, public key and namespace;
+it is not wallet deployment, on-chain readiness or a completed recovery handoff.
+Callers must independently authenticate the enrollment key and recovery metadata.
+
+For example, after obtaining the public values from authenticated enrollment:
+
+```sh
+cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet
+tosctl wallet pq-restore-key --role rescue --record-id wallet.rescue \
+  --vault-file /secure/rescue.json --vault-key-file /secure/vault-key.hex \
+  --mnemonic-file /secure/rescue.words \
+  --expected-public-key "$RESCUE_PUBLIC_KEY" --network-tag "$NETWORK_TAG" \
+  --global-id 42 --account-index 5 --key-generation 7
+```
+
+Only public values are shown as environment substitutions. Secret files must be
+owned by the current user and have no group/other access. A password file, when
+needed, contains the exact password rather than an automatically trimmed line.
+
+The actual built executable is tested against four frozen mnemonic/role
+combinations, duplicate restoration, wrong encryption keys, classical-role
+rejection, exposed mnemonic permissions and inherited FD input. Public-input
+checks cover empty IDs, wrong public-key/network widths and reused FDs before
+attempting to read a deliberately missing mnemonic. Five controls rebuild the
+binary after removing preflight guards or trimming exact password bytes and
+require the corresponding command-level assertion to fail, followed by restored
+positive commands. Both architecture jobs run the CLI and its controls.
+
+This command restores one custody record. Complete wallet creation/manifest
+workflows, transaction CLI/mobile integration, independent-device custody, LMS
+loss handling, default-credit admission and final-head deployment acceptance
+remain release gates. Evidence: `test/wallet-v5r2/cli-restore-20261006.json`.

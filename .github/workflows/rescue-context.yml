@@ -99,6 +99,12 @@ jobs:
           python test/wallet-v5r2/vault_recovery_controls.py --output artifacts/context/vault-recovery-controls
           python test/wallet-v5r2/vault_pop_controls.py --output artifacts/context/vault-pop-controls
           python test/wallet-v5r2/migration_signing_controls.py --output artifacts/context/migration-signing-controls
+      - name: PQ custody restore CLI and protected input controls
+        run: |
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p secrets-vault --lib secret_input::
+          python test/wallet-v5r2/cli_restore.py --cli "$CARGO_TARGET_DIR/debug/tosctl" --output artifacts/context/pq-cli-restore
+          python test/wallet-v5r2/cli_restore_controls.py --cli "$CARGO_TARGET_DIR/debug/tosctl" --output artifacts/context/pq-cli-controls
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
           python test/wallet-v5r2/fee_schedule_controls.py --output artifacts/context/fee-schedule

@@ -41,3 +41,6 @@ pub(crate) mod tx_cmd;
 mod utils;
 pub(crate) mod vote_cmd;
 pub(crate) mod wallet_cmd;
+
+#[cfg(feature = "pq-wallet")]
+mod wallet_pq_cmd;
