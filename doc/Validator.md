@@ -43,7 +43,10 @@ replaced, so renew by deficit and read the state back after each change.
 `tosctl controller operations status --controller <addr>` reports funds,
 allowance, expiry and runway; `tosctl controller operations plan` prepares the
 renewal by deficit and prints the offline signing command and the bounceable
-`tosctl wallet send ... --bounce` that delivers it. The elections task of
+`tosctl wallet send ... --bounce` that delivers it. When the balance is short of
+funds + floor + a storage forecast through the expiry, the plan is blocking: it
+prints the plain capital transfer to send first and withholds both commands
+until a re-run reads the funded balance. The elections task of
 `tosctl service` warns when the authorization is missing, expiring or low. See
 [validator-operator-guide.md](validator-operator-guide.md#8-fund-the-controllers-operations).
 

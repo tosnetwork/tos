@@ -1217,3 +1217,417 @@ fn there_is_no_external_way_in() {
         }
     }
 }
+
+// ── Capital top-up, executed ───────────────────────────────────────────────
+//
+// `controller operations plan` prices a plain transfer that must leave the relay's
+// capital (`balance - msg_value >= funds + floor`) in place. These run that transfer,
+// the renewal and the relay against the controller compiled from source, rather than
+// adding the planned amount to a balance.
+
+use contracts::validator_controller::{
+    CapitalCosts, OperatingState, PLAIN_RECEIVE_GAS, RelayFees, RenewalPlan, RenewalRequest,
+    capital_costs, gas_fee, plan_renewal,
+};
+use contracts::wallet::send_fees::AccountStorage;
+
+/// `sr::error` in `stake-relay.fc`: every relay precondition, the capital check
+/// included, fails with it.
+const RELAY_REFUSED: i32 = 180;
+
+fn compute_gas(result: &tos_sandbox::SendResult) -> u64 {
+    let (_, transaction) = result.transactions.first().expect("a transaction");
+    match transaction.read_description().expect("description") {
+        chain_block::TransactionDescr::Ordinary(descr) => match descr.compute_ph {
+            chain_block::TrComputePhase::Vm(vm) => vm.gas_used.as_u64(),
+            other => panic!("the compute phase did not run: {other:?}"),
+        },
+        other => panic!("not an ordinary transaction: {other:?}"),
+    }
+}
+
+/// A controller bound to `consensus`, with an elector named, deployed with `value`.
+fn bound_controller(root: &RootKey, consensus: &RootKey, value: u64) -> Controller {
+    let mut controller = Controller {
+        chain: Blockchain::with_global_version(16).expect("a chain"),
+        address: MsgAddressInt::default(),
+        global_id: 0,
+    };
+    controller.chain.set_workchain(-1);
+    name_an_elector(&mut controller.chain);
+    let state = StateInit::with_code_and_data(
+        controller_code(),
+        controller_data_bound(
+            root,
+            0,
+            0,
+            1,
+            chain_block::derive_consensus_key_id(1, &consensus.public_key).as_slice(),
+        ),
+    );
+    controller.address = MsgAddressInt::with_params(
+        -1,
+        state.write_to_new_cell().expect("state").into_cell().expect("state cell").hash(0),
+    )
+    .expect("address");
+    let funder = controller.chain.treasury("capital-deployer", 100_000 * TOS).expect("funding");
+    controller
+        .chain
+        .send_message(
+            MessageBuilder::internal(funder.address(), &controller.address, value)
+                .bounce(false)
+                .state_init(state)
+                .body(Cell::default())
+                .build(),
+        )
+        .expect("deployment")
+        .expect_success();
+    controller.global_id = match controller.chain.config_params().config(19).expect("network") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        _ => panic!("the chain states no network id"),
+    };
+    controller
+}
+
+/// What a plan reads, taken from the chain as it is now: never a locally adjusted
+/// balance.
+struct Observed {
+    state: OperatingState,
+    nonce: u64,
+    balance: u128,
+    storage: AccountStorage,
+}
+
+fn observe(controller: &Controller) -> Observed {
+    use tl_api::tos::tvm::{
+        Number, StackEntry,
+        numberdecimal::NumberDecimal,
+        slice,
+        stackentry::{StackEntryNumber, StackEntrySlice},
+    };
+    let result = controller
+        .chain
+        .run_get_method(&controller.address, "operating_state", vec![])
+        .expect("operating_state");
+    assert_eq!(result.exit_code, 0);
+    let entries = result
+        .stack
+        .iter()
+        .map(|item| {
+            if let Ok(int) = item.as_integer() {
+                return StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
+                    number: Number::Tvm_NumberDecimal(NumberDecimal { number: int.to_string() }),
+                });
+            }
+            let cell = item.as_slice().expect("a slice").clone().into_cell().expect("a cell");
+            StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+                slice: slice::Slice { bytes: chain_block::write_boc(&cell).expect("boc") },
+            })
+        })
+        .collect();
+    let state = OperatingState::decode(&common::tvm_stack_parser::TvmStackParser::new(entries))
+        .expect("operating_state decodes");
+    let account = controller.chain.get_account(&controller.address).expect("the controller");
+    Observed {
+        state,
+        nonce: controller.state().1,
+        balance: account.balance().expect("a balance").coins.as_u128(),
+        storage: AccountStorage::from_account(account).expect("storage"),
+    }
+}
+
+struct Prices {
+    gas: chain_block::GasLimitsPrices,
+    fees: RelayFees,
+    storage: Vec<chain_block::StoragePrices>,
+}
+
+fn prices(chain: &Blockchain) -> Prices {
+    let config = chain.config_params();
+    let gas = config.gas_prices(true).expect("gas prices");
+    let forward = config.fwd_prices(true).expect("forward prices");
+    Prices {
+        fees: RelayFees::from_prices(&gas, &forward).expect("relay fees"),
+        storage: config.storage_prices().expect("storage").prices().expect("prices"),
+        gas,
+    }
+}
+
+/// The renewal the tests ask for: `grant`-sized funds and limits, the given floor and
+/// expiry, paid by the account `authorize` sends from.
+fn renewal(
+    controller: &mut Controller,
+    fees: &RelayFees,
+    floor: u128,
+    expires_at: u32,
+) -> RenewalRequest {
+    let payer = controller.chain.treasury("controller-relayer", 10_000 * TOS).expect("payer");
+    RenewalRequest {
+        payer: payer.address().clone(),
+        funds_target: 3 * fees.grant,
+        allowance: 3 * fees.grant,
+        limit: 2 * fees.grant,
+        floor,
+        expires_at,
+        margin: u128::from(TOS),
+        allow_payer_change: false,
+    }
+}
+
+fn plan(
+    controller: &Controller,
+    seen: &Observed,
+    fees: &RelayFees,
+    request: &RenewalRequest,
+    costs: &CapitalCosts,
+) -> RenewalPlan {
+    plan_renewal(
+        &controller.address,
+        &seen.state,
+        seen.balance,
+        fees,
+        false,
+        u64::from(controller.chain.now()),
+        request,
+        costs,
+    )
+    .expect("a plan")
+}
+
+/// A plain transfer with an empty body, as `tosctl wallet send` without a body sends.
+fn plain_transfer(controller: &mut Controller, value: u128) {
+    let funder = controller.chain.treasury("capital-funder", 100_000 * TOS).expect("funder");
+    let value = u64::try_from(value).expect("a transfer value");
+    let result = controller
+        .chain
+        .send_message(
+            MessageBuilder::internal(funder.address(), &controller.address, value)
+                .bounce(false)
+                .body(Cell::default())
+                .build(),
+        )
+        .expect("the transfer is delivered");
+    assert_eq!(exit_code(&result), 0, "the controller refused a plain transfer");
+}
+
+/// Signs and delivers the plan's kind 4 request; returns its exit code.
+fn renew(controller: &mut Controller, root: &RootKey, plan: &RenewalPlan, nonce: u64) -> i32 {
+    let valid = valid_until(controller);
+    let global_id = controller.global_id;
+    let result =
+        authorize(controller, root, 0, nonce, valid, 4, plan.payload.clone(), None, global_id);
+    exit_code(&result)
+}
+
+/// A relay from `pool` signed by `consensus`; returns its exit code and whether the
+/// stake was sent on.
+fn relay(controller: &mut Controller, consensus: &RootKey) -> (i32, bool) {
+    let pool = controller.chain.treasury("relay-pool", 100_000 * TOS).expect("a pool");
+    let body = signed_relay_body(controller, pool.address(), consensus);
+    let result = controller
+        .chain
+        .send_message(pool.build_message(&controller.address, 5_000 * TOS, true, Some(body)))
+        .expect("the relay request is delivered");
+    (exit_code(&result), relayed(&result).is_some())
+}
+
+/// The gas the plan prices the controller's own receive at is the gas that receive
+/// uses, measured on the controller compiled from source, and the balance moves by
+/// exactly the value less that fee.
+#[test]
+fn a_plain_transfer_costs_the_controller_exactly_the_pinned_receive_gas() {
+    let root = RootKey::new(0xc1);
+    let mut controller = deploy(&root);
+    let before = observe(&controller);
+    let funder = controller.chain.treasury("capital-funder", 100_000 * TOS).expect("funder");
+    let result = controller
+        .chain
+        .send_message(
+            MessageBuilder::internal(funder.address(), &controller.address, TOS)
+                .bounce(false)
+                .body(Cell::default())
+                .build(),
+        )
+        .expect("the transfer is delivered");
+    assert_eq!(exit_code(&result), 0);
+    let gas = compute_gas(&result);
+    assert_eq!(
+        gas, PLAIN_RECEIVE_GAS,
+        "the controller's plain receive uses {gas} gas; update PLAIN_RECEIVE_GAS"
+    );
+    let fee = gas_fee(&prices(&controller.chain).gas, PLAIN_RECEIVE_GAS).expect("a fee");
+    let after = observe(&controller);
+    assert_eq!(after.balance, before.balance + u128::from(TOS) - fee);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Transfer {
+    /// What the plan says to send.
+    Planned,
+    /// One nano-TOS less.
+    PlannedLessOne,
+    /// The net shortfall alone, as the plan used to say.
+    ShortfallOnly,
+}
+
+/// Exactness with no storage and no margin: the planned transfer, then the renewal,
+/// then a relay. Returns the relay's exit code, whether it relayed, and whether the
+/// plan re-run after the transfer called the capital ready.
+fn top_up_then_relay(transfer: Transfer) -> (i32, bool, bool) {
+    let root = RootKey::new(0xc2);
+    let consensus = RootKey::new(0xc3);
+    let mut controller = bound_controller(&root, &consensus, 30 * TOS);
+    let prices = prices(&controller.chain);
+    let now = controller.chain.now();
+    let seen = observe(&controller);
+    assert_eq!(seen.storage.last_paid, now, "the deployment paid storage at this time");
+    // A floor ten TOS above the balance: the plan must ask for capital.
+    let floor = seen.balance + 10 * u128::from(TOS);
+    let request = renewal(&mut controller, &prices.fees, floor, now + 86_400);
+    // Zero accrued and zero future storage (the horizon is now), zero margin.
+    let costs = capital_costs(&prices.gas, &prices.storage, &seen.storage, now, 0).expect("costs");
+    assert_eq!(costs.storage_forecast, 0);
+    assert_eq!(costs.receive_fee, gas_fee(&prices.gas, PLAIN_RECEIVE_GAS).expect("fee"));
+    let first = plan(&controller, &seen, &prices.fees, &request, &costs);
+    assert_eq!(first.capital_shortfall, 10 * u128::from(TOS));
+    assert_eq!(first.capital_top_up_net, first.capital_shortfall);
+    assert_eq!(first.capital_transfer_value, first.capital_shortfall + costs.receive_fee);
+
+    let value = match transfer {
+        Transfer::Planned => first.capital_transfer_value,
+        Transfer::PlannedLessOne => first.capital_transfer_value - 1,
+        Transfer::ShortfallOnly => first.capital_shortfall,
+    };
+    plain_transfer(&mut controller, value);
+
+    // Re-running the plan reads the chain again: the new balance and storage record,
+    // and an authorization and nonce the transfer did not touch.
+    let again = observe(&controller);
+    assert_eq!(again.state, seen.state, "a plain transfer changed the authorization");
+    assert_eq!(again.nonce, seen.nonce, "a plain transfer spent the root nonce");
+    assert_eq!(again.storage.last_paid, now);
+    assert_eq!(again.balance, seen.balance + value - costs.receive_fee);
+    let costs = capital_costs(&prices.gas, &prices.storage, &again.storage, now, 0).expect("costs");
+    let second = plan(&controller, &again, &prices.fees, &request, &costs);
+    assert_eq!(second.payload.repr_hash(), first.payload.repr_hash(), "the request is the same");
+
+    assert_eq!(renew(&mut controller, &root, &second, 0), 0, "the renewal was refused");
+    let renewed = observe(&controller);
+    assert_eq!(renewed.state, second.projected_state());
+    assert_eq!(renewed.balance, second.capital_after, "the renewal kept the planned balance");
+    let (code, relayed) = relay(&mut controller, &consensus);
+    (code, relayed, second.capital_ready())
+}
+
+#[test]
+fn the_planned_transfer_leaves_exactly_the_capital_the_relay_checks() {
+    let (code, relayed, ready) = top_up_then_relay(Transfer::Planned);
+    assert!(ready, "the re-run plan did not see the capital");
+    assert_eq!(code, 0, "the relay was refused after the planned transfer");
+    assert!(relayed, "the relay sent nothing on");
+}
+
+#[test]
+fn one_nano_less_than_the_planned_transfer_fails_the_capital_check() {
+    let (code, relayed, ready) = top_up_then_relay(Transfer::PlannedLessOne);
+    assert!(!ready, "the re-run plan called a short controller ready");
+    assert_eq!(code, RELAY_REFUSED);
+    assert!(!relayed);
+}
+
+#[test]
+fn the_net_shortfall_alone_leaves_the_controller_underfunded() {
+    let (code, relayed, ready) = top_up_then_relay(Transfer::ShortfallOnly);
+    assert!(!ready);
+    assert_eq!(code, RELAY_REFUSED, "the old net amount must not pass the capital check");
+    assert!(!relayed);
+}
+
+/// Storage charged later: an authorization in force, optional recorded debt and
+/// storage elapsed before the plan, then a renewal to the same terms, then a relay
+/// one second before the expiry. Returns that relay's exit code.
+fn storage_until_expiry(debt: u128, elapsed: u32, with_forecast: bool) -> (i32, u128) {
+    let root = RootKey::new(0xc4);
+    let consensus = RootKey::new(0xc5);
+    let mut controller = bound_controller(&root, &consensus, 30 * TOS);
+    let prices = prices(&controller.chain);
+    let start = controller.chain.now();
+    let expires_at = start + 30 * 86_400;
+    let seen = observe(&controller);
+    let floor = seen.balance + 10 * u128::from(TOS);
+    let request = renewal(&mut controller, &prices.fees, floor, expires_at);
+    let zero = CapitalCosts { receive_fee: 0, storage_forecast: 0, margin: 0 };
+    let initial = plan(&controller, &seen, &prices.fees, &request, &zero);
+    assert_eq!(renew(&mut controller, &root, &initial, 0), 0);
+
+    controller.chain.set_now(start + elapsed);
+    if debt > 0 {
+        let mut account =
+            controller.chain.get_account(&controller.address).expect("controller").clone();
+        account.set_due_payment(Some(chain_block::Coins::from(u64::try_from(debt).expect("debt"))));
+        controller.chain.set_account(controller.address.clone(), account);
+    }
+    let seen = observe(&controller);
+    assert_eq!(seen.storage.due_payment, debt);
+    let horizon = expires_at;
+    let costs =
+        capital_costs(&prices.gas, &prices.storage, &seen.storage, horizon, 0).expect("costs");
+    assert!(costs.storage_forecast > debt, "the sandbox charges no storage; nothing is tested");
+    let costs = if with_forecast { costs } else { CapitalCosts { storage_forecast: 0, ..costs } };
+    let renewal_plan = plan(&controller, &seen, &prices.fees, &request, &costs);
+    plain_transfer(&mut controller, renewal_plan.capital_transfer_value);
+    let again = observe(&controller);
+    assert_eq!(again.storage.due_payment, 0, "the transfer paid the recorded debt");
+    assert_eq!(renew(&mut controller, &root, &renewal_plan, 1), 0);
+    controller.chain.set_now(expires_at - 1);
+    (relay(&mut controller, &consensus).0, costs.storage_forecast)
+}
+
+#[test]
+fn the_storage_forecast_keeps_the_capital_until_the_expiry() {
+    for (debt, elapsed) in [(0, 0), (0, 86_400), (70_000_000, 86_400)] {
+        let (code, forecast) = storage_until_expiry(debt, elapsed, true);
+        assert_eq!(code, 0, "debt {debt}, elapsed {elapsed}: forecast {forecast} fell short");
+        let (code, _) = storage_until_expiry(debt, elapsed, false);
+        assert_eq!(
+            code, RELAY_REFUSED,
+            "debt {debt}, elapsed {elapsed}: without the forecast the relay must fail"
+        );
+    }
+}
+
+/// A deposit of any coin-encoding length leaves exactly the planned balance and
+/// funds. A kind 4 request rewrites the persistent data, which is why the storage
+/// figure the plan prints is a forecast from the occupancy it read.
+#[test]
+fn deposits_of_every_encoding_length_leave_the_planned_balance() {
+    let root = RootKey::new(0xc6);
+    let consensus = RootKey::new(0xc7);
+    let zero = CapitalCosts { receive_fee: 0, storage_forecast: 0, margin: 0 };
+    for deposit in [1u128, 256, 65_536, 1_000_000_007, 50 * u128::from(TOS)] {
+        let mut controller = bound_controller(&root, &consensus, 30 * TOS);
+        let prices = prices(&controller.chain);
+        let expires_at = controller.chain.now() + 86_400;
+        // An authorization of one grant first, so that any deposit admits a relay.
+        let deployed = observe(&controller);
+        let mut request = renewal(&mut controller, &prices.fees, 0, expires_at);
+        request.funds_target = prices.fees.grant;
+        request.allowance = prices.fees.grant;
+        request.limit = prices.fees.grant;
+        let first = plan(&controller, &deployed, &prices.fees, &request, &zero);
+        assert_eq!(renew(&mut controller, &root, &first, 0), 0);
+        let funded = observe(&controller);
+        assert!(
+            funded.storage.bits > deployed.storage.bits,
+            "the first authorization did not grow the persistent data"
+        );
+
+        request.funds_target = funded.state.funds + deposit;
+        let planned = plan(&controller, &funded, &prices.fees, &request, &zero);
+        assert_eq!(planned.deposit, deposit);
+        assert_eq!(renew(&mut controller, &root, &planned, 1), 0, "deposit {deposit}");
+        let after = observe(&controller);
+        assert_eq!(after.balance, planned.capital_after, "deposit {deposit}");
+        assert_eq!(after.state.funds, planned.funds_after, "deposit {deposit}");
+    }
+}

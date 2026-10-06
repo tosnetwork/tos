@@ -6,11 +6,15 @@
 //! authorization has expired. This module encodes that authorization, reads it back,
 //! prices the grant from the live fee configuration exactly as `stake-relay.fc` does,
 //! and plans a renewal by deficit. It never signs: the controller root key is offline.
-use crate::{ChainProvider, MasterchainCheckpoint};
+use crate::{
+    ChainProvider, MasterchainCheckpoint,
+    chain_provider::validate_masterchain_checkpoint,
+    wallet::send_fees::{AccountStorage, storage_due},
+};
 use anyhow::Context;
 use chain_block::{
     BuilderData, Cell, Coins, ConfigParamEnum, Deserializable, GasLimitsPrices, IBitstring,
-    MsgAddressInt, MsgForwardPrices, Serializable,
+    MsgAddressInt, MsgForwardPrices, Serializable, StoragePrices,
 };
 use common::tvm_stack_parser::TvmStackParser;
 use tl_api::tos::tvm::StackEntry;
@@ -22,6 +26,12 @@ pub const WITHDRAW_OPERATIONS_KIND: u8 = 5;
 pub const RELAY_GAS: u64 = 200_000;
 pub const CONTROL_GAS: u64 = 50_000;
 pub const CALLBACK_GAS: u64 = 200_000;
+/// Gas the controller's compute phase uses to receive a plain transfer (empty body):
+/// `recv_internal` parses the header and the sender, then returns. The fee for it is
+/// taken from the controller's own balance, so a capital top-up must carry it on top of
+/// the capital it is meant to leave behind. `validator_controller_sandbox` measures it
+/// from the controller compiled from source and fails when the two differ.
+pub const PLAIN_RECEIVE_GAS: u64 = 901;
 /// The fixed message envelope `sr::control_value` and `sr::callback_value` price.
 const ENVELOPE_BITS: u64 = 4096;
 const ENVELOPE_CELLS: u64 = 8;
@@ -494,13 +504,71 @@ pub struct RenewalPlan {
     /// The controller's balance once the request is accepted: the contract reserves
     /// the prior balance plus the deposit and refunds the rest.
     pub capital_after: u128,
-    /// A plain transfer the controller still needs so that `balance >= funds + floor`
-    /// holds for the next relay. The deposit cannot supply it: it raises the balance
-    /// and the recorded funds by the same amount.
-    pub capital_top_up: u128,
+    /// `funds + floor - capital_after`, saturating: what the next relay's capital
+    /// check (`balance - msg_value >= funds + floor`) lacks right now. The deposit
+    /// cannot supply it: it raises the balance and the recorded funds by the same
+    /// amount.
+    pub capital_shortfall: u128,
+    /// `funds + floor + storage forecast`: the balance the request should leave so
+    /// that the forecast storage charges through the expiry do not take the controller
+    /// below the relay's requirement. A forecast, not a guarantee.
+    pub capital_required: u128,
+    pub capital_costs: CapitalCosts,
+    /// What a capital transfer must leave in the balance: `capital_required + margin -
+    /// capital_after` when `capital_after` is below `capital_required`, otherwise zero.
+    pub capital_top_up_net: u128,
+    /// The value of that plain transfer: the net amount plus the controller's own fee
+    /// for receiving it. Zero when no top-up is needed; no receive fee is budgeted then.
+    pub capital_transfer_value: u128,
+}
+
+/// What keeping the relay's capital check satisfied costs beyond `funds + floor`, as
+/// read at the plan's block. The storage part is a forecast from the account's
+/// occupancy and the storage prices at that block: the kind 4 request rewrites the
+/// persistent data, relays record pending state, and prices can change, so actual
+/// charges can differ. Re-run the plan after funding; it reads the balance again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct CapitalCosts {
+    /// The compute fee the controller pays from its balance to receive a plain transfer:
+    /// `gas_fee(-1, PLAIN_RECEIVE_GAS)` at the block's ConfigParam 20.
+    pub receive_fee: u128,
+    /// Forecast storage the controller will be charged from its last payment through
+    /// the authorization's expiry, plus the storage debt it already carries (counted
+    /// once).
+    pub storage_forecast: u128,
+    /// Discretionary headroom added to a transfer, so that re-planning after it lands
+    /// (later expiry, changed prices, larger data) still finds the requirement met. It
+    /// is not an availability guarantee.
+    pub margin: u128,
+}
+
+/// Prices the capital a plan must keep: the receive fee at the live gas prices, and
+/// the storage forecast through `horizon` (the authorization's expiry) at the live
+/// storage prices and the account's recorded occupancy, last payment and debt.
+pub fn capital_costs(
+    gas: &GasLimitsPrices,
+    storage_prices: &[StoragePrices],
+    storage: &AccountStorage,
+    horizon: u32,
+    margin: u128,
+) -> anyhow::Result<CapitalCosts> {
+    Ok(CapitalCosts {
+        receive_fee: gas_fee(gas, PLAIN_RECEIVE_GAS)?,
+        storage_forecast: coins(
+            storage_due(storage_prices, storage, horizon).context("storage forecast")?,
+            "storage forecast",
+        )?,
+        margin: coins(margin, "capital margin")?,
+    })
 }
 
 impl RenewalPlan {
+    /// Whether the balance the request leaves already covers `capital_required`, so
+    /// that the request can be signed and sent.
+    pub fn capital_ready(&self) -> bool {
+        self.capital_top_up_net == 0
+    }
+
     /// The authorization this request installs, as `operating_state` will report it.
     pub fn projected_state(&self) -> OperatingState {
         OperatingState {
@@ -518,6 +586,7 @@ impl RenewalPlan {
 /// contract adds the deposit to the recorded funds and replaces every other field.
 /// A target at or below the current funds is a zero-deposit renewal (for example,
 /// only the expiry moves).
+#[allow(clippy::too_many_arguments)]
 pub fn plan_renewal(
     controller: &MsgAddressInt,
     state: &OperatingState,
@@ -526,6 +595,7 @@ pub fn plan_renewal(
     relay_pending: bool,
     now: u64,
     request: &RenewalRequest,
+    costs: &CapitalCosts,
 ) -> anyhow::Result<RenewalPlan> {
     anyhow::ensure!(
         !relay_pending,
@@ -578,8 +648,18 @@ pub fn plan_renewal(
     let required_value = add(deposit, fees.funding_processing, "required message value")?;
     let message_value = add(required_value, request.margin, "message value")?;
     let capital_after = add(balance, deposit, "balance after the deposit")?;
-    let capital_top_up =
-        add(funds_after, request.floor, "funds + floor")?.saturating_sub(capital_after);
+    let relay_requirement = add(funds_after, request.floor, "funds + floor")?;
+    let capital_shortfall = relay_requirement.saturating_sub(capital_after);
+    let capital_required =
+        add(relay_requirement, costs.storage_forecast, "funds + floor + storage forecast")?;
+    let (capital_top_up_net, capital_transfer_value) = if capital_after >= capital_required {
+        (0, 0)
+    } else {
+        let net = add(capital_required, costs.margin, "capital target")?
+            .checked_sub(capital_after)
+            .ok_or_else(|| anyhow::anyhow!("capital target is below the balance"))?;
+        (net, add(net, costs.receive_fee, "capital transfer value")?)
+    };
     let payload = operating_funding_payload(&OperatingFunding {
         payer: &request.payer,
         deposit,
@@ -600,7 +680,11 @@ pub fn plan_renewal(
         message_value,
         payload,
         capital_after,
-        capital_top_up,
+        capital_shortfall,
+        capital_required,
+        capital_costs: *costs,
+        capital_top_up_net,
+        capital_transfer_value,
     })
 }
 
@@ -626,7 +710,14 @@ pub struct ControllerOperations {
     /// Retry fees are held for an unfinished relay; treated like a pending relay.
     pub retry_fees_held: bool,
     pub balance: u128,
+    /// The account's storage metadata as the node served it with the balance, when it
+    /// did. Planning a renewal needs it; a status check does not.
+    pub storage: Option<AccountStorage>,
     pub fees: RelayFees,
+    /// ConfigParam 20, masterchain gas: prices the controller's own receive.
+    pub gas_prices: GasLimitsPrices,
+    /// ConfigParam 18: prices the controller's storage.
+    pub storage_prices: Vec<StoragePrices>,
     pub elections_interval_secs: u32,
     /// The masterchain block every value above was read at.
     pub checkpoint: MasterchainCheckpoint,
@@ -665,6 +756,30 @@ pub async fn read_controller_operations_at(
         "a validator controller is a masterchain account"
     );
     let address = controller.to_string();
+    // The account first: a frozen or uninitialized controller runs no getter and
+    // relays nothing, and must be refused as such rather than quoted as active.
+    let account = chain.get_address_info_at_unverified(controller, &checkpoint).await?;
+    validate_masterchain_checkpoint(&account.block_id, &checkpoint)
+        .context("pinned controller account read returned another block")?;
+    let account_state = match account.state {
+        chain_rpc_client::v2::data_models::AccountState::Active => None,
+        chain_rpc_client::v2::data_models::AccountState::Frozen => Some("frozen"),
+        chain_rpc_client::v2::data_models::AccountState::Uninitialized => Some("uninitialized"),
+    };
+    if let Some(state) = account_state {
+        anyhow::bail!(
+            "controller {controller} is {state} at masterchain block {}: it is not an active \
+             controller and relays nothing",
+            checkpoint.seqno
+        );
+    }
+    let balance = u128::from(account.balance);
+    let storage = account
+        .storage_stat
+        .as_ref()
+        .map(AccountStorage::from_rpc)
+        .transpose()
+        .context("controller storage metadata")?;
     let getter = |method: &'static str| {
         chain.run_get_method_at_unverified(address.clone(), method, vec![], &checkpoint)
     };
@@ -674,11 +789,19 @@ pub async fn read_controller_operations_at(
     let relay_pending = !stack_entry_is_null(&pending, 0).context("relay_pending")?;
     let retry = getter("relay_retry_fees").await?;
     let retry_fees_held = !stack_entry_is_null(&retry, 0).context("relay_retry_fees")?;
-    let balance = u128::from(chain.get_balance_at_unverified(controller, &checkpoint).await?);
-    let fees = RelayFees::from_config(
-        chain.get_config_param_at_unverified(20, &checkpoint).await?,
-        chain.get_config_param_at_unverified(24, &checkpoint).await?,
-    )?;
+    let gas_prices = match chain.get_config_param_at_unverified(20, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam20(value) => value,
+        other => anyhow::bail!("live ConfigParam 20 has unexpected representation: {other:?}"),
+    };
+    let forward = match chain.get_config_param_at_unverified(24, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam24(value) => value,
+        other => anyhow::bail!("live ConfigParam 24 has unexpected representation: {other:?}"),
+    };
+    let fees = RelayFees::from_prices(&gas_prices, &forward)?;
+    let storage_prices = match chain.get_config_param_at_unverified(18, &checkpoint).await? {
+        ConfigParamEnum::ConfigParam18(value) => value.prices()?,
+        other => anyhow::bail!("live ConfigParam 18 has unexpected representation: {other:?}"),
+    };
     let elections_interval_secs =
         match chain.get_config_param_at_unverified(15, &checkpoint).await? {
             ConfigParamEnum::ConfigParam15(value) => value.validators_elected_for,
@@ -690,7 +813,10 @@ pub async fn read_controller_operations_at(
         relay_pending,
         retry_fees_held,
         balance,
+        storage,
         fees,
+        gas_prices,
+        storage_prices,
         elections_interval_secs,
         checkpoint,
     })

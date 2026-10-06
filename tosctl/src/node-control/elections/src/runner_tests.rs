@@ -2171,12 +2171,15 @@ fn controller_operations(expires: u32) -> contracts::validator_controller::Contr
         relay_pending: false,
         retry_fees_held: false,
         balance: 1_000_000_000_000,
+        storage: None,
         fees: RelayFees {
             control_value: 1_000_000_000,
             callback_value: 2_000_000_000,
             grant: 6_000_000_000,
             funding_processing: 3_000_000_000,
         },
+        gas_prices: Default::default(),
+        storage_prices: Vec::new(),
         elections_interval_secs: 3600,
         checkpoint: contracts::MasterchainCheckpoint {
             seqno: 99,

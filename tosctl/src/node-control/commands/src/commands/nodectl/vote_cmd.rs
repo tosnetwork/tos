@@ -500,19 +500,17 @@ impl VoteOfferCreateCmd {
             ),
         )
         .await;
-        let mut observed: Result<Option<u32>, String> = Ok(None);
-        if accepted.is_ok() {
-            for _ in 0..REGISTRATION_POLLS {
-                observed = proposal_expiry(&chain, &config_address, &prepared.proposal_hash)
-                    .await
-                    .map_err(|e| format!("reading the proposal back failed: {e:#}"));
-                match &observed {
-                    Ok(current) if registration_confirmed(prior, *current) => break,
-                    Ok(_) => tokio::time::sleep(REGISTRATION_POLL_INTERVAL).await,
-                    Err(_) => break,
-                }
-            }
-        }
+        let observed = if accepted.is_ok() {
+            poll_registration(
+                prior,
+                || proposal_expiry(&chain, &config_address, &prepared.proposal_hash),
+                REGISTRATION_POLLS,
+                REGISTRATION_POLL_INTERVAL,
+            )
+            .await
+        } else {
+            Ok(None)
+        };
         let (outcome, registered, error) = outcome_after_broadcast(prior, accepted, observed);
         if json {
             println!(
@@ -708,7 +706,7 @@ async fn pinned_wallet_reserve(
 pub(crate) fn wallet_storage_from_rpc(
     wallet: &chain_block::MsgAddressInt,
     account: &contracts::chain_provider::AddressInfo,
-) -> anyhow::Result<contracts::wallet::send_fees::WalletStorage> {
+) -> anyhow::Result<contracts::wallet::send_fees::AccountStorage> {
     let Some(stat) = &account.storage_stat else {
         anyhow::bail!(
             "cannot bound the fees of wallet {wallet}: the node did not return its storage \
@@ -718,18 +716,7 @@ pub(crate) fn wallet_storage_from_rpc(
              printed body from an external masterchain wallet with value + margin for its fees"
         );
     };
-    let due_payment = match &stat.due_payment {
-        Some(text) => text.parse::<u128>().map_err(|e| {
-            anyhow::anyhow!("storage_stat.due_payment '{text}' is not an amount: {e}")
-        })?,
-        None => 0,
-    };
-    Ok(contracts::wallet::send_fees::WalletStorage {
-        cells: stat.used_cells,
-        bits: stat.used_bits,
-        last_paid: stat.last_paid,
-        due_payment,
-    })
+    contracts::wallet::send_fees::AccountStorage::from_rpc(stat)
 }
 
 /// The wallet must hold the value and its own fees.
@@ -757,18 +744,49 @@ async fn proposal_expiry(
     proposal_hash: &[u8; 32],
 ) -> anyhow::Result<Option<u32>> {
     use contracts::ChainProvider;
-    let stack = chain
-        .run_get_method(
-            config_address.to_string(),
-            "get_proposal",
-            vec![contracts::stack_utils::bytes_to_stack_entry(proposal_hash)],
-        )
-        .await?;
-    if stack.stack.is_empty() || contracts::validator_controller::stack_entry_is_null(&stack, 0)? {
-        return Ok(None);
+    proposal_expiry_from(chain.run_get_method(
+        config_address.to_string(),
+        "get_proposal",
+        vec![contracts::stack_utils::bytes_to_stack_entry(proposal_hash)],
+    ))
+    .await
+}
+
+/// Decodes a `get_proposal` answer: `None` for the getter's null, the expiry for its
+/// proposal tuple, and an error for anything else.
+pub(crate) async fn proposal_expiry_from<F>(answer: F) -> anyhow::Result<Option<u32>>
+where
+    F: std::future::Future<Output = anyhow::Result<common::tvm_stack_parser::TvmStackParser>>,
+{
+    contracts::config_contract::decode_proposal_expiry(&answer.await?)
+}
+
+/// Reads the proposal back up to `polls` times, `interval` apart, until it is seen
+/// registered by this request. A read error ends the polling and is reported, never
+/// taken as "not registered yet".
+pub(crate) async fn poll_registration<R, F>(
+    prior: Option<u32>,
+    mut read: R,
+    polls: usize,
+    interval: std::time::Duration,
+) -> Result<Option<u32>, String>
+where
+    R: FnMut() -> F,
+    F: std::future::Future<Output = anyhow::Result<Option<u32>>>,
+{
+    let mut observed: Result<Option<u32>, String> = Ok(None);
+    for poll in 0..polls {
+        if poll > 0 {
+            tokio::time::sleep(interval).await;
+        }
+        observed = read().await.map_err(|e| format!("reading the proposal back failed: {e:#}"));
+        match &observed {
+            Ok(current) if registration_confirmed(prior, *current) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
     }
-    let expires = stack.tuple(0)?.u64(0)?;
-    Ok(Some(u32::try_from(expires)?))
+    observed
 }
 
 /// Registered by this request: present now, and either new or extended beyond the
@@ -1850,7 +1868,7 @@ mod offer_create_tests {
             serde_json::from_value(account.clone()).unwrap();
         assert_eq!(
             wallet_storage_from_rpc(&wallet, &info).unwrap(),
-            contracts::wallet::send_fees::WalletStorage {
+            contracts::wallet::send_fees::AccountStorage {
                 cells: 7,
                 bits: 4321,
                 last_paid: 1_700_000_123,
@@ -2032,5 +2050,187 @@ mod offer_create_tests {
         assert!(parse(&["--remove", "--value-boc", "AA=="]).is_err());
         assert!(parse(&["--bind-current", "--if-hash-equal", "00"]).is_err());
         assert!(parse(&[]).unwrap().new_value().is_err());
+    }
+}
+
+#[cfg(test)]
+mod proposal_read_back_tests {
+    use super::*;
+
+    /// `runGetMethodStd` for `get_proposal` of an absent hash, as a running node
+    /// answered it (see the README beside the file for the request and block).
+    const ABSENT_LIVE: &str =
+        include_str!("../../../../contracts/tests/fixtures/get_proposal/absent-live.json");
+    /// The same call for a proposal registered on that network by `vote offer create`.
+    const PRESENT_LIVE: &str =
+        include_str!("../../../../contracts/tests/fixtures/get_proposal/present-live.json");
+
+    /// The stack of a JSON-RPC answer, through the same conversion the chain provider
+    /// applies to every get-method result.
+    fn served(response: &str) -> common::tvm_stack_parser::TvmStackParser {
+        let value: serde_json::Value = serde_json::from_str(response).expect("JSON");
+        let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
+            serde_json::from_value(value["result"].clone()).expect("a runResult");
+        assert_eq!(result.exit_code, 0);
+        contracts::chain_provider::stack_from_rpc(result.stack)
+    }
+
+    /// A present proposal with two voters, written by hand in the shape the node's
+    /// serializer produces (tuple tested before list, so the cons chain is nested
+    /// pairs ending in an empty list). This is not independent evidence of that
+    /// shape; `PRESENT_LIVE` is.
+    fn present_with_voters(expires: u32) -> String {
+        let num = |n: &str| {
+            format!(
+                r#"{{"@type":"tvm.stackEntryNumber","number":{{"@type":"tvm.numberDecimal","number":"{n}"}}}}"#
+            )
+        };
+        let null = r#"{"@type":"tvm.stackEntryList","list":{"@type":"tvm.list","elements":[]}}"#;
+        let tuple = |items: Vec<String>| {
+            format!(
+                r#"{{"@type":"tvm.stackEntryTuple","tuple":{{"@type":"tvm.tuple","elements":[{}]}}}}"#,
+                items.join(",")
+            )
+        };
+        let voters = tuple(vec![num("1"), tuple(vec![num("3"), null.to_string()])]);
+        let proposal = tuple(vec![
+            num(&expires.to_string()),
+            num("0"),
+            tuple(vec![num("42"), null.to_string(), num("-1")]),
+            num("77"),
+            voters,
+            num("100"),
+            num("3"),
+            num("0"),
+            num("0"),
+        ]);
+        format!(
+            r#"{{"ok":true,"jsonrpc":"2.0","id":1,"result":{{"@type":"smc.runResult","gas_used":0,"stack":[{proposal}],"exit_code":0,"last_transaction_id":null,"block_id":null}}}}"#
+        )
+    }
+
+    /// The expiry the registration reported, which the live answer must carry.
+    fn live_present_expiry() -> u32 {
+        1_792_321_804
+    }
+
+    /// The pre-send read: an existing proposal must read as its expiry, not fail, or
+    /// extending it can never be broadcast.
+    #[tokio::test]
+    async fn the_prior_read_decodes_both_live_answers() {
+        let absent = proposal_expiry_from(async { Ok(served(ABSENT_LIVE)) }).await.unwrap();
+        assert_eq!(absent, None);
+        let present = proposal_expiry_from(async { Ok(served(PRESENT_LIVE)) }).await.unwrap();
+        assert_eq!(present, Some(live_present_expiry()));
+        let voted = present_with_voters(1_793_250_000);
+        let voted = proposal_expiry_from(async { Ok(served(&voted)) }).await.unwrap();
+        assert_eq!(voted, Some(1_793_250_000));
+        let failed = proposal_expiry_from(async { Err(anyhow::anyhow!("timeout")) }).await;
+        assert!(failed.is_err());
+    }
+
+    /// Serves scripted answers to successive reads, through the decoder.
+    fn script(
+        answers: Vec<anyhow::Result<String>>,
+    ) -> (
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        impl FnMut()
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Option<u32>>>>>,
+    ) {
+        let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = reads.clone();
+        let answers = std::sync::Arc::new(std::sync::Mutex::new(
+            answers.into_iter().collect::<std::collections::VecDeque<_>>(),
+        ));
+        let read = move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let next = answers.lock().expect("script").pop_front();
+            Box::pin(async move {
+                let response = next.unwrap_or_else(|| Err(anyhow::anyhow!("script exhausted")))?;
+                proposal_expiry_from(async { Ok(served(&response)) }).await
+            }) as std::pin::Pin<Box<dyn std::future::Future<Output = _>>>
+        };
+        (reads, read)
+    }
+
+    const NO_WAIT: std::time::Duration = std::time::Duration::ZERO;
+
+    #[tokio::test]
+    async fn polling_sees_the_live_registration() {
+        let expires = live_present_expiry();
+        let (reads, read) = script(vec![
+            Ok(ABSENT_LIVE.to_string()),
+            Ok(ABSENT_LIVE.to_string()),
+            Ok(PRESENT_LIVE.to_string()),
+            Ok(ABSENT_LIVE.to_string()),
+        ]);
+        let observed = poll_registration(None, read, 15, NO_WAIT).await;
+        assert_eq!(observed, Ok(Some(expires)));
+        assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 3, "stops when seen");
+        let (outcome, registered, error) = outcome_after_broadcast(None, Ok(()), observed);
+        assert_eq!(
+            (outcome, registered, error),
+            (ProposalOutcome::Registered, Some(expires), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn polling_sees_an_extension_with_voters() {
+        let (_, read) = script(vec![Ok(present_with_voters(100)), Ok(present_with_voters(200))]);
+        let observed = poll_registration(Some(100), read, 15, NO_WAIT).await;
+        assert_eq!(observed, Ok(Some(200)));
+        assert_eq!(
+            outcome_after_broadcast(Some(100), Ok(()), observed).0,
+            ProposalOutcome::Registered
+        );
+    }
+
+    /// An unchanged or shortened expiry is not this request's registration: polling
+    /// runs out and reports an unconfirmed acceptance without inventing an error.
+    #[tokio::test]
+    async fn an_unchanged_or_lower_expiry_is_not_a_registration() {
+        for current in [100, 99] {
+            let (reads, read) = script((0..4).map(|_| Ok(present_with_voters(current))).collect());
+            let observed = poll_registration(Some(100), read, 4, NO_WAIT).await;
+            assert_eq!(observed, Ok(Some(current)));
+            assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 4);
+            let (outcome, registered, error) = outcome_after_broadcast(Some(100), Ok(()), observed);
+            assert_eq!(outcome, ProposalOutcome::WalletAcceptedUnconfirmed);
+            assert_eq!((registered, error), (None, None));
+        }
+    }
+
+    /// A read error stops polling at once and is reported as such.
+    #[tokio::test]
+    async fn a_read_error_ends_polling_and_is_reported() {
+        let (reads, read) = script(vec![
+            Ok(ABSENT_LIVE.to_string()),
+            Err(anyhow::anyhow!("connection refused")),
+            Ok(PRESENT_LIVE.to_string()),
+        ]);
+        let observed = poll_registration(None, read, 15, NO_WAIT).await;
+        assert!(observed.as_ref().is_err_and(|e| e.contains("connection refused")), "{observed:?}");
+        assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let (outcome, _, error) = outcome_after_broadcast(None, Ok(()), observed);
+        assert_eq!(outcome, ProposalOutcome::WalletAcceptedUnconfirmed);
+        assert!(error.is_some_and(|e| e.contains("reading the proposal back failed")));
+
+        // A malformed answer is a read error too, not "absent".
+        let malformed = ABSENT_LIVE.replace(r#""elements":[]"#, r#""elements":[{"@type":"tvm.stackEntryNumber","number":{"@type":"tvm.numberDecimal","number":"0"}}]"#);
+        assert_ne!(malformed, ABSENT_LIVE);
+        let (_, read) = script(vec![Ok(malformed)]);
+        assert!(poll_registration(None, read, 15, NO_WAIT).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn zero_polls_read_nothing() {
+        let (reads, read) = script(vec![Ok(PRESENT_LIVE.to_string())]);
+        let observed = poll_registration(None, read, 0, NO_WAIT).await;
+        assert_eq!(observed, Ok(None));
+        assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            outcome_after_broadcast(None, Ok(()), observed).0,
+            ProposalOutcome::WalletAcceptedUnconfirmed
+        );
     }
 }

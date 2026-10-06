@@ -329,10 +329,7 @@ impl ChainProvider for DefaultChainProvider {
         if result.exit_code != 0 {
             anyhow::bail!("get-method {} error: exit_code={}", method, result.exit_code);
         }
-        // The JSON-RPC server serializes the TVM stack top-first (vm::Stack::at(0)
-        // is the top). Decoders index entries in get-method return order, so
-        // reverse to bottom-first at the RPC boundary.
-        Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
+        Ok(stack_from_rpc(result.stack))
     }
 
     async fn run_get_method_at_unverified(
@@ -368,7 +365,7 @@ impl ChainProvider for DefaultChainProvider {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("checkpoint get-method omitted block identity"))?;
         validate_masterchain_checkpoint(block, checkpoint)?;
-        Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
+        Ok(stack_from_rpc(result.stack))
     }
 
     async fn get_balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64> {
@@ -538,7 +535,15 @@ fn config_param_at_checkpoint(
     Ok(param)
 }
 
-fn validate_masterchain_checkpoint(
+/// A `runGetMethodStd` stack in get-method return order. The JSON-RPC server
+/// serializes the TVM stack top-first (`vm::Stack::at(0)` is the top), and decoders
+/// index entries in return order, so the order is reversed at this boundary.
+pub fn stack_from_rpc(entries: Vec<RPCStackEntry>) -> TvmStackParser {
+    TvmStackParser::new(entries.into_iter().rev().map(Into::into).collect::<Vec<_>>())
+}
+
+/// Refuses a pinned read answered from any block but the checkpoint.
+pub fn validate_masterchain_checkpoint(
     block: &chain_rpc_client::v2::data_models::BlockIdExt,
     expected: &MasterchainCheckpoint,
 ) -> anyhow::Result<()> {
