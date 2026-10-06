@@ -21,18 +21,23 @@
 // store.h). Disabling the production set/erase/scan fails these tests. Pins the
 // scan bounds with valid, decodable records placed just outside them, and the
 // decode-skip of malformed values.
-#include "validator/consensus/validator-cleanup-store.h"
+#include <algorithm>
+#include <functional>
+#include <optional>
+#include <set>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #include "td/db/RocksDb.h"
 #include "td/utils/Random.h"
 #include "td/utils/Slice.h"
 #include "td/utils/filesystem.h"
-#include "td/utils/port/path.h"
 #include "td/utils/port/Stat.h"
+#include "td/utils/port/path.h"
 #include "td/utils/tests.h"
-
-#include <set>
-#include <vector>
+#include "validator/consensus/validator-cleanup-manager.h"
+#include "validator/consensus/validator-cleanup-store.h"
 
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -450,6 +455,622 @@ TEST(ValidatorCleanupStateDb, store_and_erase_survive_reopen) {
   {
     auto kv = td::RocksDb::open(path).move_as_ok();
     ASSERT_TRUE(load_validator_cleanup_records(kv).empty());
+  }
+  td::rmrf(path).ignore();
+}
+
+namespace {
+
+// A distinct session id for index `n` (up to 2^24), with the first byte chosen to place
+// it in the key range.
+tos::ValidatorSessionId indexed_session(uint8_t first, size_t n) {
+  auto id = make_session_id(0x5A);
+  id.as_slice()[0] = static_cast<char>(first);
+  id.as_slice()[1] = static_cast<char>(n & 0xff);
+  id.as_slice()[2] = static_cast<char>((n >> 8) & 0xff);
+  id.as_slice()[3] = static_cast<char>((n >> 16) & 0xff);
+  return id;
+}
+
+PendingValidatorConsensusDbCleanup indexed_record(uint8_t first, size_t n, tos::BlockSeqno retire_seqno) {
+  PendingValidatorConsensusDbCleanup rec;
+  rec.session_id = indexed_session(first, n);
+  rec.retirement_checkpoint = make_checkpoint(retire_seqno);
+  rec.dir_name = consensus_db_dir_name(kShard, 7, rec.session_id, td::Slice(""));
+  return rec;
+}
+
+ValidatorCleanupOracles oracles_at(tos::BlockSeqno gc_seqno, const std::set<tos::ValidatorSessionId>* live) {
+  ValidatorCleanupOracles o;
+  o.gc = make_checkpoint(gc_seqno);
+  o.ancestor_or_equal_of_gc = [gc_seqno](const tos::BlockIdExt& r) { return r.seqno() <= gc_seqno; };
+  o.gc_shard_catchain_seqno = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+  };
+  o.is_live = [live](const tos::ValidatorSessionId& s) { return live != nullptr && live->count(s) > 0; };
+  return o;
+}
+
+// A reader over a real RocksDb whose page scans fail `failures` times: each failing
+// scan visits `visit_before_failure` records first, then returns a storage error -- the
+// shape of a real iterator error part-way through a page.
+class FailingScanReader : public td::KeyValueReader {
+ public:
+  explicit FailingScanReader(td::RocksDb& inner) : inner_(inner) {
+  }
+  int failures = 0;
+  size_t visit_before_failure = 0;
+
+  td::Result<GetStatus> get(td::Slice key, std::string& value) override {
+    return inner_.get(key, value);
+  }
+  td::Result<std::vector<GetStatus>> get_multi(td::Span<td::Slice> keys, std::vector<std::string>* values) override {
+    return inner_.get_multi(keys, values);
+  }
+  td::Result<size_t> count(td::Slice prefix) override {
+    return inner_.count(prefix);
+  }
+  td::Status for_each_in_range(td::Slice begin, td::Slice end,
+                               std::function<td::Status(td::Slice, td::Slice)> f) override {
+    if (failures <= 0) {
+      return inner_.for_each_in_range(begin, end, std::move(f));
+    }
+    --failures;
+    size_t visited = 0;
+    auto status = inner_.for_each_in_range(begin, end, [&](td::Slice key, td::Slice value) -> td::Status {
+      if (visited == visit_before_failure) {
+        return td::Status::Error("injected iterator failure");
+      }
+      ++visited;
+      return f(key, value);
+    });
+    return status.is_error() ? std::move(status) : td::Status::Error("injected iterator failure");
+  }
+
+ private:
+  td::RocksDb& inner_;
+};
+
+// Drives the production driver over a real RocksDb exactly as the glue does, but
+// synchronously: tick() is one timer tick -- skipped, or one pass of page read,
+// examination, one point read per candidate, reservation, end of pass -- followed by
+// the delete completions. Hooks run while the page is in flight and between
+// examination and the point reads; failures can be injected per point read and delete,
+// and page scans can go through a failing reader.
+struct RocksScan {
+  td::RocksDb& kv;
+  ValidatorCleanupManager& m;
+  ValidatorCleanupOracles oracles;
+  td::KeyValueReader* reader = nullptr;  // page scans; the RocksDb itself by default
+  std::function<void()> while_page_in_flight;
+  std::function<void()> before_point_reads;
+  std::function<bool(const PendingValidatorConsensusDbCleanup&)> fail_point;
+  std::function<bool(const PendingValidatorConsensusDbCleanup&)> fail_delete;
+  bool hold_deletes = false;
+  std::vector<ReservedValidatorDelete> held;
+  size_t ticks = 0;
+  size_t page_reads = 0;
+  size_t page_errors = 0;
+  size_t erased_total = 0;
+  size_t max_memory = 0;  // in-flight + open retirements + live incarnations
+
+  size_t memory() const {
+    return m.in_flight_count() + m.open_retirement_count() + m.live_session_count();
+  }
+  // One tick: the pass's reservations, or nothing if the tick was skipped.
+  std::optional<std::vector<ReservedValidatorDelete>> tick() {
+    ++ticks;
+    auto request = m.begin_tick(oracles.gc);
+    if (!request) {
+      return std::nullopt;
+    }
+    ++page_reads;
+    auto page = load_validator_cleanup_page(reader ? *reader : static_cast<td::KeyValueReader&>(kv), request->after_key,
+                                            request->max_keys);
+    if (while_page_in_flight) {
+      while_page_in_flight();
+    }
+    std::vector<ReservedValidatorDelete> reserved;
+    if (page.is_error()) {
+      ++page_errors;
+      ASSERT_TRUE(m.abort_pass(request->token).has_value());
+      return reserved;
+    }
+    auto candidates = m.on_page(*request, page.ok(), oracles);
+    if (before_point_reads) {
+      before_point_reads();
+    }
+    for (const auto& c : candidates) {
+      td::Result<std::optional<PendingValidatorConsensusDbCleanup>> current =
+          (fail_point && fail_point(c)) ? td::Result<std::optional<PendingValidatorConsensusDbCleanup>>(
+                                              td::Status::Error("injected point read failure"))
+                                        : load_validator_cleanup_record(kv, c.session_id);
+      if (auto r = m.on_point_read_result(request->token, c, current, oracles.is_live)) {
+        reserved.push_back(*r);
+      }
+    }
+    ASSERT_TRUE(m.pass_verified());
+    m.end_pass();
+    max_memory = std::max(max_memory, memory());
+    for (const auto& r : reserved) {
+      if (hold_deletes) {
+        held.push_back(r);
+      } else {
+        complete(r, !(fail_delete && fail_delete(r.record)));
+      }
+    }
+    return reserved;
+  }
+  // Complete a delete attempt and, if it succeeded, its durable erase.
+  void complete(const ReservedValidatorDelete& r, bool gone) {
+    std::vector<std::tuple<tos::ValidatorSessionId, uint64_t, uint64_t>> acks;
+    m.on_delete_completed(r.record.session_id, r.generation, r.attempt_id, gone,
+                          [&](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) {
+                            erase_validator_cleanup_record(kv, s);
+                            acks.emplace_back(s, g, a);
+                          });
+    for (const auto& [s, g, a] : acks) {
+      m.on_erase_acknowledged(s, g, a);
+      ++erased_total;
+    }
+  }
+  void run(size_t ticks_to_run) {
+    for (size_t i = 0; i < ticks_to_run; i++) {
+      tick();
+    }
+  }
+  // Ticks until `done()` or `limit` ticks; returns the ticks used.
+  size_t run_until(const std::function<bool()>& done, size_t limit) {
+    size_t used = 0;
+    while (used < limit && !done()) {
+      tick();
+      ++used;
+    }
+    return used;
+  }
+};
+
+void retire_and_close(td::RocksDb& kv, ValidatorCleanupManager& m, const PendingValidatorConsensusDbCleanup& rec) {
+  store_validator_cleanup_record(kv, rec);
+  m.on_group_created(rec.session_id);
+  m.on_close_confirmed(rec.session_id, m.on_group_retired(rec));
+}
+
+}  // namespace
+
+// A large durable backlog is reclaimed by the ticks, and the driver's memory stays at
+// the in-flight cap whatever the backlog size: 500 and 5000 records peak the same.
+TEST(ValidatorCleanupStateDb, large_backlog_is_reclaimed_with_memory_independent_of_its_size) {
+  for (size_t n : {static_cast<size_t>(500), static_cast<size_t>(5000)}) {
+    auto path = temp_db_path();
+    {
+      auto kv = td::RocksDb::open(path).move_as_ok();
+      for (size_t i = 0; i < n; i++) {
+        store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(i), i, 100));
+      }
+      ValidatorCleanupManager m;
+      RocksScan scan{kv, m, oracles_at(500, nullptr)};
+      auto used = scan.run_until([&] { return scan.erased_total == n; }, 10000);
+      ASSERT_TRUE(load_validator_cleanup_records(kv).empty());
+      ASSERT_TRUE(scan.max_memory <= ValidatorCleanupManager::kMaxInFlight);
+      // Dispatch-bound: ceil(n / 16) ticks.
+      ASSERT_TRUE(used <=
+                  (n + ValidatorCleanupManager::kDispatchBudget - 1) / ValidatorCleanupManager::kDispatchBudget + 1);
+    }
+    td::rmrf(path).ignore();
+  }
+}
+
+// Memory follows open groups, not history: 5000 retirements awaiting their closes are
+// held, and once every close arrives nothing is; the ticks then reclaim them all.
+TEST(ValidatorCleanupStateDb, burst_of_retirements_then_closes_leaves_no_resident_state) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    ValidatorCleanupManager m;
+    std::vector<std::pair<tos::ValidatorSessionId, uint64_t>> retired;
+    for (size_t i = 0; i < 5000; i++) {
+      auto rec = indexed_record(static_cast<uint8_t>(i), i, 100);
+      store_validator_cleanup_record(kv, rec);
+      m.on_group_created(rec.session_id);
+      retired.emplace_back(rec.session_id, m.on_group_retired(rec));
+    }
+    ASSERT_EQ(m.open_retirement_count(), static_cast<size_t>(5000));
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    ASSERT_TRUE(scan.tick().value().empty());  // nothing is closed yet
+    for (const auto& [s, g] : retired) {
+      m.on_close_confirmed(s, g);
+    }
+    ASSERT_EQ(scan.memory(), static_cast<size_t>(0));
+    scan.run_until([&] { return scan.erased_total == 5000; }, 10000);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(5000));
+    ASSERT_EQ(scan.memory(), static_cast<size_t>(0));
+  }
+  td::rmrf(path).ignore();
+}
+
+// More than a thousand unrelated retirements and closes landing during every page
+// read do not hold the scan back: an old eligible record is reclaimed on the first
+// tick, and the cursor advances on every tick.
+TEST(ValidatorCleanupStateDb, unrelated_retirements_during_every_read_do_not_stall_the_scan) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto eligible = indexed_record(0x80, 0, 100);
+    store_validator_cleanup_record(kv, eligible);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    size_t churned = 0;
+    scan.while_page_in_flight = [&] {
+      for (size_t n = 0; n < 1025; n++, churned++) {
+        retire_and_close(kv, m, indexed_record(static_cast<uint8_t>(churned), 100000 + churned, 900));
+      }
+    };
+    for (size_t t = 1; t <= 10; t++) {
+      auto before = m.cursor();
+      ASSERT_TRUE(scan.tick().has_value());
+      ASSERT_TRUE(m.cursor() != before || m.cursor().empty());  // moved, or wrapped
+      if (t == 1) {
+        ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+      }
+    }
+    ASSERT_TRUE(!load_validator_cleanup_record(kv, eligible.session_id).move_as_ok().has_value());
+    ASSERT_TRUE(scan.max_memory <= ValidatorCleanupManager::kMaxInFlight);  // churn leaves nothing resident
+  }
+  td::rmrf(path).ignore();
+}
+
+// An eligible record behind hundreds of ineligible ones is reached and reclaimed while
+// closed, ineligible retirements keep landing during every read and before the point
+// reads, with the GC block unchanged.
+TEST(ValidatorCleanupStateDb, eligible_record_among_ineligible_ones_is_reclaimed_under_churn) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 600; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(i % 0xF0), i, 900));
+    }
+    auto eligible = indexed_record(0xF8, 0, 100);  // at the end of the key range
+    store_validator_cleanup_record(kv, eligible);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    size_t churned = 0;
+    auto churn = [&] {
+      for (size_t n = 0; n < 4; n++, churned++) {
+        retire_and_close(kv, m, indexed_record(static_cast<uint8_t>(churned % 0xF0), 200000 + churned, 900));
+      }
+    };
+    scan.while_page_in_flight = churn;
+    scan.before_point_reads = churn;
+    scan.run_until([&] { return scan.erased_total == 1; }, 10);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+    ASSERT_TRUE(!load_validator_cleanup_record(kv, eligible.session_id).move_as_ok().has_value());
+    ASSERT_EQ(load_validator_cleanup_records(kv).size(), 600 + churned);  // every ineligible record kept
+  }
+  td::rmrf(path).ignore();
+}
+
+// A page copy older than the durable record is never acted on: the session is
+// recreated, retired again (a newer record) and closed between the page read and the
+// point read, so the stale copy is skipped; the next cycle reserves the newer record.
+TEST(ValidatorCleanupStateDb, stale_page_copy_is_skipped_for_the_newer_durable_record) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto old_copy = indexed_record(0x40, 0, 100);
+    store_validator_cleanup_record(kv, old_copy);
+    auto newer = indexed_record(0x40, 0, 300);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    bool replaced = false;
+    scan.before_point_reads = [&] {
+      if (!replaced) {
+        replaced = true;
+        retire_and_close(kv, m, newer);
+      }
+    };
+    ASSERT_TRUE(scan.tick().value().empty());  // the stale copy was not reserved
+    auto reserved = scan.tick().value();
+    ASSERT_EQ(reserved.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(reserved[0].record == newer);
+  }
+  td::rmrf(path).ignore();
+}
+
+// A record erased between the page read and the point read is never re-admitted.
+TEST(ValidatorCleanupStateDb, record_erased_before_its_point_read_is_not_readmitted) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto rec = indexed_record(0x40, 0, 100);
+    store_validator_cleanup_record(kv, rec);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    scan.before_point_reads = [&] { erase_validator_cleanup_record(kv, rec.session_id); };
+    ASSERT_TRUE(scan.tick().value().empty());
+    ASSERT_TRUE(!m.is_delete_in_flight(rec.session_id));
+    ASSERT_EQ(m.in_flight_count(), static_cast<size_t>(0));
+  }
+  td::rmrf(path).ignore();
+}
+
+// With no churn, a full cycle over N records takes ceil(N / page size) ticks, and every
+// eligible record is reserved by the end of it.
+TEST(ValidatorCleanupStateDb, full_cycle_takes_ceil_n_over_page_ticks) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    const size_t kRecords = 1000;
+    for (size_t i = 0; i < kRecords; i++) {
+      // Every 100th record is eligible: at most 10, within one pass's dispatch budget.
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(i), i, i % 100 == 0 ? 100 : 900));
+    }
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    size_t ticks_to_wrap = 0;
+    for (;;) {
+      ASSERT_TRUE(scan.tick().has_value());
+      ++ticks_to_wrap;
+      if (m.cursor().empty()) {
+        break;
+      }
+    }
+    ASSERT_EQ(ticks_to_wrap, (kRecords + ValidatorCleanupManager::kPageSize - 1) / ValidatorCleanupManager::kPageSize);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(10));
+  }
+  td::rmrf(path).ignore();
+}
+
+// ---- the fixed-period tick ------------------------------------------------------------
+
+// An eligible record behind 999 ineligible ones is reclaimed within ceil(1000/256)+1
+// ticks, and the scan keeps cycling after it (no pause).
+TEST(ValidatorCleanupStateDb, record_behind_999_is_reclaimed_within_a_cycle_of_ticks) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 999; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(i % 0xF0), i, 900));
+    }
+    auto eligible = indexed_record(0xF8, 0, 100);
+    store_validator_cleanup_record(kv, eligible);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    auto used = scan.run_until([&] { return scan.erased_total == 1; }, 50);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+    ASSERT_TRUE(used <= (1000 + ValidatorCleanupManager::kPageSize - 1) / ValidatorCleanupManager::kPageSize + 1);
+    auto reads = scan.page_reads;
+    scan.run(3);
+    ASSERT_EQ(scan.page_reads, reads + 3);  // still one page read per tick
+  }
+  td::rmrf(path).ignore();
+}
+
+// The GC block advances mid-cycle and makes a record already behind the cursor
+// eligible: the next cycle reaches and reclaims it.
+TEST(ValidatorCleanupStateDb, gc_advance_mid_cycle_is_picked_up_by_the_next_cycle) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto behind = indexed_record(0x01, 0, 600);  // first in key order; eligible once GC >= 600
+    store_validator_cleanup_record(kv, behind);
+    for (size_t i = 0; i < 600; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(0x10 + i % 0xE0), i, 900));
+    }
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    scan.tick();  // first page: the record is examined, not yet eligible
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(0));
+    ASSERT_TRUE(!m.cursor().empty());
+    scan.oracles = oracles_at(700, nullptr);  // the GC block advances mid-cycle
+    auto used = scan.run_until([&] { return scan.erased_total == 1; }, 20);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+    ASSERT_TRUE(used <= (601 + ValidatorCleanupManager::kPageSize - 1) / ValidatorCleanupManager::kPageSize + 1);
+  }
+  td::rmrf(path).ignore();
+}
+
+// Real iterator failures, including ones after several records were visited, end the
+// pass with nothing reserved and the cursor unchanged; the node is not aborted, and the
+// next tick after the failures stop reads the page again and reclaims the record.
+TEST(ValidatorCleanupStateDb, page_iterator_failures_are_retried_by_the_next_tick) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 8; i++) {
+      store_validator_cleanup_record(kv, indexed_record(0x40, i, 100));  // all eligible
+    }
+    ValidatorCleanupManager m;
+    FailingScanReader failing(kv);
+    failing.failures = 3;
+    failing.visit_before_failure = 5;  // fail part-way through the page
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    scan.reader = &failing;
+    for (int t = 0; t < 3; t++) {
+      auto reserved = scan.tick();
+      ASSERT_TRUE(reserved.has_value() && reserved->empty());
+      ASSERT_EQ(m.in_flight_count(), static_cast<size_t>(0));  // no partial reservations
+      ASSERT_TRUE(m.cursor().empty());                         // the cursor did not move
+      ASSERT_TRUE(!m.pass_running());
+    }
+    ASSERT_EQ(scan.page_errors, static_cast<size_t>(3));
+    scan.tick();  // the failures are over
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(8));
+  }
+  td::rmrf(path).ignore();
+}
+
+// A persistent point-read failure on the first page does not hold the scan there: the
+// cursor moves on, and an eligible record beyond the first page is reclaimed while the
+// failure persists.
+TEST(ValidatorCleanupStateDb, persistent_point_failure_does_not_block_later_records) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto bad = indexed_record(0x01, 0, 100);
+    store_validator_cleanup_record(kv, bad);
+    for (size_t i = 0; i < 600; i++) {
+      store_validator_cleanup_record(kv, indexed_record(static_cast<uint8_t>(0x10 + i % 0xE0), i, 900));
+    }
+    auto healthy = indexed_record(0xF8, 0, 100);  // beyond the first page
+    store_validator_cleanup_record(kv, healthy);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    scan.fail_point = [&](const PendingValidatorConsensusDbCleanup& c) { return c == bad; };
+    scan.run_until([&] { return scan.erased_total == 1; }, 20);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(1));
+    ASSERT_TRUE(!load_validator_cleanup_record(kv, healthy.session_id).move_as_ok().has_value());
+    ASSERT_TRUE(load_validator_cleanup_record(kv, bad.session_id).move_as_ok().has_value());
+    scan.fail_point = nullptr;  // once the failure clears, the next cycle reclaims it
+    scan.run_until([&] { return scan.erased_total == 2; }, 20);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(2));
+  }
+  td::rmrf(path).ignore();
+}
+
+// A page result for a pass that is no longer running -- success or failure -- changes
+// nothing, and does not end the pass that is running.
+TEST(ValidatorCleanupStateDb, stale_page_results_are_ignored) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    store_validator_cleanup_record(kv, indexed_record(0x40, 0, 100));
+    ValidatorCleanupManager m;
+    auto o = oracles_at(500, nullptr);
+    auto first = m.begin_tick(o.gc).value();
+    ASSERT_TRUE(m.abort_pass(first.token).has_value());  // that page read failed
+    auto second = m.begin_tick(o.gc).value();
+    auto page = load_validator_cleanup_page(kv, first.after_key, first.max_keys).move_as_ok();
+    ASSERT_TRUE(!m.is_current_pass(first.token));
+    ASSERT_TRUE(m.on_page(first, page, o).empty());       // a stale success
+    ASSERT_TRUE(!m.abort_pass(first.token).has_value());  // a stale failure
+    ASSERT_TRUE(m.pass_running());
+    ASSERT_TRUE(m.is_current_pass(second.token));
+    ASSERT_EQ(m.on_page(second, page, o).size(), static_cast<size_t>(1));  // the running pass proceeds
+  }
+  td::rmrf(path).ignore();
+}
+
+// No overlap: a tick while the page or point reads of a pass are outstanding is skipped
+// without reading anything.
+TEST(ValidatorCleanupStateDb, tick_while_reads_are_outstanding_is_skipped) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    store_validator_cleanup_record(kv, indexed_record(0x40, 0, 100));
+    ValidatorCleanupManager m;
+    auto o = oracles_at(500, nullptr);
+    auto request = m.begin_tick(o.gc).value();
+    ASSERT_TRUE(!m.begin_tick(o.gc).has_value());  // page read outstanding
+    auto candidates =
+        m.on_page(request, load_validator_cleanup_page(kv, request.after_key, request.max_keys).move_as_ok(), o);
+    ASSERT_EQ(candidates.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(!m.begin_tick(o.gc).has_value());  // point read outstanding
+    ASSERT_TRUE(m.on_point_read_result(request.token, candidates[0],
+                                       load_validator_cleanup_record(kv, candidates[0].session_id), o.is_live)
+                    .has_value());
+    m.end_pass();
+    ASSERT_TRUE(m.begin_tick(o.gc).has_value());  // free again
+  }
+  td::rmrf(path).ignore();
+}
+
+// Point reads of one pass may return in any order, failed or not. The pass finishes
+// exactly once, after the last of them; the failed candidate is not reserved; a
+// callback carrying another pass's token, or a duplicate, changes nothing.
+TEST(ValidatorCleanupStateDb, point_reads_in_any_order_finish_the_pass_once) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 3; i++) {
+      store_validator_cleanup_record(kv, indexed_record(0x40, i, 100));
+    }
+    ValidatorCleanupManager m;
+    auto o = oracles_at(500, nullptr);
+    auto request = m.begin_tick(o.gc).value();
+    auto candidates =
+        m.on_page(request, load_validator_cleanup_page(kv, request.after_key, request.max_keys).move_as_ok(), o);
+    ASSERT_EQ(candidates.size(), static_cast<size_t>(3));
+    auto ok = [&](size_t k) { return load_validator_cleanup_record(kv, candidates[k].session_id); };
+    td::Result<std::optional<PendingValidatorConsensusDbCleanup>> err = td::Status::Error("injected");
+    ASSERT_TRUE(!m.on_point_read_result(request.token + 1, candidates[1], ok(1), o.is_live).has_value());
+    ASSERT_TRUE(m.on_point_read_result(request.token, candidates[2], ok(2), o.is_live).has_value());
+    ASSERT_TRUE(!m.pass_verified());
+    ASSERT_TRUE(!m.on_point_read_result(request.token, candidates[0], err, o.is_live).has_value());
+    ASSERT_TRUE(!m.pass_verified());
+    ASSERT_TRUE(m.on_point_read_result(request.token, candidates[1], ok(1), o.is_live).has_value());
+    ASSERT_TRUE(m.pass_verified());
+    ASSERT_TRUE(!m.on_point_read_result(request.token, candidates[0], ok(0), o.is_live).has_value());
+    ASSERT_EQ(m.in_flight_count(), static_cast<size_t>(2));
+    ASSERT_TRUE(!m.is_delete_in_flight(candidates[0].session_id));
+    auto summary = m.end_pass();
+    ASSERT_TRUE(summary.point_failed && summary.wrapped);
+    ASSERT_TRUE(!m.pass_running());
+  }
+  td::rmrf(path).ignore();
+}
+
+// At the in-flight cap a tick is skipped without reading; when the 64 held attempts
+// then fail, later ticks resume scanning and reclaim a healthy record beyond them; the
+// failed ones are reclaimed by a later cycle.
+TEST(ValidatorCleanupStateDb, in_flight_cap_skips_ticks_and_failed_deletes_free_it) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (size_t i = 0; i < 64; i++) {
+      store_validator_cleanup_record(kv, indexed_record(0x10, i, 100));  // the first 64 in key order
+    }
+    auto healthy = indexed_record(0x90, 0, 100);
+    store_validator_cleanup_record(kv, healthy);
+    ValidatorCleanupManager m;
+    RocksScan scan{kv, m, oracles_at(500, nullptr)};
+    scan.hold_deletes = true;
+    scan.run(4);  // 4 x 16 reservations
+    ASSERT_EQ(scan.held.size(), ValidatorCleanupManager::kMaxInFlight);
+    auto reads = scan.page_reads;
+    ASSERT_TRUE(!scan.tick().has_value());  // skipped at the cap
+    ASSERT_EQ(scan.page_reads, reads);      // without a read
+    scan.hold_deletes = false;
+    auto held = std::move(scan.held);
+    for (const auto& r : held) {
+      scan.complete(r, /*gone=*/false);  // every held attempt fails
+    }
+    scan.run_until([&] { return !load_validator_cleanup_record(kv, healthy.session_id).move_as_ok().has_value(); }, 5);
+    ASSERT_TRUE(!load_validator_cleanup_record(kv, healthy.session_id).move_as_ok().has_value());
+    scan.run_until([&] { return scan.erased_total == 65; }, 20);
+    ASSERT_EQ(scan.erased_total, static_cast<size_t>(65));
+  }
+  td::rmrf(path).ignore();
+}
+
+// The page read itself: bounded by keys examined (malformed values included), resumes
+// strictly after the last key, and reports the end of the range.
+TEST(ValidatorCleanupStateDb, page_read_is_bounded_and_resumable) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    for (int i = 0; i < 5; i++) {
+      store_validator_cleanup_record(kv, make_record(static_cast<unsigned char>(i), 100));
+    }
+    put_raw(kv, td::Slice{validator_cleanup_key(make_session_id(3)) + "x"}, td::Slice{"not-a-record"});
+    std::set<std::string> seen;
+    std::string cursor;
+    size_t pages = 0;
+    while (true) {
+      auto page = load_validator_cleanup_page(kv, cursor, 2).move_as_ok();
+      ++pages;
+      ASSERT_TRUE(page.records.size() <= 2);
+      for (const auto& r : page.records) {
+        ASSERT_TRUE(seen.insert(r.session_id.to_hex()).second);  // never returned twice
+      }
+      if (page.reached_end) {
+        break;
+      }
+      cursor = page.last_key;
+    }
+    ASSERT_EQ(seen.size(), static_cast<size_t>(5));
+    ASSERT_TRUE(pages >= 3);  // six keys, two per page
+    ASSERT_TRUE(load_validator_cleanup_page(kv, cursor, 0).move_as_ok().records.empty());
   }
   td::rmrf(path).ignore();
 }

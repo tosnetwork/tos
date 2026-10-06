@@ -228,6 +228,7 @@ LONG_OPTIONS_WITHOUT_ARGUMENT="
   help
   daemonize
   enable-validator-consensus-cleanup
+  disable-validator-consensus-cleanup
   test-consensus-cleanup-crash-before-erase
   not-all-shards
   enable-precompiled-smc

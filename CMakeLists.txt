@@ -1636,6 +1636,9 @@ add_test(NAME full-node-master-startup
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/full-node-master-startup-test.py
           $<TARGET_FILE:validator-engine>)
 set_tests_properties(full-node-master-startup PROPERTIES LABELS "security-findings")
+add_test(NAME validator-consensus-cleanup-flags
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validator-consensus-cleanup-flags-test.py
+          $<TARGET_FILE:validator-engine>)
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")

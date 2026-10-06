@@ -120,6 +120,55 @@ the GC masterchain position, database size, archive size, and free space; a
 validator that is behind the GC watermark must catch up before old state can
 be deleted.
 
+### Retired consensus databases
+
+Every validator-set session a validator takes part in opens its own RocksDB
+directory under `<db>/consensus/`. A new session starts roughly every 250
+seconds per validated shard and on every key block, so these directories add
+up to gigabytes per day. When a session retires, the engine first writes a
+durable cleanup record (in the same synced write as the retirement itself) and
+only then stops the group and closes its database. The directory is deleted
+later, once all of the following hold against the durable GC masterchain block:
+
+- the block at which the session retired is an ancestor of the GC block;
+- the GC state shows the session's shard on a strictly newer catchain, so the
+  session is obsolete on-chain;
+- no current or next validator group uses or can recreate the session;
+- the retiring group has closed its database.
+
+Deletion therefore trails the GC watermark, i.e. `--state-ttl`. A crash at any
+point is recovered on the next start: the record is kept until the directory
+is confirmed gone, and a record whose directory is already gone is simply
+erased.
+
+```text
+--enable-validator-consensus-cleanup    delete retired consensus databases (default)
+--disable-validator-consensus-cleanup   keep them, e.g. for forensics
+```
+
+Cleanup is on by default; the engine logs `validator consensus cleanup:
+enabled` at start-up, and refuses to start if both flags are given. Running a
+validator with `--disable-validator-consensus-cleanup` grows its disk without
+bound; records accumulate meanwhile. The choice is made at start-up; there is no
+runtime switch. After a restart without the flag nothing is loaded at start-up:
+every 10 seconds a tick reads the next 256 stored records, deletes at most 16 of
+them (with at most 64 deletions in flight), and moves on; at the end of the
+store it starts again from the beginning, so the scan never stops. Each record is
+reclaimed only once it passes the conditions above, so a large backlog drains
+gradually and memory does not grow with it. Each record is re-read just before
+its deletion, so a copy that changed or disappeared since the scan is skipped. A
+failed read or delete is simply tried again by a later tick; with nothing to
+delete, the cost is one read of 256 keys every 10 seconds.
+
+Each deletion is logged as `VALCLEANUP reserve`, `VALCLEANUP delete_done ...
+confirmed_gone=1` and `VALCLEANUP erase_ack`. These lines are logged at INFO,
+which the default verbosity includes; at a lower verbosity (`-v 2` or less)
+they are not written, so their absence proves nothing about whether cleanup
+runs. A failed delete is logged as a `VALCLEANUP delete_done ...
+confirmed_gone=0` warning at any verbosity and is retried.
+`--test-consensus-cleanup-crash-before-erase` is a test-only fault injection
+that makes the engine exit on purpose; never set it on a real node.
+
 ### CellDB and memory policy
 
 Keep CellDB on RocksDB for production. CellDB V2 has two separate caches:

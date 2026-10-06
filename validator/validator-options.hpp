@@ -392,7 +392,8 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   size_t max_open_archive_files_ = ValidatorManagerOptions::default_max_open_archive_files();
   double archive_preload_period_ = 0.0;
   bool disable_rocksdb_stats_;
-  bool validator_consensus_cleanup_enabled_ = false;
+  // On by default; see ValidatorManagerOptions::get_validator_consensus_cleanup_enabled.
+  bool validator_consensus_cleanup_enabled_ = true;
   bool test_crash_cleanup_before_erase_ = false;
   bool nonfinal_ls_queries_enabled_ = false;
   td::optional<td::uint64> celldb_cache_size_;
