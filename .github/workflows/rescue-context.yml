@@ -103,7 +103,10 @@ jobs:
           python test/wallet-v5r2/fee_journal_controls.py --output artifacts/context/fee-journal
       - name: PQ-only complete receiver delivery
         run: |
-          python test/wallet-v5r2/test_module_delivery.py --native-signer build/crypto/pq/test-wallet-pq-signer-fixture --output artifacts/context/r2-module
+          python test/wallet-v5r2/module_tx_parity.py \
+            --native-signer build/crypto/pq/test-wallet-pq-signer-fixture \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-module
           python test/wallet-v5r2/test_pop.py --output artifacts/context/r2-pop
           python test/wallet-v5r2/test_preparation.py --output artifacts/context/r2-preparation \
             --rust-driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"

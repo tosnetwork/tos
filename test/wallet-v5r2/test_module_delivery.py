@@ -1,4 +1,8 @@
-"""Real PQ module -> complete wallet delivery, with a compiled fee-vault stub."""
+"""Real PQ module -> complete wallet -> recipient, with the production vault dependency.
+
+The initial funded internal message is supplied by the harness; this does not
+prove a payer's own transaction or default-credit external admission.
+"""
 
 import argparse
 import json
@@ -17,7 +21,7 @@ from cells import Cell, from_boc, make_dict, read_dict  # noqa: E402
 from test_auth_policy import policy as global_policy  # noqa: E402
 from test_fee_identity import vault_data  # noqa: E402
 from test_identity import chain  # noqa: E402
-from test_receiver_auth import ACCOUNT, request  # noqa: E402
+from test_receiver_auth import ACCOUNT, TARGET, request  # noqa: E402
 from test_rescue_e2e import Signers, digest  # noqa: E402
 from test_state import fee, state  # noqa: E402
 
@@ -26,6 +30,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--native-signer", type=Path)
+    p.add_argument(
+        "--delete-recipient-update", action="store_true", help="Test-only delivery control"
+    )
     args = p.parse_args()
     with ExitStack() as stack:
         if args.native_signer:
@@ -33,7 +40,7 @@ def main():
 
             signer = NativeSignerFixture(args.native_signer)
             signer.install(stack)
-        run(args.output)
+        run(args.output, args.delete_recipient_update)
         if args.native_signer:
             assert {(call["key"], call["purpose"]) for call in signer.calls} >= {
                 ("primary", "auth"),
@@ -44,7 +51,7 @@ def main():
             )
 
 
-def run(out):
+def run(out, delete_recipient_update=False):
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -54,6 +61,7 @@ def run(out):
             "wallet-v5r2-code.fc",
             "wallet-v5r2-auth.fc",
             "wallet-v5r2-fee-identity.fc",
+            "wallet-v5r2-fee-vault.fc",
             "wallet-v5r2-state.fc",
             "wallet-v5r2-identity.fc",
             "wallet-v5r2-common.fc",
@@ -63,8 +71,19 @@ def run(out):
             "wallet-v5-action-list.fc",
         ]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
-        (work / "vault.fc").write_text("() recv_internal(slice body) impure { }\n")
-        vault = native.compile_contract(str(work / "vault.fc"), out / "vault-fixture.boc")
+        vault = native.compile_contract(str(work / "wallet-v5r2-fee-vault.fc"), out / "vault.boc")
+        recipient_source = work / "recipient.fc"
+        recipient_source.write_text(
+            "() recv_internal(slice body) impure { "
+            "int count = get_data().begin_parse().preload_uint(32); "
+            "set_data(begin_cell().store_uint(count + 1, 32).end_cell()); }\n"
+        )
+        if delete_recipient_update:
+            original = recipient_source.read_text()
+            update = "set_data(begin_cell().store_uint(count + 1, 32).end_cell());"
+            assert original.count(update) == 1
+            recipient_source.write_text(original.replace(update, ""))
+        recipient_code = native.compile_contract(str(recipient_source), out / "recipient.boc")
         const = f'cell fixture_vault() asm "B{{{vault.boc().hex()}}} B>boc PUSHREF";\n'
         module_driver = work / "module.fc"
         module_driver.write_text(
@@ -151,6 +170,34 @@ def run(out):
                 outputs = native.outgoing(from_boc(received["transaction"]))
                 assert len(outputs) == (1 if kind == 0 else 0)
                 cases[name] = {"module": result["details"], "wallet": received["details"]}
+                if kind == 0:
+                    delivered = e.send(
+                        native.active_account(
+                            TARGET, recipient_code, Cell().uint(0, 32), balance=10**9
+                        ),
+                        outputs[0],
+                    )
+                    (out / f"{name}-recipient.json").write_text(
+                        json.dumps(delivered, indent=2) + "\n"
+                    )
+                    assert delivered["success"] and delivered["details"]["exit"] == 0, delivered
+                    assert not delivered["details"]["aborted"], delivered
+                    recipient_data, recipient_balance = native.account_data(
+                        from_boc(delivered["shard_account"])
+                    )
+                    assert recipient_data.hash == Cell().uint(1, 32).hash, (
+                        "recipient state update missing"
+                    )
+                    assert recipient_balance > 10**9
+                    cases[name]["recipient"] = delivered["details"]
+                    for hop, receipt in (
+                        ("module", result),
+                        ("wallet", received),
+                        ("recipient", delivered),
+                    ):
+                        (out / f"{name}-{hop}.json").write_text(
+                            json.dumps(receipt, indent=2) + "\n"
+                        )
                 if name == "primary":
                     # Actual changed signature must be rejected without any authorization relay.
                     broken = bytes([sig[0] ^ 1]) + sig[1:]
@@ -235,6 +282,51 @@ def run(out):
                 )
                 assert rejected["details"]["exit"] == 1813, rejected
                 cases["global_retirement"] = rejected["details"]
+                # Retirement must leave a real SLH payment available, including
+                # the receiving wallet's independent policy check and recipient.
+                rescue_request = request(root=root, role=2)
+                rescue_body = (
+                    Cell()
+                    .uint(0x53554233, 32)
+                    .ref(rescue_request)
+                    .ref(chain(sign.slh(digest(rescue_request))))
+                )
+                rescue_module = retired_emulator.send(
+                    module_initial, native.internal((0, 102), address, rescue_body, value=10**12)
+                )
+                assert rescue_module["details"]["exit"] == 0
+                relay = native.outgoing(from_boc(rescue_module["transaction"]))
+                assert len(relay) == 1
+                rescue_wallet = retired_emulator.send(
+                    native.active_account(
+                        ACCOUNT,
+                        wallet_code,
+                        state(
+                            witness, mode=2, seqno=0, epoch=1, primary=0, rescue=0, retired=0, key=0
+                        ),
+                        balance=10**15,
+                    ),
+                    relay[0],
+                )
+                assert rescue_wallet["details"]["exit"] == 0
+                payment = native.outgoing(from_boc(rescue_wallet["transaction"]))
+                assert len(payment) == 1
+                rescue_recipient = retired_emulator.send(
+                    native.active_account(
+                        TARGET, recipient_code, Cell().uint(0, 32), balance=10**9
+                    ),
+                    payment[0],
+                )
+                assert rescue_recipient["details"]["exit"] == 0
+                after, balance = native.account_data(from_boc(rescue_recipient["shard_account"]))
+                assert after.hash == Cell().uint(1, 32).hash and balance > 10**9
+                for receipt in (rescue_module, rescue_wallet, rescue_recipient):
+                    assert receipt["success"] and not receipt["details"]["aborted"]
+                cases["global_retirement_rescue"] = {
+                    "module": rescue_module["details"],
+                    "wallet": rescue_wallet["details"],
+                    "recipient": rescue_recipient["details"],
+                }
             finally:
                 retired_emulator.close()
             # Guard deletion must accept the same kind of corrupted signature.

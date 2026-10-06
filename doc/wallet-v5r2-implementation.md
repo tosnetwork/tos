@@ -1333,3 +1333,27 @@ receipt mismatch; the restored implementation passes. The reproducible control i
 `lms-buffer-20261006.json`. Sequential timing samples were noisy, with regressions
 on some paths, so no wall-clock speedup or revised pricing is claimed. This change
 does not resolve the default-credit gas shortfall.
+
+## Primary and rescue recipient delivery across both executors
+
+`module_tx_parity.py` now runs the native signer module suite with the actual
+compiled fee-vault dependency, replacing its earlier deposit-only vault stub.
+PRIMARY and RESCUE execute messages reach a recipient whose data counter advances
+and whose balance increases. A global-retirement configuration refuses PRIMARY
+while a real SLH submission still traverses module, wallet and recipient. The
+suite records and compares 19 transactions under two configurations in native
+and Rust executors, covering 10 cases including legacy framing, corrupted primary
+signature, classical extra fields, lock and signed migration. The primary signature
+guard deletion still changes a rejected signature into an unauthorized relay.
+
+A separate recipient mutation removes its state update: execution succeeds, but
+the delivery assertion fails. This prevents successful compute or wallet emission
+alone from being reported as delivery. Both CI architectures run these checks.
+Evidence and the corrected initial one-transaction retired-configuration driver
+failure are indexed in `primary-module-delivery-20261006.json`.
+
+The first funded internal message and active account prestates are harness inputs;
+this suite does not prove an upstream payer transaction, wallet deployment, or an
+external PRIMARY admission route. The paired rescue vault remains RESCUE-only for
+AUTH. This closes the module-to-recipient evidence gap without claiming production
+funding, custody, client integration or finality acceptance.

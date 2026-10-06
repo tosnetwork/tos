@@ -1,0 +1,98 @@
+{
+  "base_commit": "b6c309d8acb46591421c06f35cb560571a4ba7fc",
+  "scope": "Actual compiled vault dependency and native PQ signer, full module-wallet-recipient execution; harness supplies initial funded internal message and active prestates",
+  "cases": [
+    "primary",
+    "invalid_primary_signature",
+    "legacy_submit_53554231",
+    "legacy_submit_53554232",
+    "classical_field_refused",
+    "rescue",
+    "lock",
+    "signed_migration",
+    "global_retirement",
+    "global_retirement_rescue"
+  ],
+  "transactions": 19,
+  "configuration_groups": [
+    {
+      "configuration": "c99827baba0a0ad1ecf69573d5b995f19a5e3c54dedd50c7194ccb7715656368",
+      "transactions": 15,
+      "differences": []
+    },
+    {
+      "configuration": "c8ff0ac076f3d9c638b49a4f1db49f9792d1d79e271e80f8c6b8c22baa96a0ec",
+      "transactions": 4,
+      "differences": []
+    }
+  ],
+  "controls": {
+    "primary_signature": {
+      "primary_signature": "guard deletion changed corrupted signature rejection 1808 to successful relay"
+    },
+    "recipient": {
+      "exit": 1,
+      "failure": "recipient state update missing",
+      "scope": "Removing recipient update preserves successful execution but fails delivery assertion"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-module-delivery-controlled/MANIFEST.json",
+      "sha256": "70d0aaa94ecaa6ff37a1326457ad375726b8f1839a16f42d214e089336dead73",
+      "bytes": 12331
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-module-delivery-controlled/parity.json",
+      "sha256": "6695655647564dfca9649fbf3c559a814c20ed8c46599ff1605a31962955dfbe",
+      "bytes": 420
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-module-delivery-controlled/native/results.json",
+      "sha256": "8a98828dbb4ab06ad7e77c07b70b2666a08463d8d63a6e3ed686e3a417662646",
+      "bytes": 4680
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-module-delivery-controlled/native/native-wallet-signatures.json",
+      "sha256": "d10948a0ebab50ef11a1410fcce44831a3483808d1f8351a531600e9e4b9b47f",
+      "bytes": 86741
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-module-delivery-controlled/recipient-control.json",
+      "sha256": "6e869acbe43ce3b0de09c530592051b7a020f8220aaa6bd78665b1d934f719a1",
+      "bytes": 163
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-module-delivery-controlled/recipient-control.log",
+      "sha256": "ec191a8a8e433067a8ce473958a839e70d9df1d523af35b6a6bb2cf3acae5178",
+      "bytes": 633
+    }
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/module_tx_parity.py",
+      "sha256": "29428b6a917b877ec9375a384170ca004c32235c001ac9bd7118ffd10cb1f8fa",
+      "bytes": 4968
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_module_delivery.py",
+      "sha256": "4bb6d9ab24356ab0bd7ec5cb3420d8df967b493bdad4467c7867770b03d44b13",
+      "bytes": 17932
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "add684c8e41afdf4f58fc464ca4eff7ea477944b4188747ab54badcdb5ab83af",
+      "bytes": 13014
+    }
+  ],
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh && /Users/tomisetsu/tos-v5r2-rescue-artifacts/test-venv/bin/python test/wallet-v5r2/module_tx_parity.py --native-signer build/crypto/pq/test-wallet-pq-signer-fixture --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-primary-module-delivery-controlled",
+  "initial_attempt": "20261006-primary-module-delivery: native 9 cases passed; Rust driver rejected single retired-policy scenario (<4). Added meaningful retired SLH module-wallet-recipient path, keeping driver completeness check. Subsequent final and controlled runs passed.",
+  "retention": "Keep raw directories and MANIFEST entries through 2027-01-06 or later release review. Use fresh output directory for reproduction.",
+  "remaining": [
+    "Upstream payer transaction and production daily funding integration",
+    "Custody and client integration",
+    "Default external gas credit admission",
+    "Real chain finality",
+    "Latest-head CI and independent release review"
+  ]
+}
