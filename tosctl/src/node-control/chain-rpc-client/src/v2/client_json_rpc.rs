@@ -27,6 +27,36 @@ use std::{
 };
 use url::Url;
 
+/// A JSON-RPC response body as received: the HTTP status, the bounded text, and
+/// the id the request carried.
+pub struct RawRpcResponse {
+    pub status: u16,
+    pub text: String,
+    pub request_id: String,
+}
+
+/// Why a raw read produced no body.
+#[derive(Debug)]
+pub enum RawReadError {
+    /// The body exceeded the transport limit and was refused whole.
+    TooLarge { limit: usize },
+    /// Every endpoint failed before answering; the text is a bounded category.
+    Failed(String),
+}
+
+impl std::fmt::Display for RawReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RawReadError::TooLarge { limit } => {
+                write!(f, "the response exceeds the {limit}-byte transport limit")
+            }
+            RawReadError::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for RawReadError {}
+
 struct EndpointClient {
     url: String,
     display_origin: String,
@@ -211,6 +241,80 @@ impl ClientJsonRpc {
         } else {
             anyhow::bail!("chain-rpc request failed; rpc_error_category=internal")
         }
+    }
+
+    /// A side-effect-free read whose response is returned unparsed, for a caller
+    /// that parses it under its own depth and ownership rules. Endpoints fail over
+    /// on transport errors only. A body above the transport limit ends the read at
+    /// once as [`RawReadError::TooLarge`]: it is a property of the answer, not of
+    /// the endpoint, and is never retried into a smaller or partial one.
+    async fn json_rpc_read_text(
+        &self,
+        method: &'static str,
+        params: serde_json::Value,
+    ) -> Result<RawRpcResponse, RawReadError> {
+        let total = self.endpoints.len();
+        let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % total;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let mut last_error_category: Option<&'static str> = None;
+        for attempt in 0..total {
+            let idx = (start + attempt) % total;
+            let endpoint = &self.endpoints[idx];
+            match endpoint
+                .client
+                .json_rpc_text(method, params.clone(), serde_json::json!(request_id))
+                .await
+            {
+                Ok((status, text)) => {
+                    return Ok(RawRpcResponse { status, text, request_id });
+                }
+                Err(ToscenterError::ResponseTooLarge { limit }) => {
+                    return Err(RawReadError::TooLarge { limit });
+                }
+                Err(err) => {
+                    let error_category = bounded_rpc_error_category(&err);
+                    tracing::debug!(
+                        method,
+                        endpoint = %endpoint.display_origin,
+                        attempt = attempt + 1,
+                        total_attempts = total,
+                        error_category,
+                        "chain-rpc request failed"
+                    );
+                    last_error_category = Some(error_category);
+                }
+            }
+        }
+        Err(RawReadError::Failed(format!(
+            "all chain-rpc endpoints failed; endpoint_count={total}; rpc_error_category={}",
+            last_error_category.unwrap_or("internal")
+        )))
+    }
+
+    /// `runGetMethodStd` with its response unparsed; see [`Self::json_rpc_read_text`].
+    pub async fn run_get_method_raw(
+        &self,
+        args: &RunGetMethodParams,
+    ) -> Result<RawRpcResponse, RawReadError> {
+        self.json_rpc_read_text("runGetMethodStd", serde_json::json!(args)).await
+    }
+
+    /// `getAddressInformation` at masterchain block `seqno`, unparsed.
+    pub async fn get_address_information_raw(
+        &self,
+        address: &MsgAddressInt,
+        seqno: u32,
+    ) -> Result<RawRpcResponse, RawReadError> {
+        if seqno == 0 {
+            return Err(RawReadError::Failed(
+                "a pinned read needs a masterchain seqno above zero".to_string(),
+            ));
+        }
+        self.json_rpc_read_text(
+            "getAddressInformation",
+            serde_json::json!({"address": address.to_string(), "seqno": seqno}),
+        )
+        .await
     }
 
     /// Executes a state-changing JSON-RPC request against the configured

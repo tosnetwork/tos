@@ -334,6 +334,18 @@ mod tests {
         async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
             Ok(0)
         }
+
+        /// Test-only: decodes the recorded answer in process.
+        async fn read_proposals(
+            &self,
+            address: &MsgAddressInt,
+            read: contracts::ProposalRead,
+        ) -> anyhow::Result<contracts::ProposalAnswer> {
+            anyhow::ensure!(read == contracts::ProposalRead::List, "unexpected read {read:?}");
+            let stack = self.get_method(address.to_string(), "list_proposals", vec![]).await?;
+            contracts::config_contract::decode_proposal_list(&stack)
+                .map(contracts::ProposalAnswer::List)
+        }
     }
 
     fn runner(tracked: &str) -> VotingRunner {

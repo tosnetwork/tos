@@ -737,23 +737,27 @@ pub(crate) fn sender_can_pay(
     Ok(())
 }
 
-/// The expiry of a proposal the configuration contract holds, or `None`.
+/// The expiry of a proposal the configuration contract holds, or `None`, read
+/// through the bounded proposal-read path.
 async fn proposal_expiry(
     chain: &contracts::DefaultChainProvider,
     config_address: &chain_block::MsgAddressInt,
     proposal_hash: &[u8; 32],
 ) -> anyhow::Result<Option<u32>> {
     use contracts::ChainProvider;
-    proposal_expiry_from(chain.run_get_method(
-        config_address.to_string(),
-        "get_proposal",
-        vec![contracts::stack_utils::bytes_to_stack_entry(proposal_hash)],
-    ))
-    .await
+    match chain
+        .read_proposals(config_address, contracts::ProposalRead::Expiry(*proposal_hash))
+        .await?
+    {
+        contracts::ProposalAnswer::Expiry(expiry) => Ok(expiry),
+        _ => anyhow::bail!("the provider answered another proposal read"),
+    }
 }
 
 /// Decodes a `get_proposal` answer: `None` for the getter's null, the expiry for its
-/// proposal tuple, and an error for anything else.
+/// proposal tuple, and an error for anything else. Production reads go through the
+/// bounded proposal-read path, which applies the same decoder on its worker.
+#[cfg(test)]
 pub(crate) async fn proposal_expiry_from<F>(answer: F) -> anyhow::Result<Option<u32>>
 where
     F: std::future::Future<Output = anyhow::Result<common::tvm_stack_parser::TvmStackParser>>,

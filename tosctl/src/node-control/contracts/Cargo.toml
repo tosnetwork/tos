@@ -11,7 +11,9 @@ common = { path = "../common" }
 chain_block = { path = "../../block" }
 hex = "0.4.3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `unbounded_depth`: the proposal reads lift the parser's recursion limit behind
+# their own depth preflight, on a worker whose stack is sized for that depth.
+serde_json = { version = "1", features = ["unbounded_depth"] }
 sha2 = "0.10"
 tl_api = { version = "0.4.32", path = "../../tl/api" }
 tracing = "0.1"
@@ -24,10 +26,10 @@ base64 = "0.22"
 # Proven reads run the trusted verifier in a private request directory, with a
 # deadline, without blocking the caller's runtime.
 tempfile = "3"
-tokio = { version = "1.48.0", features = ["process", "time", "io-util"] }
+tokio = { version = "1.48.0", features = ["process", "time", "io-util", "sync"] }
 
 [dev-dependencies]
-tokio = "1.48.0"
+tokio = { version = "1.48.0", features = ["net", "macros", "rt-multi-thread", "io-util", "time", "sync"] }
 tos_sandbox = { path = '../../sandbox' }
 # Test-only: raising the network gas limit to measure a path the default
 # configuration cannot run to completion.

@@ -9,7 +9,8 @@ use reqwest::{header::HeaderMap, redirect::Policy, Client, Response};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
-const MAX_RESPONSE_BYTES: usize = 1 << 20;
+/// The largest response body any request reads; a larger one is refused whole.
+pub const MAX_RESPONSE_BYTES: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Network {
@@ -156,6 +157,40 @@ impl BaseApiClient {
         self.handle_api_response(response_body).await
     }
 
+    /// Posts a JSON-RPC request and returns the HTTP status and the bounded body
+    /// unparsed, for a caller that parses it under its own depth and ownership
+    /// rules. A body above [`MAX_RESPONSE_BYTES`] is
+    /// [`ToscenterError::ResponseTooLarge`]; a non-success status is returned with
+    /// its body, not interpreted here.
+    pub async fn post_rpc_text(
+        &self,
+        base_url: &str,
+        endpoint: &str,
+        body: &impl Serialize,
+    ) -> Result<(u16, String), ToscenterError> {
+        let mut headers = HeaderMap::new();
+        let mut query_params: Vec<(&str, &str)> = Vec::new();
+        if let Some(ref key) = self.api_key {
+            match key {
+                ApiKey::Header(key) => {
+                    headers.insert("x-api-key", key.parse()?);
+                }
+                ApiKey::Query(key) => {
+                    query_params.push(("api_key", key));
+                }
+            };
+        }
+        let url =
+            format!("{}/{}", base_url.trim_end_matches('/'), endpoint.trim_start_matches('/'));
+        let url_with_params = reqwest::Url::parse_with_params(&url, query_params)?;
+        // Never log headers, query values, or serialized bodies here.
+        debug!("Sending POST request to configured endpoint");
+        let response = self.client.post(url_with_params).headers(headers).json(body).send().await?;
+        let status = response.status().as_u16();
+        let text = bounded_response_text(response).await?;
+        Ok((status, text))
+    }
+
     pub async fn post_rpc(
         &self,
         base_url: &str,
@@ -256,18 +291,12 @@ fn bounded_protocol_text(message: &str) -> String {
 
 async fn bounded_response_text(mut response: Response) -> Result<String, ToscenterError> {
     if response.content_length().is_some_and(|length| length > MAX_RESPONSE_BYTES as u64) {
-        return Err(ToscenterError::HttpServerError {
-            code: 502,
-            message: "configured endpoint response exceeds the one-megabyte limit".to_string(),
-        });
+        return Err(ToscenterError::ResponseTooLarge { limit: MAX_RESPONSE_BYTES });
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-            return Err(ToscenterError::HttpServerError {
-                code: 502,
-                message: "configured endpoint response exceeds the one-megabyte limit".to_string(),
-            });
+            return Err(ToscenterError::ResponseTooLarge { limit: MAX_RESPONSE_BYTES });
         }
         bytes.extend_from_slice(&chunk);
     }

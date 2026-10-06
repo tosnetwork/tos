@@ -63,6 +63,7 @@
 //! bridges `ChainProvider` into `ContractProvider` so that adopters of the
 //! new trait automatically satisfy the old one.
 
+use crate::config_contract::{ProposalAnswer, ProposalRead};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -164,6 +165,18 @@ pub trait ChainProvider: Send + Sync {
 
     /// Query the balance (in nanotos) of an address.
     async fn get_balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64>;
+
+    /// Reads configuration-contract proposals as flat results, on a bounded worker
+    /// (see [`crate::config_contract::proposal_transport`]). Fails closed: a provider
+    /// serves proposal reads only by implementing this, never through
+    /// `run_get_method`.
+    async fn read_proposals(
+        &self,
+        _address: &MsgAddressInt,
+        _read: ProposalRead,
+    ) -> anyhow::Result<ProposalAnswer> {
+        anyhow::bail!("proposal reads are unsupported by this provider")
+    }
 
     /// The balance as of one masterchain checkpoint. Like the pinned get-method,
     /// the block identity comes from the endpoint: informational reads only.
@@ -379,6 +392,15 @@ impl ChainProvider for DefaultChainProvider {
 
     async fn send_boc(&self, boc: &[u8]) -> anyhow::Result<()> {
         self.client.send_boc(&boc.to_vec()).await
+    }
+
+    async fn read_proposals(
+        &self,
+        address: &MsgAddressInt,
+        read: ProposalRead,
+    ) -> anyhow::Result<ProposalAnswer> {
+        crate::config_contract::proposal_transport::read_proposals(&self.client, address, read)
+            .await
     }
 
     async fn get_balance_at_unverified(
@@ -638,6 +660,14 @@ impl ContractProvider for DefaultChainProvider {
     async fn balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64> {
         self.get_balance(address).await
     }
+
+    async fn read_proposals(
+        &self,
+        address: &MsgAddressInt,
+        read: ProposalRead,
+    ) -> anyhow::Result<ProposalAnswer> {
+        ChainProvider::read_proposals(self, address, read).await
+    }
 }
 
 // ─── Bridge: Arc<dyn ChainProvider> → Arc<dyn ContractProvider> ──────────
@@ -661,6 +691,14 @@ impl ContractProvider for ContractProviderAdapter {
 
     async fn balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64> {
         self.inner.get_balance(address).await
+    }
+
+    async fn read_proposals(
+        &self,
+        address: &MsgAddressInt,
+        read: ProposalRead,
+    ) -> anyhow::Result<ProposalAnswer> {
+        self.inner.read_proposals(address, read).await
     }
 }
 

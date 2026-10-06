@@ -28,6 +28,9 @@ use tl_api::tos::tvm::StackEntry;
 /// The number of fields `unpack_proposal` returns.
 pub const PROPOSAL_FIELDS: usize = 9;
 
+/// The most cells the contract lets a proposed value have.
+pub const MAX_VALUE_CELLS: u16 = 1024;
+
 /// A cons list longer than this is not a voter list: voter indices are 16-bit.
 const MAX_CONS_LENGTH: usize = 1 << 16;
 
@@ -237,23 +240,34 @@ fn proposal_from_fields(
         fields.get(index).with_context(|| format!("proposal field {index} is missing"))
     };
     let expires = canonical_u32(field(0)?, "proposal expiry")?;
-    let tuple = TvmStackParser::new(fields.to_vec());
-    let is_critical = tuple.bool(1).context("proposal critical flag")?;
+    let critical = canonical_flag(field(1)?, "proposal critical flag")?;
 
     // [param_id, param_val, param_hash]
-    let param_tuple = tuple.tuple(2).context("proposed parameter")?;
-    let id = i32::try_from(param_tuple.i64(0).context("proposed parameter id")?)
+    let StackEntry::Tvm_StackEntryTuple(param) = field(2)? else {
+        anyhow::bail!("proposed parameter is {}, not a tuple", entry_kind(field(2)?));
+    };
+    let [param_id, param_value, param_hash] = param.tuple.elements().as_slice() else {
+        anyhow::bail!(
+            "proposed parameter has {} elements, expected 3",
+            param.tuple.elements().len()
+        );
+    };
+    let param_id = i32::try_from(canonical_signed(param_id, "proposed parameter id")?)
         .context("proposed parameter id exceeds int32")?;
-    let cell = param_tuple.cell(1).ok();
-    let hash_bytes = param_tuple.number_bytes(2, 32).ok().map(|bytes| {
-        let mut value = [0u8; 32];
-        value.copy_from_slice(&bytes);
-        value
-    });
+    let value = match param_value {
+        StackEntry::Tvm_StackEntryList(list) if list.list.elements().is_empty() => None,
+        StackEntry::Tvm_StackEntryCell(cell) => Some(
+            chain_block::read_single_root_boc(&cell.cell.bytes)
+                .map_err(|error| anyhow::anyhow!("proposed value is not a cell: {error}"))?,
+        ),
+        other => anyhow::bail!("proposed value is {}, neither a cell nor null", entry_kind(other)),
+    };
+    let value_hash = match param_hash {
+        StackEntry::Tvm_StackEntryNumber(number) if number.number.number() == "-1" => None,
+        other => Some(canonical_u256(other, "proposed value hash")?),
+    };
 
-    let mut vset_id = [0u8; 32];
-    vset_id.copy_from_slice(&tuple.number_bytes(3, 32).context("proposal vset id")?);
-
+    let vset_id = canonical_u256(field(3)?, "proposal vset id")?;
     let voters = cons_list(field(4)?, "proposal voter list")?
         .into_iter()
         .map(|voter| {
@@ -261,19 +275,101 @@ fn proposal_from_fields(
             u16::try_from(index).with_context(|| format!("voter index {index} exceeds uint16"))
         })
         .collect::<anyhow::Result<Vec<u16>>>()?;
+    let weight_remaining = canonical_signed(field(5)?, "proposal remaining weight")?;
 
+    assemble(
+        hash,
+        ProposalParts {
+            expires,
+            critical,
+            param_id,
+            value,
+            value_hash,
+            vset_id,
+            voters,
+            weight_remaining,
+            rounds_remaining: canonical_u8(field(6)?, "proposal rounds remaining")?,
+            losses: canonical_u8(field(7)?, "proposal losses")?,
+            wins: canonical_u8(field(8)?, "proposal wins")?,
+        },
+    )
+}
+
+/// One proposal's fields, as either representation (the getter's answer or the
+/// contract's stored record) yields them.
+pub(super) struct ProposalParts {
+    pub expires: u32,
+    pub critical: bool,
+    pub param_id: i32,
+    pub value: Option<chain_block::Cell>,
+    pub value_hash: Option<[u8; 32]>,
+    pub vset_id: [u8; 32],
+    pub voters: Vec<u16>,
+    pub weight_remaining: i64,
+    pub rounds_remaining: u8,
+    pub losses: u8,
+    pub wins: u8,
+}
+
+/// The checks both representations share. The contract lists voters by walking its
+/// voter dictionary, so they are strictly ascending; anything else is refused.
+pub(super) fn assemble(hash: ProposalHash, parts: ProposalParts) -> anyhow::Result<ConfigProposal> {
+    anyhow::ensure!(
+        parts.voters.windows(2).all(|pair| pair[0] < pair[1]),
+        "proposal voters are not strictly ascending"
+    );
+    // The contract registers a value of at most 1024 cells (`compute_data_size(...,
+    // 1024)`), so no stored value is deeper than 1023. A deeper one is refused here,
+    // on the reading worker, rather than handed to a caller whose stack drops it.
+    if let Some(value) = &parts.value {
+        anyhow::ensure!(
+            value.repr_depth() < MAX_VALUE_CELLS,
+            "the proposed value is {} cells deep; the contract stores at most {MAX_VALUE_CELLS} cells",
+            value.repr_depth()
+        );
+    }
     Ok(ConfigProposal {
         hash,
-        expires,
-        is_critical,
-        param: ProposedParam { id, cell, hash: hash_bytes },
-        vset_id,
-        voters,
-        weight_remaining: tuple.i64(5).context("proposal remaining weight")?,
-        rounds_remaining: canonical_u8(field(6)?, "proposal rounds remaining")?,
-        losses: canonical_u8(field(7)?, "proposal losses")?,
-        wins: canonical_u8(field(8)?, "proposal wins")?,
+        expires: parts.expires,
+        is_critical: parts.critical,
+        param: ProposedParam { id: parts.param_id, cell: parts.value, hash: parts.value_hash },
+        vset_id: parts.vset_id,
+        voters: parts.voters,
+        weight_remaining: parts.weight_remaining,
+        rounds_remaining: parts.rounds_remaining,
+        losses: parts.losses,
+        wins: parts.wins,
     })
+}
+
+/// A FunC boolean as the node prints it: `-1` for true, `0` for false.
+fn canonical_flag(entry: &StackEntry, what: &str) -> anyhow::Result<bool> {
+    let StackEntry::Tvm_StackEntryNumber(number) = entry else {
+        anyhow::bail!("{what} is not a number: {}", entry_kind(entry));
+    };
+    match number.number.number().as_str() {
+        "-1" => Ok(true),
+        "0" => Ok(false),
+        other => anyhow::bail!("{what} {other:?} is neither -1 nor 0"),
+    }
+}
+
+/// A canonical signed decimal within int64: an optional `-` before a canonical
+/// unsigned decimal, with no `-0`.
+fn canonical_signed(entry: &StackEntry, what: &str) -> anyhow::Result<i64> {
+    let StackEntry::Tvm_StackEntryNumber(number) = entry else {
+        anyhow::bail!("{what} is not a number: {}", entry_kind(entry));
+    };
+    let text = number.number.number();
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(digits) => (true, digits),
+        None => (false, text.as_str()),
+    };
+    anyhow::ensure!(
+        is_canonical_unsigned(digits) && !(negative && digits == "0"),
+        "{what} {text:?} is not a canonical signed decimal"
+    );
+    text.parse::<i64>().with_context(|| format!("{what} {text:?} exceeds int64"))
 }
 
 #[cfg(test)]

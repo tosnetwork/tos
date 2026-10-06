@@ -6,11 +6,8 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use super::{ConfigContractWrapper, ConfigProposal, ProposalHash};
-use crate::{
-    ContractProvider, SmartContract,
-    stack_utils::{bytes_to_stack_entry, i64_to_stack_entry},
-};
+use super::{ConfigContractWrapper, ConfigProposal, ProposalAnswer, ProposalHash, ProposalRead};
+use crate::{ContractProvider, SmartContract, stack_utils::i64_to_stack_entry};
 use anyhow::Context;
 use chain_block::MsgAddressInt;
 use std::sync::Arc;
@@ -38,6 +35,14 @@ impl ConfigContractImpl {
     }
 }
 
+impl ConfigContractImpl {
+    async fn read(&self, read: ProposalRead) -> anyhow::Result<ProposalAnswer> {
+        let address: MsgAddressInt =
+            self.config_addr.parse().map_err(|e| anyhow::anyhow!("config address: {e}"))?;
+        self.provider.read_proposals(&address, read).await
+    }
+}
+
 #[async_trait::async_trait]
 impl SmartContract for ConfigContractImpl {
     async fn balance(&self) -> anyhow::Result<u64> {
@@ -57,19 +62,17 @@ impl ConfigContractWrapper for ConfigContractImpl {
     }
 
     async fn get_proposal(&self, phash: ProposalHash) -> anyhow::Result<Option<ConfigProposal>> {
-        let stack_entry = bytes_to_stack_entry(&phash);
-        let stack = self
-            .provider
-            .get_method(self.config_addr.clone(), "get_proposal", vec![stack_entry])
-            .await?;
-        super::decode_proposal(phash, &stack).context("parse proposal")
+        match self.read(ProposalRead::One(phash)).await.context("parse proposal")? {
+            ProposalAnswer::One(proposal) => Ok(proposal),
+            _ => anyhow::bail!("the provider answered another proposal read"),
+        }
     }
 
     async fn list_proposals(&self) -> anyhow::Result<Vec<ConfigProposal>> {
-        let stack =
-            self.provider.get_method(self.config_addr.clone(), "list_proposals", vec![]).await?;
-
-        super::decode_proposal_list(&stack).context("parse proposals list")
+        match self.read(ProposalRead::List).await.context("parse proposals list")? {
+            ProposalAnswer::List(proposals) => Ok(proposals),
+            _ => anyhow::bail!("the provider answered another proposal read"),
+        }
     }
 
     async fn proposal_storage_price(
@@ -100,6 +103,7 @@ impl ConfigContractWrapper for ConfigContractImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stack_utils::bytes_to_stack_entry;
     use chain_block::{BuilderData, Cell, IBitstring, write_boc};
     use common::tvm_stack_parser::TvmStackParser;
     use std::collections::HashMap;
@@ -135,8 +139,9 @@ mod tests {
         StackEntry::Tvm_StackEntryCell(StackEntryCell { cell: cell::Cell { bytes: boc } })
     }
 
+    /// A 256-bit value as the node prints it: a canonical decimal.
     fn bytes_to_hex_number(bytes: &[u8; 32]) -> String {
-        format!("0x{}", hex::encode_upper(bytes))
+        bytes_to_decimal(bytes)
     }
 
     // ===== Mock ContractProvider =====
@@ -189,17 +194,43 @@ mod tests {
         async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
             Ok(self.balance_value)
         }
+
+        /// Test-only: decodes the handler's stack in process. The bounded worker
+        /// path is exercised over HTTP by the transport and sandbox tests.
+        async fn read_proposals(
+            &self,
+            address: &MsgAddressInt,
+            read: ProposalRead,
+        ) -> anyhow::Result<ProposalAnswer> {
+            let address = address.to_string();
+            match read {
+                ProposalRead::List => {
+                    let stack = self.get_method(address, "list_proposals", vec![]).await?;
+                    super::super::decode_proposal_list(&stack).map(ProposalAnswer::List)
+                }
+                ProposalRead::One(hash) => {
+                    let stack = self
+                        .get_method(address, "get_proposal", vec![bytes_to_stack_entry(&hash)])
+                        .await?;
+                    super::super::decode_proposal(hash, &stack).map(ProposalAnswer::One)
+                }
+                ProposalRead::Expiry(hash) => {
+                    let stack = self
+                        .get_method(address, "get_proposal", vec![bytes_to_stack_entry(&hash)])
+                        .await?;
+                    super::super::decode_proposal_expiry(&stack).map(ProposalAnswer::Expiry)
+                }
+            }
+        }
     }
 
     // ===== Test helpers =====
 
     fn create_param_tuple(id: i32, cell: Option<&Cell>, hash: Option<&[u8; 32]>) -> StackEntry {
-        let cell_entry = cell.map(create_cell_entry).unwrap_or_else(|| {
-            // Create empty cell entry for None case
-            create_cell_entry(&Cell::default())
-        });
+        // The getter returns null for an absent value and -1 for an absent hash.
+        let cell_entry = cell.map(create_cell_entry).unwrap_or_else(|| create_list_entry(vec![]));
         let hash_entry = hash.map_or_else(
-            || create_number_entry("0"),
+            || create_number_entry("-1"),
             |h| create_number_entry(&bytes_to_hex_number(h)),
         );
         create_tuple_entry(vec![create_number_entry(&id.to_string()), cell_entry, hash_entry])
@@ -370,6 +401,35 @@ mod tests {
         }
     }
 
+    /// A provider that serves get-methods but does not implement proposal reads.
+    struct GetMethodOnly;
+
+    #[async_trait::async_trait]
+    impl ContractProvider for GetMethodOnly {
+        async fn get_method(
+            &self,
+            _address: String,
+            _method: &str,
+            _stack: Vec<StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            Ok(TvmStackParser::new(vec![create_list_entry(vec![])]))
+        }
+
+        async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            Ok(0)
+        }
+    }
+
+    /// Proposal reads fail closed: the wrapper never falls back to `get_method`.
+    #[tokio::test]
+    async fn test_proposal_reads_need_the_provider_to_implement_them() {
+        let config = ConfigContractImpl::new(Arc::new(GetMethodOnly));
+        let list = config.list_proposals().await.err().expect("refused");
+        assert!(format!("{list:#}").contains("proposal reads are unsupported"), "{list:#}");
+        let one = config.get_proposal([1; 32]).await.err().expect("refused");
+        assert!(format!("{one:#}").contains("proposal reads are unsupported"), "{one:#}");
+    }
+
     // ===== Tests for seqno() =====
 
     #[tokio::test]
@@ -490,7 +550,7 @@ mod tests {
                 create_tuple_entry(vec![
                     create_number_entry("20"),            // param_id
                     create_cell_entry(&param_cell_clone), // param_cell
-                    create_number_entry("0"),             // param_hash (None)
+                    create_number_entry("-1"),            // param_hash (None)
                 ]),
                 create_number_entry(&bytes_to_hex_number(&vset_id)),
                 create_list_entry(vec![]),  // empty voters
@@ -819,7 +879,7 @@ mod tests {
         let result = config.get_proposal([0u8; 32]).await;
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert!(err.to_string().contains("Error text"));
+        assert!(format!("{err:#}").contains("Error text"), "{err:#}");
     }
 
     #[tokio::test]
@@ -831,7 +891,7 @@ mod tests {
         let result = config.list_proposals().await;
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert!(err.to_string().contains("Error text"));
+        assert!(format!("{err:#}").contains("Error text"), "{err:#}");
     }
 
     #[tokio::test]
