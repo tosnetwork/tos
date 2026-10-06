@@ -20,8 +20,11 @@
 # that block: it holds DB_ROOT/config.json.lock (which a running node holds
 # too), writes through the engine's own schema and refuses content that schema
 # would drop, flushes the file and its directory, and checks the key again
-# under the rules the node loads it by. This script never edits config.json
-# itself; it only reads it. TOS_PQ_CONSENSUS_KEY_TOOL names another binary.
+# under the rules the node loads it by. This script does not edit config.json;
+# it reads it and leaves the binding to bind-node. (init.sh's own first-start
+# steps, the console control and lite server entries, still edit config.json
+# with sed, before this script binds.) TOS_PQ_CONSENSUS_KEY_TOOL names another
+# binary.
 #
 # The role is in effect when the variables are set or when CONFIG already
 # binds a validator: a node bound on an earlier start stays a validator after

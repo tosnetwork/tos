@@ -744,7 +744,11 @@ class BindNodeCallTest(unittest.TestCase):
                     self.call.read_text().splitlines(),
                     ["bind-node", str(self.db), str(self.seed), VALIDATOR_ID],
                 )
-                self.assertEqual(self.config.read_text(), ENGINE_CONFIG, "the script never writes")
+                self.assertEqual(
+                    self.config.read_text(),
+                    ENGINE_CONFIG,
+                    "validator-role.sh writes nothing itself",
+                )
 
     def test_refusal_is_reported_and_stops_the_container(self) -> None:
         result = self.apply(STUB_STATUS="1", STUB_OUTPUT="config.json: already bound elsewhere")
@@ -812,7 +816,9 @@ class BindNodeCallTest(unittest.TestCase):
         self.assertIn("takes the node's DB_ROOT/config.json", result.stderr)
         self.assertFalse(self.call.exists())
 
-    def test_script_never_writes_config_itself(self) -> None:
+    def test_role_script_has_no_config_writer_of_its_own(self) -> None:
+        # validator-role.sh only; init.sh's first-start sed edits of the
+        # control and lite server entries are outside this claim.
         text = ROLE.read_text()
         for writer in ("mktemp", "mv --", '> "$config', '>"$config', "--replace"):
             self.assertNotIn(writer, text)

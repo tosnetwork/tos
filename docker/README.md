@@ -153,7 +153,9 @@ rewritten from the environment afterwards: if `config.json` already names
 another validator or key file, the container refuses to start; changing the
 identity a node signs for is a deliberate
 `tos-pq-consensus-key bind-node --replace` by the operator, with the node
-stopped.
+stopped. Only the binding goes through `bind-node`: on a first start the
+entrypoint still adds the console control entry (and, on a lite server, the
+lite server entry) to `config.json` itself, before the binding is written.
 
 A validator serves no public queries. The role is refused together with
 `LITESERVER`, with lite servers already configured in `config.json` (a node
