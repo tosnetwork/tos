@@ -1,0 +1,74 @@
+{
+  "base_commit": "b008cb6309ff27779f2036328a6cb24af4150de4",
+  "scope": "Bind POP receipts to the exact enrolled wallet and full request; native transaction fixture with a synthetic authenticated anchor, not public-network finality",
+  "tests": {
+    "receipt_regression": 1,
+    "feature_state": 13,
+    "pop_wire": 3,
+    "workspace_format": "passed"
+  },
+  "controls": {
+    "enrollment": {
+      "exit": 101,
+      "semantic_failure": "accepted POP for another enrolled wallet"
+    },
+    "pre_state": {
+      "exit": 101,
+      "semantic_failure": "accepted substituted POP pre-state"
+    },
+    "code": {
+      "exit": 101,
+      "semantic_failure": "accepted POP under other code"
+    },
+    "challenge": {
+      "exit": 101,
+      "semantic_failure": "accepted unrelated POP challenge"
+    },
+    "bounced": {
+      "exit": 101,
+      "semantic_failure": "accepted bounced POP input"
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_pop.rs",
+      "sha256": "ed1b0b5d938ec7847c01793f9d0fdeeb1f128f3052a5b9778403f168e9d57d76",
+      "bytes": 15939
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "71b439a2e2154a4b5f46f8cd6d1df629cd37dc5f9b6103cd6b5dfe1fe80e0730",
+      "bytes": 111045
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/pop_receipt_controls.py",
+      "sha256": "f43f4bbcfc35a3fe71fb156aaecb333c5d3a9f572ffe69f70a55c4186ae22964",
+      "bytes": 3212
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-receipt-enrollment-controls/MANIFEST.json",
+      "sha256": "aa2dc8e6d796fd47ca2f5a0f3b97887424b4c9121b82973b0d3105a5d216a3ee",
+      "bytes": 2713
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-pop-receipt-enrollment-controls/results.json",
+      "sha256": "d3609ded30ea4efc96c4aaf2b7689325f019c56db4e8613f387553bcd1d9bb3d",
+      "bytes": 488
+    }
+  ],
+  "commands": [
+    "python3 test/wallet-v5r2/pop_receipt_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib receipt_pop_",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_v5r2_pop",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limitations": [
+    "A valid historical POP receipt is not current readiness; fresh per-key requests and chain state remain required.",
+    "This fixes individual receipt validation; enforcing both POPs before migration still requires a complete client orchestration gate.",
+    "Default-credit admission and production custody/client gates remain open."
+  ],
+  "retention": "Retain raw logs outside Git through review and release acceptance, at least through 2027-01-06."
+}

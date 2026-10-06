@@ -2364,14 +2364,22 @@ pub(crate) mod transaction_receipt_tests {
         };
         let expected = make_request(challenge);
         assert_eq!(expected.cell().repr_hash(), request.repr_hash());
-        expected.require_receipt(&receipt, pre.clone(), &init).unwrap();
+        expected.require_receipt(&receipt, pre.clone(), &init, account).unwrap();
+        let mut wrong_wallet = account;
+        wrong_wallet[0] ^= 1;
+        let error = expected
+            .require_receipt(&receipt, pre.clone(), &init, wrong_wallet)
+            .err()
+            .expect("accepted POP for another enrolled wallet");
+        assert!(error.to_string().contains("receipt enrollment binding mismatch"));
+
         let error = make_request([9; 32])
-            .require_receipt(&receipt, pre.clone(), &init)
+            .require_receipt(&receipt, pre.clone(), &init, account)
             .err()
             .expect("accepted unrelated POP challenge");
         assert!(error.to_string().contains("challenge differs"));
         let error = expected
-            .require_receipt(&receipt, proof.root().clone(), &init)
+            .require_receipt(&receipt, proof.root().clone(), &init, account)
             .err()
             .expect("accepted substituted POP pre-state");
         assert!(error.to_string().contains("pre-state hash mismatch"));
@@ -2385,7 +2393,7 @@ pub(crate) mod transaction_receipt_tests {
         let (proof, _) = fixture("successor-pop-module");
         let forged = reanchor(proof, tx);
         let error = expected
-            .require_receipt(&forged, altered, &init)
+            .require_receipt(&forged, altered, &init, account)
             .err()
             .expect("accepted POP under other code");
         assert!(error.to_string().contains("code or keys differ"));
@@ -2396,7 +2404,7 @@ pub(crate) mod transaction_receipt_tests {
         let (proof, _) = fixture("successor-pop-module");
         let forged = reanchor(proof, tx);
         let error = expected
-            .require_receipt(&forged, pre, &init)
+            .require_receipt(&forged, pre, &init, account)
             .err()
             .expect("accepted bounced POP input");
         assert!(error.to_string().contains("bounced message"));

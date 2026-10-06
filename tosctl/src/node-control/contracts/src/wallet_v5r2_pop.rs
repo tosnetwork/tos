@@ -89,7 +89,12 @@ impl PopRequest {
         pre_state: Cell,
         enrollment: &crate::wallet_v5r2_genesis::WalletGenesis,
     ) -> anyhow::Result<()> {
-        self.require_receipt(receipt, pre_state, enrollment.module_init())
+        self.require_receipt(
+            receipt,
+            pre_state,
+            enrollment.module_init(),
+            *enrollment.wallet_init().repr_hash().as_array(),
+        )
     }
 
     pub fn require_successor_receipt(
@@ -98,7 +103,7 @@ impl PopRequest {
         pre_state: Cell,
         enrollment: &crate::wallet_v5r2_genesis::SuccessorDeployment,
     ) -> anyhow::Result<()> {
-        self.require_receipt(receipt, pre_state, enrollment.module_init())
+        self.require_receipt(receipt, pre_state, enrollment.module_init(), *enrollment.wallet())
     }
 
     pub(crate) fn require_receipt(
@@ -106,7 +111,25 @@ impl PopRequest {
         receipt: &crate::proven_transactions::ProvenTransaction,
         pre_state: Cell,
         module_init: &Cell,
+        wallet: [u8; 32],
     ) -> anyhow::Result<()> {
+        use chain_block::SliceData;
+        let mut original = SliceData::load_cell(self.cell.clone())?;
+        original.move_by(32 + 32 + 256 + 8)?;
+        let challenge = *original.get_next_hash()?.as_array();
+        let valid_until = original.get_next_u32()?;
+        let (expected, _, _) = Self::from_enrolled(
+            module_init,
+            wallet,
+            self.role,
+            challenge,
+            valid_until,
+            receipt.transaction().now(),
+        )?;
+        anyhow::ensure!(
+            expected.cell.repr_hash() == self.cell.repr_hash(),
+            "POP receipt enrollment binding mismatch"
+        );
         let before = receipt.pre_account(pre_state)?;
         let init = StateInit::construct_from_cell(module_init.clone())?;
         let address =
@@ -233,7 +256,6 @@ impl PopRequest {
         self.sign_enrolled(enrollment.module_init(), *enrollment.wallet(), proven_time, signer)
     }
 
-    #[cfg(feature = "native-wallet-signer")]
     fn from_enrolled(
         module_init: &Cell,
         wallet: [u8; 32],

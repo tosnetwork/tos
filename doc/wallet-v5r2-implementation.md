@@ -1506,3 +1506,26 @@ zero-output tests exercise the wrapper's rejection behavior. Three additional
 semantic mutations ignore RNG failure, admit zero output, or replace both fresh
 constructors' random challenges with a constant. Evidence is indexed in
 `test/wallet-v5r2/fresh-pop-20261006.json`.
+
+
+## POP receipt enrollment binding
+
+Both public POP receipt methods now reconstruct the request from the supplied
+initial or successor enrollment, including its wallet address, and compare the
+complete request hash before accepting execution evidence. This closes a client
+binding gap: the immutable module can answer challenges naming different wallets,
+so matching only module code/data and a successful challenge transaction did not
+establish that the caller's selected wallet was the subject of that proof.
+
+The reconstructed deadline is checked at the authenticated transaction time.
+Existing pre-state, enrolled-code/key, successful execution, exact challenge and
+non-bounced-input checks remain in place. Historical acceptance is not current
+readiness: the client still needs fresh chain state and per-key fresh requests.
+
+The regression test uses the existing native successor POP transaction fixture
+with a synthetic authenticated anchor. It accepts the correct wallet and rejects
+the same transaction when a different enrollment wallet is supplied. Deleting the
+new binding check reproduces wrong-wallet acceptance; all five receipt deletion
+controls and restored tests must pass. This proves the client validation boundary,
+not public-network finality or completed migration orchestration. Evidence:
+`test/wallet-v5r2/pop-receipt-enrollment-20261006.json`.

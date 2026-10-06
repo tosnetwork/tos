@@ -13,8 +13,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
+    args.output.mkdir(parents=True, exist_ok=False)
     cases = [
+        (
+            "enrollment",
+            "wallet_v5r2_pop.rs",
+            "POP receipt enrollment binding mismatch",
+            "accepted POP for another enrolled wallet",
+        ),
         (
             "pre_state",
             "proven_transactions.rs",
@@ -85,7 +91,7 @@ def main():
         code, log = run("restored")
         assert code == 0 and "1 passed" in log, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("4 POP receipt guard controls detected; restored test passes")
+    print(f"{len(cases)} POP receipt guard controls detected; restored test passes")
 
 
 if __name__ == "__main__":
