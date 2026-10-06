@@ -27,7 +27,6 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
-use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct StoredSecret {
@@ -306,14 +305,27 @@ impl FileJsonStorage {
     }
 
     async fn safe_save(data: &str, file_path: &Path) -> anyhow::Result<()> {
-        let temp_path = file_path.with_extension("tmp");
-        let mut file = tokio::fs::File::create(&temp_path).await?;
-        file.write_all(data.as_bytes()).await?;
-        file.sync_all().await?;
-        drop(file);
-        tokio::fs::rename(&temp_path, file_path).await?;
-
-        Ok(())
+        // Use an exclusive, unpredictable, owner-only file in the same directory.
+        // A fixed temporary name can be pre-created as a symlink and clobber an
+        // unrelated file before the final rename. Persist atomically replaces the
+        // destination; synchronizing the directory makes that rename durable.
+        let file_path = file_path.to_owned();
+        let data = data.to_owned();
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            use std::io::Write;
+            let parent = file_path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+            temp.write_all(data.as_bytes())?;
+            temp.as_file().sync_all()?;
+            temp.persist(&file_path).map_err(|error| error.error)?;
+            #[cfg(unix)]
+            std::fs::File::open(parent)?.sync_all()?;
+            Ok(())
+        })
+        .await?
     }
 
     async fn migrate_to(
@@ -551,5 +563,36 @@ impl Storage for FileJsonStorage {
 
     fn format_version(&self) -> anyhow::Result<u32> {
         Ok(Self::FORMAT_VERSION)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod persistence_tests {
+    use super::FileJsonStorage;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    #[tokio::test]
+    async fn save_does_not_follow_predictable_temporary_symlink() {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("vault.json");
+        let victim = dir.path().join("unrelated");
+        std::fs::write(&victim, b"preserve unrelated file").expect("victim fixture");
+        symlink(&victim, path.with_extension("tmp")).expect("old temporary name");
+        FileJsonStorage::safe_save("encrypted replacement fixture", &path).await.expect("save");
+        assert_eq!(
+            std::fs::read(&victim).expect("victim"),
+            b"preserve unrelated file",
+            "predictable temporary symlink clobbered unrelated file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("saved file"),
+            "encrypted replacement fixture"
+        );
+        assert_eq!(std::fs::metadata(&path).expect("metadata").permissions().mode() & 0o777, 0o600);
+        FileJsonStorage::safe_save("second replacement fixture", &path).await.expect("replace");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("saved file"),
+            "second replacement fixture"
+        );
     }
 }

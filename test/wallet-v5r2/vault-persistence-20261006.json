@@ -1,0 +1,58 @@
+{
+  "base_commit": "2ef31178acd56d61adb9d313ce63c83f0bfeeafe",
+  "scope": "Prevent predictable temporary-path symlink clobbering during encrypted Vault saves; synchronize rename directory on Unix.",
+  "tests": {
+    "original_regression": "failed with unrelated file overwritten",
+    "storage_tests_passed": 51,
+    "pq_encrypted_reopen_tests_passed": 2,
+    "semantic_control": {
+      "exit": 101,
+      "semantic_witness": "predictable temporary symlink clobbered unrelated file"
+    },
+    "restored_regression": "passed",
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p secrets-vault --lib storage::",
+    "python3 test/wallet-v5r2/vault_persistence_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --features vault --lib vault::tests",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/secrets-vault/src/storage/file_json.rs",
+      "bytes": 19836,
+      "sha256": "e44f9a24fb587dd8547c2e44571ef7c423c8dd533cd550e2e762df0338b986a4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/vault_persistence_controls.py",
+      "bytes": 2482,
+      "sha256": "ea64310ac990bb962a694b8bab533b67129bd9ea82bf7a86cb05a55b6b1366b4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 16749,
+      "sha256": "4dfbe3891e40082d01aa48f27ff46c202992aa9e831ce1e3916b043fedab26d5"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 123155,
+      "sha256": "feae2ea9bb6402968d2b5f9b3af1ea0c0bcdd0fb8a316840f9403ff2e7306092"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-persistence-controls/MANIFEST.json",
+      "bytes": 1839,
+      "sha256": "12c3188ce90d17c1543696de1e4ae238a225496590bf30ef206702447a306a82"
+    }
+  ],
+  "limitations": [
+    "Reproduced using temporary fixture files only; no actual user secrets or remote exploitation.",
+    "Trusted parent directory required; cross-process exclusive ownership and stale-snapshot overwrite remain unresolved.",
+    "Unix directory fsync executed successfully, but no power-loss durability or filesystem fault campaign performed.",
+    "Linux CI pending; V5R2 default-credit and production custody gates remain open."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}

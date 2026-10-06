@@ -1890,3 +1890,29 @@ on an already returned handle. Revocation, creation UX, backup/restore policy,
 device isolation and secure deployment of the master key remain release gates.
 No real user keys were accessed. Evidence:
 `test/wallet-v5r2/vault-pq-load-20261006.json`.
+
+### Vault atomic-save hardening before PQ creation
+
+Review of the persistent backend found that its fixed `vault.tmp` name was opened
+with truncation. A pre-existing symlink at that name caused saving the encrypted
+Vault to overwrite the symlink target before rename. A controlled temporary-directory
+regression test reproduced that overwrite on the previous implementation. This
+requires an attacker able to plant that filesystem entry; it is not a demonstrated
+remote exploit or a disclosure of plaintext keys.
+
+`FileJsonStorage::safe_save` now creates a random exclusive `NamedTempFile` in the
+same directory, writes and synchronizes it, atomically persists it at the target,
+and synchronizes the parent directory on Unix. Blocking file operations run in
+`spawn_blocking`. The Unix regression checks that the planted symlink's target is
+unchanged, both successive saves produce the requested contents and the saved file
+has mode 0600. Existing callers and serialization remain unchanged.
+
+All 51 storage tests passed locally. Reinstating the old save implementation
+causes the exact unrelated-file overwrite assertion to fail; restoring the repair
+passes. The encrypted PQ reopen tests are rerun against this backend. These are
+local filesystem functional tests, not a power-loss or filesystem fault campaign.
+A trusted parent directory is still required. Separate Vault instances/processes
+can still have stale in-memory snapshots: this repair does not provide exclusive
+writer ownership, cross-process merge safety or rollback protection. Safe PQ key
+creation must retain those as explicit prerequisites. Evidence:
+`test/wallet-v5r2/vault-persistence-20261006.json`.

@@ -85,6 +85,8 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests
           python test/wallet-v5r2/rust_signer_controls.py --output artifacts/context/rust-wallet-signer-controls
           python test/wallet-v5r2/vault_signer_controls.py --output artifacts/context/vault-wallet-signer-controls
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p secrets-vault --lib storage::
+          python test/wallet-v5r2/vault_persistence_controls.py --output artifacts/context/vault-persistence-controls
           python test/wallet-v5r2/migration_signing_controls.py --output artifacts/context/migration-signing-controls
       - name: Fee signer scheduling boundaries and deletion controls
         run: |
