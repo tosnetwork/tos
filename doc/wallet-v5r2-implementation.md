@@ -1979,3 +1979,31 @@ This completes a local library creation path, not production custody acceptance.
 UI/CLI provisioning, secure master-key management, isolated rescue devices,
 backup/restore, revocation, closed-snapshot anti-rollback and actual chain
 activation remain open. Evidence: `test/wallet-v5r2/vault-creation-20261006.json`.
+
+### CI mutation anchors and governance answer reconciliation
+
+The native ML-DSA mutation runner's base-gas text became ambiguous when the generic
+suite gained its own ML-DSA charge. Its mutation now includes the standalone
+opcode's four-input stack check, leaving the suite path unchanged. All seven
+mutations produced semantic failures locally and each restored baseline passed;
+all anchors are checked before beginning the campaign.
+
+The governance proposal regression retained the pre-AUTH-policy configuration
+upgrade answer. With the current compiler and unchanged other inputs, compiling
+`config-code.fc` from `52d2e8b66` in a private source copy and substituting only the
+generated configuration assembly reproduces the old answer. The old artifact
+fails the new answer; restoring the current artifact passes it. Only the
+`config_upgrade_root_hash` field changes; the configuration proposal, elector
+upgrade and complaint envelope roots remain identical. The source difference is
+the AUTH retirement-policy include and transition/membership checks introduced by
+`367d41e41`. The full check then exposed a second stale answer in the zerostate
+regression, which had not run after the first fatal governance mismatch. The same
+old/current configuration controls reproduce both zerostate answers; only its BOC
+size, file hash and root hash change. Basechain state and all address summaries
+remain identical. These two records are updated; no contract guard or policy is
+removed. `governance_policy_regression.py` preserves both sets of cross-checks and
+restores the generated assembly even if a test fails.
+
+These fixes address failures observed on CI head `f6837f42a`; local evidence does
+not substitute for a fresh Linux run of the final branch head. Reproduction and
+retained outputs: `test/wallet-v5r2/native-ci-repair-20261006.json`.

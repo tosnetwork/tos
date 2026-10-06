@@ -1,0 +1,187 @@
+{
+  "base_commit": "be727b7240114cdc87933ce32405f493b6f2dfd8",
+  "scope": "Repair CI mutation targeting and reconcile two frozen answers after the AUTH policy configuration change; no production source/guard/tariff change.",
+  "failed_ci_head": "f6837f42a3319eb95ff1aac261c851281360caf0",
+  "tests": {
+    "mldsa_vectors": {
+      "counts": {
+        "acvp.I": 12,
+        "acvp.V": 3,
+        "acvp.other_profile": 165,
+        "openssl.V": 3,
+        "wycheproof.I": 91,
+        "wycheproof.M": 12,
+        "wycheproof.V": 77
+      },
+      "rows": 198,
+      "sources": {
+        "acvp-expected.json": [
+          "usnistgov/ACVP-Server",
+          "975de31eb83d87039ec88934fdc47d8c312b892d",
+          "gen-val/json-files/ML-DSA-sigVer-FIPS204/expectedResults.json",
+          "dba8bcfe5f090503c9390701c11677389752cecd"
+        ],
+        "acvp-prompt.json": [
+          "usnistgov/ACVP-Server",
+          "975de31eb83d87039ec88934fdc47d8c312b892d",
+          "gen-val/json-files/ML-DSA-sigVer-FIPS204/prompt.json",
+          "22b0803253f7aa24644229acd04c387d260e874a"
+        ],
+        "wycheproof.json": [
+          "C2SP/wycheproof",
+          "3fa63dd0344abb611f1fb1d77e119938603ea230",
+          "testvectors_v1/mldsa_44_verify_test.json",
+          "b2fb655fc645dab4a8af226bbefe5a8f23a687a7"
+        ]
+      },
+      "vectors_sha256": "bf2f64ee4a8116f6f7cbc79a2e1ccfba45268cf1380497aa2429b7fc7d76e272"
+    },
+    "mldsa_mutations": [
+      "KILLED verification FAIL: acvp-1-1: wrapper result V != I",
+      "KILLED version FAIL: instruction accepted before version 16",
+      "KILLED base-gas FAIL: openssl-auth-commitment: exact gas mismatch",
+      "KILLED byte-gas FAIL: openssl-auth-commitment: exact gas mismatch",
+      "KILLED message-bound FAIL: message-over-bound: wrapper result I != M",
+      "KILLED context FAIL: openssl-auth-commitment: wrapper result I != V",
+      "KILLED canonical-chunks FAIL: short-nonterminal: wrong structural rejection 0"
+    ],
+    "mldsa_restored": "passed after each mutation",
+    "governance_controls": {
+      "receipts": {
+        "current_old_record": 1,
+        "previous_old_record": 0,
+        "previous_new_record": 1,
+        "restored_new_record": 0
+      },
+      "old": {
+        "config_proposal_root_hash": "832C802A751CF69258DE5838BF1F6EB2278555BBF100E6E8DACE573BA3B48FAA",
+        "config_upgrade_root_hash": "75A7B4598DAB00B02304DAE5E59AF47D476C12B24CE11A7E66B5086E9B710EBC",
+        "elector_upgrade_root_hash": "968339A3A16B50A6D60B568AD1E9D7121735766A646DD284A6E2C49CBCDBACE6",
+        "complaint_envelope_root_hash": "C02B819260617277F96540507171F597AA25F473B5294F378B2341E1EA11C2C8"
+      },
+      "new": {
+        "config_proposal_root_hash": "832C802A751CF69258DE5838BF1F6EB2278555BBF100E6E8DACE573BA3B48FAA",
+        "config_upgrade_root_hash": "42F10644D5BB3AAFD3ED96F3898F73440F0E8A04BE781B9FAE62E7A063A50358",
+        "elector_upgrade_root_hash": "968339A3A16B50A6D60B568AD1E9D7121735766A646DD284A6E2C49CBCDBACE6",
+        "complaint_envelope_root_hash": "C02B819260617277F96540507171F597AA25F473B5294F378B2341E1EA11C2C8"
+      },
+      "changed": [
+        "config_upgrade_root_hash"
+      ],
+      "prior_config_sha256": "da3c313b4b0f1ccf59166baca25f8ab4f26af7acd1e6491531f686896753f7c3",
+      "restored_asm_sha256": "b6d6462d5420c2ee0f39f971d26246d541ee7145504c3928115f4fa13635c13a"
+    },
+    "zerostate_controls": {
+      "receipts": {
+        "current_old_record": 1,
+        "previous_old_record": 0,
+        "previous_new_record": 1,
+        "restored_new_record": 0
+      },
+      "old": {
+        "script": "gen-zerostate.fif",
+        "basestate0.boc_size": "105",
+        "basestate0.file_hash": "8375256A7007A9D4FDEA1952D0AA12F8EF074C56A620ABE6B252BAEF7CF864B2",
+        "basestate0.root_hash": "4DAA0F44F130CAFD0685FA6B71154A383C5FF26D4246602FCCC8AE831E95772E",
+        "zerostate.boc_size": "21139",
+        "zerostate.file_hash": "0392FB5A1ABECC0B0A5684DBE5A0F934746F01C237CC2936C1915E31B0A0E853",
+        "zerostate.root_hash": "BE1A8546D2C686F4F820036463F54648476C5AD920C36AF27AAFBA84F24EDCBF",
+        "main-wallet.addr": "1111111111111111111111111111111111111111111111111111111111111111FFFFFFFF",
+        "config-master.addr": "5555555555555555555555555555555555555555555555555555555555555555FFFFFFFF",
+        "elector.addr": "3333333333333333333333333333333333333333333333333333333333333333FFFFFFFF"
+      },
+      "new": {
+        "script": "gen-zerostate.fif",
+        "basestate0.boc_size": "105",
+        "basestate0.file_hash": "8375256A7007A9D4FDEA1952D0AA12F8EF074C56A620ABE6B252BAEF7CF864B2",
+        "basestate0.root_hash": "4DAA0F44F130CAFD0685FA6B71154A383C5FF26D4246602FCCC8AE831E95772E",
+        "zerostate.boc_size": "21567",
+        "zerostate.file_hash": "8F0542E2149AF5F99738FEE05FC7418FE252312597A4899388E08A332148403D",
+        "zerostate.root_hash": "21D9E2C1AC0DCD9AB8D19DB5EBE6F00219F3893CDA5607FFA8C05A0E287FB107",
+        "main-wallet.addr": "1111111111111111111111111111111111111111111111111111111111111111FFFFFFFF",
+        "config-master.addr": "5555555555555555555555555555555555555555555555555555555555555555FFFFFFFF",
+        "elector.addr": "3333333333333333333333333333333333333333333333333333333333333333FFFFFFFF"
+      },
+      "changed": [
+        "zerostate.boc_size",
+        "zerostate.file_hash",
+        "zerostate.root_hash"
+      ],
+      "prior_config_sha256": "da3c313b4b0f1ccf59166baca25f8ab4f26af7acd1e6491531f686896753f7c3",
+      "restored_asm_sha256": "b6d6462d5420c2ee0f39f971d26246d541ee7145504c3928115f4fa13635c13a"
+    },
+    "initial_full_regression": "failed on zerostate after governance repair; retained",
+    "final_full_regression": {
+      "exit": 0,
+      "output": "every recorded answer is verified by a test, and every test still gives it"
+    },
+    "ruff": "passed",
+    "diff_check": "passed"
+  },
+  "prior_configuration_commit": "52d2e8b66ca443fa7a6a076f6e0e9bacb45acd43",
+  "policy_change_commit": "367d41e4169d7e236e8244b2cb21649ffa99ea62",
+  "commands": [
+    "python3 test/pq-mldsa44/prepare_vectors.py --out <fresh-vectors>",
+    "cmake --build build --target test-pq-mldsa44 test-smartcont -j4",
+    "python3 test/pq-mldsa44/mutations.py --build build --vectors <fresh-vectors>/vectors.tsv",
+    "git show 52d2e8b66:crypto/smartcont/config-code.fc > <prior-config>",
+    "python3 test/wallet-v5r2/governance_policy_regression.py --case <governance|zerostate> --build build --prior-config <prior-config> --output <fresh-directory>",
+    "cmake --build build --target test-fift test-cells test-vm test-smartcont -j4",
+    "./scripts/check-regression-db.sh . build"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/pq-mldsa44/mutations.py",
+      "bytes": 3719,
+      "sha256": "13340e08b8c4cb66a9d51b0f95484718d7b097317cb6d97497ee53b80f84cd4f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/governance_policy_regression.py",
+      "bytes": 5109,
+      "sha256": "e4191a683cfee1e736bee5f253be9cf2c0b843a84cb0abc1bfd59d7aa23613fa"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/regression-tests.ans",
+      "bytes": 8734,
+      "sha256": "5cbc81fea25dc4bed55dbbbf1eb6b889405c08d2ba423a05750939caebf00c8f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/smartcont/config-code.fc",
+      "bytes": 34181,
+      "sha256": "938da7060bce81a1b97cb588cfff818653a4356740d19e7404b47eb7ece6169e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 129164,
+      "sha256": "8d079add9b9e90531b553504c63ac66fff84e928e11fec9951344accce76a792"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-mldsa-mutation-ci-repair/MANIFEST.json",
+      "bytes": 1888,
+      "sha256": "d5cc300eda8a9b7a9e0e24fb9ba46e6be9483c519e2f386fb2771eae04ed2ee9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-governance-regression/MANIFEST.json",
+      "bytes": 913,
+      "sha256": "ab4e175ebf7e647781468c697cbba94538293bc54dfcc4b13e545e50817bfd61"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-governance-policy-controls/MANIFEST.json",
+      "bytes": 21789,
+      "sha256": "6b8acbb3611f474f54a8dca93dcf12a0f859419a83a3f57d55f5de4d2c8e26d4"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-zerostate-policy-controls/MANIFEST.json",
+      "bytes": 21226,
+      "sha256": "67eebd56821c617e7347d5fe0a5890248d4b8e4370cd6d326b71f8fe1790c0af"
+    }
+  ],
+  "limitations": [
+    "Final-head Linux CI still required; local fixes do not establish overall release readiness.",
+    "Changing a regression answer does not approve a genesis rollout or network activation.",
+    "Default-credit admission, full custody/device/client acceptance and other production gates remain open."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}
