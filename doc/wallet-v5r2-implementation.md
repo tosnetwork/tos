@@ -1853,3 +1853,40 @@ against this particular compiler refactoring, not a proof that every safe
 optimization is exhausted or justification for changing the network gas credit.
 The reproducible `bounds-payload` variant and retained artifact hashes are indexed
 in `test/wallet-v5r2/admission-combined-helpers-20261006.json`.
+
+### PQ signer loading from encrypted Vault records
+
+The optional `wallet-pq-signer/vault` feature adds `vault::load_bound`. It accepts
+an existing `SecretVault`, a record ID, a fixed PQ role and an independently
+trusted enrollment public key. A record must be an `Algorithm::None` blob with
+`tos-wallet-pq-seed-profile=v5r2-seed-v1` and
+`tos-wallet-pq-seed-role=ml-dsa-44` (32 seed bytes) or
+`tos-wallet-pq-seed-role=slh-dsa-sha2-128s` (48 seed bytes). The record ID, algorithm,
+profile, role and expiration are checked before import. The native importer
+validates seed length. The derived public key must equal the supplied enrollment
+key before a signer is returned; tags do not authenticate enrollment.
+
+Seed access uses the Vault's protected memory and a mutable guard directly,
+without an intermediate ordinary Rust seed vector in the production adapter.
+`import_and_wipe` clears that import buffer even if native import fails. Other
+Vault-owned protected copies follow the Vault's destruction policy. Errors are
+mapped to a content-free rejection. The adapter neither exposes a classical
+signing branch nor changes wallet authorization. The generic Vault dependency
+still contains its unrelated existing classical-key functionality.
+
+Tests create actual encrypted file stores using PUBLIC fixed test seeds and
+master keys, flush and close them, reopen them and produce native PQ signatures
+for both roles. Wrong master keys, mismatched enrollment keys, wrong record
+profile/role and expired records are rejected. Four semantic deletion controls
+remove profile, role, expiration and derived-key binding checks independently;
+each must yield the corresponding false acceptance. Restored tests pass. Both
+rescue CI architectures run the same controls.
+
+This is a loading adapter, not a complete production custody service. The caller
+must select/authenticate an encrypted backend, provision records safely, supply
+trusted enrollment, keep primary and rescue custody separate and apply the proven
+state/action signing gates. Expiration is checked when loading, not continuously
+on an already returned handle. Revocation, creation UX, backup/restore policy,
+device isolation and secure deployment of the master key remain release gates.
+No real user keys were accessed. Evidence:
+`test/wallet-v5r2/vault-pq-load-20261006.json`.

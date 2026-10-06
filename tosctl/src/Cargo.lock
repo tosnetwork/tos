@@ -5307,8 +5307,12 @@ name = "wallet-pq-signer"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "chrono",
  "fips204",
  "openssl-sys",
+ "secrets-vault",
+ "tempfile",
+ "tokio",
  "zeroize",
 ]
 

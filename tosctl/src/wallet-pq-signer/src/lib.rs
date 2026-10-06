@@ -2,6 +2,9 @@
 //! Owned in-process wallet signer, with fixed PQ roles and contexts.
 //! No persistence, seed export, chain proof validation or action approval is
 //! provided here. Obtain the expected public key from authenticated enrollment.
+#[cfg(feature = "vault")]
+pub mod vault;
+
 use openssl_sys as _; // Carry the native backend's OpenSSL linkage.
 use std::{ffi::c_void, marker::PhantomData, ptr::NonNull, rc::Rc};
 use zeroize::Zeroize;

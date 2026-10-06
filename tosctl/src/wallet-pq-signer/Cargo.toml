@@ -5,7 +5,11 @@ edition = "2024"
 license = "LGPL-2.0-or-later"
 publish = false
 
+[features]
+vault = ["dep:secrets-vault"]
+
 [dependencies]
+secrets-vault = { path = "../secrets-vault", optional = true }
 openssl-sys = "0.9"
 zeroize = "1"
 
@@ -14,3 +18,7 @@ cc = "1"
 
 [dev-dependencies]
 fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44"] }
+
+tokio = { version = "1", features = ["macros", "rt"] }
+tempfile = "3"
+chrono = "0.4"

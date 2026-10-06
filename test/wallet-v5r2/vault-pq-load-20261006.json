@@ -1,0 +1,90 @@
+{
+  "base_commit": "a0ab5a1696bca0bc07bdd217ebedea5b3339871d",
+  "scope": "Optional encrypted Vault blob loading into the native PQ signer with independent enrollment binding; not full production custody.",
+  "tests": {
+    "encrypted_reopen_roles": [
+      "ML-DSA-44",
+      "SLH-DSA-SHA2-128s"
+    ],
+    "vault_tests": 2,
+    "all_signer_unit_tests": 5,
+    "compile_fail_doctests": 2,
+    "semantic_controls": {
+      "profile": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid profile"
+      },
+      "role": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid role"
+      },
+      "expiration": {
+        "exit": 101,
+        "semantic_witness": "accepted invalid expiration"
+      },
+      "enrollment": {
+        "exit": 101,
+        "semantic_witness": "wrong enrollment accepted"
+      }
+    },
+    "workspace_fmt_check": "passed",
+    "ruff": "passed"
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --features vault",
+    "python3 test/wallet-v5r2/vault_signer_controls.py --output <fresh-directory>",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/vault.rs",
+      "bytes": 6941,
+      "sha256": "8b7fb0711bb049e289da5b0da7417d71c3031f17c485a6ac17315ecb01123996"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/lib.rs",
+      "bytes": 9937,
+      "sha256": "2f7aa0a53052880a9f9bf38a5587ed9abf9f8d87e60d69ad87339d9a968e4850"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/Cargo.toml",
+      "bytes": 494,
+      "sha256": "69281d8e729b2613ef0b45cb46896e70a2c3beac659644421660163b41e42510"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.lock",
+      "bytes": 148662,
+      "sha256": "f0fbc4f62110b1a902c7e9b3d010fa4337395ab332826786ed5570068b2699f6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/vault_signer_controls.py",
+      "bytes": 2456,
+      "sha256": "4338bc7f1f349a5b9cbcb3828726b723bef0d2e0be5ce691d4fa4c1ddeb80488"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 16530,
+      "sha256": "1624721d3ddbb7af9ffd8fde9aa5793e7b3bee03571c50ce9a0d3856cb5ae04e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 121482,
+      "sha256": "d3e2513ce84e39af3d384e3af21afd7327ddeb3984c2a9bb6e6e97dcb019fc73"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-vault-pq-load-controls/MANIFEST.json",
+      "bytes": 2250,
+      "sha256": "1e4431b408bed748633e92515862ad57fdf51d2ab0a3e913df816e29328d0a30"
+    }
+  ],
+  "limitations": [
+    "Only public fixture keys used; initial compile errors are retained separately and do not count as semantic controls.",
+    "Caller must select and authenticate encrypted backend, trusted enrollment and separate primary/rescue custody.",
+    "Expiration checked on loading only; open handle revocation, secure creation, backup/restore, hardware isolation and master-key deployment remain open.",
+    "No chain transaction or real deployment exercised by Vault unit tests; existing proven-state gates remain required.",
+    "Linux CI for this source is pending; production 10000 gas-credit admission remains failed."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}
