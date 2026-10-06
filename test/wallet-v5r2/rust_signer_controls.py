@@ -40,8 +40,8 @@ def main():
         (
             "pop_enrollment",
             pop,
-            "expected.cell.repr_hash() == self.cell.repr_hash()",
-            "true",
+            'expected.cell.repr_hash() == self.cell.repr_hash(),\n            "POP enrollment binding mismatch"',
+            'true,\n            "POP enrollment binding mismatch"',
             "native_pop_signing_binds_initial_and_successor_enrollment",
         ),
         (
@@ -128,6 +128,12 @@ def main():
     ]:
         cases.append((name, state, old, new, preparation_witness))
 
+    # Validate every target before any expensive test or temporary mutation.
+    for name, path, old, _, _ in cases:
+        expected = 2 if name == "fresh_challenge" else 1
+        actual = sources[path].count(old)
+        assert actual == expected, (name, str(path), expected, actual)
+
     def run(path, label):
         command = [
             "cargo",
@@ -148,7 +154,6 @@ def main():
             code, log = run(path, f"baseline-{index}")
             assert code == 0, log[-3000:]
         for name, path, old, new, witness in cases:
-            assert sources[path].count(old) == (2 if name == "fresh_challenge" else 1)
             path.write_text(sources[path].replace(old, new))
             code, log = run(path, name)
             assert code != 0 and f"{witness} ... FAILED" in log, log[-3000:]

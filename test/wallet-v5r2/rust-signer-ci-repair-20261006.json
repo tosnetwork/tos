@@ -1,0 +1,107 @@
+{
+  "base_commit": "7eb4b80b9ca14ece0a08b76fe669b531b210eb3a",
+  "failed_ci_head": "f6837f42a3319eb95ff1aac261c851281360caf0",
+  "failed_run": "https://github.com/tosnetwork/tos/actions/runs/37403520178",
+  "cause": "POP enrollment comparison appears in both funded receipt validation and signing. The mutation runner required one generic match and failed preflight on both architectures.",
+  "repair": "Anchor the signing mutation with its distinct POP enrollment binding mismatch message. Preflight all patterns before building or modifying any source, with named counts.",
+  "tests": {
+    "semantic_controls": {
+      "pop_enrollment": {
+        "exit": 101,
+        "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+      },
+      "pop_domain": {
+        "exit": 101,
+        "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+      },
+      "pop_key": {
+        "exit": 101,
+        "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+      },
+      "seed_wipe": {
+        "exit": 101,
+        "witness": "import_wipes_on_success_and_failure"
+      },
+      "failure_status": {
+        "exit": 101,
+        "witness": "bound_signatures_and_independent_primary_verification"
+      },
+      "proven_key": {
+        "exit": 101,
+        "witness": "native_wallet_signing_binds_proven_keys_and_policy"
+      },
+      "challenge_rng_status": {
+        "exit": 101,
+        "witness": "challenge_rng_failures_are_rejected"
+      },
+      "challenge_nonzero": {
+        "exit": 101,
+        "witness": "challenge_rng_failures_are_rejected"
+      },
+      "fresh_challenge": {
+        "exit": 101,
+        "witness": "native_pop_signing_binds_initial_and_successor_enrollment"
+      },
+      "preparation_wallet": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_module_code": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_vault_code": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_namespace": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_domain": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_key": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      },
+      "preparation_ready_policy": {
+        "exit": 101,
+        "witness": "native_preparation_signing_binds_successor_and_current_rescue"
+      }
+    },
+    "baseline_and_restored": "passed",
+    "production_changes": "none for this repair"
+  },
+  "command": "python3 test/wallet-v5r2/rust_signer_controls.py --output <fresh-directory>",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/rust_signer_controls.py",
+      "bytes": 6557,
+      "sha256": "f4256dc87ee5d7eebf28d714665161b2e5116d52d30d738a3ea1ab50bfa411e1"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-rust-signer-ci-repair/MANIFEST.json",
+      "bytes": 5948,
+      "sha256": "3899a4daca3d2e312087db2b30b553ae7b466c1371bbbe0f61966e96b9404545"
+    }
+  ],
+  "outstanding_ci_failures": [
+    {
+      "run": "37403520469",
+      "cause": "ML-DSA base-gas mutation text now appears twice; needs scoped anchor and semantic rerun."
+    },
+    {
+      "run": "37403520242",
+      "cause": "GovernanceProposalFiftScriptRegression recorded hash mismatch: expected 2d5c00270f3abb0304318dd8d481eaa29d031f02d73a0c307e94e770bd8ad593, got 064b5a65380b0b6fdfec7dfc2e179941437859d28e6abcd48a807bc946fe6f17. Root cause not yet verified; do not blindly update answer."
+    }
+  ],
+  "limitations": [
+    "Local repaired controls do not replace final-head Linux CI.",
+    "Production wallet release gates remain open."
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}
