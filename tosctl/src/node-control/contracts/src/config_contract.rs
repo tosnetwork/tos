@@ -16,5 +16,7 @@ mod proposal_read;
 mod wrapper;
 
 pub use config_impl::ConfigContractImpl;
-pub use proposal_read::{PROPOSAL_FIELDS, decode_proposal, decode_proposal_expiry};
+pub use proposal_read::{
+    PROPOSAL_FIELDS, decode_proposal, decode_proposal_expiry, decode_proposal_list,
+};
 pub use wrapper::{ConfigContractWrapper, ConfigProposal, ProposalHash, ProposedParam};

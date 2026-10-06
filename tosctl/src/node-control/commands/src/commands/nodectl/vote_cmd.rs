@@ -917,7 +917,6 @@ impl VoteOfferLsCmd {
         use super::utils::try_create_rpc_client;
         use colored::Colorize;
         use common::app_config::AppConfig;
-        use common::time_format::format_ts;
         use contracts::{
             ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, contract_provider_from,
         };
@@ -937,63 +936,104 @@ impl VoteOfferLsCmd {
         let wrapper = ConfigContractImpl::new(contract_provider_from(chain_provider));
 
         let proposals = wrapper.list_proposals().await?;
-
-        if proposals.is_empty() {
-            if self.format == super::output_format::OutputFormat::Json {
-                println!("[]");
-            } else {
-                println!("\n{}\n", "No active config proposals.".yellow());
-            }
-            return Ok(());
-        }
-
-        if self.format == super::output_format::OutputFormat::Json {
-            let views: Vec<serde_json::Value> = proposals
-                .iter()
-                .map(|p| {
-                    serde_json::json!({
-                        "param_id": p.param.id,
-                        "is_critical": p.is_critical,
-                        "expires": format_ts(p.expires as u64),
-                        "voters": p.voters.len(),
-                        "weight_remaining": p.weight_remaining,
-                        "hash": hex::encode(p.hash),
-                    })
-                })
-                .collect();
-            println!("{}", serde_json::to_string_pretty(&views)?);
-        } else {
-            println!();
-            println!("{}", "Config Proposals".bold());
-            println!("{}", "\u{2500}".repeat(80));
-            println!(
-                "  {:<4} {:<8} {:<11} {:<22} {:<9} {}",
-                "#".bold(),
-                "Param".bold(),
-                "Critical".bold(),
-                "Expires".bold(),
-                "Voters".bold(),
-                "Weight Remaining".bold(),
-            );
-            println!("  {}", "\u{2500}".repeat(76));
-
-            for (i, p) in proposals.iter().enumerate() {
-                let critical = if p.is_critical { "Yes" } else { "No" };
-                let expires = format_ts(p.expires as u64);
-                println!(
-                    "  {:<4} {:<8} {:<11} {:<22} {:<9} {}",
-                    i + 1,
-                    p.param.id,
-                    critical,
-                    expires,
-                    p.voters.len(),
-                    p.weight_remaining,
-                );
-            }
-
-            println!();
-        }
+        let json = self.format == super::output_format::OutputFormat::Json;
+        print!("{}", render_offer_list(&proposals, json)?);
         Ok(())
+    }
+}
+
+/// What `vote offer ls` prints for `proposals`, in the getter's order.
+fn render_offer_list(
+    proposals: &[contracts::ConfigProposal],
+    json: bool,
+) -> anyhow::Result<String> {
+    use colored::Colorize;
+    use common::time_format::format_ts;
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    if proposals.is_empty() {
+        if json {
+            writeln!(out, "[]")?;
+        } else {
+            writeln!(out, "\n{}\n", "No active config proposals.".yellow())?;
+        }
+        return Ok(out);
+    }
+
+    if json {
+        let views: Vec<serde_json::Value> = proposals
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "param_id": p.param.id,
+                    "is_critical": p.is_critical,
+                    "expires": format_ts(p.expires as u64),
+                    "voters": p.voters.len(),
+                    "weight_remaining": p.weight_remaining,
+                    "hash": hex::encode(p.hash),
+                })
+            })
+            .collect();
+        writeln!(out, "{}", serde_json::to_string_pretty(&views)?)?;
+    } else {
+        writeln!(out)?;
+        writeln!(out, "{}", "Config Proposals".bold())?;
+        writeln!(out, "{}", "\u{2500}".repeat(80))?;
+        writeln!(
+            out,
+            "  {:<4} {:<8} {:<11} {:<22} {:<9} {}",
+            "#".bold(),
+            "Param".bold(),
+            "Critical".bold(),
+            "Expires".bold(),
+            "Voters".bold(),
+            "Weight Remaining".bold(),
+        )?;
+        writeln!(out, "  {}", "\u{2500}".repeat(76))?;
+
+        for (i, p) in proposals.iter().enumerate() {
+            let critical = if p.is_critical { "Yes" } else { "No" };
+            let expires = format_ts(p.expires as u64);
+            writeln!(
+                out,
+                "  {:<4} {:<8} {:<11} {:<22} {:<9} {}",
+                i + 1,
+                p.param.id,
+                critical,
+                expires,
+                p.voters.len(),
+                p.weight_remaining,
+            )?;
+        }
+
+        writeln!(out)?;
+    }
+    Ok(out)
+}
+
+/// Which listed proposal `vote offer cast` targets.
+enum OfferChoice<'a> {
+    One(&'a contracts::ConfigProposal),
+    /// Several proposals are listed and no hash was given.
+    Ambiguous,
+    /// The given hash is not among the listed proposals.
+    Missing,
+}
+
+fn select_offer<'a>(
+    proposals: &'a [contracts::ConfigProposal],
+    target: Option<&[u8; 32]>,
+) -> OfferChoice<'a> {
+    match target {
+        Some(target) => match proposals.iter().find(|p| p.hash == *target) {
+            Some(p) => OfferChoice::One(p),
+            None => OfferChoice::Missing,
+        },
+        None => match proposals {
+            [only] => OfferChoice::One(only),
+            _ => OfferChoice::Ambiguous,
+        },
     }
 }
 
@@ -1155,13 +1195,9 @@ impl VoteOfferCastCmd {
         println!();
 
         // Find the target proposal
-        let proposal = if let Some(ref target) = target_hash {
-            proposals.iter().find(|p| p.hash == *target)
-        } else {
-            // If only one proposal, use it; otherwise require --hash
-            if proposals.len() == 1 {
-                Some(&proposals[0])
-            } else {
+        let proposal = match select_offer(&proposals, target_hash.as_ref()) {
+            OfferChoice::One(p) => p,
+            OfferChoice::Ambiguous => {
                 println!(
                     "  {}",
                     "Multiple proposals found. Use --hash to specify which one to vote on."
@@ -1170,11 +1206,7 @@ impl VoteOfferCastCmd {
                 println!();
                 return Ok(());
             }
-        };
-
-        let proposal = match proposal {
-            Some(p) => p,
-            None => {
+            OfferChoice::Missing => {
                 println!(
                     "  {}",
                     "Proposal with specified hash not found among active proposals.".yellow()
@@ -2241,5 +2273,91 @@ mod proposal_read_back_tests {
             outcome_after_broadcast(None, Ok(()), observed).0,
             ProposalOutcome::WalletAcceptedUnconfirmed
         );
+    }
+}
+
+#[cfg(test)]
+mod offer_list_tests {
+    use super::*;
+
+    /// The node's real `list_proposals` answer with two proposals, decoded as the
+    /// wrapper decodes it.
+    fn live_proposals() -> Vec<contracts::ConfigProposal> {
+        let response =
+            include_str!("../../../../contracts/tests/fixtures/list_proposals/two-live.json");
+        let value: serde_json::Value = serde_json::from_str(response).unwrap();
+        let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
+            serde_json::from_value(value["result"].clone()).unwrap();
+        let stack = contracts::chain_provider::stack_from_rpc(result.stack);
+        contracts::config_contract::decode_proposal_list(&stack).unwrap()
+    }
+
+    const FIRST: &str = "472b34cc4214f8c3d028bc1f47dcc7d8c2e040b093a9b32f4afe2485be597cc9";
+    const SECOND: &str = "caf342eb8fdd9adc97379f44c7740735097dd210430f79dc410a3690639888f0";
+
+    #[test]
+    fn the_json_listing_of_the_live_answer() {
+        let rendered = render_offer_list(&live_proposals(), true).unwrap();
+        let expected = serde_json::json!([
+            {
+                "param_id": 1000,
+                "is_critical": false,
+                "expires": common::time_format::format_ts(1_792_326_266),
+                "voters": 0,
+                "weight_remaining": 864_691_128_455_135_232i64,
+                "hash": FIRST,
+            },
+            {
+                "param_id": 1001,
+                "is_critical": false,
+                "expires": common::time_format::format_ts(1_792_326_268),
+                "voters": 0,
+                "weight_remaining": 864_691_128_455_135_232i64,
+                "hash": SECOND,
+            }
+        ]);
+        assert_eq!(rendered, format!("{}\n", serde_json::to_string_pretty(&expected).unwrap()));
+        assert_eq!(render_offer_list(&[], true).unwrap(), "[]\n");
+    }
+
+    #[test]
+    fn the_text_listing_of_the_live_answer() {
+        colored::control::set_override(false);
+        let rendered = render_offer_list(&live_proposals(), false).unwrap();
+        let rows: Vec<&str> = rendered.lines().collect();
+        assert_eq!(rows[1], "Config Proposals");
+        assert_eq!(
+            rows[3],
+            "  #    Param    Critical    Expires                Voters    Weight Remaining"
+        );
+        let first = common::time_format::format_ts(1_792_326_266);
+        let second = common::time_format::format_ts(1_792_326_268);
+        assert_eq!(
+            rows[5],
+            format!("  1    1000     No          {first:<22} 0         864691128455135232")
+        );
+        assert_eq!(
+            rows[6],
+            format!("  2    1001     No          {second:<22} 0         864691128455135232")
+        );
+        assert_eq!(rows.len(), 8);
+        assert_eq!(render_offer_list(&[], false).unwrap(), "\nNo active config proposals.\n\n");
+    }
+
+    #[test]
+    fn cast_selects_by_hash_or_the_only_proposal() {
+        let proposals = live_proposals();
+        let mut second = [0u8; 32];
+        hex::decode_to_slice(SECOND, &mut second).unwrap();
+        match select_offer(&proposals, Some(&second)) {
+            OfferChoice::One(p) => assert_eq!((p.hash, p.param.id), (second, 1001)),
+            _ => panic!("the listed hash is selected"),
+        }
+        assert!(matches!(select_offer(&proposals, Some(&[0x11; 32])), OfferChoice::Missing));
+        assert!(matches!(select_offer(&proposals, None), OfferChoice::Ambiguous));
+        match select_offer(&proposals[..1], None) {
+            OfferChoice::One(p) => assert_eq!(hex::encode(p.hash), FIRST),
+            _ => panic!("a single proposal is selected without a hash"),
+        }
     }
 }
