@@ -134,15 +134,19 @@ VerifyResult verify_lms_fee(std::string_view message, std::string_view signature
 
     std::string kin = prefix;
     put16(kin, d_pblc);
+    // I || q || i || j || tmp is exactly 55 bytes for the admitted n=32
+    // profile. Reuse its fixed buffer instead of allocating on every chain step.
+    std::array<unsigned char, 16 + 4 + 2 + 1 + n> chain_input{};
+    std::memcpy(chain_input.data(), prefix.data(), prefix.size());
     for (unsigned i = 0; i < ots.p; i++) {
       std::array<unsigned char, n> tmp{};
       std::memcpy(tmp.data(), y + std::size_t{i} * n, n);
+      chain_input[20] = static_cast<unsigned char>(i >> 8);
+      chain_input[21] = static_cast<unsigned char>(i);
       for (unsigned j = coef(qc.data(), i, ots.w); j < maxv; j++) {
-        std::string cin = prefix;
-        put16(cin, static_cast<std::uint16_t>(i));
-        cin.push_back(static_cast<char>(j));
-        cin.append(reinterpret_cast<const char*>(tmp.data()), n);
-        tmp = sha256(cin);
+        chain_input[22] = static_cast<unsigned char>(j);
+        std::memcpy(chain_input.data() + 23, tmp.data(), n);
+        SHA256(chain_input.data(), chain_input.size(), tmp.data());
       }
       kin.append(reinterpret_cast<const char*>(tmp.data()), n);
     }

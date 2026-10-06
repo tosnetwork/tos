@@ -1,0 +1,109 @@
+{
+  "base_commit": "95cb05c17912ff37256d187abc6ee40164de2378",
+  "change": "Reuse exact 55-byte I || q || i || j || tmp input instead of per-step string allocation; cryptographic bytes and VM gas tariff unchanged",
+  "validation": {
+    "recovery_transactions": 65,
+    "recovery_verified_executions": 2145,
+    "primary_pop_transactions": 24,
+    "primary_pop_verified_executions": 288,
+    "mutations": [
+      "chain index zeroed -> receipt mismatch",
+      "chain hash omitted -> receipt mismatch"
+    ],
+    "baseline_and_restored": "65 transactions, 2 verified executions per transaction each"
+  },
+  "performance": "No speedup claim: sequential warm-cache timings are noisy and some paths regressed; not an isolated randomized performance comparison. Allocation removal follows source structure, not wall-clock proof.",
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cmake --build build --target emulator -j4",
+    "python test/wallet-v5r2/benchmark_transactions.py --fixtures <native-signer-integration-final/recovery> --output <fresh-directory> --iterations 30 --warmup 3",
+    "python test/wallet-v5r2/benchmark_transactions.py --fixtures <native-signer-integration-final/primary-pop> --output <fresh-directory> --iterations 10 --warmup 2",
+    "python test/wallet-v5r2/lms_buffer_controls.py --build build --fixtures <native-signer-integration-final/recovery> --output <fresh-directory>"
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-recovery/measurements.json",
+      "sha256": "9a7dc36db3c24a58236b5276463f2c35ae18e88d6566c9f3e2d05eecda56a094",
+      "bytes": 52074
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-pop/measurements.json",
+      "sha256": "42d5e3dba948cf651ce657d84912d3e57944abee41c3c069c8edf43522cebc72",
+      "bytes": 11583
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/baseline/measurements.json",
+      "sha256": "5db8e905c683977bebdbf02cb8d3ba8224dd0c83ec5d1ec2986dd145c55f66a4",
+      "bytes": 22105
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/baseline-build.log",
+      "sha256": "76d97e889cf56e5163f00235e4e3e827b8395df96e0b09cb30203b85bc1ba18e",
+      "bytes": 91
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/baseline.log",
+      "sha256": "3182efe5676ffb6e68b693fa44c0e4ffad21f4d94118c6057a1b28bf56083f98",
+      "bytes": 67
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/chain-hash-build.log",
+      "sha256": "77bf5791dd2e76612d12c64314f78f0306b6639d0e68a0e21d293c1af3bf5ebf",
+      "bytes": 6405
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/chain-hash.log",
+      "sha256": "5ea01f331dc79ca8ad42b93372508717cb885842de144483fcf19fe0d319cf3e",
+      "bytes": 942
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/chain-index-build.log",
+      "sha256": "7acbb9ec025313dd28ae8f49be6f5de4a5021d156c85f1672ab1a877b8d4c4e7",
+      "bytes": 6405
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/chain-index.log",
+      "sha256": "5ea01f331dc79ca8ad42b93372508717cb885842de144483fcf19fe0d319cf3e",
+      "bytes": 942
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/restored/measurements.json",
+      "sha256": "80a4b420ff930669023712cd902f6b572cbce566d5615058c887da0df2aeb45e",
+      "bytes": 22137
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/restored-build.log",
+      "sha256": "2aa8d85dd363fdd1573282971362b2348dc782b93a51777019c01a8df6af781a",
+      "bytes": 6405
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/restored.log",
+      "sha256": "3182efe5676ffb6e68b693fa44c0e4ffad21f4d94118c6057a1b28bf56083f98",
+      "bytes": 67
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-lms-fixed-buffer-controls/results.json",
+      "sha256": "f4cfb48f6d2ba2d2f3d830f9422f18b3db698eaa44ced3884734a70326333ebe",
+      "bytes": 162
+    }
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/lms-fee.cpp",
+      "sha256": "c7792505bd59820760d9d0d0b00b6367e734ff6c2eef1462eebe57ec9373772a",
+      "bytes": 6703
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/lms_buffer_controls.py",
+      "sha256": "6f66892efaa16b37ed4c22f631307250f35f5943ca281a59022ef5db36249295",
+      "bytes": 2627
+    }
+  ],
+  "retention": "Keep raw files and referenced public fixtures through 2027-01-06 or later release review.",
+  "remaining": [
+    "Default gas credit admission unchanged and still failing",
+    "Independent cryptographic review",
+    "Reference hardware worst-case cost and tariff review",
+    "Final-head relevant CI"
+  ]
+}

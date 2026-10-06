@@ -1321,3 +1321,15 @@ configuration entries are preserved by the adapter's regression test. Both CI
 architectures run this comparison alongside the diagnostic-credit measurements.
 See `test/wallet-v5r2/default-credit-timing-20261006.json`; neither these repeated
 public samples nor their measured rejection latency establish worst-case safety.
+
+The native LMS verifier now reuses a fixed 55-byte chain input buffer for
+`I || q || i || j || tmp`, removing per-step temporary string allocations.
+The signature profile, hash input bytes, verification policy and gas tariff are
+unchanged. Full recovery (65 transactions, 2,145 verified executions) and primary
+POP (24 transactions, 288 executions) retain their recorded receipts. Two native
+mutations, zeroing the chain index and omitting chain hashing, each cause a real
+receipt mismatch; the restored implementation passes. The reproducible control is
+`lms_buffer_controls.py`, also wired into the native CI job. Evidence is indexed in
+`lms-buffer-20261006.json`. Sequential timing samples were noisy, with regressions
+on some paths, so no wall-clock speedup or revised pricing is claimed. This change
+does not resolve the default-credit gas shortfall.

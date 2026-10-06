@@ -148,6 +148,12 @@ jobs:
             --fixtures artifacts/context/r2-fee-prepare \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-default-credit-timing --iterations 10
+      - name: Native LMS chain buffer sensitivity
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python test/wallet-v5r2/lms_buffer_controls.py --build build \
+            --fixtures artifacts/context/r2-fee-prepare \
+            --output artifacts/context/r2-lms-buffer-controls
       - name: Receipt-bound module rent invariant
         run: |
           python test/wallet-v5r2/module_rent_control.py \
