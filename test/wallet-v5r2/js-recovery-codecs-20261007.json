@@ -1,0 +1,38 @@
+{
+  "status": "local-source-bound",
+  "scope": "POP and SLH-only preparation wire encoding; proof acquisition, receipt approval, custody and broadcast are not supplied by these codecs",
+  "wallet_test_count": 110,
+  "typecheck": "passed",
+  "independent_vectors": {
+    "pop": 4,
+    "prepare": 3
+  },
+  "sources": {
+    "sdk/js/packages/wallets/src/V5R2Recovery.ts": "34b82bf917da46a42cf5d0dbef573fc1f50da3b09e7fb3c87f020a853182c38f",
+    "sdk/js/packages/wallets/src/V5R2Recovery.test.ts": "107357a5d18f9779616cac4b2e8d3de20e2a7f4e67d4699b1e394b9eeea76c34"
+  },
+  "controls": {
+    "source_sha256": "34b82bf917da46a42cf5d0dbef573fc1f50da3b09e7fb3c87f020a853182c38f",
+    "results": [
+      {
+        "name": "challenge",
+        "exit": 1,
+        "semantic_failure": true,
+        "log_sha256": "57dae11959d16b766a801ab76618b176bc597f5159434bbe4b74ea4407891c77"
+      },
+      {
+        "name": "positive-amount",
+        "exit": 1,
+        "semantic_failure": true,
+        "log_sha256": "54e447f2e7f6156cb3ac210c2ab1659af9e7b1674b28cd8cbc8775dac99e1fab"
+      },
+      {
+        "name": "signature-role",
+        "exit": 1,
+        "semantic_failure": true,
+        "log_sha256": "32fdb6deac434c45ddf5bd830d843fb39c8ec0989e4411074ef279b3c9505081"
+      }
+    ]
+  },
+  "raw_logs": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-js-recovery"
+}
