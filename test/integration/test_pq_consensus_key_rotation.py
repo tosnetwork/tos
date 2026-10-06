@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import calendar
 import json
 import re
 import subprocess
@@ -51,11 +52,14 @@ from tostester.install import Install
 from tostester.key import Key
 from tostester.network import Network, StartOptions
 
+from toslib import EngineConsoleClient
+
 SUCCESSOR_SEED = bytes.fromhex("5e" * 32)
 THIRD_SEED = bytes.fromhex("7c" * 32)
 # The first election date the successor signs stakes for. Any date works: the node
 # checks windows, not whether an election at that date exists.
 SUCCESSOR_FROM = 2_000_000_000
+DELETE_TRIALS = 8
 
 
 class Failure(Exception):
@@ -442,6 +446,7 @@ async def concurrent(install: Install, directory: Path, base_port: int, timeout:
         return dict(files=files, ids=ids)
 
     network, node, k = await boot(install, directory, base_port, configure)
+    second_console = None
     try:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -453,16 +458,42 @@ async def concurrent(install: Install, directory: Path, base_port: int, timeout:
         delete = tos_api.Engine_validator_delPqConsensusKeyRequest
         add = tos_api.Engine_validator_addPqConsensusKeyRequest
 
-        # Deleting both at once: each alone leaves one key; both would leave none.
-        outcomes = await asyncio.gather(
-            node.engine_console.request(delete(key_id=k["ids"][0])),
-            node.engine_console.request(delete(key_id=k["ids"][1])),
-            return_exceptions=True,
+        # Deleting both at once: each alone leaves one key; both would leave none. Two
+        # separate console connections, so the second request can reach the engine while
+        # the first is still waiting for the validator manager; repeated, because whether
+        # it does is up to the scheduler.
+        second_console = EngineConsoleClient(
+            node._toslib,
+            node._toslib_event_loop,
+            tos_api.EngineConsoleClient_config(
+                address=node._engine_console_addr.address,
+                server_public_key=node._engine_console_server_key.public_key,
+                client_private_key=node._engine_console_client_key.private_key,
+            ),
         )
-        if sum(1 for outcome in outcomes if not isinstance(outcome, Exception)) != 1:
-            raise Failure(f"two concurrent deletes did not leave exactly one key: {outcomes!r}")
-        if len(await list_keys(node)) != 1 or len(disk_keys(node).get("keys", [])) > 1:
-            raise Failure("concurrent deletes left another number of keys")
+        files = {key_id: path for key_id, path in zip(k["ids"], k["files"], strict=True)}
+        windows = {k["ids"][0]: 0, k["ids"][1]: 100}
+        refusals = []
+        for trial in range(DELETE_TRIALS):
+            outcomes = await asyncio.gather(
+                node.engine_console.request(delete(key_id=k["ids"][0])),
+                second_console.request(delete(key_id=k["ids"][1])),
+                return_exceptions=True,
+            )
+            succeeded = [outcome for outcome in outcomes if not isinstance(outcome, Exception)]
+            if len(succeeded) != 1:
+                raise Failure(
+                    f"trial {trial}: two concurrent deletes did not leave exactly one key: {outcomes!r}"
+                )
+            refusals += [str(outcome) for outcome in outcomes if isinstance(outcome, Exception)]
+            remaining = await list_keys(node)
+            if len(remaining) != 1 or len(disk_keys(node).get("keys", [])) > 1:
+                raise Failure(f"trial {trial}: concurrent deletes left another number of keys")
+            if trial + 1 < DELETE_TRIALS:
+                gone = next(key_id for key_id in k["ids"][:2] if key_id != remaining[0].key_id)
+                await node.engine_console.request(
+                    add(consensus_key_file=str(files[gone]), valid_from=windows[gone], expire_at=0)
+                )
         held = (await list_keys(node))[0]
         held_index = k["ids"].index(held.key_id)
 
@@ -503,9 +534,12 @@ async def concurrent(install: Install, directory: Path, base_port: int, timeout:
         return {
             "decision": "serialized",
             "kept_after_deletes": held_index,
+            "delete_refusals": sorted(set(refusal[:80] for refusal in refusals)),
             "log_path": str(node.log_path),
         }
     finally:
+        if second_console is not None:
+            second_console.close()
         await network.__aexit__(None, None, None)
 
 
@@ -535,6 +569,21 @@ async def hard_deadline(install: Install, directory: Path, base_port: int, timeo
         if successful_stats(node) != frozen:
             raise Failure("blocks were still produced after the only listed key expired")
         log = node.log_path.read_text(errors="replace")
+        # The deadline is exact: no candidate is signed from expire_at on, not even by the
+        # group that was already running with A when it expired.
+        late = [
+            stamp
+            for stamp in re.findall(
+                r"\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.\d+\]\[BusRuntime\.h:\d+\]\[[^\]]*BlockProducer\]"
+                r"\s+Published event [^\n]*CandidateGenerated",
+                log,
+            )
+            if calendar.timegm(time.strptime(stamp, "%Y-%m-%d %H:%M:%S")) >= expire_at
+        ]
+        if late:
+            raise Failure(f"candidates were signed at or after the deadline: {late[:3]}")
+        if not re.search(r"BlockProducer\]\s+Published event [^\n]*CandidateGenerated", log):
+            raise Failure("no candidate was ever logged; the deadline check measured nothing")
         if "(the consensus key has expired)" not in log:
             raise Failure("the expired key's refused signatures were not logged as such")
         await refused(stake(node, 1, k["a_id"]), "expired", "a stake named with expired A")
