@@ -5,7 +5,19 @@
     "canonical_release_ctest": "passed",
     "android_mobile_library_host_smoke": "passed before direct-backend assertion extension",
     "android_jni_cpp_syntax": "passed",
-    "ios_project_tests": "running, unified exec session 86748"
+    "ios_project_tests": {
+      "status": "passed",
+      "repository": "tosnetwork/ios",
+      "head": "1d6eb3a43ae991c2ff5b298ec160cf4136b048f4",
+      "scheme": "WalletCore",
+      "suite": "CoreComponentsTests/TOSV5R2SignerTests",
+      "simulator": "iPhone 17 iOS 26.5",
+      "tests": 2,
+      "failures": 0,
+      "scope": "native custody primitives only, not wallet lifecycle",
+      "log": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-native/ios/tests-WalletCore-raw.log",
+      "sha256": "76ad1b0b59da0fd16f27c8fcd7234c5bb677cac488dd367527d5317c3ea2fb26"
+    }
   },
   "controls": {
     "source_sha256": "22b90e34daee0fc6144e531bd6979036be395b8dff4f804818349a00b441f937",
