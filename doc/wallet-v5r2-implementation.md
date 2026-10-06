@@ -3175,3 +3175,73 @@ fee-funded recovery acceptance. PRIMARY signing/payment regressions cover the
 shared durable output writer extracted for these two commands.
 
 Evidence: [SLH lock CLI execution and controls](../test/wallet-v5r2/cli-slh-lock-20261006.json).
+
+## Persistent fee-session signing and restart recovery
+
+`pq-fee-session-initial` provides a persistent JSON-line CLI
+that keeps an exclusively owned initial fee journal open across requests. It loads
+and validates the public H20 cache, binds fee-vault reads to the locally pinned
+initial enrollment and uses fresh proofs for each request. The request vocabulary
+is `status`, `lock` (explicit TTL, decimal nanoTOS value and new output directory),
+`retry` (persisted intent and new output directory), and `quit`.
+
+The implemented lock composition signs SLH from current wallet state, writes the
+complete pending intent durably before the LMS signing call, and exports the exact
+external message only after journal-backed native signing and cache verification.
+Retry decodes that canonical intent and requests the existing verified signature;
+it does not open signing custody or allocate another leaf. These signing/retry
+branches passed a real-clock cross-slot CLI test using native encrypted custody,
+exact cached restart retry and local fee-vault/module/wallet execution. Fee affordability,
+production admission, old remote-device revocation and network delivery also
+remain outside this implementation checkpoint. No broadcast is performed.
+
+Completed local checks currently cover startup with a real public tree cache,
+refusal to sign within the restart slot, unchanged journal after refusal, exclusion
+of a second process, renewed barrier after reopening, and idle SIGTERM shutdown
+with journal release. Deleting the restore barrier or exclusive lock triggers its
+specific CLI assertion; restored code passes. Initial testing exposed synchronous
+stdin preventing cancellation; a dedicated bounded input thread now holds no
+custody or journal, while the async command honors the shared cancellation token.
+Mocked proof responses are still used. The cross-slot test consumes leaf 4, then
+restarts with only the persisted intent and journal/cache after deleting the
+exported message/report. Retry reproduces the exact external message without
+appending to the journal, even while the new-signature restore barrier is active.
+That message locks the wallet through the fee vault and module at diagnostic
+credit 20,000; default 10,000 fails before admission. Updating the mock fee proof
+to the resulting consumed counter makes another retry fail without an output or
+journal append. A fault-injected build exits the entire process with status 73
+after the verified signature cache commit but before message export. Restart retry
+recovers a message that completes the same native fee/module/wallet lock without
+another journal append. Removing the earlier pending-intent write makes this
+recovery test fail its specific missing-intent assertion. The runner restores the
+source and requires the normal cross-slot signing/retry path to pass again. This
+checks process interruption at that boundary, not physical power-loss durability,
+production admission, authenticated network proof or live finality.
+
+The command requires the common pinned initial-proof arguments, an existing
+owner-only `--journal-dir`, `--fee-tree-cache`, and separate fee/rescue encrypted
+Vault paths, record IDs and protected encryption-key files. `status` and `retry`
+require those argument names but do not load either signing key. Keep the process
+open across the next recovery-slot boundary before requesting a new signature.
+A minimal JSON-line session is:
+
+```json
+{"command":"status"}
+{"command":"lock","valid_for_seconds":600,"value_nanotos":"5000000000","output_dir":"/absolute/new-lock-output"}
+{"command":"quit"}
+```
+
+The value above is a local test fixture amount, not a recommended live reserve or
+fee quote. After an uncertain export, reopen the same journal and use a new output
+directory with the persisted intent:
+
+```json
+{"command":"retry","intent":"/absolute/new-lock-output/pending-intent.boc","output_dir":"/absolute/new-retry-output"}
+```
+
+Retry is limited by the original signed deadline, slot and current proven leaf
+counter. Retain the original directory and journal on every refusal; never treat a
+missing report as proof that a signature was not produced or a message was not
+delivered. `fee_message_cached` reports an exact signed external message only.
+
+Evidence: [fee-session signing, lifecycle and crash controls](../test/wallet-v5r2/cli-fee-session-20261006.json).

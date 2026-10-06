@@ -61,7 +61,10 @@ def main():
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--rescue-lock", action="store_true")
+    parser.add_argument("--fee-session-tree", type=Path)
     args = parser.parse_args()
+    if args.fee_session_tree:
+        args.rescue_lock = True
     args.output.mkdir(parents=True, exist_ok=False)
     cli = [str(args.cli.resolve()), "wallet"]
     vectors = json.loads(
@@ -72,6 +75,18 @@ def main():
     for key in ("recovery_manifest", "recovery_derivation", "existing_wallet", "expected_wallet"):
         payload.pop(key, None)
     payload["network"] = vectors["context"]["network_hex"]
+    if args.fee_session_tree:
+        fee_vector = json.loads(
+            (
+                ROOT / "tosctl/src/wallet-pq-signer/tests/fixtures/native-fee-recovery.json"
+            ).read_text()
+        )
+        assert payload["network"] == fee_vector["context"]["network_hex"]
+        payload["fee_public_key"] = fee_vector["public_key_hex"]
+        payload["fee_tree_id"] = fee_vector["tree_id_hex"]
+        # Real clock and fixed one-hour protocol slots: leave setup time before
+        # crossing the first boundary while retaining the same CLI process.
+        payload["epoch0"] = int(time.time()) - 3600 + 45
     signing_role = "rescue" if args.rescue_lock else "primary"
     results = {}
     with tempfile.TemporaryDirectory(prefix="pq-primary-cli-") as tmp:
@@ -138,7 +153,9 @@ def main():
             rescue_seed_profile="tos-native-mnemonic-v1"
             if args.rescue_lock
             else "raw-master-32-v1",
-            fee_seed_profile="raw-master-32-v1",
+            fee_seed_profile="tos-native-mnemonic-v1"
+            if args.fee_session_tree
+            else "raw-master-32-v1",
         )
         output = genesis(payload)
         manifest = json.loads(output["recovery_manifest"])
@@ -239,6 +256,14 @@ def main():
                     file_hash="55" * 32,
                 ),
             )
+
+        if args.fee_session_tree:
+            from cli_fee_session_sign import check_signing_session
+
+            check_signing_session(
+                args, root, common, accounts, config, payload, codes, data, addresses
+            )
+            return
 
         def policy(retired=0):
             return (

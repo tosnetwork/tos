@@ -506,3 +506,7 @@ pub use sign::PqSignPrimaryInitialCmd;
 #[path = "wallet_pq_lock_cmd.rs"]
 mod lock;
 pub use lock::PqLockPrimaryInitialCmd;
+
+#[path = "wallet_pq_fee_session.rs"]
+mod fee_session;
+pub use fee_session::PqFeeSessionInitialCmd;

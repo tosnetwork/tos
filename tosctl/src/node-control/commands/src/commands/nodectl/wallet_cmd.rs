@@ -79,6 +79,8 @@ pub enum WalletAction {
     PqSignPrimaryInitial(super::wallet_pq_cmd::PqSignPrimaryInitialCmd),
     #[cfg(feature = "pq-wallet")]
     PqLockPrimaryInitial(super::wallet_pq_cmd::PqLockPrimaryInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqFeeSessionInitial(super::wallet_pq_cmd::PqFeeSessionInitialCmd),
     /// Create one PQ key with a new recoverable 24-word backup
     #[cfg(feature = "pq-wallet")]
     PqCreateKey(super::wallet_pq_cmd::PqCreateKeyCmd),
@@ -388,7 +390,7 @@ pub struct WalletBroadcastPreparedCmd {
 }
 
 impl WalletCmd {
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self, _cancellation_ctx: CancellationCtx) -> anyhow::Result<()> {
         match &self.action {
             #[cfg(feature = "pq-wallet")]
             WalletAction::PqRestoreKey(cmd) => cmd.run().await,
@@ -404,6 +406,8 @@ impl WalletCmd {
             WalletAction::PqSignPrimaryInitial(cmd) => cmd.run().await,
             #[cfg(feature = "pq-wallet")]
             WalletAction::PqLockPrimaryInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqFeeSessionInitial(cmd) => cmd.run(_cancellation_ctx).await,
             #[cfg(feature = "pq-wallet")]
             WalletAction::PqCreateKey(cmd) => cmd.run().await,
             WalletAction::Create(cmd) => cmd.run(&self.config).await,

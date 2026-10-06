@@ -261,6 +261,21 @@ jobs:
             --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
             --public-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-controls
+      - name: Fee session restore barrier and exclusive ownership controls
+        run: |
+          python test/wallet-v5r2/cli_fee_session_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --fee-session-tree artifacts/context/r2-fee-prepare/native/PUBLIC-TEST-ONLY-lms-tree \
+            --output artifacts/context/cli-fee-session-controls
+      - name: Fee session abrupt export crash and native funded lock controls
+        run: |
+          python test/wallet-v5r2/cli_fee_session_crash_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
+            --output artifacts/context/cli-fee-session-crash-controls
       - name: Compiled-code manifest reconstruction controls
         run: |
           python test/wallet-v5r2/manifest_integration_controls.py \

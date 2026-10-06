@@ -3,7 +3,9 @@ use super::{InitialCodeArgs, PathBuf, bounded_public_file, public_hash};
 use common::app_config::ProofVerifierConfig;
 use contracts::{
     proven_getters::{ProvenAccountState, ProvenGetterProvider, ReadPolicy},
+    wallet_v5r2_genesis::WalletGenesis,
     wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
+    wallet_v5r2_state::ProvenFeeVault,
     wallet_v5r2_wallet_state::ProvenWalletState,
 };
 
@@ -44,8 +46,14 @@ pub(super) struct InitialProof {
     pub observed_at: u32,
 }
 
+pub(super) struct InitialContext {
+    genesis: WalletGenesis,
+    provider: ProvenGetterProvider,
+    max_age_seconds: u32,
+}
+
 impl InitialProofArgs {
-    pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
+    pub(super) fn context(&self) -> anyhow::Result<InitialContext> {
         let (_, genesis) = InitialRecoveryManifest::parse_and_reconstruct(
             &bounded_public_file(&self.recovery_manifest, MAX_MANIFEST_BYTES)?,
             self.code.load()?,
@@ -58,6 +66,23 @@ impl InitialProofArgs {
             "proof configuration needs a live age no greater than the wallet age policy"
         );
         let provider = ProvenGetterProvider::new(&config)?;
+        Ok(InitialContext { genesis, provider, max_age_seconds: self.max_age_seconds })
+    }
+    pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
+        self.context()?.read(config_params).await
+    }
+}
+
+impl InitialContext {
+    pub(super) async fn fee(&self) -> anyhow::Result<ProvenFeeVault> {
+        let address =
+            format!("0:{}", self.genesis.vault_init().repr_hash().to_hex_string()).parse()?;
+        let account = self.provider.read_account(&address, &ReadPolicy::Live).await?;
+        ProvenFeeVault::bind(&account, &self.genesis, now()?, self.max_age_seconds)
+    }
+    pub(super) async fn read(&self, config_params: &[u32]) -> anyhow::Result<InitialProof> {
+        let genesis = &self.genesis;
+        let provider = &self.provider;
         let wallet_address = format!("0:{}", genesis.wallet_init().repr_hash().to_hex_string());
         let module_address = format!("0:{}", genesis.module_init().repr_hash().to_hex_string());
         let wallet = provider
@@ -74,7 +99,7 @@ impl InitialProofArgs {
         let view = ProvenWalletState::bind_initial(
             &wallet,
             &module,
-            &genesis,
+            genesis,
             observed_at,
             self.max_age_seconds,
         )?;

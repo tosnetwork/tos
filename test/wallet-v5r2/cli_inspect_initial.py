@@ -59,6 +59,7 @@ def main():
     parser.add_argument("--cli", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--fee-session-tree", type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     fixture = json.loads(args.fixture.read_text())
@@ -133,6 +134,11 @@ def main():
                     file_hash="55" * 32,
                 ),
             )
+        if args.fee_session_tree:
+            from cli_fee_session import check_session_barrier
+
+            check_session_barrier(args, root, common, accounts, config, inputs)
+            return
         for mode in (
             "valid",
             "refusal",

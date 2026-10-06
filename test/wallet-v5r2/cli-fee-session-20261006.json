@@ -1,0 +1,102 @@
+{
+  "base_commit": "cfa8dd66c3edc0f5be92b115dca9d94e9138e771",
+  "scope": "Native encrypted SLH and LMS signing in a process-held initial fee session; mock proof acquisition; local native fee/module/wallet lock execution at diagnostic credit only. No broadcast, production admission or live finality.",
+  "commands": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_fee_session_controls.py --cli tosctl/src/target/debug/tosctl --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --fee-session-tree /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/PUBLIC-TEST-ONLY-lms-tree --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-session-cancel-controls",
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_fee_session_crash_controls.py --cli tosctl/src/target/debug/tosctl --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fee-session-tree /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-session-crash-controls"
+  ],
+  "exit": 0,
+  "checks": [
+    "real recovery-slot barrier and concurrent journal exclusion",
+    "idle SIGTERM releases journal",
+    "actual process exit 73 after native signature cache commit, before export",
+    "persisted-intent restart retry without another journal append",
+    "normal restart retry preserves exact external BOC bytes",
+    "consumed leaf refuses retry before output or journal append",
+    "default credit 10000 rejects; diagnostic 20000 completes native fee/module/wallet SLH lock"
+  ],
+  "semantic_controls": {
+    "restore_barrier_deleted": "session skipped restore barrier",
+    "exclusive_lock_deleted": "concurrent journal owner accepted",
+    "pre_sign_intent_write_deleted": "cached signature lost its persisted intent"
+  },
+  "restored_checks_pass": true,
+  "regressions": {
+    "inspection_cli": 8,
+    "primary_cli_and_native_recipient": 7
+  },
+  "validation": [
+    "cargo fmt --all --check",
+    "Ruff changed Python runners",
+    "git diff --check"
+  ],
+  "ci": "New steps wired for ARM and x86; final-head remote results pending.",
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-session.tar.gz",
+    "sha256": "632bf4a95bb077985dd377169aaccd33077744d8e84a911e17a20987d0950f86",
+    "bytes": 258568
+  },
+  "retention_through": "2027-01-06",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "058f27158ac88d1607eb1e5dc2c4924c6965a5952f48cc29d4d85443712b92cf",
+      "bytes": 26342
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_inspect_initial.py",
+      "sha256": "cf8f45c4e4ae69e0b6bf7a29df807fbf3affbab7b68df07423e4c9a1958bf239",
+      "bytes": 9015
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_sign_primary.py",
+      "sha256": "ba54da30ac08f1722d8c590da188af32c6f08a0a7840b56da19766456ad804c6",
+      "bytes": 22912
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/command_manager.rs",
+      "sha256": "19199991b9509cd1685a985e36b6f0372ba4516331a56584cc8567c77c05eeda",
+      "bytes": 4501
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_cmd.rs",
+      "sha256": "91d3baa84c1856a6a746cc296d041593d2675bfdc98134509dbaaa719fca0c99",
+      "bytes": 73099
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_cmd.rs",
+      "sha256": "8865a273dc419fc65b9a6de454a75c28b8f80f3034531a4f0653310c0088823e",
+      "bytes": 19261
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "sha256": "5c8924dde268ba9ea6b73acec6ef6ab0fbec9164d7d6e0cccc001cf13bda64b9",
+      "bytes": 5848
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session.py",
+      "sha256": "35f93c273c1533bad08c237ee434ba3de27bdeef5ef4bc0d2c6f199792e512da",
+      "bytes": 5605
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_controls.py",
+      "sha256": "94cc55c2854bd42b844565e200681f6e2848127877c731af09d44e3ad05845bf",
+      "bytes": 3383
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_crash_controls.py",
+      "sha256": "9493f7d25c6014b44600b61b76e1fcdb5f8b531119734ebd32c050649ca3d41a",
+      "bytes": 3401
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_sign.py",
+      "sha256": "60720eb639f087c175a8cdbbe89f4393b33739f9b9dbed2dabf2d7549a6a428a",
+      "bytes": 12791
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs",
+      "sha256": "85747d3868db91038ea39ef0b71863cb6ddca69855ab016a37f93611a566b5f8",
+      "bytes": 11846
+    }
+  ]
+}

@@ -61,7 +61,7 @@ impl CommandManager {
                 Ok(None)
             }
             Commands::Wallet(cmd) => {
-                cmd.run().await?;
+                cmd.run(cancellation_ctx).await?;
                 Ok(None)
             }
             Commands::Pool(cmd) => {
