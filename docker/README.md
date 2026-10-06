@@ -156,8 +156,13 @@ variables), and with any `--json-rpc-address` in `CUSTOM_ARG` that is not a
 literal loopback address (`127.x.y.z:port` or `[::1]:port`; host names are
 refused because the node resolves them). Once `config.json` binds a
 validator, the same rules apply on every start even if the variables are
-removed. Keep the console port (CONSOLE_PORT) unpublished; wallets and
-explorers use separate RPC nodes.
+removed. When `config.json` is missing, the `config.json.tmp` the node would
+recover in its place is checked instead. Keep the console port (CONSOLE_PORT)
+unpublished; wallets and explorers use separate RPC nodes.
+
+For every role, `CUSTOM_ARG` may not move the database or its configuration:
+`-D`/`--db` and `-c`/`--local-config` (also bundled, as in `-vD`) are refused,
+because the entrypoint checks the configuration in `/var/tos-work/db`.
 
 Back the seed up offline and encrypted, never on the host. The controller root
 key (`tos-pq-key`) and the controller actions it signs (`tos-pq-controller`)

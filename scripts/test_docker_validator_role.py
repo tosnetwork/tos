@@ -412,6 +412,95 @@ class RoleTest(unittest.TestCase):
                 self.assertIn(reason, result.stderr)
                 self.assertEqual(self.config.read_bytes(), before)
 
+    MOVING_ARGS = (
+        "--db /other-db --json-rpc-readonly --json-rpc-address 0.0.0.0:8081",
+        "--db=/other-db",
+        "-D /other-db",
+        "-D/other-db",
+        "-vD /other-db",
+        "--local-config /other-db/config.json",
+        "--local-config=/other-db/config.json",
+        "-c /other-db/config.json",
+        "--verbosity 3\n-D /other-db",
+    )
+
+    def test_custom_arg_cannot_move_the_database_for_any_role(self) -> None:
+        for role_env in ({}, {"VALIDATOR_ID": None, "PQ_CONSENSUS_KEY_FILE": None}):
+            for custom in self.MOVING_ARGS:
+                with self.subTest(custom=custom, role=bool(role_env) is False):
+                    result = self.role("check", str(self.config), CUSTOM_ARG=custom, **role_env)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("fixed by the entrypoint", result.stderr)
+
+    def test_redirected_bound_database_is_refused(self) -> None:
+        # The bound, lite-serving config sits in another database that
+        # CUSTOM_ARG would point the engine at; no role variables are set.
+        other = self.tmp / "other-db"
+        other.mkdir()
+        config = json.loads(ENGINE_CONFIG)
+        config["liteservers"] = [{"@type": "engine.liteServer", "id": "AAAA", "port": 30003}]
+        config["extraconfig"] = {
+            "@type": "engine.validator.extraConfig",
+            "state_serializer_enabled": True,
+            "pq_consensus": {
+                "@type": "engine.validator.pqConsensus",
+                "validator_id": VALIDATOR_ID_B64,
+                "consensus_key_file": str(self.seed),
+            },
+        }
+        (other / "config.json").write_text(json.dumps(config))
+        result = self.role(
+            "check",
+            str(self.config),
+            VALIDATOR_ID=None,
+            PQ_CONSENSUS_KEY_FILE=None,
+            CUSTOM_ARG=f"--db {other} --json-rpc-readonly --json-rpc-address 0.0.0.0:8081",
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("fixed by the entrypoint", result.stderr)
+
+    def test_options_that_keep_the_database_are_allowed(self) -> None:
+        for custom in ("--verbosity 3", "-v 3", "--db-event-fifo /tmp/fifo", "--threads 4"):
+            with self.subTest(custom=custom):
+                result = self.role(
+                    "check",
+                    str(self.config),
+                    VALIDATOR_ID=None,
+                    PQ_CONSENSUS_KEY_FILE=None,
+                    CUSTOM_ARG=custom,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_recovery_config_is_inspected_when_config_is_missing(self) -> None:
+        # The engine renames config.json.tmp into place when config.json is
+        # missing, so the temporary file decides the role in that state.
+        self.write_bound_config(
+            liteservers=[{"@type": "engine.liteServer", "id": "AAAA", "port": 30003}]
+        )
+        temporary = self.tmp / "config.json.tmp"
+        self.config.rename(temporary)
+        cases = (
+            (
+                {"VALIDATOR_ID": None, "PQ_CONSENSUS_KEY_FILE": None, "LITESERVER": "true"},
+                "a validator runs no lite server",
+            ),
+            ({"VALIDATOR_ID": None, "PQ_CONSENSUS_KEY_FILE": None}, "configures 1 lite server(s)"),
+            ({}, "configures 1 lite server(s)"),
+        )
+        for env, reason in cases:
+            with self.subTest(reason=reason, env=env):
+                result = self.role("check", str(self.config), **env)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(reason, result.stderr)
+
+    def test_unbound_recovery_config_leaves_the_role_off(self) -> None:
+        self.config.rename(self.tmp / "config.json.tmp")
+        result = self.role(
+            "check", str(self.config), VALIDATOR_ID=None, PQ_CONSENSUS_KEY_FILE=None, LITESERVER="1"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Validator role disabled", result.stdout)
+
     def test_unreadable_config_is_refused(self) -> None:
         self.config.write_text("{not json")
         result = self.role("check", str(self.config), VALIDATOR_ID=None, PQ_CONSENSUS_KEY_FILE=None)
@@ -534,6 +623,23 @@ class EntrypointTest(unittest.TestCase):
         self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
         self.assertIn("a validator runs no lite server", result.stderr)
         self.assertEqual(len(self.engine_calls()), 2, "only the first, validator run started it")
+
+    def test_custom_arg_moving_the_database_stops_before_the_engine(self) -> None:
+        result = self.run_init(
+            CUSTOM_ARG="--db /other-db --json-rpc-readonly --json-rpc-address 0.0.0.0:8081"
+        )
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+        self.assertIn("fixed by the entrypoint", result.stderr)
+        self.assertEqual(self.engine_calls(), [])
+
+    def test_bound_recovery_config_stops_a_lite_server_start(self) -> None:
+        self.assertEqual(self.run_init(**self.validator_env()).returncode, 0)
+        (self.db / "config.json").rename(self.db / "config.json.tmp")
+        calls = len(self.engine_calls())
+        result = self.run_init(LITESERVER="true")
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+        self.assertIn("a validator runs no lite server", result.stderr)
+        self.assertEqual(len(self.engine_calls()), calls, "the engine was not run again")
 
     def test_bad_key_stops_before_anything_is_created(self) -> None:
         self.seed.chmod(0o644)

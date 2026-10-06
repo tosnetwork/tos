@@ -30,7 +30,10 @@
 # LITESERVER, lite servers already configured in CONFIG, and any
 # --json-rpc-address in CUSTOM_ARG that is not a literal loopback address
 # (127.0.0.0/8 or [::1]); a host name is refused because the engine resolves
-# it. CUSTOM_ARG is split exactly as init.sh expands it for the engine.
+# it. CUSTOM_ARG is split exactly as init.sh expands it for the engine, and
+# for every role it may not move the database or configuration (-D/--db,
+# -c/--local-config). When CONFIG is missing, CONFIG.tmp, which the engine
+# recovers, is inspected in its place.
 #
 # The binding is written once. A config.json that already names a different
 # validator or key file is refused, not rewritten: changing the identity a
@@ -114,11 +117,53 @@ loopback_address() {
   [[ "$port" =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535))
 }
 
+# The words the engine receives from CUSTOM_ARG. init.sh passes $CUSTOM_ARG
+# unquoted, so they are the result of its word splitting and pathname
+# expansion, from the same directory; never only its first line.
+custom_words() {
+  # shellcheck disable=SC2206
+  CUSTOM_WORDS=(${CUSTOM_ARG:-})
+}
+
+# The engine takes its database from the last -D/--db and its configuration
+# from that database, or from -c/--local-config when no config.json exists
+# there yet. init.sh names both, and CUSTOM_ARG follows them on the command
+# line, so a later one there would make the engine run from a database and
+# configuration this script never inspected. Refused for every role. A
+# single-dash word is refused when it contains D or c anywhere, because the
+# engine accepts short options bundled into one word (-vD/other).
+check_custom_arg_keeps_location() {
+  local word
+  for word in "${CUSTOM_WORDS[@]}"; do
+    case "$word" in
+      --db | --db=* | --local-config | --local-config=*)
+        refuse "CUSTOM_ARG sets '$word'; the database and its configuration are fixed by the entrypoint"
+        ;;
+      --*) ;;
+      -*[Dc]*)
+        refuse "CUSTOM_ARG sets '$word'; the database and its configuration are fixed by the entrypoint"
+        ;;
+    esac
+  done
+}
+
+# The configuration the engine will load from CONFIG's location: CONFIG, or,
+# when it is missing, the CONFIG.tmp the engine then recovers and renames into
+# place. Empty when neither exists.
+effective_config() {
+  local config="$1"
+  if [ -e "$config" ] || [ -L "$config" ]; then
+    printf '%s' "$config"
+  elif [ -e "$config.tmp" ] || [ -L "$config.tmp" ]; then
+    printf '%s' "$config.tmp"
+  fi
+}
+
 # Whether CONFIG already binds a validator. A config that cannot be read is
 # refused rather than taken as unbound.
 config_binds_validator() {
   local config="$1"
-  [ -e "$config" ] || return 1
+  [ -n "$config" ] || return 1
   command -v jq >/dev/null || refuse "jq is required to read $config"
   local bound
   bound="$(jq -r 'if (.extraconfig.pq_consensus | type) == "object" then "yes" else "no" end' \
@@ -131,24 +176,19 @@ check_no_public_service() {
   if [ -n "${LITESERVER:-}" ]; then
     refuse "LITESERVER is set; a validator runs no lite server. Serve queries from a separate RPC node"
   fi
-  if [ -e "$config" ]; then
+  if [ -n "$config" ]; then
     command -v jq >/dev/null || refuse "jq is required to read $config"
     local lite
     lite="$(jq -r '(.liteservers // []) | length' "$config")" || refuse "cannot parse $config"
     [ "$lite" = "0" ] ||
       refuse "$config configures $lite lite server(s); a validator runs none. Remove them from config.json"
   fi
-  # init.sh passes $CUSTOM_ARG unquoted, so the engine receives the words of
-  # its word splitting and pathname expansion, from the same directory. Split
-  # it the same way here, never only its first line.
-  local words=() i value
-  # shellcheck disable=SC2206
-  words=(${CUSTOM_ARG:-})
-  for ((i = 0; i < ${#words[@]}; i++)); do
-    case "${words[i]}" in
-      --json-rpc-address=*) value="${words[i]#--json-rpc-address=}" ;;
+  local i value
+  for ((i = 0; i < ${#CUSTOM_WORDS[@]}; i++)); do
+    case "${CUSTOM_WORDS[i]}" in
+      --json-rpc-address=*) value="${CUSTOM_WORDS[i]#--json-rpc-address=}" ;;
       --json-rpc-address)
-        value="${words[i + 1]:-}"
+        value="${CUSTOM_WORDS[i + 1]:-}"
         ;;
       *) continue ;;
     esac
@@ -158,21 +198,25 @@ check_no_public_service() {
 }
 
 check() {
-  local config="$1"
+  local config effective
+  config="$1"
+  custom_words
+  check_custom_arg_keeps_location
+  effective="$(effective_config "$config")"
   if ! role_requested; then
-    if ! config_binds_validator "$config"; then
+    if ! config_binds_validator "$effective"; then
       echo "[=] Validator role disabled (VALIDATOR_ID and PQ_CONSENSUS_KEY_FILE are not set)"
       return 0
     fi
-    check_no_public_service "$config"
-    echo "[=] $config already binds a validator; the validator role stays in effect"
+    check_no_public_service "$effective"
+    echo "[=] $effective already binds a validator; the validator role stays in effect"
     return 0
   fi
   [ -n "${VALIDATOR_ID:-}" ] ||
     refuse "PQ_CONSENSUS_KEY_FILE is set without VALIDATOR_ID; both are needed for the validator role"
   normalized_validator_id >/dev/null
   check_key_file
-  check_no_public_service "$config"
+  check_no_public_service "$effective"
   echo "[+] Validator role: controller $(normalized_validator_id), consensus key $PQ_CONSENSUS_KEY_FILE"
 }
 
