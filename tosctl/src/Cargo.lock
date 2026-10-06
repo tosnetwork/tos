@@ -877,6 +877,7 @@ dependencies = [
  "tempfile",
  "tl_api",
  "tokio",
+ "tos-native-mnemonic",
  "tos_executor",
  "tos_sandbox",
  "tos_vm",

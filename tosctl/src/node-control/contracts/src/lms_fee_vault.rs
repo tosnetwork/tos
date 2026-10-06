@@ -16,6 +16,9 @@ use secrets_vault::{
 };
 use wallet_pq_signer::{Rejected, fee::verify_seed_and_wipe};
 use zeroize::Zeroize;
+#[path = "lms_fee_restore.rs"]
+mod restore;
+pub use restore::{restore_derived_and_wipe, restore_mnemonic};
 
 const PROFILE_TAG: &str = "tos-wallet-fee-seed-profile";
 const PROFILE: &str = "lms-h20-w4-seed-v1";

@@ -2679,8 +2679,8 @@ the decrypted seed again. A guard installed before future construction clears
 the input even if the future is never polled. Failed or cancelled persistence
 may leave a record; callers must resolve it rather than deleting or overwriting
 it. This API receives an already derived seed and an independently authenticated
-public key/path. Master/mnemonic restoration and tree rebuilding still need a
-complete fee-specific client flow.
+public key/path. The SDK master/mnemonic adapters and complete reconstruction test below
+cover fee recovery; a complete CLI/client flow is still required.
 
 `FeeJournal::sign_proven_fee_from_vault` loads only a correctly tagged, unexpired
 blob with matching record identity and algorithm. Its private loader returns
@@ -2718,7 +2718,7 @@ Generation is synchronous and CPU-heavy. Clients must run it on a worker and
 compare the result with independently authenticated enrollment during restore.
 Rebuilding the public tree does not revoke another signer or bypass the journal's
 next-slot wait. The cache adapter below persists and authenticates public nodes. The
-mnemonic-driven client flow remains to be integrated. No phone performance, side-channel resistance or hardware
+mnemonic-driven SDK recovery is covered below; CLI/client integration remains. No phone performance, side-channel resistance or hardware
 anti-rollback claim follows from this implementation.
 
 The explicit full-tree test reconstructs the existing independent public fixture,
@@ -2758,3 +2758,34 @@ parent hashing, trailing-byte rejection and new-only publication to fail named
 assertions when removed. Evidence:
 `test/wallet-v5r2/fee-tree-cache-20261006.json`. These are local SDK results, not
 proof of live enrollment authentication or completed mnemonic recovery UX.
+
+
+### Native mnemonic and master restoration of fee custody
+
+`lms_fee_vault::restore_derived_and_wipe` derives the 48-byte fee seed using the
+fixed dual-root KDF and supplied network, global id, account index, key generation
+and fee-tree identity. It keeps derived material in protected memory, binds it
+to independently authenticated fee enrollment, then uses the new-only encrypted
+record adapter. A master wipe guard is installed before returning the future,
+including unpolled cancellation. `restore_mnemonic` first validates the native
+phrase and exact password, holds its resolved master in zeroizing storage, and
+uses the same derivation path. It does not trim passwords or derive classical
+signing keys. Borrowed phrase/password buffers remain the caller's responsibility.
+
+The fixture `wallet-pq-signer/tests/fixtures/native-fee-recovery.json` is public
+test material only. `fee_recovery_fixture.py` independently computes the fee KDF
+with Python HMAC and obtains the enrolled root/leaf-zero path using the separate
+LMS test tool. Tests cover wrong master, every public KDF namespace field, tree
+identity, width, enrollment and path, invalid mnemonic and password whitespace,
+unpolled cleanup, duplicate refusal and encrypted close/reopen. Seven semantic
+controls require namespace substitution, misplaced cleanup and password trimming
+to fail named assertions. The explicit full reconstruction test starts from the
+native mnemonic, rebuilds the complete H20 tree, matches the independent key/path,
+persists and reopens its public cache, and restores the bound encrypted fee record.
+
+These adapters neither create nor modify the leaf journal. A recovered device
+must still obtain authenticated current state, take exclusive custody, revoke
+old writers and wait for the next-slot restore barrier before new signatures.
+The tests establish an SDK recovery path, not a CLI workflow, live proof service,
+funded rescue transaction or production admission. Evidence:
+`test/wallet-v5r2/fee-recovery-20261006.json`.
