@@ -75,8 +75,10 @@ impl WalletStorage {
 }
 
 /// What the storage phase charges at `now`: the recorded debt plus the masterchain
-/// fees accrued over every price period since `last_paid`, rounded up per period as
-/// the executor does.
+/// fees accrued since `last_paid`. Mirrors the node's
+/// `StoragePrices::compute_storage_fees`: each price period is clipped to `now`, the
+/// fixed-point (2^-16 nanoTOS) total is accumulated across periods, and it is
+/// rounded up once at the end.
 pub fn storage_due(
     prices: &[StoragePrices],
     storage: &WalletStorage,
@@ -93,38 +95,50 @@ fn storage_accrued(
     now: u32,
 ) -> anyhow::Result<u128> {
     let overflow = || anyhow::anyhow!("storage fee overflows");
+    let last_paid = storage.last_paid;
     let first = match prices.first() {
         Some(first) => first,
         None => return Ok(0),
     };
-    if now <= storage.last_paid || storage.last_paid == 0 || now <= first.utime_since {
+    if now <= last_paid || last_paid == 0 || now <= first.utime_since {
         return Ok(0);
     }
-    let mut last_paid = storage.last_paid;
-    let mut fee: u128 = 0;
-    for (index, period) in prices.iter().enumerate() {
-        let end = prices.get(index.saturating_add(1)).map_or(now, |next| next.utime_since);
-        if end < last_paid {
-            continue;
-        }
-        let delta = end.saturating_sub(period.utime_since.max(last_paid));
-        let per_second = u128::from(storage.bits)
-            .checked_mul(u128::from(period.mc_bit_price_ps))
-            .and_then(|bit_part| {
-                u128::from(storage.cells)
-                    .checked_mul(u128::from(period.mc_cell_price_ps))
-                    .and_then(|cell_part| bit_part.checked_add(cell_part))
-            })
-            .ok_or_else(overflow)?;
-        let period_fee = per_second
-            .checked_mul(u128::from(delta))
-            .and_then(|value| value.checked_add(0xffff))
-            .ok_or_else(overflow)?
-            >> 16;
-        fee = fee.checked_add(period_fee).ok_or_else(overflow)?;
-        last_paid = end;
+    // The period in force at last_paid: the last one that starts at or before it.
+    let count = prices.len();
+    let mut index = count;
+    while index > 0
+        && prices.get(index.saturating_sub(1)).is_some_and(|period| period.utime_since > last_paid)
+    {
+        index = index.saturating_sub(1);
     }
-    Ok(fee)
+    index = index.saturating_sub(1);
+    let mut upto = last_paid.max(first.utime_since);
+    let mut total: u128 = 0;
+    while upto < now {
+        let Some(period) = prices.get(index) else {
+            break;
+        };
+        let valid_until =
+            prices.get(index.saturating_add(1)).map_or(now, |next| now.min(next.utime_since));
+        if upto < valid_until {
+            let per_second = u128::from(storage.bits)
+                .checked_mul(u128::from(period.mc_bit_price_ps))
+                .and_then(|bit_part| {
+                    u128::from(storage.cells)
+                        .checked_mul(u128::from(period.mc_cell_price_ps))
+                        .and_then(|cell_part| bit_part.checked_add(cell_part))
+                })
+                .ok_or_else(overflow)?;
+            total = per_second
+                .checked_mul(u128::from(valid_until.saturating_sub(upto)))
+                .and_then(|part| total.checked_add(part))
+                .ok_or_else(overflow)?;
+        }
+        upto = valid_until;
+        index = index.saturating_add(1);
+    }
+    // Divide by 2^16, rounding up, once.
+    Ok(total.checked_add(0xffff).ok_or_else(overflow)? >> 16)
 }
 
 /// Everything the reserve is computed from, at one block.
@@ -227,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_due_spans_price_periods_and_rounds_up() {
+    fn storage_due_spans_price_periods_and_rounds_up_once() {
         let prices = [
             StoragePrices {
                 utime_since: 0,
@@ -243,15 +257,59 @@ mod tests {
             },
         ];
         let storage = WalletStorage { cells: 3, bits: 100, last_paid: 900, due_payment: 0 };
-        // 100 s at (100 + 1500) and 500 s at (200 + 3000), each rounded up.
-        let first = (100 * 1_600 + 0xffff) >> 16;
-        let second = (500 * 3_200 + 0xffff) >> 16;
-        assert_eq!(storage_due(&prices, &storage, 1_500).unwrap(), first + second);
+        // 100 s at (100 * 1 + 3 * 500) = 1600 and 500 s at (100 * 2 + 3 * 1000) = 3200,
+        // summed in 2^-16 nanoTOS and rounded up once: ceil(1_760_000 / 65536) = 27.
+        // Rounding each period separately would give 3 + 25 = 28.
+        assert_eq!(storage_due(&prices, &storage, 1_500).unwrap(), 27);
         assert_eq!(storage_due(&prices, &storage, 900).unwrap(), 0);
         assert_eq!(storage_due(&[], &storage, 1_500).unwrap(), 0);
         // Recorded debt is charged on top, even when nothing new has accrued.
         let indebted = WalletStorage { due_payment: 7, ..storage };
-        assert_eq!(storage_due(&prices, &indebted, 1_500).unwrap(), first + second + 7);
+        assert_eq!(storage_due(&prices, &indebted, 1_500).unwrap(), 27 + 7);
         assert_eq!(storage_due(&prices, &indebted, 900).unwrap(), 7);
+    }
+
+    /// The review's control: a price period that starts after `now` must not be
+    /// charged up to its start. 1 cell at 1 nanoTOS per cell-second (65536 in 2^-16
+    /// units), last paid at 1, now 100, debt 7, the next period from 1000: 99 s
+    /// accrue, so 99 + 7 = 106 (the node), not 999 + 7 = 1006.
+    #[test]
+    fn a_period_that_starts_after_now_is_clipped_to_now() {
+        let prices = [
+            StoragePrices { utime_since: 0, mc_cell_price_ps: 65_536, ..Default::default() },
+            StoragePrices { utime_since: 1_000, mc_cell_price_ps: 65_536, ..Default::default() },
+        ];
+        let storage = WalletStorage { cells: 1, bits: 0, last_paid: 1, due_payment: 7 };
+        assert_eq!(storage_due(&prices, &storage, 100).unwrap(), 106);
+    }
+
+    /// Several periods wholly in the past, starting inside the second one, derived by
+    /// hand from the node's compute_storage_fees (not callable from these tests; the
+    /// sandbox runs a different executor):
+    ///   periods start at 0, 100, 200, 300; last_paid 150; now 350; 2 cells, 10 bits;
+    ///   period 1 (from 100): 2 * 1000 + 10 * 10 = 2100/s for 150..200 = 50 s -> 105_000
+    ///   period 2 (from 200): 2 * 2000 + 10 * 20 = 4200/s for 200..300 = 100 s -> 420_000
+    ///   period 3 (from 300): 2 * 3000 + 10 * 30 = 6300/s for 300..350 = 50 s -> 315_000
+    ///   total 840_000 in 2^-16 nanoTOS -> ceil(840_000 / 65536) = 13; rounding each
+    ///   period separately would give 2 + 7 + 5 = 14.
+    /// Period 0 is never charged: last_paid is after it ends.
+    #[test]
+    fn several_past_periods_accumulate_and_round_once() {
+        let period = |since: u32, cell: u64, bit: u64| StoragePrices {
+            utime_since: since,
+            mc_cell_price_ps: cell,
+            mc_bit_price_ps: bit,
+            ..Default::default()
+        };
+        let prices = [
+            period(0, 1_000_000, 1_000_000),
+            period(100, 1_000, 10),
+            period(200, 2_000, 20),
+            period(300, 3_000, 30),
+        ];
+        let storage = WalletStorage { cells: 2, bits: 10, last_paid: 150, due_payment: 0 };
+        assert_eq!(storage_due(&prices, &storage, 350).unwrap(), 13);
+        // Ending inside period 2 clips it: 105_000 + 4200 * 50 = 315_000 -> ceil 4.81 = 5.
+        assert_eq!(storage_due(&prices, &storage, 250).unwrap(), 5);
     }
 }
