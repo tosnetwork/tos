@@ -1,0 +1,192 @@
+{
+  "base_commit": "fa6fc474764d349c9e11c70da1ded065e371abab",
+  "scope": "Six encrypted-Vault fee signatures match executed transaction bodies. Public test seeds, actual account/transaction cells, synthetic proof metadata and fixture clock. Prior dual-VM transactions use diagnostic 20000 credit. No live network or production readiness claim.",
+  "results": {
+    "baseline": {
+      "exit": 0,
+      "semantic_witness": null
+    },
+    "config_binding": {
+      "exit": 101,
+      "semantic_witness": "protected custody changed executed fee body"
+    },
+    "clock_resample": {
+      "exit": 101,
+      "semantic_witness": "recorded custody accepted stale clock after key loading"
+    },
+    "restored": {
+      "exit": 0,
+      "semantic_witness": null
+    }
+  },
+  "restored": {
+    "scope": "Encrypted public test seeds, actual executed bodies, synthetic proof metadata; diagnostic credit 20000",
+    "messages": [
+      {
+        "route": 0,
+        "leaf": 12,
+        "body_hash": "0a526c80f2155336a05926105f26af43dad2b52f11d52e39394d16f85b7fc4fe"
+      },
+      {
+        "route": 0,
+        "leaf": 13,
+        "body_hash": "62b126e1cae70aec9c66f9bb9bb491a7fb5b6c79dfb9348bdff9e90e5c6a4d98"
+      },
+      {
+        "route": 1,
+        "leaf": 16,
+        "body_hash": "b900533f241795201ae6dcddb4edbb9bf05bbd27065ac8dd10cf414dd35f063a"
+      },
+      {
+        "route": 1,
+        "leaf": 17,
+        "body_hash": "902f680b3e9b86f71563ef44529a29340367638abb177f98c7aab21af48e7870"
+      },
+      {
+        "route": 0,
+        "leaf": 16,
+        "body_hash": "59c8e4583424418305b835c351f4f0fce347707c28b6576c7f312fdb88ea4316"
+      },
+      {
+        "route": 1,
+        "leaf": 18,
+        "body_hash": "70025a6b03f4f5cb82df7fe86efc397d711f956dd17a122da2b7333a2c0f2fc3"
+      }
+    ],
+    "stale_clock_rejected_without_reservation": true,
+    "reopened_encrypted_vault": true,
+    "exact_cached_retry_after_vault_drop": true
+  },
+  "command": "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh; python3 test/wallet-v5r2/recorded_fee_custody.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-recorded-fee-custody-controls --controls",
+  "regression": {
+    "rust_format_exit": 0,
+    "ruff_check_exit": 0,
+    "ruff_format_exit": 0
+  },
+  "prior_dual_vm_evidence": "test/wallet-v5r2/native-fee-integration-20261006.json",
+  "retention_through": "2027-01-06",
+  "raw_archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-recorded-fee-custody.tar.gz",
+    "sha256": "a0d7323b4040ef88d75353b71ed5dc2d682e2cd71671747fb60273104f93609f",
+    "bytes": 255682
+  },
+  "fixture_files": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-genesis.json",
+      "sha256": "bf73d4456aaff495a044ee6d39a059622c3e86dbf87d205c84d2869470523483",
+      "bytes": 59004
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-successor.json",
+      "sha256": "f9f051ca33d2d6181805961091217277e48f727acb3f5a45aee8f67fec5f0267",
+      "bytes": 32005
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/genesis-deployment/vault.json",
+      "sha256": "c1ac2734d22ccf3afceb8d727b7a9f9a24c367f5e0c45cd08b0a0358e8924b39",
+      "bytes": 3736
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-fee/04.json",
+      "sha256": "330f0cd5dc2c235326410e0abfb3aa4394385709db1e6b642fb3def958db4169",
+      "bytes": 61608
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-fee/06.json",
+      "sha256": "19124eba42771bcbbf371ebab1414ececd4f03a837dd9e6c4d4afdbc7f3d68fd",
+      "bytes": 90331
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-fee/08.json",
+      "sha256": "e7d89c2fabbc34dbd874349cfb2e1821dcded86b82f2f8be070d8ac72c3cb22d",
+      "bytes": 62082
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-fee/10.json",
+      "sha256": "7f8be3ac4521e2fb4c0e9950221f05866fe4d8361f4149b1b644908d71899785",
+      "bytes": 28710
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-fee/12.json",
+      "sha256": "82b51657202f660a97dd40250c839d80d213909ee6be83cd3d96f27109da36ba",
+      "bytes": 90396
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/sdk-fee/14.json",
+      "sha256": "8a34adf769569651e61f571df5c8cc5e96df2c4fc708662171be8bbe55c5ea05",
+      "bytes": 62208
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/recovery/lock-fee.json",
+      "sha256": "bd614d71dd3afc2936614c2bda37f55feec667e56652453c83bc0fa7d83d84e2",
+      "bytes": 33274
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/recovery/prepare-fee.json",
+      "sha256": "0c323653ef94b405e235655923e7521957919c6eef13e203ec0b8335c06a4ddb",
+      "bytes": 46883
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/recovery/deploy-vault.json",
+      "sha256": "c3d432a8bca5d7c27412cc1b04a64129b6da1a65111e5e83f3bc5b4ee04c73df",
+      "bytes": 3728
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/recovery/successor-pop-fee.json",
+      "sha256": "8ef385374a652566f2535fa12fbca867b7af79ed08749f936fd4f45b774f30c8",
+      "bytes": 34070
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/recovery/successor-primary-pop-fee.json",
+      "sha256": "76580d3f1b7a6222d9a7c1d93aec32cd30d5b16ef7996f8e21b216aae4b9e0e7",
+      "bytes": 19230
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/recovery/migrate-fee.json",
+      "sha256": "274e75675747e7c786cd6aa055e47c0fb6770f3cc69292bd578581d52c092344",
+      "bytes": 46070
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-integration/native/recovery/payment-fee.json",
+      "sha256": "1c548434fa8f4d7691b0d00701534e5ef6b2fddf91ed8847736df6881ef4ea9d",
+      "bytes": 33534
+    }
+  ],
+  "source_files": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "4df5d3dbbebb26e4d174e9561aafcb6e96ef164b4ffe4ce3168680cf43b4ad34",
+      "bytes": 23393
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "sha256": "b169b8441299507288fd653652ee2b04b4971cfa6c3a9210b976556a1245b6c2",
+      "bytes": 186156
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/recorded_fee_custody.py",
+      "sha256": "bc6b34d6c16822a68e1f3e08f6910f0ab137b72967c9a6700b79c366276ab390",
+      "bytes": 3561
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_fee_tests.rs",
+      "sha256": "cc3c42150a10e10a40445b000463bda9face210b331c287e5b1249d4820ae499",
+      "bytes": 6779
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_recorded_migration_tests.rs",
+      "sha256": "1f44862979d538f491c054d1a52834bc072b738a05bea667a456e2c44cc10ecf",
+      "bytes": 12865
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_vault.rs",
+      "sha256": "b7558b34dfbba4ee2e1b7b6ce9db89823f6b8d5c9ab0550e3108f6379019ab86",
+      "bytes": 8345
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_journal.rs",
+      "sha256": "6d9f6b2c665e5325e14dd22708d1aaa9bc0f886f2fc56746b355613b0778f2fb",
+      "bytes": 20164
+    }
+  ]
+}

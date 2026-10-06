@@ -200,6 +200,11 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/r2-fee-prepare
+      - name: Encrypted fee custody matches executed recovery messages
+        run: |
+          python test/wallet-v5r2/recorded_fee_custody.py \
+            --fixtures artifacts/context/r2-fee-prepare/native \
+            --output artifacts/context/r2-recorded-fee-custody --controls
       - name: Initial wallet preparation CLI controls
         run: |
           python test/wallet-v5r2/cli_prepare_controls.py \

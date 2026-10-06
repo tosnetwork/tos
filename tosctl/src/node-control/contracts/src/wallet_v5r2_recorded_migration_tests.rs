@@ -291,3 +291,7 @@ fn recorded_migration_submission_executed() {
     assert_eq!(installed.epoch(), 3);
     assert_eq!(installed.seqno(), 0);
 }
+
+#[cfg(feature = "native-wallet-vault")]
+#[path = "wallet_v5r2_recorded_fee_tests.rs"]
+mod recorded_fee_tests;

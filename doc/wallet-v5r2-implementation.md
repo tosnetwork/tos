@@ -2886,3 +2886,28 @@ credit 20,000. They do not demonstrate encrypted-Vault-to-live-chain integration
 current proof acquisition, device takeover/revocation, default-credit admission,
 or production readiness. Evidence: `test/wallet-v5r2/native-fee-integration-20261006.json`.
 The full SDK transaction CI and cache deletion control require this native mode.
+
+### Encrypted fee custody matches executed recovery messages
+
+`recorded_fee_custody.py` reconstructs both local enrollments and binds the
+recorded pre-transaction fee account states. Its Rust test restores the two
+public test fee seeds to separate, new-only encrypted Vault records, closes
+custody, and reopens it for each of six recovery signatures. The production
+`sign_proven_fee_from_vault` path selects leaves through the proof-bound journal,
+loads and checks enrollment, resamples the clock, reserves durably, signs and
+verifies output. No direct fixture signing callback is used in this replay.
+
+Each output body matches the SDK-encoded body byte for byte and the input body
+of the corresponding successful recorded transaction: lock, preparation,
+successor rescue POP, successor primary POP, migration and payment. Cached
+signatures read after dropping the Vault also match exactly. A stale clock
+sample after key loading is rejected without reserving a leaf for every case.
+Config-hash substitution and removal of the post-load clock sample must fail
+named semantic assertions; restored code must pass all six messages.
+
+This closes the local encrypted-custody-to-executed-message comparison. It does
+not acquire or authenticate network proofs: the account cells come from actual
+execution, while their proof metadata and local clock are explicitly synthetic.
+The prior dual-VM execution used diagnostic credit 20,000. Live deployment,
+revocation/takeover and default-credit admission remain open. Evidence:
+`test/wallet-v5r2/recorded-fee-custody-20261006.json`.
