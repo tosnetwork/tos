@@ -206,7 +206,7 @@ class ValidatorCleanupManager {
       // A full window (runtime retirements arrived meanwhile) makes room by evicting
       // one closed entry: its record is durable and comes back on a later sweep, so the
       // sweep keeps moving however many retirements fill the window.
-      if (pending_.size() >= resident_limit_ && !evict_one_closed()) {
+      if (pending_.size() >= resident_limit_ && !evict_one_closed(request.token)) {
         // Nothing evictable (every entry awaits its close or is in flight): resume here.
         sweep_cursor_ = resume;
         disk_backlog_ = true;
@@ -215,6 +215,7 @@ class ValidatorCleanupManager {
       }
       resume = key;
       if (on_loaded_at_startup(std::move(record))) {
+        pending_[session].admitted_by_page = request.token;
         ++admitted;
       }
     }
@@ -230,11 +231,12 @@ class ValidatorCleanupManager {
       if (!evicted_in_sweep_) {
         disk_backlog_ = false;
       }
-      if (!reserved_in_sweep_) {
+      if (!reserved_in_sweep_ && !evicted_unexamined_in_sweep_) {
         rotation_idle_gc_ = last_gc_;
       }
       sweep_cursor_.clear();
       evicted_in_sweep_ = false;
+      evicted_unexamined_in_sweep_ = false;
       reserved_in_sweep_ = false;
     }
     return admitted;
@@ -389,6 +391,7 @@ class ValidatorCleanupManager {
         auto is_closed = [&entry](const ValidatorSessionId&) { return entry.closed; };
         bool eligible = validator_cleanup_eligible(entry.record, gc_checkpoint, ancestor_or_equal_of_gc,
                                                    gc_shard_catchain_seqno, is_live, is_closed);
+        entry.examined = true;
         entry.examined_ineligible = !eligible;
         ++examined_since_reservation_;
         if (on_examined && entry.last_reported_eligible != eligible) {
@@ -476,22 +479,39 @@ class ValidatorCleanupManager {
   }
 
  private:
-  // Keep the window bounded: evict closed, not-in-flight entries (their records are
-  // durable, so the store still holds every deletion authority) until the window is
-  // within its limit or nothing else is evictable.
-  // Evict one closed, not-in-flight entry, preferring one last judged ineligible.
-  bool evict_one_closed() {
-    auto victim = pending_.end();
+  // Make room for a record of page `page_token`: evict one closed, not-in-flight
+  // entry. Preference: examined and ineligible, then any examined entry, then an
+  // unexamined runtime retirement. A record admitted from this same page is never
+  // evicted before a pass has examined it -- the page would otherwise push out its own
+  // records undecided. Evicting any unexamined entry means the current sweep can no
+  // longer prove that every record was examined, so it will not pause rotation when it
+  // finishes. Returns false when nothing is evictable; the caller stops the page there.
+  bool evict_one_closed(uint64_t page_token) {
+    auto examined_victim = pending_.end();
+    auto unexamined_victim = pending_.end();
     for (auto it = pending_.begin(); it != pending_.end(); ++it) {
-      if (it->second.state == EntryState::Pending && it->second.closed) {
-        victim = it;
-        if (it->second.examined_ineligible) {
+      const auto& entry = it->second;
+      if (entry.state != EntryState::Pending || !entry.closed) {
+        continue;
+      }
+      if (entry.examined) {
+        if (entry.examined_ineligible) {
+          examined_victim = it;
           break;
         }
+        if (examined_victim == pending_.end()) {
+          examined_victim = it;
+        }
+      } else if (entry.admitted_by_page != page_token && unexamined_victim == pending_.end()) {
+        unexamined_victim = it;
       }
     }
+    auto victim = examined_victim != pending_.end() ? examined_victim : unexamined_victim;
     if (victim == pending_.end()) {
       return false;
+    }
+    if (!victim->second.examined) {
+      evicted_unexamined_in_sweep_ = true;
     }
     pending_.erase(victim);
     disk_backlog_ = true;
@@ -499,14 +519,25 @@ class ValidatorCleanupManager {
     return true;
   }
 
+  // Keep the window bounded: evict closed, not-in-flight entries (their records are
+  // durable, so the store still holds every deletion authority) until the window is
+  // within its limit or nothing else is evictable. Examined entries go first; if an
+  // unexamined one must go to hold the bound, the current sweep can no longer prove
+  // that every record was examined, so it does not pause rotation when it finishes.
   void trim_to_limit() {
-    for (auto evict = pending_.begin(); pending_.size() > resident_limit_ && evict != pending_.end();) {
-      if (evict->second.state == EntryState::Pending && evict->second.closed) {
-        evict = pending_.erase(evict);
-        disk_backlog_ = true;
-        evicted_in_sweep_ = true;
-      } else {
-        ++evict;
+    for (bool examined_only : {true, false}) {
+      for (auto evict = pending_.begin(); pending_.size() > resident_limit_ && evict != pending_.end();) {
+        auto& entry = evict->second;
+        if (entry.state == EntryState::Pending && entry.closed && (entry.examined || !examined_only)) {
+          if (!entry.examined) {
+            evicted_unexamined_in_sweep_ = true;
+          }
+          evict = pending_.erase(evict);
+          disk_backlog_ = true;
+          evicted_in_sweep_ = true;
+        } else {
+          ++evict;
+        }
       }
     }
   }
@@ -528,6 +559,10 @@ class ValidatorCleanupManager {
     // Examined and found ineligible on its latest examination: a stalled window
     // evicts these first.
     bool examined_ineligible = false;
+    // Examined by at least one pass since it became resident.
+    bool examined = false;
+    // Token of the page that admitted it (0 for a runtime retirement).
+    uint64_t admitted_by_page = 0;
   };
   std::map<ValidatorSessionId, Entry> pending_;
   // Incarnation token of each currently-live session (created, not yet retired).
@@ -555,6 +590,8 @@ class ValidatorCleanupManager {
   // An entry was evicted since the current sweep began, so a finished sweep does
   // not prove that everything on disk is resident.
   bool evicted_in_sweep_ = false;
+  // An entry no pass had examined was evicted since the current sweep began.
+  bool evicted_unexamined_in_sweep_ = false;
   bool page_in_flight_ = false;
   uint64_t page_token_ = 0;
   // Keys of sessions retired while the current page was in flight, after the page's

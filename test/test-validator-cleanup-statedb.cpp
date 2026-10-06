@@ -801,6 +801,61 @@ TEST(ValidatorCleanupStateDb, page_record_beyond_the_tracked_retirements_is_not_
   td::rmrf(path).ignore();
 }
 
+// A full window must not evict a record admitted earlier in the same page before any
+// pass has examined it. Here a four-record page (one eligible, three not yet) arrives
+// while four closed, not-yet-eligible runtime retirements fill a window of four; the
+// eligible record must still be examined and reclaimed with the GC block unchanged.
+TEST(ValidatorCleanupStateDb, page_admissions_are_not_evicted_before_examination) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto with_first_byte = [](uint8_t first, tos::BlockSeqno retire_seqno) {
+      PendingValidatorConsensusDbCleanup rec;
+      rec.session_id = make_session_id(0x22);
+      rec.session_id.as_slice()[0] = static_cast<char>(first);
+      rec.retirement_checkpoint = make_checkpoint(retire_seqno);
+      rec.dir_name = consensus_db_dir_name(kShard, 7, rec.session_id, td::Slice(""));
+      return rec;
+    };
+    auto eligible = with_first_byte(0x80, 100);
+    store_validator_cleanup_record(kv, eligible);
+    for (uint8_t b = 0x81; b <= 0x83; b++) {
+      store_validator_cleanup_record(kv, with_first_byte(b, 900));
+    }
+    ValidatorCleanupManager m(4);
+    // A pass has already run at this GC block, as on a running node.
+    ASSERT_TRUE(m.begin_eligible_deletes(
+                     make_checkpoint(500), [](const tos::BlockIdExt& r) { return r.seqno() <= 500; },
+                     [](tos::ShardIdFull) -> std::optional<tos::CatchainSeqno> { return 10; },
+                     [](const tos::ValidatorSessionId&) { return false; }, 16, 256, 64)
+                    .empty());
+    bool filled = false;
+    BacklogDrive drive{kv, m, [](const tos::BlockIdExt& r) { return r.seqno() <= 500; }};
+    drive.while_page_in_flight = [&] {
+      if (filled) {
+        return;
+      }
+      filled = true;
+      // Four lower-key runtime retirements, closed and not yet eligible.
+      for (uint8_t b = 0x10; b < 0x14; b++) {
+        auto rec = with_first_byte(b, 900);
+        store_validator_cleanup_record(kv, rec);
+        m.on_group_created(rec.session_id);
+        auto gen = m.on_group_retired(rec);
+        m.on_close_confirmed(rec.session_id, gen);
+      }
+    };
+    drive.run();
+    ASSERT_TRUE(filled);
+    ASSERT_EQ(drive.erased_total, static_cast<size_t>(1));
+    for (const auto& r : load_validator_cleanup_records(kv)) {
+      ASSERT_TRUE(!(r == eligible));
+    }
+    ASSERT_TRUE(drive.max_resident <= m.resident_limit());
+  }
+  td::rmrf(path).ignore();
+}
+
 // The page read itself: bounded by keys examined (malformed values included), resumes
 // strictly after the last key, and reports the end of the range.
 TEST(ValidatorCleanupStateDb, page_read_is_bounded_and_resumable) {
