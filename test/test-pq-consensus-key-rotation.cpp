@@ -647,6 +647,11 @@ void registry_checks() {
     check("readers_b_refused_at_100", !b->sign_election("100").has_value());
     set_test_clock({99});
     check("readers_membership_refused_at_99", !validator::node_validator_membership(set_b, {}, {}, custody, 99).second);
+    const auto usable_at_99 = custody.usable_key_ids(validator_id, 99);
+    check("readers_usable_keys_at_99_are_only_a",
+          usable_at_99.size() == 1 && usable_at_99.front() == validator::PqConsensusCustody::key_id_of(*a));
+    check("readers_holds_refuses_b_at_99", !custody.holds(validator_id, id_b, 99));
+    check("readers_report_b_expired_at_99", custody.report_expired(validator_id, id_b, 100, 99));
     check("readers_descriptor_matching_refused_at_99",
           custody.get_matching_store(validator_id, set_with_b[0], 99) == nullptr);
     check("readers_vote_signer_refused_at_99",
@@ -664,6 +669,26 @@ void registry_checks() {
     check("readers_fresh_store_refuses_consensus", !fresh_b->sign_consensus("x").has_value());
     check("readers_fresh_store_refuses_config_votes", !fresh_b->sign_config_vote("x").has_value());
     check("readers_fresh_store_refuses_election", !fresh_b->sign_election("x").has_value());
+  }
+
+  // Reporting alone retires: the key list reports C expired at 100 (no signature, no other
+  // custody question); with the clock back at 99, C signs nothing and is not usable.
+  {
+    const auto validator_id = ValidatorId{filled(0x85)};
+    const auto keep = key_from('\x4c');
+    const auto c = key_from('\x4d', 100);
+    const auto id_c = validator::PqConsensusCustody::key_id_of(*c);
+    validator::PqConsensusCustody custody;
+    check("report_holds_keep", custody.install(validator_id, keep, 0, 0).is_ok());
+    check("report_holds_c", custody.install(validator_id, c, 50, 100).is_ok());
+    check("report_c_not_expired_at_99_before", !custody.report_expired(validator_id, id_c, 100, 99));
+    check("report_c_expired_at_100", custody.report_expired(validator_id, id_c, 100, 100));
+    set_test_clock({99});
+    check("report_c_signs_nothing_after_the_clock_goes_back", !c->sign_consensus("99").has_value() && c->retired());
+    check("report_c_not_usable_at_99", custody.usable_key_ids(validator_id, 99).size() == 1);
+    // A key that is not held is reported by its timestamp alone.
+    check("report_unheld_key_by_timestamp", custody.report_expired(validator_id, std::nullopt, 100, 100) &&
+                                                !custody.report_expired(validator_id, std::nullopt, 100, 99));
   }
 
   // Two stores of one identity in two threads: once the retirement through one has

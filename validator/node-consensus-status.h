@@ -292,6 +292,21 @@ class PqConsensusCustody {
     return held != it->second.end() && expired(held->first, held->second, now);
   }
 
+  // Whether a configured key is to be reported as expired at `now`. A held key is judged
+  // by custody first -- which retires it if its window has closed at `now` -- so that a
+  // key reported expired is never revived by a clock stepped back afterwards; only a key
+  // that is not held (not loaded, or of no known identity) falls back to its timestamp.
+  bool report_expired(const tos::ValidatorId& validator_id, const std::optional<tos::ConsensusKeyId>& key_id,
+                      td::uint32 expire_at, td::uint32 now) const {
+    if (key_id) {
+      auto it = stores_.find(validator_id);
+      if (it != stores_.end() && it->second.count(*key_id) != 0) {
+        return key_expired(validator_id, *key_id, now);
+      }
+    }
+    return tos::pq::consensus_key_expired(expire_at, now);
+  }
+
   // Why removing `key_id` at `now` must be refused, or nothing. One clock reading, and the
   // process's retired keys, decide everything: the key itself is not refused once expired
   // or retired, and is refused while usable if any of `sets` lists it for this validator;

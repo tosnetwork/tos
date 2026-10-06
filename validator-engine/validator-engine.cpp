@@ -5000,9 +5000,14 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKeyInfo> ValidatorE
   }
   return tos::create_tl_object<tos::tos_api::engine_validator_pqConsensusKeyInfo>(
       key_id, key.consensus_key_file, static_cast<td::int32>(key.valid_from), static_cast<td::int32>(key.expire_at),
-      tos::pq::consensus_key_expired(key.expire_at, now) ||
-          (config_.pq_consensus && !key_id.is_zero() &&
-           pq_custody_.key_expired(config_.pq_consensus->validator_id, tos::ConsensusKeyId{key_id}, now)));
+      // A held key is judged by custody first, which retires it if it has expired; the
+      // timestamp alone is used only for a key this node does not hold.
+      config_.pq_consensus
+          ? pq_custody_.report_expired(
+                config_.pq_consensus->validator_id,
+                key_id.is_zero() ? std::nullopt : std::optional<tos::ConsensusKeyId>(tos::ConsensusKeyId{key_id}),
+                key.expire_at, now)
+          : tos::pq::consensus_key_expired(key.expire_at, now));
 }
 
 void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_getPqConsensusKeys &query, td::BufferSlice data,
