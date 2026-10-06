@@ -1188,6 +1188,206 @@ mod fee_state_tests {
 
     #[cfg(feature = "native-wallet-signer")]
     #[test]
+    fn native_migration_requires_both_funded_pops() {
+        use crate::proven_transactions::ProvenTransaction;
+        use crate::wallet_v5r2::{AuthAction, AuthRole};
+        use crate::wallet_v5r2_genesis::SuccessorDeployment;
+        use crate::wallet_v5r2_pop::{FundedPopReceipts, PopRequest};
+        use crate::wallet_v5r2_wallet_state::{MigrationEvidence, ProvenWalletState};
+        use chain_block::{HashUpdate, Message, SliceData, Transaction};
+        use wallet_pq_signer::{Role, Signer};
+        let mut signer = Signer::import_and_wipe(Role::Rescue, &mut [0x22; 48]).unwrap();
+        let (birth, proof) = fixture_with_keys(
+            RescuePolicy::Required,
+            [2; 1312],
+            signer.public_key().try_into().unwrap(),
+        );
+        let mut wallet = account_proof(proof, birth.wallet_init());
+        let (_, proof) = fixture();
+        let module = account_proof(proof, birth.module_init());
+        set_wallet_counters(&birth, &mut wallet, u32::MAX, 9, u64::MAX, u64::MAX);
+        let view = ProvenWalletState::bind_initial(&wallet, &module, &birth, 4620, 30).unwrap();
+        let (template, _) = fixture_with_keys(RescuePolicy::Required, [8; 1312], [9; 32]);
+        let successor =
+            SuccessorDeployment::new(template, *birth.wallet_init().repr_hash().as_array())
+                .unwrap();
+        let (_, proof) = fixture();
+        let vault = account_proof(proof, successor.vault_init());
+        // Synthetic successful executions isolate client gates. These are NOT
+        // evidence that the zero signatures below execute in either VM.
+        let make = |role, time, checkpoint, anchor| {
+            let request = PopRequest::fresh_successor(&successor, role, 4700, 4600).unwrap();
+            let (_, root) = super::transaction_receipt_tests::fixture("successor-pop-module");
+            let module_template = Transaction::construct_from_cell(root).unwrap();
+            let (_, root) = super::transaction_receipt_tests::fixture("successor-pop-fee");
+            let fee_template = Transaction::construct_from_cell(root).unwrap();
+            let (_, p) = fixture();
+            let mp = account_proof(p, successor.module_init());
+            let (_, p) = fixture();
+            let fp = account_proof(p, successor.vault_init());
+            let mut delivered = module_template.read_in_msg().unwrap().unwrap();
+            delivered.int_header_mut().unwrap().set_src(fp.account.get_addr().unwrap().clone());
+            delivered.int_header_mut().unwrap().set_dst(mp.account.get_addr().unwrap().clone());
+            delivered.set_body(
+                SliceData::load_cell(
+                    request.encode_submission(&vec![0; role.signature_bytes()]).unwrap(),
+                )
+                .unwrap(),
+            );
+            let mut external = fee_template.read_in_msg().unwrap().unwrap();
+            external.ext_in_header_mut().unwrap().dst = fp.account.get_addr().unwrap().clone();
+            let receipt = |mut p: ProvenAccountState,
+                           msg: &Message,
+                           out: Option<&Message>,
+                           template: &Transaction,
+                           lt| {
+                let mut tx = Transaction::with_account_and_message(&p.account, msg, lt).unwrap();
+                tx.set_now(time);
+                tx.write_description(&template.read_description().unwrap()).unwrap();
+                tx.write_state_update(&HashUpdate::with_hashes(
+                    p.root.repr_hash(),
+                    p.root.repr_hash(),
+                ))
+                .unwrap();
+                if let Some(out) = out {
+                    tx.add_out_message(out).unwrap();
+                }
+                p.evidence.checkpoint.seqno = checkpoint;
+                p.anchor_id = anchor;
+                let root = tx.serialize().unwrap();
+                p.last_transaction_hash = *root.repr_hash().as_array();
+                p.evidence.account.last_trans_lt = lt;
+                ProvenTransaction::latest(&p, root).unwrap()
+            };
+            let before_fee = fp.root.clone();
+            let before_module = mp.root.clone();
+            let fee = receipt(fp, &external, Some(&delivered), &fee_template, 100);
+            let module = receipt(mp, &delivered, None, &module_template, 101);
+            (request, fee, module, before_fee, before_module, external.serialize().unwrap())
+        };
+        let primary = make(AuthRole::Primary, 4600, 1, [0; 32]);
+        let rescue = make(AuthRole::Rescue, 4600, 1, [0; 32]);
+        fn funded(
+            case: &(PopRequest, ProvenTransaction, ProvenTransaction, Cell, Cell, Cell),
+        ) -> FundedPopReceipts<'_> {
+            FundedPopReceipts {
+                fee: &case.1,
+                module: &case.2,
+                fee_before: case.3.clone(),
+                module_before: case.4.clone(),
+            }
+        }
+        let p = funded(&primary);
+        let r = funded(&rescue);
+        let mut evidence = MigrationEvidence {
+            primary_request: &primary.0,
+            primary_receipts: &p,
+            primary_external: &primary.5,
+            rescue_request: &rescue.0,
+            rescue_receipts: &r,
+            rescue_external: &rescue.5,
+            vault: &vault,
+            policy: None,
+        };
+        let expected = view.migration_request(4620, 4700, &successor, &evidence).unwrap();
+        let signed =
+            view.sign_migration_submission(4620, 4700, &successor, &evidence, &mut signer).unwrap();
+        assert_eq!(signed.reference(0).unwrap().repr_hash(), expected.cell().repr_hash());
+        let action = AuthAction::Migrate {
+            module_init: successor.module_init().clone(),
+            metadata: successor.metadata().clone(),
+            vault_init: successor.vault_init().clone(),
+        };
+        assert!(
+            view.sign_rescue_submission(4620, 4700, action, &mut signer).is_err(),
+            "ungated migration signed"
+        );
+        evidence.primary_request = &rescue.0;
+        evidence.primary_receipts = &r;
+        evidence.primary_external = &rescue.5;
+        assert!(
+            view.migration_request(4620, 4700, &successor, &evidence).is_err(),
+            "accepted duplicate rescue POPs"
+        );
+        evidence.primary_request = &primary.0;
+        evidence.primary_receipts = &p;
+        evidence.primary_external = &primary.5;
+        let wrong = Cell::default();
+        evidence.primary_external = &wrong;
+        assert!(
+            view.migration_request(4620, 4700, &successor, &evidence).is_err(),
+            "primary funded POP bypassed"
+        );
+        evidence.primary_external = &primary.5;
+        evidence.rescue_external = &wrong;
+        assert!(
+            view.migration_request(4620, 4700, &successor, &evidence).is_err(),
+            "rescue funded POP bypassed"
+        );
+        evidence.rescue_external = &rescue.5;
+        for (time, checkpoint, anchor, reason) in [
+            (4580, 1, [0; 32], "stale migration POP"),
+            (4600, 2, [0; 32], "checkpoint or trust anchor"),
+            (4600, 1, [1; 32], "checkpoint or trust anchor"),
+        ] {
+            let case = make(AuthRole::Primary, time, checkpoint, anchor);
+            let receipts = funded(&case);
+            let e = MigrationEvidence {
+                primary_request: &case.0,
+                primary_receipts: &receipts,
+                primary_external: &case.5,
+                ..evidence
+            };
+            let error = view
+                .migration_request(4620, 4700, &successor, &e)
+                .err()
+                .expect("accepted stale or unrelated POP");
+            assert!(error.to_string().contains(reason), "{error}");
+        }
+        let (_, proof) = fixture();
+        let mut exhausted = account_proof(proof, successor.vault_init());
+        let mut data = SliceData::load_cell(exhausted.account.get_data().unwrap()).unwrap();
+        let mut b = BuilderData::new();
+        b.append_u8(data.get_next_byte().unwrap()).unwrap();
+        data.move_by(32).unwrap();
+        b.append_u32(crate::lms_fee_schedule::LEAF_COUNT).unwrap();
+        b.append_raw(&data.get_bytestring(0), data.remaining_bits()).unwrap();
+        while data.remaining_references() > 0 {
+            b.checked_append_reference(data.checked_drain_reference().unwrap()).unwrap();
+        }
+        assert!(exhausted.account.set_data(b.into_cell().unwrap()));
+        refresh_proof_data(&mut exhausted);
+        let e = MigrationEvidence { vault: &exhausted, ..evidence };
+        assert!(
+            view.migration_request(4620, 4700, &successor, &e).is_err(),
+            "accepted exhausted successor fee tree"
+        );
+        for stale_checkpoint in [false, true] {
+            let (_, proof) = fixture();
+            let mut bad_vault = account_proof(proof, successor.vault_init());
+            if stale_checkpoint {
+                bad_vault.evidence.checkpoint.seqno = 2;
+            } else {
+                bad_vault.evidence.live = false;
+            }
+            let e = MigrationEvidence { vault: &bad_vault, ..evidence };
+            let error = view
+                .migration_request(4620, 4700, &successor, &e)
+                .err()
+                .expect("accepted unproven successor vault");
+            assert!(
+                error.to_string().contains(if stale_checkpoint {
+                    "vault checkpoint"
+                } else {
+                    "live proof"
+                }),
+                "{error}"
+            );
+        }
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    #[test]
     fn native_preparation_signing_binds_successor_and_current_rescue() {
         use crate::wallet_v5r2_genesis::SuccessorDeployment;
         use crate::wallet_v5r2_policy::tests::policy;

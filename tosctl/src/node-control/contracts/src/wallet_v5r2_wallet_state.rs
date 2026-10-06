@@ -7,8 +7,22 @@ use crate::wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis};
 use crate::wallet_v5r2_prepare::{PreparationAmounts, PreparationBinding, PreparationRequest};
 use chain_block::{Cell, CellType, SliceData};
 
+/// Both locally generated requests and their exact funded executions. Fetch
+/// receipts and the current successor vault at the wallet's checkpoint.
+pub struct MigrationEvidence<'a> {
+    pub primary_request: &'a crate::wallet_v5r2_pop::PopRequest,
+    pub primary_receipts: &'a crate::wallet_v5r2_pop::FundedPopReceipts<'a>,
+    pub primary_external: &'a Cell,
+    pub rescue_request: &'a crate::wallet_v5r2_pop::PopRequest,
+    pub rescue_receipts: &'a crate::wallet_v5r2_pop::FundedPopReceipts<'a>,
+    pub rescue_external: &'a Cell,
+    pub vault: &'a ProvenAccountState,
+    pub policy: Option<&'a ProvenAccountState>,
+}
+
 pub struct ProvenWalletState {
     checkpoint: crate::MasterchainCheckpoint,
+    anchor_id: [u8; 32],
     global_id: i32,
     network: [u8; 32],
     wallet: [u8; 32],
@@ -171,6 +185,7 @@ impl ProvenWalletState {
         let primary_key = primary_key_bytes(md.checked_drain_reference()?)?;
         let result = Self {
             checkpoint: w.checkpoint.clone(),
+            anchor_id: *wallet.anchor_id(),
             global_id,
             network,
             wallet: wallet_hash,
@@ -249,8 +264,8 @@ impl ProvenWalletState {
         self.sign_submission(request, signer)
     }
 
-    /// Policy-independent rescue signing; caller must approve the action and
-    /// verify successor deployment/POP when migrating. No transport is implied.
+    /// Policy-independent rescue signing. Migration uses the separate funded
+    /// dual-POP gate below. Caller approval is still required; no transport is implied.
     #[cfg(feature = "native-wallet-signer")]
     pub fn sign_rescue_submission(
         &self,
@@ -259,6 +274,10 @@ impl ProvenWalletState {
         action: AuthAction,
         signer: &mut wallet_pq_signer::Signer,
     ) -> anyhow::Result<Cell> {
+        anyhow::ensure!(
+            !matches!(action, AuthAction::Migrate { .. }),
+            "migration signing requires both funded POPs"
+        );
         let request = self.rescue_request(now, valid_until, action)?;
         self.sign_submission(request, signer)
     }
@@ -296,6 +315,26 @@ impl ProvenWalletState {
     ) -> anyhow::Result<PreparationRequest> {
         self.fresh(now)?;
         anyhow::ensure!(valid_until > now, "preparation deadline expired by local clock");
+        self.validate_successor(successor, policy_source, now)?;
+        PreparationRequest::new(
+            PreparationBinding {
+                global_id: self.global_id,
+                network: self.network,
+                wallet: self.wallet,
+                source_module: self.module,
+                valid_until,
+            },
+            successor.preparation_plan(amounts.module, amounts.vault),
+            self.module_time,
+        )
+    }
+
+    fn validate_successor(
+        &self,
+        successor: &SuccessorDeployment,
+        policy_source: Option<&ProvenAccountState>,
+        now: u32,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(successor.wallet() == &self.wallet, "preparation targets another wallet");
         let module_code =
             SliceData::load_cell(successor.module_init().clone())?.checked_drain_reference()?;
@@ -327,17 +366,87 @@ impl ProvenWalletState {
             2 => (),
             _ => anyhow::bail!("unsupported successor policy"),
         }
-        PreparationRequest::new(
-            PreparationBinding {
-                global_id: self.global_id,
-                network: self.network,
-                wallet: self.wallet,
-                source_module: self.module,
-                valid_until,
+        Ok(())
+    }
+
+    /// Build migration only after both keys proved funded possession through
+    /// this exact successor route. Historical POPs must be recent under the
+    /// wallet's age policy and authenticated at this same checkpoint.
+    pub fn migration_request(
+        &self,
+        now: u32,
+        valid_until: u32,
+        successor: &SuccessorDeployment,
+        evidence: &MigrationEvidence<'_>,
+    ) -> anyhow::Result<AuthRequest> {
+        self.fresh(now)?;
+        self.validate_successor(successor, evidence.policy, now)?;
+        anyhow::ensure!(
+            evidence.primary_request.role() == AuthRole::Primary
+                && evidence.rescue_request.role() == AuthRole::Rescue,
+            "migration requires one POP for each key"
+        );
+        for receipt in [
+            evidence.primary_receipts.fee,
+            evidence.primary_receipts.module,
+            evidence.rescue_receipts.fee,
+            evidence.rescue_receipts.module,
+        ] {
+            receipt.require_checkpoint(&self.checkpoint, &self.anchor_id)?;
+            let age = now
+                .checked_sub(receipt.transaction().now())
+                .ok_or_else(|| anyhow::anyhow!("migration POP time is in the future"))?;
+            anyhow::ensure!(age <= self.max_age, "stale migration POP");
+        }
+        anyhow::ensure!(
+            evidence.vault.evidence().checkpoint == self.checkpoint
+                && evidence.vault.evidence().block_gen_utime == self.master_time
+                && evidence.vault.anchor_id() == &self.anchor_id,
+            "migration vault checkpoint mismatch"
+        );
+        let fee = crate::wallet_v5r2_state::ProvenFeeVault::bind_successor(
+            evidence.vault,
+            successor,
+            now,
+            self.max_age,
+        )?;
+        anyhow::ensure!(
+            fee.next_leaf() < crate::lms_fee_schedule::LEAF_COUNT,
+            "successor fee tree exhausted"
+        );
+        evidence.primary_request.require_successor_funded_receipt(
+            evidence.primary_receipts,
+            evidence.primary_external,
+            successor,
+        )?;
+        evidence.rescue_request.require_successor_funded_receipt(
+            evidence.rescue_receipts,
+            evidence.rescue_external,
+            successor,
+        )?;
+        self.rescue_request(
+            now,
+            valid_until,
+            AuthAction::Migrate {
+                module_init: successor.module_init().clone(),
+                metadata: successor.metadata().clone(),
+                vault_init: successor.vault_init().clone(),
             },
-            successor.preparation_plan(amounts.module, amounts.vault),
-            self.module_time,
         )
+    }
+
+    /// Sign the gated migration with the currently installed SLH key. This
+    /// does not submit, reserve a fee leaf, or prove completed migration.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn sign_migration_submission(
+        &self,
+        now: u32,
+        valid_until: u32,
+        successor: &SuccessorDeployment,
+        evidence: &MigrationEvidence<'_>,
+        signer: &mut wallet_pq_signer::Signer,
+    ) -> anyhow::Result<Cell> {
+        self.sign_submission(self.migration_request(now, valid_until, successor, evidence)?, signer)
     }
 
     /// SLH-only preparation signing from the current installed module. It

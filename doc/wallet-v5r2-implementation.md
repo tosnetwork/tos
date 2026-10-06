@@ -1554,5 +1554,42 @@ Wrong vault identity, altered executed code/configuration, internal instead of
 external funding input, and a missing emitted message all fail. Five new guard
 deletion controls reproduce the corresponding false acceptances alongside the
 five existing POP receipt controls. Evidence is indexed in
-`test/wallet-v5r2/funded-pop-receipt-20261006.json`. Both funded per-key proofs still
-need to be consumed by the pending strict migration orchestration gate.
+`test/wallet-v5r2/funded-pop-receipt-20261006.json`. The migration signing gate below consumes both funded per-key proofs.
+
+
+## Migration signing requires both funded POPs
+
+`ProvenWalletState::migration_request` and `sign_migration_submission` consume
+`MigrationEvidence`: distinct PRIMARY and RESCUE requests, both fee-vault/module
+receipt pairs and their exact external submissions, plus a current successor-vault
+proof. The existing native `sign_rescue_submission` rejects raw `Migrate` actions;
+callers must use the gated migration method. The low-level AUTH wire encoder remains
+available and does not claim to enforce a client lifecycle.
+
+The gate checks the successor's wallet, namespace, pinned code and policy, verifies
+both funded POPs for that exact deployment, and requires all four transactions to
+be authenticated at the wallet's checkpoint and trust anchor. Transaction history
+now preserves its originating proof checkpoint when walking backwards. Each POP
+transaction must also be recent under the wallet snapshot's maximum-age policy.
+The current successor vault must be live and match that checkpoint, masterchain
+time, trust anchor and exact enrollment, and its fee tree must not be exhausted.
+READY successors still need current global primary authorization; REQUIRED
+successors do not. Migration uses the installed rescue key and existing epoch
+rules, preserving recovery after execute counters are exhausted.
+
+The new gate test uses synthetic successful transaction metadata and placeholder
+POP signatures to isolate client validation. It is not a successful VM execution
+of those POPs. It exercises a real native SLH migration signature; earlier funded
+POP receipt tests separately use actual recorded native transaction pairs. Nine
+semantic deletion controls cover generic signing bypass, duplicate roles, stale
+POPs, receipt/vault checkpoint substitution, non-live vault acceptance, exhausted
+fee trees, and removal of either funded-POP verification. Both architecture CI
+jobs run the new control suite.
+
+This closes the native client signing bypass, not the full release gate. Callers
+still generate and retain fresh requests, collect trustworthy proofs, approve the
+migration, coordinate signing/fee reservations and funding, verify successful
+on-chain installation and a subsequent payment, and handle retries/restores.
+Current reserve sufficiency, LMS custody continuity, full dual-POP-to-migration VM
+integration and default-credit admission still require validation. Evidence:
+`test/wallet-v5r2/migration-signing-20261006.json`.

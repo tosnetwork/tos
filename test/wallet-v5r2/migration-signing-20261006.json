@@ -1,0 +1,104 @@
+{
+  "base_commit": "25486cf3ecaf61707c678be4caa590a595448369",
+  "scope": "Native client migration signing requires both funded per-key POPs at the current checkpoint, current successor vault state and unexhausted fee tree",
+  "tests": {
+    "feature_state": 14,
+    "default_state": 10,
+    "transaction_receipts": 11,
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "controls": {
+    "generic_bypass": {
+      "exit": 101,
+      "semantic_failure": "ungated migration signed"
+    },
+    "both_roles": {
+      "exit": 101,
+      "semantic_failure": "accepted duplicate rescue POPs"
+    },
+    "fresh_pop": {
+      "exit": 101,
+      "semantic_failure": "accepted stale or unrelated POP"
+    },
+    "receipt_checkpoint": {
+      "exit": 101,
+      "semantic_failure": "accepted stale or unrelated POP"
+    },
+    "vault_checkpoint": {
+      "exit": 101,
+      "semantic_failure": "accepted unproven successor vault"
+    },
+    "vault_live": {
+      "exit": 101,
+      "semantic_failure": "accepted unproven successor vault"
+    },
+    "vault_exhaustion": {
+      "exit": 101,
+      "semantic_failure": "accepted exhausted successor fee tree"
+    },
+    "primary_funding": {
+      "exit": 101,
+      "semantic_failure": "primary funded POP bypassed"
+    },
+    "rescue_funding": {
+      "exit": 101,
+      "semantic_failure": "rescue funded POP bypassed"
+    }
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_wallet_state.rs",
+      "sha256": "dc3fadeab38a07b6c22d1601e25a2562d691a6f4c3ee095196710dc8bad2b8a6",
+      "bytes": 22826
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_transactions.rs",
+      "sha256": "2b4a0fc8b7703d3e14c1645b51234d40f8427c055a71d4e6b13f94db51f7ecaa",
+      "bytes": 15489
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/proven_getters.rs",
+      "sha256": "01c33455d262dc35e3be819e421607de2119607caa9593e25523f51942f9e309",
+      "bytes": 125795
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/migration_signing_controls.py",
+      "sha256": "5f22565fc818685cdf7fd8bc70b3765c7762af3b20a39c21b6ae94cf38b89b57",
+      "bytes": 4546
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "sha256": "8f44a6b86ca7a96ad5dcd4b65197f2c473f8794bf3f7b0ebccd3d6c161e14683",
+      "bytes": 13805
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-migration-signing-controls-verified/MANIFEST.json",
+      "sha256": "f13d5469d8593a2b8380408d87a3ae6d06009b99d9b2d48b7d2e14a479530db9",
+      "bytes": 3717
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-migration-signing-controls-verified/results.json",
+      "sha256": "083c69e17d948958df182cae7e335c0f702b7ace42dc83a8d3c50f97e9f9b30f",
+      "bytes": 910
+    }
+  ],
+  "commands": [
+    "python3 test/wallet-v5r2/migration_signing_controls.py --output <fresh-directory>",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib transaction_receipt_tests",
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib fee_state_tests",
+    "make -C tosctl/src fmt-check"
+  ],
+  "limitations": [
+    "New migration gate fixtures use synthetic successful execution metadata and placeholder POP signatures, not actual VM execution of a dual-POP migration.",
+    "The returned migration signature uses the real native SLH signer; existing separate funded-POP tests retain actual native transaction pairs.",
+    "Current reserve sufficiency, fee custody continuity, transport/retries, on-chain migration completion and subsequent payment remain separate requirements.",
+    "Low-level AUTH encoding and raw signer APIs remain available; this gate applies to the native proven-wallet migration signing API.",
+    "Default-credit admission and other production release gates remain open."
+  ],
+  "runner_note": "Two earlier attempts stopped on an ambiguous freshness mutation pattern and restored all sources. The verified run uses a unique migration-specific match and preflights every mutation; only its nine semantic failures count.",
+  "retention": "Retain raw logs outside Git through review and release acceptance, at least through 2027-01-06."
+}

@@ -26,6 +26,7 @@ pub struct ProvenTransaction {
     transaction: Transaction,
     address: MsgAddressInt,
     anchor_id: [u8; 32],
+    checkpoint: crate::MasterchainCheckpoint,
 }
 
 impl ProvenTransaction {
@@ -149,6 +150,7 @@ impl ProvenTransaction {
             account.evidence().account.last_trans_lt,
             address,
             *account.anchor_id(),
+            account.evidence().checkpoint.clone(),
         )?;
         anyhow::ensure!(
             result.transaction.now() <= account.evidence().account.gen_utime,
@@ -167,6 +169,7 @@ impl ProvenTransaction {
         expected_lt: u64,
         address: MsgAddressInt,
         anchor_id: [u8; 32],
+        checkpoint: crate::MasterchainCheckpoint,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             root.cell_type() == CellType::Ordinary && root.level() == 0,
@@ -182,7 +185,7 @@ impl ProvenTransaction {
             transaction.account_id() == address.address(),
             "transaction account mismatch"
         );
-        Ok(Self { root, transaction, address, anchor_id })
+        Ok(Self { root, transaction, address, anchor_id, checkpoint })
     }
 
     /// One backwards step through authenticated transaction and Account hashes.
@@ -199,6 +202,7 @@ impl ProvenTransaction {
             lt,
             self.address.clone(),
             self.anchor_id,
+            self.checkpoint.clone(),
         )?;
         anyhow::ensure!(
             previous.transaction.now() <= self.transaction.now(),
@@ -224,6 +228,18 @@ impl ProvenTransaction {
             "transaction pre-state address mismatch"
         );
         Ok(account)
+    }
+
+    pub(crate) fn require_checkpoint(
+        &self,
+        checkpoint: &crate::MasterchainCheckpoint,
+        anchor: &[u8; 32],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            &self.checkpoint == checkpoint && &self.anchor_id == anchor,
+            "receipt checkpoint or trust anchor mismatch"
+        );
+        Ok(())
     }
 
     pub fn root(&self) -> &Cell {
