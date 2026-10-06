@@ -123,13 +123,9 @@ pub enum PoolNominatorAction {
 pub struct PoolNominatorCreateCmd {
     #[arg(short = 'n', long = "name", help = "Pool name to save in config")]
     name: String,
-    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner wallet name from config")]
+    #[arg(long, help = "Owner wallet name from config")]
     owner: String,
-    #[arg(
-        allow_hyphen_values = true, value_parser = super::utils::address_arg,
-        long,
-        help = "Validator wallet name from config (usually the node's wallet)"
-    )]
+    #[arg(long, help = "Validator wallet name from config (usually the node's wallet)")]
     validator: String,
     #[arg(
         allow_hyphen_values = true, value_parser = super::utils::address_arg,
@@ -268,13 +264,9 @@ pub enum PoolSingleAction {
 pub struct PoolSingleCreateCmd {
     #[arg(short = 'n', long = "name", help = "Pool name to save in config")]
     name: String,
-    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner wallet name from config")]
+    #[arg(long, help = "Owner wallet name from config")]
     owner: String,
-    #[arg(
-        allow_hyphen_values = true, value_parser = super::utils::address_arg,
-        long,
-        help = "Validator wallet name from config (usually the node's wallet)"
-    )]
+    #[arg(long, help = "Validator wallet name from config (usually the node's wallet)")]
     validator: String,
     #[arg(
         allow_hyphen_values = true, value_parser = super::utils::address_arg,

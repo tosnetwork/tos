@@ -32,9 +32,13 @@ pub const DEPLOY_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_se
 /// clap value parser for a flag that takes an account address. The flag also allows
 /// hyphen values, because a raw masterchain address starts with `-1:`; this parser
 /// is what keeps a following option (`--to --bounce`) from being taken as the
-/// address. Accepts the raw `wc:hex` and the user-friendly form; returns the text.
+/// address. Accepts the raw `wc:hex` and the user-friendly form, ignoring surrounding
+/// whitespace; returns the trimmed text.
 pub(crate) fn address_arg(value: &str) -> Result<String, String> {
     use std::str::FromStr;
+    // Surrounding whitespace was trimmed by the commands that read these values
+    // before; trim before validating so a quoted value keeps working.
+    let value = value.trim();
     MsgAddressInt::from_str(value).map(|_| value.to_owned()).map_err(|error| {
         format!("'{value}' is not an account address ({error}); expected wc:hex or the user-friendly form")
     })

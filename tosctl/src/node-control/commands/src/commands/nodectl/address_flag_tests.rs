@@ -170,18 +170,8 @@ fn every_address_flag_accepts_a_raw_masterchain_address() {
         check::<super::pool_cmd::PoolImportCmd>("pool_cmd::PoolImportCmd", "controller"),
         check::<super::pool_cmd::PoolNominatorCreateCmd>(
             "pool_cmd::PoolNominatorCreateCmd",
-            "owner",
-        ),
-        check::<super::pool_cmd::PoolNominatorCreateCmd>(
-            "pool_cmd::PoolNominatorCreateCmd",
-            "validator",
-        ),
-        check::<super::pool_cmd::PoolNominatorCreateCmd>(
-            "pool_cmd::PoolNominatorCreateCmd",
             "controller",
         ),
-        check::<super::pool_cmd::PoolSingleCreateCmd>("pool_cmd::PoolSingleCreateCmd", "owner"),
-        check::<super::pool_cmd::PoolSingleCreateCmd>("pool_cmd::PoolSingleCreateCmd", "validator"),
         check::<super::pool_cmd::PoolSingleCreateCmd>(
             "pool_cmd::PoolSingleCreateCmd",
             "controller",
@@ -442,23 +432,7 @@ fn every_address_flag_refuses_an_option_or_a_non_address_as_its_value() {
         ),
         refuses_non_address::<super::pool_cmd::PoolNominatorCreateCmd>(
             "pool_cmd::PoolNominatorCreateCmd",
-            "owner",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolNominatorCreateCmd>(
-            "pool_cmd::PoolNominatorCreateCmd",
-            "validator",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolNominatorCreateCmd>(
-            "pool_cmd::PoolNominatorCreateCmd",
             "controller",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolSingleCreateCmd>(
-            "pool_cmd::PoolSingleCreateCmd",
-            "owner",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolSingleCreateCmd>(
-            "pool_cmd::PoolSingleCreateCmd",
-            "validator",
         ),
         refuses_non_address::<super::pool_cmd::PoolSingleCreateCmd>(
             "pool_cmd::PoolSingleCreateCmd",
@@ -597,4 +571,53 @@ fn a_missing_address_does_not_swallow_the_next_option() {
         assert!(matches.get_flag("bounce"), "{to}");
         assert!(super::wallet_cmd::WalletSendCmd::from_arg_matches(&matches).is_ok());
     }
+}
+
+/// Wallet-name flags are names looked up in the configuration, not addresses: they
+/// take any name and are not validated as addresses.
+#[test]
+fn wallet_name_flags_take_names() {
+    use clap::FromArgMatches;
+    let controller = MASTERCHAIN;
+    let single = super::pool_cmd::PoolSingleCreateCmd::augment_args(Command::new("create"))
+        .try_get_matches_from([
+            "create",
+            "--name",
+            "p",
+            "--owner",
+            "alice",
+            "--validator",
+            "bob",
+            "--controller",
+            controller,
+        ])
+        .expect("single-nominator create takes wallet names");
+    assert!(super::pool_cmd::PoolSingleCreateCmd::from_arg_matches(&single).is_ok());
+    let nominator = super::pool_cmd::PoolNominatorCreateCmd::augment_args(Command::new("create"))
+        .try_get_matches_from([
+            "create",
+            "--name",
+            "p",
+            "--owner",
+            "alice",
+            "--validator",
+            "bob",
+            "--controller",
+            controller,
+        ])
+        .expect("nominator-pool create takes wallet names");
+    assert!(super::pool_cmd::PoolNominatorCreateCmd::from_arg_matches(&nominator).is_ok());
+}
+
+/// An address with surrounding whitespace (as from a quoted shell variable) is
+/// accepted, trimmed, as the commands that read these values used to trim them.
+#[test]
+fn an_address_with_surrounding_whitespace_is_trimmed() {
+    let padded = format!("  {MASTERCHAIN}\n");
+    assert_eq!(super::utils::address_arg(&padded), Ok(MASTERCHAIN.to_owned()));
+    let matches = super::config_pool_cmd::PoolAddCmd::augment_args(Command::new("add"))
+        .ignore_errors(true)
+        .try_get_matches_from(["add", "--controller", padded.as_str()])
+        .expect("parses");
+    assert_eq!(matches.get_one::<String>("controller").map(String::as_str), Some(MASTERCHAIN));
 }
