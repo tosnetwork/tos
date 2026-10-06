@@ -485,20 +485,23 @@ impl VoteOfferCreateCmd {
                 None,
             )
             .await?;
-        rpc_client.send_boc(&write_boc(&message)?).await?;
-        // From here on the message may be on its way: every failure is reported in the
-        // final report rather than returned bare. A seqno change shows only that the
-        // wallet accepted the external message; the wallet sends in a mode that ignores
-        // action errors, so the proposal is looked for in the configuration contract.
-        let accepted = wait_for_seqno_change(
-            rpc_client.clone(),
-            &wallet_address,
-            info.seqno,
-            &common::task_cancellation::CancellationCtx::default(),
-            SEND_TIMEOUT,
+        let boc = write_boc(&message)?;
+        // From the moment the message is handed over it may be on its way, even if the
+        // answer is lost: every failure is reported in the final report rather than
+        // returned bare. A seqno change shows only that the wallet accepted the external
+        // message; the wallet sends in a mode that ignores action errors, so the
+        // proposal is looked for in the configuration contract.
+        let accepted = send_then_wait(
+            rpc_client.send_boc(&boc),
+            wait_for_seqno_change(
+                rpc_client.clone(),
+                &wallet_address,
+                info.seqno,
+                &common::task_cancellation::CancellationCtx::default(),
+                SEND_TIMEOUT,
+            ),
         )
-        .await
-        .map_err(|e| format!("{e:#}"));
+        .await;
         let mut observed: Result<Option<u32>, String> = Ok(None);
         if accepted.is_ok() {
             for _ in 0..REGISTRATION_POLLS {
@@ -548,6 +551,18 @@ impl VoteOfferCreateCmd {
         );
         Ok(())
     }
+}
+
+/// Hands the message over, then waits for the wallet to accept it. A failed hand-over
+/// is not proof the message went nowhere (the node may have forwarded it before the
+/// answer was lost), so it is an unconfirmed broadcast, not a plain error.
+pub(crate) async fn send_then_wait<S, W>(send: S, wait: W) -> Result<(), String>
+where
+    S: std::future::Future<Output = anyhow::Result<()>>,
+    W: std::future::Future<Output = anyhow::Result<()>>,
+{
+    send.await.map_err(|e| format!("the node did not confirm it took the message: {e:#}"))?;
+    wait.await.map_err(|e| format!("{e:#}"))
 }
 
 /// What can be said once the message was handed to the network: the wallet's
@@ -1793,6 +1808,24 @@ mod offer_create_tests {
         let error = wallet_storage_from_rpc(&wallet, &info).unwrap_err().to_string();
         assert!(error.contains("storage metadata"), "{error}");
         assert!(error.contains("without --wallet"), "{error}");
+    }
+
+    /// A lost answer to the send itself still yields the final report, as an
+    /// unconfirmed broadcast, and the wallet is not waited for.
+    #[tokio::test]
+    async fn a_lost_send_answer_is_an_unconfirmed_broadcast() {
+        let waited = std::sync::atomic::AtomicBool::new(false);
+        let accepted = send_then_wait(async { Err(anyhow::anyhow!("connection reset")) }, async {
+            waited.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+        assert!(!waited.load(std::sync::atomic::Ordering::SeqCst));
+        let (outcome, registered, error) = outcome_after_broadcast(None, accepted, Ok(None));
+        assert_eq!(outcome, ProposalOutcome::BroadcastUnconfirmed);
+        assert_eq!(registered, None);
+        assert!(error.is_some_and(|e| e.contains("connection reset")));
+        assert_eq!(send_then_wait(async { Ok(()) }, async { Ok(()) }).await, Ok(()));
     }
 
     #[test]
