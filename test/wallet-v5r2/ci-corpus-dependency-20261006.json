@@ -1,0 +1,119 @@
+{
+  "repository": "tosnetwork/tos",
+  "pr": 138,
+  "head_sha": "8251ca8679f5212bf7325d3ee0ae46a9994584c8",
+  "workflow_run_id": 37468758691,
+  "conclusion": "failure",
+  "diagnosis": "cryptography is imported by the early full-wallet corpus before the workflow installs the pinned package in its later SDK vector step",
+  "fix": "Move cryptography==46.0.4 installation immediately after setup-python and before Python corpus steps; keep the version pin. Current local workflow also pins checkout to pull_request.head.sha for next-run source identity.",
+  "artifacts": [
+    {
+      "architecture": "aarch64",
+      "job_id": 112286586019,
+      "artifact_id": 11417617801,
+      "archive_sha256": "76eba7062b2aeb11eb36cad54f4d7d655d05b3a289fb477c5692442a4cae6aad",
+      "archive_bytes": 38830,
+      "artifact_expires_at": "2026-10-20T13:48:51Z",
+      "checkout_commit": "32977c560926ffbfdaf7d71be5e80fd78880e6e3",
+      "member": "r2-release-wallet/auth.log",
+      "member_sha256": "ab525f8a5c5314e95174eb4c50870b54e11742b9f0b0a713928d7ff1a946e50a",
+      "member_bytes": 1374,
+      "error_excerpt": "    from test_state import fee  # noqa: E402\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/tos/tos/test/wallet-v5r2/test_state.py\", line 22, in <module>\n    from test_auth import KEY  # noqa: E402\n    ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/tos/tos/test/auth-extensions/test_auth.py\", line 13, in <module>\n    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\nModuleNotFoundError: No module named 'cryptography'"
+    },
+    {
+      "architecture": "x86_64",
+      "job_id": 112286586407,
+      "artifact_id": 11417648719,
+      "archive_sha256": "20136ab9fbfff0c698babf520165f380de68f7984a0fa22a8702f4a5fd153659",
+      "archive_bytes": 182546,
+      "artifact_expires_at": "2026-10-20T13:54:02Z",
+      "checkout_commit": "32977c560926ffbfdaf7d71be5e80fd78880e6e3",
+      "member": "r2-release-wallet/auth.log",
+      "member_sha256": "ab525f8a5c5314e95174eb4c50870b54e11742b9f0b0a713928d7ff1a946e50a",
+      "member_bytes": 1374,
+      "error_excerpt": "    from test_state import fee  # noqa: E402\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/tos/tos/test/wallet-v5r2/test_state.py\", line 22, in <module>\n    from test_auth import KEY  # noqa: E402\n    ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/runner/work/tos/tos/test/auth-extensions/test_auth.py\", line 13, in <module>\n    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\nModuleNotFoundError: No module named 'cryptography'"
+    }
+  ],
+  "fix_source_sha256": {
+    ".github/workflows/rescue-context.yml": "cb1ec85078ff5abb16a9badc553d07acd0891ee02057d430d1978ef0400f15af"
+  },
+  "verification": "Both architecture artifacts identified the same missing dependency. The fixed install ordering and exact-head checkout await the next workflow run; local corpus already passes with cryptography 46.0.4.",
+  "post_execution_static_path_checks": {
+    "date": "2026-10-06",
+    "scope": "Paths-only fixes appended after local native execution. These are read-only YAML/path/head-ref/order checks, not a runtime rerun or remote CI result. The native runtime source inputs, binaries and commands remain unchanged; final-head CI remains pending.",
+    "parser": "PyYAML 6.0.3 BaseLoader (preserves the on key)",
+    "workflows": {
+      ".github/workflows/admission-work.yml": {
+        "sha256": "58b2f407b3138fd0444324db8f77cfc398fd5bb716f765c3c75f8a81e50367b0",
+        "non_paths_structure_sha256": "303bf3cfc1e51b67c124c1719aca52c7256c7eea4b38fb47c848e7bcfe3dddf4",
+        "yaml_parsed": true,
+        "new_generator_paths_covered": [
+          "crypto/block/create-state.cpp",
+          "crypto/block/mc-config.cpp",
+          "crypto/block/mc-config.h",
+          "crypto/smartcont/CreateState.fif",
+          "crypto/smartcont/elector-code.fc",
+          "crypto/smartcont/pq-validator.fc"
+        ],
+        "exact_pr_head_checkout": true,
+        "persist_credentials": false,
+        "artifact_retention_days": 90,
+        "previous_sha256": "ba245c80ed68394d29942566a3cbb1b8d207d38e9af501b1a805e4706bd9dfbf",
+        "non_paths_structure_unchanged": true
+      },
+      ".github/workflows/rescue-context.yml": {
+        "sha256": "cb1ec85078ff5abb16a9badc553d07acd0891ee02057d430d1978ef0400f15af",
+        "non_paths_structure_sha256": "6892ae2b28c04a110d9cb7c9bf262bd18bdb40b53eec0147448d121739f351dc",
+        "yaml_parsed": true,
+        "new_generator_paths_covered": [
+          "crypto/block/create-state.cpp",
+          "crypto/block/mc-config.cpp",
+          "crypto/block/mc-config.h",
+          "crypto/smartcont/CreateState.fif",
+          "crypto/smartcont/elector-code.fc",
+          "crypto/smartcont/pq-validator.fc"
+        ],
+        "exact_pr_head_checkout": true,
+        "persist_credentials": false,
+        "artifact_retention_days": 14,
+        "previous_sha256": "8675a5da2687a02811b22c6f06f51823b7b2fbc5bc22e443a08c85b5f9a05a37",
+        "non_paths_structure_unchanged": true
+      }
+    },
+    "admission_checks": {
+      "dependencies_before_build_before_generated_checker": true,
+      "explicit_clang_and_default_quic": true,
+      "generated_checker_target_and_generation_dependencies_present": true
+    },
+    "rescue_checks": {
+      "one_pinned_dependency_install_before_first_corpus": true,
+      "pinned_rust_before_build": true,
+      "cli_and_fixture_inputs_precede_rotation_controls": true,
+      "default_rotation_mutations": 14,
+      "third_h20_fixture_parameters_and_path_match": true,
+      "third_h20_tree_excluded_from_artifact": true,
+      "job_timeout_minutes": 150,
+      "no_new_short_step_timeout": true,
+      "all_frozen_repository_source_paths_trigger_workflow": true
+    },
+    "frozen_manifest": {
+      "workflow_entries": 0,
+      "bundle_entries": 74,
+      "repository_source_entries": 67,
+      "sha256": "b11e01c2ea64823f30f8b60aa753811e3e94eaa33ee7628ed6197b3abe25517d",
+      "unchanged": true
+    },
+    "native_runtime_sources_and_commands_unchanged": true,
+    "native_source_hashes_verified": 18,
+    "native_commands_sha256": "5c853f3c373957c44241552d70352d4334eadf6330808ea15b73d589438000aa",
+    "build_compilation_or_runtime_rerun": false
+  },
+  "local_workflow_checks": {
+    "dependency_before_first_corpus": true,
+    "one_pinned_install": true,
+    "exact_pr_head_checkout": true,
+    "all_frozen_source_paths_trigger_workflow": true,
+    "public_tree_cache_excluded_from_upload": true,
+    "scope": "Local workflow structure; remote run remains required"
+  }
+}

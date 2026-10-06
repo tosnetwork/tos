@@ -1,0 +1,616 @@
+{
+  "date": "2026-10-06",
+  "status": "local baseline and four mutation/restoration controls passed; final-head CI pending",
+  "scope": "Real pool/checker on unchanged canonical candidate ConfigParams; synthetic funded accounts and shard descriptor",
+  "source_identity": {
+    "base_commit": "8251ca8679f5212bf7325d3ee0ae46a9994584c8",
+    "worktree_changes": true,
+    "note": "This local evidence covers the listed source bytes layered on the base commit; it is not a clean final-commit or remote-CI result.",
+    "sha256": {
+      "crypto/smartcont/gen-zerostate.fif": "e837c6a29ffdf605ebd723f65db1eaa29982061480982122dce4f3814d828d4e",
+      "test/wallet-v5r2/checker-gas-probe.fc": "d6792cfa16fd2adf4d7a49b2c8ca1d4a161a57eb4e791bd2ee8b921684a6f1b5",
+      "test/test-ext-message-generated-checker.cpp": "fbfa318bf9b5da143441d4cf5b7fb2986398be1f4ca4b316dea2309457cfa3ca",
+      "scripts/check-ext-message-generated.py": "da084c41fad88fb09992842edeb4171529a4af270c93d330d56a133a4d764273",
+      "validator/impl/ext-message-checker.cpp": "080ef0c13ba023e4f2f04b9dbe673b9a878931614db7c3b31504eb6207ed6a85",
+      "validator/impl/external-message.cpp": "9bfd5d53f8fb72d3cf0b4b97edd0e94ef40edebb0ab9bbdddc1f487839fc39fe",
+      "validator/impl/ext-message-pool.cpp": "e5acfb7bef80120b105c846b64272ce86cad7287b36d2b636b8995d47cb6afd1",
+      "crypto/vm/tosops.cpp": "d3bf79e7c4e2c9e1c3dc132fa392a8c5eb544954b375eabb5138a553031fb617",
+      "CMakeLists.txt": "e22f7ead274369cf9aaae13c1e6878e164041d9392495f53bcf7852dd3e747c3",
+      ".github/workflows/admission-work.yml": "58b2f407b3138fd0444324db8f77cfc398fd5bb716f765c3c75f8a81e50367b0",
+      "crypto/CMakeLists.txt": "8311785336d4dc843a5275b3b167b324f405fc2e85e633c51257dd10c88f4e70",
+      "crypto/smartcont/stdlib.fc": "77d121550d99c533cffe10d5f479c04777e6e7c34b712421473cfe6a24615717",
+      "crypto/fift/lib/Asm.fif": "a1df048428646f7f5ea2addc206a0cb2089982d967d589d5408aba90d2fedc4e",
+      "crypto/block/block.tlb": "b6885c1cedd4cb8d86433634488578825b2b7f9003a9b625bfccb2fbf0d8842a",
+      "scripts/check-ext-message-work-cli.py": "149ac5856724c7a9222524ca373ca898995fc78d3f6e91f2c39459b4c4afe9bb",
+      "test/test-ext-message-pool.cpp": "184910a14dc81cc0bca1441ff66bc3a3ef7da71e5721c2f69901727c6d1df043",
+      "test/test-ext-message-manager.cpp": "906c7eb70bc5f20475d83f933e9aa4a1de95e4eee2695d0217d2d99568fcefb3",
+      "test/test-ext-message-admission-budget.cpp": "53eda000d00f52e06dff4aa320360646d9cafe0cc3900e6610d2b42f09f0a357",
+      "test/test-validator-options.cpp": "67ed983dddf641316fec76c9ce11f3df5b77f8dd419a1f6f055f02f4716acd39"
+    }
+  },
+  "post_execution_static_path_update": {
+    "date": "2026-10-06",
+    "scope": "Added after the recorded local native execution: only workflow pull_request.paths filters were changed. Actual native runtime source inputs, binaries and executed commands were not changed or rerun.",
+    "workflow": ".github/workflows/admission-work.yml",
+    "previous_sha256": "ba245c80ed68394d29942566a3cbb1b8d207d38e9af501b1a805e4706bd9dfbf",
+    "current_sha256": "58b2f407b3138fd0444324db8f77cfc398fd5bb716f765c3c75f8a81e50367b0",
+    "non_paths_workflow_structure_unchanged": true,
+    "native_runtime_sources_and_commands_unchanged": true,
+    "build_compilation_or_runtime_rerun": false,
+    "verification_index": "ci-corpus-dependency-20261006.json"
+  },
+  "build": {
+    "platform": "Linux x86_64",
+    "cxx": "Ubuntu clang 18.1.3 (1ubuntu1)",
+    "linker": "Ubuntu LLD 18.1.3",
+    "cmake": "4.4.4",
+    "ninja": "1.13.2.git.kitware.jobserver-pipe-1",
+    "python": "3.12.14",
+    "type": "Release",
+    "use_quic_final": true,
+    "scope": "Fresh build-clang directory for all native C++ test, engine and generation-tool objects. Vendored OpenSSL 3.5.5 and QUIC dependencies were built in that directory. Only the same-repository PIC secp256k1 C archive was reused from a GCC 13.3.0 C build; no C++ coroutine objects were mixed with the old GCC build.",
+    "initial_attempts_excluded": [
+      "GCC 13.3.0 could not compile existing overlay/consensus coroutine code. No compatibility source workaround remains.",
+      "The first Clang configuration used USE_QUIC=OFF and could not link the existing validator-engine unconditional quic dependency. Reconfiguration to the repository/CI default USE_QUIC=ON and final target rebuild succeeded."
+    ],
+    "restored_binaries": {
+      "build-clang/test-ext-message-generated-checker": {
+        "sha256": "ece1ea30d339987df8d69f0789ccc1d2d5da214b8960787050b316203d7289f5",
+        "bytes": 41224984
+      },
+      "build-clang/crypto/create-state": {
+        "sha256": "d600cd2e64ce97cba746b2940bd9616eb764479043e40b729589533351261543",
+        "bytes": 12777032
+      },
+      "build-clang/crypto/func": {
+        "sha256": "31f76781b608f44132fa8f7caf601c06b6a16aa6d1937b9e6a377c709e17e8ac",
+        "bytes": 1619960
+      },
+      "build-clang/crypto/fift": {
+        "sha256": "2d3f1ae5e3d5707e7e03e57d8a1c12a2af47d29161509a8d8bfce3f830f79461",
+        "bytes": 11340080
+      },
+      "build-clang/test-ext-message-pool": {
+        "sha256": "6aff427456af772585c15902f340f79e5728e8630d333e132347c5af00729295",
+        "bytes": 13373720
+      },
+      "build-clang/test-ext-message-manager": {
+        "sha256": "3aaed0d84b5b7a70f957cdf2e58860387e0d1a25a40aac1920d917b116da3687",
+        "bytes": 37904712
+      },
+      "build-clang/test-ext-message-admission-budget": {
+        "sha256": "a5e11db5bbbfb68e6ab7a2a486c8f9d8d5131b25ec2a082fbb0fe014ef3d34b1",
+        "bytes": 6591512
+      },
+      "build-clang/test-validator-options": {
+        "sha256": "682944802f0187cb1044fb2f54c0f35c1d718a1e277100a4fe2c5d1cb872ce6a",
+        "bytes": 868704
+      },
+      "build-clang/validator-engine/validator-engine": {
+        "sha256": "e963003be518828340a4b771cda1b1196c3693ed737d971a3548e8c2e301f841",
+        "bytes": 55928192
+      },
+      "build-clang/emulator/libemulator.so": {
+        "sha256": "9de032d52fcdc552cc78f8c6a8e904a3e25b87b4eed8b6df934c7f87f6576b37",
+        "bytes": 11731992
+      }
+    },
+    "compiler_binary": {
+      "sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
+      "bytes": 140592
+    },
+    "secp_c_archive": {
+      "sha256": "6dfb5c89559881df88c81c3fb411b4ab4c091ccca6439f6c35aa857fac0af377",
+      "bytes": 1217220
+    },
+    "openssl_crypto_archive": {
+      "sha256": "23c7c63f1a00431258a995cfc6457ce4d47440290371ebd366f4a59b99d657f2",
+      "bytes": 11607434
+    },
+    "openssl_ssl_archive": {
+      "sha256": "17f37c43e867b107eb65fc30b6c64d7fe399f59c284aa807d2732b00d41ed97a",
+      "bytes": 2082412
+    }
+  },
+  "commands": {
+    "working_directory": "/workspace/scratch/58828491a8ce/tos",
+    "environment": "source /workspace/scratch/58828491a8ce/clang-env.sh; ulimit -c 0",
+    "final_quic_configuration": "cmake -S . -B build-clang -DUSE_QUIC=ON",
+    "final_build": "cmake --build build-clang --target test-ext-message-generated-checker test-ext-message-pool test-ext-message-manager test-ext-message-admission-budget test-validator-options validator-engine func fift create-state emulator -j4",
+    "generated_checker_and_controls": "python3 scripts/check-ext-message-generated.py --build-dir build-clang --output-dir /workspace/scratch/58828491a8ce/artifacts/generated-checker --controls",
+    "each_guard_and_restore_build": "cmake --build build-clang --target test-ext-message-generated-checker -j2",
+    "each_red_case": "build-clang/test-ext-message-generated-checker --filter <red_cases.test>",
+    "each_restored_suite": "build-clang/test-ext-message-generated-checker",
+    "final_native_baselines": [
+      [
+        "build-clang/test-ext-message-pool"
+      ],
+      [
+        "build-clang/test-ext-message-manager"
+      ],
+      [
+        "build-clang/test-ext-message-admission-budget"
+      ],
+      [
+        "build-clang/test-validator-options"
+      ]
+    ],
+    "final_cli_boundaries": "python3 scripts/check-ext-message-work-cli.py --engine build-clang/validator-engine/validator-engine --output-dir /workspace/scratch/58828491a8ce/artifacts/node-baseline/cli",
+    "reproduction": "The checked-in admission-work workflow builds with Clang and default QUIC, runs existing gates, then invokes the same generated checker runner with --controls. Run source mutations exclusively; the runner restores each guarded file in finally."
+  },
+  "generated_configuration": {
+    "template": "crypto/smartcont/gen-zerostate.fif",
+    "candidate_flag": true,
+    "source_date_epoch": 1789434000,
+    "auth_namespace": "4242424242424242424242424242424242424242424242424242424242424242",
+    "version": 18,
+    "config20_masterchain_credit": 10000,
+    "config21_basechain_credit": 20000,
+    "config_dictionary_root": "afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726",
+    "same_root_as_release_candidate": true,
+    "release_candidate_config_boc": {
+      "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+      "bytes": 7387
+    },
+    "configuration_rewrites": [],
+    "config31_preserved": true,
+    "synthetic_state_changes": "An ordinary funded probe account is added to each generated account state and a matching basechain shard descriptor is added to the masterchain state. The destination is explicitly absent from Config31. No ConfigParams cell is replaced.",
+    "public_fixture_inputs": "Four deterministic validator descriptors are public test records, not validated signing-key generation. The fixed public main-wallet seed only supplies a funded-account prototype. These fixtures are not a deployable genesis approval.",
+    "generated_bocs": {
+      "generated/basestate0.boc": {
+        "sha256": "8375256a7007a9d4fdea1952d0aa12f8ef074c56a620abe6b252baef7cf864b2",
+        "bytes": 105
+      },
+      "generated/checker-gas-probe.boc": {
+        "sha256": "d1518f823cd3e5bd6d3a526074c4031b59eae1f3cf0a9747c78f113bdc147661",
+        "bytes": 190
+      },
+      "generated/zerostate.boc": {
+        "sha256": "d968dd78910f940fe337f7eb88bad87fc15e2f3e0e37775c149efdeb089325dc",
+        "bytes": 21721
+      }
+    }
+  },
+  "baseline": {
+    "tests_passed": 6,
+    "exit": 0,
+    "accepted_cases": [
+      {
+        "workchain": 0,
+        "operation": "ACCEPT",
+        "initial_credit": 20000,
+        "requested_setgaslimit": null,
+        "vm_gas_used": 3932,
+        "accepted": true,
+        "successful_compute": true,
+        "vm_executions": 1,
+        "stopped_at_acceptance_opcode": true
+      },
+      {
+        "workchain": 0,
+        "operation": "SETGASLIMIT",
+        "initial_credit": 20000,
+        "requested_setgaslimit": 200000,
+        "vm_gas_used": 4004,
+        "accepted": true,
+        "successful_compute": true,
+        "vm_executions": 1,
+        "stopped_at_acceptance_opcode": true
+      },
+      {
+        "workchain": -1,
+        "operation": "ACCEPT",
+        "initial_credit": 10000,
+        "requested_setgaslimit": null,
+        "vm_gas_used": 3932,
+        "accepted": true,
+        "successful_compute": true,
+        "vm_executions": 1,
+        "stopped_at_acceptance_opcode": true
+      },
+      {
+        "workchain": -1,
+        "operation": "SETGASLIMIT",
+        "initial_credit": 10000,
+        "requested_setgaslimit": 200000,
+        "vm_gas_used": 4004,
+        "accepted": true,
+        "successful_compute": true,
+        "vm_executions": 1,
+        "stopped_at_acceptance_opcode": true
+      }
+    ],
+    "insufficient_setgaslimit": {
+      "workchains": [
+        0,
+        -1
+      ],
+      "requested_limit": 1,
+      "accepted": false,
+      "vm_executions_per_case": 1,
+      "vm_steps_per_case": 82,
+      "actual_vm_gas_per_case": 4004,
+      "vm_exitcode": -14,
+      "outward_rejection_gas_used_field": 0,
+      "diagnostic_note": "The outward gas_used=0 field on unaccepted messages does not mean zero VM work: the trace records 4004 gas and 82 steps.",
+      "excerpts": {
+        "Basechain": [
+          "steps: 82 gas: used=4004, max=30000000, limit=0, credit=20000",
+          "out_of_gas=true, accepted=false, success=false",
+          "exitcode=-14, steps=82, gas_used=0"
+        ],
+        "Masterchain": [
+          "steps: 82 gas: used=4004, max=1000000, limit=0, credit=10000",
+          "out_of_gas=true, accepted=false, success=false",
+          "exitcode=-14, steps=82, gas_used=0"
+        ]
+      }
+    },
+    "shared_work_profile": {
+      "capacity": 2,
+      "attempt_units": 1,
+      "refill_units": 1,
+      "refill_interval_ns": 9223372036854775807,
+      "max_bytes": 65535,
+      "max_depth": 512,
+      "sequence_per_case": "The actual probe consumes one unit; the next malformed BOC consumes the second; another malformed BOC from another peer is refused for global work exhaustion. Byte occupancy returns to zero after each request, with exactly one VM execution overall.",
+      "calibration_claim": false
+    }
+  },
+  "controls": [
+    {
+      "name": "disable-stop",
+      "source": "validator/impl/external-message.cpp",
+      "mutation": "stop_on_accept_message = true -> false",
+      "mutant_build_exit": 0,
+      "restore_build_exit": 0,
+      "restored_suite_exit": 0,
+      "restored_tests_passed": 6,
+      "red_cases": [
+        {
+          "test": "BasechainStopsAtAccept",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: counter.messages.find(\"External message is accepted, stopping TVM\") != std::string::npos!",
+            "Expectation failed: gas < (workchain == basechainId ? 20000u : 10000u)!",
+            "Generated checker wc=0 operation=0 gas=119602 config=AFEF08859AF185EA675446C6570DB8B41A3639E467989EDA26553527348D0726"
+          ],
+          "raw_log": "disable-stop-BasechainStopsAtAccept.log"
+        },
+        {
+          "test": "BasechainStopsAtSetGasLimit",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: counter.messages.find(\"External message is accepted, stopping TVM\") != std::string::npos!",
+            "Expectation failed: gas < (workchain == basechainId ? 20000u : 10000u)!",
+            "Generated checker wc=0 operation=1 gas=119679 config=AFEF08859AF185EA675446C6570DB8B41A3639E467989EDA26553527348D0726"
+          ],
+          "raw_log": "disable-stop-BasechainStopsAtSetGasLimit.log"
+        },
+        {
+          "test": "MasterchainStopsAtAccept",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: counter.messages.find(\"External message is accepted, stopping TVM\") != std::string::npos!",
+            "Expectation failed: gas < (workchain == basechainId ? 20000u : 10000u)!",
+            "Generated checker wc=-1 operation=0 gas=119602 config=AFEF08859AF185EA675446C6570DB8B41A3639E467989EDA26553527348D0726"
+          ],
+          "raw_log": "disable-stop-MasterchainStopsAtAccept.log"
+        },
+        {
+          "test": "MasterchainStopsAtSetGasLimit",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: counter.messages.find(\"External message is accepted, stopping TVM\") != std::string::npos!",
+            "Expectation failed: gas < (workchain == basechainId ? 20000u : 10000u)!",
+            "Generated checker wc=-1 operation=1 gas=119679 config=AFEF08859AF185EA675446C6570DB8B41A3639E467989EDA26553527348D0726"
+          ],
+          "raw_log": "disable-stop-MasterchainStopsAtSetGasLimit.log"
+        }
+      ]
+    },
+    {
+      "name": "wrong-workchain-prices",
+      "source": "validator/impl/ext-message-checker.cpp",
+      "mutation": "ExecutionConfig::create workchain argument wc -> masterchainId",
+      "mutant_build_exit": 0,
+      "restore_build_exit": 0,
+      "restored_suite_exit": 0,
+      "restored_tests_passed": 6,
+      "red_cases": [
+        {
+          "test": "BasechainStopsAtAccept",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: counter.messages.find(credit) != std::string::npos!",
+            "gas limits: max=1000000, limit=0, credit=10000"
+          ],
+          "raw_log": "wrong-workchain-prices-BasechainStopsAtAccept.log"
+        }
+      ]
+    },
+    {
+      "name": "skip-charge",
+      "source": "validator/impl/ext-message-pool.cpp",
+      "mutation": "if (!work_admission_->try_consume()) -> if (false)",
+      "mutant_build_exit": 0,
+      "restore_build_exit": 0,
+      "restored_suite_exit": 0,
+      "restored_tests_passed": 6,
+      "red_cases": [
+        {
+          "test": "BasechainStopsAtSetGasLimit",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: rejected.error().message().str().find(expected) != std::string::npos!"
+          ],
+          "raw_log": "skip-charge-BasechainStopsAtSetGasLimit.log"
+        },
+        {
+          "test": "MasterchainStopsAtSetGasLimit",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: rejected.error().message().str().find(expected) != std::string::npos!"
+          ],
+          "raw_log": "skip-charge-MasterchainStopsAtSetGasLimit.log"
+        }
+      ]
+    },
+    {
+      "name": "ignore-setgaslimit",
+      "source": "crypto/vm/tosops.cpp",
+      "mutation": "exec_set_gas_generic(st, gas) -> exec_set_gas_generic(st, GasLimits::infty)",
+      "mutant_build_exit": 0,
+      "restore_build_exit": 0,
+      "restored_suite_exit": 0,
+      "restored_tests_passed": 6,
+      "red_cases": [
+        {
+          "test": "BasechainRejectsInsufficientSetGasLimit",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: result.is_ok() == accepted!",
+            "Expectation failed: counter.messages.find(\"External message is accepted, stopping TVM\") == std::string::npos!",
+            "Expectation failed: counter.messages.find(\"out_of_gas=true\") != std::string::npos!",
+            "External message is accepted, stopping TVM",
+            "out_of_gas=false, accepted=true, success=true"
+          ],
+          "raw_log": "ignore-setgaslimit-BasechainRejectsInsufficientSetGasLimit.log"
+        },
+        {
+          "test": "MasterchainRejectsInsufficientSetGasLimit",
+          "exit": 1,
+          "excerpt": [
+            "Expectation failed: result.is_ok() == accepted!",
+            "Expectation failed: counter.messages.find(\"External message is accepted, stopping TVM\") == std::string::npos!",
+            "Expectation failed: counter.messages.find(\"out_of_gas=true\") != std::string::npos!",
+            "External message is accepted, stopping TVM",
+            "out_of_gas=false, accepted=true, success=true"
+          ],
+          "raw_log": "ignore-setgaslimit-MasterchainRejectsInsufficientSetGasLimit.log"
+        }
+      ]
+    }
+  ],
+  "restoration": {
+    "mutation_groups": 4,
+    "targeted_semantic_reds": 9,
+    "restored_suites": 4,
+    "tests_per_restored_suite": 6,
+    "all_mutant_and_restore_builds_exit_zero": true,
+    "production_source_hashes_restored": true,
+    "final_related_targets_rebuilt": true,
+    "final_existing_baselines": {
+      "pool": 14,
+      "manager": 1,
+      "admission_budget": 11,
+      "validator_options_exit": 0,
+      "cli_valid_profile": 1,
+      "cli_rejection_boundaries": 4
+    }
+  },
+  "raw_artifacts": {
+    "checker_directory": "/workspace/scratch/58828491a8ce/artifacts/generated-checker",
+    "checker_run_index": {
+      "sha256": "1dba7881a92df0ec88e2cad70b23a78986e4f9588870513f827e4354fa4d22ca",
+      "bytes": 13192
+    },
+    "checker_files": {
+      "assemble-probe.log": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "baseline.log": {
+        "sha256": "fba78371eb6ed433b5c0b95760b7780265737003018794bdb9be00ca8e90a221",
+        "bytes": 82750
+      },
+      "compile-probe.log": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "disable-stop-BasechainStopsAtAccept.log": {
+        "sha256": "0847dacaf9459f928745e9a86ab838f99dd75f47e8c98b9a256a31858d46b7c5",
+        "bytes": 1394138
+      },
+      "disable-stop-BasechainStopsAtSetGasLimit.log": {
+        "sha256": "866214cf60fba87838f2817688a15e66783d4f215ebd049d3730bb0ff36bb36b",
+        "bytes": 1394602
+      },
+      "disable-stop-MasterchainStopsAtAccept.log": {
+        "sha256": "207581678f7276b700c0db11bd33c6a82dfeeac01f0a646ab008b49dc19708de",
+        "bytes": 1394157
+      },
+      "disable-stop-MasterchainStopsAtSetGasLimit.log": {
+        "sha256": "ffa3a3a46029b3f6a702f9f7f8b1223fb6ccdcfd3c406729a870e66c2846baa3",
+        "bytes": 1394622
+      },
+      "disable-stop-build.log": {
+        "sha256": "2ec631957352b7ff6b6b1dc5a0ab83ae162fdb0933d8d27c1c906018716a107b",
+        "bytes": 315
+      },
+      "disable-stop-restore-build.log": {
+        "sha256": "2ec631957352b7ff6b6b1dc5a0ab83ae162fdb0933d8d27c1c906018716a107b",
+        "bytes": 315
+      },
+      "disable-stop-restored.log": {
+        "sha256": "b692df30af76386d2bee41473e0f37d2a383e80155032dfbc8eaa425d36527b1",
+        "bytes": 82754
+      },
+      "generate.log": {
+        "sha256": "85dc621e811fd550af69e19df0ddfc8392a477dbbb412767bcaf543c3c6357f3",
+        "bytes": 54698
+      },
+      "generated/basestate0.boc": {
+        "sha256": "8375256a7007a9d4fdea1952d0aa12f8ef074c56a620abe6b252baef7cf864b2",
+        "bytes": 105
+      },
+      "generated/checker-gas-probe.boc": {
+        "sha256": "d1518f823cd3e5bd6d3a526074c4031b59eae1f3cf0a9747c78f113bdc147661",
+        "bytes": 190
+      },
+      "generated/zerostate.boc": {
+        "sha256": "d968dd78910f940fe337f7eb88bad87fc15e2f3e0e37775c149efdeb089325dc",
+        "bytes": 21721
+      },
+      "ignore-setgaslimit-BasechainRejectsInsufficientSetGasLimit.log": {
+        "sha256": "d1769bcb09d5e3f7b7b4f4a1405ddbe73011eac9182d924b29f967a7441fc53c",
+        "bytes": 14950
+      },
+      "ignore-setgaslimit-MasterchainRejectsInsufficientSetGasLimit.log": {
+        "sha256": "5057749607c2acd34b63a249b84e33f18869a7b42876f5a5e71171309cdcb2e3",
+        "bytes": 14969
+      },
+      "ignore-setgaslimit-build.log": {
+        "sha256": "3acc82dbbee81501fef60f8551d523bff43637e8aa9f06da12ab96db66f4d505",
+        "bytes": 6511
+      },
+      "ignore-setgaslimit-restore-build.log": {
+        "sha256": "da4e1d05fd9710ae7e5c9e521a9b498f776f8f8383d16181c67ac5a597ec82a7",
+        "bytes": 6511
+      },
+      "ignore-setgaslimit-restored.log": {
+        "sha256": "827e6cc7192411018302731855904b5d1d225c6f07c49201b7de8440be5175da",
+        "bytes": 82750
+      },
+      "skip-charge-BasechainStopsAtSetGasLimit.log": {
+        "sha256": "632a9869028e6be4c728497a7d9e807c319c071a69f779ab21df4e8fa4fd461d",
+        "bytes": 14376
+      },
+      "skip-charge-MasterchainStopsAtSetGasLimit.log": {
+        "sha256": "6aa272ec22322043bc9c2de3bcb7291cd8b5cf3791fb977c88a32721b812815a",
+        "bytes": 14395
+      },
+      "skip-charge-build.log": {
+        "sha256": "26d396dc64ede1347df19ac4d1c83a81d0513bc43088c91b9119187098e09c76",
+        "bytes": 315
+      },
+      "skip-charge-restore-build.log": {
+        "sha256": "26d396dc64ede1347df19ac4d1c83a81d0513bc43088c91b9119187098e09c76",
+        "bytes": 315
+      },
+      "skip-charge-restored.log": {
+        "sha256": "5ee9cb7a5e7f4b179bd473a198712a78cc2677d369aa37a350438ee7a9e6c346",
+        "bytes": 82751
+      },
+      "wrong-workchain-prices-BasechainStopsAtAccept.log": {
+        "sha256": "0989b267ef9bca64a6b0e75d68c2eb4bd09f4a2f4fa27862ac0442d056283bf3",
+        "bytes": 13974
+      },
+      "wrong-workchain-prices-build.log": {
+        "sha256": "201d5474463c011616f2857a106977907332ee74a4478ed2761387835dbc661a",
+        "bytes": 318
+      },
+      "wrong-workchain-prices-restore-build.log": {
+        "sha256": "201d5474463c011616f2857a106977907332ee74a4478ed2761387835dbc661a",
+        "bytes": 318
+      },
+      "wrong-workchain-prices-restored.log": {
+        "sha256": "c542ef3b1b4b74d1c19efa246bab7bdfdf72487620ab3fd1f2a621c5f0156ee8",
+        "bytes": 82752
+      }
+    },
+    "final_native_baselines": {
+      "cli/duplicate.log": {
+        "sha256": "0ae54d81c11adb6437c09bd892087de38a4c9b68af77940fcd06fc8a0e30f8be",
+        "bytes": 171
+      },
+      "cli/overflow.log": {
+        "sha256": "4e3577704189e45c9a3d2d69a67e5c6b466ca0facefc69e8d2ffa2958b945e1a",
+        "bytes": 163
+      },
+      "cli/results.json": {
+        "sha256": "b04d40b1c0d562858965b5a2f01be82c1ef18684cdc614f2f56605b36abf8560",
+        "bytes": 2111
+      },
+      "cli/uppercase.log": {
+        "sha256": "66986b8d1e4f58c27e1daf5cca21c943d06499b896e44f373ac0f05f666828b7",
+        "bytes": 179
+      },
+      "cli/valid.log": {
+        "sha256": "0c3745ac0477e78b6f68870b2ce1a962610ecc5a05c4adc186214655f9c5c880",
+        "bytes": 9976
+      },
+      "cli/zero-root.log": {
+        "sha256": "19c807f245606969aaaf968e0aafc1249f36de0d762c25c399c48e7f309d0d86",
+        "bytes": 158
+      },
+      "final-restored-build.log": {
+        "sha256": "8d74201a38f21b8003478b01b680e941f802ab7ff59690598b78179deaddc000",
+        "bytes": 432
+      },
+      "runs.json": {
+        "sha256": "4dd307695ca8d3554d12f07016a4569091d59686a86dcbc7b8fb70e8e7a27f41",
+        "bytes": 515
+      },
+      "test-ext-message-admission-budget.log": {
+        "sha256": "17b855de3f620418239d54b05b5bbe90ded112d1fe76cf774c5db82812909d0f",
+        "bytes": 1084
+      },
+      "test-ext-message-manager.log": {
+        "sha256": "6c955d7e637dea3daeec53f69b5fe0a9bcd6bebda207db4f43162b4308b3bebc",
+        "bytes": 2195
+      },
+      "test-ext-message-pool.log": {
+        "sha256": "de43ead7e5380d20e9e27b12a019f3105e1b7e671d6dc663033e1f31806802c4",
+        "bytes": 14279
+      },
+      "test-validator-options.log": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    "build_logs": {
+      "native-clang-configure-ready.log": {
+        "sha256": "ab7204bafc7174fd48ba809f70fbdb2edbcf425226e31923996e12baf03f3468",
+        "bytes": 2598
+      },
+      "native-clang-build.log": {
+        "sha256": "d1589dce6b0c918bd49f26d0c11d55dbe5a218b738b9c4b4eeef096860a693d5",
+        "bytes": 243074
+      },
+      "native-clang-quic-configure.log": {
+        "sha256": "b75108c2243f8a96f42b9b037f72905d9c02cf8b002ac4381f4747d0f45a2f59",
+        "bytes": 6107
+      },
+      "native-clang-quic-build.log": {
+        "sha256": "3b2fb86ee941a426107d0814837b8e9458c0659c0de8ad7d4a87581274784944",
+        "bytes": 6872
+      },
+      "native-clang-baseline-rebuild.log": {
+        "sha256": "cab103c949c54e4af5c2200a9b41fc5943895bd5fd2bdeec8c63376ef2271077",
+        "bytes": 277
+      }
+    },
+    "retention": "These local raw files are scratch evidence and have no durable retention guarantee. The checked-in admission-work workflow uploads artifacts for 90 days; a run of the final pushed head and its artifact references are still pending. Bounded semantic excerpts are included here for review without the large traces."
+  },
+  "limits": [
+    "No HTTP/ADNL listener or live state database",
+    "No production CPU/rate/burst calibration",
+    "No wallet authorization or recipient-delivery claim",
+    "Public fixture validator records are not signing keys",
+    "A small owner-funded probe does not establish the maximum work of every legal destination, special account, native executor, parser or serialized input.",
+    "The 3932/4004 gas measurements do not calibrate CPU time, tokens per second, burst size, admission prices or public-network activation.",
+    "Existing old-head CI jobs do not cover this local source bundle or the new generated checker.",
+    "PR remains draft; no activation or reduced threshold is authorized by this evidence."
+  ]
+}

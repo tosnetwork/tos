@@ -107,9 +107,11 @@ ConfigParam 20/21 cells match the canonical candidate byte-for-byte; incompatibl
 profiles fail before key generation. The localnet credit and validation bypass
 controls are recorded in [localnet evidence](localnet-admission-20261006.json).
 
-This is a configuration candidate for further acceptance work. Rust defaults, full wallet transaction parity under the generated
-configuration, calibrated node rates and public-network activation remain
-pending; generating a BOC does not establish these gates.
+This remains a configuration candidate. The selected 138-transaction full-wallet
+corpus and 19-transaction PRIMARY corpus now pass both executors with the
+unchanged generated configuration; see [release coverage](RELEASE_CORPUS.md).
+Published Rust defaults, the complete legal-input corpus, calibrated node rates
+and public-network activation remain pending.
 
 The [Rust loading controls](rust-admission-config-20261006.json) generate the
 canonical candidate and pass its `ConfigParams` directly into
@@ -275,6 +277,67 @@ transaction result remains valid, but must not be used as the ordinary
 stop-on-accept checker execution bound. Initial credit alone still does not
 price parsing, lookup, serialization, overshoot or special/native execution.
 
-This establishes a real checker boundary on a synthetic frozen configuration;
-version-18 generated-state checker coverage, SETGASLIMIT-specific runtime
-coverage and hardware/network CPU calibration remain open.
+This records the earlier checker boundary on a synthetic frozen configuration.
+The generated version-18 and SETGASLIMIT cases below extend that evidence;
+hardware/network CPU calibration remains open.
+
+
+## Generated version-18 checker and SETGASLIMIT
+
+[Generated checker evidence](generated-checker-20261006.json) runs the actual
+`ExtMessagePool` and `ExtMessageChecker` against freshly generated candidate
+configuration. The runner invokes the canonical genesis template with the
+explicit candidate flag and public test namespace, then compiles the probe
+from FunC source. It adds ordinary funded probe accounts and a matching
+basechain shard descriptor to the generated account states. Every ConfigParams
+cell, including ConfigParam 31, is preserved. The configuration dictionary root
+is `afef08859af185ea675446c6570db8b41a3639e467989eda26553527348d0726`, matching
+the candidate used by [the release corpus](RELEASE_CORPUS.md).
+
+The probe checks version 18 and both gas-credit parameters inside the VM before
+the acceptance opcode. A 5,000-iteration loop follows that opcode. The real
+checker stops before the loop in all four accepted cases:
+
+| Workchain | Opcode | Initial credit | Measured checker gas |
+| --- | --- | ---: | ---: |
+| Basechain | ACCEPT | 20,000 | 3,932 |
+| Basechain | SETGASLIMIT 200,000 | 20,000 | 4,004 |
+| Masterchain | ACCEPT | 10,000 | 3,932 |
+| Masterchain | SETGASLIMIT 200,000 | 10,000 | 4,004 |
+
+Two additional cases request `SETGASLIMIT 1`. Both are rejected after 82 VM
+steps and 4,004 gas, with VM exit code -14 and `out_of_gas=true`. The outward
+rejection diagnostic reports `gas_used=0` for an unaccepted message; the actual
+trace still records the 4,004 gas of execution work.
+
+Each case executes the VM once. The synthetic shared work profile has capacity
+two and charges one unit per attempt. The probe consumes the first unit, a
+malformed BOC from a peer consumes the second, and a further malformed BOC from
+another peer is refused for work exhaustion. Byte occupancy returns to zero
+after each request. These profile values serve the deterministic test and do
+not set production admission rates.
+
+Four independent production mutations produce nine targeted semantic failures:
+
+| Mutation | Cases that fail | Observed failure |
+| --- | ---: | --- |
+| Disable the stop-on-accept flag | 4 | ACCEPT runs to 119,602 gas and SETGASLIMIT to 119,679 gas; stop-marker and initial-credit assertions fail in both workchains. |
+| Use masterchain prices for basechain execution | 1 | The basechain VM starts with credit 10,000 and fails the required 20,000-credit assertion. |
+| Skip shared work charging | 2 | Both SETGASLIMIT cases fail the subsequent work-exhaustion assertion. |
+| Ignore the requested SETGASLIMIT limit | 2 | Both limit-one requests are actually accepted and fail the expected-rejection assertion. |
+
+Every mutant builds successfully. Each source is restored byte-for-byte, its
+target is rebuilt and all six checker tests pass again. The final related-target
+rebuild and existing pool (14), manager (1), admission-budget (11), options and
+CLI valid-profile/four-rejection boundaries also pass. All C++ targets and
+generation tools use a fresh Clang 18 build; the final configuration retains the
+repository's default QUIC support. Source, restored-binary and artifact hashes,
+commands and bounded failure excerpts are included in the evidence index.
+
+This establishes the selected generated-configuration checker boundary. Live
+HTTP/ADNL listeners, real state databases, the complete legal-input corpus,
+special/native execution bounds and hardware CPU/rate/burst calibration remain
+open. The probe is an owner-funded test program and makes no wallet spending or
+delivery claim. Local raw logs have no durable retention guarantee; the updated
+admission workflow retains CI artifacts for 90 days, and its run on the final
+pushed head remains pending. The PR remains draft with no activation.

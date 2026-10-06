@@ -13,6 +13,14 @@ on:
       - 'test/pq-native/data/c04-pq-genesis.boc'
       - 'test/wallet-v5r2/post-accept-probe.boc'
       - 'test/wallet-v5r2/post-accept-probe.fc'
+      - 'test/wallet-v5r2/checker-gas-probe.fc'
+      - 'crypto/smartcont/**'
+      - 'crypto/fift/**'
+      - 'crypto/func/**'
+      - 'crypto/block/block.tlb'
+      - 'crypto/block/create-state.cpp'
+      - 'crypto/block/mc-config.*'
+      - 'crypto/CMakeLists.txt'
       - 'crypto/block/transaction.*'
       - 'crypto/vm/**'
       - 'scripts/check-ext-message-*.py'
@@ -35,6 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Install build dependencies
         run: |
@@ -43,7 +52,7 @@ jobs:
       - name: Build and run native boundaries
         run: |
           cmake -S . -B build-admission -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          cmake --build build-admission --target test-validator-options test-ext-message-admission-budget test-ext-message-pool test-ext-message-manager validator-engine -j2
+          cmake --build build-admission --target test-validator-options test-ext-message-admission-budget test-ext-message-pool test-ext-message-manager test-ext-message-generated-checker validator-engine -j2
           mkdir -p artifacts/admission
           build-admission/test-validator-options 2>&1 | tee artifacts/admission/options.log
           build-admission/test-ext-message-admission-budget 2>&1 | tee artifacts/admission/budget.log
@@ -62,6 +71,9 @@ jobs:
       - name: Stop-on-accept execution-config control
         run: |
           python3 scripts/check-ext-message-stop-accept.py --build-dir build-admission --output-dir artifacts/admission/stop-accept-controls
+      - name: Generated version-18 checker and SETGASLIMIT controls
+        run: |
+          python3 scripts/check-ext-message-generated.py --build-dir build-admission --output-dir artifacts/admission/generated-checker --controls
       - name: Record source identity
         if: always()
         run: |

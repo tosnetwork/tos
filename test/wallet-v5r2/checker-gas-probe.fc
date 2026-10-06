@@ -1,0 +1,34 @@
+;; Generated-configuration checker probe; not a wallet or authorization scheme.
+int credit(int parameter) inline {
+  slice price = config_param(parameter).begin_parse();
+  int tag = price~load_uint(8);
+  if (tag == 0xd1) {
+    price~skip_bits(128);
+    tag = price~load_uint(8);
+  }
+  throw_unless(902, tag == 0xde);
+  price~skip_bits(192);
+  return price~load_uint(64);
+}
+
+() recv_internal(slice body) impure { }
+() recv_external(slice body) impure {
+  slice version = config_param(8).begin_parse();
+  throw_unless(902, version~load_uint(8) == 0xc4);
+  throw_unless(903, version~load_uint(32) == 18);
+  throw_unless(904, credit(21) == 20000);
+  throw_unless(905, credit(20) == 10000);
+
+  int operation = body~load_uint(8);
+  int gas_limit = body~load_uint(32);
+  int count = body~load_uint(32);
+  body.end_parse();
+  if (operation == 0) {
+    accept_message();
+  } elseif (operation == 1) {
+    set_gas_limit(gas_limit);
+  }
+  int value = 0;
+  repeat (count) { value += 1; }
+  set_data(begin_cell().store_uint(value, 32).end_cell());
+}

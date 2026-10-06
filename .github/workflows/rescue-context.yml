@@ -5,11 +5,22 @@ on:
   pull_request:
     paths:
       - '.github/workflows/rescue-context.yml'
+      - 'scripts/build-wallet-v5r2-bundle.py'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
+      - 'doc/tvm-lms-fee-hash.md'
+      - 'doc/auth-policy-v1.md'
+      - 'test/pq-mldsa44/fixtures.json'
+      - 'test/pq-falcon512/vectors.json'
+      - 'crypto/block/block.tlb'
+      - 'crypto/block/create-state.cpp'
+      - 'crypto/block/mc-config.*'
       - 'crypto/block/transaction.*'
       - 'crypto/smc-envelope/SmartContract.cpp'
       - 'crypto/vm/**'
       - 'crypto/pq/**'
-      - 'crypto/fift/lib/Asm.fif'
+      - 'crypto/fift/**'
+      - 'crypto/func/**'
       - 'crypto/smartcont/**'
       - 'crypto/CMakeLists.txt'
       - 'CMakeLists.txt'
@@ -61,10 +72,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
+      - name: Install Python corpus dependency
+        run: python -m pip install cryptography==46.0.4
       - name: Install pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
       - name: Build native Release tools and both Rust drivers
@@ -78,6 +92,7 @@ jobs:
             --example lms_fee_cache_fixture --example v5r2_auth_encode --example v5r2_pop_encode --example v5r2_prepare_encode --example v5r2_fee_encode --example v5r2_genesis_encode
       - name: Generated admission configuration loading
         run: |
+          python test/wallet-v5r2/test_recorded_admission.py
           python test/wallet-v5r2/admission_config_controls.py --output-dir artifacts/context/r2-generated-config
       - name: Whole transactions using the generated admission configuration
         run: |
@@ -85,6 +100,12 @@ jobs:
             --config artifacts/context/r2-generated-config/restored-config.boc \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-release-transactions
+      - name: Reproducible code and interface review bundle
+        run: |
+          python test/wallet-v5r2/release_bundle_controls.py \
+            --config artifacts/context/r2-generated-config/restored-config.boc \
+            --expected-manifest test/wallet-v5r2/review-candidate-manifest.json \
+            --output artifacts/context/r2-review-bundle
       - name: Generated-config transaction sensitivity controls
         if: matrix.runner == 'ubuntu-24.04'
         run: |
@@ -100,6 +121,13 @@ jobs:
             --config artifacts/context/r2-generated-config/restored-config.boc \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-release-wallet "${candidate_controls[@]}"
+      - name: PRIMARY wallet and recipient execution on the unchanged candidate
+        run: |
+          python test/wallet-v5r2/module_tx_parity.py \
+            --chain-config artifacts/context/r2-generated-config/restored-config.boc \
+            --native-signer build/crypto/pq/test-wallet-pq-signer-fixture \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-release-primary
       - name: Account-funded execution after ACCEPT
         run: |
           python test/wallet-v5r2/post_accept_transactions.py \
@@ -173,7 +201,6 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_ -- --test-threads=1
       - name: PQ-only wallet SDK wire vectors
         run: |
-          python -m pip install cryptography==46.0.4
           python test/wallet-v5r2/sdk_auth_vectors.py --output /tmp/v5r2-auth-vectors.json
           cmp /tmp/v5r2-auth-vectors.json tosctl/src/node-control/contracts/tests/fixtures/v5r2/auth-wire.json
           python test/wallet-v5r2/sdk_pop_vectors.py --output /tmp/v5r2-pop-vectors.json
@@ -377,6 +404,20 @@ jobs:
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
             --output artifacts/context/cli-migration-controls
+      - name: Installed fee route promotion and repeated recovery controls
+        run: |
+          python test/wallet-v5r2/fee_recovery_fixture.py \
+            --vector-index 0 --key-generation 8 \
+            --tree-id a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7 \
+            --output artifacts/context/second-successor-fee-recovery-fixture
+          python test/wallet-v5r2/cli_rotation_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
+            --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
+            --second-successor-fee-fixture artifacts/context/second-successor-fee-recovery-fixture \
+            --output artifacts/context/cli-rotation-controls
       - name: Compiled-code manifest reconstruction controls
         run: |
           python test/wallet-v5r2/manifest_integration_controls.py \
@@ -513,4 +554,5 @@ jobs:
             artifacts/context
             !artifacts/context/**/PUBLIC-TEST-ONLY-lms-tree
             !artifacts/context/**/PUBLIC-TEST-ONLY-successor-tree
+            !artifacts/context/**/PUBLIC-TEST-ONLY-tree
           retention-days: 14

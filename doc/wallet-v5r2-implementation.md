@@ -3557,3 +3557,224 @@ post-migration spend/backup/device workflow.
 
 The role and persisted-intent sensitivity checks and retained native executions
 are indexed in `test/wallet-v5r2/cli-migration-20261006.json`.
+
+### Generated candidate selection and cached gas prices (2026-10-06 continuation)
+
+The continuation starts from `8251ca8679f5212bf7325d3ee0ae46a9994584c8`.
+Its bounded result indexes identify the actual working-tree source hashes;
+they do not promote historical runs to final-head CI. The explicit candidate
+remains version 18, namespace `0x42` repeated 32 times, global ID 1, basechain
+credit 20,000 and masterchain credit 10,000. Existing canonical/default genesis
+and Rust fallback credits remain at 10,000. Selecting version 18 alone does not
+select the candidate gas profile or activate it on a network.
+
+Comparison with serialized gas cells exposed a derived-cache defect in
+`GasLimitsPrices::default_wc()`: `max_gas_threshold` was 1,000,000,000 while
+decoding its unchanged fields computes 200,000,152. The default now uses the
+same derivation as the decoded profile. This changes no serialized
+price or credit. The new comparison first failed on the original cache value,
+then passed after the repair. All six gas-envelope tests pass. Independently
+replacing actual ConfigParams loading with default prices compiles and fails
+the candidate basechain-credit assertion; restored code passes all six again.
+
+G01's construction/selection behavior is now explicit. Approved publication,
+client-default selection and deployment activation remain separate gates.
+Current Falcon introduction gates are 19 in both dedicated and generic paths;
+they are not the candidate genesis version. See the
+[current delivery ledger](wallet-v5r2-release-status.md).
+
+### Selected complete transactions on unchanged ConfigParams (2026-10-06)
+
+The corpus runner supplies the generated ConfigParams BOC unchanged to native
+and Rust complete transactions. Each G−1/G or historical-credit probe changes
+only the credit field, preserving `dd`, `de` and flat-prefix `d1` representations
+and the other gas-price fields. The actual candidate BOC is 7,387 bytes with
+SHA-256 `3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7`.
+
+The AUTH, PRIMARY POP, SLH POP and recovery profiles match for 26, 24, 24 and
+64 transactions respectively: 138 in total. All 31 selected successful fee
+externals match at G−1 rejection, G acceptance and historical 10,000 rejection.
+The largest observed minimum credit is 13,515; the largest complete fee-vault
+gas use is 15,556. These measure different boundaries and are not a bound on
+module/recipient execution or every legal input. Rejection commits no
+transaction or account update in either VM. Private-compiler lock and migration
+deletions each fail the intended state assertion.
+
+PRIMARY/SLH module delivery adds 19 matching transactions: 15 use the unchanged
+candidate and four use an explicitly separate ConfigParam 48 retirement
+control. The recipient-delivery deletion fails its actual state assertion.
+The original diagnostic module run also passes 19 cases. These transactions
+use internally funded public fixtures, not a deployed PRIMARY payer.
+Seven configuration tests pass, including three in-memory semantic controls.
+The complete legal-input, cold-load, solvency and accepted-failure matrix stays
+open in the [G01–G15 coverage ledger](../test/wallet-v5r2/RELEASE_CORPUS.md).
+Commands, per-profile results and minimal red receipts are in
+[the current corpus index](../test/wallet-v5r2/release-corpus-20261006.json).
+
+### Reproducible ordinary code and interface candidate (2026-10-06)
+
+`scripts/build-wallet-v5r2-bundle.py` builds the ordinary fee vault, embeds it
+in the module, and builds the wallet with the vault, module hash and explicit
+namespace. It snapshots the transitive contract inputs and included public
+files, rejects exotic/library cells, and records exact code/config/file
+identities. The compact manifest freezes 74 identities, including source,
+TL-B, opcode/error definitions, SDK codecs and the currently available public
+crypto/KDF/wire vectors. It contains no duplicate source tree and remains an
+unapproved review candidate.
+
+The three code hashes match the selected fee and PRIMARY transaction corpora.
+The wallet binds the public test namespace, so another deployment requires its
+own reviewed identities. CI compares against the committed manifest and never
+refreshes it automatically. Compiler binary hashes and Git metadata remain
+per-run provenance while the code and file identities must reproduce.
+
+The local suite has 18 expected outcomes: three normal build/reproduce/restored
+checks, eight bundle corruption refusals, two actual CLI expected-manifest
+refusals, and five in-memory guard deletions that fail the corresponding
+assertions. Wrong expected namespace/status controls require successful native
+compilation before the refusal counts. The complete ACVP/interop inventory,
+final deployment namespace, release binaries and independent R0/R4 approval
+remain open. See [rebuild instructions](../test/wallet-v5r2/REVIEW_BUNDLE.md)
+and [source-bound evidence](../test/wallet-v5r2/review-bundle-20261006.json).
+
+After the client source controls were restored, a separate build and independent
+check with Clang 18-built Func/Fift reproduced all 74 frozen identities from the
+earlier GCC-tool run. This adds local compiler-build reproducibility without
+changing the control count or claiming final-head architecture CI.
+
+### Rescue CI dependency ordering and tested source identity (2026-10-06)
+
+Both architecture artifacts for handoff rescue run `37468758691` failed in
+the early full-wallet corpus with `ModuleNotFoundError: No module named
+'cryptography'`. The import is through shared legacy test helpers; it does not
+make classical authorization part of the V5R2 wallet. The pinned package was
+installed only in a later SDK-vector step. Installation of
+`cryptography==46.0.4` now occurs immediately after Python setup, before any
+corpus import.
+
+Those two artifacts identify implicit merge commit
+`32977c560926ffbfdaf7d71be5e80fd78880e6e3`, not PR head `8251ca867…`, as the
+actual checkout. Rescue and admission workflows now select the pull request's
+head SHA. Their new checks cover the generated-config PRIMARY corpus, frozen
+review manifest, installed-route rotation and generated-state checker.
+Changed frozen inputs trigger the relevant workflows. Large public H20 caches
+are excluded from artifact upload; source-mutating controls remain sequential.
+The final static audit also covers isolated changes to `create-state.cpp`,
+`mc-config.*` and the smart-contract generation inputs in the relevant workflow
+path rules. Those trigger-only additions leave the recorded native inputs,
+commands and restored binaries unchanged.
+
+The dependency failure receipts, archive hashes and local workflow structure
+checks are retained in [the CI index](../test/wallet-v5r2/ci-corpus-dependency-20261006.json).
+Next-head CI still has to execute the repaired workflow. Rescue artifacts have
+14-day retention and admission artifacts 90-day retention; local scratch
+archives have no guaranteed independent availability.
+
+### Generated-state checker and SETGASLIMIT controls (2026-10-06)
+
+The new native target runs the real `ExtMessagePool` and `ExtMessageChecker`
+against canonical generated version-18 ConfigParams. It preserves all
+configuration cells, including ConfigParam 31, while adding synthetic ordinary
+funded accounts and the corresponding basechain shard descriptor. The
+configuration dictionary root matches the selected wallet transaction corpus.
+The probe checks both credit fields and version inside the VM, then places a
+5,000-iteration loop after the acceptance opcode.
+
+All six Clang Release cases pass. Both workchains stop at 3,932 gas for ACCEPT
+and 4,004 gas for SETGASLIMIT. Both limit-one requests refuse after 4,004 actual
+VM gas and 82 steps, even though the outward error reports `gas_used=0`.
+Each attempt executes the VM once and consumes the shared work budget; the
+diagnostic field does not make failed execution free.
+
+Disabling the stop flag makes four targeted cases fail after executing the
+post-acceptance loop: 119,602 gas for ACCEPT and 119,679 for SETGASLIMIT.
+Selecting masterchain prices for basechain execution fails its 20,000-credit
+assertion. Skipping shared charging makes both work-exhaustion assertions fail.
+Ignoring the SETGASLIMIT operand actually accepts both limit-one requests and
+fails their refusal assertions. All four mutants compile; their nine failures
+are semantic. Each byte-for-byte source restoration passes all six cases.
+
+Final related-target rebuilding passes the existing pool 14, manager 1,
+admission-budget 11, options and valid-profile/four-refusal CLI boundaries.
+Clang 18/LLD 18 built the C++ targets and generation tools in a separate build
+directory, with the repository's default QUIC support restored. The initial
+GCC compatibility failure and incomplete QUIC configuration are excluded from
+semantic evidence and left no production-source workaround.
+
+The runner is in admission CI with exact PR-head checkout. This closes the
+selected generated-state/SETGASLIMIT runtime gap; it does not establish live
+HTTP/ADNL, a live database, complete legal-input or special/native envelopes,
+or hardware-calibrated rates and bursts. The final-head CI and deployment gates
+remain open. See the [generated-checker index](../test/wallet-v5r2/generated-checker-20261006.json)
+and [admission scope](../test/wallet-v5r2/ADMISSION_WORK.md).
+
+### Installed-route promotion and repeated client recovery (2026-10-06)
+
+The joint fee session can now promote its attached successor after a fresh
+wallet proof establishes the installed module/metadata/vault tuple, a newer
+epoch and preserved retirement. The fee account is read at that wallet's
+authenticated checkpoint. A historical fee proof is usable only with a
+matching fresh Live source, including trust anchor, full checkpoint and
+masterchain time. Migration uses the same binding; independently advancing
+Live reads cannot substitute for a shared checkpoint.
+
+Promotion writes and synchronizes the public birth/installed manifests,
+original independent code pins, known fee-key history and resume arguments,
+then reads and reconstructs the export before a synchronous ownership swap.
+The already-held successor journal becomes current without reopening, and
+old journals remain exclusively held until process exit. Current-route
+`execute` signs a strict SLH OutList. Status, signing and exact cached retries
+all recheck the wallet's installed tuple, so a deployed old vault cannot by
+itself authorize continued use of a retired route.
+
+Review identified three concrete continuation defects. Relative proof/custody
+paths made an exported enrollment depend on the original working directory;
+resume arguments now resolve them to absolute paths. A history file rewritten
+after session startup could remove a locally known intermediate key; the
+session now retains its enrolled history in memory. Capacity checks also
+needed to precede irreversible progress: preparation/attachment require room
+in the 64-key history, migration rechecks it before signing, and attachment
+checks the 32-old-journal bound before opening the next journal. Promotion
+retains its defensive bound. These controls cover locally known keys; they
+do not establish unknown history or a global authenticated registry.
+
+The complete local fixture performs two successive recoveries with three
+mnemonic-derived H20 trees, both funded successor POPs in each round,
+two installed exports and encrypted restarts, restore-slot waits, exact
+cached retries and actual recipient execution. The first recovered wallet
+also sends 60 TOS to fund its next recovery through a real signed action.
+It begins with relative paths and resumes from a different working directory.
+The restored run retains 34 successful native transaction results: 19 in the
+first stage and 15 in the second. Two separately counted default-credit
+requests refuse with exit -14 and no committed transaction or account update.
+Cached retries and repeated control runs are not added to that count.
+
+Fourteen independent guard groups produce 15 semantic negative invocations.
+The Live-source group additionally exercises native funded migration and
+same-module rollover. Every mutant compiles before its targeted assertion
+fails. The journal-capacity checks include the actual Attach entrypoint in a
+private limit-zero build: the normal request refuses before journal creation,
+then deleting only the Attach call accepts it and trips the named assertion.
+The production limit remains 32; this does not claim 33 native rotations.
+After byte-for-byte restoration, the normal CLI rebuild, all six checkpoint,
+capacity, native-migration and rollover tests, and the complete two-rotation
+flow pass again.
+
+The existing migration runner's targeted `vault_live` control also compiles,
+fails its unproven-successor assertion, and restores to a passing native test.
+It exercises the same Live-source guard, not a fifteenth independent group.
+The final Python formatting cleanup retains the original control-run source
+hashes and byte-identical parsed ASTs for all seven reformatted scripts.
+A separate complete two-rotation smoke passes on those final formatted files.
+Repository-pinned Ruff checks, the full Rust formatting gate and the new C/C++
+format checks also pass; layout cleanup is not counted as new semantic evidence.
+
+Account-proof and transaction-history acquisition use explicit local fixture
+adapters, public mnemonic material and a process-local clock. Native execution
+uses diagnostic version 17 with credit 20,000. These results establish the
+exercised client bindings and transaction effects, while live proof acquisition,
+finality, independent custody, remote-device revocation, full loss drills and
+iOS/Android acceptance remain open. They do not add candidate-config evidence
+to the separate version-18 corpus. See
+[rotation behavior and reproduction](../test/wallet-v5r2/CLI_ROTATION.md) and
+[the bounded current index](../test/wallet-v5r2/cli-rotation-20261006.json).

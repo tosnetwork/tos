@@ -772,6 +772,17 @@ target_link_libraries(test-ext-message-manager PRIVATE validator full-node tos_b
                       tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-ext-message-manager PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 
+add_executable(test-ext-message-generated-checker test/test-td-main.cpp test/test-ext-message-generated-checker.cpp)
+target_link_libraries(test-ext-message-generated-checker PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-ext-message-generated-checker PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+add_dependencies(test-ext-message-generated-checker create-state func fift)
+add_dependencies(all-tests test-ext-message-generated-checker)
+add_test(NAME test-ext-message-generated-checker
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-ext-message-generated.py
+          --build-dir ${CMAKE_CURRENT_BINARY_DIR}
+          --output-dir ${CMAKE_CURRENT_BINARY_DIR}/Testing/generated-admission)
+
 add_executable(test-ext-message-ingress test/test-td-main.cpp test/test-ext-message-ingress.cpp)
 target_link_libraries(test-ext-message-ingress PRIVATE tos_external_message_parser)
 
