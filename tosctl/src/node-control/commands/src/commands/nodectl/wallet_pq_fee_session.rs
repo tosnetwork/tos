@@ -9,14 +9,15 @@ use contracts::{
     lms_fee_journal::{FeeJournal, SignedFeeMessage},
     wallet_v5r2::{AuthAction, AuthRole},
     wallet_v5r2_fee::{FeeBinding, FeeClass, FeeIntent, FeePayload},
-    wallet_v5r2_pop::PopRequest,
+    wallet_v5r2_pop::{PopRequest, RescuePolicy},
+    wallet_v5r2_prepare::PreparationAmounts,
     wallet_v5r2_vault::VaultKey,
 };
 use std::io::{BufRead, Read, Write};
 
 #[derive(clap::Args, Clone)]
 #[command(
-    about = "Hold an initial rescue-fee journal session; JSON-line status/lock/pop/retry/quit, no broadcast"
+    about = "Hold an initial rescue-fee journal session; JSON-line status/lock/pop/prepare/retry/quit, no broadcast"
 )]
 pub struct PqFeeSessionInitialCmd {
     #[command(flatten)]
@@ -52,9 +53,30 @@ pub struct PqFeeSessionInitialCmd {
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
     Status,
-    Lock { valid_for_seconds: u32, value_nanotos: String, output_dir: PathBuf },
-    Pop { role: PopRole, valid_for_seconds: u32, value_nanotos: String, output_dir: PathBuf },
-    Retry { intent: PathBuf, output_dir: PathBuf },
+    Lock {
+        valid_for_seconds: u32,
+        value_nanotos: String,
+        output_dir: PathBuf,
+    },
+    Pop {
+        role: PopRole,
+        valid_for_seconds: u32,
+        value_nanotos: String,
+        output_dir: PathBuf,
+    },
+    Prepare {
+        successor_manifest: PathBuf,
+        expected_template_wallet: String,
+        module_nanotos: String,
+        vault_nanotos: String,
+        valid_for_seconds: u32,
+        value_nanotos: String,
+        output_dir: PathBuf,
+    },
+    Retry {
+        intent: PathBuf,
+        output_dir: PathBuf,
+    },
     Quit,
 }
 
@@ -63,6 +85,16 @@ enum Request {
 enum PopRole {
     Primary,
     Rescue,
+}
+
+fn decimal_amount(value: &str) -> anyhow::Result<u128> {
+    anyhow::ensure!(
+        !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()),
+        "value must be exact decimal nanoTOS"
+    );
+    let amount = value.parse::<u128>()?;
+    anyhow::ensure!(amount > 0, "fee value must be positive");
+    Ok(amount)
 }
 
 fn fee_clock() -> u32 {
@@ -202,6 +234,7 @@ impl PqFeeSessionInitialCmd {
         tree: &wallet_pq_signer::fee::FeeTree,
     ) -> anyhow::Result<serde_json::Value> {
         let view = context.fee().await?;
+        let mut preparation = None;
         let (pop_role, valid_for_seconds, value_nanotos, output_dir) = match request {
             Request::Status => {
                 let plan = journal.preview_proven(&view, now()?)?;
@@ -228,21 +261,77 @@ impl PqFeeSessionInitialCmd {
             Request::Pop { role, valid_for_seconds, value_nanotos, output_dir } => {
                 (Some(role), valid_for_seconds, value_nanotos, output_dir)
             }
+            Request::Prepare {
+                successor_manifest,
+                expected_template_wallet,
+                module_nanotos,
+                vault_nanotos,
+                valid_for_seconds,
+                value_nanotos,
+                output_dir,
+            } => {
+                let successor =
+                    self.proof.successor(&successor_manifest, &expected_template_wallet)?;
+                let amounts = PreparationAmounts {
+                    module: decimal_amount(&module_nanotos)?,
+                    vault: decimal_amount(&vault_nanotos)?,
+                };
+                preparation = Some((successor, amounts));
+                (None, valid_for_seconds, value_nanotos, output_dir)
+            }
             Request::Quit => anyhow::bail!("session already closing"),
         };
         anyhow::ensure!((1..=3600).contains(&valid_for_seconds), "fee TTL out of range");
-        anyhow::ensure!(
-            !value_nanotos.is_empty() && value_nanotos.bytes().all(|b| b.is_ascii_digit()),
-            "value must be exact decimal nanoTOS"
-        );
-        let value = value_nanotos.parse::<u128>()?;
-        anyhow::ensure!(value > 0, "fee value must be positive");
+        let value = decimal_amount(&value_nanotos)?;
         journal.preview_proven(&view, now()?)?;
-        let proof = context.read(&[]).await?;
+        let needs_primary_policy = preparation
+            .as_ref()
+            .is_some_and(|(successor, _)| successor.policy() == RescuePolicy::Ready);
+        let proof = context.read(if needs_primary_policy { &[48] } else { &[] }).await?;
         let deadline = now()?
             .checked_add(valid_for_seconds)
             .ok_or_else(|| anyhow::anyhow!("deadline overflow"))?;
-        let (class, submission) = if let Some(role) = pop_role {
+        let (class, submission) = if let Some((successor, amounts)) = &preparation {
+            let request = proof.view.preparation_request(
+                now()?,
+                deadline,
+                successor,
+                *amounts,
+                Some(&proof.wallet),
+            )?;
+            anyhow::ensure!(
+                value > request.deployment_value(),
+                "preparation needs execution funding above deployment amounts"
+            );
+            std::fs::create_dir(&output_dir)?;
+            put(&output_dir, "preparation-request.boc", &chain_block::write_boc(request.cell())?)?;
+            put(
+                &output_dir,
+                "successor-module-init.boc",
+                &chain_block::write_boc(successor.module_init())?,
+            )?;
+            put(
+                &output_dir,
+                "successor-vault-init.boc",
+                &chain_block::write_boc(successor.vault_init())?,
+            )?;
+            let rescue =
+                open_vault_file(&self.rescue_vault_file, Some(&self.rescue_vault_key_file), None)
+                    .await?;
+            let id = SecretId::new(&self.rescue_record_id);
+            let submission = VaultKey { vault: &rescue, id: &id }
+                .sign_preparation(
+                    &proof.view,
+                    now,
+                    deadline,
+                    successor,
+                    *amounts,
+                    Some(&proof.wallet),
+                )
+                .await?;
+            drop(rescue);
+            (FeeClass::Prepare, submission)
+        } else if let Some(role) = pop_role {
             let (role, file, key, id) = match role {
                 PopRole::Primary => (
                     AuthRole::Primary,
@@ -310,7 +399,15 @@ impl PqFeeSessionInitialCmd {
             )?;
         }
         let plan = journal.preview_proven(&view, now()?)?;
-        if pop_role.is_none() {
+        if let Some((successor, amounts)) = &preparation {
+            proof.view.preparation_request(
+                now()?,
+                deadline,
+                successor,
+                *amounts,
+                Some(&proof.wallet),
+            )?;
+        } else if pop_role.is_none() {
             proof.view.rescue_request(now()?, deadline, AuthAction::LockPrimary)?;
         }
         let intent = FeeIntent::new(

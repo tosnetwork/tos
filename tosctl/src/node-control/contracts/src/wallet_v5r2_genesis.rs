@@ -53,6 +53,7 @@ pub struct GenesisParameters {
 }
 
 pub struct WalletGenesis {
+    policy: RescuePolicy,
     module_data: Cell,
     module_init: Cell,
     metadata: Cell,
@@ -191,6 +192,7 @@ impl WalletGenesis {
         )?;
         let vault_init = state_init(code.vault, vault_data.clone())?;
         Ok(Self {
+            policy: p.policy,
             module_data,
             module_init,
             metadata,
@@ -238,6 +240,12 @@ pub struct SuccessorDeployment {
     config_hash: [u8; 32],
 }
 impl SuccessorDeployment {
+    /// Whether the proposed successor permits PRIMARY authorization. This is
+    /// the policy encoded by the typed genesis builder, not a live policy check.
+    pub fn policy(&self) -> RescuePolicy {
+        self.template.policy
+    }
+
     pub fn new(template: WalletGenesis, wallet: [u8; 32]) -> anyhow::Result<Self> {
         let module_hash = *template.module_init().repr_hash().as_array();
         anyhow::ensure!(wallet != module_hash, "successor wallet and module must differ");

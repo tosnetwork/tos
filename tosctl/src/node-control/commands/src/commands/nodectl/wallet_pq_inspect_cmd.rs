@@ -53,6 +53,24 @@ pub(super) struct InitialContext {
 }
 
 impl InitialProofArgs {
+    pub(super) fn successor(
+        &self,
+        manifest: &std::path::Path,
+        expected_template_wallet: &str,
+    ) -> anyhow::Result<contracts::wallet_v5r2_genesis::SuccessorDeployment> {
+        // The template's wallet is a reconstruction pin, never the destination
+        // of recovery. Pair its module and fee tree with the existing wallet.
+        let (_, template) = InitialRecoveryManifest::parse_and_reconstruct(
+            &bounded_public_file(manifest, MAX_MANIFEST_BYTES)?,
+            self.code.load()?,
+            public_hash(expected_template_wallet)?,
+        )?;
+        contracts::wallet_v5r2_genesis::SuccessorDeployment::new(
+            template,
+            public_hash(&self.expected_wallet)?,
+        )
+    }
+
     pub(super) fn context(&self) -> anyhow::Result<InitialContext> {
         let (_, genesis) = InitialRecoveryManifest::parse_and_reconstruct(
             &bounded_public_file(&self.recovery_manifest, MAX_MANIFEST_BYTES)?,

@@ -145,6 +145,12 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
             time.sleep(min(1, max(0.01, boundary + 1 - time.time())))
         available = request(dict(command="status"))
         assert available["status"] == "leaf_available" and available["leaf"] == 4, available
+        if args.fee_session_prepare:
+            from cli_fee_session_prepare import check_preparation
+
+            check_preparation(args, root, request, journal, payload, codes, data, addresses)
+            stop()
+            return
         if args.fee_session_pop:
             from cli_fee_session_pop import check_pop_flow
 

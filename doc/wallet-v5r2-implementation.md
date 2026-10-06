@@ -3362,3 +3362,48 @@ control. Candidate reconstruction, trace totals and independently probed credit
 agree with the retained artifacts.
 
 Evidence: [rejected ordering and literal-tag experiments](../test/wallet-v5r2/admission-order-tags-20261006.json).
+
+### Fee-session successor preparation
+
+The persistent initial fee session accepts a `prepare` JSON-line command with
+`successor_manifest`, `expected_template_wallet`, `module_nanotos`,
+`vault_nanotos`, `valid_for_seconds`, `value_nanotos` and `output_dir`. The
+successor input is a separately approved public initial-template manifest and
+its independently retained template-wallet pin, reconstructed with the session's
+release code pins. Its module and fee metadata are paired with the **existing**
+wallet; its initial-template vault address is not reused as the successor vault.
+The exported `successor-module-init.boc` and `successor-vault-init.boc` identify
+the actual proposed deployments.
+
+Current wallet/module proofs and the bound SLH custody authorize preparation.
+A READY successor also requires ConfigParam 48 at the wallet checkpoint and
+must pass the existing global PRIMARY policy gate before and after custody
+loading. A REQUIRED successor does not request ConfigParam 48. Its preparation
+remains independent of PRIMARY availability. The typed genesis retains the same
+policy used to encode the module, allowing the client to choose this proof scope.
+
+Amounts are exact positive decimal nanoTOS; the SDK checks their sum and canonical
+coin encoding. The outer funding value must exceed the deployment sum. This is
+only a necessary condition, not a dynamic fee estimate or affordability promise.
+The retained preparation request and paired StateInit cells are written before
+custody opens. The complete fee intent is persisted before stateful LMS signing,
+using the existing reservation, cache verification and byte-identical retry path.
+Preparation uses fee class 3 and grants no migration authority.
+
+The local integration harness executes the actual CLI message through the fee
+vault and installed module, then executes both emitted deployment messages against
+empty accounts. It checks transaction input/state-update binding, exact target
+addresses, funding amounts, deployed data and unchanged current-module authority.
+It also checks wrong template pins, zero/overflow amounts, insufficient outer
+funding, retired/missing PRIMARY policy for READY, and REQUIRED operation without
+that policy. Its account-proof executable is a trusted mock; native transaction
+execution uses diagnostic credit 20,000 and separately requires default-credit
+rejection. This is not deployed proof acquisition, funded successor dual-POP,
+migration, broadcast or release clearance.
+
+All six refusal cases and both deployments pass. Deleting the template-wallet
+pin or the outer-funding check fails the corresponding named assertion; forcing
+REQUIRED preparation to request PRIMARY policy fails its availability assertion.
+Restored code passes. Four genesis/vector tests and the existing three funded
+POPs, nine receipt cases and subsequent native SLH lock also pass.
+Evidence: [fee-session preparation controls](../test/wallet-v5r2/cli-fee-prepare-20261006.json).

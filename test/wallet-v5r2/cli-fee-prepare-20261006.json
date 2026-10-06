@@ -1,0 +1,125 @@
+{
+  "base_commit": "66678e33366d902da1f24e083658bc61a312041f",
+  "scope": "Persistent initial fee session signs exact SLH successor preparation and native fee/module messages deploy both paired successor accounts. Local mock proof source; no broadcast, funded successor dual-POP or migration claim.",
+  "command": "source <artifacts>/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/cli_fee_prepare_controls.py --cli tosctl/src/target/debug/tosctl --genesis-driver tosctl/src/target/debug/examples/v5r2_genesis_encode --fixture <artifacts>/20261006-native-fee-integration/native/sdk-genesis.json --fee-session-tree <artifacts>/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --output <new-directory>",
+  "runner_exit": 0,
+  "refusals": {
+    "wrong_template": {
+      "status": "request_refused",
+      "reason": "manifest wallet differs from trusted enrollment",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "zero_module": {
+      "status": "request_refused",
+      "reason": "fee value must be positive",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "overflow": {
+      "status": "request_refused",
+      "reason": "deployment sum overflow",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "insufficient_funding": {
+      "status": "request_refused",
+      "reason": "preparation needs execution funding above deployment amounts",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "ready_retired": {
+      "status": "request_refused",
+      "reason": "primary suite retired",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    },
+    "ready_missing_policy": {
+      "status": "request_refused",
+      "reason": "proven configuration parameter count mismatch",
+      "scope": "preserve journal and any partial output; refusal is not proof of failed delivery"
+    }
+  },
+  "semantic_mutations": {
+    "template": "preparation accepted wrong_template",
+    "funding": "preparation accepted insufficient_funding",
+    "required-policy": "REQUIRED preparation depended on PRIMARY policy"
+  },
+  "restored": "Six refusals; REQUIRED preparation without PRIMARY policy; exact non-consuming cached retry; native fee, module and both deployments complete; original module data unchanged.",
+  "regressions": {
+    "genesis_tests": 4,
+    "funded_pop_roles": [
+      "primary",
+      "rescue",
+      "primary"
+    ],
+    "pop_receipt_cases": 9,
+    "subsequent_slh_wallet_lock": "passed"
+  },
+  "limits": {
+    "default_credit": 10000,
+    "default_admission": "rejected with exit -14",
+    "native_diagnostic_credit": 20000,
+    "production_admission_passed": false,
+    "network_proofs": "trusted local mock, not cryptographic proof acquisition",
+    "dynamic_affordability": "not established; funding above deployment sum is necessary only"
+  },
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_fee_session.rs",
+      "bytes": 18196,
+      "sha256": "882188d79381c966d5cb9c742f7f809ad2cb469a788cab1f2bc303df50f694a8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/wallet_pq_inspect_cmd.rs",
+      "bytes": 7241,
+      "sha256": "2abe778373adaf8229d071a94d36f529ad9ceaf0acdcf6e4cea2f144ffba992a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_genesis.rs",
+      "bytes": 17160,
+      "sha256": "6cd73ed9612dd68b67aaba999ce1fbbff26c51097b7eadb74533d05069e409f2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_manifest.rs",
+      "bytes": 27994,
+      "sha256": "4f8d6cd82ff1d4e452169ae8087dab3be4d38433e896c036ff527fa04a3f1870"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/wallet_v5r2_vault.rs",
+      "bytes": 6199,
+      "sha256": "8df2d11de726df66edb72d88dda17ae26a96d8f84231161b029ead5b3c28c17a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_prepare_controls.py",
+      "bytes": 4053,
+      "sha256": "c788d147be0a30375dfb95f33c43090fee239e0b85c1794542068e6067fab292"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_prepare.py",
+      "bytes": 9480,
+      "sha256": "cd82c8bc3774bd652ce75d1363173dfe6c579bb190b716b7ffb6502e82466e0d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_fee_session_sign.py",
+      "bytes": 13525,
+      "sha256": "89e6c66b026cd9a0cd920d65f0a1d944f4c830f8655239db079bea0287c25115"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/cli_sign_primary.py",
+      "bytes": 23884,
+      "sha256": "8670146d8913adf62e54d19167690295e02eb1f5f34ef49b64401d2fa3a0a784"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 27913,
+      "sha256": "329fab6ad1c17b4d2a3b418089b27ac32ed8dca22848d4ec6e4d23594cebaeec"
+    }
+  ],
+  "archive": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-prepare.tar.gz",
+    "bytes": 413825,
+    "sha256": "fd34f81edff3d02d2fd037a6c07432dbcd083125cce2eb6ac732303c92fd720f"
+  },
+  "raw_manifest": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-prepare-MANIFEST.json",
+    "bytes": 25998,
+    "sha256": "30e81581ab76783fc9e0a7d4d9e81e8a452c1cf61feb3e07fcef2424569ee3a0"
+  },
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06."
+}
