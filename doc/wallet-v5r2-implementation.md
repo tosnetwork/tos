@@ -663,6 +663,28 @@ gate. This does not establish a masterchain-backed admission check, network load
 budget or successful wallet execution. Evidence:
 `test/wallet-v5r2/ingress-boundary-20261006.json`.
 
+`test-ext-message-ingress-fixtures` now also invokes that same production parser
+on the actual envelope probe's serialized messages. `ingress_fixture_probe.py`
+retains all 15 original fee/boundary cases and adds, for each class, exact
+65,536-byte and depth 511/512/513 inputs. All 27 cases are checked for the expected
+structural verdict and exact message root. Eighteen parse successfully; nine
+reject at the byte or depth boundary. A unit sensitivity control substitutes a
+different returned message root, requires rejection, and shows that deleting
+the comparison admits it.
+
+The 1,025-cell cases pass structural parsing but fail the contract's separate
+cell-count guard in the preceding dual-VM probe. Similarly, a forged fee signature
+can be structurally valid yet fail wallet authorization. The original 65,535-byte
+messages parse, while the added 65,536-byte messages fail before BOC parsing.
+This closes the previously unmeasured handoff of those particular fixtures into
+the node parser; it does not prove masterchain-backed admission or delivery.
+
+The local run made 891 parser calls (27 cases, three warmups and 30 timed samples).
+Timing covers `create_ext_message` only, excluding input-buffer copying and
+cleanup of the returned object. It is sequential warm-cache evidence, not a
+network throughput or concurrent-load budget. Both architecture CI jobs replay
+the fixture corpus. Evidence: `test/wallet-v5r2/ingress-fixtures-20261006.json`.
+
 
 ## Client fee-leaf scheduling boundary
 

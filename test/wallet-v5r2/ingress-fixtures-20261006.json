@@ -1,0 +1,74 @@
+{
+  "base_commit": "01ddde02408f9a62c7f40b9ca0b21693bdef4925",
+  "scope": "Actual node structural parser only; no masterchain state, wallet authentication or network transport",
+  "timing_scope": "create_ext_message call only; input buffer copy and returned object cleanup excluded; sequential warm-cache samples",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "native_parser_calls": 891,
+  "cases": 27,
+  "structurally_parsed": 18,
+  "byte_or_depth_rejected": 9,
+  "tests": {
+    "root_and_verdict_controls": 2,
+    "clang_format": "passed",
+    "ruff": "passed"
+  },
+  "max_65535_scenario_median_ns": 140062.5,
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/test-ext-message-ingress-fixtures.cpp",
+      "bytes": 2829,
+      "sha256": "cf37d42166d39b127e2caae9b7d9cd87e210debca08c70f279c8860c8ee9937b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/ingress_fixture_probe.py",
+      "bytes": 5458,
+      "sha256": "fe07ee4177884f6ab6e9ec184b1dd5c76a2886afd2f05d8df66d765c7c8612e9"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/test_ingress_fixture_probe.py",
+      "bytes": 1686,
+      "sha256": "22203073013493033cad2944087927a080e4174e62826e7ddc51e16c79f8d3f6"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/CMakeLists.txt",
+      "bytes": 103104,
+      "sha256": "ad1e290e5bd72aa23f87348c2e416b867980fef45019d068b692317217e35574"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 16114,
+      "sha256": "2ab7c39d9469ad58d76d5b09bf35a345cb866bea4cd2b0f588be6e706c74e953"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 115602,
+      "sha256": "4d8b44f75eeca1334723a7cd371c5af8d932747693f1517c333e3ffb7e0f825e"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-ingress-fixture-probe-final/MANIFEST.json",
+      "bytes": 869,
+      "sha256": "3e8ee0f10084ab13d35b3a7a806bf294d30edb26cb4ac3e68d872bb39a42df1b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-ingress-fixture-probe/MANIFEST.json",
+      "bytes": 845,
+      "sha256": "6f7bf2a6e97ae9bcae03c22bcde605de5b6792aeecbb708eaa7ec3a125be9a42"
+    }
+  ],
+  "commands": [
+    "cmake --build build --target test-ext-message-ingress-fixtures -j 4",
+    "python3 test/wallet-v5r2/ingress_fixture_probe.py --fixtures /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-custody-migration-recovery --envelopes /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-admission-envelope-probe-final --driver build/test-ext-message-ingress-fixtures --output <fresh-directory> --iterations 30",
+    "python3 -m unittest discover -s test/wallet-v5r2 -p test_ingress_fixture_probe.py"
+  ],
+  "prior_run": "Initial complete run lacked explicit platform/timing-scope fields; retained separately. Final run includes that metadata.",
+  "limitations": [
+    "Uses default structural size/depth limits, not a live masterchain configuration.",
+    "No authentication, state lookup, mempool transport, network ingress concurrency or block inclusion is exercised by the parser driver.",
+    "Structurally parsed forged or oversized-for-contract messages remain rejected by later contract checks.",
+    "Timing excludes input copying and returned-object cleanup; local warm-cache observations do not establish reference-hardware or production abuse budgets.",
+    "Default-credit wallet admission and other production gates remain open."
+  ],
+  "retention": "Retain raw output and referenced source fixture corpus through release review, at least through 2027-01-06."
+}
