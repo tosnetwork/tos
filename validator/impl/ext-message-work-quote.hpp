@@ -32,4 +32,21 @@ inline td::Result<std::uint64_t> external_tvm_initial_gas_bound(std::uint64_t ga
   return std::max(ordinary, special_gas_limit + special_credit);
 }
 
+// ACCEPT can raise an ordinary account's limit to gas_max, bounded by the
+// configured gas_limit. Initial credit is therefore not a complete-attempt
+// bound. This remains a gas bound, not calibrated CPU work, and excludes the
+// separately bounded instruction overshoot, parsing and state lookup.
+inline td::Result<std::uint64_t> external_tvm_complete_gas_bound(std::uint64_t gas_limit,
+                                                                std::uint64_t special_gas_limit,
+                                                                std::uint64_t gas_credit,
+                                                                bool has_precompiled_contracts) {
+  TRY_RESULT(initial, external_tvm_initial_gas_bound(gas_limit, special_gas_limit, gas_credit,
+                                                    has_precompiled_contracts));
+  constexpr auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  if (gas_limit > maximum) {
+    return td::Status::Error("external admission complete gas exceeds supported VM range");
+  }
+  return std::max(gas_limit, initial);
+}
+
 }  // namespace tos::validator

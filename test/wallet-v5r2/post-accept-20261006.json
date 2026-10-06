@@ -1,0 +1,90 @@
+{
+  "base_commit": "5158da987856e8c32f46ca5109e6d726f134bb73",
+  "source_state": "Candidate complete-bound helper/tests on base commit; C++ source and container copy restored; unrelated client changes excluded",
+  "platform": "macOS AArch64 native Release emulator/Rust debug executor; Linux AArch64 Release pure C++ bound unit tests",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "validator/impl/ext-message-work-quote.hpp": "02de8a24bfc6624eff180327cfeb1e69953578ad0992808c685692fb74374b25",
+    "test/test-ext-message-admission-budget.cpp": "53eda000d00f52e06dff4aa320360646d9cafe0cc3900e6610d2b42f09f0a357",
+    "test/wallet-v5r2/post-accept-probe.fc": "9e999075a703adaf8f584c42d37b7d72e49e650c3912c8a4ec011d4c5b0201fd",
+    "test/wallet-v5r2/post_accept_transactions.py": "3b4de45dbe828b972468483a07f7f9be8fcfa43ee58c4a9ddfc7620e7a82be8b",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "00501e611a56f4df3e890470a2f9a20412c5dd6da2378acf749823b0d1b68e34",
+    ".github/workflows/rescue-context.yml": "c721ea2e9bcdadfd81514585989fd60415ee308f9c172d11ce45215b6b72d8b0"
+  },
+  "commands": [
+    "python3 test/wallet-v5r2/post_accept_transactions.py --config /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-release-generated-config.boc --driver tosctl/src/target/debug/examples/pq-tx-parity --output /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-post-accept-restored",
+    "Run the same probe with --delete-accept; require exit 1 at accepted-small expected acceptance",
+    "docker exec v5r2-admission-linux cmake --build /build-shadow --target test-ext-message-admission-budget -j2",
+    "docker exec v5r2-admission-linux /build-shadow/test-ext-message-admission-budget"
+  ],
+  "results": {
+    "passed": true,
+    "config_sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+    "measurements": [
+      {
+        "name": "unaccepted-small",
+        "transaction_accepted": false,
+        "exit": 0
+      },
+      {
+        "name": "unaccepted-large",
+        "transaction_accepted": false,
+        "exit": -14
+      },
+      {
+        "name": "accepted-small",
+        "transaction_accepted": true,
+        "exit": 0,
+        "gas": 1129
+      },
+      {
+        "name": "accepted-large",
+        "transaction_accepted": true,
+        "exit": 0,
+        "gas": 116106
+      },
+      {
+        "name": "accepted-exhaustion",
+        "transaction_accepted": true,
+        "exit": -14,
+        "gas": 30000000
+      }
+    ],
+    "command": [
+      "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/target/debug/examples/pq-tx-parity",
+      "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-post-accept-restored/config.boc",
+      "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-post-accept-restored/scenarios.tsv",
+      "18",
+      "--details"
+    ],
+    "scope": "Ordinary funded owner-controlled account; whole transactions, not actual node dispatch or CPU calibration"
+  },
+  "cpp_controls": {
+    "passed": true,
+    "runs": {
+      "baseline": 0,
+      "initial-only": 1,
+      "restored": 0
+    },
+    "mutation": "complete bound returns initial bound instead of max(gas_limit, initial)",
+    "restored_green": true
+  },
+  "accept_deletion": {
+    "exit": 1,
+    "assertion": "accepted-small expected acceptance",
+    "private_copy": true
+  },
+  "cpp_control_reproduction": "Replace the single return std::max(gas_limit, initial); with return initial; in ext-message-work-quote.hpp; copy to container and touch; build must pass, unit test must fail; restore/copy/touch/build and require all 11 tests pass",
+  "raw_artifacts": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-post-accept-evidence.tar.gz",
+    "bytes": 5603,
+    "sha256": "5e0c02ffbc0417b67510f1655d3dc8333b0d81be0824eaca3e0020a85d2628a0"
+  },
+  "limits": [
+    "Gas bounds exclude CPU parsing/state lookup and instruction overshoot",
+    "Helper is not used to set runtime work-unit prices or production rates",
+    "Actual node checker dispatch and mixed network workload remain untested on this probe",
+    "Owner-controlled funded account probe; not wallet authorization or live-chain funding evidence",
+    "Unsupported precompiled and custom engine calibration remains separate"
+  ]
+}

@@ -223,3 +223,27 @@ the harness. Proven-chain migration custody, installed-enrollment CLI promotion,
 real backup-derived keys, live funding/finality and production acceptance remain
 open gates. The old diagnostic fixture defaults are retained for historical
 regression; generated-config tests pass explicit identity and version values.
+
+
+## Complete ordinary-account execution bound
+
+The gas helpers distinguish initial credit from complete execution.
+`external_tvm_complete_gas_bound` includes ordinary `gas_limit` after `ACCEPT`,
+as well as special-account initial limit plus credit. It rejects unsupported
+signed ranges and uncalibrated precompiled profiles. These helpers are not
+connected to runtime work-unit pricing and do not set a production rate.
+
+[Post-ACCEPT evidence](post-accept-20261006.json) runs five transactions through
+both executors using the unchanged generated version-18 configuration. An
+ordinary funded owner-controlled account without ACCEPT is rejected. With
+ACCEPT, the same class of loop consumes 116,106 gas, and exhaustion consumes
+30,000,000 gas. The exhausted transaction preserves data while charging compute
+fees; all native/Rust transcripts agree. The account is a probe, not a wallet.
+
+Deleting ACCEPT fails the expected-acceptance assertion. Replacing the complete
+gas bound with the initial bound fails the C++ ordinary-account assertion;
+restored unit tests pass. A complete node-attempt CPU quote must cover these
+post-ACCEPT paths, parsing, state lookup, instruction overshoot, special accounts
+and supported native execution. The selected wallet fee maximum of 15,556 is
+not a bound for every destination. Actual checker dispatch on this probe and
+hardware/network calibration remain open gates.

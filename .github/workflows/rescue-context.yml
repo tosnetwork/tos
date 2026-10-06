@@ -100,6 +100,12 @@ jobs:
             --config artifacts/context/r2-generated-config/restored-config.boc \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/r2-release-wallet "${candidate_controls[@]}"
+      - name: Account-funded execution after ACCEPT
+        run: |
+          python test/wallet-v5r2/post_accept_transactions.py \
+            --config artifacts/context/r2-generated-config/restored-config.boc \
+            --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
+            --output artifacts/context/r2-post-accept
       - name: SDK deployment and native cached recovery on generated configuration
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \

@@ -11,6 +11,18 @@
 namespace tos::validator {
 namespace {
 
+TEST(ExtMessageWorkQuote, IncludesOrdinaryAccountGasAfterAccept) {
+  auto complete = external_tvm_complete_gas_bound(30000000, 0, 20000, false);
+  ASSERT_TRUE(complete.is_ok());
+  EXPECT_EQ(complete.ok(), 30000000u);
+  auto special = external_tvm_complete_gas_bound(1000000, 70000000, 10000, false);
+  ASSERT_TRUE(special.is_ok());
+  EXPECT_EQ(special.ok(), 70010000u);
+  EXPECT(external_tvm_complete_gas_bound(30000000, 70000000, 20000, true).is_error());
+  constexpr auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  EXPECT(external_tvm_complete_gas_bound(maximum + 1, 0, 1, false).is_error());
+}
+
 TEST(ExtMessageWorkQuote, IncludesSpecialAccountCreditInInitialGas) {
   auto special = external_tvm_initial_gas_bound(1000000, 70000000, 10000, false);
   ASSERT_TRUE(special.is_ok());
