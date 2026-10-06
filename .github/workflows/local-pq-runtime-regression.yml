@@ -30,16 +30,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Retain exact source for reproducible offline review
+      - name: Prepare retained evidence
         run: |
           mkdir -p "$RUNNER_TEMP/local-pq-evidence"
           git rev-parse HEAD > "$RUNNER_TEMP/local-pq-evidence/commit.txt"
-          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/local-pq-evidence/source.tar.gz"
       - name: Existing snapshot security regressions
         run: |
           python3 -m venv "$RUNNER_TEMP/testenv"
           "$RUNNER_TEMP/testenv/bin/pip" install 'pytest>=9,<10'
           "$RUNNER_TEMP/testenv/bin/python" -m pytest -q scripts/test_install_root_services.py --junitxml="$RUNNER_TEMP/local-pq-evidence/snapshot.xml"
+      - name: Offline wire-test dependencies
+        run: |
+          "$RUNNER_TEMP/testenv/bin/pip" download --only-binary=:all: --platform manylinux2014_x86_64 --python-version 313 --implementation cp --abi cp313 --dest "$RUNNER_TEMP/local-pq-evidence/wheels" bitarray pynacl pycryptodome
       - name: Retain regression evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
