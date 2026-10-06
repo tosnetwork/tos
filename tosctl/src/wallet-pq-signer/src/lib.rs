@@ -4,6 +4,7 @@
 //! module creates and loads versioned encrypted-backend records. Chain proof
 //! validation and action approval remain the caller's responsibility; obtain
 //! expected public keys from authenticated enrollment.
+pub mod fee;
 pub mod kdf;
 #[cfg(feature = "vault")]
 pub mod vault;

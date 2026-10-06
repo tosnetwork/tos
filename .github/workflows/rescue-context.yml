@@ -82,6 +82,7 @@ jobs:
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer
+          python test/wallet-v5r2/native_fee_verify_controls.py --output artifacts/context/native-fee-verify-controls
           python test/wallet-v5r2/kdf_controls.py --output artifacts/context/wallet-kdf-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos-native-mnemonic
           python test/wallet-v5r2/mnemonic_vector_check.py

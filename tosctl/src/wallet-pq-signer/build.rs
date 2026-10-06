@@ -21,6 +21,8 @@ fn main() {
         .file(pq.join("wallet-pq-signer.cpp"))
         .file(pq.join("wallet-pq-signer-c.cpp"))
         .file(pq.join("slhdsa128s.cpp"))
+        .file(pq.join("lms-fee.cpp"))
+        .file(pq.join("wallet-lms-fee-c.cpp"))
         .compile("tos_wallet_pq_signer_ffi");
     cc::Build::new()
         .cpp(true)

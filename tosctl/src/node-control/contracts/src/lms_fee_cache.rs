@@ -27,6 +27,58 @@ fn framing(leaf: u32, signature: &[u8]) -> anyhow::Result<()> {
 }
 
 impl FeeJournal {
+    /// Reserve durably, invoke the backend once, and verify using the native
+    /// consensus implementation before caching and again before returning bytes.
+    /// The caller supplies authenticated route/key/time; this low-level adapter
+    /// does not validate chain proofs or provide an LMS private-key backend.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn sign_once_verified<S>(
+        &mut self,
+        public_key: &[u8; 60],
+        proven_time: u32,
+        chain_next_leaf: u32,
+        expected_leaf: u32,
+        intent_hash: [u8; 32],
+        signer: S,
+    ) -> anyhow::Result<Vec<u8>>
+    where
+        S: FnOnce(u32, &[u8; 32]) -> anyhow::Result<Vec<u8>>,
+    {
+        self.sign_once(
+            proven_time,
+            chain_next_leaf,
+            expected_leaf,
+            intent_hash,
+            signer,
+            |leaf, digest, signature| {
+                Ok(wallet_pq_signer::fee::verify_reserved_signature(
+                    public_key, leaf, digest, signature,
+                )
+                .is_ok())
+            },
+        )?;
+        self.cached_signature_verified(public_key, expected_leaf, intent_hash)
+    }
+
+    /// Reverify exact cached bytes before export. A cache miss never invokes a
+    /// signer. Freshness, current route and message expiry remain caller gates.
+    #[cfg(feature = "native-wallet-signer")]
+    pub fn cached_signature_verified(
+        &mut self,
+        public_key: &[u8; 60],
+        leaf: u32,
+        intent_hash: [u8; 32],
+    ) -> anyhow::Result<Vec<u8>> {
+        let signature = self.cached_signature(leaf, intent_hash)?;
+        wallet_pq_signer::fee::verify_reserved_signature(
+            public_key,
+            leaf,
+            &intent_hash,
+            &signature,
+        )?;
+        Ok(signature)
+    }
+
     /// Orchestrate one signing attempt through caller-supplied, reviewed LMS
     /// primitives. The signer is never invoked before a durable reservation.
     /// Verification failure burns the leaf; successful bytes are cached before
@@ -205,6 +257,71 @@ mod tests {
         let d = tempfile::tempdir()?;
         std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o700))?;
         Ok(d)
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    #[test]
+    fn native_fee_verification_guards_backend_cache_and_retry() -> anyhow::Result<()> {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../wallet-pq-signer/tests/fixtures/lms-fee-signature.json"
+        ))?;
+        let key: [u8; 60] =
+            hex::decode(fixture["public_key"].as_str().unwrap())?.try_into().unwrap();
+        let digest: [u8; 32] =
+            hex::decode(fixture["digest"].as_str().unwrap())?.try_into().unwrap();
+        let signature = hex::decode(fixture["signature"].as_str().unwrap())?;
+        let leaf = u32::try_from(fixture["leaf"].as_u64().unwrap())?;
+        assert_eq!(leaf, 12);
+        let d = directory()?;
+        let mut journal = FeeJournal::open(d.path(), route(), 100)?;
+        let calls = std::cell::Cell::new(0);
+        let output = journal.sign_once_verified(&key, 10900, 0, leaf, digest, |q, m| {
+            assert_eq!(q, leaf);
+            assert_eq!(m, &digest);
+            calls.set(calls.get() + 1);
+            Ok(signature.clone())
+        })?;
+        assert_eq!(output, signature);
+        assert_eq!(calls.get(), 1);
+        assert!(
+            journal
+                .sign_once_verified(&key, 10900, 0, leaf, digest, |_, _| panic!(
+                    "native retry invoked backend"
+                ))
+                .is_err()
+        );
+        assert_eq!(journal.cached_signature_verified(&key, leaf, digest)?, signature);
+        let mut wrong_key = key;
+        wrong_key[28] ^= 1;
+        assert!(
+            journal.cached_signature_verified(&wrong_key, leaf, digest).is_err(),
+            "native cache ignored enrolled key"
+        );
+        let mut invalid = signature.clone();
+        invalid[4..8].copy_from_slice(&13u32.to_be_bytes());
+        assert!(
+            journal.sign_once_verified(&key, 10900, 0, 13, digest, |_, _| Ok(invalid)).is_err(),
+            "native adapter cached invalid backend signature"
+        );
+        assert_eq!(journal.state.next_unreserved, 14, "invalid backend did not burn leaf");
+        assert!(
+            !d.path().join("fee-signature-0000000d").exists(),
+            "invalid backend wrote signature cache"
+        );
+        // Corrupt signature bytes but preserve framing and the non-secret checksum.
+        let cache = d.path().join("fee-signature-0000000c");
+        let mut record = std::fs::read(&cache)?;
+        record[76 + 44] ^= 1;
+        let checksum = Sha256::digest(&record[..CACHE_SIZE - 32]);
+        record[CACHE_SIZE - 32..].copy_from_slice(&checksum);
+        std::fs::write(&cache, record)?;
+        assert!(journal.cached_signature(leaf, digest).is_ok());
+        assert!(
+            journal.cached_signature_verified(&key, leaf, digest).is_err(),
+            "native adapter exported forged cache"
+        );
+        assert_eq!(calls.get(), 1);
+        Ok(())
     }
 
     #[test]

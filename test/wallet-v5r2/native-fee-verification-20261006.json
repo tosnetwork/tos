@@ -1,0 +1,151 @@
+{
+  "base_commit": "6b3ff26221254cdb17208e279e2675a45c7ca330",
+  "scope": "In-process reserved-leaf LMS signature verification using existing native consensus code, plus fixed-verifier pre-cache and export adapters. No private-key backend.",
+  "tests": {
+    "semantic_controls": {
+      "reserved_leaf": {
+        "exit": 101,
+        "semantic_witness": "fee verifier ignored reserved leaf"
+      },
+      "cryptography": {
+        "exit": 101,
+        "semantic_witness": "fee verifier accepted wrong digest"
+      },
+      "backend_verification": {
+        "exit": 101,
+        "semantic_witness": "invalid backend wrote signature cache"
+      },
+      "export_verification": {
+        "exit": 101,
+        "semantic_witness": "native cache ignored enrolled key"
+      }
+    },
+    "signer_vault_unit_tests": "16 passed",
+    "signer_compile_fail_doctests": "2 passed",
+    "journal_suite": "21 passed, 1 ignored child-process helper",
+    "commands": {
+      "signer": {
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "tosctl/src/Cargo.toml",
+          "--locked",
+          "-p",
+          "wallet-pq-signer",
+          "--features",
+          "vault"
+        ],
+        "exit": 0
+      },
+      "journal": {
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "tosctl/src/Cargo.toml",
+          "--locked",
+          "-p",
+          "contracts",
+          "--features",
+          "native-wallet-signer",
+          "--lib",
+          "lms_fee_"
+        ],
+        "exit": 0
+      },
+      "format": {
+        "command": [
+          "make",
+          "-C",
+          "tosctl/src",
+          "fmt-check"
+        ],
+        "exit": 0
+      }
+    },
+    "ruff": "passed"
+  },
+  "control_command": "python3 test/wallet-v5r2/native_fee_verify_controls.py --output <fresh-directory>",
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/wallet-lms-fee-c.cpp",
+      "bytes": 1449,
+      "sha256": "146247877abafabc47e58e0edc53531dedf6af58ed2cb56c8d12ce54d31dd246"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/lms-fee.cpp",
+      "bytes": 6703,
+      "sha256": "c7792505bd59820760d9d0d0b00b6367e734ff6c2eef1462eebe57ec9373772a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/crypto/pq/lms-fee.h",
+      "bytes": 1315,
+      "sha256": "601bda498c7a67bc870b4248bd2036a2a14287f17e8dbb4c83dc7bb670885443"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/build.rs",
+      "bytes": 2078,
+      "sha256": "8072a310a64f41ca0dbc5229c478b762c6990596d1f517b005a5e271c8ae4372"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/lib.rs",
+      "bytes": 10093,
+      "sha256": "dbe0cee8dc242d389d8770ee4bfc15c5dec765bedda2f5477ae1f493d84792ae"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/fee.rs",
+      "bytes": 3582,
+      "sha256": "7ee26b1a8b1042feffe5e811d5e506b142fca77ff5b9c6b359d34ccdb13f4fa1"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/tests/fixtures/lms-fee-signature.json",
+      "bytes": 6137,
+      "sha256": "22e4ce39d6e2bf20d3cb51797c081671230a9d10da4889b5021c18dda7524da0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/contracts/src/lms_fee_cache.rs",
+      "bytes": 19594,
+      "sha256": "5d5f000db4607606f25743b5354f077b78b188390133b0a1191b44f4e5f45466"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/native_fee_verify_controls.py",
+      "bytes": 3976,
+      "sha256": "1edf95cf15313d6b48738a80e5a8e250cd0c6885d6c8b86b38a652375b5ce4b0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 20447,
+      "sha256": "94758db64c9a4de27f8c5fc90157cd9b7ffdbee9c0ae88663c1c458275e15f2e"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 165412,
+      "sha256": "392090a27e293455afdbb4059de6b612aa8ac22f98cf912a46f0255c8ddcb93f"
+    }
+  ],
+  "fixture_origin": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-recovery-integration/native/recovery/sdk-old/journal/fee-signature-0000000c",
+    "bytes": 2940,
+    "sha256": "fdb7068c366695962a7c394ab0523b356988ce02df43695bc5e189fffd596d1d"
+  },
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-verify-controls-final/MANIFEST.json",
+      "bytes": 2269,
+      "sha256": "fbcb7c23b4cce26bab187f007e9521486a527a601e35fd4bb89a00258a172a27"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-fee-regression/MANIFEST.json",
+      "bytes": 973,
+      "sha256": "c2566a35d045795e9391f99a372e0bff0ff795f92603aedb756d049dd916e801"
+    }
+  ],
+  "retention": "Retain through release review, at least through 2027-01-06.",
+  "limitations": [
+    "Verification only; actual LMS secret backend, generation and protected signer state remain incomplete.",
+    "Low-level journal adapters require independently authenticated key/route/time and separate freshness/expiry/admission checks.",
+    "Frozen signature is public test data; no production-key or hardware custody evidence.",
+    "Consensus verifier implementation and gas pricing unchanged; default-credit and final-head CI gates remain open."
+  ]
+}

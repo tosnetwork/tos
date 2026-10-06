@@ -2547,3 +2547,37 @@ outcomes now consume the actual CLI-prepared manifest and compare it with the
 SDK output; their manifest-binding bypass control is rerun after sharing the
 code-loading options. Public fixture keys and local code pins remain test-only.
 Evidence: `test/wallet-v5r2/cli-prepare-20261006.json`.
+
+### In-process native fee verification and journal export
+
+`wallet-pq-signer::fee::verify_reserved_signature` verifies the fixed HSS L1 /
+LMS SHA256 M32 H20 / LMOTS SHA256 N32 W4 profile using the existing native
+consensus verifier. A small C ABI checks pointer/length bounds and the exact
+reserved leaf before calling that implementation. The Rust API accepts only a
+32-byte intent digest and returns a content-free rejection for failure. It adds
+no private-key backend, tree generation or signing state.
+
+With `native-wallet-signer`, `FeeJournal::sign_once_verified` durably reserves
+before invoking the supplied signing backend, uses the native verifier before
+caching, then rereads and cryptographically checks the cache before export.
+`cached_signature_verified` similarly checks exact cached bytes against the
+supplied enrolled public key, digest and leaf without invoking a signer. These
+are low-level adapters: callers still authenticate route/key/time and enforce
+current chain state, expiry and admission. The existing proof-bound fee flow
+continues to require trusted cryptographic callbacks until its concrete backend
+integration is completed.
+
+A bounded public signature fixture comes from a fee cache used by the recorded
+67-transaction dual-executor recovery fixture. Tests cover the valid signature,
+wrong reserved leaf/digest, changed key/signature fields and malformed sizes.
+Actual journal tests cover valid signing once, identical retry bytes, duplicate
+reservation rejection, wrong-key export, burning a leaf without caching invalid
+backend output, and refusing a cache whose signature was altered even after its
+non-secret checksum was recomputed. Four semantic controls remove leaf binding,
+cryptographic verification, pre-cache verification or export verification; each
+must fail its named assertion and restored tests pass.
+
+This supplies verification for a future real fee signing backend, not that
+backend itself. The current test LMS tool remains unsuitable for secrets or
+production custody. No change to VM consensus verification or gas pricing is
+made here. Evidence: `test/wallet-v5r2/native-fee-verification-20261006.json`.
