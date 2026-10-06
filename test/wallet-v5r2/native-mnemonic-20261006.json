@@ -1,0 +1,147 @@
+{
+  "base_commit": "4a2e32a9bc3e2343bb72da402612169cb840dfcd",
+  "scope": "Share unchanged native mnemonic semantics between legacy CLI and bound PQ Vault recovery, with zeroizing intermediate phrase containers.",
+  "tests": {
+    "native_unit_tests": 3,
+    "signer_unit_tests": 15,
+    "compile_fail_doctests": 2,
+    "legacy_source_frozen_tests": 3,
+    "independent_python_mnemonic_vectors": 2,
+    "independent_python_pq_vectors": 4,
+    "semantic_controls": {
+      "basic_seed": {
+        "exit": 101,
+        "semantic_test": "rejects_bip39_words_that_do_not_form_a_tos_basic_seed"
+      },
+      "normalization": {
+        "exit": 101,
+        "semantic_test": "preserves_native_vectors_and_exact_passwords"
+      },
+      "native_salt": {
+        "exit": 101,
+        "semantic_test": "preserves_native_vectors_and_exact_passwords"
+      },
+      "password": {
+        "exit": 101,
+        "semantic_test": "preserves_native_vectors_and_exact_passwords"
+      },
+      "iterations": {
+        "exit": 101,
+        "semantic_test": "preserves_native_vectors_and_exact_passwords"
+      },
+      "seed_half": {
+        "exit": 101,
+        "semantic_test": "preserves_native_vectors_and_exact_passwords"
+      }
+    },
+    "commands_cargo_check": "passed",
+    "workspace_format": "passed",
+    "ruff": "passed"
+  },
+  "legacy_control": {
+    "source_commit": "4a2e32a9bc3e2343bb72da402612169cb840dfcd",
+    "source_path": "tosctl/src/node-control/commands/src/commands/nodectl/tos_mnemonic.rs",
+    "method": "Temporarily compile the original implementation as the new crate with the same frozen tests appended; require all three passing, restore current source in finally; subsequent controls baseline and restored tests pass."
+  },
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos-native-mnemonic -p wallet-pq-signer --features wallet-pq-signer/vault",
+    "python3 test/wallet-v5r2/mnemonic_vector_check.py",
+    "python3 test/wallet-v5r2/mnemonic_controls.py --output <fresh-directory>",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --locked -p commands --lib",
+    "make -C tosctl/src fmt-check"
+  ],
+  "sources": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/tos-native-mnemonic/src/lib.rs",
+      "bytes": 5281,
+      "sha256": "57ede8bf32ac73ea0a89c1b64afae84490a2f2201e47d59a7c4e782ae8379df2"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/tos-native-mnemonic/Cargo.toml",
+      "bytes": 340,
+      "sha256": "c35a5b877c5721cfa5012a30dcc33b9bd0aa42fde04012524d9fc2424b7ad9fe"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/tos-native-mnemonic/tests/fixtures/native-pq.json",
+      "bytes": 1462,
+      "sha256": "a8aa654107f705f907981951f3f6db62e9fbf1fc1b5864264144a78cb0fb91cc"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/src/commands/nodectl/tos_mnemonic.rs",
+      "bytes": 237,
+      "sha256": "de83ec46fc9187572e3b81b3b13ffb0c0e5e4252b057dde37577f44ef83c5d0d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/node-control/commands/Cargo.toml",
+      "bytes": 1318,
+      "sha256": "b357cc85bb1ecde81b21e68e2e6c1bfef1fb12c40123d6982e2cabd641ec73b0"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/src/vault.rs",
+      "bytes": 25616,
+      "sha256": "3c3cfec85cdf971c4593279556eee2e7ba22c03096e4e7736377135a886a92d5"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/wallet-pq-signer/Cargo.toml",
+      "bytes": 631,
+      "sha256": "e302a0471074c18431feb990699fcc712fcc39dc5a2ce348a696ecedc2c08504"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.toml",
+      "bytes": 610,
+      "sha256": "8ba762c9bef816c4b1e9270e158efd2bf469e6576d0857ab65ff512b2cf21f8a"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/tosctl/src/Cargo.lock",
+      "bytes": 148939,
+      "sha256": "e46603cdb013d24c267f746046d5934bfc0e722a1acc2832cde586d76f4b9a7f"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/mnemonic_controls.py",
+      "bytes": 2842,
+      "sha256": "bf1427d165b94b4e641fa811d7c1be90f66728c36a31a6caa2595ce1b76c4b23"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/test/wallet-v5r2/mnemonic_vector_check.py",
+      "bytes": 1750,
+      "sha256": "765a39d41c9fe57754732003d564dc48f8afc4d4fc6ab6fd4675480dbcaae92d"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/.github/workflows/rescue-context.yml",
+      "bytes": 17894,
+      "sha256": "b5798f6974573920f97175235b6b06da1aff702a07a097a60e32b746f94a394b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue/doc/wallet-v5r2-implementation.md",
+      "bytes": 142749,
+      "sha256": "8a425e5c43989e28ddb0e6b8c9f09245b899b7ccb8db8809a76d1cef70bcc993"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-mnemonic-bridge/MANIFEST.json",
+      "bytes": 1473,
+      "sha256": "816cc1d540796c1e626d4617ff3c922af1f8b8013b8ffdc4b8d05360b121d815"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-native-mnemonic-controls/MANIFEST.json",
+      "bytes": 2138,
+      "sha256": "3639449793731f8f889f1e1fcae2a794217d01418166eb9d1f6962c3482dfa59"
+    }
+  ],
+  "retention": "Retain raw artifacts through release review, at least through 2027-01-06.",
+  "ci": {
+    "previous_run": 37408434711,
+    "previous_result": "Both architectures failed at the same stale fee-scheduler mutation anchor; repaired in 4a2e32a9b.",
+    "new_run": 37410539906,
+    "head": "4a2e32a9bc3e2343bb72da402612169cb840dfcd",
+    "state_when_recorded": "in_progress",
+    "includes_this_mnemonic_change": false
+  },
+  "limitations": [
+    "Library recovery and CLI compile compatibility are not complete CLI/mobile creation or recovery flows.",
+    "Caller-owned phrase/password/successful returned word and seed buffers require cleanup; no complete memory-snapshot erasure guarantee.",
+    "Authenticated recovery manifests, device independence, live chain readiness and LMS restore barriers remain separate gates.",
+    "Default-credit admission and final-head CI/deployment acceptance remain open."
+  ]
+}

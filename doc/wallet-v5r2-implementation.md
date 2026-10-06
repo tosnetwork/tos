@@ -2188,3 +2188,37 @@ production and restored candidates pass. Production scheduler code is unchanged.
 This resolves the reproduced harness defect locally; it is not a claim that the
 remaining Linux CI or deployment gates pass. Evidence:
 `test/wallet-v5r2/fee-schedule-ci-repair-20261006.json`.
+
+
+### Shared native mnemonic derivation and bound PQ recovery
+
+The CLI's existing `tos_mnemonic` implementation is now the workspace library
+`tos-native-mnemonic`; the CLI module reexports the same three functions. Word
+normalization, 12/24-word acceptance, English word-list membership, native
+basic-seed check, exact password input and 100,000-round private-seed derivation
+are retained. This remains a TOS-native mnemonic format, not BIP39 checksum/seed
+semantics. Internal normalized words, rejected generated candidates and the joined
+phrase use zeroizing containers. Successful returned words/seed and caller-owned
+phrase/password buffers remain the caller's cleanup responsibility; no complete
+memory-snapshot erasure claim is made.
+
+`vault::restore_mnemonic` validates and derives the native 32-byte master, protects
+its local buffer with a zeroizing guard, then invokes the fixed KDF and the
+independently public-key-bound new-record restoration path. It exposes no
+classical signing branch and does not infer enrollment from the mnemonic itself.
+Public fixed fixtures cover 12 words with the empty password and 24 words with an
+exact whitespace-bearing password, two master seeds and four PQ role seeds.
+Python hashlib/hmac independently recomputes every seed. The original CLI
+implementation from `4a2e32a9b` passes those same frozen native vectors before the
+shared implementation is restored. Six semantic controls change the basic-seed
+check, normalization, password use, private-seed salt, rounds or selected seed
+half, and each fails its named test before restored tests pass.
+
+End-to-end library tests restore both roles for both public phrases into actual
+encrypted Vault files, reject an incompatible mnemonic and wrong account index
+before storage, reopen and produce native POP signatures under the expected keys
+from independently computed frozen seeds. This is a library recovery path; full
+CLI/mobile creation/restore commands, authenticated recovery manifests, separate
+custody and chain readiness remain to be completed. Existing CLI identities are
+not relabelled V5R2. Evidence:
+`test/wallet-v5r2/native-mnemonic-20261006.json`.

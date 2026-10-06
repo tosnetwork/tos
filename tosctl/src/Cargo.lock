@@ -784,7 +784,6 @@ dependencies = [
  "adnl",
  "anyhow",
  "base64 0.22.1",
- "bip39",
  "chain-rpc-client",
  "chain_block",
  "chain_block_json",
@@ -798,9 +797,7 @@ dependencies = [
  "elections",
  "futures-util",
  "hex",
- "hmac",
  "libc",
- "pbkdf2",
  "rand 0.8.5",
  "reqwest",
  "rpassword",
@@ -812,6 +809,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tos-native-mnemonic",
  "tracing",
  "zeroize",
 ]
@@ -4875,6 +4873,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tos-native-mnemonic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bip39",
+ "hex",
+ "hmac",
+ "pbkdf2",
+ "rand 0.8.5",
+ "serde_json",
+ "sha2",
+ "zeroize",
+]
+
+[[package]]
 name = "tos_assembler"
 version = "1.9.3"
 dependencies = [
@@ -5319,6 +5332,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tos-native-mnemonic",
  "zeroize",
 ]
 

@@ -9,6 +9,7 @@ publish = false
 vault = ["dep:secrets-vault"]
 
 [dependencies]
+tos-native-mnemonic = { path = "../tos-native-mnemonic" }
 secrets-vault = { path = "../secrets-vault", optional = true }
 openssl-sys = "0.9"
 openssl = "0.10"

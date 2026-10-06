@@ -20,6 +20,7 @@ members = [
     'toscenter-rs',
     'vm',
     'wallet-pq-signer',
+    'tos-native-mnemonic',
     'sandbox',
 ]
 resolver = '2'

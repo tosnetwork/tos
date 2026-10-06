@@ -134,6 +134,25 @@ pub fn restore_derived_and_wipe<'a>(
     }
 }
 
+/// Validate a TOS-native mnemonic/password and restore its bound derived role.
+/// Phrase/password are borrowed: callers must protect and clear their own buffers.
+/// Validation errors are deliberately content-free at this secret-handling API.
+/// This is not a BIP39 seed import and performs no classical key derivation.
+pub async fn restore_mnemonic(
+    vault: &SecretVault,
+    id: &SecretId,
+    role: Role,
+    phrase: &str,
+    password: &str,
+    context: crate::kdf::DerivationContext,
+    expected_key: &[u8],
+) -> Result<Signer, Rejected> {
+    let mut master = zeroize::Zeroizing::new(
+        tos_native_mnemonic::private_seed(phrase, password).map_err(|_| Rejected)?,
+    );
+    restore_derived_and_wipe(vault, id, role, &mut *master, context, expected_key).await
+}
+
 /// Open a seed record and bind the derived key to independently authenticated
 /// enrollment. Records use Algorithm::None blobs, PROFILE_TAG/ROLE_TAG, and
 /// exactly 32 primary or 48 rescue seed bytes. This is not a classical-key path.
@@ -556,6 +575,66 @@ mod restore_tests {
             load_bound(&reopened, &id, Role::Primary, &key)
                 .await
                 .expect("uncertain restored record preserved");
+        }
+    }
+}
+
+#[cfg(test)]
+mod mnemonic_tests {
+    use super::creation_tests::{Failure, open};
+    use super::*;
+    #[tokio::test]
+    async fn native_mnemonic_restores_both_bound_roles() {
+        let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tos-native-mnemonic/tests/fixtures/native-pq.json"
+        ))
+        .unwrap();
+        let context = crate::kdf::DerivationContext {
+            network: [1; 32],
+            global_id: 42,
+            account_index: 5,
+            key_generation: 7,
+        };
+        for vector in fixtures["vectors"].as_array().unwrap() {
+            for (role, label) in [(Role::Primary, "ML-DSA-44"), (Role::Rescue, "SLH-DSA-SHA2-128s")]
+            {
+                let mut seed = hex::decode(vector["derived"][label].as_str().unwrap()).unwrap();
+                let expected = Signer::import_and_wipe(role, &mut seed).unwrap();
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("vault.json");
+                let vault = open(&path, Failure::None).await;
+                let id = SecretId::new("pq.mnemonic");
+                let key = expected.public_key();
+                let bip39 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+                assert!(
+                    restore_mnemonic(&vault, &id, role, bip39, "", context, key).await.is_err(),
+                    "accepted incompatible mnemonic"
+                );
+                assert!(!vault.exists(&id).await.unwrap());
+                let phrase = vector["phrase"].as_str().unwrap();
+                let password = vector["password"].as_str().unwrap();
+                let mut wrong = context;
+                wrong.account_index = 6;
+                assert!(
+                    restore_mnemonic(&vault, &id, role, phrase, password, wrong, key)
+                        .await
+                        .is_err(),
+                    "mnemonic bypassed bound enrollment"
+                );
+                assert!(!vault.exists(&id).await.unwrap());
+                let signer = restore_mnemonic(&vault, &id, role, phrase, password, context, key)
+                    .await
+                    .unwrap();
+                assert_eq!(signer.public_key(), key);
+                drop(signer);
+                drop(vault);
+                let reopened = open(&path, Failure::None).await;
+                let mut signer = load_bound(&reopened, &id, role, key).await.unwrap();
+                assert_eq!(
+                    signer.sign_bound(role, key, crate::Purpose::Pop, &[8; 32]).unwrap().len(),
+                    role.signature_bytes()
+                );
+            }
         }
     }
 }
