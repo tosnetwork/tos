@@ -178,6 +178,89 @@ if ! import_requested; then
   exit 0
 fi
 
+# ---- The node's configuration lock, held for the whole import.
+#
+# Taken before anything in the database is read, the default global config
+# included, and held until the import exits.
+#
+# validator-engine takes <db>/config.json.lock before it reads or writes
+# anything in the database and holds it while it runs; bind-node takes it for
+# its edit. It is a POSIX record lock (fcntl F_SETLK, F_WRLCK, the whole
+# file), which flock(1) neither sees nor conflicts with, so the same kind of
+# lock is taken here, through perl's fcntl, by this very process: the script
+# re-executes itself under a perl that opens the file, locks it, keeps the
+# descriptor open across exec and execs the script again. A record lock
+# belongs to the process, so it stays held until the import exits. While it is
+# held, a node started on this database refuses to start; if a node holds it,
+# the import is refused. The file is created if missing and never removed:
+# removing it would let two processes lock two different files.
+# Stopping the node first is still required; the lock catches a node that was
+# not stopped, it does not replace stopping it. flock(1)/flock(2) is not used
+# here and is not the engine's primitive: on Linux it is independent of fcntl
+# record locks and would not exclude the engine.
+#
+# Whether this process holds the lock is asked of the kernel, never of the
+# environment: /proc/locks must list a POSIX WRITE lock on the lock file's
+# device and inode, over the whole file, owned by this process. Anything else
+# re-executes through perl and takes the lock as if fresh. A second failure
+# to confirm it after taking it is refused rather than retried.
+#
+# In the container this is a second line of defence. init.sh runs the import
+# before it initializes or execs the engine, once, guarded by the
+# .snapshot-imported marker, so no engine of that container can be running.
+[ -d "$DB_DIR" ] || fail "database directory $DB_DIR is missing"
+CONFIG_LOCK="$DB_DIR/config.json.lock"
+command -v perl >/dev/null || fail "perl is required to take the node's configuration lock"
+
+holds_config_lock() {
+  [ -f "$CONFIG_LOCK" ] && [ ! -L "$CONFIG_LOCK" ] || return 1
+  perl -e '
+    my ($path, $pid) = @ARGV;
+    my @st = lstat($path) or exit 1;
+    my $dev = $st[0];
+    # The kernel encoding of dev_t, as /proc/locks prints it (hex major:minor).
+    my $major = (($dev >> 8) & 0xfff) | (($dev >> 32) & ~0xfff);
+    my $minor = ($dev & 0xff) | (($dev >> 12) & ~0xff);
+    my $id = sprintf("%02x:%02x:%d", $major, $minor, $st[1]);
+    open(my $locks, "<", "/proc/locks") or exit 1;
+    while (my $line = <$locks>) {
+      my @f = split(" ", $line);
+      # "N: POSIX ADVISORY WRITE PID MAJ:MIN:INODE START END"; a blocked waiter
+      # is listed as "N: -> POSIX ..." and is not a holder.
+      next unless @f == 8 && $f[1] eq "POSIX" && $f[3] eq "WRITE";
+      exit 0 if $f[4] eq $pid && $f[5] eq $id && $f[6] eq "0" && $f[7] eq "EOF";
+    }
+    exit 1;
+  ' -- "$CONFIG_LOCK" "$$"
+}
+
+if ! holds_config_lock; then
+  attempt="${TOS_SNAPSHOT_LOCK_ATTEMPT:-0}"
+  [[ "$attempt" =~ ^[0-9]+$ ]] || attempt=1
+  ((attempt == 0)) ||
+    fail "this process does not hold the configuration lock $CONFIG_LOCK after taking it, as /proc/locks shows; refusing to import without it"
+  [ ! -L "$CONFIG_LOCK" ] || fail "$CONFIG_LOCK is a symbolic link; import only into a new database"
+  exec perl -MFcntl=O_RDWR,O_CREAT,O_NOFOLLOW,F_SETLK,F_WRLCK,F_SETFD,SEEK_SET -e '
+    my ($lock, $script, @args) = @ARGV;
+    sysopen(my $fh, $lock, O_RDWR | O_CREAT | O_NOFOLLOW, 0600)
+      or do { print STDERR "[snapshot] refused: cannot open $lock: $!\n"; exit 1 };
+    # struct flock on Linux LP64: short type, short whence, (pad), off_t start,
+    # off_t len, pid_t pid, (pad). Length 0 locks the whole file.
+    my $request = pack("s s x4 q q i x4", F_WRLCK, SEEK_SET, 0, 0, 0);
+    fcntl($fh, F_SETLK, $request)
+      or do {
+        print STDERR "[snapshot] refused: $lock is held by another process: a node running on this "
+          . "database, or bind-node editing its configuration ($!); stop it before importing\n";
+        exit 1;
+      };
+    fcntl($fh, F_SETFD, 0) or do { print STDERR "[snapshot] refused: cannot keep $lock open: $!\n"; exit 1 };
+    # Only bounds the retry; whether the lock is held is checked in /proc/locks.
+    $ENV{TOS_SNAPSHOT_LOCK_ATTEMPT} = 1;
+    exec("bash", $script, @args) or do { print STDERR "[snapshot] refused: cannot continue: $!\n"; exit 1 };
+  ' -- "$CONFIG_LOCK" "$0" "$@"
+fi
+log "holding the node's configuration lock $CONFIG_LOCK for the import"
+
 # ---- Configuration: everything checked before any network or disk access.
 
 [ -n "${DUMP_URL:-}" ] || fail "SNAPSHOT_IMPORT is enabled but DUMP_URL is empty"
@@ -198,7 +281,6 @@ configured_zerostate="$(jq -er '.validator.zero_state.root_hash' "$GLOBAL_CONFIG
 [ "$configured_zerostate" = "$expected_zerostate" ] ||
   fail "DUMP_ZEROSTATE_ROOT_HASH $expected_zerostate does not match zero state $configured_zerostate in $GLOBAL_CONFIG (a consistency check between operator settings; it authenticates neither)"
 
-[ -d "$DB_DIR" ] || fail "database directory $DB_DIR is missing"
 db_real="$(realpath -e "$DB_DIR")"
 staging_real="$(realpath -m "$STAGING_DIR")"
 case "$staging_real/" in
@@ -207,51 +289,6 @@ esac
 case "$db_real/" in
   "$staging_real"/*) fail "the database directory $db_real is inside SNAPSHOT_STAGING_DIR $staging_real" ;;
 esac
-
-# ---- The node's configuration lock, held for the whole import.
-#
-# validator-engine takes <db>/config.json.lock before it reads or writes
-# anything in the database and holds it while it runs; bind-node takes it for
-# its edit. It is a POSIX record lock (fcntl F_SETLK, F_WRLCK, the whole
-# file), which flock(1) neither sees nor conflicts with, so the same kind of
-# lock is taken here, through perl's fcntl, by this very process: the script
-# re-executes itself under a perl that opens the file, locks it, keeps the
-# descriptor open across exec and execs the script again. A record lock
-# belongs to the process, so it stays held until the import exits. While it is
-# held, a node started on this database refuses to start; if a node holds it,
-# the import is refused. The file is created if missing and never removed:
-# removing it would let two processes lock two different files.
-# Stopping the node first is still required; the lock catches a node that was
-# not stopped, it does not replace stopping it. flock(1)/flock(2) is not used
-# here and is not the engine's primitive: on Linux it is independent of fcntl
-# record locks and would not exclude the engine.
-#
-# In the container this is a second line of defence. init.sh runs the import
-# before it initializes or execs the engine, once, guarded by the
-# .snapshot-imported marker, so no engine of that container can be running.
-CONFIG_LOCK="$DB_DIR/config.json.lock"
-if [ "${TOS_SNAPSHOT_CONFIG_LOCK_PID:-}" != "$$" ]; then
-  [ ! -L "$CONFIG_LOCK" ] || fail "$CONFIG_LOCK is a symbolic link; import only into a new database"
-  command -v perl >/dev/null || fail "perl is required to take the node's configuration lock"
-  exec perl -MFcntl=O_RDWR,O_CREAT,O_NOFOLLOW,F_SETLK,F_WRLCK,F_SETFD,SEEK_SET -e '
-    my ($lock, $script, @args) = @ARGV;
-    sysopen(my $fh, $lock, O_RDWR | O_CREAT | O_NOFOLLOW, 0600)
-      or do { print STDERR "[snapshot] refused: cannot open $lock: $!\n"; exit 1 };
-    # struct flock on Linux LP64: short type, short whence, (pad), off_t start,
-    # off_t len, pid_t pid, (pad). Length 0 locks the whole file.
-    my $request = pack("s s x4 q q i x4", F_WRLCK, SEEK_SET, 0, 0, 0);
-    fcntl($fh, F_SETLK, $request)
-      or do {
-        print STDERR "[snapshot] refused: $lock is held by another process: a node running on this "
-          . "database, or bind-node editing its configuration ($!); stop it before importing\n";
-        exit 1;
-      };
-    fcntl($fh, F_SETFD, 0) or do { print STDERR "[snapshot] refused: cannot keep $lock open: $!\n"; exit 1 };
-    $ENV{TOS_SNAPSHOT_CONFIG_LOCK_PID} = $$;
-    exec("bash", $script, @args) or do { print STDERR "[snapshot] refused: cannot continue: $!\n"; exit 1 };
-  ' -- "$CONFIG_LOCK" "$0" "$@"
-fi
-log "holding the node's configuration lock $CONFIG_LOCK for the import"
 
 if [ -f "$MARKER" ]; then
   recorded="$(cat "$MARKER")"

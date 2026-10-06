@@ -38,10 +38,14 @@ ZEROSTATE = "F6OpKZKqvqeFp6CQmFomXNMfMj2EnaUSOXN+Mh+wVWk="
 OTHER_ZEROSTATE = "XplPz01CXAps5qeSWUtxcyBfdAo5zVb1N979KLSKD24="
 
 # Tries the engine's lock (fcntl F_SETLK, F_WRLCK, whole file) on PATH from
-# another process and prints "free" or "held".
+# another process and prints "free", "held", or "absent" when there is no lock file.
 LOCK_PROBE = (
     "import fcntl, os, sys\n"
-    "fd = os.open(sys.argv[1], os.O_RDWR)\n"
+    "try:\n"
+    "    fd = os.open(sys.argv[1], os.O_RDWR)\n"
+    "except FileNotFoundError:\n"
+    "    print('absent')\n"
+    "    sys.exit(0)\n"
     "try:\n"
     "    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
     "    print('free')\n"
@@ -223,7 +227,9 @@ class ImportSnapshotTest(unittest.TestCase):
         path.write_bytes(payload)
         return path.as_uri(), hashlib.sha256(payload).hexdigest()
 
-    def run_import(self, **env_overrides: str) -> subprocess.CompletedProcess[str]:
+    def run_import(
+        self, *, argv: list[str] | None = None, **env_overrides: str
+    ) -> subprocess.CompletedProcess[str]:
         env = {
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
             "TOS_DB_DIR": str(self.db),
@@ -233,7 +239,12 @@ class ImportSnapshotTest(unittest.TestCase):
         }
         env.update(env_overrides)
         return subprocess.run(
-            ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=120, check=False
+            argv or ["bash", str(SCRIPT)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
         )
 
     def enabled(self, url: str, digest: str, **extra: str) -> dict[str, str]:
@@ -780,6 +791,59 @@ class ImportSnapshotTest(unittest.TestCase):
         self.assertEqual(len(imports), 1)
         self.assertGreaterEqual(len(engine), 2, "initialize and exec")
         self.assertLess(imports[0], min(engine))
+
+    # The previous version trusted this variable as proof of the lock; an
+    # invocation can set it to its own pid and exec the script.
+    FORGED = ["bash", "-c", 'TOS_SNAPSHOT_CONFIG_LOCK_PID=$$ exec bash "$0"', str(SCRIPT)]
+
+    def test_forged_lock_claim_while_another_process_holds_it_is_refused(self) -> None:
+        holder = self.hold_lock_as_the_engine_does()
+        try:
+            url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+            before = tree(self.db)
+            for name, argv, extra in (
+                ("pid variable", self.FORGED, {}),
+                ("attempt counter", None, {"TOS_SNAPSHOT_LOCK_ATTEMPT": "1"}),
+            ):
+                with self.subTest(name):
+                    result = self.run_import(argv=argv, **self.enabled(url, digest, **extra))
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("[snapshot] refused", result.stderr)
+                    self.assertEqual(tree(self.db), before)
+                    self.assertFalse((self.db / ".snapshot-imported").exists())
+        finally:
+            self.release(holder)
+
+    def test_forged_lock_claim_when_nobody_holds_it_still_takes_the_lock(self) -> None:
+        probe = self.root / "lock-probe"
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(
+            argv=self.FORGED, **self.enabled(url, digest, PLZIP_STUB_LOCK_PROBE=str(probe))
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(probe.read_text().split(), ["held", "held"])
+
+    def test_lock_is_held_before_the_first_database_read(self) -> None:
+        # The default global config lives in the database and is read with jq
+        # first; a jq that probes the lock from another process on each call
+        # must find it held already at the first.
+        probe = self.root / "jq-probe"
+        real_jq = shutil.which("jq")
+        assert real_jq is not None
+        wrapper = self.bin / "jq"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f'python3 -c "$LOCK_PROBE_PROGRAM" "$TOS_DB_DIR/config.json.lock" >>"{probe}"\n'
+            f'exec "{real_jq}" "$@"\n'
+        )
+        wrapper.chmod(0o755)
+        self.assertEqual(self.extra_env.get("TOS_GLOBAL_CONFIG"), None, "default location")
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = probe.read_text().split()
+        self.assertTrue(calls, "jq was never called")
+        self.assertEqual(calls[0], "held")
 
     def test_lock_is_held_through_the_import(self) -> None:
         probe = self.root / "lock-probe"
