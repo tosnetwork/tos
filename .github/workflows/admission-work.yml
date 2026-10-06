@@ -1,0 +1,63 @@
+name: External admission work boundaries
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/admission-work.yml'
+      - 'CMakeLists.txt'
+      - 'validator/**'
+      - 'validator-engine/**'
+      - 'test/test-ext-message-*.cpp'
+      - 'test/test-validator-options.cpp'
+      - 'scripts/check-ext-message-*.py'
+      - 'tdutils/td/utils/misc.h'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld cmake ninja-build pkg-config libssl-dev libsodium-dev liblz4-dev zlib1g-dev gperf
+      - name: Build and run native boundaries
+        run: |
+          cmake -S . -B build-admission -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build-admission --target test-validator-options test-ext-message-admission-budget test-ext-message-pool validator-engine -j2
+          mkdir -p artifacts/admission
+          build-admission/test-validator-options 2>&1 | tee artifacts/admission/options.log
+          build-admission/test-ext-message-admission-budget 2>&1 | tee artifacts/admission/budget.log
+          build-admission/test-ext-message-pool 2>&1 | tee artifacts/admission/pool.log
+          python3 scripts/check-ext-message-work-cli.py --engine build-admission/validator-engine/validator-engine --output-dir artifacts/admission/cli
+      - name: Configuration deletion controls
+        run: |
+          for boundary in setter parser-validation parser-canonical; do
+            python3 scripts/check-ext-message-options-controls.py --build-dir build-admission --boundary "$boundary" --output-dir "artifacts/admission/$boundary"
+          done
+      - name: Record source identity
+        if: always()
+        run: |
+          mkdir -p artifacts/admission
+          git rev-parse HEAD > artifacts/admission/source-commit.txt
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: admission-work-${{ matrix.runner }}
+          path: artifacts/admission
+          retention-days: 90

@@ -12,6 +12,7 @@ namespace tos::validator {
 // for every destination supported by this exact chain configuration, including
 // parsing, state lookup and special/native execution. No release rate is inferred.
 struct ExtMessageWorkProfile {
+  static td::Result<ExtMessageWorkProfile> parse(td::Slice text);
   RootHash config_root{RootHash::zero()};
   std::uint64_t capacity{0};
   std::uint64_t refill_units{0};

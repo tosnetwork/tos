@@ -271,6 +271,7 @@ class ValidatorEngine : public td::actor::Actor {
   bool enable_validator_consensus_cleanup_ = false;
   bool test_crash_cleanup_before_erase_ = false;
   size_t max_mempool_num_ = 0;
+  td::optional<tos::validator::ExtMessageWorkProfile> ext_message_work_profile_;
   double block_ttl_ = 0;
   double sync_ttl_ = 0;
   double archive_ttl_ = 0;
@@ -346,6 +347,9 @@ class ValidatorEngine : public td::actor::Actor {
   }
   void set_test_crash_cleanup_before_erase(bool v) {
     test_crash_cleanup_before_erase_ = v;
+  }
+  void set_ext_message_work_profile(tos::validator::ExtMessageWorkProfile profile) {
+    ext_message_work_profile_ = std::move(profile);
   }
   void set_max_mempool_num(size_t t) {
     max_mempool_num_ = t;

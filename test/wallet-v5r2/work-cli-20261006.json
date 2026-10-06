@@ -1,0 +1,292 @@
+{
+  "base_commit": "d90f28e80976fe5ac751ae584951e2564aea03d7",
+  "source_state": "uncommitted changes on base commit; source hashes below",
+  "platform": "Linux AArch64, Release clang, v5r2-admission-linux snapshot",
+  "retain_until": "2027-01-06",
+  "sources": {
+    "validator/admission-work-profile.cpp": "3ea55c796a07ac92003765da2cd3bee417d575dc7bdb03718bb3b03a878c6566",
+    "validator/admission-work-profile.h": "9810c0ddc459fa5a740817cbf20da817b5ba0c8f0344eec0152a28360138913a",
+    "validator/CMakeLists.txt": "6f2dc0650c93277757ef6dec671d2ac37770ff5cf89a16cc9f5d42debf879267",
+    "validator-engine/validator-engine.cpp": "1c67374272dab20cbf2ecd318f049458600dd09722e468fb1cd8486f3bc378ce",
+    "validator-engine/validator-engine.hpp": "43c6945c342b778c45621777c66ec651a0d46acfb1823d75dc6f76070e78ca8a",
+    "test/test-validator-options.cpp": "67ed983dddf641316fec76c9ce11f3df5b77f8dd419a1f6f055f02f4716acd39",
+    "validator/validator-options.hpp": "593e85f75caa136b8f1bdfe04653d7f8fd599542deaff14107455f552f36251b",
+    "validator/impl/ext-message-pool.cpp": "f42bd694b77a2bf807c2f2fc0e3037851dbedbea4617748f63c98300f98167a7",
+    "validator/impl/ext-message-checker.cpp": "080ef0c13ba023e4f2f04b9dbe673b9a878931614db7c3b31504eb6207ed6a85",
+    "test/test-ext-message-pool.cpp": "635d9dc93ab7b3544261b4839503040c7ed9e1f5b5e3d8e0cfb19c08fae65d1d",
+    "test/test-ext-message-admission-budget.cpp": "a90225945874e5c494dbd5f06cd1ab73ca2875612b40959b0f6817a184ac4e08",
+    "scripts/check-ext-message-options-controls.py": "6feb1689a36f2e46ae41a335e5ea1ee374210c262d73714fef07ed01e7d1ae5c",
+    "scripts/check-ext-message-work-cli.py": "149ac5856724c7a9222524ca373ca898995fc78d3f6e91f2c39459b4c4afe9bb",
+    ".github/workflows/admission-work.yml": "8cfa46210e0a62b1b5695771c429faa00851ef33e9d903fe7823d233eaeb35b3",
+    "test/wallet-v5r2/ADMISSION_WORK.md": "2751629b58e7b2cc9322634463c023af660cf0734d0a5907da5fdff129adc87a"
+  },
+  "compiled_sources_match_snapshot": true,
+  "builds": {
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-cli-configure.log": {
+      "sha256": "7aa85b6aded602fc5d616d9b27dc1ce8b95bef8333fc64b5c3e09b7d112948b6",
+      "bytes": 4611,
+      "returncode": 0
+    },
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-cli-build.log": {
+      "sha256": "7d8a3fafa165a5f9cb397b6acc7d48ef6f4f49902e47d27081a405b5fd02cdc4",
+      "bytes": 17776,
+      "returncode": 0
+    },
+    "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-cli-final-build.log": {
+      "sha256": "e658db4acaf3f01fd1c7bc51743a3b1324327532844460a5b7236decc337ff0e",
+      "bytes": 359,
+      "returncode": 0
+    }
+  },
+  "controls": {
+    "validation-controls": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-cli-validation-controls",
+      "results": {
+        "boundary": "parser-validation",
+        "source": "validator/admission-work-profile.cpp",
+        "source_sha256": "3ea55c796a07ac92003765da2cd3bee417d575dc7bdb03718bb3b03a878c6566",
+        "returncodes": {
+          "baseline-build": 0,
+          "baseline": 0,
+          "skip-validation-build": 0,
+          "skip-validation": 1,
+          "restored-build": 0,
+          "restored": 0
+        },
+        "logs": {
+          "baseline-build.log": {
+            "sha256": "f15e95c933be267f63b60348a9ff7961ab5ac31d9ce33fefd2880431bdffaf38",
+            "bytes": 240
+          },
+          "baseline.log": {
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "restored-build.log": {
+            "sha256": "f15e95c933be267f63b60348a9ff7961ab5ac31d9ce33fefd2880431bdffaf38",
+            "bytes": 240
+          },
+          "restored.log": {
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "skip-validation-build.log": {
+            "sha256": "f15e95c933be267f63b60348a9ff7961ab5ac31d9ce33fefd2880431bdffaf38",
+            "bytes": 240
+          },
+          "skip-validation.log": {
+            "sha256": "86d6f0e59cef6212f1086e11f0d7d21f4d8d758ad8c2baf01fa391d23f00cad2",
+            "bytes": 50
+          }
+        }
+      }
+    },
+    "canonical-controls": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-cli-canonical-controls",
+      "results": {
+        "boundary": "parser-canonical",
+        "source": "validator/admission-work-profile.cpp",
+        "source_sha256": "3ea55c796a07ac92003765da2cd3bee417d575dc7bdb03718bb3b03a878c6566",
+        "returncodes": {
+          "baseline-build": 0,
+          "baseline": 0,
+          "skip-validation-build": 0,
+          "skip-validation": 1,
+          "restored-build": 0,
+          "restored": 0
+        },
+        "logs": {
+          "baseline-build.log": {
+            "sha256": "f15e95c933be267f63b60348a9ff7961ab5ac31d9ce33fefd2880431bdffaf38",
+            "bytes": 240
+          },
+          "baseline.log": {
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "restored-build.log": {
+            "sha256": "f15e95c933be267f63b60348a9ff7961ab5ac31d9ce33fefd2880431bdffaf38",
+            "bytes": 240
+          },
+          "restored.log": {
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "skip-validation-build.log": {
+            "sha256": "f15e95c933be267f63b60348a9ff7961ab5ac31d9ce33fefd2880431bdffaf38",
+            "bytes": 240
+          },
+          "skip-validation.log": {
+            "sha256": "75ad4155d59ef2e09999d6df504ce1a6d6a0205d58334064efacd13d2fb0206c",
+            "bytes": 55
+          }
+        }
+      }
+    },
+    "native-setter-controls": {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-cli-native-setter-controls",
+      "results": {
+        "boundary": "setter",
+        "source": "validator/validator-options.hpp",
+        "source_sha256": "593e85f75caa136b8f1bdfe04653d7f8fd599542deaff14107455f552f36251b",
+        "returncodes": {
+          "baseline-build": 0,
+          "baseline": 0,
+          "skip-validation-build": 0,
+          "skip-validation": 1,
+          "restored-build": 0,
+          "restored": 0
+        },
+        "logs": {
+          "baseline-build.log": {
+            "sha256": "7d941100fd2f8122e585332b1f7f068bfc0f272697e897a36f9e6855edea78d8",
+            "bytes": 91
+          },
+          "baseline.log": {
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "restored-build.log": {
+            "sha256": "c251c26429db471cca1ab79f281cb85afcec5962669e20f360388d0b0b6d29f2",
+            "bytes": 235
+          },
+          "restored.log": {
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "skip-validation-build.log": {
+            "sha256": "c251c26429db471cca1ab79f281cb85afcec5962669e20f360388d0b0b6d29f2",
+            "bytes": 235
+          },
+          "skip-validation.log": {
+            "sha256": "cf853c96e3996ce4539e76fa05edbaec2677463fb785c36f98a28c132c52426e",
+            "bytes": 40
+          }
+        }
+      }
+    }
+  },
+  "final_tests": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-cli-final",
+    "results": {
+      "test-validator-options": {
+        "command": [
+          "docker",
+          "exec",
+          "v5r2-admission-linux",
+          "/build-shadow/test-validator-options"
+        ],
+        "returncode": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "test-ext-message-admission-budget": {
+        "command": [
+          "docker",
+          "exec",
+          "v5r2-admission-linux",
+          "/build-shadow/test-ext-message-admission-budget"
+        ],
+        "returncode": 0,
+        "sha256": "ef4ccff351e7d9bb2f2fbec8e6e40f450b6e6f1678a1055830da7f36a4aea127",
+        "bytes": 990
+      },
+      "test-ext-message-pool": {
+        "command": [
+          "docker",
+          "exec",
+          "v5r2-admission-linux",
+          "/build-shadow/test-ext-message-pool"
+        ],
+        "returncode": 0,
+        "sha256": "7d47f4e8fcc45ae4df263bb2f32d12f6aac0de90ab04da762c4e5a17ffd71244",
+        "bytes": 3592
+      }
+    },
+    "cli": {
+      "valid": {
+        "command": [
+          "docker",
+          "exec",
+          "v5r2-admission-linux",
+          "/build-shadow/validator-engine/validator-engine",
+          "--ext-message-work-profile",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,2,1,1000000000,1,65535,512",
+          "--help"
+        ],
+        "returncode": 2,
+        "passed": true,
+        "sha256": "0c3745ac0477e78b6f68870b2ce1a962610ecc5a05c4adc186214655f9c5c880",
+        "bytes": 9976
+      },
+      "zero-root": {
+        "command": [
+          "docker",
+          "exec",
+          "v5r2-admission-linux",
+          "/build-shadow/validator-engine/validator-engine",
+          "--ext-message-work-profile",
+          "0000000000000000000000000000000000000000000000000000000000000000,2,1,1000000000,1,65535,512",
+          "--help"
+        ],
+        "returncode": 2,
+        "passed": true,
+        "sha256": "fe0673066eb4f1ea14fb90174f94b60c08d63c1771dfa68fd114795714f50166",
+        "bytes": 158
+      },
+      "uppercase": {
+        "command": [
+          "docker",
+          "exec",
+          "v5r2-admission-linux",
+          "/build-shadow/validator-engine/validator-engine",
+          "--ext-message-work-profile",
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,2,1,1000000000,1,65535,512",
+          "--help"
+        ],
+        "returncode": 2,
+        "passed": true,
+        "sha256": "9ec399d4f0be2a062d3c0614955bfa0ec9abb6f69035fe52b97c4ddb49f6e152",
+        "bytes": 179
+      },
+      "overflow": {
+        "command": [
+          "docker",
+          "exec",
+          "v5r2-admission-linux",
+          "/build-shadow/validator-engine/validator-engine",
+          "--ext-message-work-profile",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,18446744073709551616,1,1,1,65535,512",
+          "--help"
+        ],
+        "returncode": 2,
+        "passed": true,
+        "sha256": "d1403a3cf0d061903796d99616cf216af6ca82aef38b03ee571ec337046b60c7",
+        "bytes": 163
+      },
+      "duplicate": {
+        "command": [
+          "docker",
+          "exec",
+          "v5r2-admission-linux",
+          "/build-shadow/validator-engine/validator-engine",
+          "--ext-message-work-profile",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,2,1,1000000000,1,65535,512",
+          "--ext-message-work-profile",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,2,1,1000000000,1,65535,512",
+          "--help"
+        ],
+        "returncode": 2,
+        "passed": true,
+        "sha256": "280544c0439bf0d6d1140f3840e3eed3be914747cb075a56a98f8fa146ec0671",
+        "bytes": 171
+      }
+    }
+  },
+  "scope": "Explicit startup option parsing; real engine build and CLI rejection; options, token accounting and pool regression. Three targeted guard mutations fail and restoration passes. Native runner mode exercised for setter control.",
+  "limitations": [
+    "CLI probe exits via help before actors start; runtime engine-to-pool installation is not established by this probe.",
+    "New dual-architecture CI workflow has not run at this source revision.",
+    "No calibrated production default, config credit change, network-load/fairness acceptance or release activation."
+  ]
+}
