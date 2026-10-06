@@ -4901,10 +4901,9 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createPqS
   }
 
   // No key is named: the key schedule picks the one for this election.
-  td::actor::create_actor<PqStakeAuthorizationCreator>("stakeauth", static_cast<td::uint32>(query.election_date_),
-                                                       static_cast<td::uint32>(query.max_factor_), query.adnl_addr_,
-                                                       query.stake_owner_, std::nullopt, actor_id(this),
-                                                       std::move(promise))
+  td::actor::create_actor<PqStakeAuthorizationCreator>(
+      "stakeauth", static_cast<td::uint32>(query.election_date_), static_cast<td::uint32>(query.max_factor_),
+      query.adnl_addr_, query.stake_owner_, std::nullopt, actor_id(this), std::move(promise))
       .release();
 }
 
@@ -4921,8 +4920,8 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createPqS
     return;
   }
   if (query.key_id_.is_zero()) {
-    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::protoviolation,
-                                                                   "a consensus key is named by its non-zero key id")));
+    promise.set_value(create_control_query_error(
+        td::Status::Error(tos::ErrorCode::protoviolation, "a consensus key is named by its non-zero key id")));
     return;
   }
 
@@ -4944,9 +4943,8 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKeyInfo> ValidatorE
       tos::pq::consensus_key_expired(key.expire_at, now));
 }
 
-void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_getPqConsensusKeys &query,
-                                        td::BufferSlice data, tos::PublicKeyHash src, td::uint32 perm,
-                                        td::Promise<td::BufferSlice> promise) {
+void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_getPqConsensusKeys &query, td::BufferSlice data,
+                                        tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise) {
   // Identities, windows and file names; never a seed.
   if (!(perm & ValidatorEnginePermissions::vep_default)) {
     promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
@@ -4967,8 +4965,7 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_getPqCons
 }
 
 void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addPqConsensusKey &query, td::BufferSlice data,
-                                        tos::PublicKeyHash src, td::uint32 perm,
-                                        td::Promise<td::BufferSlice> promise) {
+                                        tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise) {
   // A new key is new signing authority for this validator, gated as signing is.
   if (!(perm & ValidatorEnginePermissions::vep_modify)) {
     promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
@@ -5056,8 +5053,8 @@ void ValidatorEngine::finish_add_pq_consensus_key(Config::PqConsensusKey key, to
     return;
   }
   LOG(WARNING) << "post-quantum consensus custody: validator_id " << pq_identity_hex(validator_id.value)
-               << " added key_id " << pq_identity_hex(key_id.value) << " valid_from " << key.valid_from
-               << " expire_at " << key.expire_at;
+               << " added key_id " << pq_identity_hex(key_id.value) << " valid_from " << key.valid_from << " expire_at "
+               << key.expire_at;
   pq_key_ids_by_file_[key.consensus_key_file] = key_id;
   config_.pq_consensus->keys.push_back(key);
   update_local_pq_validator_adnl_ids();
@@ -5073,8 +5070,7 @@ void ValidatorEngine::finish_add_pq_consensus_key(Config::PqConsensusKey key, to
 }
 
 void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqConsensusKey &query, td::BufferSlice data,
-                                        tos::PublicKeyHash src, td::uint32 perm,
-                                        td::Promise<td::BufferSlice> promise) {
+                                        tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise) {
   if (!(perm & ValidatorEnginePermissions::vep_modify)) {
     promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
     return;
@@ -5122,12 +5118,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqCons
       }
     }
   }
-  td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::del_pq_consensus_key,
-                          validator_id, key_id,
-                          [SelfId = actor_id(this), key_id, promise = std::move(promise)](td::Result<td::Unit> result) mutable {
-                            td::actor::send_closure(SelfId, &ValidatorEngine::finish_del_pq_consensus_key, key_id,
-                                                    std::move(result), std::move(promise));
-                          });
+  td::actor::send_closure(
+      validator_manager_, &tos::validator::ValidatorManagerInterface::del_pq_consensus_key, validator_id, key_id,
+      [SelfId = actor_id(this), key_id, promise = std::move(promise)](td::Result<td::Unit> result) mutable {
+        td::actor::send_closure(SelfId, &ValidatorEngine::finish_del_pq_consensus_key, key_id, std::move(result),
+                                std::move(promise));
+      });
 }
 
 void ValidatorEngine::finish_del_pq_consensus_key(tos::ConsensusKeyId key_id, td::Result<td::Unit> removed,
@@ -6480,8 +6476,8 @@ void ValidatorEngine::get_local_pq_identity(td::uint32 election_date, std::optio
   // schedule assigns to this election (or the one requested), and its identity is what
   // its seed derives. Nothing is looked up in a validator set, and nothing here can be, or
   // a node could never place the stake that puts it into one.
-  auto store = pq_custody_.select_stake_store(config_.pq_consensus->validator_id, election_date, pq_custody_now(),
-                                              requested);
+  auto store =
+      pq_custody_.select_stake_store(config_.pq_consensus->validator_id, election_date, pq_custody_now(), requested);
   if (store.is_error()) {
     promise.set_error(store.move_as_error());
     return;
@@ -6527,7 +6523,7 @@ void ValidatorEngine::get_current_validator(td::Promise<LocalValidator> promise)
   // during a rotation the node holds the key the running set lists and the key it rotates
   // to, and a vote counted by this set is signed with the former.
   auto member = tos::validator::pq_signer_for_set(validator_set_->export_vector(), config_.pq_consensus->validator_id,
-                                                   pq_custody_, pq_custody_now());
+                                                  pq_custody_, pq_custody_now());
   if (member.is_error()) {
     promise.set_error(member.move_as_error_prefix("current set: "));
     return;

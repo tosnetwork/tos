@@ -793,7 +793,6 @@ def check_node_keys(tool: Path, work: Path, home: Path) -> None:
 
     if node_keys(tool, "bind-node", [str(db), str(primary), VALIDATOR_HEX]).returncode != 0:
         raise Failure("bind-node failed before the rotation checks")
-    single = path.read_bytes()
 
     # The successor goes in beside the key the node already holds, with its window, and
     # the single key the node was bound with stays exactly as it was.

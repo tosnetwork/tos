@@ -100,8 +100,8 @@ struct NodeConsensusKeyAddition {
 // from the same election date, too many keys, a window that closes before it opens, the
 // same key under two file names, a configured key that cannot be loaded). The same key
 // with the same window already present is `unchanged`.
-NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& addition,
-                                          NodeConsensusBindingResult& result, std::string& why);
+NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& addition, NodeConsensusBindingResult& result,
+                                          std::string& why);
 
 struct NodeConsensusKeyRemoval {
   std::string db_root;
@@ -112,8 +112,8 @@ struct NodeConsensusKeyRemoval {
 // sees no validator set: removing a key a running set still lists for this validator
 // takes the validator out of that set's consensus until the set ends. The operator checks
 // that first (or uses the console's del-pq-consensus-key on the running node, which does).
-NodeBindingOutcome remove_node_consensus_key(const NodeConsensusKeyRemoval& removal,
-                                             NodeConsensusBindingResult& result, std::string& why);
+NodeBindingOutcome remove_node_consensus_key(const NodeConsensusKeyRemoval& removal, NodeConsensusBindingResult& result,
+                                             std::string& why);
 
 struct NodeConsensusKeyListing {
   struct Key {

@@ -95,7 +95,8 @@ bool refused_with(const std::optional<std::string>& verdict, const char* phrase)
 
 template <class T>
 bool refused_with(const std::variant<T, std::string>& verdict, const char* phrase) {
-  return std::holds_alternative<std::string>(verdict) && std::get<std::string>(verdict).find(phrase) != std::string::npos;
+  return std::holds_alternative<std::string>(verdict) &&
+         std::get<std::string>(verdict).find(phrase) != std::string::npos;
 }
 
 void schedule_checks() {
@@ -111,19 +112,18 @@ void schedule_checks() {
   check("schedule_accepts_exactly_the_capacity", !pq::check_consensus_key_schedule(nine).has_value());
   check("schedule_refuses_a_window_that_closes_before_it_opens",
         refused_with(pq::check_consensus_key_windows({{id_bytes(1), 100, 100}}), "not after its window"));
-  check("schedule_refuses_two_keys_from_one_election",
-        refused_with(pq::check_consensus_key_windows({{id_bytes(1), 0, 0}, {id_bytes(2), 0, 0}}),
-                     "same election date"));
-  check("schedule_refuses_one_key_twice",
-        refused_with(pq::check_consensus_key_schedule({{id_bytes(1), 0, 0}, {id_bytes(1), 100, 0}}),
-                     "configured twice"));
+  check(
+      "schedule_refuses_two_keys_from_one_election",
+      refused_with(pq::check_consensus_key_windows({{id_bytes(1), 0, 0}, {id_bytes(2), 0, 0}}), "same election date"));
+  check(
+      "schedule_refuses_one_key_twice",
+      refused_with(pq::check_consensus_key_schedule({{id_bytes(1), 0, 0}, {id_bytes(1), 100, 0}}), "configured twice"));
   check("schedule_accepts_a_rotation",
         !pq::check_consensus_key_schedule({{id_bytes(1), 0, 0}, {id_bytes(2), 1000, 0}}).has_value());
 
   // What a start loads.
   using pq::ConfiguredConsensusKey;
-  check("load_refuses_an_empty_file_name",
-        refused_with(pq::plan_consensus_key_load({{"", 0, 0}}, 10), "no key file"));
+  check("load_refuses_an_empty_file_name", refused_with(pq::plan_consensus_key_load({{"", 0, 0}}, 10), "no key file"));
   check("load_refuses_a_repeated_file",
         refused_with(pq::plan_consensus_key_load({{"/k/a", 0, 0}, {"/k/a", 100, 0}}, 10), "configured twice"));
   check("load_refuses_when_every_key_expired",
@@ -175,7 +175,8 @@ void schedule_checks() {
   check("a_named_expired_key_is_refused", refused_with(pq::select_stake_key(b_expired, 1500, 2500, &b), "expired"));
   check("a_key_expiring_by_the_election_is_refused",
         refused_with(pq::select_stake_key(b_expired, 2000, 1500, nullptr), "before election date 2000"));
-  check("an_unexpired_key_before_its_expiry_signs", index_of(pq::select_stake_key(b_expired, 1500, 1200, nullptr)) == 1);
+  check("an_unexpired_key_before_its_expiry_signs",
+        index_of(pq::select_stake_key(b_expired, 1500, 1200, nullptr)) == 1);
 }
 
 void custody_checks() {
@@ -198,9 +199,9 @@ void custody_checks() {
         custody.install(validator_id, key_c, now + 100, 0).is_error() && custody.held_keys(validator_id).size() == 2);
   check("custody_refuses_an_absent_store", custody.install(validator_id, nullptr, 7, 0).is_error());
   // Installing a key it holds replaces that key's window rather than holding it twice.
-  check("custody_reinstall_replaces_the_window",
-        custody.install(validator_id, key_b, now + 200, 0).is_ok() && custody.held_keys(validator_id).size() == 2 &&
-            custody.held_keys(validator_id).at(id_b).valid_from == now + 200);
+  check("custody_reinstall_replaces_the_window", custody.install(validator_id, key_b, now + 200, 0).is_ok() &&
+                                                     custody.held_keys(validator_id).size() == 2 &&
+                                                     custody.held_keys(validator_id).at(id_b).valid_from == now + 200);
 
   // The engine-level paths, on real keys. The running set lists A; the stake for the
   // election at now + 300 (after B's window opens) is due.
@@ -227,8 +228,9 @@ void custody_checks() {
     check("the_stake_signature_is_made", signed_stake.has_value());
     if (signed_stake) {
       check("the_stake_names_key_b", signed_stake->key_id == id_b.value);
-      const auto preimage = pq::stake_preimage(global_id, election, 0x10000, validator_id.value, owner,
-                                               static_cast<std::uint16_t>(pq::PQAlgorithmId::mldsa44), id_b.value, adnl);
+      const auto preimage =
+          pq::stake_preimage(global_id, election, 0x10000, validator_id.value, owner,
+                             static_cast<std::uint16_t>(pq::PQAlgorithmId::mldsa44), id_b.value, adnl);
       check("the_stake_verifies_under_b",
             pq::verify_mldsa44(preimage, pq::validator_election_context, signed_stake->signature.signature,
                                key_b->consensus_key().public_key) == pq::VerifyResult::valid);
@@ -270,19 +272,18 @@ void custody_checks() {
   check("custody_of_b_beside_it", expiring.install(validator_id, key_b, 10, 0).is_ok());
   check("an_unexpired_key_still_signs", expiring.get_matching_store(validator_id, set_with_a[0], now - 1) == key_a);
   check("an_expired_key_signs_no_group", expiring.get_matching_store(validator_id, set_with_a[0], now) == nullptr);
-  check("an_expired_key_is_not_held_for_use", !expiring.holds(validator_id, id_a, now) &&
-                                                  expiring.usable_key_ids(validator_id, now).size() == 1);
-  check("an_expired_key_is_not_membership",
-        !validator::node_validator_membership(set_a, {}, {}, expiring, now).second);
-  check("an_expired_key_signs_no_vote", validator::pq_signer_for_set(set_with_a, validator_id, expiring, now).is_error());
-  check("an_expired_key_signs_no_named_stake",
-        expiring.select_stake_store(validator_id, 5, now, id_a).is_error());
+  check("an_expired_key_is_not_held_for_use",
+        !expiring.holds(validator_id, id_a, now) && expiring.usable_key_ids(validator_id, now).size() == 1);
+  check("an_expired_key_is_not_membership", !validator::node_validator_membership(set_a, {}, {}, expiring, now).second);
+  check("an_expired_key_signs_no_vote",
+        validator::pq_signer_for_set(set_with_a, validator_id, expiring, now).is_error());
+  check("an_expired_key_signs_no_named_stake", expiring.select_stake_store(validator_id, 5, now, id_a).is_error());
   check("an_expired_key_is_still_listed_for_removal", expiring.held_keys(validator_id).count(id_a) == 1);
 
   // Removal is per key.
-  check("removing_a_key_keeps_the_other",
-        custody.remove_key(validator_id, id_a) && !custody.holds(validator_id, id_a, now) &&
-            custody.holds(validator_id, id_b, now));
+  check("removing_a_key_keeps_the_other", custody.remove_key(validator_id, id_a) &&
+                                              !custody.holds(validator_id, id_a, now) &&
+                                              custody.holds(validator_id, id_b, now));
   check("removing_an_absent_key_reports_it", !custody.remove_key(validator_id, id_a));
   check("removing_the_last_key_empties_custody", custody.remove_key(validator_id, id_b) && custody.empty());
 }

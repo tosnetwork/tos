@@ -46,10 +46,10 @@
 #include "td/utils/port/FileFd.h"
 #include "tos/tos-types.h"
 #include "validator/full-node-master.h"
-#include "validator/node-consensus-status.h"
 #include "validator/full-node-slave-key.h"
 #include "validator/full-node.h"
 #include "validator/manager.h"
+#include "validator/node-consensus-status.h"
 #include "validator/validator-transport-authority.h"
 #include "validator/validator.h"
 
@@ -804,9 +804,8 @@ class ValidatorEngine : public td::actor::Actor {
                          td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(tos::tos_api::engine_validator_createPqStakeAuthorization &query, td::BufferSlice data,
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
-  void run_control_query(tos::tos_api::engine_validator_createPqStakeAuthorizationWithKey &query,
-                         td::BufferSlice data, tos::PublicKeyHash src, td::uint32 perm,
-                         td::Promise<td::BufferSlice> promise);
+  void run_control_query(tos::tos_api::engine_validator_createPqStakeAuthorizationWithKey &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(tos::tos_api::engine_validator_getPqConsensusKeys &query, td::BufferSlice data,
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(tos::tos_api::engine_validator_addPqConsensusKey &query, td::BufferSlice data,

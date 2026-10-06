@@ -92,7 +92,8 @@ int main() {
   }
   {
     std::set<PublicKeyHash> temp{outsider_key};
-    expect("configured_non_member_not_in_set", validator::node_validator_membership(set, temp, {}, {}, kNow), true, false);
+    expect("configured_non_member_not_in_set", validator::node_validator_membership(set, temp, {}, {}, kNow), true,
+           false);
   }
   {
     expect("no_local_keys_unknown", validator::node_validator_membership(set, {}, {}, {}, kNow), false, false);
@@ -129,14 +130,16 @@ int main() {
 
     validator::PqConsensusCustody holding;
     check("custody_install_accepts_a_key", holding.install(pq_id, held_store, 0, 0).is_ok());
-    expect("pq_custodied_key_is_member", validator::node_validator_membership(pq_set, {}, {}, holding, kNow), true, true);
+    expect("pq_custodied_key_is_member", validator::node_validator_membership(pq_set, {}, {}, holding, kNow), true,
+           true);
 
     // Holding a different key for that validator does not: a validator that has rotated
     // away from this key is not us any more, and the key identity is read from the key
     // rather than taken on our word.
     validator::PqConsensusCustody stale;
     check("custody_install_accepts_a_rotated_key", stale.install(pq_id, other_store, 0, 0).is_ok());
-    expect("pq_stale_key_is_not_member", validator::node_validator_membership(pq_set, {}, {}, stale, kNow), true, false);
+    expect("pq_stale_key_is_not_member", validator::node_validator_membership(pq_set, {}, {}, stale, kNow), true,
+           false);
 
     // The back door this phase exists to close: every Ed25519 key in the world, and no
     // custody, must not make this node a post-quantum consensus validator. The keys
@@ -152,8 +155,8 @@ int main() {
     validator::PqConsensusCustody absent;
     check("absent_key_store_is_refused", absent.install(pq_id, nullptr, 0, 0).is_error());
     check("refused_store_is_not_custodied", absent.empty());
-    expect("absent_key_store_is_not_membership", validator::node_validator_membership(pq_set, {}, {}, absent, kNow), false,
-           false);
+    expect("absent_key_store_is_not_membership", validator::node_validator_membership(pq_set, {}, {}, absent, kNow),
+           false, false);
 
     // And holding the right key for some other validator is not holding it for this one.
     validator::PqConsensusCustody elsewhere;
@@ -172,7 +175,8 @@ int main() {
     // The descriptor names a different validator than the one asked for.
     ValidatorDescr other_id{
         tos::ValidatorId{bits_with_first_byte(0xb0)}, 1, held_key, held_pk, 1, bits_with_first_byte(0xc0)};
-    check("matching_store_refuses_a_validator_id_mismatch", holding.get_matching_store(pq_id, other_id, kNow) == nullptr);
+    check("matching_store_refuses_a_validator_id_mismatch",
+          holding.get_matching_store(pq_id, other_id, kNow) == nullptr);
 
     // Same validator, but the descriptor records a rotated key this node does not hold.
     ValidatorDescr rotated{
@@ -191,7 +195,8 @@ int main() {
 
     // A classical descriptor never yields a post-quantum signer.
     ValidatorDescr classical{pub_member, /*weight=*/1};
-    check("matching_store_refuses_a_classical_descriptor", holding.get_matching_store(pq_id, classical, kNow) == nullptr);
+    check("matching_store_refuses_a_classical_descriptor",
+          holding.get_matching_store(pq_id, classical, kNow) == nullptr);
 
     // No custodied key for this validator at all.
     validator::PqConsensusCustody empty_custody;

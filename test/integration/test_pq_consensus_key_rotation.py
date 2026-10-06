@@ -106,7 +106,9 @@ async def stake(node, election: int, key_id: bytes | None = None):
     if key_id is None:
         request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(**common)
     else:
-        request = tos_api.Engine_validator_createPqStakeAuthorizationWithKeyRequest(**common, key_id=key_id)
+        request = tos_api.Engine_validator_createPqStakeAuthorizationWithKeyRequest(
+            **common, key_id=key_id
+        )
     return request.parse_result(await node.engine_console.request(request))
 
 
@@ -163,8 +165,16 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
                 consensus_key_file=str(b_file), valid_from=SUCCESSOR_FROM, expire_at=0
             )
         ]
-        return dict(a_file=a_file, a_id=a_id, a_public=a_public, b_file=b_file, b_id=b_id, b_public=b_public,
-                    c_file=c_file, c_id=c_id)
+        return dict(
+            a_file=a_file,
+            a_id=a_id,
+            a_public=a_public,
+            b_file=b_file,
+            b_id=b_id,
+            b_public=b_public,
+            c_file=c_file,
+            c_id=c_id,
+        )
 
     network, node, k = await boot(install, directory, base_port, configure)
     try:
@@ -177,21 +187,38 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
 
         # The stake for B's election is signed with B; one for an earlier election with A.
         for_b = await stake(node, SUCCESSOR_FROM)
-        if for_b.key_id != k["b_id"] or for_b.public_key != k["b_public"] or for_b.validator_id != FIXED_VALIDATOR_ID:
+        if (
+            for_b.key_id != k["b_id"]
+            or for_b.public_key != k["b_public"]
+            or for_b.validator_id != FIXED_VALIDATOR_ID
+        ):
             raise Failure(f"the stake for B's election was not signed with B: {for_b.key_id.hex()}")
         for_a = await stake(node, SUCCESSOR_FROM - 1)
         if for_a.key_id != k["a_id"] or for_a.public_key != k["a_public"]:
-            raise Failure(f"the stake for an earlier election was not signed with A: {for_a.key_id.hex()}")
+            raise Failure(
+                f"the stake for an earlier election was not signed with A: {for_a.key_id.hex()}"
+            )
         if for_a.signature == for_b.signature:
             raise Failure("two keys produced one signature")
         named = await stake(node, SUCCESSOR_FROM, k["a_id"])
         if named.key_id != k["a_id"]:
             raise Failure("a stake naming A was not signed with A")
-        await refused(stake(node, SUCCESSOR_FROM - 1, k["b_id"]), "valid only from", "naming B before its window")
-        await refused(stake(node, SUCCESSOR_FROM, k["c_id"]), "not held", "naming a key the node does not hold")
+        await refused(
+            stake(node, SUCCESSOR_FROM - 1, k["b_id"]),
+            "valid only from",
+            "naming B before its window",
+        )
+        await refused(
+            stake(node, SUCCESSOR_FROM, k["c_id"]),
+            "not held",
+            "naming a key the node does not hold",
+        )
 
         listed = await list_keys(node)
-        if [(key.key_id, key.valid_from) for key in listed] != [(k["a_id"], 0), (k["b_id"], SUCCESSOR_FROM)]:
+        if [(key.key_id, key.valid_from) for key in listed] != [
+            (k["a_id"], 0),
+            (k["b_id"], SUCCESSOR_FROM),
+        ]:
             raise Failure(f"the console listed other keys: {listed!r}")
 
         # A is what the running set lists: it stays. B is listed by no set: it may go.
@@ -203,7 +230,11 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
         on_disk = disk_keys(node)
         if on_disk["consensus_key_file"] != str(k["a_file"]) or on_disk.get("keys", []) != []:
             raise Failure(f"config.json was not rewritten to the single key: {on_disk!r}")
-        await refused(node.engine_console.request(delete(key_id=k["a_id"])), "last consensus key", "dropping the last key")
+        await refused(
+            node.engine_console.request(delete(key_id=k["a_id"])),
+            "last consensus key",
+            "dropping the last key",
+        )
         await refused(stake(node, SUCCESSOR_FROM, k["b_id"]), "not held", "naming a dropped key")
 
         # B comes back while the node runs, and signs B's election again.
@@ -225,17 +256,23 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
         ]:
             raise Failure(f"config.json does not hold the added key: {on_disk!r}")
         await refused(
-            node.engine_console.request(add(consensus_key_file=str(k["c_file"]), valid_from=SUCCESSOR_FROM, expire_at=0)),
+            node.engine_console.request(
+                add(consensus_key_file=str(k["c_file"]), valid_from=SUCCESSOR_FROM, expire_at=0)
+            ),
             "same election date",
             "a key valid from B's date",
         )
         await refused(
-            node.engine_console.request(add(consensus_key_file=str(k["b_file"]), valid_from=SUCCESSOR_FROM + 5, expire_at=0)),
+            node.engine_console.request(
+                add(consensus_key_file=str(k["b_file"]), valid_from=SUCCESSOR_FROM + 5, expire_at=0)
+            ),
             "configured twice",
             "B's file a second time",
         )
         await refused(
-            node.engine_console.request(add(consensus_key_file="pq-consensus-third.seed", valid_from=7, expire_at=0)),
+            node.engine_console.request(
+                add(consensus_key_file="pq-consensus-third.seed", valid_from=7, expire_at=0)
+            ),
             "absolute",
             "a relative key path",
         )
@@ -254,7 +291,9 @@ async def rotation(install: Install, directory: Path, base_port: int, timeout: f
         await network.__aexit__(None, None, None)
 
 
-async def without_a(install: Install, directory: Path, base_port: int, timeout: float, expired_a: bool) -> dict:
+async def without_a(
+    install: Install, directory: Path, base_port: int, timeout: float, expired_a: bool
+) -> dict:
     def configure(node):
         b_file = node.directory / "pq-consensus-next.seed"
         b_id, _ = place_key(install, b_file, SUCCESSOR_SEED)
@@ -265,7 +304,9 @@ async def without_a(install: Install, directory: Path, base_port: int, timeout: 
                 tos_api.Engine_validator_pqConsensusKey(
                     consensus_key_file=pq.consensus_key_file, valid_from=0, expire_at=1000
                 ),
-                tos_api.Engine_validator_pqConsensusKey(consensus_key_file=str(b_file), valid_from=1, expire_at=0),
+                tos_api.Engine_validator_pqConsensusKey(
+                    consensus_key_file=str(b_file), valid_from=1, expire_at=0
+                ),
             ]
             pq.consensus_key_file = ""
         else:
@@ -302,12 +343,22 @@ async def main() -> int:
     install = Install(args.build_dir.resolve(), root)
     results = {}
     try:
-        results["rotation"] = await rotation(install, artifact_dir / "rotation", args.base_port, args.timeout)
+        results["rotation"] = await rotation(
+            install, artifact_dir / "rotation", args.base_port, args.timeout
+        )
         results["missing"] = await without_a(
-            install, artifact_dir / "missing", args.base_port + 100, args.timeout / 3, expired_a=False
+            install,
+            artifact_dir / "missing",
+            args.base_port + 100,
+            args.timeout / 3,
+            expired_a=False,
         )
         results["expired"] = await without_a(
-            install, artifact_dir / "expired", args.base_port + 200, args.timeout / 3, expired_a=True
+            install,
+            artifact_dir / "expired",
+            args.base_port + 200,
+            args.timeout / 3,
+            expired_a=True,
         )
     except Failure as failure:
         print(f"PQ_CONSENSUS_KEY_ROTATION_FAILED {failure}")

@@ -125,7 +125,9 @@ def main() -> int:
         re.search(rf"(?m)^\s*run: {re.escape(relay_ctest)}\s*$", text) is not None,
         "custom overlay relay deduplication gate is absent",
     )
-    rotation_ctest = "ctest --test-dir build --output-on-failure -R '^test-pq-consensus-key-rotation$'"
+    rotation_ctest = (
+        "ctest --test-dir build --output-on-failure -R '^test-pq-consensus-key-rotation$'"
+    )
     require(
         re.search(rf"(?m)^\s*run: {re.escape(rotation_ctest)}\s*$", text) is not None,
         "multi-key PQ consensus custody and key schedule gate is absent",

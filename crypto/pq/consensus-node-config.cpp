@@ -3,8 +3,8 @@
 #include <cstring>
 #include <fcntl.h>
 #include <functional>
-#include <optional>
 #include <openssl/rand.h>
+#include <optional>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <variant>
@@ -635,8 +635,8 @@ NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, 
       result.config_path, why);
 }
 
-NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& addition,
-                                          NodeConsensusBindingResult& result, std::string& why) {
+NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& addition, NodeConsensusBindingResult& result,
+                                          std::string& why) {
   if (addition.key_file.empty() || addition.key_file.front() != '/') {
     why = "the key file must be given as an absolute path";
     return NodeBindingOutcome::refused;
@@ -702,8 +702,8 @@ NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& additi
       result.config_path, why);
 }
 
-NodeBindingOutcome remove_node_consensus_key(const NodeConsensusKeyRemoval& removal,
-                                             NodeConsensusBindingResult& result, std::string& why) {
+NodeBindingOutcome remove_node_consensus_key(const NodeConsensusKeyRemoval& removal, NodeConsensusBindingResult& result,
+                                             std::string& why) {
   // A key is named by the absolute path it is configured at, or by its identity.
   ConsensusKeyIdBytes wanted{};
   const bool by_path = !removal.key.empty() && removal.key.front() == '/';
