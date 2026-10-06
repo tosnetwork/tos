@@ -2818,5 +2818,46 @@ both early-return and unpolled cleanup. Evidence:
 `test/wallet-v5r2/manifest-fee-20261006.json`.
 
 This is initial custody reconstruction only. It cannot authorize a retired fee
-tree, waive current proof/readiness checks or reconstruct spent-leaf state. The
-CLI fee recovery entry and current-chain takeover flow remain unfinished.
+tree, waive current proof/readiness checks or reconstruct spent-leaf state. The CLI fee recovery entry is described below; the current-chain takeover
+flow remains unfinished.
+
+
+### Initial fee recovery CLI
+
+With `pq-wallet`, `tosctl wallet pq-restore-fee-initial` accepts the initial
+recovery manifest, independent basechain wallet identity and the same six release
+code file/hash arguments as primary/rescue initial restoration. It requires the
+native-mnemonic fee input profile. Mnemonic, exact password and Vault encryption
+key use protected file/descriptor or hidden input; descriptors must be distinct.
+No secret CLI literal or classical signature role is introduced.
+
+`--fee-tree-cache` loads and authenticates an existing exact-size public cache
+before collecting secrets. Without it, a blocking worker derives and reconstructs
+the complete H20 tree and verifies its key against initial enrollment. Both
+paths perform manifest-bound master verification before opening the encrypted
+Vault. `--write-fee-tree-cache` optionally publishes the verified tree to a new
+Unix file with sync/readback; a storage failure is not permission to overwrite.
+A cache may already have been published if a later Vault operation fails. After
+new-only encrypted persistence and bound readback, output reports only
+`fee_key_record_restored`, the record ID, initial wallet and public fee key.
+
+The CLI never opens a signing journal, chooses a signing leaf or declares rescue
+readiness. Its leaf-zero path is used only for read-only seed enrollment binding.
+Old-device revocation, current authenticated fee-route proofs, the next-slot wait
+and funded rescue completion remain mandatory outside this offline operation.
+
+Actual CLI tests exercise 14 outcomes, including no-cache reconstruction matching
+every byte of an independently generated public tree, cached restoration,
+wrong wallet/code/metadata/password/mnemonic/cache, unsafe secret inputs, duplicate refusal and
+existing cache-output refusal. A CLI mutation removes preflight binding and must
+expose that wrong-context input opened custody; restored code rejects it before
+storage. A separate full-rebuild mutation requires the SDK enrollment comparison
+to reject an independently supplied mismatched root. Evidence:
+`test/wallet-v5r2/cli-fee-20261006.json`.
+
+
+The parity job budget is 150 minutes for the expanded native custody/recovery
+matrix, including repeated complete H20 rebuilds. The earlier ARM run at
+`82d74c610c78ed13904c2ac2d9ff83f6f630889c` took about 71 minutes before these added
+controls. Increasing the job deadline does not waive individual assertions or
+semantic-control subprocess deadlines; final-head CI is still required.

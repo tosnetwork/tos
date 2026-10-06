@@ -66,12 +66,6 @@ def main():
             "fee manifest unpolled restore retained master",
         ),
         (
-            "preflight_wipe",
-            "        let master = Wipe(master);\n        let (context, tree_id, key)",
-            "        struct Unwiped<'a>(&'a mut [u8]); let master = Unwiped(master);\n        let (context, tree_id, key)",
-            "fee manifest preflight retained master",
-        ),
-        (
             "restore_binding",
             """            crate::lms_fee_vault::restore_derived_and_wipe(
                 vault, id, master.0, context, tree_id, &key, leaf, path,
@@ -81,6 +75,19 @@ def main():
             "fee manifest restore accepted input 1",
         ),
     ]
+    start = original.index("    pub fn verify_initial_fee_master_and_wipe(")
+    prefix = original[start : original.index("        let (context, tree_id, key)", start)]
+    cases.append(
+        (
+            "preflight_wipe",
+            prefix,
+            prefix.replace(
+                "let master = Wipe(master);",
+                "struct Unwiped<'a>(&'a mut [u8]); let master = Unwiped(master);",
+            ),
+            "fee manifest preflight retained master",
+        )
+    )
     for name, old, _, _ in cases:
         assert original.count(old) == 1, name
 

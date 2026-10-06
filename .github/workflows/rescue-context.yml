@@ -47,7 +47,8 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # Full custody/recovery controls now include repeated complete H20 rebuilds.
+    timeout-minutes: 150
     env:
       TOS_ROOT: ${{ github.workspace }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/build-cargo
@@ -90,6 +91,7 @@ jobs:
           python test/wallet-v5r2/fee_vault_controls.py --output artifacts/context/fee-vault-controls
           python test/wallet-v5r2/fee_recovery_controls.py --output artifacts/context/fee-recovery-controls
           python test/wallet-v5r2/manifest_fee_controls.py --output artifacts/context/manifest-fee-controls
+          python test/wallet-v5r2/fee_rebuild_controls.py --output artifacts/context/fee-rebuild-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-vault --lib fee_mnemonic_rebuilds_tree_cache_and_encrypted_custody -- --ignored
           python test/wallet-v5r2/fee_tree_controls.py --output artifacts/context/fee-tree-controls
           python test/wallet-v5r2/fee_tree_cache_controls.py --output artifacts/context/fee-tree-cache-controls
@@ -210,6 +212,20 @@ jobs:
             --genesis-driver "$CARGO_TARGET_DIR/debug/examples/v5r2_genesis_encode" \
             --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-initial-controls
+      - name: Initial fee custody CLI recovery and controls
+        run: |
+          python test/wallet-v5r2/fee_recovery_fixture.py --output artifacts/context/fee-recovery-fixture
+          cmp artifacts/context/fee-recovery-fixture/native-fee-recovery.json tosctl/src/wallet-pq-signer/tests/fixtures/native-fee-recovery.json
+          python test/wallet-v5r2/cli_fee_restore.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --public-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
+            --output artifacts/context/cli-fee-restore
+          python test/wallet-v5r2/cli_fee_controls.py \
+            --cli "$CARGO_TARGET_DIR/debug/tosctl" \
+            --fixture artifacts/context/r2-fee-prepare/native/sdk-genesis.json \
+            --public-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
+            --output artifacts/context/cli-fee-controls
       - name: Compiled-code manifest reconstruction controls
         run: |
           python test/wallet-v5r2/manifest_integration_controls.py \

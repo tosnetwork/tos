@@ -176,32 +176,7 @@ impl PqRestoreKeyCmd {
     }
 
     async fn open_vault(&self) -> anyhow::Result<SecretVault> {
-        // Retain no plaintext Vault encryption key after constructing protected memory.
-        let source = secret_input::select_source(
-            self.vault_key_file.as_deref(),
-            self.vault_key_fd,
-            "--vault-key-file",
-            "--vault-key-fd",
-            "Vault encryption key, hex (hidden): ",
-        )?;
-        let encryption_key = {
-            let text = secret_input::read_secret(&source)?;
-            let bytes = secret_input::decode_hex(&text)?;
-            anyhow::ensure!(bytes.len() == 32, "Vault encryption key must be 32 bytes");
-            ProtectedMemory::from_slice(&bytes).await?
-        };
-        let encryption_key =
-            MasterKey::from_key_material(KeyMaterial::new_symmetric_key(encryption_key).await?)
-                .await?;
-        let storage = FileJsonStorage::new(
-            encryption_key,
-            &self.vault_file,
-            Box::new(AutoCryptoFactory {}),
-            false,
-        )
-        .await?;
-        let vault = SecretVault::new(Arc::new(storage), Arc::new(NullEventHandler {}));
-        Ok(vault)
+        open_vault_file(&self.vault_file, self.vault_key_file.as_deref(), self.vault_key_fd).await
     }
 
     fn report(&self, public_key: &[u8], status: &str) {
@@ -487,3 +462,35 @@ impl PqPrepareInitialCmd {
         Ok(())
     }
 }
+
+async fn open_vault_file(
+    vault_file: &Path,
+    key_file: Option<&Path>,
+    key_fd: Option<i32>,
+) -> anyhow::Result<SecretVault> {
+    // Retain no plaintext Vault encryption key after constructing protected memory.
+    let source = secret_input::select_source(
+        key_file,
+        key_fd,
+        "--vault-key-file",
+        "--vault-key-fd",
+        "Vault encryption key, hex (hidden): ",
+    )?;
+    let encryption_key = {
+        let text = secret_input::read_secret(&source)?;
+        let bytes = secret_input::decode_hex(&text)?;
+        anyhow::ensure!(bytes.len() == 32, "Vault encryption key must be 32 bytes");
+        ProtectedMemory::from_slice(&bytes).await?
+    };
+    let encryption_key =
+        MasterKey::from_key_material(KeyMaterial::new_symmetric_key(encryption_key).await?).await?;
+    let storage =
+        FileJsonStorage::new(encryption_key, vault_file, Box::new(AutoCryptoFactory {}), false)
+            .await?;
+    let vault = SecretVault::new(Arc::new(storage), Arc::new(NullEventHandler {}));
+    Ok(vault)
+}
+
+#[path = "wallet_pq_fee_cmd.rs"]
+mod fee;
+pub use fee::PqRestoreFeeInitialCmd;

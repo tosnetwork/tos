@@ -4,6 +4,31 @@ use super::{InitialRecoveryManifest, SeedProfile, Wipe, bytes};
 use wallet_pq_signer::kdf::{DerivationContext, Material, derive_seed_and_wipe};
 
 impl InitialRecoveryManifest {
+    /// Initial public enrollment only; callers still require current chain proofs.
+    pub fn initial_fee_public_key(&self) -> anyhow::Result<[u8; 60]> {
+        bytes(&self.wire.fee_public_key)
+    }
+
+    /// Reconstruct a missing public tree on a blocking worker and bind it to
+    /// initial enrollment. Wipe the resolved master on every return. No custody
+    /// record, journal or signature is created by this CPU-heavy operation.
+    pub fn rebuild_initial_fee_tree_and_wipe(
+        &self,
+        master: &mut [u8],
+        input_profile: SeedProfile,
+    ) -> anyhow::Result<wallet_pq_signer::fee::FeeTree> {
+        let master = Wipe(master);
+        let (context, tree_id, key) = self.initial_fee_context(input_profile)?;
+        let mut seed = zeroize::Zeroizing::new([0; 48]);
+        derive_seed_and_wipe(master.0, context, Material::Fee { tree_id }, &mut *seed)?;
+        let tree = wallet_pq_signer::fee::FeeTree::generate_and_wipe(&mut *seed)?;
+        anyhow::ensure!(
+            tree.public_key() == &key,
+            "rebuilt fee tree differs from initial enrollment"
+        );
+        Ok(tree)
+    }
+
     fn initial_fee_context(
         &self,
         input_profile: SeedProfile,
@@ -220,5 +245,41 @@ mod tests {
         );
         assert!(master.iter().all(|b| *b == 0));
         assert_eq!(std::fs::read(&file).unwrap(), before);
+    }
+
+    #[test]
+    #[ignore = "full H20 reconstruction against mismatched initial enrollment"]
+    fn initial_fee_rebuild_refuses_different_enrolled_root() {
+        let v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../wallet-pq-signer/tests/fixtures/native-fee-recovery.json"
+        ))
+        .unwrap();
+        let mut master = hex::decode(v["master_hex"].as_str().unwrap()).unwrap();
+        let mut p = parameters();
+        p.network = [1; 32];
+        p.global_id = 42;
+        p.fee_tree_id = [0xa5; 32];
+        p.fee_public_key =
+            hex::decode(v["public_key_hex"].as_str().unwrap()).unwrap().try_into().unwrap();
+        p.fee_public_key[28] ^= 1;
+        let (manifest, _) = InitialRecoveryManifest::prepare(
+            bundle(),
+            p,
+            RecoveryDerivation {
+                account_index: 5,
+                key_generation: 7,
+                primary_seed_profile: SeedProfile::RawMaster32,
+                rescue_seed_profile: SeedProfile::RawMaster32,
+                fee_seed_profile: SeedProfile::NativeMnemonic,
+            },
+        )
+        .unwrap();
+        assert!(
+            manifest
+                .rebuild_initial_fee_tree_and_wipe(&mut master, SeedProfile::NativeMnemonic)
+                .is_err(),
+            "fee rebuild accepted different enrolled root"
+        );
+        assert!(master.iter().all(|b| *b == 0), "fee rebuild retained rejected master");
     }
 }

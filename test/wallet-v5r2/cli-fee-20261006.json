@@ -1,0 +1,230 @@
+{
+  "base_commit": "6580f3317eedfb3d4a2412d8c1eb3b2250fd7f3b",
+  "scope": "Actual initial fee CLI validates independent code/wallet enrollment, declared native mnemonic profile, protected secret inputs, exact public cache or full H20 reconstruction, preflight binding before Vault open, and new-only encrypted persistence. No journal state, current authority, funded rescue or production readiness claim.",
+  "cli_outcomes": {
+    "wrong-wallet": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "wrong-code": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "metadata-account_index": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "metadata-key_generation": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "metadata-fee_seed_profile": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "wrong-password": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "bad-mnemonic": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "duplicate-fd": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "unsafe-mnemonic": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "bad-cache": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "cached": {
+      "exit": 0,
+      "expected_success": true
+    },
+    "duplicate": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "existing-cache-output": {
+      "exit": 1,
+      "expected_success": false
+    },
+    "rebuild": {
+      "exit": 0,
+      "expected_success": true
+    }
+  },
+  "cli_preflight_control": "Fee preflight bypass opened custody for a mismatched account index; restored CLI refuses before storage.",
+  "full_rebuild_control": {
+    "root": {
+      "exit": 101,
+      "semantic_witness": "fee rebuild accepted different enrolled root"
+    }
+  },
+  "manifest_controls": {
+    "profile": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 0"
+    },
+    "account_index": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 1"
+    },
+    "key_generation": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 2"
+    },
+    "tree_id": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 5"
+    },
+    "network": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 6"
+    },
+    "global_id": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 7"
+    },
+    "key_binding": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight accepted input 1"
+    },
+    "unpolled_wipe": {
+      "exit": 101,
+      "semantic_witness": "fee manifest unpolled restore retained master"
+    },
+    "restore_binding": {
+      "exit": 101,
+      "semantic_witness": "fee manifest restore accepted input 1"
+    },
+    "preflight_wipe": {
+      "exit": 101,
+      "semantic_witness": "fee manifest preflight retained master"
+    }
+  },
+  "regression": {
+    "manifest": {
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--features",
+        "native-wallet-vault",
+        "--lib",
+        "wallet_v5r2_manifest"
+      ],
+      "exit": 0
+    },
+    "default_commands": {
+      "command": [
+        "cargo",
+        "check",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "commands"
+      ],
+      "exit": 0
+    },
+    "fmt": {
+      "command": [
+        "make",
+        "-C",
+        "tosctl/src",
+        "fmt-check"
+      ],
+      "exit": 0
+    },
+    "ruff": {
+      "command": [
+        "/Users/tomisetsu/tos/.venv/bin/ruff",
+        "check",
+        "test/wallet-v5r2/cli_fee_restore.py",
+        "test/wallet-v5r2/cli_fee_controls.py",
+        "test/wallet-v5r2/fee_rebuild_controls.py",
+        "test/wallet-v5r2/manifest_fee_controls.py"
+      ],
+      "exit": 0
+    }
+  },
+  "prior_cli_initial": "18 outcomes passed",
+  "prior_cli_restore": "29 outcomes passed",
+  "final_cli_build_exit": 0,
+  "retention_until": "2027-01-06",
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-restore-final.tar.gz",
+      "source_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-restore-final",
+      "size": 1977,
+      "sha256": "3b8b94599a51bd5d5aa90062509fed97eedc92a01942d8f7010084e31d7ab267"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-controls-final.tar.gz",
+      "source_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-controls-final",
+      "size": 8418,
+      "sha256": "3eb65f433b64d341c74e1400467d58c1de447fa10593a67e036547442cc195e8"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-rebuild-controls.tar.gz",
+      "source_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-rebuild-controls",
+      "size": 2772,
+      "sha256": "df6db5d8003fb333e0c70d83bd57d1aa8157319d6f4021c9715eba49e5b46158"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-manifest-controls.tar.gz",
+      "source_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-manifest-controls",
+      "size": 4785,
+      "sha256": "978248a6210d499e98a52bdcb217ba5c348b46d9d842a675546f75114738c519"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-initial-regression.tar.gz",
+      "source_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-initial-regression",
+      "size": 3861,
+      "sha256": "2ff22b887a199f68a3a4460d118c24646018ac5803315fd1db4fe8b23e44e67b"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-input-regression.tar.gz",
+      "source_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-input-regression",
+      "size": 21847,
+      "sha256": "de863d3292b401e977f08cca2c1d75139cbe47bab5eafb77fe050c957490c819"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-regression.tar.gz",
+      "source_directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-cli-fee-regression",
+      "size": 3680,
+      "sha256": "3be8c3d6c2a7c08cb39c26c2e3f210efdcaa93cb217dcee56e47aaba4f2d04b2"
+    }
+  ],
+  "inputs": [
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-recovery-integration/native/sdk-genesis.json",
+      "size": 59004,
+      "sha256": "bf73d4456aaff495a044ee6d39a059622c3e86dbf87d205c84d2869470523483"
+    },
+    {
+      "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree",
+      "size": 67108864,
+      "sha256": "51192902af58e65ecf9603d4354a575bb7d0b4ac68b0b6e3da3df55e5cd785d8"
+    }
+  ],
+  "manifest_results": [
+    "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 259 filtered out; finished in 2.09s"
+  ],
+  "reproduce": [
+    "source /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/env.sh",
+    "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet",
+    "python3 test/wallet-v5r2/cli_fee_restore.py --cli tosctl/src/target/debug/tosctl --fixture /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-manifest-recovery-integration/native/sdk-genesis.json --public-tree /Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-recovery-fixture/PUBLIC-TEST-ONLY-tree --output FRESH_OUTPUT",
+    "python3 test/wallet-v5r2/fee_rebuild_controls.py --output FRESH_OUTPUT"
+  ]
+}
