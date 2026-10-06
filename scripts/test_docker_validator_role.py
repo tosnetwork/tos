@@ -1044,9 +1044,11 @@ class RealEngineTest(unittest.TestCase):
                     process.kill()
                     process.wait(timeout=30)
             self.assertTrue(line, log.read_bytes().decode(errors="replace")[-3000:])
-            self.assertIn(f"validator {VALIDATOR_ID.upper()} ", line)
-            key_id_b64 = base64.b64encode(bytes.fromhex(key_id_hex)).decode()
-            self.assertIn(f"key {key_id_b64}", line)
+            # The engine names both in lower-case hex, the way the key tool prints
+            # the key id, so the two can be compared as text.
+            self.assertIn(f"validator_id {VALIDATOR_ID} ", line)
+            self.assertRegex(key_id_hex, r"^[0-9a-f]{64}$")
+            self.assertRegex(line, rf"\bkey_id {key_id_hex}(?![0-9a-f])")
 
 
 if __name__ == "__main__":
