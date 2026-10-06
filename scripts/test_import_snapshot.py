@@ -585,7 +585,7 @@ class ImportSnapshotTest(unittest.TestCase):
         # The layout the replicated fixture claims to reproduce.
         self.assertEqual(
             sorted(p.name for p in self.db.iterdir()),
-            ["config.json", "error", "keyring", "tos-global.config"],
+            ["config.json", "config.json.lock", "error", "keyring", "tos-global.config"],
         )
         self.assertEqual(
             sorted(p.name for p in (self.db / "error").iterdir()), ["files", "log.txt"]
@@ -594,6 +594,24 @@ class ImportSnapshotTest(unittest.TestCase):
         result = self.run_import(**self.enabled(url, digest, DUMP_ZEROSTATE_ROOT_HASH=zerostate))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.db / ".snapshot-imported").read_text(), digest)
+
+    def test_empty_configuration_lock_is_accepted(self) -> None:
+        (self.db / "config.json.lock").touch(mode=0o600)
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.db / ".snapshot-imported").read_text(), digest)
+
+    def test_configuration_lock_with_content_is_refused(self) -> None:
+        (self.db / "config.json.lock").write_bytes(b"data")
+        self.assert_member_refused(GOOD_MEMBERS, "config.json.lock is not the empty lock file")
+
+    def test_configuration_lock_that_is_a_link_is_refused(self) -> None:
+        (self.db / "config.json.lock").symlink_to(self.db / "elsewhere")
+        self.assert_member_refused(GOOD_MEMBERS, "config.json.lock is not the empty lock file")
+
+    def test_archive_carrying_a_configuration_lock_is_refused(self) -> None:
+        self.assert_spelling_refused("config.json.lock", "file", "config.json.lock")
 
     def test_error_log_with_entries_is_refused(self) -> None:
         make_engine_error_log(self.db)

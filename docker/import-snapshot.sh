@@ -17,7 +17,9 @@
 #
 # The database must be new: before anything is installed it may hold only the
 # node's own configuration and keys (config.json, keyring/, tos-global.config),
-# the empty error log validator-engine creates when it initializes a database
+# the empty configuration lock validator-engine and bind-node take
+# (config.json.lock), the empty error log validator-engine creates when it
+# initializes a database
 # (error/ holding an empty files/ directory and an empty log.txt), and an empty
 # lost+found. A snapshot is never merged into existing chain data.
 #
@@ -61,7 +63,7 @@ LEGACY_MARKER="$DB_DIR/dump_downloaded"
 # identity and configuration written by validator-engine and init.sh, the
 # error log directory validator-engine creates on its first start, and the
 # lost+found a freshly formatted volume carries at its root.
-NEW_DB_ENTRIES=(config.json keyring tos-global.config error lost+found)
+NEW_DB_ENTRIES=(config.json config.json.lock keyring tos-global.config error lost+found)
 # Top-level names an archive may not carry: everything a new database may
 # already hold, the temporary file validator-engine promotes to config.json
 # when config.json is missing (init.sh runs the import before validator-engine
@@ -114,6 +116,11 @@ require_new_database() {
       config.json | tos-global.config)
         [ -f "$entry" ] && [ ! -L "$entry" ] ||
           fail "database entry $name is not a regular file; import only into a new database"
+        ;;
+      config.json.lock)
+        # Only ever opened to be locked; it never holds data.
+        [ -f "$entry" ] && [ ! -L "$entry" ] && [ ! -s "$entry" ] ||
+          fail "database entry config.json.lock is not the empty lock file validator-engine creates; import only into a new database"
         ;;
       keyring)
         [ -d "$entry" ] && [ ! -L "$entry" ] ||
