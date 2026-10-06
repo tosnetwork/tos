@@ -1,0 +1,55 @@
+{
+  "source_sha256": "29792d9f09465f4497c1a304a7deabc8dbff97cd9b2c05e2418288d7a1ba0298",
+  "returncodes": {
+    "baseline-build": 0,
+    "baseline": 0,
+    "missing-debit-build": 0,
+    "missing-debit": 1,
+    "restored-build": 0,
+    "restored": 0
+  },
+  "logs": {
+    "baseline-build.log": {
+      "sha256": "38e2ef270418840abbbaa6c17cb5914b2237bfcf75389332b8f5569434d9a3df",
+      "bytes": 409
+    },
+    "baseline.log": {
+      "sha256": "5e0b0b1ab49fa873a3f7e908cdf0367a53c542bc5de82f272425279d23640559",
+      "bytes": 702
+    },
+    "missing-debit-build.log": {
+      "sha256": "38e2ef270418840abbbaa6c17cb5914b2237bfcf75389332b8f5569434d9a3df",
+      "bytes": 409
+    },
+    "missing-debit.log": {
+      "sha256": "c34a17287756055144ff8909eb46bc30a478b9b0e3ea1e1190a8b9c0309e6173",
+      "bytes": 3311
+    },
+    "restored-build.log": {
+      "sha256": "38e2ef270418840abbbaa6c17cb5914b2237bfcf75389332b8f5569434d9a3df",
+      "bytes": 409
+    },
+    "restored.log": {
+      "sha256": "068903f22867610894a8703f44a04e6ddd2c2a5616cebb91fc99f5aa8c59eab4",
+      "bytes": 701
+    }
+  },
+  "scope": "token bucket only; not pool dispatch or VM execution counts",
+  "base_commit": "bedbd6b72fdbca29e57878b0e43239990dca1efe",
+  "source_state": "uncommitted additions on base commit",
+  "sources": {
+    "validator/impl/ext-message-work-budget.hpp": "29792d9f09465f4497c1a304a7deabc8dbff97cd9b2c05e2418288d7a1ba0298",
+    "test/test-ext-message-admission-budget.cpp": "04b73c70f21e623714d4353cbe10ac45cd8be72251a6f39afed5400642b3c4ba",
+    "scripts/check-ext-message-work-budget.py": "5e9cc7d8dab227072a89717b0818bacd1a5962f186698d69a9f00989b7c191f9"
+  },
+  "command": "python3 scripts/check-ext-message-work-budget.py --build-dir build --output-dir <retained-output>",
+  "raw_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-work-budget-controls-final",
+  "retain_until": "2027-01-06",
+  "platform": "macOS arm64, CMake Release",
+  "result": "7 baseline tests passed; missing debit causes accounting assertion failures; 7 restored tests passed",
+  "remaining": [
+    "Integrate at all-source pool dispatch with same-snapshot supported-profile quotes",
+    "Calibrate rate and burst on supported release hardware",
+    "Actual checker VM execution counts and mixed-network load"
+  ]
+}

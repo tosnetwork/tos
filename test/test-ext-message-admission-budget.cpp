@@ -5,9 +5,63 @@
 #include "td/actor/TestScheduler.h"
 #include "td/utils/tests.h"
 #include "validator/impl/ext-message-admission-budget.hpp"
+#include "validator/impl/ext-message-work-budget.hpp"
 
 namespace tos::validator {
 namespace {
+
+TEST(ExtMessageWorkBudget, ChargesEveryAttemptUntilTimedRefill) {
+  ExtMessageWorkBudget budget(100, 20, 10, 1000);
+  // The same charge applies regardless of the eventual checker outcome.
+  for (unsigned outcome = 0; outcome < 4; ++outcome) {
+    ASSERT_TRUE(budget.try_consume(25, 1000));
+    EXPECT_EQ(budget.available(), 100u - (outcome + 1) * 25u);
+  }
+  EXPECT(!budget.try_consume(1, 1000));
+  EXPECT(!budget.try_consume(1, 1009));
+  EXPECT(!budget.try_consume(21, 1010));
+  EXPECT_EQ(budget.available(), 20u);
+  EXPECT(budget.try_consume(20, 1010));
+  EXPECT(!budget.try_consume(1, 1019));
+  EXPECT(budget.try_consume(20, 1020));
+}
+
+TEST(ExtMessageWorkBudget, PreservesFractionalTimeAndBoundsIdleBurst) {
+  ExtMessageWorkBudget budget(100, 7, 10, 0);
+  ASSERT_TRUE(budget.try_consume(100, 0));
+  EXPECT(budget.try_consume(7, 19));
+  EXPECT(budget.try_consume(7, 20));
+  EXPECT(!budget.try_consume(1, 29));
+  EXPECT(budget.try_consume(100, 10000));
+  EXPECT(!budget.try_consume(1, 10000));
+}
+
+TEST(ExtMessageWorkBudget, RejectsInvalidQuotesAndBackwardClock) {
+  ExtMessageWorkBudget budget(100, 20, 10, 1000);
+  EXPECT(!budget.try_consume(0, 1000));
+  EXPECT(!budget.try_consume(101, 1000));
+  EXPECT(!budget.try_consume(1, 999));
+  EXPECT_EQ(budget.available(), 100u);
+  EXPECT(budget.try_consume(1, 1009));
+  EXPECT(!budget.try_consume(1, 1008));
+  EXPECT_EQ(budget.available(), 99u);
+  EXPECT(budget.try_consume(99, 1009));
+  EXPECT(!budget.try_consume(101, 2000));
+  EXPECT_EQ(budget.available(), 0u);
+  EXPECT(budget.try_consume(100, 2000));
+}
+
+TEST(ExtMessageWorkBudget, SaturatesWithoutIntegerOverflow) {
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  ExtMessageWorkBudget budget(maximum, maximum, 1, 0);
+  ASSERT_TRUE(budget.try_consume(maximum, 0));
+  EXPECT(budget.try_consume(maximum, maximum));
+  EXPECT(!budget.try_consume(1, maximum));
+  ExtMessageWorkBudget exact(maximum, 1, 1, 0);
+  ASSERT_TRUE(exact.try_consume(maximum, 0));
+  EXPECT(exact.try_consume(maximum, maximum));
+  EXPECT_EQ(exact.available(), 0u);
+}
 
 TEST(ExtMessageAdmissionBudget, RejectsAggregateBytesBeforeCountLimit) {
   auto budget = std::make_shared<adnl::AdnlExtByteBudget>(ext_message_admission_bytes);
