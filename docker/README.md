@@ -222,6 +222,12 @@ The import script (`docker/import-snapshot.sh`) then:
 
 - refuses to start when `DUMP_URL` is set without `SNAPSHOT_IMPORT=1`, or when
   the digest or the network binding is missing or does not match;
+- holds the node's configuration lock (`config.json.lock`, the record lock
+  `validator-engine` holds while it runs and `bind-node` holds while it edits)
+  from before it reads the database until it exits, and refuses if another
+  process holds it. A node started during the import refuses to start. The
+  lock catches a node that was not stopped; it does not replace stopping it.
+  The lock file is created if missing and left in place;
 - imports only into a new database: before downloading, and again immediately
   before installing, the database directory may hold nothing but the node's
   `config.json`, `keyring/` and `tos-global.config`, the empty
