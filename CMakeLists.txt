@@ -1496,6 +1496,13 @@ if (NOT NIX)
           "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
           "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     endif()
+    # Raw inline bytes bypass symbolic continuation-capacity handling.
+    add_test(
+      NAME test-tol-raw-opcode-capacity
+      COMMAND ${PYTHON_VER} ${CMAKE_CURRENT_SOURCE_DIR}/tol-tester/check-raw-opcode-capacity.py
+        $<TARGET_FILE:tol> $<TARGET_FILE:fift>)
+    set_property(TEST test-tol-raw-opcode-capacity PROPERTY ENVIRONMENT
+      "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     # Committed scaffold examples must match `tol new` output, and the tests
     # it generates must pass.
     add_test(

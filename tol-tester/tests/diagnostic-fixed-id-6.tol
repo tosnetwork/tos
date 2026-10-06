@@ -1,0 +1,10 @@
+@method_id(100001)
+fun get_state(): (int, (int, int)) {
+    return (7, (8, 9));
+}
+
+fun onInternalMessage(in: InMessage) {}
+
+/**
+@testcase | 100001 | | 7 8 9
+ */

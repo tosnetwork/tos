@@ -1,0 +1,23 @@
+import "@stdlib/common"
+struct (0x40005000) Request { queryId: uint64; amount: uint64; }
+struct (0x40005001) Ack { queryId: uint64; amount: uint64; }
+@noinline
+fun helper(dest: address, queryId: uint64) {
+    createMessage({bounce: false, dest: dest, value: 0, body: Ack { queryId: queryId, amount: 1 }}).send(SEND_MODE_REGULAR);
+}
+@noinline
+fun other(dest: address, queryId: uint64) {
+    helper(dest, queryId);
+}
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy Request.fromSlice(in.body);
+    val send = in.valueCoins > 0 ? helper : other;
+    send(in.senderAddress, msg.queryId);
+}
+@method_id(101) fun dummy(): int { return 0; }
+/**
+@testcase | 101 | | 0
+@stderr diagnostic-query-indirect-helper.tol:12: warning:
+@stderr cannot prove whether a helper replies
+@stderr_avoid emits no reply
+ */
