@@ -113,6 +113,7 @@ jobs:
           python test/wallet-v5r2/vault_recovery_controls.py --output artifacts/context/vault-recovery-controls
           python test/wallet-v5r2/vault_pop_controls.py --output artifacts/context/vault-pop-controls
           python test/wallet-v5r2/migration_signing_controls.py --output artifacts/context/migration-signing-controls
+          python test/wallet-v5r2/fee_rollover_controls.py --output artifacts/context/fee-rollover-controls
       - name: PQ custody restore CLI and protected input controls
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet

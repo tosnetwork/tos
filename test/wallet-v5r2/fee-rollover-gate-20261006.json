@@ -1,0 +1,41 @@
+{
+  "base_commit": "266bda452734e8fa90981c8e14afae6662076b6f",
+  "scope": "SDK ordinary rescue signing cannot replace a fee descriptor without the funded successor gate. Same-module fee rollover remains available through migration signing. No contract/VM change or real-network proof claim.",
+  "before": {
+    "command": "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-vault --lib fee_rollover_cannot",
+    "exit": 101,
+    "failed": 2,
+    "witnesses": [
+      "ungated fee rollover signed",
+      "opened custody for ungated fee rollover"
+    ]
+  },
+  "after": {
+    "command": "source <artifacts>/20261005-baseline/env.sh; <test-venv>/bin/python test/wallet-v5r2/fee_rollover_controls.py --output <fresh-directory>",
+    "exit": 0,
+    "baseline_and_restored_passed": 22,
+    "semantic_controls": {
+      "wallet_v5r2_wallet_state.rs": {
+        "exit": 101,
+        "witness": "ungated fee rollover signed"
+      },
+      "wallet_v5r2_vault.rs": {
+        "exit": 101,
+        "witness": "opened custody for ungated fee rollover"
+      }
+    }
+  },
+  "positive_boundary": "native_same_module_rollover_requires_both_funded_pops runs the full migration gate matrix with an unchanged module and fresh fee key, including native and encrypted Vault signature generation. Synthetic funded receipts isolate SDK policy.",
+  "remaining": [
+    "CLI migration composition",
+    "historical and cross-wallet LMS reuse checks",
+    "final-head ARM/x86 CI",
+    "default-credit admission"
+  ],
+  "artifact": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261006-fee-rollover-gate.tar.gz",
+    "bytes": 42702,
+    "sha256": "0aeeb5086945a6b829daf2559ff55645c832c161ebc4e79d5de4ca27f5418560",
+    "retain_until": "2027-01-06"
+  }
+}

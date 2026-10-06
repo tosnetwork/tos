@@ -3470,3 +3470,26 @@ rollover. The final restored client run completes preparation, three successor
 POPs and nine receipt cases. Initial POP/receipt/lock regression and four POP
 codec tests also pass at their recorded stage. Evidence and stage boundaries:
 [successor client lifecycle and active-key reuse controls](../test/wallet-v5r2/successor-client-pop-20261006.json).
+
+### Fee-only rollover must use the funded successor gate (2026-10-06)
+
+A local regression reproduced an SDK bypass: `sign_rescue_submission` accepted
+`Configure { fee_replacement: Some(...) }` for a valid fresh fee tree at the
+unchanged module without any successor POP evidence. The Vault convenience API
+also reached custody loading before a funded-route check. This is a high-level
+client policy bypass; the reproduction does not establish unauthorized on-chain
+spending, and low-level wire construction is not a readiness assertion.
+
+Both ordinary rescue-signing entrypoints now reject descriptor replacements.
+Fee-only rollover uses same-root `sign_migration` / `sign_migration_submission`,
+which retains the funded PRIMARY and RESCUE POPs, authenticated checkpoint,
+current fee-vault state, active-key freshness and local custody continuity gates.
+A separate same-module test runs the full migration gate matrix, including a
+successful signature through native and encrypted custody. Policy-only
+`Configure` and low-level canonical encoding remain available. These synthetic
+receipt tests isolate SDK policy; they are not new VM execution or real-network
+proof evidence.
+
+The before/after results and independent deletion of each new signing guard are
+indexed in `test/wallet-v5r2/fee-rollover-gate-20261006.json`. Full client migration
+orchestration and historical/cross-wallet fee-key reuse tracking remain open.

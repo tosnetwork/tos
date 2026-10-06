@@ -1437,8 +1437,75 @@ mod fee_state_tests {
     }
 
     #[cfg(feature = "native-wallet-signer")]
+    fn fee_rollover_signing_fixture() -> (
+        crate::wallet_v5r2_wallet_state::ProvenWalletState,
+        crate::wallet_v5r2::AuthAction,
+        wallet_pq_signer::Signer,
+    ) {
+        use crate::wallet_v5r2_genesis::SuccessorDeployment;
+        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use wallet_pq_signer::{Role, Signer};
+        let signer = Signer::import_and_wipe(Role::Rescue, &mut [0x22; 48]).unwrap();
+        let rescue = signer.public_key().try_into().unwrap();
+        let (g, proof) = fixture_with_keys(RescuePolicy::Required, [2; 1312], rescue);
+        let wallet = account_proof(proof, g.wallet_init());
+        let (_, proof) = fixture();
+        let module = account_proof(proof, g.module_init());
+        let view = ProvenWalletState::bind_initial(&wallet, &module, &g, 4620, 30).unwrap();
+        let (fresh, _) = fixture_with_keys_and_fee(RescuePolicy::Required, [2; 1312], rescue, 1);
+        let successor =
+            SuccessorDeployment::new(fresh, *g.wallet_init().repr_hash().as_array()).unwrap();
+        assert_eq!(successor.module_init(), g.module_init());
+        successor.require_fresh_fee_key(g.metadata()).unwrap();
+        let action = crate::wallet_v5r2::AuthAction::Configure {
+            fee_replacement: Some((successor.metadata().clone(), successor.vault_init().clone())),
+        };
+        // A valid wire envelope alone does not establish funded successor POPs.
+        view.rescue_request(4620, 4700, action.clone()).unwrap();
+        (view, action, signer)
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    #[test]
+    fn native_fee_rollover_cannot_bypass_funded_pop_gate() {
+        let (view, action, mut signer) = fee_rollover_signing_fixture();
+        assert!(
+            view.sign_rescue_submission(4620, 4700, action, &mut signer).is_err(),
+            "ungated fee rollover signed"
+        );
+    }
+
+    #[cfg(feature = "native-wallet-vault")]
+    #[tokio::test]
+    async fn vault_fee_rollover_cannot_open_custody_before_pop_gate() {
+        use crate::wallet_v5r2_vault::VaultKey;
+        use secrets_vault::types::secret_id::SecretId;
+        let (view, action, _) = fee_rollover_signing_fixture();
+        let (_dir, custody, _) = public_vault_fixture(wallet_pq_signer::Role::Rescue).await;
+        let missing = SecretId::new("missing");
+        let key = VaultKey { vault: &custody, id: &missing };
+        let error = key.sign_rescue(&view, || Ok(4620), 4700, action).await.err().unwrap();
+        assert_eq!(
+            error.to_string(),
+            "fee replacement signing requires funded successor POPs",
+            "opened custody for ungated fee rollover"
+        );
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
     #[tokio::test]
     async fn native_migration_requires_both_funded_pops() {
+        exercise_funded_migration(false).await;
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    #[tokio::test]
+    async fn native_same_module_rollover_requires_both_funded_pops() {
+        exercise_funded_migration(true).await;
+    }
+
+    #[cfg(feature = "native-wallet-signer")]
+    async fn exercise_funded_migration(same_module: bool) {
         use crate::lms_fee_schedule::{Continuity, IntactState, RestoreBarrier};
         use crate::proven_transactions::ProvenTransaction;
         use crate::wallet_v5r2::{AuthAction, AuthRole};
@@ -1458,8 +1525,13 @@ mod fee_state_tests {
         let module = account_proof(proof, birth.module_init());
         set_wallet_counters(&birth, &mut wallet, u32::MAX, 9, u64::MAX, u64::MAX);
         let view = ProvenWalletState::bind_initial(&wallet, &module, &birth, 4620, 30).unwrap();
-        let (template, _) =
-            fixture_with_keys_and_fee(RescuePolicy::Required, [8; 1312], [9; 32], 1);
+        let (template, _) = fixture_with_keys_and_fee(
+            RescuePolicy::Required,
+            if same_module { view.primary_public_key().try_into().unwrap() } else { [8; 1312] },
+            if same_module { *view.rescue_public_key() } else { [9; 32] },
+            1,
+        );
+        assert_eq!(template.module_init() == birth.module_init(), same_module);
         let successor =
             SuccessorDeployment::new(template, *birth.wallet_init().repr_hash().as_array())
                 .unwrap();

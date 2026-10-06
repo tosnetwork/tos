@@ -282,6 +282,12 @@ impl ProvenWalletState {
             !matches!(action, AuthAction::Migrate { .. }),
             "migration signing requires both funded POPs"
         );
+        // Fee-only rollover uses the same-root migration API and its funded
+        // successor/custody checks; a raw Configure must not bypass them.
+        anyhow::ensure!(
+            !matches!(action, AuthAction::Configure { fee_replacement: Some(_) }),
+            "fee replacement signing requires funded successor POPs"
+        );
         let request = self.rescue_request(now, valid_until, action)?;
         self.sign_submission(request, signer)
     }
