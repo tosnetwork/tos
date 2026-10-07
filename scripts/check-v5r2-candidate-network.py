@@ -63,6 +63,11 @@ def validate(cells):
         source = cells[index].begin_parse()
         decoded = decoder.deserialize(source)
         require(source.remaining_bits == 0 and source.remaining_refs == 0, "gas trailing data")
+        require(
+            decoded.flat_gas_limit == 100
+            and decoded.flat_gas_price == (1000000 if index == 20 else 667),
+            "candidate flat gas tariff mismatch",
+        )
         while decoded.other is not None:
             decoded = decoded.other
         require(decoded.gas_credit == expected_credit, "candidate gas credit mismatch")
@@ -74,8 +79,14 @@ def validate(cells):
                 "special_gas_limit",
                 "gas_credit",
                 "block_gas_limit",
+                "freeze_due_limit",
+                "delete_due_limit",
             )
         }
+        require(
+            decoded.freeze_due_limit == 100000000 and decoded.delete_due_limit == 1000000000,
+            "candidate storage debt limits mismatch",
+        )
     require(
         gas["21"]["gas_price"] == 436907
         and gas["21"]["gas_limit"] == 30000000

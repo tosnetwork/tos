@@ -15,18 +15,27 @@ class CandidateReadbackTests(unittest.TestCase):
         cls.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.module)
 
-    def cells(self, version=18, global_id=1, network=0x42, credit=20000, gas_price=436907):
+    def cells(
+        self,
+        version=18,
+        global_id=1,
+        network=0x42,
+        credit=20000,
+        gas_price=436907,
+        flat_price=667,
+        freeze_due=100000000,
+    ):
         def gas(mc):
             values = (
                 [655360000, 1000000, 70000000, 10000, 2500000, 100000000, 1000000000]
                 if mc
-                else [gas_price, 30000000, 30000000, credit, 60000000, 100000000, 1000000000]
+                else [gas_price, 30000000, 30000000, credit, 60000000, freeze_due, 1000000000]
             )
             b = (
                 Builder()
                 .store_uint(0xD1, 8)
                 .store_uint(100, 64)
-                .store_uint(1000000 if mc else 667, 64)
+                .store_uint(1000000 if mc else flat_price, 64)
                 .store_uint(0xDE, 8)
             )
             for value in values:
@@ -60,6 +69,8 @@ class CandidateReadbackTests(unittest.TestCase):
             dict(network=0x43),
             dict(credit=10000),
             dict(gas_price=10),
+            dict(flat_price=666),
+            dict(freeze_due=1),
         ]:
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.module.validate(self.cells(**kwargs))
