@@ -1,0 +1,29 @@
+{
+  "vectors": 6,
+  "tests": 4,
+  "controls": [
+    {
+      "field": "configure",
+      "exit": 1
+    },
+    {
+      "field": "lock",
+      "exit": 1
+    },
+    {
+      "field": "migration-order",
+      "exit": 1
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Android JVM all AUTH wire actions; byte-filled signatures are framing fixtures only",
+  "android_commit": "937918f",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-auth-full",
+  "generator": "test/wallet-v5r2/sdk_auth_vectors.py",
+  "logs": {
+    "configure.log": "4905d2988d577d1d241d1568b484f38d29ac4ca9745c958b6526dd587d57c5d2",
+    "migration-order.log": "47b54ea316aa12592cf14546102c31a2e7f4a8770e16d6fac02300c97975f317",
+    "restored.log": "e0e9ff1d2d3abbf56698bbb7483c0f048f5c60ff55422cdc5a67cf78abe2756a",
+    "lock.log": "f404a119f7a8ad0a7d328a10f54e3a9f28e1fdeff17792639a43c71aa9201518"
+  }
+}
