@@ -7,11 +7,11 @@ use super::{
 };
 use contracts::{
     lms_fee_journal::{FeeJournal, SignedFeeMessage},
-    wallet_v5r2::{AuthAction, AuthRole},
-    wallet_v5r2_fee::{FeeBinding, FeeClass, FeeIntent, FeePayload},
-    wallet_v5r2_pop::{PopRequest, RescuePolicy},
-    wallet_v5r2_prepare::PreparationAmounts,
-    wallet_v5r2_vault::VaultKey,
+    wallet_quantum::{AuthAction, AuthRole},
+    wallet_quantum_fee::{FeeBinding, FeeClass, FeeIntent, FeePayload},
+    wallet_quantum_pop::{PopRequest, RescuePolicy},
+    wallet_quantum_prepare::PreparationAmounts,
+    wallet_quantum_vault::VaultKey,
 };
 use std::io::{BufRead, Read, Write};
 
@@ -391,7 +391,7 @@ impl PqFeeSessionInitialCmd {
                     &actions,
                     4 * 1024 * 1024,
                 )?)?;
-                contracts::wallet_v5r2::validate_actions(&actions)?;
+                contracts::wallet_quantum::validate_actions(&actions)?;
                 execute_actions = Some(actions);
                 (None, valid_for_seconds, value_nanotos, output_dir)
             }

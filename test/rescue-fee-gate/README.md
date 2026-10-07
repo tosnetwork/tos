@@ -1,8 +1,8 @@
-# Wallet V5R2 rescue — PROTOTYPE
+# Wallet Quantum rescue — PROTOTYPE
 
 The product target is the complete V5R1 wallet baseline with the R2 protection
 model, not the simplified receiver in this research harness. See
-[the full-wallet implementation requirements](../../doc/wallet-v5r2-implementation.md).
+[the full-wallet implementation requirements](../../doc/wallet-quantum-implementation.md).
 The experiments below validate individual boundaries and do not replace that gate.
 
 Prototype of the wallet rescue design: an ML-DSA-44 daily root, an SLH-DSA-SHA2-128s rescue
@@ -38,10 +38,10 @@ What it adds:
   is read (prototype tariff). The Rust suite 4 is an independent port.
 - `crypto/smartcont/rescue-fee-vault-slot.fc`: the time-slot fee vault — pinned target, value
   cap, rescue-submission opcode, `q == leaf`, slot window, cached solvency budget, send mode 1 + 2.
-- `crypto/smartcont/rescue-dual-module.fc` and `rescue-v5r2-account.fc`: the dual-root module and
-  a minimal V5R2 receiver (AUTH v2 checks, lock, execute, configure, migrate; PRIMARY funded by
-  the account's own fee vault is refused). Wire format: `crypto/smartcont/wallet-v5r2-rescue.tlb`
-  (`tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-v5r2-rescue.tlb`).
+- `crypto/smartcont/rescue-dual-module.fc` and `rescue-quantum-account.fc`: the dual-root module and
+  a minimal Quantum receiver (AUTH v2 checks, lock, execute, configure, migrate; PRIMARY funded by
+  the account's own fee vault is refused). Wire format: `crypto/smartcont/wallet-quantum-rescue.tlb`
+  (`tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-quantum-rescue.tlb`).
 - `fee_key.py`, `fee-kdf-vectors.json`: the fee-key derivation from the wallet master (H20/W4
   vectors), checked against RFC 8554 Test Case 2 in Python and through `tools/lms_tool`.
 - `suite_scenarios.py`, `suite-scenarios.tsv`, `suite-expected.tsv`, `suite-parity.cpp`,

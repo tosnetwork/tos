@@ -47,7 +47,7 @@ def validate_unconditional_steps(text: str) -> None:
     # Always-on evidence upload cannot skip a test. All jobs and runtime gates
     # retain the unconditional coverage rule, including any other upload step.
     archive = re.search(
-        r"(?ms)^      - name: Retain V5R2 candidate configuration and boot evidence\n"
+        r"(?ms)^      - name: Retain Quantum candidate configuration and boot evidence\n"
         r"(?P<body>.*?)(?=^      - |\Z)",
         text,
     )

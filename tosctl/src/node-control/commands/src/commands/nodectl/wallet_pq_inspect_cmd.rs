@@ -3,10 +3,10 @@ use super::{InitialCodeArgs, PathBuf, bounded_public_file, public_hash};
 use common::app_config::ProofVerifierConfig;
 use contracts::{
     proven_getters::{ProvenAccountState, ProvenGetterProvider, ReadPolicy},
-    wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis},
-    wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
-    wallet_v5r2_state::ProvenFeeVault,
-    wallet_v5r2_wallet_state::ProvenWalletState,
+    wallet_quantum_genesis::{SuccessorDeployment, WalletGenesis},
+    wallet_quantum_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
+    wallet_quantum_state::ProvenFeeVault,
+    wallet_quantum_wallet_state::ProvenWalletState,
 };
 
 #[derive(clap::Args, Clone)]
@@ -92,7 +92,7 @@ impl InitialProofArgs {
         &self,
         manifest: &std::path::Path,
         expected_template_wallet: &str,
-    ) -> anyhow::Result<contracts::wallet_v5r2_genesis::SuccessorDeployment> {
+    ) -> anyhow::Result<contracts::wallet_quantum_genesis::SuccessorDeployment> {
         // The template's wallet is a reconstruction pin, never the destination
         // of recovery. Pair its module and fee tree with the existing wallet.
         let (_, template) = InitialRecoveryManifest::parse_and_reconstruct(
@@ -100,7 +100,7 @@ impl InitialProofArgs {
             self.code.load()?,
             public_hash(expected_template_wallet)?,
         )?;
-        let successor = contracts::wallet_v5r2_genesis::SuccessorDeployment::new(
+        let successor = contracts::wallet_quantum_genesis::SuccessorDeployment::new(
             template,
             public_hash(&self.expected_wallet)?,
         )?;
@@ -142,7 +142,7 @@ impl InitialProofArgs {
             let history: FeeHistory =
                 serde_json::from_slice(&bounded_public_file(path, 16 * 1024)?)?;
             anyhow::ensure!(
-                history.schema == "TOS-WALLET-V5R2-FEE-HISTORY-v1"
+                history.schema == "TOS-WALLET-Quantum-FEE-HISTORY-v1"
                     && public_hash(&history.wallet)? == public_hash(&self.expected_wallet)?
                     && !history.used_fee_public_key_hashes.is_empty()
                     && history.used_fee_public_key_hashes.len() <= MAX_FEE_HISTORY,
@@ -265,7 +265,7 @@ impl InitialProofArgs {
             (
                 "fee-history.json",
                 serde_json::to_vec_pretty(&FeeHistory {
-                    schema: "TOS-WALLET-V5R2-FEE-HISTORY-v1".into(),
+                    schema: "TOS-WALLET-Quantum-FEE-HISTORY-v1".into(),
                     wallet: hex::encode(public_hash(&self.expected_wallet)?),
                     used_fee_public_key_hashes: context
                         .known_fee_keys

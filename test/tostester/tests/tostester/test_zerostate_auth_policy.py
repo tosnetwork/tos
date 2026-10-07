@@ -1,4 +1,4 @@
-"""Generate real zero states and inspect the mandatory V5R2 AUTH policy."""
+"""Generate real zero states and inspect the mandatory Quantum AUTH policy."""
 
 import hashlib
 import os

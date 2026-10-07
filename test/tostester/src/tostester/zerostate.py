@@ -68,11 +68,11 @@ class NetworkConfig:
     monitor_min_split: int = 0
     split: int = 0
     global_version: int = 16
-    # Mandatory public namespace for the experimental V5R2 activation profile.
+    # Mandatory public namespace for the experimental Quantum activation profile.
     # Deliberately no default: it must not depend on a generated genesis hash.
     auth_network_tag: bytes | None = None
     # Explicit version-18 admission candidate; requires the deployment fee table.
-    v5r2_admission_candidate: bool = False
+    quantum_admission_candidate: bool = False
     # Test-only funded basechain genesis; allocation is deducted from the faucet.
     basechain_fixture: bytes | None = field(default=None, repr=False)
     shard_validators: int = 1  # DEV-SPECIFIC: single-validator bootstrap rehearsal
@@ -521,19 +521,19 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     is not made to the other fails rather than quietly producing a localnet
     whose fees are nobody's.
     """
-    if type(config.v5r2_admission_candidate) is not bool:
-        raise ValueError("V5R2 admission candidate flag must be boolean")
-    if config.v5r2_admission_candidate and (
+    if type(config.quantum_admission_candidate) is not bool:
+        raise ValueError("Quantum admission candidate flag must be boolean")
+    if config.quantum_admission_candidate and (
         config.global_version != 18
         or not config.deployment_fee_schedule
         or not isinstance(config.auth_network_tag, bytes)
         or len(config.auth_network_tag) != 32
     ):
         raise ValueError(
-            "V5R2 admission candidate requires version 18, deployment fees and a 32-byte AUTH network tag"
+            "Quantum admission candidate requires version 18, deployment fees and a 32-byte AUTH network tag"
         )
     if config.deployment_fee_schedule:
-        credit = 20000 if config.v5r2_admission_candidate else 10000
+        credit = 20000 if config.quantum_admission_candidate else 10000
         return {
             "gas_prices": f"436907 30 *M 30 *M {credit} 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
             "mc_gas_prices": "655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000"
@@ -841,8 +841,8 @@ def create_zerostate(
 
     basechain_state = "0 mkemptyShardState"
     if config.basechain_fixture is not None:
-        if not config.v5r2_admission_candidate or config.validator_economics_profile:
-            raise ValueError("funded basechain fixture requires isolated V5R2 candidate profile")
+        if not config.quantum_admission_candidate or config.validator_economics_profile:
+            raise ValueError("funded basechain fixture requires isolated Quantum candidate profile")
         allocated = basechain_fixture_balance(config.basechain_fixture, config.global_id)
         # The three ordinary system allocations consume 21 TOS independently.
         if allocated > (5_000_000_000 - 21) * NANOTOS_PER_TOS:

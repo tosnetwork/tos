@@ -201,13 +201,13 @@ jobs:
       - name: Run the complete Python suite
         run: uv run pytest
 
-      - name: Read back the disposable V5R2 admission candidate
+      - name: Read back the disposable Quantum admission candidate
         timeout-minutes: 5
         run: |
-          uv run python scripts/test_v5r2_candidate_network.py
-          uv run python scripts/check-v5r2-candidate-network.py --build-dir build --out build/v5r2-candidate-ci --sdk-fixture test/wallet-v5r2/fixtures/public-genesis-accounts.json
+          uv run python scripts/test_quantum_candidate_network.py
+          uv run python scripts/check-quantum-candidate-network.py --build-dir build --out build/quantum-candidate-ci --sdk-fixture test/wallet-quantum/fixtures/public-genesis-accounts.json
 
-      - name: Broadcast disposable V5R2 payment and verify execution linkage
+      - name: Broadcast disposable Quantum payment and verify execution linkage
         timeout-minutes: 15
         env:
           TOS_ROOT: ${{ github.workspace }}
@@ -220,40 +220,40 @@ jobs:
         run: |
           sh test/rescue-fee-gate/tools/build.sh build-signers
           signing_time=$(date +%s)
-          uv run --with cryptography python test/wallet-v5r2/test_fee_delivery.py \
-            --chain-config build/v5r2-candidate-ci/candidate-config.boc \
-            --transaction-time "$signing_time" --export-network-input --output build/v5r2-payment-input
-          uv run python scripts/test_v5r2_transaction_chain.py --input build/v5r2-payment-input
-          uv run python scripts/check-v5r2-candidate-network.py --build-dir build \
-            --out build/v5r2-payment-ci --network-input build/v5r2-payment-input/PUBLIC-TEST-ONLY-network-input.json --broadcast
+          uv run --with cryptography python test/wallet-quantum/test_fee_delivery.py \
+            --chain-config build/quantum-candidate-ci/candidate-config.boc \
+            --transaction-time "$signing_time" --export-network-input --output build/quantum-payment-input
+          uv run python scripts/test_quantum_transaction_chain.py --input build/quantum-payment-input
+          uv run python scripts/check-quantum-candidate-network.py --build-dir build \
+            --out build/quantum-payment-ci --network-input build/quantum-payment-input/PUBLIC-TEST-ONLY-network-input.json --broadcast
 
-      - name: Retain V5R2 candidate configuration and boot evidence
+      - name: Retain Quantum candidate configuration and boot evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: v5r2-candidate-${{ github.sha }}
+          name: quantum-candidate-${{ github.sha }}
           path: |
-            build/v5r2-payment-ci/report.json
-            build/v5r2-payment-ci/network.log
-            build/v5r2-payment-ci/broadcast-result.json
-            build/v5r2-payment-ci/transaction-observations.json
-            build/v5r2-payment-ci/transaction-chain.json
-            build/v5r2-payment-ci/anchor.json
-            build/v5r2-payment-ci/*-proof-result.json
-            build/v5r2-payment-ci/*-proof-verifier.log
-            build/v5r2-candidate-ci/candidate-config.boc
-            build/v5r2-candidate-ci/report.json
-            build/v5r2-candidate-ci/network.log
-            build/v5r2-candidate-ci/proof-result.json
-            build/v5r2-candidate-ci/proof-verifier.log
-            build/v5r2-candidate-ci/anchor.json
-            build/v5r2-candidate-ci/proof-request.json
-            build/v5r2-candidate-ci/proof-material/
-            build/v5r2-candidate-ci/*-proof-request.json
-            build/v5r2-candidate-ci/*-proof-result.json
-            build/v5r2-candidate-ci/*-proof-verifier.log
-            build/v5r2-candidate-ci/*-material/
-            build/v5r2-candidate-ci/funded-accounts/accounts.json
+            build/quantum-payment-ci/report.json
+            build/quantum-payment-ci/network.log
+            build/quantum-payment-ci/broadcast-result.json
+            build/quantum-payment-ci/transaction-observations.json
+            build/quantum-payment-ci/transaction-chain.json
+            build/quantum-payment-ci/anchor.json
+            build/quantum-payment-ci/*-proof-result.json
+            build/quantum-payment-ci/*-proof-verifier.log
+            build/quantum-candidate-ci/candidate-config.boc
+            build/quantum-candidate-ci/report.json
+            build/quantum-candidate-ci/network.log
+            build/quantum-candidate-ci/proof-result.json
+            build/quantum-candidate-ci/proof-verifier.log
+            build/quantum-candidate-ci/anchor.json
+            build/quantum-candidate-ci/proof-request.json
+            build/quantum-candidate-ci/proof-material/
+            build/quantum-candidate-ci/*-proof-request.json
+            build/quantum-candidate-ci/*-proof-result.json
+            build/quantum-candidate-ci/*-proof-verifier.log
+            build/quantum-candidate-ci/*-material/
+            build/quantum-candidate-ci/funded-accounts/accounts.json
           if-no-files-found: ignore
           retention-days: 14
 

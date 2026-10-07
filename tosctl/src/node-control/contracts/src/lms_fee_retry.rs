@@ -3,8 +3,8 @@
 use super::{FeeJournal, SignedFeeMessage};
 use crate::{
     lms_fee_schedule::{LEAVES_PER_SLOT, SLOT_SECONDS},
-    wallet_v5r2_fee::FeeIntent,
-    wallet_v5r2_state::ProvenFeeVault,
+    wallet_quantum_fee::FeeIntent,
+    wallet_quantum_state::ProvenFeeVault,
 };
 
 impl FeeJournal {

@@ -34,14 +34,14 @@ import { WalletV5R1 } from "./WalletV5R1.js";
 
 export { WalletV3R2, WalletV4R2, WalletV5R1 };
 
-export { V5R2AuthRequest, validateV5R2Actions } from "./V5R2Auth.js";
-export type { V5R2Role, V5R2Action, V5R2Binding } from "./V5R2Auth.js";
-export { WalletV5R2 } from "./WalletV5R2.js";
-export { V5R2PopRequest, V5R2PreparationRequest } from "./V5R2Recovery.js";
-export type { V5R2RecoveryBinding, V5R2PreparationPlan } from "./V5R2Recovery.js";
-export { V5R2FeeIntent, validateV5R2FeePayload } from "./V5R2Fee.js";
-export type { V5R2FeeClass, V5R2FeeBinding } from "./V5R2Fee.js";
-export type { V5R2Policy, V5R2CodeBundle, V5R2CodePins, V5R2GenesisParameters } from "./WalletV5R2.js";
+export { QuantumAuthRequest, validateQuantumActions } from "./QuantumAuth.js";
+export type { QuantumRole, QuantumAction, QuantumBinding } from "./QuantumAuth.js";
+export { WalletQuantum } from "./WalletQuantum.js";
+export { QuantumPopRequest, QuantumPreparationRequest } from "./QuantumRecovery.js";
+export type { QuantumRecoveryBinding, QuantumPreparationPlan } from "./QuantumRecovery.js";
+export { QuantumFeeIntent, validateQuantumFeePayload } from "./QuantumFee.js";
+export type { QuantumFeeClass, QuantumFeeBinding } from "./QuantumFee.js";
+export type { QuantumPolicy, QuantumCodeBundle, QuantumCodePins, QuantumGenesisParameters } from "./WalletQuantum.js";
 
 // Signer
 export { KeyPairSigner } from "./KeyPairSigner.js";

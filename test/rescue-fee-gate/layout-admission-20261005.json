@@ -101,7 +101,7 @@
     "production_acceptance": false
   },
   "raw_result": {
-    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/layout-admission.json",
+    "path": "/Users/tomisetsu/tos-quantum-rescue-artifacts/20261005-baseline/layout-admission.json",
     "sha256": "f0242400412757bb31a006ad0268eb39766c7969180a16ce4b7969e93360d147",
     "bytes": 2233,
     "retention": "retain with this experiment until superseded by a reproduced admission result"

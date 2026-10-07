@@ -1,6 +1,6 @@
 """EXPERIMENT: the minimal rescue loop in real transactions, native emulator.
 
-fee vault (LMS, external) -> dual-root module (SLH-DSA or ML-DSA, internal) -> V5R2 account.
+fee vault (LMS, external) -> dual-root module (SLH-DSA or ML-DSA, internal) -> Quantum account.
 Every hop is a separate transaction fed with the previous one's actual outgoing message.
 
 Environment: as test_slot_vault.py, plus SLH_TOOL and MLDSA_TOOL (test-only signers built from the
@@ -123,7 +123,7 @@ class RescueLoopTests(unittest.TestCase):
         slot.SlotVaultTests.setUpClass()
         cls.tmp = tempfile.TemporaryDirectory()
         module = os.environ.get("MODULE_SOURCE", "rescue-dual-module.fc")
-        account = os.environ.get("ACCOUNT_SOURCE", "rescue-v5r2-account.fc")
+        account = os.environ.get("ACCOUNT_SOURCE", "rescue-quantum-account.fc")
         cls.module_code = compile_contract(module, Path(cls.tmp.name) / "module.boc")
         cls.account_code = compile_contract(account, Path(cls.tmp.name) / "account.boc")
         cls.sign = Signers(cls.tmp.name)

@@ -121,7 +121,7 @@
     "production_acceptance": false
   },
   "raw_result": {
-    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/bounded-admission.json",
+    "path": "/Users/tomisetsu/tos-quantum-rescue-artifacts/20261005-baseline/bounded-admission.json",
     "sha256": "3ea835bd363a1af38473b8b4b35d3787ed41212669bfb78ddb8764f21830b018",
     "bytes": 2569,
     "retention": "retain with this experiment until superseded by a reproduced admission result"

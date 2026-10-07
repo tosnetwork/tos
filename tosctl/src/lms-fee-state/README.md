@@ -1,4 +1,4 @@
-# Shared V5R2 fee custody state
+# Shared Quantum fee custody state
 
 This crate compiles the existing `lms_fee_schedule.rs`, `lms_fee_journal.rs` and
 its `lms_fee_cache.rs` directly. It does not fork the reservation format,
@@ -30,7 +30,7 @@ test; it is not a skipped ownership scenario.
 
 ## Native state interface
 
-`sdk/native/v5r2/tos_fee_state.h` exposes process-local integer session handles,
+`sdk/native/quantum/tos_fee_state.h` exposes process-local integer session handles,
 capacity previews, durable reservations and close. Sessions and pending tokens
 are bounded at 256 and 1,024 respectively. Contention returns BUSY; a poisoned
 registry returns INTERNAL and must not be treated as a retryable capacity hint.

@@ -111,7 +111,7 @@ impl PqRestoreKeyCmd {
 
     async fn run_with_manifest(
         &self,
-        manifest: Option<&contracts::wallet_v5r2_manifest::InitialRecoveryManifest>,
+        manifest: Option<&contracts::wallet_quantum_manifest::InitialRecoveryManifest>,
     ) -> anyhow::Result<()> {
         let (context, expected_key) = self.enrollment()?;
         let phrase_source = secret_input::select_source(
@@ -146,7 +146,7 @@ impl PqRestoreKeyCmd {
             manifest.verify_initial_master_and_wipe(
                 &mut *checked,
                 self.role.native(),
-                contracts::wallet_v5r2_manifest::SeedProfile::NativeMnemonic,
+                contracts::wallet_quantum_manifest::SeedProfile::NativeMnemonic,
             )?;
         }
         let derived = wallet_pq_signer::kdf::derive_signer_and_wipe(
@@ -331,7 +331,7 @@ fn public_hash(text: &str) -> anyhow::Result<[u8; 32]> {
 }
 impl PqRestoreInitialCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
-        use contracts::wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES};
+        use contracts::wallet_quantum_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES};
         self.key.enrollment()?;
         let expected = public_hash(&self.expected_wallet)?;
         let encoded = bounded_public_file(&self.recovery_manifest, MAX_MANIFEST_BYTES)?;
@@ -343,8 +343,8 @@ impl PqRestoreInitialCmd {
 }
 
 impl InitialCodeArgs {
-    fn load(&self) -> anyhow::Result<contracts::wallet_v5r2_genesis::CodeBundle> {
-        use contracts::wallet_v5r2_genesis::{CodeBundle, CodeHashes};
+    fn load(&self) -> anyhow::Result<contracts::wallet_quantum_genesis::CodeBundle> {
+        use contracts::wallet_quantum_genesis::{CodeBundle, CodeHashes};
         let pins = CodeHashes {
             wallet: public_hash(&self.wallet_code_hash)?,
             module: public_hash(&self.module_code_hash)?,
@@ -371,7 +371,7 @@ struct InitialEnrollment {
     fee_tree_id: String,
     fee_public_key: String,
     fee_epoch0: u32,
-    derivation: contracts::wallet_v5r2_manifest::RecoveryDerivation,
+    derivation: contracts::wallet_quantum_manifest::RecoveryDerivation,
 }
 
 #[derive(clap::Args, Clone)]
@@ -394,9 +394,9 @@ fn public_bytes<const N: usize>(text: &str) -> anyhow::Result<[u8; N]> {
 impl PqPrepareInitialCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         use contracts::{
-            wallet_v5r2_genesis::GenesisParameters,
-            wallet_v5r2_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
-            wallet_v5r2_pop::RescuePolicy,
+            wallet_quantum_genesis::GenesisParameters,
+            wallet_quantum_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES},
+            wallet_quantum_pop::RescuePolicy,
         };
         let enrollment: InitialEnrollment = serde_json::from_slice(&bounded_public_file(
             &self.enrollment_file,

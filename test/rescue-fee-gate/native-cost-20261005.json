@@ -229,7 +229,7 @@
     "production_acceptance": false
   },
   "retained_artifacts": {
-    "directory": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-native-cost",
+    "directory": "/Users/tomisetsu/tos-quantum-rescue-artifacts/20261005-native-cost",
     "retention": "retain until superseded by reproduced native admission and counter validation",
     "files": {
       "block-tests.log": {
@@ -283,7 +283,7 @@
     }
   },
   "raw_receipt": {
-    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/native-cost.json",
+    "path": "/Users/tomisetsu/tos-quantum-rescue-artifacts/20261005-baseline/native-cost.json",
     "sha256": "03fb5d6cc774abe57ec677723e0e080327e81ac3c270087e0db6a0e2778a5155",
     "bytes": 4654
   }

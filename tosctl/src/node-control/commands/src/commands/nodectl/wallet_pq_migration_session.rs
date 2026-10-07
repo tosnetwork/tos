@@ -3,7 +3,7 @@
 use super::super::inspect::absolute_path_argument;
 use super::super::pop_receipt::{PopHistoryOptions, RetainedPopFiles};
 use super::*;
-use contracts::{lms_fee_schedule::Continuity, wallet_v5r2_wallet_state::MigrationEvidence};
+use contracts::{lms_fee_schedule::Continuity, wallet_quantum_wallet_state::MigrationEvidence};
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -160,7 +160,7 @@ impl PqFeeSessionInitialCmd {
             "scope": "authenticated installed tuple and retained local journal ownership; no broadcast, current funding/readiness, recipient delivery or remote-device revocation claim"
         });
         let resume = serde_json::json!({
-            "schema": "TOS-WALLET-V5R2-INSTALLED-CLI-v1",
+            "schema": "TOS-WALLET-Quantum-INSTALLED-CLI-v1",
             "proof_arguments": command.proof.proof_arguments()?,
             "fee_session_arguments": command.resume_arguments()?,
             "scope": "public enrollment and local custody paths only; preserve encrypted backups and all journals separately; reopening always enforces the restore barrier"

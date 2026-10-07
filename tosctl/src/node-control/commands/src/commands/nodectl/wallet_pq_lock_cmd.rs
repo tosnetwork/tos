@@ -5,7 +5,7 @@ use super::{
     inspect::{InitialProofArgs, now},
     open_vault_file,
 };
-use contracts::{wallet_v5r2::AuthAction, wallet_v5r2_vault::VaultKey};
+use contracts::{wallet_quantum::AuthAction, wallet_quantum_vault::VaultKey};
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Sign an SLH lock of PRIMARY from proven initial wallet state; no broadcast")]

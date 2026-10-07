@@ -30,7 +30,7 @@ def main():
         for name in [
             relative,
             "test/test-ext-message-pool.cpp",
-            "test/wallet-v5r2/post-accept-probe.boc",
+            "test/wallet-quantum/post-accept-probe.boc",
         ]:
             actual = subprocess.check_output(
                 [

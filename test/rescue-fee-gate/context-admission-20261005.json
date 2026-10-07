@@ -194,7 +194,7 @@
     "crypto/fift/lib/Asm.fif": "a1df048428646f7f5ea2addc206a0cb2089982d967d589d5408aba90d2fedc4e",
     "crypto/smartcont/pq.fc": "04c582149605adbeeb7d0ab0733ebcc2d3af15b44455162255541be6aebf3bf3",
     "crypto/smartcont/rescue-fee-vault-context.fc": "17dd89895b15c46df8b1bd2031ec1c087762275a2763177de795d7436f4902bf",
-    "crypto/smartcont/wallet-v5r2-rescue.tlb": "b69ba5506d3b65af665d7c24dd6e20b4501a9f0ac60fde1e25f47bf3f809fa1c",
+    "crypto/smartcont/wallet-quantum-rescue.tlb": "b69ba5506d3b65af665d7c24dd6e20b4501a9f0ac60fde1e25f47bf3f809fa1c",
     "crypto/smc-envelope/SmartContract.cpp": "12f4b9e97ca10a604787ef4cc27b929038bb0b95985bae86551b29c9a6a2635d",
     "crypto/vm/pqops.cpp": "75b9d43dd7f105a7eab3829cfdadbd70f6faa04e607e383f5ec46ded37e20951",
     "crypto/vm/pqops.h": "189dc9b0adb9b35a1917c01beb12360d91a20ab1dc60ce2d53aa5fc895283cf2",
@@ -218,7 +218,7 @@
     "tosctl/src/vm/src/tests/test_smart_contract_info.rs": "beebdbe949c874b81f7facc51c7eb1a446d2f27267998933f127bd64d6fba0fc"
   },
   "raw_artifacts": {
-    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-context-entry",
+    "path": "/Users/tomisetsu/tos-quantum-rescue-artifacts/20261005-context-entry",
     "retention": "retain locally for at least 90 days; no automatic deletion configured",
     "publication": "local only; hashes do not make the files independently accessible",
     "files": {

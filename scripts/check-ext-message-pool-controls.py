@@ -36,7 +36,7 @@ def main():
     original = source.read_bytes()
     if args.container:
         for relative in [
-            "test/wallet-v5r2/post-accept-probe.boc",
+            "test/wallet-quantum/post-accept-probe.boc",
             "test/test-ext-message-pool.cpp",
             "validator/impl/ext-message-pool.hpp",
             "validator/impl/ext-message-work-profile.hpp",

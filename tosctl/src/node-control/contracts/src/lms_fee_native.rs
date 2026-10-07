@@ -3,7 +3,7 @@
 //! Seed custody, authenticated path acquisition and old-writer revocation remain
 //! caller responsibilities. No unreserved native signing entry is public here.
 use super::{FeeJournal, SignedFeeMessage};
-use crate::{wallet_v5r2_fee::FeePayload, wallet_v5r2_state::ProvenFeeVault};
+use crate::{wallet_quantum_fee::FeePayload, wallet_quantum_state::ProvenFeeVault};
 use zeroize::Zeroize;
 
 unsafe extern "C" {

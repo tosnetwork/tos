@@ -869,7 +869,7 @@ _ PrecompiledContractsConfig = ConfigParam 45;
 validator_controller_policy_v1#_ controller_codes:(HashmapE 256 True) = ValidatorControllerPolicy;
 _ ValidatorControllerPolicy = ConfigParam 47;
 
-// Mandatory V5R2 daily-auth retirement policy. Semantic checks enforce profile,
+// Mandatory Quantum daily-auth retirement policy. Semantic checks enforce profile,
 // admitted suites and monotonic transitions in addition to this wire shape.
 auth_policy_v1#a1 network_tag:bits256 policy_sequence:uint64
   retired:uint16 retire_at:(HashmapE 8 uint32) policy_spec_hash:bits256 = AuthPolicy;

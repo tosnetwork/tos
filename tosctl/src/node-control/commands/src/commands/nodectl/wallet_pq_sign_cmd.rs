@@ -4,7 +4,7 @@ use super::{
     inspect::{InitialProofArgs, now},
     open_vault_file,
 };
-use contracts::wallet_v5r2_vault::VaultKey;
+use contracts::wallet_quantum_vault::VaultKey;
 use std::io::Write;
 
 #[derive(clap::Args, Clone)]
@@ -40,7 +40,7 @@ impl PqSignPrimaryInitialCmd {
             &self.actions,
             4 * 1024 * 1024,
         )?)?;
-        contracts::wallet_v5r2::validate_actions(&actions)?;
+        contracts::wallet_quantum::validate_actions(&actions)?;
         let proof = self.proof.read(&[48]).await?;
         let request =
             proof.view.primary_request(&proof.wallet, now()?, self.valid_until, actions.clone())?;

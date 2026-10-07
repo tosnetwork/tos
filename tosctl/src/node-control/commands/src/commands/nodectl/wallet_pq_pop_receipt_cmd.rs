@@ -9,8 +9,8 @@ use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use contracts::{
     proven_getters::ProvenAccountState,
     proven_transactions::ProvenTransaction,
-    wallet_v5r2::AuthRole,
-    wallet_v5r2_pop::{FundedPopReceipts, PopRequest},
+    wallet_quantum::AuthRole,
+    wallet_quantum_pop::{FundedPopReceipts, PopRequest},
 };
 use std::time::Duration;
 

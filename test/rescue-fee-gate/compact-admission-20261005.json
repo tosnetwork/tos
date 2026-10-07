@@ -45,7 +45,7 @@
     "production_acceptance": false
   },
   "raw_result": {
-    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline/compact-admission.json",
+    "path": "/Users/tomisetsu/tos-quantum-rescue-artifacts/20261005-baseline/compact-admission.json",
     "sha256": "84baec5fd79617d06a2bd31b32f71ea51cdf14ec2944cb354761ac86e7aeee71",
     "bytes": 1043,
     "retention": "retain with this experiment until superseded by a reproduced admission result"

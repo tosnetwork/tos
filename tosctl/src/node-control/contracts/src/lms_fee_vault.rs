@@ -2,8 +2,8 @@
 //! Encrypted fee-seed records. Journal state remains separate and mandatory.
 use crate::{
     lms_fee_journal::{FeeJournal, SignedFeeMessage},
-    wallet_v5r2_fee::FeePayload,
-    wallet_v5r2_state::ProvenFeeVault,
+    wallet_quantum_fee::FeePayload,
+    wallet_quantum_state::ProvenFeeVault,
 };
 use secrets_vault::{
     crypto::factory::{AutoCryptoFactory, CryptoFactory},

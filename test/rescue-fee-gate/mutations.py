@@ -142,7 +142,7 @@ VAULTS = {
         },
     ),
     "account": (
-        "rescue-v5r2-account.fc",
+        "rescue-quantum-account.fc",
         "test_rescue_e2e.py",
         {
             "drop sender == root": (
@@ -179,7 +179,7 @@ VAULTS = {
 # Which environment variable makes each test compile the mutant instead of the original.
 SOURCE_VARIABLE = {
     "rescue-dual-module.fc": "MODULE_SOURCE",
-    "rescue-v5r2-account.fc": "ACCOUNT_SOURCE",
+    "rescue-quantum-account.fc": "ACCOUNT_SOURCE",
 }
 
 

@@ -13,7 +13,7 @@ on:
       - 'sdk/js/packages/wallets/**'
       - 'sdk/js/packages/client/src/client/TosClient.ts'
       - 'test/auth-extensions/**'
-      - 'test/wallet-v5r2/**'
+      - 'test/wallet-quantum/**'
       - 'test/weak-ed25519/**'
       - 'scripts/update-auth-contract-code.py'
       - '.github/workflows/auth-extension-validation.yml'
@@ -50,18 +50,18 @@ jobs:
           python3 scripts/update-auth-contract-code.py --check
           python3 test/auth-extensions/test_auth.py
           python3 test/auth-extensions/mutations.py
-          python3 test/wallet-v5r2/test_v5r1_action_baseline.py --output "$RUNNER_TEMP/v5r1-baseline"
-          python3 test/wallet-v5r2/test_auth_policy.py --output "$RUNNER_TEMP/auth-policy"
-          python3 test/wallet-v5r2/test_receiver_auth.py --output "$RUNNER_TEMP/r2-receiver-auth"
-          python3 test/wallet-v5r2/test_identity.py --output "$RUNNER_TEMP/r2-identity"
-          python3 test/wallet-v5r2/test_state.py --output "$RUNNER_TEMP/r2-state"
-          python3 test/wallet-v5r2/test_fee_identity.py --output "$RUNNER_TEMP/r2-fee-identity"
-          python3 test/wallet-v5r2/test_fee_cells.py --output "$RUNNER_TEMP/r2-fee-cells"
-          python3 test/wallet-v5r2/test_fee_bounds.py --output "$RUNNER_TEMP/r2-fee-bounds"
-          python3 test/wallet-v5r2/test_fee_gas_config.py --output "$RUNNER_TEMP/r2-fee-gas-config"
-          python3 test/wallet-v5r2/test_wallet.py --output "$RUNNER_TEMP/r2-wallet"
+          python3 test/wallet-quantum/test_v5r1_action_baseline.py --output "$RUNNER_TEMP/v5r1-baseline"
+          python3 test/wallet-quantum/test_auth_policy.py --output "$RUNNER_TEMP/auth-policy"
+          python3 test/wallet-quantum/test_receiver_auth.py --output "$RUNNER_TEMP/quantum-receiver-auth"
+          python3 test/wallet-quantum/test_identity.py --output "$RUNNER_TEMP/quantum-identity"
+          python3 test/wallet-quantum/test_state.py --output "$RUNNER_TEMP/quantum-state"
+          python3 test/wallet-quantum/test_fee_identity.py --output "$RUNNER_TEMP/quantum-fee-identity"
+          python3 test/wallet-quantum/test_fee_cells.py --output "$RUNNER_TEMP/quantum-fee-cells"
+          python3 test/wallet-quantum/test_fee_bounds.py --output "$RUNNER_TEMP/quantum-fee-bounds"
+          python3 test/wallet-quantum/test_fee_gas_config.py --output "$RUNNER_TEMP/quantum-fee-gas-config"
+          python3 test/wallet-quantum/test_wallet.py --output "$RUNNER_TEMP/quantum-wallet"
           build/test-config-transition
-          python3 test/wallet-v5r2/policy_native_mutations.py --build build --output "$RUNNER_TEMP/auth-policy-native"
+          python3 test/wallet-quantum/policy_native_mutations.py --build build --output "$RUNNER_TEMP/auth-policy-native"
           python3 test/auth-extensions/test_sdk_wallet_vectors.py
           python3 test/weak-ed25519/test_native_aliases.py
           git diff --exit-code
@@ -92,14 +92,14 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: r2-receiver-identity-validation
+          name: quantum-receiver-identity-validation
           path: |
-            ${{ runner.temp }}/r2-receiver-auth/
-            ${{ runner.temp }}/r2-identity/
-            ${{ runner.temp }}/r2-state/
-            ${{ runner.temp }}/r2-fee-identity/
-            ${{ runner.temp }}/r2-fee-cells/
-            ${{ runner.temp }}/r2-fee-bounds/
-            ${{ runner.temp }}/r2-fee-gas-config/
-            ${{ runner.temp }}/r2-wallet/
+            ${{ runner.temp }}/quantum-receiver-auth/
+            ${{ runner.temp }}/quantum-identity/
+            ${{ runner.temp }}/quantum-state/
+            ${{ runner.temp }}/quantum-fee-identity/
+            ${{ runner.temp }}/quantum-fee-cells/
+            ${{ runner.temp }}/quantum-fee-bounds/
+            ${{ runner.temp }}/quantum-fee-gas-config/
+            ${{ runner.temp }}/quantum-wallet/
           retention-days: 14

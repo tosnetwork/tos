@@ -374,18 +374,18 @@ async def resume_saved_network(
         await asyncio.gather(*drainers, return_exceptions=True)
 
 
-def configure_v5r2_candidate(config, auth_network_tag, version_override=None):
+def configure_quantum_candidate(config, auth_network_tag, version_override=None):
     """Explicit frozen candidate for a fresh disposable network; never a default switch."""
     tag = bytes.fromhex("42" * 32)
     if auth_network_tag is not None and auth_network_tag != tag:
-        raise ValueError("V5R2 candidate requires the frozen 0x42 AUTH namespace")
+        raise ValueError("Quantum candidate requires the frozen 0x42 AUTH namespace")
     if version_override is not None and int(version_override) != 18:
-        raise ValueError("V5R2 candidate conflicts with TOS_GLOBAL_VERSION")
+        raise ValueError("Quantum candidate conflicts with TOS_GLOBAL_VERSION")
     config.global_version = 18
     config.global_id = 1
     config.auth_network_tag = tag
     config.deployment_fee_schedule = True
-    config.v5r2_admission_candidate = True
+    config.quantum_admission_candidate = True
 
 
 async def main(
@@ -400,13 +400,13 @@ async def main(
     base_port,
     bootstrap_validator_set_valid_for,
     auth_network_tag=None,
-    v5r2_admission_candidate=False,
+    quantum_admission_candidate=False,
     basechain_fixture=None,
 ):
     fixture_bytes = None
     if basechain_fixture is not None:
-        if not v5r2_admission_candidate:
-            raise ValueError("basechain fixture requires --v5r2-admission-candidate")
+        if not quantum_admission_candidate:
+            raise ValueError("basechain fixture requires --quantum-admission-candidate")
         from tostester.zerostate import basechain_fixture_balance
 
         fixture_path = Path(basechain_fixture)
@@ -414,11 +414,11 @@ async def main(
             raise ValueError("basechain fixture size")
         fixture_bytes = fixture_path.read_bytes()
         basechain_fixture_balance(fixture_bytes, 1)
-    if v5r2_admission_candidate and saved_network_exists(workdir, num_validators):
-        raise ValueError("V5R2 candidate cannot overwrite an existing network")
+    if quantum_admission_candidate and saved_network_exists(workdir, num_validators):
+        raise ValueError("Quantum candidate cannot overwrite an existing network")
     install = Install(BUILD_DIR, REPO)
-    if reuse and v5r2_admission_candidate:
-        raise ValueError("V5R2 candidate is fresh-network only; cannot use --reuse")
+    if reuse and quantum_admission_candidate:
+        raise ValueError("Quantum candidate is fresh-network only; cannot use --reuse")
     if reuse and saved_network_exists(workdir, num_validators):
         if auth_network_tag is not None:
             raise ValueError(
@@ -448,8 +448,8 @@ async def main(
         if os.environ.get("TOS_GLOBAL_VERSION"):
             network.config.global_version = int(os.environ["TOS_GLOBAL_VERSION"])
             print(f"   version  : global_version={network.config.global_version}", flush=True)
-        if v5r2_admission_candidate:
-            configure_v5r2_candidate(
+        if quantum_admission_candidate:
+            configure_quantum_candidate(
                 network.config, auth_network_tag, os.environ.get("TOS_GLOBAL_VERSION")
             )
         elif auth_network_tag is not None:
@@ -565,7 +565,7 @@ def parse_args(argv=None):
     p.add_argument("--workdir", default=str(REPO / "test/integration/.localnet"))
     p.add_argument("--boot-timeout", type=float, default=120.0)
     p.add_argument(
-        "--v5r2-admission-candidate",
+        "--quantum-admission-candidate",
         action="store_true",
         help="fresh test-only v18/global-ID-1/0x42 candidate with deployment fees and basechain credit 20000",
     )
@@ -581,7 +581,7 @@ def parse_args(argv=None):
     p.add_argument(
         "--basechain-fixture",
         type=Path,
-        help="test-only funded basechain genesis BOC for a fresh V5R2 candidate",
+        help="test-only funded basechain genesis BOC for a fresh Quantum candidate",
     )
     p.add_argument(
         "--base-port",
@@ -625,7 +625,7 @@ if __name__ == "__main__":
                 a.base_port,
                 a.bootstrap_validator_set_valid_for,
                 a.auth_network_tag,
-                a.v5r2_admission_candidate,
+                a.quantum_admission_candidate,
                 basechain_fixture=a.basechain_fixture,
             )
         )

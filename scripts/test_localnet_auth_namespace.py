@@ -43,24 +43,24 @@ class LocalnetAuthNamespaceTests(unittest.TestCase):
         cls.localnet = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.localnet)
 
-    def test_frozen_v5r2_candidate_profile_and_conflicts(self):
+    def test_frozen_quantum_candidate_profile_and_conflicts(self):
         from tostester.zerostate import fee_schedule_for
 
         config = NetworkConfig()
-        self.localnet.configure_v5r2_candidate(config, None)
+        self.localnet.configure_quantum_candidate(config, None)
         self.assertEqual(
             (config.global_version, config.global_id, config.auth_network_tag),
             (18, 1, bytes.fromhex("42" * 32)),
         )
         self.assertTrue(config.deployment_fee_schedule)
-        self.assertTrue(config.v5r2_admission_candidate)
+        self.assertTrue(config.quantum_admission_candidate)
         self.assertIn("20000", fee_schedule_for(config)["gas_prices"])
         self.assertIn("10000", fee_schedule_for(config)["mc_gas_prices"])
         for tag, version in [(bytes.fromhex("43" * 32), None), (None, "19")]:
             with self.assertRaises(ValueError):
-                self.localnet.configure_v5r2_candidate(NetworkConfig(), tag, version)
-        self.assertTrue(self.parsed(["--v5r2-admission-candidate"]).v5r2_admission_candidate)
-        self.assertFalse(self.parsed().v5r2_admission_candidate)
+                self.localnet.configure_quantum_candidate(NetworkConfig(), tag, version)
+        self.assertTrue(self.parsed(["--quantum-admission-candidate"]).quantum_admission_candidate)
+        self.assertFalse(self.parsed().quantum_admission_candidate)
 
     def test_candidate_cli_reaches_frozen_config_before_node_creation(self):
         script = Path(__file__).with_name("localnet-jsonrpc.py")
@@ -69,7 +69,7 @@ class LocalnetAuthNamespaceTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             patch.dict(os.environ, {}, clear=True),
             patch.object(
-                sys, "argv", [str(script), "--workdir", directory, "--v5r2-admission-candidate"]
+                sys, "argv", [str(script), "--workdir", directory, "--quantum-admission-candidate"]
             ),
             patch("tostester.network.Network", return_value=network),
             contextlib.redirect_stdout(io.StringIO()),
@@ -80,7 +80,7 @@ class LocalnetAuthNamespaceTests(unittest.TestCase):
         self.assertEqual(network.config.global_id, 1)
         self.assertEqual(network.config.auth_network_tag, bytes.fromhex("42" * 32))
         self.assertTrue(network.config.deployment_fee_schedule)
-        self.assertTrue(network.config.v5r2_admission_candidate)
+        self.assertTrue(network.config.quantum_admission_candidate)
 
     def test_candidate_never_reuses_or_overwrites_saved_network(self):
         for reuse, existing in [(True, False), (False, True)]:

@@ -965,9 +965,9 @@ mod tests {
 #[cfg(test)]
 mod fee_state_tests {
     use super::*;
-    use crate::wallet_v5r2_genesis::{CodeBundle, CodeHashes, GenesisParameters, WalletGenesis};
-    use crate::wallet_v5r2_pop::RescuePolicy;
-    use crate::wallet_v5r2_state::ProvenInitialFeeVault;
+    use crate::wallet_quantum_genesis::{CodeBundle, CodeHashes, GenesisParameters, WalletGenesis};
+    use crate::wallet_quantum_pop::RescuePolicy;
+    use crate::wallet_quantum_state::ProvenInitialFeeVault;
     use chain_block::{BuilderData, CurrencyCollection, IBitstring, Serializable, StateInit};
 
     // Synthetic account, deliberately not evidence of a cryptographic proof.
@@ -995,10 +995,10 @@ mod fee_state_tests {
         let (_, mut live) = fixture_with_policy(RescuePolicy::Required);
         historical.evidence.live = false;
         assert!(
-            crate::wallet_v5r2_state::ProvenFeeVault::bind(&historical, &genesis, 4610, 30)
+            crate::wallet_quantum_state::ProvenFeeVault::bind(&historical, &genesis, 4610, 30)
                 .is_err()
         );
-        crate::wallet_v5r2_state::ProvenFeeVault::bind_at_live_checkpoint(
+        crate::wallet_quantum_state::ProvenFeeVault::bind_at_live_checkpoint(
             &historical,
             &live,
             &genesis,
@@ -1008,7 +1008,7 @@ mod fee_state_tests {
         .expect("same historical checkpoint anchored by fresh live read");
         live.evidence.live = false;
         assert!(
-            crate::wallet_v5r2_state::ProvenFeeVault::bind_at_live_checkpoint(
+            crate::wallet_quantum_state::ProvenFeeVault::bind_at_live_checkpoint(
                 &historical,
                 &live,
                 &genesis,
@@ -1021,7 +1021,7 @@ mod fee_state_tests {
         live.evidence.live = true;
         live.anchor_id = [1; 32];
         assert!(
-            crate::wallet_v5r2_state::ProvenFeeVault::bind_at_live_checkpoint(
+            crate::wallet_quantum_state::ProvenFeeVault::bind_at_live_checkpoint(
                 &historical,
                 &live,
                 &genesis,
@@ -1033,7 +1033,7 @@ mod fee_state_tests {
         );
         live.anchor_id = historical.anchor_id;
         assert!(
-            crate::wallet_v5r2_state::ProvenFeeVault::bind_at_live_checkpoint(
+            crate::wallet_quantum_state::ProvenFeeVault::bind_at_live_checkpoint(
                 &historical,
                 &live,
                 &genesis,
@@ -1172,9 +1172,9 @@ mod fee_state_tests {
     }
     #[test]
     fn preparation_rejects_active_lms_key_in_another_vault() {
-        use crate::wallet_v5r2_genesis::SuccessorDeployment;
-        use crate::wallet_v5r2_prepare::PreparationAmounts;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum_genesis::SuccessorDeployment;
+        use crate::wallet_quantum_prepare::PreparationAmounts;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         let (birth, wallet, module) = wallet_pair();
         let view = ProvenWalletState::bind_initial(&wallet, &module, &birth, 4620, 30).unwrap();
         let (template, _) = fixture_with_keys(RescuePolicy::Required, [8; 1312], [9; 32]);
@@ -1308,10 +1308,10 @@ mod fee_state_tests {
     #[cfg(feature = "native-wallet-vault")]
     #[tokio::test]
     async fn vault_wallet_signing_rechecks_proofs_after_loading() {
-        use crate::wallet_v5r2::AuthAction;
-        use crate::wallet_v5r2_policy::tests::policy;
-        use crate::wallet_v5r2_vault::VaultKey;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum::AuthAction;
+        use crate::wallet_quantum_policy::tests::policy;
+        use crate::wallet_quantum_vault::VaultKey;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         use secrets_vault::{
             crypto::{
                 factory::AutoCryptoFactory, key_material::KeyMaterial, master_key::MasterKey,
@@ -1447,9 +1447,9 @@ mod fee_state_tests {
     #[cfg(feature = "native-wallet-signer")]
     #[test]
     fn native_wallet_signing_binds_proven_keys_and_policy() {
-        use crate::wallet_v5r2::AuthAction;
-        use crate::wallet_v5r2_policy::tests::policy;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum::AuthAction;
+        use crate::wallet_quantum_policy::tests::policy;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         use chain_block::SliceData;
         use fips204::traits::{SerDes, Verifier};
         use wallet_pq_signer::{Role, Signer};
@@ -1521,12 +1521,12 @@ mod fee_state_tests {
 
     #[cfg(feature = "native-wallet-signer")]
     fn fee_rollover_signing_fixture() -> (
-        crate::wallet_v5r2_wallet_state::ProvenWalletState,
-        crate::wallet_v5r2::AuthAction,
+        crate::wallet_quantum_wallet_state::ProvenWalletState,
+        crate::wallet_quantum::AuthAction,
         wallet_pq_signer::Signer,
     ) {
-        use crate::wallet_v5r2_genesis::SuccessorDeployment;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum_genesis::SuccessorDeployment;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         use wallet_pq_signer::{Role, Signer};
         let signer = Signer::import_and_wipe(Role::Rescue, &mut [0x22; 48]).unwrap();
         let rescue = signer.public_key().try_into().unwrap();
@@ -1540,7 +1540,7 @@ mod fee_state_tests {
             SuccessorDeployment::new(fresh, *g.wallet_init().repr_hash().as_array()).unwrap();
         assert_eq!(successor.module_init(), g.module_init());
         successor.require_fresh_fee_key(g.metadata()).unwrap();
-        let action = crate::wallet_v5r2::AuthAction::Configure {
+        let action = crate::wallet_quantum::AuthAction::Configure {
             fee_replacement: Some((successor.metadata().clone(), successor.vault_init().clone())),
         };
         // A valid wire envelope alone does not establish funded successor POPs.
@@ -1561,7 +1561,7 @@ mod fee_state_tests {
     #[cfg(feature = "native-wallet-vault")]
     #[tokio::test]
     async fn vault_fee_rollover_cannot_open_custody_before_pop_gate() {
-        use crate::wallet_v5r2_vault::VaultKey;
+        use crate::wallet_quantum_vault::VaultKey;
         use secrets_vault::types::secret_id::SecretId;
         let (view, action, _) = fee_rollover_signing_fixture();
         let (_dir, custody, _) = public_vault_fixture(wallet_pq_signer::Role::Rescue).await;
@@ -1591,10 +1591,10 @@ mod fee_state_tests {
     async fn exercise_funded_migration(same_module: bool) {
         use crate::lms_fee_schedule::{Continuity, IntactState, RestoreBarrier};
         use crate::proven_transactions::ProvenTransaction;
-        use crate::wallet_v5r2::{AuthAction, AuthRole};
-        use crate::wallet_v5r2_genesis::SuccessorDeployment;
-        use crate::wallet_v5r2_pop::{FundedPopReceipts, PopRequest};
-        use crate::wallet_v5r2_wallet_state::{MigrationEvidence, ProvenWalletState};
+        use crate::wallet_quantum::{AuthAction, AuthRole};
+        use crate::wallet_quantum_genesis::SuccessorDeployment;
+        use crate::wallet_quantum_pop::{FundedPopReceipts, PopRequest};
+        use crate::wallet_quantum_wallet_state::{MigrationEvidence, ProvenWalletState};
         use chain_block::{HashUpdate, Message, SliceData, Transaction};
         use wallet_pq_signer::{Role, Signer};
         let mut signer = Signer::import_and_wipe(Role::Rescue, &mut [0x22; 48]).unwrap();
@@ -1688,7 +1688,7 @@ mod fee_state_tests {
         let r = funded(&rescue);
         // Synthetic custody fixture, independent of the chain's accepted counter.
         let local = IntactState {
-            route: crate::wallet_v5r2_state::ProvenFeeVault::bind_successor(
+            route: crate::wallet_quantum_state::ProvenFeeVault::bind_successor(
                 &vault, &successor, 4620, 30,
             )
             .unwrap()
@@ -1710,7 +1710,7 @@ mod fee_state_tests {
         let expected = view.migration_request(4620, 4700, &successor, &evidence).unwrap();
         #[cfg(feature = "native-wallet-vault")]
         {
-            use crate::wallet_v5r2_vault::VaultKey;
+            use crate::wallet_quantum_vault::VaultKey;
             let (_dir, custody, id) = public_vault_fixture(wallet_pq_signer::Role::Rescue).await;
             let key = VaultKey { vault: &custody, id: &id };
             let signed =
@@ -1906,10 +1906,10 @@ mod fee_state_tests {
     #[cfg(feature = "native-wallet-signer")]
     #[tokio::test]
     async fn native_preparation_signing_binds_successor_and_current_rescue() {
-        use crate::wallet_v5r2_genesis::SuccessorDeployment;
-        use crate::wallet_v5r2_policy::tests::policy;
-        use crate::wallet_v5r2_prepare::PreparationAmounts;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum_genesis::SuccessorDeployment;
+        use crate::wallet_quantum_policy::tests::policy;
+        use crate::wallet_quantum_prepare::PreparationAmounts;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         use chain_block::SliceData;
         use tos_vm as _;
         use wallet_pq_signer::{Role, Signer}; // Link the VM verifier shim, separately from the signer.
@@ -2029,7 +2029,7 @@ mod fee_state_tests {
 
         #[cfg(feature = "native-wallet-vault")]
         let body = {
-            use crate::wallet_v5r2_vault::VaultKey;
+            use crate::wallet_quantum_vault::VaultKey;
             let (_dir, custody, id) = public_vault_fixture(wallet_pq_signer::Role::Rescue).await;
             let key = VaultKey { vault: &custody, id: &id };
             let signed = key
@@ -2118,10 +2118,10 @@ mod fee_state_tests {
     #[cfg(feature = "native-wallet-vault")]
     #[tokio::test]
     async fn vault_pop_signing_binds_enrollment_and_time() {
-        use crate::wallet_v5r2::AuthRole;
-        use crate::wallet_v5r2_genesis::{SuccessorDeployment, WalletGenesis};
-        use crate::wallet_v5r2_pop::PopRequest;
-        use crate::wallet_v5r2_vault::VaultKey;
+        use crate::wallet_quantum::AuthRole;
+        use crate::wallet_quantum_genesis::{SuccessorDeployment, WalletGenesis};
+        use crate::wallet_quantum_pop::PopRequest;
+        use crate::wallet_quantum_vault::VaultKey;
         use chain_block::SliceData;
         use fips204::traits::{SerDes, Verifier};
         use secrets_vault::types::secret_id::SecretId;
@@ -2259,9 +2259,9 @@ mod fee_state_tests {
     #[cfg(feature = "native-wallet-signer")]
     #[test]
     fn native_pop_signing_binds_initial_and_successor_enrollment() {
-        use crate::wallet_v5r2::AuthRole;
-        use crate::wallet_v5r2_genesis::SuccessorDeployment;
-        use crate::wallet_v5r2_pop::{PopBinding, PopRequest};
+        use crate::wallet_quantum::AuthRole;
+        use crate::wallet_quantum_genesis::SuccessorDeployment;
+        use crate::wallet_quantum_pop::{PopBinding, PopRequest};
         use chain_block::SliceData;
         use fips204::traits::{SerDes, Verifier};
         use wallet_pq_signer::{Role, Signer};
@@ -2371,9 +2371,9 @@ mod fee_state_tests {
 
     #[test]
     fn primary_request_requires_current_proven_policy() {
-        use crate::wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole};
-        use crate::wallet_v5r2_policy::tests::policy;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum::{AuthAction, AuthBinding, AuthRequest, AuthRole};
+        use crate::wallet_quantum_policy::tests::policy;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         let (g, p) = fixture_with_policy(RescuePolicy::Ready);
         let mut w = account_proof(p, g.wallet_init());
         let (_, p) = fixture();
@@ -2459,8 +2459,8 @@ mod fee_state_tests {
 
     #[test]
     fn proven_wallet_snapshot_binds_rescue_request() {
-        use crate::wallet_v5r2::{AuthAction, AuthBinding, AuthRequest, AuthRole};
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum::{AuthAction, AuthBinding, AuthRequest, AuthRole};
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         let (g, mut w, m) = wallet_pair();
         set_wallet_counters(&g, &mut w, 7, 9, 10, 11);
         let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
@@ -2498,7 +2498,7 @@ mod fee_state_tests {
     }
     #[test]
     fn proven_wallet_rejects_unbound_observations() {
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         for case in [
             "live",
             "checkpoint",
@@ -2564,8 +2564,8 @@ mod fee_state_tests {
     }
     #[test]
     fn proven_wallet_control_operations_survive_execute_exhaustion() {
-        use crate::wallet_v5r2::AuthAction;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum::AuthAction;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         let (g, mut w, m) = wallet_pair();
         set_wallet_counters(&g, &mut w, u32::MAX, 9, u64::MAX, u64::MAX);
         let view = ProvenWalletState::bind_initial(&w, &m, &g, 4620, 30).unwrap();
@@ -2604,8 +2604,8 @@ mod fee_state_tests {
 
     #[test]
     fn proven_wallet_requires_installed_successor() {
-        use crate::wallet_v5r2_genesis::SuccessorDeployment;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum_genesis::SuccessorDeployment;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         let (g, mut wallet, old_module) = wallet_pair();
         let code = Cell::default();
         let hash = *code.repr_hash().as_array();
@@ -2664,8 +2664,8 @@ mod fee_state_tests {
 
     #[test]
     fn proven_wallet_execute_exhaustion_is_independent() {
-        use crate::wallet_v5r2::AuthAction;
-        use crate::wallet_v5r2_wallet_state::ProvenWalletState;
+        use crate::wallet_quantum::AuthAction;
+        use crate::wallet_quantum_wallet_state::ProvenWalletState;
         for (seq, nonce, reason) in
             [(0, u64::MAX, "nonce exhausted"), (u32::MAX, 0, "seqno exhausted")]
         {
@@ -2739,9 +2739,9 @@ mod fee_state_tests {
     fn native_fee_signing_preserves_proof_reservation_and_seed_cleanup() {
         use crate::{
             lms_fee_journal::FeeJournal,
-            wallet_v5r2::AuthRole,
-            wallet_v5r2_fee::{FeeClass, FeePayload},
-            wallet_v5r2_pop::{PopBinding, PopRequest},
+            wallet_quantum::AuthRole,
+            wallet_quantum_fee::{FeeClass, FeePayload},
+            wallet_quantum_pop::{PopBinding, PopRequest},
         };
         use std::os::unix::fs::PermissionsExt;
         let v: serde_json::Value = serde_json::from_str(include_str!(
@@ -3005,9 +3005,9 @@ mod fee_state_tests {
     #[test]
     fn proven_fee_signing_uses_journal_and_bound_key() {
         use crate::lms_fee_journal::FeeJournal;
-        use crate::wallet_v5r2::AuthRole;
-        use crate::wallet_v5r2_fee::{FeeBinding, FeeClass, FeeIntent, FeePayload};
-        use crate::wallet_v5r2_pop::{PopBinding, PopRequest};
+        use crate::wallet_quantum::AuthRole;
+        use crate::wallet_quantum_fee::{FeeBinding, FeeClass, FeeIntent, FeePayload};
+        use crate::wallet_quantum_pop::{PopBinding, PopRequest};
         use std::os::unix::fs::PermissionsExt;
         // Framing-only backend: this tests ordering/binding, not LMS crypto.
         fn signature(leaf: u32) -> Vec<u8> {
@@ -3201,8 +3201,8 @@ mod fee_state_tests {
 
     #[test]
     fn successor_fee_state_binding() {
-        use crate::wallet_v5r2_genesis::SuccessorDeployment;
-        use crate::wallet_v5r2_state::ProvenFeeVault;
+        use crate::wallet_quantum_genesis::SuccessorDeployment;
+        use crate::wallet_quantum_state::ProvenFeeVault;
         let (template, mut state) = fixture();
         let successor = SuccessorDeployment::new(template, [7; 32]).unwrap();
         assert!(ProvenFeeVault::bind_successor(&state, &successor, 4620, 30).is_err());
@@ -3302,7 +3302,7 @@ pub(crate) mod transaction_receipt_tests {
     // proof metadata. Real finality proof plumbing is tested separately.
     pub(crate) fn fixture(name: &str) -> (ProvenAccountState, Cell) {
         let cases: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/fixtures/v5r2/receipt-transactions.json"))
+            serde_json::from_str(include_str!("../tests/fixtures/quantum/receipt-transactions.json"))
                 .unwrap();
         let item = &cases["cases"][name];
         let decode = |field: &str| {
@@ -3544,8 +3544,8 @@ pub(crate) mod transaction_receipt_tests {
 
     #[test]
     fn receipt_pop_binds_challenge_and_executed_code() {
-        use crate::wallet_v5r2::AuthRole;
-        use crate::wallet_v5r2_pop::{PopBinding, PopRequest, RescuePolicy};
+        use crate::wallet_quantum::AuthRole;
+        use crate::wallet_quantum_pop::{PopBinding, PopRequest, RescuePolicy};
         use chain_block::{BuilderData, IBitstring, SliceData, StateInit};
         let (proof, root) = fixture("successor-pop-module");
         let receipt = ProvenTransaction::latest(&proof, root).unwrap();
@@ -3608,7 +3608,7 @@ pub(crate) mod transaction_receipt_tests {
             .expect("accepted POP for another enrolled wallet");
         assert!(error.to_string().contains("receipt enrollment binding mismatch"));
 
-        use crate::wallet_v5r2_pop::FundedPopReceipts;
+        use crate::wallet_quantum_pop::FundedPopReceipts;
         let (fee_proof, fee_root) = fixture("successor-pop-fee");
         let fee_receipt = ProvenTransaction::latest(&fee_proof, fee_root).unwrap();
         let (vault_before, _) = fixture("deploy-vault");
@@ -4002,5 +4002,5 @@ pub(crate) mod transaction_receipt_tests {
 }
 
 #[cfg(all(test, feature = "native-wallet-signer"))]
-#[path = "wallet_v5r2_recorded_migration_tests.rs"]
+#[path = "wallet_quantum_recorded_migration_tests.rs"]
 mod recorded_migration_tests;

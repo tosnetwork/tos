@@ -1,5 +1,5 @@
-;; PROTOTYPE dual-root AUTH module for Wallet V5R2: ML-DSA-44 daily root (PRIMARY) and
-;; SLH-DSA-SHA2-128s rescue root (RESCUE). Wire format: crypto/smartcont/wallet-v5r2-rescue.tlb.
+;; PROTOTYPE dual-root AUTH module for Wallet Quantum: ML-DSA-44 daily root (PRIMARY) and
+;; SLH-DSA-SHA2-128s rescue root (RESCUE). Wire format: crypto/smartcont/wallet-quantum-rescue.tlb.
 ;; Immutable code and data; no ACCEPT, no admin, no withdrawal of earlier balance. Relays only
 ;; the funded incoming remainder, and tells the account who funded it, so that the account can
 ;; keep its fee vault RESCUE-only without the vault spending external credit on the check. Not yet in this prototype: global retirement policy (proposed

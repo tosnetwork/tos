@@ -1,4 +1,4 @@
-;; Wallet V5 action-list engine; the full V5R2 implementation must reuse it.
+;; Wallet V5 action-list engine; the full Quantum implementation must reuse it.
 ;; Keep wire format, action cap, error codes and mode validation identical.
 ;; Authentication decides who may call this engine; it cannot replace its checks.
 const int v5_action::external_requires_ignore_errors = 137;

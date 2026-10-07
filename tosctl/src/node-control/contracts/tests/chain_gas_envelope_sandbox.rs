@@ -50,7 +50,7 @@ fn admission_candidate_executor_loads_the_generated_chain_configuration() {
     std::fs::write(
         &wrapper,
         format!(
-            "0x{} constant v5r2-network-tag\ntrue constant v5r2-admission-candidate\n\"{template}\" include\n",
+            "0x{} constant quantum-network-tag\ntrue constant quantum-admission-candidate\n\"{template}\" include\n",
             "42".repeat(32)
         ),
     )
@@ -61,7 +61,7 @@ fn admission_candidate_executor_loads_the_generated_chain_configuration() {
     assert_eq!(config.get_global_version().expect("version").version, 18);
     assert_eq!(config.gas_prices(false).expect("basechain prices").gas_credit, 20000);
     assert_eq!(config.gas_prices(true).expect("masterchain prices").gas_credit, 10000);
-    if let Ok(path) = std::env::var("V5R2_ADMISSION_CONFIG_OUT") {
+    if let Ok(path) = std::env::var("Quantum_ADMISSION_CONFIG_OUT") {
         config.write_to_file(&path).expect("retain generated public configuration");
     }
     // No set_gas_credit, version replacement or fallback defaults on this path.

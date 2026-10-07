@@ -1,6 +1,6 @@
 # AUTH retirement policy v1
 
-ConfigParam 48 is the mandatory policy for V5R2 PRIMARY authorization. This
+ConfigParam 48 is the mandatory policy for Quantum PRIMARY authorization. This
 implementation now covers governance installation and the native node configuration
 validity/transition predicates. Explicit version-17 genesis construction and trusted-state admission are now
 implemented. Full receiver/module integration and shard-propagation evidence
@@ -48,10 +48,10 @@ No production protocol version or genesis is activated by this change.
 ## Reproduce
 
 ```sh
-python test/wallet-v5r2/test_auth_policy.py --output /path/to/retained-policy
+python test/wallet-quantum/test_auth_policy.py --output /path/to/retained-policy
 cmake --build build --target test-config-transition -j4
 build/test-config-transition
-python test/wallet-v5r2/policy_native_mutations.py --build build --output /path/to/retained-native-controls
+python test/wallet-quantum/policy_native_mutations.py --build build --output /path/to/retained-native-controls
 ```
 
 The transaction harness calls the actual configuration contract's `install_param`;
@@ -62,7 +62,7 @@ call the PRIMARY reader; end-to-end role routing remains a full-wallet gate.
 Native controls delete guards, rebuild successfully, require the intended named
 test to reach a failing assertion, restore the source, rebuild and rerun green.
 
-Local evidence is indexed in `test/wallet-v5r2/auth-policy-20261005.json`.
+Local evidence is indexed in `test/wallet-quantum/auth-policy-20261005.json`.
 The full-installation control starts from the emulator configuration and supplies
 its omitted canonical block-limit, catchain and validator-set fields. It proves
 both the old complete configuration and the new policy configuration are accepted,
@@ -72,7 +72,7 @@ is a parser fixture; this test does not certify validator admission or launch.
 ## Genesis and trusted snapshots
 
 The default canonical mainnet template remains version 16. A candidate wrapper
-can define an explicit `v5r2-network-tag` uint256 before including
+can define an explicit `quantum-network-tag` uint256 before including
 `gen-zerostate.fif`; this selects version 17 and installs the v1 record in both
 mandatory and critical parameter sets. The testing generator requires
 `NetworkConfig(global_version=17, auth_network_tag=<32 public bytes>)` and refuses
@@ -96,5 +96,5 @@ credential socket APIs in `metrics/diagnostic-ipc.h`; the dedicated Linux x86-64
 and AArch64 workflow must supply full-build evidence. Actor-level propagation and
 queued PRIMARY delivery tests remain necessary with the full R2 receiver.
 
-See `test/wallet-v5r2/auth-genesis-admission-20261005.json` for source bindings and
+See `test/wallet-quantum/auth-genesis-admission-20261005.json` for source bindings and
 retained local artifacts. This evidence does not authorize production activation.

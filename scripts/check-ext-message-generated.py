@@ -60,8 +60,8 @@ def main():
     (fixtures / "main-wallet.pk").write_bytes(b"\x53" * 32)
     wrapper = fixtures / "candidate.fif"
     wrapper.write_text(
-        "0x" + "42" * 32 + " constant v5r2-network-tag\n"
-        "true constant v5r2-admission-candidate\n"
+        "0x" + "42" * 32 + " constant quantum-network-tag\n"
+        "true constant quantum-admission-candidate\n"
         f'"{root / "crypto/smartcont/gen-zerostate.fif"}" include\n'
     )
     require_success(
@@ -79,7 +79,7 @@ def main():
         ],
         fixtures,
     )
-    source = root / "test/wallet-v5r2/checker-gas-probe.fc"
+    source = root / "test/wallet-quantum/checker-gas-probe.fc"
     assembly = fixtures / "checker-gas-probe.fif"
     require_success(
         "compile-probe",
@@ -225,7 +225,7 @@ def main():
 
     sources = [
         "crypto/smartcont/gen-zerostate.fif",
-        "test/wallet-v5r2/checker-gas-probe.fc",
+        "test/wallet-quantum/checker-gas-probe.fc",
         "test/test-ext-message-generated-checker.cpp",
         "scripts/check-ext-message-generated.py",
         "validator/impl/ext-message-checker.cpp",

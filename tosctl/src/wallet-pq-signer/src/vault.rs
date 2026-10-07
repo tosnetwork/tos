@@ -16,7 +16,7 @@ use secrets_vault::{
 
 pub const PROFILE_TAG: &str = "tos-wallet-pq-seed-profile";
 pub const ROLE_TAG: &str = "tos-wallet-pq-seed-role";
-pub const PROFILE_V1: &str = "v5r2-seed-v1";
+pub const PROFILE_V1: &str = "quantum-seed-v1";
 
 pub fn role_tag(role: Role) -> &'static str {
     match role {

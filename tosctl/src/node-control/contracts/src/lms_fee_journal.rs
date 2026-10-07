@@ -58,7 +58,7 @@ impl ReservedLeaf {
 #[cfg(not(tos_mobile_fee_core))]
 pub struct SignedFeeMessage {
     vault: [u8; 32],
-    intent: crate::wallet_v5r2_fee::FeeIntent,
+    intent: crate::wallet_quantum_fee::FeeIntent,
     body: chain_block::Cell,
 }
 #[cfg(not(tos_mobile_fee_core))]
@@ -66,7 +66,7 @@ impl SignedFeeMessage {
     pub fn vault(&self) -> &[u8; 32] {
         &self.vault
     }
-    pub fn intent(&self) -> &crate::wallet_v5r2_fee::FeeIntent {
+    pub fn intent(&self) -> &crate::wallet_quantum_fee::FeeIntent {
         &self.intent
     }
     pub fn body(&self) -> &chain_block::Cell {
@@ -212,7 +212,7 @@ impl FeeJournal {
     #[cfg(not(tos_mobile_fee_core))]
     pub fn open_proven(
         directory: &Path,
-        vault: &crate::wallet_v5r2_state::ProvenFeeVault,
+        vault: &crate::wallet_quantum_state::ProvenFeeVault,
         now: u32,
     ) -> anyhow::Result<Self> {
         vault.validate_freshness(now)?;
@@ -226,11 +226,11 @@ impl FeeJournal {
     #[cfg(not(tos_mobile_fee_core))]
     pub fn sign_proven_fee<S, V>(
         &mut self,
-        vault: &crate::wallet_v5r2_state::ProvenFeeVault,
+        vault: &crate::wallet_quantum_state::ProvenFeeVault,
         now: u32,
         valid_until: u32,
         value: u128,
-        payload: crate::wallet_v5r2_fee::FeePayload,
+        payload: crate::wallet_quantum_fee::FeePayload,
         signer: S,
         mut verify: V,
     ) -> anyhow::Result<SignedFeeMessage>
@@ -238,7 +238,7 @@ impl FeeJournal {
         S: FnOnce(u32, &[u8; 32]) -> anyhow::Result<Vec<u8>>,
         V: FnMut(&[u8; 60], u32, &[u8; 32], &[u8]) -> anyhow::Result<bool>,
     {
-        use crate::wallet_v5r2_fee::{FeeBinding, FeeIntent};
+        use crate::wallet_quantum_fee::{FeeBinding, FeeIntent};
         let plan = self.preview_proven(vault, now)?;
         anyhow::ensure!(valid_until > now, "fee deadline already expired by local clock");
         let intent = FeeIntent::new(
@@ -275,7 +275,7 @@ impl FeeJournal {
     #[cfg(not(tos_mobile_fee_core))]
     pub fn preview_proven(
         &self,
-        vault: &crate::wallet_v5r2_state::ProvenFeeVault,
+        vault: &crate::wallet_quantum_state::ProvenFeeVault,
         now: u32,
     ) -> anyhow::Result<ReservationPlan> {
         vault.validate_freshness(now)?;

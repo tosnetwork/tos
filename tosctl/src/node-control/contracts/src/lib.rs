@@ -51,18 +51,18 @@ pub mod stack_utils;
 pub mod task_escrow;
 pub mod validator_controller;
 pub mod wallet;
-pub mod wallet_v5r2;
-pub mod wallet_v5r2_fee;
-pub mod wallet_v5r2_genesis;
-pub mod wallet_v5r2_manifest;
-mod wallet_v5r2_policy;
-pub mod wallet_v5r2_pop;
-pub mod wallet_v5r2_prepare;
-pub mod wallet_v5r2_receipts;
-pub mod wallet_v5r2_state;
+pub mod wallet_quantum;
+pub mod wallet_quantum_fee;
+pub mod wallet_quantum_genesis;
+pub mod wallet_quantum_manifest;
+mod wallet_quantum_policy;
+pub mod wallet_quantum_pop;
+pub mod wallet_quantum_prepare;
+pub mod wallet_quantum_receipts;
+pub mod wallet_quantum_state;
 #[cfg(feature = "native-wallet-vault")]
-pub mod wallet_v5r2_vault;
-pub mod wallet_v5r2_wallet_state;
+pub mod wallet_quantum_vault;
+pub mod wallet_quantum_wallet_state;
 
 pub use agent_account::{
     AGENT_ACCOUNT_MAX_ACTION_GAS, AGENT_ACCOUNT_MAX_ACTION_VALUE,

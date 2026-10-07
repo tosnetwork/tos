@@ -12,14 +12,14 @@ from pytosiq_core.boc.deserialize import Boc
 
 class ExportTests(unittest.TestCase):
     def setUp(self):
-        path = Path(__file__).with_name("export-v5r2-genesis-proof-fixture.py")
+        path = Path(__file__).with_name("export-quantum-genesis-proof-fixture.py")
         spec = importlib.util.spec_from_file_location("proof_export", path)
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.sdk = path.parents[1] / "test/wallet-v5r2/fixtures/public-genesis-accounts.json"
+        self.sdk = path.parents[1] / "test/wallet-quantum/fixtures/public-genesis-accounts.json"
         fixture = json.loads(self.sdk.read_text())
         self.capture = self.root / "capture"
         self.capture.mkdir()

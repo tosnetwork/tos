@@ -22,7 +22,7 @@ jobjectArray refuse(JNIEnv *env) {
 }
 }
 extern "C" JNIEXPORT jobjectArray JNICALL
-Java_network_tos_security_pq_V5R2ProofNative_nativeVerify(JNIEnv *env, jobject,
+Java_network_tos_security_pq_QuantumProofNative_nativeVerify(JNIEnv *env, jobject,
     jbyteArray anchor, jbyteArray request, jbyteArray state, jlong now,
     jintArray kinds, jobjectArray material) {
   try {
@@ -73,7 +73,7 @@ Java_network_tos_security_pq_V5R2ProofNative_nativeVerify(JNIEnv *env, jobject,
 #include <string>
 #include "persisted.h"
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_network_tos_security_pq_V5R2ProofNative_nativeVerifyLivePersisted(JNIEnv *env, jobject,
+Java_network_tos_security_pq_QuantumProofNative_nativeVerifyLivePersisted(JNIEnv *env, jobject,
     jstring directory, jboolean initialize, jbyteArray anchor, jbyteArray request,
     jlong now, jintArray kinds, jobjectArray material) {
   auto fail = [&]() -> jbyteArray { refuse(env); return nullptr; };
@@ -139,7 +139,7 @@ int platform_query(void *context, const uint8_t *data, size_t size, uint8_t *out
 }
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_network_tos_security_pq_V5R2ProofNative_nativeAcquireLivePersisted(JNIEnv *env, jobject,
+Java_network_tos_security_pq_QuantumProofNative_nativeAcquireLivePersisted(JNIEnv *env, jobject,
     jstring directory, jboolean initialize, jbyteArray anchor, jbyteArray request, jlong now, jobject transport) {
   auto fail = [&]() -> jbyteArray { refuse(env); return nullptr; };
   try {

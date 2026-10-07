@@ -987,8 +987,8 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
         (directory / "main-wallet.pk").write_bytes(b"\x53" * 32)
         wrapper = directory / "profile.fif"
         wrapper.write_text(
-            (f"0x{network_tag.hex()} constant v5r2-network-tag\n" if enabled else "")
-            + ("true constant v5r2-admission-candidate\n" if admission else "")
+            (f"0x{network_tag.hex()} constant quantum-network-tag\n" if enabled else "")
+            + ("true constant quantum-admission-candidate\n" if admission else "")
             + f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n'
         )
         subprocess.run(
@@ -1040,8 +1040,8 @@ def _generate_admission_candidate(directory, source):
     template.write_text(source)
     wrapper = directory / "candidate.fif"
     wrapper.write_text(
-        f"0x{bytes(range(32)).hex()} constant v5r2-network-tag\n"
-        "true constant v5r2-admission-candidate\n"
+        f"0x{bytes(range(32)).hex()} constant quantum-network-tag\n"
+        "true constant quantum-admission-candidate\n"
         f'"{template}" include\n'
     )
     result = subprocess.run(
@@ -1081,7 +1081,7 @@ def test_admission_candidate_parameter_mutation_is_detected(tmp_path, boundary):
 def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path):
     wrapper = tmp_path / "missing-tag.fif"
     wrapper.write_text(
-        "true constant v5r2-admission-candidate\n"
+        "true constant quantum-admission-candidate\n"
         f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n'
     )
     result = subprocess.run(
@@ -1091,20 +1091,20 @@ def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path)
         env=_mainnet_genesis_env(),
     )
     assert result.returncode != 0
-    assert b"V5R2 admission candidate requires an explicit AUTH network tag" in result.stderr
+    assert b"Quantum admission candidate requires an explicit AUTH network tag" in result.stderr
     assert not (tmp_path / "main-wallet.pk").exists()
     (tmp_path / "guarded.stderr.raw").write_bytes(result.stderr)
 
     # Removing the early guard must make this boundary check fail, even if a
     # later configuration validation eventually rejects the missing policy.
     source = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
-    guard = '  def? v5r2-network-tag not abort"V5R2 admission candidate requires an explicit AUTH network tag"'
+    guard = '  def? quantum-network-tag not abort"Quantum admission candidate requires an explicit AUTH network tag"'
     assert source.count(guard) == 1
     mutated = tmp_path / "without-guard.fif"
     mutated.write_text(
         source.replace(guard, "  // Controlled deletion of early namespace validation.")
     )
-    wrapper.write_text(f'true constant v5r2-admission-candidate\n"{mutated}" include\n')
+    wrapper.write_text(f'true constant quantum-admission-candidate\n"{mutated}" include\n')
     result = subprocess.run(
         _create_state_command(wrapper),
         cwd=tmp_path,
@@ -1113,7 +1113,7 @@ def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path)
     )
     (tmp_path / "unguarded.stderr.raw").write_bytes(result.stderr)
     with pytest.raises(AssertionError, match="early namespace guard"):
-        assert b"V5R2 admission candidate requires an explicit AUTH network tag" in result.stderr, (
+        assert b"Quantum admission candidate requires an explicit AUTH network tag" in result.stderr, (
             "early namespace guard"
         )
     assert (tmp_path / "main-wallet.pk").exists(), "unguarded candidate reached custody generation"
@@ -1126,7 +1126,7 @@ def test_admission_candidate_localnet_matches_generated_canonical_gas_fields(tmp
     config = NetworkConfig(
         global_version=18,
         auth_network_tag=bytes(range(32)),
-        v5r2_admission_candidate=True,
+        quantum_admission_candidate=True,
         deployment_fee_schedule=True,
         genesis_time=EXPECTED_MAINNET_GENESIS_UTIME,
         genesis_wallet_seed=b"\x53" * 32,
@@ -1165,17 +1165,17 @@ def test_admission_candidate_localnet_matches_generated_canonical_gas_fields(tmp
         {"global_version": 19},
         {"deployment_fee_schedule": False},
         {"auth_network_tag": None},
-        {"v5r2_admission_candidate": "yes"},
+        {"quantum_admission_candidate": "yes"},
     ],
 )
 def test_admission_candidate_localnet_rejects_incompatible_profile(tmp_path, change):
     config = NetworkConfig(
         global_version=18,
         auth_network_tag=bytes(range(32)),
-        v5r2_admission_candidate=True,
+        quantum_admission_candidate=True,
         deployment_fee_schedule=True,
     )
-    with pytest.raises(ValueError, match="V5R2 admission candidate"):
+    with pytest.raises(ValueError, match="Quantum admission candidate"):
         create_zerostate(Install(BUILD_DIR, REPO), tmp_path, replace(config, **change), [Key()])
     assert not (tmp_path / "main-wallet.pk").exists()
 
@@ -1184,7 +1184,7 @@ def test_admission_candidate_localnet_validation_deletion_is_detected(tmp_path, 
     config = NetworkConfig(
         global_version=17,
         auth_network_tag=bytes(range(32)),
-        v5r2_admission_candidate=True,
+        quantum_admission_candidate=True,
         deployment_fee_schedule=True,
         genesis_time=EXPECTED_MAINNET_GENESIS_UTIME,
         genesis_wallet_seed=b"\x53" * 32,
@@ -1195,7 +1195,7 @@ def test_admission_candidate_localnet_validation_deletion_is_detected(tmp_path, 
         try:
             create_zerostate(Install(BUILD_DIR, REPO), directory, config, [Key()])
         except ValueError as error:
-            assert "V5R2 admission candidate" in str(error)
+            assert "Quantum admission candidate" in str(error)
             assert not (directory / "main-wallet.pk").exists()
             return
         raise AssertionError("incompatible candidate reached genesis generation")
@@ -1206,7 +1206,7 @@ def test_admission_candidate_localnet_validation_deletion_is_detected(tmp_path, 
         context.setattr(
             zerostate_module,
             "fee_schedule_for",
-            lambda cfg: original(replace(cfg, v5r2_admission_candidate=False)),
+            lambda cfg: original(replace(cfg, quantum_admission_candidate=False)),
         )
         with pytest.raises(
             AssertionError, match="incompatible candidate reached genesis generation"

@@ -8,7 +8,7 @@
   "source_sha256": {
     "crypto/smartcont/rescue-dual-module.fc": "65e4e11c1212432388716b01168c384962152c4e534737159b2b3cee16c2ff68",
     "crypto/smartcont/rescue-fee-vault-slot.fc": "bc2abe072edc469375316549b954e95eb0b27882eebf580ba9633d6a56f166b7",
-    "crypto/smartcont/rescue-v5r2-account.fc": "9f409fb588fb3f3d3bf75df5a6d24d48c3634e63568431b12fac1c2b3287543a",
+    "crypto/smartcont/rescue-quantum-account.fc": "9f409fb588fb3f3d3bf75df5a6d24d48c3634e63568431b12fac1c2b3287543a",
     "crypto/vm/pqops.h": "4ab1ef3eb93956f236cb13e933662ce82a59e44578d0204596cf919ac00750d7",
     "test/rescue-fee-gate/README.md": "e516f013609f35860f1983275551bb678b4d3b5c4ea791e078f44852a1ca9dc9",
     "test/rescue-fee-gate/compare.py": "e6c7c4935baac256f829e064a5b5e4ff0a6fb63a05f66940f717dd6a87687481",
@@ -89,7 +89,7 @@
     "role_guard_exit": -14
   },
   "retained_artifacts": {
-    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261005-baseline",
+    "path": "/Users/tomisetsu/tos-quantum-rescue-artifacts/20261005-baseline",
     "retention": "retain until explicitly superseded or owner-authorized cleanup",
     "manifest_sha256": "eeea042a971ddbffcbc2b61cc910388a7419a66e808678eb2af54dbe0e0fc138"
   },

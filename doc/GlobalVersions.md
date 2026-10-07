@@ -351,7 +351,7 @@ Not yet activated on any TOS network, same as version 14 above.
 
 ML-DSA-44, all three Poseidon2 instructions and the frozen-account recovery
 fix are enabled at version 16. Falcon retains a separate version-19 gate in
-the V5R2 candidate profile; version 18 does not activate either Falcon entry point.
+the Quantum candidate profile; version 18 does not activate either Falcon entry point.
 This changes execution under version 16: existing development-chain history
 requires the original binary, or a fresh genesis for the consolidated baseline.
 No running network is migrated by this source change.
